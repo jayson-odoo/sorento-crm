@@ -16,7 +16,7 @@ global AI assistant config).
 - Parser config: `head/parser.py:872` `resolve_config`; provider/model from `agent_model(db, PROMPT_KEY)` then
   `AIAssistantConfigService(db).get()` (`parser.py:906-913`); called at `engine.py:5073`, after the profile is
   loaded at `engine.py:4853`.
-- Clarifier: `lanes/casual.py:263` `resolve_clarifier_config`, model falls back to `DEFAULT_MODEL`
+- Clarifier: `lanes/casual.py:263` `resolve_clarifier_config`, model falls back to `llm_provider.resolve_model` (label, then config; was `DEFAULT_MODEL` until NO-OPENAI)
   (`casual.py:287`); called at `engine.py:6946`.
 - Code reader: `resolver_code_reader.py:219` `_resolve_provider`: own label, then the parser's label, then global.
 - Image lane: `media_extract/service.py:520-527`, `settings.image_provider`, runs on the worker (no profile).

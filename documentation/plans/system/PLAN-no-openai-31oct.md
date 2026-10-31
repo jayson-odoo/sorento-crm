@@ -1,6 +1,6 @@
 # PLAN: no-openai (clarifier model fallback + what still needs an OpenAI key)
 
-Status: Built, in review. Track: small fix (one file of code, no migration, no auth change).
+Status: PR+CI, PR #2035, reviewer READY after one fix round. Track: small fix (one file of code, no migration, no auth change).
 
 Lane: NO-OPENAI. Owner, 31 Oct: "I am not using OpenAI anymore". He switched System > AI
 Assistant > Settings to Google Gemini. He sets the prompt labels and settings on prod himself, so
