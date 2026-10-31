@@ -256,6 +256,8 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 
 ### To do when `IDEA_IS_TEST` flips (the lane that puts the agent on WhatsApp)
 
+**Owner of the flip (crew ruling, 31 Oct): AGENTIC-KNOWLEDGE-P2, #2053.** It flips `writes.IDEA_IS_TEST` in the same PR that turns the WhatsApp hook on, and it owns this list. The flag stays True in this PR. Until then a WhatsApp idea routed to the agent would be created as a test idea and not show on the board, so the hook must not go live ahead of the flip. Once this lane finishes, this plan moves to `documentation/plans/_archive/chatbot/`.
+
 - Drop the second source in `crm_ideas_list`, and the test-only edit rule.
 - Decide whether a view-only operator may create an idea in another user's name. R9 allows it, and the test flag hides it today.
 - The proposal now hands full values back to the model while it waits (`waiting_reference`, history), up to 4000 characters a
