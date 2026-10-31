@@ -184,13 +184,20 @@ def _resolve_entity(db: Session) -> ResolveEntityFn:
             body = {**body, "contact_id": None, "space_id": None}
         principal = {"id": staff.user_id if staff is not None else getattr(settings, "external_api_key_act_as_user_id", None)}
         result = resolve_reference_post(ResolveReferenceRequest(**body), current_user=principal, db=db)
-        if staff is not None:
-            from app.services.chatbot.agent.tools import denied_entity_types
-
-            result = _without_entity_types(result, denied_entity_types(db, staff.user_id))
-        return result
+        return without_denied_kinds(db, result)
 
     return call
+
+
+def without_denied_kinds(db: Any, result: Any) -> Any:
+    """On a staff turn, the resolver's payload without the kinds this user has no slug for; a contact's
+    turn is returned as it is."""
+    staff = staff_principal.current()
+    if staff is None:
+        return result
+    from app.services.chatbot.agent.tools import denied_entity_types
+
+    return _without_entity_types(result, denied_entity_types(db, staff.user_id))
 
 
 def _without_entity_types(value: Any, denied: set[str]) -> Any:

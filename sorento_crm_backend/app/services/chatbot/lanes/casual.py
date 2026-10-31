@@ -129,14 +129,19 @@ def resolve_for_prompt(db: Session, *, ctx: dict) -> dict:
     hints = _allowed_entity_types(ctx, entities)
     goal = out.get("user_goal")
 
-    return _resolve_input(
+    from app.services.chatbot.lanes.business.services import without_denied_kinds
+
+    return without_denied_kinds(
         db,
-        goal if jsc.truthy(goal) else NOTHING,
-        raws if len(raws) else [NOTHING],
-        match_mode="or",
-        allowed_entity_types=hints if len(raws) else [NOTHING],
-        access_levels=jsc.array(out.get("access_levels")),
-        fallback_to_all_types=True,
+        _resolve_input(
+            db,
+            goal if jsc.truthy(goal) else NOTHING,
+            raws if len(raws) else [NOTHING],
+            match_mode="or",
+            allowed_entity_types=hints if len(raws) else [NOTHING],
+            access_levels=jsc.array(out.get("access_levels")),
+            fallback_to_all_types=True,
+        ),
     )
 
 

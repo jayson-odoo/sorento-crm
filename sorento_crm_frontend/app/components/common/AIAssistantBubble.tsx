@@ -411,11 +411,15 @@ export default function AIAssistantBubble() {
       drawCountRef.current += 1;
       setMessages((prev) => [...prev, optimistic]);
       setIsSending(true);
+      // The thread this send started on: an answer for a thread no longer open is dropped.
+      const startedOn = openThreadRef.current;
       try {
         const snapshot = getPageSnapshot();
-        const conv = await sendAIAssistantMessage(trimmed, conversationId, snapshot, confirmAction);
-        drawThread(conv.id, conv.messages || []);
+        const conv = await sendAIAssistantMessage(trimmed, startedOn, snapshot, confirmAction);
+        if (openThreadRef.current === startedOn) drawThread(conv.id, conv.messages || []);
       } catch (err) {
+        drawCountRef.current += 1;
+        if (openThreadRef.current !== startedOn) return;
         const errorMessage: AIAssistantMessage = {
           id: `temp-error-${Date.now()}`,
           role: 'assistant',
@@ -428,7 +432,7 @@ export default function AIAssistantBubble() {
         setIsSending(false);
       }
     },
-    [conversationId, drawThread, isSending],
+    [drawThread, isSending],
   );
 
   // A card's Confirm, Cancel, Undo and a countdown's end: the server decides, then the thread is read
@@ -826,7 +830,7 @@ export default function AIAssistantBubble() {
                           <BrainReplyParts
                             meta={m.metadata_json}
                             canViewTrace={canViewTrace}
-                            busy={isDeciding || isSending}
+                            busy={isDeciding}
                             onConfirm={(id) => decide(() => confirmPanelAction(id))}
                             onCancel={(id) => decide(() => cancelPanelAction(id))}
                             onWithdraw={(id, index) => decide(() => withdrawPanelStep(id, index))}

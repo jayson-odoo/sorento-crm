@@ -73,9 +73,15 @@ def current() -> StaffPrincipal | None:
 @contextmanager
 def acting_as(principal: StaffPrincipal | None) -> Iterator[None]:
     token = _CURRENT.set(principal)
+    # The resolver (core) reads a staff member's purchase requests through this hook; it cannot import us.
+    from app.services import entity_resolver
+    from app.services.chatbot.ref_status import _may_read_request
+
+    hook = entity_resolver.request_read_check.set(_may_read_request if principal is not None else None)
     try:
         yield
     finally:
+        entity_resolver.request_read_check.reset(hook)
         _CURRENT.reset(token)
 
 

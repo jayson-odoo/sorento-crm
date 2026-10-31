@@ -281,6 +281,7 @@ def _staff_tool(db: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str,
             expected_amount=Decimal(str(arguments["expected_amount"])),
             expected_close_date=date.fromisoformat(arguments["expected_close_date"]),
             dry_run=arguments.get("dry_run") == "true",
+            real_user_id=principal.real_user_id,
         )
     except AppException as exc:
         detail = exc.detail if isinstance(exc.detail, dict) else {}

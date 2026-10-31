@@ -5388,10 +5388,11 @@ def _run_stages_body(  # noqa: PLR0915
         current_message=latest_user_message,
         reply_to=None,
         media_line=None,
-        # Left out while a question is open: a short reply answers that, not the page.
+        # Left out while a question is open (`open_question` is built from a pending pick or offer, a
+        # required ask or a stock task): a short reply answers that, not the page.
         page_line=(
             None
-            if open_question is not None or state_in.pending is not None
+            if open_question is not None
             else context_mod.page_line(getattr(staff_principal.current(), "page", None))
         ),
         task_lines=parser.open_task_lines(state_in.focus, open_question),

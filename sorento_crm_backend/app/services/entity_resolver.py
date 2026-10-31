@@ -1151,6 +1151,13 @@ def _probe_purchase_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
     return result
 
 
+#: Set by the chatbot lane for a staff turn: `check(db, row)` says whether the user may read this purchase
+#: request or sponsorship form. Core holds the hook and never imports the chatbot package.
+request_read_check: ContextVar[Optional[Callable[[Session, Any], bool]]] = ContextVar(
+    "entity_resolver_request_read_check", default=None
+)
+
+
 def _probe_purchase_request(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
     """Exact match on purchase_request_headers.request_number; every duplicate row returns."""
     from app.models.procurement import PurchaseRequestHeader
@@ -1164,13 +1171,12 @@ def _probe_purchase_request(db: Session, tokens: list[str]) -> dict[str, list[Re
         .filter(_ws_insensitive_lower(PurchaseRequestHeader.request_number).in_(list(norm_to_token.keys())))
         .all()
     )
-    from app.services.chatbot.ref_status import _may_read_request
-
+    may_read = request_read_check.get()
     for row in rows:
         token = norm_to_token.get(_strip_all_ws(str(row.request_number).lower()))
         # A staff turn sees a request or sponsorship form by that kind's own slugs (no staff principal:
         # unchanged), so a row it may not read places nothing and names no customer.
-        if not token or not _may_read_request(db, row):
+        if not token or (may_read is not None and not may_read(db, row)):
             continue
         result[token].append(
             ResolvedEntity(
