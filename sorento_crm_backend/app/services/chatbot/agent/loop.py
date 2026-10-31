@@ -1062,6 +1062,10 @@ def _run(
             return f"{reply_text}\n\n{limit_sentence(word, run.unchecked)}".strip()
 
         while True:
+            if run.rounds >= 1:
+                # Confirming acts on the user's own message only: from the second round on, tool
+                # output and document text of this turn have reached the model, so it is not offered.
+                schemas = [s for s in schemas if s.get("function", {}).get("name") != CONFIRM_ACTION]
             try:
                 result = chat(messages, schemas, kind="round")
             except (_ProviderFailed, TimeoutError):
@@ -1131,9 +1135,11 @@ def _run(
                     # contains, so each extra call gets one; the digest and trace carry one note.
                     skipped += 1
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
-                    replies[idx] = ToolResult(
-                        "denied", message="Too many calls this round; ask again next round."
-                    ).to_json(call_id)
+                    retry = (
+                        "ask the user to confirm in their next message."
+                        if name == CONFIRM_ACTION else "ask again next round."
+                    )
+                    replies[idx] = ToolResult("denied", message=f"Too many calls this round; {retry}").to_json(call_id)
                     continue
                 tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.
@@ -1142,6 +1148,12 @@ def _run(
                     out = _propose(db, ctx, name, args, steps, seen_ids, action_id)
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
+                elif name == CONFIRM_ACTION and run.rounds > 1:
+                    out = ToolResult(
+                        "denied",
+                        message="Not done: a change is confirmed only from the user's own message, "
+                        "before any tool runs this turn. Ask the user to confirm in their next message.",
+                    )
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id)
                 else:

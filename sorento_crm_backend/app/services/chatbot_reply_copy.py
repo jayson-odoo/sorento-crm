@@ -308,6 +308,13 @@ IDEATION_CAPTURE_GIVE_UP = {
     ),
     "zh": "我还是没能从中找到创意。准备好后，请用一条消息发送您的创意，例如您想改进什么。",
 }
+#: AI-KEY-PER-PROVIDER: the message could not be read at all (provider or key error, timeout).
+#: Not "no idea": a plain statement of what happened, no apology, no question.
+IDEATION_CAPTURE_READ_FAILED = {
+    "en": "I couldn't read that just now. Please send it again.",
+    "ms": "Saya tidak dapat membaca mesej itu sekarang. Sila hantar sekali lagi.",
+    "zh": "我刚才无法读取这条消息，请再发送一次。",
+}
 IDEATION_CAPTURE_SIMILAR_OFFERED = {
     "en": "You already have ideas like this:",
     "ms": "Anda sudah ada idea yang serupa:",
@@ -448,6 +455,7 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "ideation_capture_unconfigured": (IDEATION_CAPTURE_UNCONFIGURED, ()),
     "ideation_capture_ask_idea": (IDEATION_CAPTURE_ASK_IDEA, ()),
     "ideation_capture_give_up": (IDEATION_CAPTURE_GIVE_UP, ()),
+    "ideation_capture_read_failed": (IDEATION_CAPTURE_READ_FAILED, ()),
     "ideation_capture_similar_offered": (IDEATION_CAPTURE_SIMILAR_OFFERED, ()),
     "ideation_capture_similar_offered_reply": (IDEATION_CAPTURE_SIMILAR_OFFERED_REPLY, ()),
     "ideation_capture_similar_offered_see_all": (IDEATION_CAPTURE_SIMILAR_OFFERED_SEE_ALL, ("link",)),
