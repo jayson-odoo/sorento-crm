@@ -7,6 +7,11 @@ not enough (UAC4.5).
 
 The script lives at repo-root `scripts/sync_user_guides_outline.py`; it is
 loaded here by path so these tests run from the backend test suite.
+
+These tests never read the real documentation/user-guides tree: a guides-only
+change is docs-only in deploy.yml (no test job runs for it). The real tree is
+checked on every PR by the PR gate's `sync_user_guides_outline.py check` step
+(unmapped folder, bad layout, title too long). DOCS-SYNC-AUTO.
 """
 from __future__ import annotations
 
@@ -58,17 +63,25 @@ def test_guard_raises_when_commercial_added():
         mod.PARENT_TITLES.pop("commercial", None)
 
 
-def test_dry_run_plan_excludes_commercial_includes_getting_started():
+def test_dry_run_plan_excludes_commercial(monkeypatch, tmp_path):
     mod = _load_module()
+    _fake_guides(
+        mod,
+        monkeypatch,
+        tmp_path,
+        {
+            "commercial/x.md": "# X\n",
+            "_shared/getting-started.md": "# Getting started\n",
+            "inventory/data-analysis.md": "# Inventory data\n",
+        },
+    )
     plan, skipped = mod.plan_push()
     plan_blob = "\n".join(plan)
     # Held folder docs are skipped, never planned for publish.
     assert all("commercial/" not in line for line in plan)
-    assert any(s.startswith("commercial/") for s in skipped)
-    # Ready guides + the new getting-started ARE in the publish plan.
-    assert "_shared/getting-started-for-new-users.md" in plan_blob
+    assert skipped == ["commercial/x.md"]
+    assert "_shared/getting-started.md" in plan_blob
     assert "inventory/data-analysis.md" in plan_blob
-    assert "sla/data-analysis.md" in plan_blob
 
 
 def test_plan_push_raises_when_commercial_added():
@@ -81,31 +94,12 @@ def test_plan_push_raises_when_commercial_added():
         mod.PARENT_TITLES.pop("commercial", None)
 
 
-def test_guides_dir_is_the_real_guides_folder():
-    mod = _load_module()
-    # Compared as a string on purpose: a guides-only change is docs-only in
-    # deploy.yml (no test job runs for it), and what this file guards is
-    # gated on every PR by the PR gate's `sync_user_guides_outline.py check`
-    # step instead, so test_ci_docs_only_filter's reader scan must not count
-    # this file as a documentation/ reader that needs the full pipeline.
-    assert mod.GUIDES_DIR.relative_to(_REPO_ROOT).as_posix() == "documentation/user-guides"
-    assert (mod.GUIDES_DIR / "README.md").exists()
-
-
-def test_every_guide_folder_is_published_or_held():
-    mod = _load_module()
-    folders = {p.name for p in mod.GUIDES_DIR.iterdir() if p.is_dir()}
-    unlisted = folders - set(mod.PARENT_TITLES) - set(mod.HELD_FOLDERS)
-    assert not unlisted, f"guide folders that would never reach Outline: {sorted(unlisted)}"
-    _, skipped = mod.plan_push()
-    assert all(s.split("/")[0] in mod.HELD_FOLDERS for s in skipped), skipped
-
-
-def test_pull_keeps_a_repo_page_newer_than_its_outline_copy(monkeypatch):
+def test_pull_keeps_a_repo_page_newer_than_its_outline_copy(monkeypatch, tmp_path):
     from datetime import datetime, timezone
 
     mod = _load_module()
-    page = mod.GUIDES_DIR / "README.md"
+    root = _fake_guides(mod, monkeypatch, tmp_path, {})
+    page = root / "README.md"
     committed = datetime(2026, 10, 31, 5, 0, tzinfo=timezone.utc)
     monkeypatch.setattr(mod, "_repo_committed_at", lambda _p: committed)
 
@@ -114,7 +108,7 @@ def test_pull_keeps_a_repo_page_newer_than_its_outline_copy(monkeypatch):
     assert mod.repo_is_newer(page, older) is True
     assert mod.repo_is_newer(page, newer) is False
     # A page that is not in the repo yet is always pulled.
-    assert mod.repo_is_newer(mod.GUIDES_DIR / "no-such-page.md", older) is False
+    assert mod.repo_is_newer(root / "no-such-page.md", older) is False
     # No Outline timestamp or no git history: fall back to pulling.
     assert mod.repo_is_newer(page, {}) is False
     monkeypatch.setattr(mod, "_repo_committed_at", lambda _p: None)
@@ -123,7 +117,7 @@ def test_pull_keeps_a_repo_page_newer_than_its_outline_copy(monkeypatch):
 
 def test_repo_committed_at_reads_git_history():
     mod = _load_module()
-    when = mod._repo_committed_at(mod.GUIDES_DIR / "README.md")
+    when = mod._repo_committed_at(_SCRIPT)
     # Shallow CI checkouts still have the HEAD commit, so this is never None in a clone.
     assert when is not None and when.tzinfo is not None
 
@@ -143,11 +137,6 @@ def _fake_guides(mod, monkeypatch, tmp_path, pages):
     monkeypatch.setattr(mod, "GUIDES_DIR", root)
     monkeypatch.setattr(mod, "STATE_FILE", root / ".outline-sync.json")
     return root
-
-
-def test_repo_guides_validate_clean():
-    mod = _load_module()
-    assert mod.validate_guides() == []
 
 
 def test_check_fails_on_long_title(monkeypatch, tmp_path):
@@ -178,20 +167,26 @@ def test_check_ignores_held_folder(monkeypatch, tmp_path):
     assert mod.validate_guides() == []
 
 
-def test_check_runs_without_requests_installed():
+def test_check_runs_without_requests_installed(tmp_path):
     """The PR gate runs `check` on a bare python3: no third-party import at module load."""
     import subprocess
 
+    (tmp_path / "README.md").write_text("# Overview\n")
+    (tmp_path / "warehouse").mkdir()
+    (tmp_path / "warehouse" / "a.md").write_text("# A\n")
     code = (
-        "import sys, builtins\n"
+        "import builtins, importlib.util, pathlib, sys\n"
         "real = builtins.__import__\n"
         "def guard(name, *a, **k):\n"
         "    if name.split('.')[0] in ('requests', 'dotenv'):\n"
         "        raise ImportError(name)\n"
         "    return real(name, *a, **k)\n"
         "builtins.__import__ = guard\n"
-        f"sys.argv = ['x', 'check']\n"
-        f"exec(compile(open({str(_SCRIPT)!r}).read(), 'script', 'exec'), {{'__name__': '__main__', '__file__': {str(_SCRIPT)!r}}})\n"
+        f"spec = importlib.util.spec_from_file_location('m', {str(_SCRIPT)!r})\n"
+        "m = importlib.util.module_from_spec(spec); sys.modules['m'] = m\n"
+        "spec.loader.exec_module(m)\n"
+        f"m.GUIDES_DIR = pathlib.Path({str(tmp_path)!r}); m.REPO_ROOT = m.GUIDES_DIR.parent\n"
+        "m.check(None)\n"
     )
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
