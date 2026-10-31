@@ -716,7 +716,7 @@ def test_AC_RC_8_a_number_inside_an_idea_problem_does_not_back_a_figure():
     from app.services.chatbot.agent.loop import verify_answer
 
     bad_numbers, _ = verify_answer({"text": "Stock is 5000 units"}, _ideas_ledger("Unit cost is 5000"), "")
-    assert "5000" in bad_numbers, bad_numbers
+    assert any("5000" in b for b in bad_numbers), bad_numbers  # a flagged figure carries its unit
 
 
 def test_AC_RC_8_a_figure_from_a_real_data_key_is_still_backed():
