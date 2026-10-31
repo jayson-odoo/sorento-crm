@@ -76,6 +76,10 @@ class AttachmentTypeBase(BaseModel):
     # Folder an upload of this type files into by default (R4). None = no default,
     # same as today.
     default_directory_id: Optional[str] = None
+    # AGENTIC-KNOWLEDGE: who the AI may answer from files of this type, and the team the
+    # reply names when the documents do not cover a question. 'off' = the AI never reads them.
+    ai_audience: Literal["off", "staff", "dealer", "public"] = "off"
+    ai_escalate_team_id: Optional[str] = None
 
 
 class AttachmentTypeCreate(AttachmentTypeBase):
@@ -94,6 +98,8 @@ class AttachmentTypeUpdate(BaseModel):
     triggers_n8n_webhook: Optional[bool] = None
     is_shared: Optional[bool] = None
     default_directory_id: Optional[str] = None
+    ai_audience: Optional[Literal["off", "staff", "dealer", "public"]] = None
+    ai_escalate_team_id: Optional[str] = None
 
 
 class AttachmentTypeResponse(AttachmentTypeBase):
@@ -105,6 +111,7 @@ class AttachmentTypeResponse(AttachmentTypeBase):
     # `type_name` label. Read-only: not on AttachmentTypeBase, so create/update
     # payloads cannot set it. NULL for types that predate the column.
     code: Optional[str] = None
+    ai_escalate_team_name: Optional[str] = None
 
     @field_validator('id', mode='before')
     @classmethod
@@ -363,6 +370,13 @@ class AttachmentResponse(AttachmentBase):
     # Certificates this file is a filed revision of. Read-only on the FE: the
     # link is created by filing the document, not by a user linking two rows.
     linked_certificates: list[LinkedEntityRef] = []
+    # AGENTIC-KNOWLEDGE: how the AI's reading of this file went. All null until a read is queued.
+    ai_read_status: Optional[str] = None
+    ai_read_pages: Optional[int] = None
+    ai_read_ocr_pages: Optional[int] = None
+    ai_read_cost_usd: Optional[float] = None
+    ai_read_error: Optional[str] = None
+    ai_read_at: Optional[datetime] = None
 
     @field_validator('id', 'uploaded_by', 'deleted_by', 'attachment_type_id', 'entity_id', 'directory_id', 'company_id', mode='before')
     @classmethod

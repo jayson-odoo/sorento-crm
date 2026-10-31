@@ -499,6 +499,7 @@ class AttachmentTypeService:
         total = q.count()
         offset = (page - 1) * limit
         types = q.offset(offset).limit(limit).all()
+        self._attach_team_names(types)
         
         return {
             "data": types,
@@ -511,7 +512,22 @@ class AttachmentTypeService:
         attachment_type = self.db.query(AttachmentType).filter(AttachmentType.id == type_id).first()
         if not attachment_type:
             raise handle_not_found("Attachment Type", type_id)
+        self._attach_team_names([attachment_type])
         return attachment_type
+
+    def _attach_team_names(self, types) -> None:
+        """Set `ai_escalate_team_name` on each row (the response schema reads it as an attribute)."""
+        from app.models.access import Team
+        from app.models.base import company_scope
+
+        ids = {t.ai_escalate_team_id for t in types if t.ai_escalate_team_id}
+        names = {}
+        if ids:
+            # The type itself is not company scoped, so neither is the name of its hand-off team.
+            with company_scope(self.db, None):
+                names = {str(i): n for i, n in self.db.query(Team.id, Team.name).filter(Team.id.in_(ids)).all()}
+        for t in types:
+            t.ai_escalate_team_name = names.get(str(t.ai_escalate_team_id)) if t.ai_escalate_team_id else None
 
     def get_type_by_code(self, code: str):
         """Get an attachment type by code, or None if not found."""
@@ -531,6 +547,7 @@ class AttachmentTypeService:
         self.db.add(attachment_type)
         self.db.commit()
         self.db.refresh(attachment_type)
+        self._attach_team_names([attachment_type])
         return attachment_type
     
     def update_type(self, type_id: str, type_data: AttachmentTypeUpdate):
@@ -538,6 +555,9 @@ class AttachmentTypeService:
         attachment_type = self.get_type(type_id)
         
         update_data = type_data.model_dump(exclude_unset=True)
+        if update_data.get("ai_audience") is None:
+            update_data.pop("ai_audience", None)  # NOT NULL column: an explicit null leaves it alone
+        was_off = attachment_type.ai_audience == "off"
         
         # Check for name uniqueness if type_name is being updated
         if "type_name" in update_data and update_data["type_name"] != attachment_type.type_name:
@@ -552,6 +572,13 @@ class AttachmentTypeService:
         
         self.db.commit()
         self.db.refresh(attachment_type)
+        if was_off and attachment_type.ai_audience != "off":
+            # AGENTIC-KNOWLEDGE: turning AI reading on reads the files already filed under this type.
+            from app.services import knowledge_service
+
+            knowledge_service.queue_type_files(self.db, str(attachment_type.id))
+            self.db.refresh(attachment_type)
+        self._attach_team_names([attachment_type])
         return attachment_type
     
     def delete_type(self, type_id: str):

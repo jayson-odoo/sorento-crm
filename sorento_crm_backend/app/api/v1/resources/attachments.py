@@ -208,6 +208,16 @@ def _next_copy_name(
     return candidate
 
 
+def _queue_ai_read(db, attachment) -> None:
+    """Queue the AI read when the file's type allows it; an upload never fails because of it."""
+    from app.services import knowledge_service
+
+    try:
+        knowledge_service.queue_read(db, attachment)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not queue the AI read for %s", getattr(attachment, "id", None))
+
+
 def _enrich_uploaded_by_user(db, attachment) -> Optional[dict]:
     """Resolve uploaded_by UUID to user name/email for display. Returns UploadedByUser dict or None."""
     from app.schemas.resources import UploadedByUser
@@ -1158,6 +1168,7 @@ async def create_attachment(
                         e,
                         exc_info=True,
                     )
+            _queue_ai_read(db, attachment)
             # Stamp the owning company by hand: returning the bare ORM row would
             # serialize company_name as None while company_id is populated, so the
             # write echo would disagree with the very next list read.
@@ -1212,6 +1223,7 @@ async def create_attachment(
                     e,
                     exc_info=True,
                 )
+        _queue_ai_read(db, attachment)
         # Same reason as the replace-in-place branch above: the ORM row alone
         # carries company_id but no company_name.
         data = AttachmentResponse.model_validate(attachment).model_dump()
@@ -1871,6 +1883,22 @@ def apply_bulk_access_levels(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.post("/{attachment_id}/ai-read", status_code=status.HTTP_202_ACCEPTED)
+def read_attachment_again(
+    attachment_id: str,
+    current_user: dict = Depends(require_permission("resource.attachments.upload")),
+    db: Session = Depends(get_db),
+):
+    """Queue the AI's reading of this file again (AGENTIC-KNOWLEDGE)."""
+    from app.services import knowledge_service
+
+    validate_uuid_path(attachment_id, resource="Attachment")
+    attachment = AttachmentService(db).get_attachment(attachment_id)
+    knowledge_service.queue_read(db, attachment)
+    db.refresh(attachment)
+    return {"ai_read_status": attachment.ai_read_status}
 
 
 @router.post("/{attachment_id}/resubmit", status_code=status.HTTP_200_OK)

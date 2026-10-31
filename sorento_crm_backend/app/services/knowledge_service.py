@@ -474,13 +474,14 @@ def search(
                 "similarity": round(float(sim), 4),
             }
         )
-    teams = (
-        db.query(Team.name)
-        .join(AttachmentType, AttachmentType.ai_escalate_team_id == Team.id)
-        .filter(AttachmentType.ai_audience.in_(READABLE_AUDIENCES))
-        .distinct()
-        .all()
-    )
+    with company_scope(db, None):  # types are not company scoped, so neither is their hand-off team
+        teams = (
+            db.query(Team.name)
+            .join(AttachmentType, AttachmentType.ai_escalate_team_id == Team.id)
+            .filter(AttachmentType.ai_audience.in_(READABLE_AUDIENCES))
+            .distinct()
+            .all()
+        )
     return {"status": "ok", "passages": passages, "handoff_teams": sorted(name for (name,) in teams)}
 
 

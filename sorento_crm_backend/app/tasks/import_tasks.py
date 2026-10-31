@@ -626,6 +626,16 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
         db.close()
 
 
+def _queue_ai_read(db, attachment) -> None:
+    """AGENTIC-KNOWLEDGE: queue the AI read when the file's type allows it; never fails the import."""
+    from app.services import knowledge_service
+
+    try:
+        knowledge_service.queue_read(db, attachment)
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not queue the AI read for %s", getattr(attachment, "id", None), exc_info=True)
+
+
 def process_attachment_bulk_import(
     db_job_id: str,
     storage_key: str,
@@ -984,6 +994,7 @@ def process_attachment_bulk_import(
                                 attachment.id,
                                 e,
                             )
+                        _queue_ai_read(db, attachment)
                         collisions_replaced += 1
                         created_attachments.append({"id": attachment.id, "path": file_path, "replaced": True})
                         outcome.updated(
@@ -1025,6 +1036,7 @@ def process_attachment_bulk_import(
                             )
                         except Exception as e:
                             logger.warning("Webhook creation failed for %s: %s", attachment.id, e)
+                        _queue_ai_read(db, attachment)
                         created_attachments.append({"id": attachment.id, "path": file_path})
                     outcome.success(
                         row=entry_row,
