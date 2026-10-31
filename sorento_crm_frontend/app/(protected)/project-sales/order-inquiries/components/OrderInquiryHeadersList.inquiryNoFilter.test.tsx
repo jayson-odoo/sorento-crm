@@ -27,9 +27,10 @@ if (!window.matchMedia) {
 
 let searchParamsValue = '';
 const replaceSpy = vi.hoisted(() => vi.fn());
+const pushSpy = vi.hoisted(() => vi.fn());
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/order-inquiries',
-  useRouter: () => ({ push: vi.fn(), replace: replaceSpy }),
+  useRouter: () => ({ push: pushSpy, replace: replaceSpy, prefetch: vi.fn() }),
   useSearchParams: () => new URLSearchParams(searchParamsValue),
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -235,5 +236,31 @@ describe('AC-RF-26 choosing Outstanding keeps state=outstanding in the URL', () 
     await screen.findByText('OI-2610-001');
     fireEvent.click(await screen.findByRole('radio', { name: /outstanding/i }));
     await waitFor(() => expect(lastReplaceQuery().get('state')).toBe('outstanding'));
+  });
+});
+
+describe('AC-RF-26 the detail link carries the chosen state', () => {
+  /** Open the first row and read the query of the detail URL the list pushed. */
+  async function detailQuery(): Promise<URLSearchParams> {
+    const row = (await screen.findByText('OI-2610-001')).closest('tr') as HTMLElement;
+    fireEvent.click(row);
+    await waitFor(() => expect(pushSpy).toHaveBeenCalled());
+    const href = String(pushSpy.mock.calls[pushSpy.mock.calls.length - 1][0]);
+    expect(href).toContain('/project-sales/order-inquiries/h-1');
+    return new URLSearchParams(href.includes('?') ? href.split('?')[1] : '');
+  }
+
+  it.each([
+    ['inquiry_no', `state=outstanding&inquiry_no=${NUMBERS}`],
+    ['reserve', 'state=outstanding&reserve=needs_reserve'],
+  ])('keeps state=outstanding with %s in the URL', async (_name, query) => {
+    searchParamsValue = query;
+    renderList();
+    expect((await detailQuery()).get('state')).toBe('outstanding');
+  });
+
+  it('a plain list has no state in the detail link', async () => {
+    renderList();
+    expect((await detailQuery()).get('state')).toBeNull();
   });
 });

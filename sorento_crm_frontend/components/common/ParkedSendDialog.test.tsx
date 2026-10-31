@@ -179,3 +179,12 @@ describe('AC-RF-28 desktop preview width', () => {
     );
   });
 });
+
+describe('AC-RF-28 dialog is wide enough for a 900 px frame', () => {
+  it('is capped at sm:max-w-5xl, not max-w-4xl', () => {
+    renderDialog();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.className).toContain('sm:max-w-5xl');
+    expect(dialog.className).not.toMatch(/max-w-4xl/);
+  });
+});
