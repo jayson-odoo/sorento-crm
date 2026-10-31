@@ -86,15 +86,34 @@ Before `engine.run_turn` (`inbox_queue.py:857`):
 - `run_agent_turn` gains `is_test: bool = True` (console default unchanged; WhatsApp `False`) and the rate limit
   keys on the contact when there is no operator.
 
-### S4 - hand-off on a knowledge miss (W-Q2 b) - built last
+### S4 - hand-off on a knowledge miss (W-Q2 b, one switch) - built last
 
-When `crm_knowledge_search` returned no passage and the agent answers "not in the documents", the reply ends with
-"I couldn't find that in our product documents." and the bot's existing escalation offer for team
-`marketing_product` is armed as the contact's open question, so the contact's own "yes" runs today's escalation lane
-(router: an open bot question goes to the bot). Per W-Q2 (b) the offer is armed even when
-`escalation_allowed` is off; that needs a narrow allowance in the bot's barred check for this one armed offer.
-Mechanism to be measured in the escalation lane before coding (UNVERIFIED); if crew reports the owner meant
-"shouldn't", S4 follows the switch instead (barred -> "Please refer to your salesman.").
+Crew ruling 1 Nov: build (b) for now, keep it a single switch (owner wording "should" vs "shouldn't" pending).
+- The agent arms the bot's existing single-team offer as the contact's open question
+  (`session_vars.open_question`, shape of `turn/chat_state.py:631-640`): `team_pick`, `expects="yes_no"`, team
+  `marketing_product`, agent `general_enquiries`, `payload.source = "knowledge_miss"`. Reply ends with
+  "I couldn't find that in our product documents." plus the offer line. No ticket in the agent turn.
+- The router sends the contact's answer to the bot (open question, `router.py:71-73`), so today's escalation lane
+  makes the ticket on the contact's own "yes".
+- Barred contacts: ONE switch `knowledge_service.KNOWLEDGE_MISS_IGNORES_ESCALATION_BAR = True`, read at ONE place,
+  the turn's profile load (`turn_runtime.py:534`, not `engine.py`): when the contact's open question is a
+  `knowledge_miss` offer and the switch is on, that turn's profile has `escalation_allowed = True`, so every
+  backstop (`engine.py`, `compose.py`, `answer_bridge.py`) lets the one answer through without being edited.
+  Switch off -> barred contacts get "Please refer to your salesman." and no offer is armed.
+- Staff-tier profiles (`is_staff_profile`) are never offered (unchanged rule).
+
+### S6 - ideas leave test mode (crew ruling 1 Nov, from AGENTIC-IDEATE #2038)
+
+The owner ruled agent ideas stay TEST only until the agent reaches WhatsApp; this lane is that trigger. Depends on
+#2038 merging first (the flag and the list live on its branch): merge main, then
+- flip `agent/writes.py` `IDEA_IS_TEST` to False;
+- do the to-do list in `documentation/plans/chatbot/PLAN-agentic-ideate-31oct.md` "To do when `IDEA_IS_TEST`
+  flips": drop the second source in `crm_ideas_list` and the test-only edit rule; decide the view-only operator
+  create; bound the values handed back to the model while waiting; strip the remaining invisible characters (Mn
+  from U+E0100, CGJ, Hangul filler, braille blank); use-case edit merge rule; escape look-alike quotes; carry the
+  turn's own text to `raw_transcript`; give the ss non-`captured` replay and 4xx their own lines.
+- Note: idea writes stay user-principal only (a contact principal has no writes in W1), so on WhatsApp only linked
+  staff contacts create ideas.
 
 ### S5 - eval and evidence
 
