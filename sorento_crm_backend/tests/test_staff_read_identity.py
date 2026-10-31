@@ -466,9 +466,17 @@ def test_ac10_plain_key_and_session_are_as_today(env, probe):
     assert probe.get("/api/v1/zzt/perm", headers=env.session(nobody)).status_code == 403
 
 
-def test_ac11_any_both_hold_one_slug_passes(env, probe):
-    assert _perm_status(env, probe, "/api/v1/zzt/any", ["zzt.b.view"], ["zzt.a.view"], actas_roles=()) == 403
-    assert _perm_status(env, probe, "/api/v1/zzt/any", ["zzt.a.view"], ["zzt.a.view"], actas_roles=()) == 200
+def test_ac11_any_staff_one_slug_and_actas_one_slug_passes_even_if_not_the_same(env, probe):
+    """New rule: staff holds at least one of the list AND act-as holds at least one."""
+    path = "/api/v1/zzt/any"
+    assert _perm_status(env, probe, path, ["zzt.b.view"], ["zzt.a.view"], actas_roles=()) == 200, (
+        "AC-11: the two users need not share the slug"
+    )
+    assert _perm_status(env, probe, path, ["zzt.a.view"], ["zzt.a.view"], actas_roles=()) == 200
+
+
+def test_ac11_any_actas_holding_none_is_403_though_staff_holds_one(env, probe):
+    assert _perm_status(env, probe, "/api/v1/zzt/any", ["zzt.a.view"], [], actas_roles=()) == 403
 
 
 def test_ac11_staff_lacking_any_slug_is_403_though_actas_holds(env, probe):
@@ -985,3 +993,44 @@ def test_staff_read_post_paths_equal_the_catalogs_read_only_post_paths():
     assert {p.rstrip("/") for p in STAFF_READ_POST_PATHS} == expected, (
         "STAFF_READ_POST_PATHS must be exactly the catalog's read_only POST paths under /api/v1/"
     )
+
+
+def test_ac11_view_own_staff_with_a_non_admin_view_actas_reads_only_their_rows(env):
+    """A real any-of route (projects list, `.view` or `.view_own`): the staff member holds only
+    `.view_own`, the shared key's act-as is a non-admin role holding only `.view`. Not the same
+    slug, yet let through, and narrowed to the staff member's own rows like their session."""
+    from tests.test_portal_p2_own_scope_projects import _project
+
+    env.use_actas(perms=["projects.projects.view"], roles=())
+    w = _own_world(env)
+    mine = _project(env.db, SORENTO, w.a)
+    theirs = _project(env.db, SORENTO, w.b)
+    grant(env.db, w.a, ["projects.projects.view_own"])
+
+    base = "/api/v1/project-sales/projects/"
+    session = env.client.get(base, params={"limit": 100}, headers=env.session(w.a))
+    identity = env.client.get(base, params={"limit": 100}, headers=env.ident(w.a))
+    assert identity.status_code == 200, f"AC-11: staff view_own + act-as view must pass, got {identity.status_code}"
+    via_session, via_identity = _ids(session), _ids(identity)
+    assert mine.id in via_session and theirs.id not in via_session, "fixture: session baseline"
+    assert via_identity == via_session, "AC-11/AC-15: the same rows as the session"
+    assert mine.id in via_identity and theirs.id not in via_identity
+
+
+def test_ac11_the_module_check_runs_per_user_and_a_disabled_module_refuses(env, probe, monkeypatch):
+    from app.modules.runtime import installer
+    from app.modules.runtime.permission_module_map import module_for_permission
+
+    slug = "complaint_management.complaints.view"
+    module = module_for_permission(slug)
+    assert module, "fixture: the slug must map to a module"
+    env.use_actas(perms=[slug])
+    staff = mk_user(env.db, "staff", perms=[slug])
+    monkeypatch.setattr(settings, "module_guard_strict", True, raising=False)
+    monkeypatch.setattr(installer, "tenant_has_any_module_row", lambda db_, tenant: True)
+    path = "/api/v1/complaints-management/complaints/"
+
+    monkeypatch.setattr(installer, "is_module_enabled", lambda db_, tenant, mod: True)
+    assert env.client.get(path, headers=env.ident(staff)).status_code == 200, "fixture: enabled module passes"
+    monkeypatch.setattr(installer, "is_module_enabled", lambda db_, tenant, mod: mod != module)
+    assert env.client.get(path, headers=env.ident(staff)).status_code == 403, "a disabled module refuses"
