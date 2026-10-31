@@ -8,7 +8,7 @@ module carries its own uninstall story.
 
 Three rules govern what is in here:
 
-* **Module-owned tables only, and the model file is what says so.** All 49 live in the
+* **Module-owned tables only, and the model file is what says so.** Every one of them lives in the
   ``projects`` Postgres schema (ADR-0011), which is a second, mechanically checkable
   expression of the same fact - but ownership is still "declared in
   ``app/models/projects.py`` or ``app/models/project_so.py``", which is exactly what
@@ -107,6 +107,8 @@ from app.models.projects import (
     ProjectTemplateRole,
     ProjectTemplateTask,
     ProjectType,
+    QuotationAmendmentRequest,
+    QuotationAmendmentRequestRow,
     QuotationSignature,
     QuotationTemplate,
 )
@@ -188,6 +190,12 @@ PURGE_ORDER: List[Type] = [
     ProjectPurchaseOrder,
     ProjectSample,
     # --- quotations: issues reference scopes and versions, documents sit under them -----
+    # quotation_amendment_request_rows CASCADEs off both the request and the issued line,
+    # and quotation_amendment_requests CASCADEs off the issue (QUOTE-CUSTOMER-AMEND), so
+    # either parent would take them; rows before requests, both before the issue, each its
+    # own statement so the operator sees the customer's suggestions counted.
+    QuotationAmendmentRequestRow,
+    QuotationAmendmentRequest,
     ProjectQuotationIssueScope,
     ProjectQuotationIssue,
     ProjectQuotationLine,

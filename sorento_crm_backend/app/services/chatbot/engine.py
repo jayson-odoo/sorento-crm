@@ -31,7 +31,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass, replace as dataclasses_replace
+from dataclasses import dataclass, fields as dataclasses_fields, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator, Mapping
 
@@ -2959,17 +2959,33 @@ def run_turn(
     session_factory: SessionFactory,
     offload: bool | None = None,
     queued_turn_id: str | None = None,
+    switch_overrides: Mapping[str, Any] | None = None,
 ) -> TurnResult:
     """One turn, then the final reply pass (`_localize_result`, called by `_run_turn` at its
     one exit, just before the messages answered ahead are put in front of the actions).
 
     `queued_turn_id` (CHAT-INBOX-QUEUE): the inbox drain runs a row it already claimed, in
-    this process (`inbox_queue.drain`)."""
+    this process (`inbox_queue.drain`).
+
+    `switch_overrides` (CONSOLE-SWITCH-OVERRIDE): settings switches for THIS turn only,
+    keyed by `_TurnSwitches` field name (e.g. `{"chatbot_business_lane_enabled": True,
+    "chatbot_completed_lanes": [...]}`), laid over the snapshot `_read_switches` takes.
+    `system_settings` is never written, so a live turn running beside this one reads the
+    real stored switches. A keyword argument and never an envelope field on purpose: only
+    in-process code can set it, no inbound request can. An overridden turn runs in this
+    process (no worker offload), because the override does not travel through the queue.
+    An unknown key raises `ValueError` rather than being silently ignored."""
     if queued_turn_id is not None:
         return _run_turn(
-            envelope, session_factory=session_factory, offload=False, queued_turn_id=queued_turn_id
+            envelope,
+            session_factory=session_factory,
+            offload=False,
+            queued_turn_id=queued_turn_id,
+            switch_overrides=switch_overrides,
         )
-    return _run_turn(envelope, session_factory=session_factory, offload=offload)
+    return _run_turn(
+        envelope, session_factory=session_factory, offload=offload, switch_overrides=switch_overrides
+    )
 
 
 def _localize_result(result: TurnResult, session_factory: SessionFactory, dry_run: bool) -> None:
@@ -3446,6 +3462,7 @@ def _run_turn(
     session_factory: SessionFactory,
     offload: bool | None = None,
     queued_turn_id: str | None = None,
+    switch_overrides: Mapping[str, Any] | None = None,
 ) -> TurnResult:
     """Run the head of one turn. NEVER raises for a business failure; records it.
 
@@ -3468,6 +3485,8 @@ def _run_turn(
     and the drain holds the contact's mutex, so there is no dedup, no ticket, no insert and
     no answering of earlier messages (the drain takes them in send order).
     """
+    # Checked before anything runs, so a typo fails the caller rather than the turn.
+    _validate_switch_overrides(switch_overrides)
     contact_respond_id = _contact_respond_id(envelope)
     # H56. BEFORE the offload branch, so the invariant reads the same on every entry:
     # every session this turn opens - the dedup read, the stages, the lanes' own family
@@ -3505,6 +3524,9 @@ def _run_turn(
             turn_id=queued_turn_id,
         )
 
+    if switch_overrides:
+        # The override lives in this call only; a worker would read the stored switches.
+        offload = False
     if offload is None:
         offload = bool(getattr(settings, "chatbot_turn_on_worker", False))
     if offload:
@@ -3531,6 +3553,8 @@ def _run_turn(
     try:
         with _session(session_factory) as db:
             switches = _read_switches(db)
+            if switch_overrides:
+                switches = dataclasses_replace(switches, **switch_overrides)
             # H57: a DRY RUN takes no ticket, waits on nothing and marks nothing. The
             # ordering keys (`chatbot:seq|done|running:{contact}`, dispatch.py) are keyed
             # on the contact id and are SHARED with that contact's live traffic, so a test
@@ -11039,6 +11063,16 @@ class _TurnSwitches:
     # CHAT-SPEED: which contacts the respond.io webhook starts turns for (`direct_ingress`).
     chatbot_direct_ingress_mode: str = "off"
     chatbot_direct_ingress_contacts: str | None = None
+
+
+def _validate_switch_overrides(overrides: Mapping[str, Any] | None) -> None:
+    """`run_turn(switch_overrides=...)` may name only `_TurnSwitches` fields."""
+    if not overrides:
+        return
+    known = {f.name for f in dataclasses_fields(_TurnSwitches)}
+    unknown = sorted(set(overrides) - known)
+    if unknown:
+        raise ValueError(f"switch_overrides names unknown switches: {unknown}")
 
 
 def _read_switches(db: Session) -> _TurnSwitches:

@@ -11,6 +11,12 @@ The lane DOES build the customer's one message (`ROUTED_TO_PIC_REPLY`, WA-MSG-TR
 `includeResponse: false`), so the turn's `reply.text` - what the console, the eval, the
 next turn's `Previous response:` and the chat-history link all read - was null.
 
+CHATBOT-FAIL-TRIAGE AC-7c (#2018, owner 30 Oct 2026: "we shouldn't do no topic escalate to
+marketing product, we should clarify"): that same topic-less verdict now asks ONE topic
+question instead of routing to a default team. The never-blank rule is unchanged: the
+question is the turn's reply, the sent message and the stored row. The routed hand-over
+line is pinned on a verdict that names its topic (`inventory`).
+
 Driven through `engine.run_turn` with the harness's `mock_reformulator_output` (G6), so
 nothing reaches an LLM. Postgres only, blank schema, via `tests/chatbot/conftest.py`.
 """
@@ -34,13 +40,13 @@ from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
 )
 
 
-def _eval_verdict() -> dict[str, Any]:
+def _eval_verdict(domain_hint: str | None = None) -> dict[str, Any]:
     """The crew eval's verdict: every declared key present, almost all of them null."""
     verdict: dict[str, Any] = {key: None for key in parser_mod.DECLARED_KEYS}
     verdict.update(
         {
             "message_type": "request_for_help",
-            "domain_hint": None,
+            "domain_hint": domain_hint,
             "intent_hint": None,
             "entities": [],
             "access_levels": [],
@@ -79,8 +85,10 @@ def no_parser_call(monkeypatch):
 def no_team_found(monkeypatch):
     """The eval's log line: the dry-run preview's next-assignee read 404s for the team."""
     real_build = escalation_services.build
+    calls: list[dict[str, Any]] = []
 
     def preview(body: dict[str, Any]) -> dict[str, Any]:
+        calls.append(body)
         raise HTTPException(
             status_code=404,
             detail=(
@@ -94,52 +102,62 @@ def no_team_found(monkeypatch):
         "build",
         lambda db: dataclasses.replace(real_build(db), preview_assignee=preview),
     )
+    return calls
 
 
-def _run(session_factory, message_id: str):
+# AC-7c: the topic question over every topic, as `lanes/escalation._topic_clarify` words it
+# when the company's reachable pairs are not narrowed (`reachable is None`).
+TOPIC_CLARIFY_REPLY = (
+    "Which topic is this about - Orders & delivery, Stock & ETA, Product info, Promotions or Forms?"
+)
+
+
+def _run(session_factory, message_id: str, domain_hint: str | None = None):
     return engine_mod.run_turn(
         _envelope(
             is_test=True,
             test_run_id=f"ZZT-oos-blank-{message_id}",
-            mock_reformulator_output=_eval_verdict(),
+            mock_reformulator_output=_eval_verdict(domain_hint),
         ),
         session_factory=session_factory,
     )
 
 
-#: CHATBOT-FAIL-TRIAGE AC-7c (#2018, owner 30 Oct 2026): a hand-over with no topic is never routed to a
-#: default team; it asks one question over the topics the company can reach.
-TOPIC_QUESTION_PREFIX = "Which topic is this about - "
-
-
-def _assert_topic_question(session_factory, result) -> None:
+def _assert_reply(session_factory, result, expected: str) -> None:
     assert result.branch_kind == "out_of_scope"
     assert result.status == "done", result
     sends = [a for a in result.actions if a.get("kind") == "send_message"]
-    assert len(sends) == 1 and sends[0]["text"].startswith(TOPIC_QUESTION_PREFIX), result.actions
-    asked = sends[0]["text"]
+    assert [a["text"] for a in sends] == [expected], result.actions
 
     # The turn's own reply is the message the customer is sent, never blank.
-    assert result.reply["text"] == asked, result.reply
+    assert result.reply["text"] == expected, result.reply
 
     # The persisted row agrees: the console, the eval and the next turn's
     # `Previous response:` all read `response.reply.text` off it.
     row = _turn_row(session_factory, result.turn_id)
-    assert row.response["reply"]["text"] == asked, row.response.get("reply")
+    assert row.response["reply"]["text"] == expected, row.response.get("reply")
 
 
-def test_no_entity_request_for_help_gets_the_topic_question(
+def test_no_entity_no_topic_request_for_help_asks_the_topic_never_blank(
     session_factory, seeded, stub_access, no_parser_call
 ) -> None:
     stub_access()
-    _assert_topic_question(session_factory, _run(session_factory, "plain"))
+    _assert_reply(session_factory, _run(session_factory, "plain"), TOPIC_CLARIFY_REPLY)
 
 
-def test_no_team_found_on_the_preview_still_gets_the_topic_question(
+def test_no_entity_request_for_help_with_a_topic_gets_the_handover_reply(
+    session_factory, seeded, stub_access, no_parser_call
+) -> None:
+    stub_access()
+    _assert_reply(session_factory, _run(session_factory, "topic", "inventory"), ROUTED_TO_PIC_REPLY)
+
+
+def test_no_team_found_on_the_preview_still_gets_the_handover_reply(
     session_factory, seeded, stub_access, no_parser_call, no_team_found
 ) -> None:
     stub_access()
-    _assert_topic_question(session_factory, _run(session_factory, "no-team"))
+    _assert_reply(session_factory, _run(session_factory, "no-team", "inventory"), ROUTED_TO_PIC_REPLY)
+    assert no_team_found, "the preview never ran: the 404 this test is about was not reached"
 
 
 def test_a_voice_turn_handover_sends_and_persists_the_same_prefixed_line() -> None:
