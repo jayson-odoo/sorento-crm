@@ -71,9 +71,9 @@ This is display only: no new status, no schema change. A line amended back to 0 
 
 | Lines | Subject |
 | --- | --- |
-| All reserved | Reserved: 2 order inquiries raised by User-A (User-G) |
-| Some partial or rejected | Reserved: 2 order inquiries raised by User-A, 1 partial, 1 rejected (User-G) |
-| All rejected | Rejected: OI-2609-0676 - SO409325, raised by Owner-acct (User-G) |
+| All reserved | Reserved: 2 order inquiries raised by User-H (User-G) |
+| Some partial or rejected | Reserved: OI-2610-0025 - SO424763, raised by User-E, 1 rejected (User-G) |
+| All rejected | Rejected: OI-2609-0780 - SO423386, raised by User-C (User-G) |
 
 A one-OI email names the OI and SO instead of a count, as today, without the `#n`.
 
@@ -132,6 +132,8 @@ Label: "View these N order inquiries". A one-OI email keeps today's direct link 
 - `customers.account_owner_user_id` is NULL on 20 of 20, so it is not a usable alternative.
 - The sales agent has no user link (on the dev DB, `sales_agents.contact_id` points at a contact, not a user), so
   it cannot address an email.
+- The 5 OIs in the mockup have 4 different raisers. On each, the raiser, the person who asked for the
+  reserve and the person who reserved are three different people, so the split changes real emails.
 
 Card v1 said `raised_by` is "mostly the admin account on imported OIs". **That was wrong.** On OIs
 raised after the import, `raised_by` is the CS who raised them.
@@ -163,11 +165,14 @@ as a hand raise (`:2760-2762`), so the owner's account is just the raiser.
 
 ### (4) Real case
 
-The mockup (filed as its own ask) renders 5 real OIs, 22 lines, from the 28 Oct dev copy, masked.
-Two things are illustrative, and the mockup says so: who raised these 5 OIs (not in that data pull),
-and the partial and rejected answers with their reasons. On that copy, none of the 65 reserved request
-rows with RESERVED above 0 has RESERVED below REQUESTED RESERVE, and rows at 0 were not counted. A
-crew-data-request on PR #2046 asks for both.
+The mockup (filed as its own ask) renders 5 real OIs, 22 lines, from the 28 Oct dev copy, masked, with
+their real raisers: 4 emails each way. Only the partial and rejected answers and their reasons are
+illustrative, and the mockup says so. On that copy every answered line is a full answer and no line has
+reason text, so no real Partial or Rejected exists yet, and until one happens every line reads "Reserved
+N". The hand test has to create both with a real Reserve 0 and a short answer on the test copy.
+
+The masked data does not say whether the OIs raised by User-H are legacy imports on the owner's account.
+The rule is the same either way (L1).
 
 ## Build after the mockup OK (small fix track, plus one template-data migration)
 
