@@ -53,7 +53,7 @@ def access_denied_text(db: Session, ctx: Mapping[str, Any], copy: CannedCopy) ->
     """`sorento-sub-respond-sendmsg-respond5`'s `message` expression, verbatim -
     with one R18-named exception (S3, AC-1307).
 
-    `Sorry, you are not allowed to access {agent}`, where the agent is the parser's
+    `You are not allowed to access {agent}`, where the agent is the parser's
     `suggested_agent` with **em-dashes folded to hyphens**. That fold is n8n's own
     (`.replace(/\\u2014/g, '-')`) and it is on the AGENT, not on the sentence: an agent
     name that arrives with an em-dash in it is a parser emission, and the customer must

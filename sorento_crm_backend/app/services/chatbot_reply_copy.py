@@ -26,7 +26,7 @@ CHATBOT_REPLY_DEMAND_QTY = "Please specify your demand quantity"
 # `case 'not_supported'`. The DOMAIN LIST becomes
 # `system_settings.chatbot_unsupported_domains` at S3 (AC-304); the SENTENCE is here.
 CHATBOT_REPLY_NOT_SUPPORTED = (
-    "Sorry, we don't support direct goods receive & SPO at the moment. You may ask "
+    "We don't support direct goods receive & SPO at the moment. You may ask "
     "about incoming stock for a specific product or container"
 )
 
@@ -50,11 +50,11 @@ CHATBOT_REPLY_CLARIFY_MENU = (
 # is a DIFFERENT sentence ("this to our team"), and substituting an empty `{{team}}`
 # would send "escalate to  team?" to a customer.
 CHATBOT_REPLY_ESCALATE_OFFER = (
-    "I am sorry the provided answer does not meet your requirements. Would you like me "
+    "The provided answer does not meet your requirements. Would you like me "
     "to escalate to {{team}} team?"
 )
 CHATBOT_REPLY_ESCALATE_OFFER_NO_TEAM = (
-    "I am sorry the provided answer does not meet your requirements. Would you like me "
+    "The provided answer does not meet your requirements. Would you like me "
     "to escalate this to our team?"
 )
 
@@ -94,7 +94,7 @@ CHATBOT_REPLY_OFFER_DECLINED = "Okay, noted."
 # for a string. NOT a registry key: an owner editing it in Settings could leave a failed
 # turn with no words at all, and this is the one sentence that must always exist.
 CHATBOT_TURN_ERROR_REPLY = (
-    "Sorry, I ran into a problem understanding that. Please try again in a moment."
+    "I ran into a problem understanding that. Please send it again."
 )
 
 # CHATBOT-FAIL-TRIAGE (owner rule, 30 Oct 2026): the bot never replies the generic apology
@@ -122,7 +122,7 @@ CHATBOT_REPLY_REPORT_NOT_PERMITTED = "That report is not available on your accou
 # access-denied lane, which never reaches `compile-current-state` at all. `{{team}}` is
 # the parser's `suggested_agent`, em-dash folded to a hyphen by the caller (the fold is
 # n8n's own, on the agent name, not on this sentence).
-CHATBOT_REPLY_ACCESS_DENIED = "Sorry, you are not allowed to access {{team}}"
+CHATBOT_REPLY_ACCESS_DENIED = "You are not allowed to access {{team}}"
 
 # `offer-hold-reply.js`'s closing clause. The LEAD ("Both *A* and *B* teams are listed")
 # is a function of how many companies the pool holds, so it is composed in

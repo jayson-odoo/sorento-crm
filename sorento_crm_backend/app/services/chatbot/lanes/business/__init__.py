@@ -103,7 +103,7 @@ LOW_STOCK_NOT_ENABLED_MESSAGE = "Low stock report is not enabled for your accoun
 #: Console round 3, defect A: what the customer hears when the CALL ITSELF failed - the
 #: lane's MCP client gives up at `chatbot_mcp_timeout_seconds` (10 s), and a run that
 #: outlasts it raises `httpx.ReadTimeout` in `call_tool`. The generic lane failure line
-#: ("Sorry, I ran into a problem understanding that") is wrong twice over: the bot
+#: ("I ran into a problem understanding that") is wrong twice over: the bot
 #: understood perfectly, and the report is very likely still being built and about to be
 #: pushed. Same wording as the presenter's own error line, so the customer hears ONE
 #: sentence for this tool's failures however they arise.
@@ -1547,7 +1547,7 @@ def run_fetch(
     # CHATBOT-SELFREF-SCOPE (owner hand test, 30 Sep 2026, "Mr Loo"): a contact WITH linked
     # accounts asking for sales is asking about those accounts, staff tier or not - the
     # company analysis route refuses any linked contact outright (`analysis.py:253-258`,
-    # AC-S1-23), so sending a linked staff contact there answers "Sorry, I can only share
+    # AC-S1-23), so sending a linked staff contact there answers "I can only share
     # sales figures for your own account" to the very person whose own accounts exist.
     # Links win: the customer sales report over them. Staff without links keep the analysis.
     has_own_accounts = bool(customer_scope.get("ids"))

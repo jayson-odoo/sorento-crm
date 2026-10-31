@@ -59,7 +59,7 @@ _LATEST = date(2199, 12, 31)
 
 
 def refusal_message(location: str) -> str:
-    return f"Sorry, {location} isn't one of the locations you can check."
+    return f"{location} isn't one of the locations you can check."
 
 
 def grain_for(date_from: Optional[date], date_to: Optional[date]) -> str:

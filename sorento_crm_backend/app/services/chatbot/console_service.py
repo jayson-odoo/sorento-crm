@@ -508,7 +508,10 @@ def run_console_turn(
     )
 
 
-AGENT_BUSY_REPLY = "The agent is busy with an earlier message for this contact. Try again in a moment."
+AGENT_BUSY_REPLY = (
+    "I was still answering an earlier message for this contact, so I could not take this one. "
+    "Please send it again."
+)
 AGENT_FAILED_REPLY = "The agent could not answer this message. Try again."
 
 

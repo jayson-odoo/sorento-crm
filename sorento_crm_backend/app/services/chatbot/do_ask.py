@@ -48,7 +48,7 @@ def granted(ctx: dict[str, Any], key: str) -> bool:
 
 #: Security S1 / review S5: a transporter named without its reveal is refused, never
 #: silently dropped from the filter (that would answer a different question).
-TRANSPORTER_REFUSED = "Sorry, delivery orders can't be looked up by transporter for your account."
+TRANSPORTER_REFUSED = "Delivery orders can't be looked up by transporter for your account."
 
 
 def today_myt() -> date:

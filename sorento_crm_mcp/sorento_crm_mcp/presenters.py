@@ -3029,7 +3029,7 @@ TOP_SELLING_ASK_GROUP = (
     "Do you want the top items inside one category, or the categories ranked against each other?"
 )
 TOP_SELLING_ASK_BASIS = "Delivered (transferred to DO) or ordered?"
-TOP_SELLING_REFUSED_OTHER_CUSTOMER = "Sorry, I can only share sales figures for your own account."
+TOP_SELLING_REFUSED_OTHER_CUSTOMER = "I can only share sales figures for your own account."
 
 # The shared safety ceiling on a named N (owner, 30 Sep 2026: no 100 cap, "100, 200").
 # A COPY of the backend's `sales_report_service.TOP_SELLING_N_CEILING` (this package cannot

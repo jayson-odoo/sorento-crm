@@ -134,4 +134,4 @@ def _refusal_for(names: list[str]) -> str:
     else:
         joined = ", ".join(names[:-1]) + " and " + names[-1]
     stop = "" if joined.endswith(".") else "."  # "SOON HENG HARDWARE CO.SDN.BHD." ends its own sentence
-    return f"Sorry, that isn't under your account. I can only check on {joined}{stop}"
+    return f"That isn't under your account. I can only check on {joined}{stop}"

@@ -145,6 +145,31 @@ def bump_prompt_to_fallback(bind: Connection, name: str) -> None:
         session.close()
 
 
+def bump_prompt_if_unedited(bind: Connection, name: str, old_default: str) -> None:
+    """``bump_prompt_to_fallback``, but ONLY while production still carries
+    ``old_default`` - the text an earlier fallback shipped. A reply an admin has
+    reworded in Settings > AI Prompts is theirs and is left alone; a missing key or
+    label is seeded by ``seed_prompt_registry`` straight from the new fallback.
+    """
+    session = Session(bind=bind)
+    try:
+        label = (
+            session.query(AIPromptLabel)
+            .filter(AIPromptLabel.name == name, AIPromptLabel.label == "production")
+            .first()
+        )
+        current = (
+            session.query(AIPromptVersion).filter(AIPromptVersion.id == label.version_id).first()
+            if label is not None
+            else None
+        )
+        unedited = current is not None and (current.template or "") == old_default
+    finally:
+        session.close()
+    if unedited:
+        bump_prompt_to_fallback(bind, name)
+
+
 def seed_prompt_registry(bind: Connection) -> None:
     """Idempotent seed. Safe to run repeatedly."""
     session = Session(bind=bind)

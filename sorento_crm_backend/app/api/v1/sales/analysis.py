@@ -71,7 +71,7 @@ REPORT_KEY = "sales_yearly"
 #: the chatbot's figure IS that report's figure for the same filter.
 DEBTOR_TYPE_REPORT_KEY = "sales_by_debtor_type"
 GRANT = "sales_orders.sales_report"
-REFUSAL = "Sorry, I can only share sales figures for your own account."
+REFUSAL = "I can only share sales figures for your own account."
 MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 #: The ask's axis words -> the dataset's dimensions.
