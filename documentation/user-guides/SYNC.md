@@ -8,6 +8,71 @@ The repo copy is kept in sync so that:
 - Outline outages don't break local AI tooling (the markdown is still on disk).
 - Edits made by non-engineers in Outline land back in git automatically.
 
+## How it runs (automatic, both directions)
+
+Nobody runs the sync by hand any more. `.github/workflows/outline-user-guides-sync.yml`:
+
+| Direction | When | What it does |
+|---|---|---|
+| **push** (repo -> Outline) | every push to `main` that changes `documentation/user-guides/**` (the state file alone does not count) or the sync script | `dry-run` first (validates, no token, no network), then `push` |
+| **pull** (Outline -> repo) | every 6 hours | `pull`, then opens or refreshes ONE PR on `bot/outline-user-guides-sync`, labelled `docs-sync` |
+
+Both share one concurrency group (`outline-user-guides-sync`), so two pushes never overlap and a
+pull never runs while a push is writing. A running sync is never cancelled, but GitHub keeps only
+ONE queued run per group: a newer queued run (push or pull) replaces the older one. A push replaced
+by a push loses nothing (every run checks out `main`'s current head). A push replaced by the
+6-hourly pull is lost until the next guide merge pushes again, or dispatch `mode=push` by hand. The
+pull can not undo it meanwhile: it never pulls a page last written by the sync's own push (with a
+dedicated sync account; see the token note below).
+
+So the loop is: merge a guide PR -> it is on Outline a minute later. Edit on Outline -> within 6h a
+`docs-sync` PR brings it back -> merge it (its push finds those pages already the same).
+
+Neither side overwrites the other's newer edit:
+
+- **pull** keeps a repo page whose last commit is newer than its Outline copy (`repo_is_newer`,
+  prints `[keep] ... (repo copy is newer than Outline's, push it)`).
+- **push** keeps an Outline page a person edited after the repo page's last commit
+  (`outline_is_newer`, prints `[keep] ... (Outline copy edited after the repo commit, pull it)`).
+  Edits made by the sync's own API user (an earlier push) do not count, and pull likewise never
+  pulls a page that user last wrote. **The token should belong to a dedicated Outline account
+  nobody edits guides as.** Each run resolves the token's user (`auth.info`) and logs it. Only an
+  account whose display name contains `bot` or `sync` (e.g. "Sorento Sync Bot") counts as the
+  sync's own. Any other account gets a `::warning::` annotation and NO exemption, so a person's
+  Outline edits are never overwritten. The cost while running on a person's token: push `[keep]`s
+  pages its own earlier push wrote, and pull may open `docs-sync` PRs that only carry Outline's
+  markdown reformatting. Switching to a dedicated account is one step: replace the
+  `OUTLINE_API_TOKEN` secret with its key. To overwrite anyway,
+  dispatch the workflow with `mode=push` and `force` ticked (`OUTLINE_SYNC_FORCE=1` locally).
+- push skips a page whose title and text already match (`[same]`).
+
+A page edited on both sides keeps whichever side the guard protects; re-apply the other edit by hand.
+
+A push that fails on one page carries on with the rest, saves the ids it learnt, then exits red with
+every failure listed (`N page(s) FAILED to push`), so one bad page never stops the others.
+
+### PR gate: `check`
+
+`python3 scripts/sync_user_guides_outline.py check` runs in the PR gate (`deploy.yml`
+`lean-gate`, step "User guides publish to Outline"; stdlib only, no network). It fails the PR when:
+
+- a guide folder is in neither `PARENT_TITLES` nor `HELD_FOLDERS` (its pages would be skipped as
+  `unknown folder` and never reach Outline or the AI assistant);
+- a markdown file sits outside the `<folder>/<page>.md` layout;
+- a page H1, parent or root title is over Outline's 100-character limit (`MAX_TITLE_LEN`; Outline
+  answers 400 "Document title must be 100 characters or less").
+
+Run it locally before pushing a guide change.
+
+### Doc ids (`.outline-sync.json`)
+
+The push runs on a runner and does not commit the state file. The next pull learns the ids of
+docs the push created by matching titles (parents against `PARENT_TITLES`, pages against the H1
+of the repo page in the same folder; `[learn]` in the log), and its `docs-sync` PR carries the
+updated state. A saved id is never overridden. Renaming a page's H1 is safe once its id is in
+state; renaming a page that is not in state yet creates a new Outline doc and leaves the old one
+for a human to delete.
+
 ## Script
 
 `scripts/sync_user_guides_outline.py`
@@ -21,6 +86,12 @@ python scripts/sync_user_guides_outline.py pull
 
 # diff overview, no writes
 python scripts/sync_user_guides_outline.py status
+
+# push plan + validation, no network, no token
+python3 scripts/sync_user_guides_outline.py dry-run
+
+# validation only (the PR gate), no network, stdlib only
+python3 scripts/sync_user_guides_outline.py check
 ```
 
 State (path → Outline doc id) is stored in `documentation/user-guides/.outline-sync.json`. Commit it. Without state, the script falls back to title matching.
@@ -67,15 +138,11 @@ the AI assistant, which reads Outline only).
 
 Each markdown file's first H1 (`# Title`) becomes the Outline doc title. The leading H1 is stripped from the body Outline stores (Outline keeps title separately).
 
-## Scheduled sync (Outline → repo)
+## Manual runs
 
-`.github/workflows/outline-user-guides-sync.yml` runs every 6 hours, pulls the current Outline state, and opens a PR (`bot/outline-user-guides-sync`) if anything changed. Workflow can also be triggered manually with the `pull` / `push` / `status` choice.
-
-Pull never overwrites a repo page whose last git commit is newer than its Outline copy's
-`updatedAt` (`repo_is_newer` in the script); it prints `[keep] <path> (repo copy is newer than
-Outline's, push it)` instead. That covers the window between merging a guide change and running
-the push. It needs real commit dates, so the workflow checks out with `fetch-depth: 0`. A page
-edited on both sides keeps the repo copy; re-apply the Outline edit by hand.
+The workflow can still be dispatched by hand (Actions -> Outline user-guides sync -> Run
+workflow) with `pull` / `push` / `status` / `dry-run`, plus `force` for a push. Both keep guards
+need real commit dates, so the workflow checks out with `fetch-depth: 0`.
 
 ### One-time setup
 
@@ -83,11 +150,14 @@ In GitHub repo settings → Secrets and variables → Actions, add:
 
 | Name | Value |
 |---|---|
-| `OUTLINE_API_TOKEN` | your Outline API token (workspace-scoped) |
+| `OUTLINE_API_TOKEN` | an API token of a dedicated Outline account used only by the sync (see the keep guards above) |
 | `OUTLINE_BASE_URL` | `https://doc.foundryx.my` (optional, has default) |
 | `OUTLINE_COLLECTION_ID` | `18f78b01-bf5a-4032-934c-d5679609d553` (optional) |
 
-The PR creation step uses `peter-evans/create-pull-request`. The workflow has `contents: write` and `pull-requests: write` permissions; no further setup required.
+The PR creation step uses `peter-evans/create-pull-request`. The workflow has `contents: write`,
+`pull-requests: write` and `issues: write` (for the `docs-sync` label, created on first use)
+permissions; no further setup required. Only `OUTLINE_API_TOKEN` is secret; the workflow never
+prints it.
 
 ## MCP integration
 
@@ -100,6 +170,8 @@ These are registered alongside the catalog-driven CRUD tools. Add `OUTLINE_API_T
 
 ## When to push vs pull
 
-- **Edited a guide locally?** → run `push` (or merge to main, then run push from your machine).
-- **Edited a guide on Outline?** → wait for the scheduled job (or trigger the workflow manually with `pull`).
-- **In doubt?** → run `status` to see which side has unsynced content.
+- **Edited a guide in the repo?** Merge it to main; the push runs on its own. Watch the run if
+  you want to see `[create]` / `[update]` lines.
+- **Edited a guide on Outline?** The 6-hourly pull opens a `docs-sync` PR; merge it (or dispatch
+  `pull` to get it sooner).
+- **In doubt?** Run `status` to see which side has unsynced content.

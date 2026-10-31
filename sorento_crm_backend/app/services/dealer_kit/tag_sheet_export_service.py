@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.models.dealer_kit import ExportRequest, Page, PageVersion
 from app.models.download import DownloadStatus, UserDownload
 from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
+from app.schemas.price_tag import ResolvedLineData
 from app.services.error_handler import AppException
 from app.services.price_tag_request_service import (
     STATUS_APPROVED,
@@ -519,53 +520,21 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
                     filtered_sheets.append({**sheet, "tags": tags})
             doc = {**doc, "sheets": filtered_sheets}
 
-    resolved_data: dict[str, dict] = {}
-
-    for row in rows:
-        # Keyed by REQUEST TAG since the combos slice (D3) - a line may print
-        # several tags, so a line id could no longer name one tile's data.
-        resolved_data[row["tag_id"]] = {
-            "tag_id": row["tag_id"],
-            "line_id": row["line_id"],
-            "tag_label": row["tag_label"],
-            "open_groups": row["open_groups"],
-            # D7 (S9): full product data per part, prices leaving as floats
-            # the same way the tag's own do below.
-            "parts": [
-                {
-                    **part,
-                    "list_price": _as_float(part.get("list_price")),
-                    "sell_price": _as_float(part.get("sell_price")),
-                }
-                for part in row["parts"]
-            ],
-            "code": row["code"],
-            "name": row["name"],
-            "dimensions": row["dimensions"],
-            "spec_lines": row["spec_lines"],
-            # Key by key, so a `{{spec.<key>}}` in a saved tag resolves in
-            # the PDF exactly as it did on the canvas (D58).
-            "specs": row["specs"],
-            "set_members": row["set_members"],
-            # Money leaves as a number the browser can format. The Decimal
-            # arithmetic already happened, in the pricing engine.
-            "list_price": _as_float(row["list_price"]),
-            "sell_price": _as_float(row["sell_price"]),
-            # D7 (S9): the host alone - what a price badge's `subjectPart:
-            # -1` reads, never the roll-up above.
-            "parent_list_price": _as_float(row.get("parent_list_price")),
-            "parent_sell_price": _as_float(row.get("parent_sell_price")),
-            "sell_price_basis": row.get("sell_price_basis"),
-            "show_promo_price": row["show_promo_price"],
-            "included_accessories": row["included_accessories"],
-            "quantity": row["quantity"],
-            # The barcode layer's binding (S7); null for a set line.
-            "barcode": row["barcode"],
-            # The photos themselves, not just their ids: a product-photo
-            # slot follows the product's PRIMARY photo when the template
-            # pinned none (D42), and only this list says which that is.
-            "images": row["images"],
-        }
+    # Keyed by REQUEST TAG since the combos slice (D3) - a line may print
+    # several tags, so a line id could no longer name one tile's data.
+    #
+    # Each row goes through `ResolvedLineData`, the SAME schema the CRM
+    # designer and the portal preview answer, so the PDF reads exactly what
+    # the screen drew. This used to be a hand-copied field list, and a field
+    # added to the schema later (`price_tag_description`, `currency`,
+    # `own_parts`) never reached the PDF: the designer showed the tag copy,
+    # the printed sheet left it blank (PRICETAG-PDF-FIELDS). Money leaves as
+    # a float the browser can format; the Decimal arithmetic already
+    # happened, in the pricing engine.
+    resolved_data: dict[str, dict] = {
+        row["tag_id"]: ResolvedLineData.model_validate(row).model_dump(mode="json")
+        for row in rows
+    }
 
     return {
         "doc": doc,
@@ -575,6 +544,3 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
         "version": inputs["version"],
     }
 
-
-def _as_float(value) -> Optional[float]:
-    return None if value is None else float(value)

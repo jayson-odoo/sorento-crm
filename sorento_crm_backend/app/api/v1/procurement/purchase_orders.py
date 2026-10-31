@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user_or_api_key
+from app.dependencies import get_current_user_or_api_key, require_staff_read_permission
 from app.api.v1.order_management.orders import _parse_flex_date  # shared flexible date parser
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.po_last_cost_service import last_cost_rows
@@ -25,13 +25,16 @@ from app.services.uuid_list_param import parse_uuid_list
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+#: AGENTIC-UNIFY AC-13: on an identity read the staff member needs the purchase order view.
+_STAFF_READ = require_staff_read_permission("scm.purchase_orders.view")
+
 
 #: (chatbot-last-purchase-cost, review N1) registered ahead of `/placed` below. This
 #: router carries no `/{po_id}`-shaped route today, so there is nothing for "last-cost"
 #: to collide with yet - the placement is precautionary, matching `/placed`'s own
 #: position, so a future bare-uuid route added to this router cannot swallow it by
 #: registration order (Starlette matches in the order routes are added).
-@router.get("/last-cost")
+@router.get("/last-cost", dependencies=[Depends(_STAFF_READ)])
 def get_purchase_orders_last_cost(
     product_ids: Optional[list[str]] = Query(
         None, description="Filter by canonical product UUIDs (csv / JSON / repeated)."
@@ -83,7 +86,7 @@ def get_purchase_orders_last_cost(
         raise handle_internal_error(str(e))
 
 
-@router.get("/placed")
+@router.get("/placed", dependencies=[Depends(_STAFF_READ)])
 def get_purchase_orders_placed(
     limit: int = Query(50, ge=1, le=500),
     product_ids: Optional[list[str]] = Query(

@@ -6,9 +6,11 @@ import logging
 import time
 import uuid
 from typing import Any, Mapping, MutableMapping
+from urllib.parse import quote
 
 import httpx
 
+from sorento_crm_mcp.scope import CRM_STAFF_HEADER, forwarded_staff_id
 from sorento_crm_mcp.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -45,10 +47,24 @@ def http_error_body(text: str, *, status_code: int, path: str, method: str) -> s
     return json.dumps(body)
 
 
+class CrossOriginRedirectRefused(httpx.RequestError):
+    """A redirect pointed off the CRM's origin; the request carrying X-API-Key is not sent.
+
+    httpx strips `Authorization` on a cross-origin redirect but keeps custom headers, so
+    following one would hand the shared X-API-Key to whatever host the Location named.
+    Same-origin redirects (FastAPI's trailing-slash 307) still follow.
+    """
+
+
+def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
+    # httpx lowercases scheme/host and reports a default port as None.
+    return (url.scheme, url.host, url.port)
+
+
 class CRMClient:
     """Thin async client with X-API-Key and response size guard."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._settings = settings
         self._base = settings.crm_base_url.rstrip("/")
         self._client = httpx.AsyncClient(
@@ -58,7 +74,19 @@ class CRMClient:
             # Avoid stale keep-alive sockets causing first-request read timeouts.
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=0),
             follow_redirects=True,
+            transport=transport,
+            event_hooks={"request": [self._refuse_foreign_origin]},
         )
+        self._origin = _origin(self._client.base_url)
+
+    async def _refuse_foreign_origin(self, request: httpx.Request) -> None:
+        # Runs before every request httpx sends, redirect hops included.
+        if _origin(request.url) != self._origin:
+            raise CrossOriginRedirectRefused(
+                f"refused to send credentials to {request.url.scheme}://{request.url.netloc.decode('ascii')}"
+                " (off the CRM origin)",
+                request=request,
+            )
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -105,12 +133,33 @@ class CRMClient:
             text = (text or "").replace("\n", " ")
             return text if len(text) <= limit else (text[:limit] + "...<truncated>")
 
+        method_upper = method.upper()
         rendered = path
         if path_params:
             for k, v in path_params.items():
-                rendered = rendered.replace("{" + k + "}", str(v))
+                text = str(v)
+                # One value fills exactly one segment. quote(safe='') keeps ? # % inside
+                # it; "/" and dot segments are refused because encoding cannot hold them
+                # (the backend's ASGI server decodes %2F before routing, and "." / ".."
+                # are unreserved so normalisation still treats them as dot segments).
+                if (
+                    not text.strip()
+                    or "/" in text
+                    or text in (".", "..")
+                    or any(ord(c) < 0x20 or ord(c) == 0x7F for c in text)
+                ):
+                    return json.dumps(
+                        {
+                            "error": "invalid_path_param",
+                            "param": k,
+                            "detail": f"{k} must be a single non-empty identifier.",
+                            "status_code": 400,
+                            "path": path,
+                            "method": method_upper,
+                        }
+                    )
+                rendered = rendered.replace("{" + k + "}", quote(text, safe=""))
         params = {k: v for k, v in (query or {}).items() if v is not None}
-        method_upper = method.upper()
 
         # Attribution for the CRM's api_call_log. Without these the backend
         # cannot tell MCP from n8n at all - both authenticate with the same
@@ -124,6 +173,10 @@ class CRMClient:
         }
         if tool_name:
             call_headers["X-Tool-Name"] = tool_name
+        # A staff-marked read runs as the staff member (AGENTIC-UNIFY PR 1).
+        staff_id = forwarded_staff_id()
+        if staff_id:
+            call_headers[CRM_STAFF_HEADER] = staff_id
 
         started = time.perf_counter()
         logger.info(
