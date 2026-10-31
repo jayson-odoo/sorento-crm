@@ -435,8 +435,10 @@ B173_LANE = {
     "never_mind_any_promotions": "check_promotion", "cancel_talk_to_a_person": "out_of_scope", "an_idea": "ideate",
     "a_cold_all_of_them": "clarify_menu",
 }
-# `cancel_talk_to_a_person` was None at b173c6e8c4; since CHATBOT-FAIL-TRIAGE AC-7c (#2018) a hand-over
-# with no topic asks which topic, on the `out_of_scope` lane. Still no reset seam (asserted below).
+# cancel_talk_to_a_person: at b173c6e8c4 the lane was None because the turn FAILED ("Sorry, I ran
+# into a problem understanding that", re-measured on 2368d18e^). CHATBOT-FAIL-TRIAGE (#2018) AC-1
+# retired that reply and AC-7c answers a hand-over with no topic (the cancel closed the held one)
+# with one topic question on the `out_of_scope` arm. Still no reset: the seam's ACK is not sent.
 
 GUARD_CASES = [
     (name, gate)
@@ -460,6 +462,13 @@ def test_round8_guard_no_reset_keeps_todays_path(turn, name, gate):
     assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that is no reset"
     assert t.plans, "apply never ran: the turn did not take today's path"
     assert result.branch_kind == B173_LANE[name], (result.branch_kind, (result.reply or {}).get("text"))
+    if name == "cancel_talk_to_a_person":
+        # AC-7c: the hand-over asks the topic question, never a default team's hand-over line
+        # (a default route that succeeded would also be `out_of_scope`).
+        from app.services.chatbot.lanes import escalation
+
+        asked = escalation._topic_clarify(escalation.topic_pairs(), None)["text"]
+        assert (result.reply or {}).get("text") == asked, (result.reply or {}).get("text")
 
 
 # --- round 8: a reset closes the memory episode, as the routed reset did --------------------------------

@@ -1126,6 +1126,7 @@ def test_gemini_json_schema_drops_the_null_member_from_a_nullable_enum(monkeypat
         "stock_inquiry",
         "purchase_request",
         "sponsorship_form",
+        "price_tag_request",
     ]
     assert form_target["nullable"] is True
     assert form_target["type"] == "string"
