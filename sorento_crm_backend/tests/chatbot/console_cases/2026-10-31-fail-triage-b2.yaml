@@ -13,11 +13,13 @@
 # known reason, not a defect of this batch.
 #
 # The code-plus-size cases need a copy whose catalogue holds the SRTWC286 family with
-# SRTWC286-SH-200 variants (a family_code SRTWC286, trap_length 200 and 250). The "no variant
-# holds it" case asserts only the negatives: its wording is not decided yet. Dealer cost cases
-# are NOT in this file (AC-5 is undecided). Every case carries the banned failure texts as
-# negatives (owner rule, 30 Oct 2026). No real conversation, customer name or phone is
-# quoted; this file is for a PUBLIC repo.
+# SRTWC286-SH-200 variants (a family_code SRTWC286, trap_length 200 and 250) and NO variant
+# holding 300. The dealer my-cost case needs a DEALER contact on the copy: a contact with an
+# active tag whose settings have `chatbot.tier` = dealer, and no purchase_orders.cost grant
+# (run that case alone with `--contact <dealer contact id>`; the other cases keep the default
+# contact). Until the tier is set on the dealer tags the dealer case is red for a known reason.
+# Every case carries the banned failure texts as negatives (owner rule, 30 Oct 2026). No real
+# conversation, customer name or phone is quoted; this file is for a PUBLIC repo.
 
 contact: "900000008"
 
@@ -49,14 +51,24 @@ cases:
           reply_contains: ["SRTWC286-SH"]
           reply_not_contains: ["Couldn't find", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
           no_uuid: true
-  - name: a size no variant holds is not a not-found
+  - name: a size no variant holds says None with the size, then lists the variants
     live_only: true
     cold: true
-    # The wording for this case is not decided: only the failure texts are graded.
     turns:
       - text: "SRTWC286 300MM"
         expect:
+          reply_contains: ["None with size 300", "SRTWC286"]
           reply_not_contains: ["Couldn't find", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: a dealer's my cost is answered through the promotions
+    live_only: true
+    cold: true
+    # Dealer contact required (see the header). Graded on promotion content, never a cost number.
+    turns:
+      - text: "my cost for SRTWC286-SH"
+        expect:
+          reply_contains: ["romotion"]
+          reply_not_contains: ["not allowed to access purchase cost", "dealer_cost", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
           no_uuid: true
   - name: named product marketing team routes there
     live_only: true

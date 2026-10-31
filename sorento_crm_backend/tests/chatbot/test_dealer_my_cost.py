@@ -245,3 +245,168 @@ def test_multi_level_dealer_gets_the_same_tier_pick_and_continues_to_the_promoti
     assert c1 == p1 and cc1 == pc1, (c1, p1)
     assert c2 == p2 and cc2 == pc2, (c2, p2)
     assert DENIAL not in c1 + c2
+
+
+# ---------------------------------------------------------------- review round 1 (31 Oct): real rows, asks, edges
+
+STOCK_TOOL = "crm_inventory_stock_balance_list"
+REAL_DEALER_COST = "7391.25"
+
+
+def _real_promo_rows(names, *, dealer_cost: str | None = REAL_DEALER_COST) -> str:
+    """The promotions route's own rows pushed through the REAL MCP presenter (`view=render`), then a
+    `dealer_cost` put back on the presented items, so a leak in the engine (not only in the MCP) shows."""
+    from tests.chatbot.test_promo_subject_pick_reply import _rows
+
+    presented = _rows(names)
+    if dealer_cost is None:
+        return presented
+    try:
+        body = json.loads(presented)
+    except (TypeError, ValueError):
+        return presented
+    items = body.get("items") if isinstance(body, dict) else None
+    for it in items or []:
+        if isinstance(it, dict):
+            it["dealer_cost"] = dealer_cost
+    return json.dumps(body)
+
+
+def _asks_qf(asks: list[tuple[str, str | None]], *, domain_hint=None, intent_hint=None) -> dict[str, Any]:
+    entity = [{"raw": PRODUCT_CODE, "hint": "product", "canonical_code": None, "current_message": True, "confident": True}]
+    return _parser_output(
+        domain_hint=domain_hint, intent_hint=intent_hint, user_goal="my cost and stock", entities=entity,
+        asks=[{"domain": d, "intent": i} for d, i in asks],
+    )
+
+
+def _by_tool(promo_payload):
+    def behaviour(name, args):
+        if name == PROMO_TOOL:
+            return promo_payload
+        if name == STOCK_TOOL:
+            return {"has_result": True, "items": [{"product_code": PRODUCT_CODE, "quantity_on_hand": 12}]}
+        return {"ok": True, "items": []}
+
+    return behaviour
+
+
+def _count(calls, tool) -> int:
+    return sum(1 for n, _ in calls if n == tool)
+
+
+def test_real_promotion_rows_dealer_cost_reply_equals_promotion_reply_and_leaks_no_cost(session_factory, monkeypatch, dealer):
+    """Replaces the vacuous half of `test_no_dealer_cost_number_reaches_the_reply`: REAL rows, with content."""
+    names = ["ZZT DEALER PROMO ALPHA", "ZZT DEALER PROMO BETA"]
+    payload = _real_promo_rows(names)
+    (promo_text, promo_calls), (cost_text, cost_calls) = _pair(session_factory, monkeypatch, payload)
+    for n in names:
+        assert n in promo_text, f"{n!r} missing from the promotion reply (rows not rendered): {promo_text!r}"
+        assert n in cost_text, f"{n!r} missing from the my-cost reply: {cost_text!r}"
+    assert cost_text == promo_text, (cost_text, promo_text)
+    link = re.search(r"https://cdn\.example\.test/zzt-\d\.pdf|zzt-\d\.pdf", promo_text)
+    if link:  # the presenter links the file: the cost reply must carry it too
+        assert link.group(0) in cost_text, cost_text
+    assert REAL_DEALER_COST not in cost_text and "dealer_cost" not in cost_text, cost_text
+
+
+# ---- B2: the dealer cost ask carried in `asks`
+
+ASK_SHAPES = {
+    "cost_then_stock": ([("purchase_cost", "check_po_cost"), ("inventory", "check_stock")], None, None),
+    "stock_then_cost": ([("inventory", "check_stock"), ("purchase_cost", "check_po_cost")], None, None),
+    "cost_only": ([("purchase_cost", "check_po_cost")], None, None),
+    "null_domain_cost_in_asks": ([("purchase_cost", "check_po_cost"), ("inventory", "check_stock")], None, "check_po_cost"),
+}
+
+
+@pytest.mark.parametrize("shape", list(ASK_SHAPES))
+def test_dealer_cost_in_asks_calls_the_promotion_tool_and_never_the_denial(session_factory, monkeypatch, dealer, shape):
+    asks, dom, intent = ASK_SHAPES[shape]
+    reply, calls, _ = _say(session_factory, monkeypatch, "cost", _by_tool(ONE_PROMO), qf=_asks_qf(asks, domain_hint=dom, intent_hint=intent))
+    assert PROMO_TOOL in _names(calls), (shape, calls, reply)
+    assert COST_TOOL not in _names(calls), calls
+    assert DENIAL not in reply, reply
+
+
+@pytest.mark.parametrize("shape", ["cost_then_stock", "stock_then_cost", "null_domain_cost_in_asks"])
+def test_dealer_cost_in_asks_still_answers_the_other_ask(session_factory, monkeypatch, dealer, shape):
+    asks, dom, intent = ASK_SHAPES[shape]
+    reply, calls, _ = _say(session_factory, monkeypatch, "cost", _by_tool(ONE_PROMO), qf=_asks_qf(asks, domain_hint=dom, intent_hint=intent))
+    assert STOCK_TOOL in _names(calls), (shape, calls, reply)
+    assert PROMO_TOOL in _names(calls), (shape, calls, reply)
+
+
+@pytest.mark.parametrize("shape", ["cost_then_stock", "stock_then_cost", "cost_only", "null_domain_cost_in_asks"])
+def test_non_dealer_with_cost_in_asks_keeps_the_denial_and_no_promotion_tool(session_factory, monkeypatch, shape):
+    _seed_contact(session_factory, variables={})
+    asks, dom, intent = ASK_SHAPES[shape]
+    reply, calls, _ = _say(session_factory, monkeypatch, "cost", _by_tool(ONE_PROMO), levels=TWO_TIERS, qf=_asks_qf(asks, domain_hint=dom, intent_hint=intent))
+    assert PROMO_TOOL not in _names(calls) and COST_TOOL not in _names(calls), calls
+    assert DENIAL in reply, reply
+    if len(asks) > 1:
+        assert STOCK_TOOL in _names(calls), (calls, reply)  # the stock answer survives beside the denial
+
+
+def test_asks_already_holding_promotion_beside_cost_runs_promotion_once(session_factory, monkeypatch, dealer):
+    both = _asks_qf([("purchase_cost", "check_po_cost"), ("promotion", "check_promotion")])
+    only = _asks_qf([("promotion", "check_promotion")])
+    _, calls_both, _ = _say(session_factory, monkeypatch, "cost", _by_tool(ONE_PROMO), qf=both, msg="both")
+    _reset_session(session_factory)
+    _, calls_only, _ = _say(session_factory, monkeypatch, "promo", _by_tool(ONE_PROMO), qf=only, msg="only")
+    print('DBG', calls_only and _names(calls_only), _names(calls_both))
+    assert PROMO_TOOL in _names(calls_both), calls_both
+    assert _count(calls_both, PROMO_TOOL) == _count(calls_only, PROMO_TOOL), (calls_both, calls_only)
+
+
+# ---- kill gaps
+
+def test_the_swap_also_moves_the_intent_hint_to_check_promotion(session_factory, monkeypatch, dealer):
+    from app.models.chatbot_turn import ChatbotTurn
+
+    _, _, result = _say(session_factory, monkeypatch, "cost", _by_tool(ONE_PROMO))
+    row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+    blob = json.dumps(row.trace or [], default=str)
+    assert "check_promotion" in blob, blob
+    swap = [e for e in (row.trace or []) if isinstance(e, dict) and "dealer_cost_as_promotion" in json.dumps(e, default=str)]
+    assert swap, blob
+    # after the swap, no later trace entry may still plan the turn as a PO cost ask
+    first = (row.trace or []).index(swap[0])
+    later = json.dumps((row.trace or [])[first + 1 :], default=str)
+    assert "check_po_cost" not in later, later
+
+
+def test_a_dealer_refused_the_agent_gets_the_refusal_and_no_promotion_tool(session_factory, monkeypatch, dealer):
+    from app.services.chatbot import engine as engine_mod
+
+    captured = _use_mcp(monkeypatch, lambda n, a: ONE_PROMO)
+    inner = lane_harness._capturing_mcp
+    monkeypatch.setattr(lane_harness, "_capturing_mcp", lambda response=None: (monkeypatch.setattr(
+        engine_mod, "check_access",
+        lambda db, *, agent_code, contact_id, space_id: {"allowed": False, "decision": "deny", "agent_name": "General", "attributes": []},
+    ) or inner(response)))
+    result, _ = _run_turn(
+        session_factory, monkeypatch, qf=_qf("cost"), text_body=f"cost {PRODUCT_CODE}",
+        msg_id=f"zzt-dmc-refused-{uuid.uuid4().hex[:6]}", resolve_services=_services(ONE_TIER),
+    )
+    assert PROMO_TOOL not in _names(captured), captured
+    assert COST_TOOL not in _names(captured), captured
+    assert "ZZT Dealer Promo" not in ((result.reply or {}).get("text") or ""), result.reply
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [{"chatbot": {"llm": None}}, {"chatbot": None}, {"chatbot": {"tier": None}}, {"chatbot": "dealer"}, {"chatbot": {"tier": ["dealer"]}}],
+    ids=["llm_null", "chatbot_null", "tier_null", "chatbot_string", "tier_list"],
+)
+def test_malformed_tag_settings_are_not_a_dealer_and_the_turn_answers_the_denial(session_factory, monkeypatch, settings):
+    from app.services.contact_tag_settings import contact_is_dealer
+
+    _seed_contact(session_factory, variables={})
+    _tag(session_factory, settings, name="ZZT Malformed Tag")
+    db = session_factory()
+    pk = db.execute(text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)}).scalar()
+    assert contact_is_dealer(db, str(pk)) is False
+    reply, calls, _ = _say(session_factory, monkeypatch, "cost", lambda n, a: ONE_PROMO, levels=TWO_TIERS)
+    assert reply == DENIAL, reply
+    assert "problem understanding" not in reply and calls == [], (reply, calls)
