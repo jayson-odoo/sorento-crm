@@ -401,3 +401,27 @@ def test_access_level_propagation_stays_in_the_company(api):
     assert _unscoped(db, ProductAttachment, my_link_id).access_levels == _NEW
     assert _unscoped(db, Promotion, my_promotion).access_levels == _NEW
     assert _unscoped(db, InboundShipment, my_shipment).access_levels == _NEW
+
+
+def test_access_level_propagation_to_a_packing_lists_own_file_stays_in_the_company(api):
+    """A packing list can also hold the file directly (`InboundShipment.attachment_id`)."""
+    db, _in_company, other = api
+    shared = _attachment(db, None)
+    _in_company(other)
+    theirs = _shipment(db)
+    _unscoped(db, InboundShipment, theirs).attachment_id = shared
+    db.commit()
+    _in_company(_SORENTO)
+    mine = _shipment(db)
+    _unscoped(db, InboundShipment, mine).attachment_id = shared
+    db.commit()
+
+    with TestClient(app) as client:
+        res = client.post(
+            ACCESS_LEVELS_APPLY,
+            json={"attachment_ids": [shared], "access_levels": _NEW, "propagate_to_linked": True},
+        )
+    assert res.status_code == 200, res.text
+    assert res.json()["propagated"]["packing_lists"] == 1
+    assert _unscoped(db, InboundShipment, theirs).access_levels == _OLD
+    assert _unscoped(db, InboundShipment, mine).access_levels == _NEW
