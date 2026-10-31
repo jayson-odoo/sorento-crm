@@ -1355,19 +1355,23 @@ class OrderInquiryReserveService:
         }
 
     def _groups(self, trigger_type: str, items):
-        """One group per (To person, raiser): `group_by_recipient` picks the To, then each
-        group splits by the OI's raiser so no other CS reaches its Cc, and the recipients
-        are resolved again from that subgroup's own people. A NULL raiser is its own group."""
+        """One group per (To person, raiser, requester): `group_by_recipient` picks the To, then
+        each group splits by the OI's raiser (and by requester, so one person's request never
+        puts another requester on the Cc) and the recipients are resolved again from that
+        subgroup's own people. A NULL raiser is its own group."""
         from app.services import park_send
 
         groups, unresolved = park_send.group_by_recipient(self.db, trigger_type, items)
         automation = park_send.first_automation(self.db, trigger_type)
         split = []
         for group in groups:
-            by_raiser: Dict[str, List[Dict[str, Any]]] = {}
+            by_raiser: Dict[tuple, List[Dict[str, Any]]] = {}
             for item in group["items"]:
-                raiser = item["context"].get("raiser") or {}
-                by_raiser.setdefault((raiser.get("email") or "").strip().lower(), []).append(item)
+                key = tuple(
+                    ((item["context"].get(who) or {}).get("email") or "").strip().lower()
+                    for who in ("raiser", "requester")
+                )
+                by_raiser.setdefault(key, []).append(item)
             if len(by_raiser) == 1:
                 split.append(group)
                 continue
