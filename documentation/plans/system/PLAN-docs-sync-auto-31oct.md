@@ -1,6 +1,6 @@
 # PLAN: user guides <-> Outline sync, automatic both ways
 
-Status: in progress (small fix track: CI/tooling only, no app change, no migration)
+Status: in review, PR #2043 (small fix track: CI/tooling only, no app change, no migration, no auth; the diff is ~600 lines, mostly tests and SYNC.md)
 
 ## Why
 
@@ -12,8 +12,10 @@ manual push (run 41178406314) died part-way on a page title over Outline's 100-c
 
 1. `outline-user-guides-sync.yml` pushes on every push to main touching
    `documentation/user-guides/**` (state file excluded), one concurrency group for push and pull.
-2. Pull and push PRs go to one bot branch, labelled `docs-sync`; the push commits the doc-id state
-   it learnt, and pull re-learns ids by title so a missed state commit never duplicates a page.
+2. The pull PR (one bot branch) is labelled `docs-sync`. The push opens no PR: the next pull learns
+   the ids of docs the push created by title, so a doc never comes back as a duplicate slug page.
+   Push keeps an Outline page a person edited after the repo commit (`outline_is_newer`, the
+   mirror of pull's `repo_is_newer`) and skips pages already the same.
 3. `sync_user_guides_outline.py check` (stdlib only, no network) runs in the PR gate: fails on a
    guide folder in neither `PARENT_TITLES` nor `HELD_FOLDERS`, an unexpected layout, or a title
    over 100 characters.
