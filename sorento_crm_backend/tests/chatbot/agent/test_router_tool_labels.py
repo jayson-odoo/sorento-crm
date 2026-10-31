@@ -328,3 +328,24 @@ def test_AC_R1_9_a_jev_failure_still_goes_to_chat(db, jev):
     decision = route(db, contact["respond_id"])
     assert (decision.side, decision.reason) == ("chat", "router_failed:timeout")
     assert len(jev.calls) == 1
+
+
+# ------------------------------------------------------------------ AC-HT-5 the owner's message
+
+OWNER_MESSAGE = "I think we need to have sorento agentic ai"
+NEW_IDEA_LABEL = "record a suggestion or wish for what the system should have or do, an idea or a feature request"
+OLD_IDEA_LABEL = "submit a new idea or feature request"
+
+
+def test_AC_HT_5_the_owners_message_reaches_jev_with_the_stated_need_label(db, jev):
+    # Jev is faked here, so this pins what Jev is TOLD. Whether the real model routes the message to the
+    # agent is shown by the crew eval and a live run, not by this test.
+    contact = seed_agent_contact(db)
+    arm(db)
+    jev.answer = jev_answer("agent", 0.9)
+    decision = route(db, contact["respond_id"], OWNER_MESSAGE)
+    tools = jev.calls[0]["criteria"]["agent"]["tools"]
+    assert NEW_IDEA_LABEL in tools
+    assert OLD_IDEA_LABEL not in tools
+    assert jev.calls[0]["state"]["latest_message"] == OWNER_MESSAGE
+    assert (decision.side, decision.reason) == ("agent", "classified")
