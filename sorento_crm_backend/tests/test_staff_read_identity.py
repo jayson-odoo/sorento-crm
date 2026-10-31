@@ -283,6 +283,19 @@ def _probe_client(db) -> TestClient:
         return {"ok": True}
 
     from app.api.v1.external.permissions import require_external_permission_for_path
+    from app.modules.runtime.guards import require_module_enabled_with_api_key
+
+    @r.get("/zzt/offlist")
+    def offlist(request: Request, user=Depends(get_current_user_or_api_key), database=Depends(get_db)):
+        return snapshot(request, user, database)
+
+    @r.get("/zzt/permmod")
+    def permmod(user=Depends(require_permission_with_api_key("order_management.orders.view"))):
+        return {"ok": True}
+
+    @r.get("/zzt/modguard", dependencies=[Depends(require_module_enabled_with_api_key("order"))])
+    def modguard(user=Depends(get_current_user_or_api_key)):
+        return {"ok": True}
 
     @r.get("/zzt/ext-path/{entity}")
     def ext_path(
@@ -305,8 +318,42 @@ def _probe_client(db) -> TestClient:
     return TestClient(probe, raise_server_exceptions=False)
 
 
+PROBE_READS = [
+    ("GET", "/api/v1/zzt/whoami"),
+    ("HEAD", "/api/v1/zzt/whoami"),
+    ("GET", "/api/v1/zzt/perm"),
+    ("GET", "/api/v1/zzt/any"),
+    ("GET", "/api/v1/zzt/ext"),
+    ("GET", "/api/v1/zzt/ext-integration"),
+    ("GET", "/api/v1/zzt/ext-path/thing"),
+    ("GET", "/api/v1/zzt/ext-path/int"),
+    ("GET", "/api/v1/zzt/permmod"),
+    ("GET", "/api/v1/zzt/modguard"),
+]
+#: `/api/v1/zzt/offlist` is deliberately never added: a read route off the list.
+
+
+def _route_entry(sample, method, path):
+    """One STAFF_READ_ROUTES entry in whatever shape the backend constant uses."""
+    if isinstance(sample, tuple):
+        return (method, path)
+    return f"{method} {path}"
+
+
+def _patch_staff_read_routes(monkeypatch, entries):
+    from app.services import company_scope_resolver as resolver
+
+    current = getattr(resolver, "STAFF_READ_ROUTES", None)
+    if current is None:  # before the constant exists the probes are plain GETs
+        return
+    sample = next(iter(current), None)
+    extra = {_route_entry(sample, m, p) for m, p in entries}
+    monkeypatch.setattr(resolver, "STAFF_READ_ROUTES", frozenset(set(current) | extra))
+
+
 @pytest.fixture()
-def probe(env):
+def probe(env, monkeypatch):
+    _patch_staff_read_routes(monkeypatch, PROBE_READS)
     return _probe_client(env.db)
 
 
@@ -542,6 +589,10 @@ GATED = [
     ),
 ]
 GATED_IDS = [g[0] for g in GATED]
+#: What each gated route answers a caller who passes the gate, on an empty database and with no
+#: parameters (measured): 200 for a list, 422 for a route with a required parameter, 404 for an
+#: unknown number. Anything else (a 500 above all) is a defect, not "passed the gate".
+EMPTY_DB_STATUS = {"crm_procurement_grn_summary": 422, "crm_purchase_request_by_number": 404}
 
 
 @pytest.mark.parametrize("tool,path,slugs", GATED, ids=GATED_IDS)
@@ -555,15 +606,16 @@ def test_ac13_identity_staff_holding_nothing_is_403(env, tool, path, slugs):
 def test_ac13_identity_staff_holding_the_slug_passes_the_gate(env, tool, path, slugs):
     staff = mk_user(env.db, "holder", perms=slugs[:1])
     resp = env.client.get(path, headers=env.ident(staff))
-    assert resp.status_code not in (401, 403), f"{tool}: {resp.status_code} {resp.text[:200]}"
+    assert resp.status_code == EMPTY_DB_STATUS.get(tool, 200), f"{tool}: {resp.status_code} {resp.text[:200]}"
 
 
 @pytest.mark.parametrize("tool,path,slugs", GATED, ids=GATED_IDS)
 def test_ac13_session_and_plain_key_behave_as_today(env, tool, path, slugs):
     """Regression: no new gate for a session or a plain key (passes today)."""
     nobody = mk_user(env.db, "nobody")
-    assert env.client.get(path, headers=env.session(nobody)).status_code not in (401, 403), f"{tool} session"
-    assert env.client.get(path, headers=env.plain()).status_code not in (401, 403), f"{tool} plain key"
+    expected = EMPTY_DB_STATUS.get(tool, 200)
+    assert env.client.get(path, headers=env.session(nobody)).status_code == expected, f"{tool} session"
+    assert env.client.get(path, headers=env.plain()).status_code == expected, f"{tool} plain key"
 
 
 # =========================================================================== #
@@ -581,7 +633,8 @@ PICKERS = [
 def test_ac14_pickers_are_open_to_staff_holding_nothing(env, method, path):
     staff = mk_user(env.db, "nothing")
     resp = env.client.request(method, path, headers=env.ident(staff))
-    assert resp.status_code not in (401, 403), f"{path}: {resp.status_code} {resp.text[:200]}"
+    expected = 422 if method == "POST" else 200  # lookup/resolve with no body is a validation error
+    assert resp.status_code == expected, f"{path}: {resp.status_code} {resp.text[:200]}"
 
 
 # =========================================================================== #
@@ -793,18 +846,39 @@ def _request(env, headers, query=""):
     )
 
 
-def test_ac18_identity_plus_contact_pair_is_the_intersection(env, probe):
+def test_ac18_a_non_blank_contact_pair_with_the_header_is_403(env, probe):
+    """AC-6 (replaces the old intersection rule): the panel always blanks the pair."""
     staff = mk_user(env.db, "two-co", companies=[env.co_a, env.co_b], last_active=env.co_a)
-    both, space_both = mk_contact_in(env.db, [env.co_a, env.co_b])
-    only_b, space_b = mk_contact_in(env.db, [env.co_b])
-    hit = probe.get(
-        f"/api/v1/zzt/whoami?contact_id={both}&space_id={space_both}", headers=env.ident(staff)
-    ).json()["scope"]
-    assert hit == [env.co_a], "AC-18: staff active {A} intersect contact {A,B} = {A}"
-    miss = probe.get(
-        f"/api/v1/zzt/whoami?contact_id={only_b}&space_id={space_b}", headers=env.ident(staff)
-    ).json()["scope"]
-    assert miss in ([], "unset"), f"AC-18: staff {{A}} intersect contact {{B}} is empty, got {miss}"
+    rid, space = mk_contact_in(env.db, [env.co_a, env.co_b])
+    resp = probe.get(f"/api/v1/zzt/whoami?contact_id={rid}&space_id={space}", headers=env.ident(staff))
+    assert resp.status_code == 403, f"AC-6: contact pair with the header got {resp.status_code}"
+    assert INVALID_CODE in resp.text
+
+
+def test_ac18_a_non_blank_contact_pair_with_the_header_reads_zero_rows(env):
+    rows = _seed_two_company_rows(env)
+    staff = mk_user(env.db, "reader", perms=[ORDERS_VIEW], companies=[env.co_a, env.co_b], last_active=env.co_a)
+    rid, space = mk_contact_in(env.db, [env.co_a, env.co_b])
+    resp = env.client.get(ORDERS, params={"contact_id": rid, "space_id": space}, headers=env.ident(staff))
+    assert resp.status_code == 403, f"AC-6: got {resp.status_code}"
+    assert rows.order_a not in resp.text and rows.order_b not in resp.text
+
+
+def test_ac18_a_blank_pair_counts_as_no_pair_and_passes(env, probe):
+    """The panel sends `contact_id=&space_id=`."""
+    staff = mk_user(env.db, "two-co", companies=[env.co_a, env.co_b], last_active=env.co_a)
+    resp = probe.get("/api/v1/zzt/whoami?contact_id=&space_id=", headers=env.ident(staff))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["user"]["id"] == staff
+    assert resp.json()["scope"] == [env.co_a]
+
+
+def test_ac18_a_blank_pair_on_a_real_route_reads_the_active_company(env):
+    rows = _seed_two_company_rows(env)
+    staff = mk_user(env.db, "reader", perms=[ORDERS_VIEW], companies=[env.co_a, env.co_b], last_active=env.co_a)
+    resp = env.client.get(ORDERS, params={"contact_id": "", "space_id": ""}, headers=env.ident(staff))
+    assert resp.status_code == 200, resp.text[:300]
+    assert rows.order_a in resp.text and rows.order_b not in resp.text
 
 
 # =========================================================================== #
@@ -980,57 +1054,168 @@ def test_ac12_for_path_integration_slug_is_checked_on_actas_only(env, probe):
 
 
 # =========================================================================== #
-# STAFF_READ_POST_PATHS is pinned against the catalog                         #
+# STAFF_READ_ROUTES is pinned against the catalog                             #
 # =========================================================================== #
-def test_staff_read_post_paths_equal_the_catalogs_read_only_post_paths():
-    from app.services.company_scope_resolver import STAFF_READ_POST_PATHS
+def _norm_route(method: str, path: str) -> tuple[str, str]:
+    return method.upper(), re.sub(r"\{[^}]+\}", "{}", path).rstrip("/")
+
+
+def test_staff_read_routes_equal_the_catalogs_reads_under_api_v1():
+    from app.services.company_scope_resolver import STAFF_READ_ROUTES
 
     expected = {
-        s.path.rstrip("/")
+        _norm_route(s.method, s.path)
         for s in _catalog()
-        if s.method == "POST" and s.read_only and s.path.startswith("/api/v1/")
+        if (s.method == "GET" or s.read_only) and s.path.startswith("/api/v1/")
     }
-    assert {p.rstrip("/") for p in STAFF_READ_POST_PATHS} == expected, (
-        "STAFF_READ_POST_PATHS must be exactly the catalog's read_only POST paths under /api/v1/"
+    actual = set()
+    for entry in STAFF_READ_ROUTES:
+        method, path = entry if isinstance(entry, tuple) else entry.split(None, 1)
+        actual.add(_norm_route(method, path))
+    assert actual == expected, (
+        f"STAFF_READ_ROUTES must be exactly the catalog reads under /api/v1/: "
+        f"missing {sorted(expected - actual)}, stray {sorted(actual - expected)}"
     )
 
 
-def test_ac11_view_own_staff_with_a_non_admin_view_actas_reads_only_their_rows(env):
-    """A real any-of route (projects list, `.view` or `.view_own`): the staff member holds only
-    `.view_own`, the shared key's act-as is a non-admin role holding only `.view`. Not the same
-    slug, yet let through, and narrowed to the staff member's own rows like their session."""
-    from tests.test_portal_p2_own_scope_projects import _project
-
-    env.use_actas(perms=["projects.projects.view"], roles=())
-    w = _own_world(env)
-    mine = _project(env.db, SORENTO, w.a)
-    theirs = _project(env.db, SORENTO, w.b)
-    grant(env.db, w.a, ["projects.projects.view_own"])
-
-    base = "/api/v1/project-sales/projects/"
-    session = env.client.get(base, params={"limit": 100}, headers=env.session(w.a))
-    identity = env.client.get(base, params={"limit": 100}, headers=env.ident(w.a))
-    assert identity.status_code == 200, f"AC-11: staff view_own + act-as view must pass, got {identity.status_code}"
-    via_session, via_identity = _ids(session), _ids(identity)
-    assert mine.id in via_session and theirs.id not in via_session, "fixture: session baseline"
-    assert via_identity == via_session, "AC-11/AC-15: the same rows as the session"
-    assert mine.id in via_identity and theirs.id not in via_identity
+def test_ac2_the_catalog_has_exactly_one_external_read_and_it_is_the_guide_tool():
+    """A future hand-written CRM read (flagged `external`, skipped by the AC-22 guard and by the
+    compiled-tool forwarding) must fail here until it is handled."""
+    external_reads = sorted(s.name for s in _catalog() if (s.method == "GET" or s.read_only) and s.external)
+    assert external_reads == ["user_guides_read"]
 
 
-def test_ac11_the_module_check_runs_per_user_and_a_disabled_module_refuses(env, probe, monkeypatch):
-    from app.modules.runtime import installer
-    from app.modules.runtime.permission_module_map import module_for_permission
+# =========================================================================== #
+# AC-6  more ways to fail closed                                              #
+# =========================================================================== #
+def test_ac6_a_read_off_the_list_is_403_and_scope_unset(env, probe):
+    staff = mk_user(env.db, "staff", companies=[SORENTO], last_active=SORENTO)
+    resp = probe.get("/api/v1/zzt/offlist", headers=env.ident(staff))
+    assert resp.status_code == 403, f"AC-6: header on an off-list read got {resp.status_code}"
+    assert INVALID_CODE in resp.text
+    from app.services.company_scope_resolver import resolve_company_scope
 
-    slug = "complaint_management.complaints.view"
-    module = module_for_permission(slug)
-    assert module, "fixture: the slug must map to a module"
-    env.use_actas(perms=[slug])
-    staff = mk_user(env.db, "staff", perms=[slug])
+    req = _request(env, {"X-API-Key": env.key, STAFF_HEADER: staff})
+    req.scope["path"] = "/api/v1/zzt/offlist"
+    assert resolve_company_scope(req, env.db) is UNSET, "AC-6: an off-list read has no scope at all"
+
+
+def test_ac6_a_write_off_the_list_still_ignores_the_header(env, probe):
+    staff = mk_user(env.db, "staff")
+    resp = probe.post("/api/v1/zzt/write", headers=env.ident(staff))
+    assert resp.status_code == 200 and resp.json()["user"]["id"] == env.actas
+
+
+def test_ac6_naming_an_integration_user_is_403(env, probe):
+    other = mk_user(env.db, "an-integration", integration=True)
+    resp = probe.get("/api/v1/zzt/whoami", headers=env.ident(other))
+    assert resp.status_code == 403, f"AC-6: an is_integration user may not be named, got {resp.status_code}"
+    assert INVALID_CODE in resp.text
+
+
+# =========================================================================== #
+# AC-27  naming a stronger user gains nothing act-as lacks                    #
+# =========================================================================== #
+def test_ac27_audit_logs_stay_403_when_a_superadmin_is_named(env):
+    env.use_actas(perms=["zzt.unrelated.view"])
+    boss = mk_user(env.db, "boss", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO)
+    assert env.client.get("/api/v1/audit/logs/", headers=env.plain()).status_code == 403, "fixture: plain key"
+    named = env.client.get("/api/v1/audit/logs/", headers=env.ident(boss))
+    assert named.status_code == 403, f"AC-27: naming a superadmin lifted the audit gate ({named.status_code})"
+
+
+def test_ac27_tickets_view_all_is_not_lent_by_the_named_user(env):
+    from app.models.tickets import Ticket
+
+    env.use_actas(perms=["tickets.tickets.view"])
+    other = mk_user(env.db, "other", companies=[SORENTO], last_active=SORENTO)
+    boss = mk_user(
+        env.db, "boss", perms=["tickets.tickets.view", "tickets.tickets.view_all"],
+        companies=[SORENTO], last_active=SORENTO,
+    )
+    env.db.add(Ticket(title="ZZT secret", raised_by=other, raised_by_kind="user"))
+    env.db.flush()
+    path = "/api/v1/tickets-management/tickets"
+    plain = env.client.get(path, headers=env.plain())
+    named = env.client.get(path, headers=env.ident(boss))
+    assert plain.status_code == 200, "fixture: plain key"
+    assert plain.json()["pagination"]["total"] == 0, "fixture: act-as has no view_all"
+    assert named.status_code == 403, f"AC-27: tickets are off the list, got {named.status_code}"
+
+
+def _incoming_has_field_access(resp) -> bool:
+    assert resp.status_code == 200, resp.text[:300]
+    return "field_access" in resp.json()
+
+
+def test_ac27_incoming_clearance_is_not_lifted_by_staff_alone(env):
+    env.use_actas(perms=["procurement.packing_lists.view"])
+    holder = mk_user(
+        env.db, "holder", perms=["procurement.packing_lists.view", "procurement.packing_lists.view_clearance"],
+        companies=[SORENTO], last_active=SORENTO,
+    )
+    path = "/api/v1/incoming-stock/list"
+    assert _incoming_has_field_access(env.client.get(path, headers=env.plain())), "fixture: plain key is gated"
+    assert _incoming_has_field_access(env.client.get(path, headers=env.ident(holder))), (
+        "AC-27: staff holding clearance with an act-as lacking it must stay gated"
+    )
+
+
+def test_ac27_incoming_clearance_is_lifted_when_both_users_hold_it(env):
+    both = ["procurement.packing_lists.view", "procurement.packing_lists.view_clearance"]
+    env.use_actas(perms=both)
+    holder = mk_user(env.db, "holder", perms=both, companies=[SORENTO], last_active=SORENTO)
+    assert not _incoming_has_field_access(
+        env.client.get("/api/v1/incoming-stock/list", headers=env.ident(holder))
+    ), "AC-27: both users hold clearance, so the gate lifts"
+
+
+def _disable_module(monkeypatch, module):
+    from app.modules.runtime import guards, installer
+
     monkeypatch.setattr(settings, "module_guard_strict", True, raising=False)
-    monkeypatch.setattr(installer, "tenant_has_any_module_row", lambda db_, tenant: True)
-    path = "/api/v1/complaints-management/complaints/"
+    for target in (installer, guards):
+        monkeypatch.setattr(target, "tenant_has_any_module_row", lambda db_, tenant: True)
+        monkeypatch.setattr(target, "is_module_enabled", lambda db_, tenant, mod: mod != module)
 
-    monkeypatch.setattr(installer, "is_module_enabled", lambda db_, tenant, mod: True)
-    assert env.client.get(path, headers=env.ident(staff)).status_code == 200, "fixture: enabled module passes"
-    monkeypatch.setattr(installer, "is_module_enabled", lambda db_, tenant, mod: mod != module)
-    assert env.client.get(path, headers=env.ident(staff)).status_code == 403, "a disabled module refuses"
+
+def test_ac27_module_check_via_require_permission_asks_act_as_too(env, probe, monkeypatch):
+    env.use_actas(perms=["order_management.orders.view"], roles=())
+    boss = mk_user(env.db, "boss", roles=("superadmin",))
+    _disable_module(monkeypatch, "order")
+    resp = probe.get("/api/v1/zzt/permmod", headers=env.ident(boss))
+    assert resp.status_code == 403, f"AC-27: a superadmin staff lifted a disabled module, got {resp.status_code}"
+
+
+def test_ac27_module_guard_asks_act_as_too(env, probe, monkeypatch):
+    env.use_actas(perms=["order_management.orders.view"], roles=())
+    boss = mk_user(env.db, "boss", roles=("superadmin",))
+    _disable_module(monkeypatch, "order")
+    resp = probe.get("/api/v1/zzt/modguard", headers=env.ident(boss))
+    assert resp.status_code == 403, f"AC-27: guards.py module guard lifted by the named superadmin, got {resp.status_code}"
+
+
+@pytest.mark.parametrize("path", ["/api/v1/scm/low-stock-report", "/api/v1/sales/analysis"])
+def test_ac27_contact_attributed_reads_cannot_name_a_user(env, path):
+    staff = mk_user(
+        env.db, "staff", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO
+    )
+    bare = env.client.get(path, headers=env.ident(staff))
+    assert bare.status_code in (403, 422), f"AC-27: no contact got {bare.status_code}"
+    rid, space = mk_contact_in(env.db, [SORENTO])
+    paired = env.client.get(path, params={"contact_id": rid, "space_id": space}, headers=env.ident(staff))
+    assert paired.status_code == 403, f"AC-27: a named user cannot be attributed, got {paired.status_code}"
+
+
+# =========================================================================== #
+# AC-9  the backend logs the named user                                       #
+# =========================================================================== #
+def test_ac9_the_named_user_is_logged_on_an_identity_read(env, probe, caplog):
+    import logging
+
+    staff = mk_user(env.db, "staff")
+    with caplog.at_level(logging.INFO):
+        assert probe.get("/api/v1/zzt/whoami", headers=env.ident(staff)).status_code == 200
+    assert any(staff in rec.getMessage() for rec in caplog.records), (
+        "AC-9: no log line names the staff user id on an identity read"
+    )

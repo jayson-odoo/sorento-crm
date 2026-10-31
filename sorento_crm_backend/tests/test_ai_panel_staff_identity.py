@@ -8,6 +8,7 @@ the database is the blank Postgres schema, permissions and record rows are real.
 from __future__ import annotations
 
 import inspect
+import json
 import re
 
 import httpx
@@ -141,25 +142,81 @@ def test_ac1_the_agent_loop_builds_its_client_as_the_staff_member(db_session, mo
 
 # --- AC-21 ----------------------------------------------------------------------------------------
 class _RefusingMCP(_RecordingMCP):
+    """A CRM 403 as the MCP server delivers it: ordinary tool text, `isError` false, shaped by
+    `http_error_body` (sorento_crm_mcp/http_client.py), with an `error` key stamped on it."""
+
+    BODY = {
+        "detail": {"code": "permission_denied", "message": "Permission required: inventory.stock.view"},
+        "error": "GET /api/v1/inventory/stock/balance returned HTTP 403: permission_denied",
+        "http_error": "GET /api/v1/inventory/stock/balance returned HTTP 403: permission_denied",
+        "status_code": 403,
+        "path": "/api/v1/inventory/stock/balance",
+        "method": "GET",
+    }
+
     def call_tool(self, name, args):
         self.calls.append((name, args))
-        raise MCPToolCallError(
-            '{"error": "HTTP 403", "status_code": 403, "code": "permission_denied", '
-            '"message": "Permission required: inventory.stock.view"}'
-        )
+        return json.dumps(self.BODY)
 
 
 def test_ac21_a_403_from_a_tool_still_answers_and_the_model_sees_a_failed_result(db_session, monkeypatch):
-    """Regression (passes today): a refused tool is a failed tool result, never a 500."""
+    """Regression (passes today): a refused tool is a failed tool result, never a 500. Blinding
+    `_tool_output_is_error` (which reads the `error` key) turns the `ok` assertion red."""
     provider = _Provider()
     svc, cfg = _loop_service(db_session, monkeypatch, _RefusingMCP, provider)
     text, tool_calls, _usage = _run_loop(svc, cfg)
     assert text == "final answer"
     assert [c.ok for c in tool_calls if c.tool_name == "crm_test_tool"] == [False]
-    second_round = provider.messages_seen[1]
-    tool_msgs = [m for m in second_round if m.get("role") == "tool"]
+    tool_msgs = [m for m in provider.messages_seen[1] if m.get("role") == "tool"]
     assert tool_msgs, "the model must receive the refusal as a tool result"
-    assert "403" in tool_msgs[-1]["content"] or "Permission required" in tool_msgs[-1]["content"]
+    assert '"status_code": 403' in tool_msgs[-1]["content"]
+
+
+# --- AC-26 ----------------------------------------------------------------------------------------
+@pytest.fixture
+def no_http(monkeypatch):
+    """No token configured; any HTTP call the panel client makes is recorded."""
+    seen: list[httpx.Request] = []
+    monkeypatch.setattr("app.services.mcp_auth_token.current_token", lambda db=None: None)
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": "x", "result": {"tools": [], "content": []}})
+
+    real = httpx.Client
+    monkeypatch.setattr(
+        svc_module.httpx, "Client", lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)})
+    )
+    return seen
+
+
+def test_ac26_a_staff_client_with_no_token_makes_no_call_and_raises_the_tool_error(no_http):
+    client = MCPRuntimeClient("http://mcp:8765/mcp", staff=True, staff_user_id=STAFF_ID)
+    with pytest.raises(MCPToolCallError):
+        client.call_tool("crm_x", {})
+    with pytest.raises(MCPToolCallError):
+        client.list_tools()
+    assert no_http == [], "AC-26: nothing may go out without the bearer"
+
+
+def test_ac26_a_non_staff_client_with_no_token_is_unchanged(no_http):
+    MCPRuntimeClient("http://mcp:8765/mcp").call_tool("crm_x", {})
+    assert no_http, "the chatbot lanes keep working with Enforce off"
+
+
+def test_ac26_a_panel_turn_with_no_token_still_answers(db_session, monkeypatch, no_http):
+    svc = AIAssistantChatService(db_session)
+    cfg = svc.cfg.get()
+    cfg.api_key_ciphertext = "fake-key"
+    cfg.provider = "openai"
+    cfg.model = "gpt-4o-mini"
+    cfg.is_enabled = True
+    db_session.commit()
+    monkeypatch.setattr(svc_module, "get_provider", lambda *_a, **_k: _Provider())
+    text, tool_calls, _usage = _run_loop(svc, cfg)
+    assert isinstance(text, str) and text.strip(), "the turn still answers"
+    assert no_http == []
+    assert tool_calls and all(not c.ok for c in tool_calls)
 
 
 # --- AC-24 ----------------------------------------------------------------------------------------
@@ -236,8 +293,13 @@ def test_ac19_panel_gives_facts_to_a_view_holder(db_session, panel, kind):
     row_id = _record_row(db_session, kind)
     user = mk_user(db_session, "viewer", perms=RECORD_KINDS[kind][:1])
     _ask(panel, user, kind, row_id)
-    facts, _spy = _facts_given(panel)
+    facts, spy = _facts_given(panel)
     assert facts is not None, f"AC-19 {kind}: a view holder must get the facts"
+    assert spy is panel._render, "a record question takes the record route"
+    assert spy.kwargs.get("user_id") == user, (
+        "AC-1: the record route must hand the staff id to _render_record_answer, which builds "
+        "its MCP client from it"
+    )
 
 
 @pytest.mark.parametrize("kind", sorted(RECORD_KINDS))

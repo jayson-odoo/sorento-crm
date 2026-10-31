@@ -134,13 +134,20 @@ def test_ac3_a_staff_marked_call_with_a_hostile_inbound_header_sends_only_the_re
     assert sent and all(r.headers.get(IDENTITY) == STAFF_ID for r in sent)
 
 
-def test_ac3_a_write_tool_never_carries_it(mcp, crm):
-    # record_actions.py:89 (hand-written write) and a compiled catalog write
-    _call(mcp, "crm_complaint_close", {"complaint_id": PROMO_ID}, STAFF)
-    _call(mcp, "crm_it_support_ticket_create", {"contact_id": "", "space_id": "", "payload_json": "{}"}, STAFF)
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("crm_complaint_close", {"complaint_id": PROMO_ID}),
+        # a COMPILED catalog write: `message_id` is required, so the call reaches the CRM
+        ("crm_it_support_ticket_create", {"payload_json": "{}", "message_id": "zzt-msg-1"}),
+    ],
+)
+def test_ac3_a_write_tool_never_carries_it(mcp, crm, tool, args):
+    """record_actions.py:89 (hand-written write) and a compiled catalog write, one each."""
+    _call(mcp, tool, args, STAFF)
     sent = _crm_requests(crm)
-    assert sent, "fixture: the write tools must have reached the CRM"
-    assert all(IDENTITY not in r.headers for r in sent), "AC-3: a write stays act-as"
+    assert sent, f"fixture: {tool} must have reached the CRM"
+    assert all(IDENTITY not in r.headers for r in sent), f"AC-3: {tool} is a write and stays act-as"
 
 
 # --- AC-4: staff-marked read of a scoped tool with no staff id is refused ----------------------
@@ -157,8 +164,49 @@ def test_ac4_a_blank_staff_id_is_refused_too(mcp, crm):
     assert _crm_requests(crm) == []
 
 
-def test_ac4_an_unscoped_tool_is_not_refused_for_want_of_an_id(mcp, crm):
-    """The refusal is for company-scoped tools only (scope.is_scoped)."""
+@pytest.mark.parametrize(
+    "tool,args",
+    [
+        ("crm_forms_management_forms_list", {}),
+        ("crm_system_tool_capabilities_summary", {}),
+        ("crm_inventory_warehouses_list", {}),
+    ],
+)
+def test_ac4_an_unscoped_read_with_no_staff_id_is_refused_too(mcp, crm, tool, args):
+    """AC-4 (changed): any staff-marked read, scoped or not, with no id is refused."""
     headers = {**BASE, "X-MCP-Scope": "staff"}
-    _call(mcp, "crm_forms_management_forms_list", {}, headers)
-    assert _crm_requests(crm), "an unscoped read still goes ahead"
+    _call(mcp, tool, args, headers)
+    assert _crm_requests(crm) == [], f"AC-4: {tool} reached the CRM without a staff id"
+
+
+# --- AC-26: the bearer decides whether the staff markers survive --------------------------------
+def _app_with(tokens, enforce):
+    settings = Settings(CRM_BASE_URL="http://crm.local", EXTERNAL_API_KEY="k")
+    return TestClient(create_http_app(settings, token_fetcher=FakeBackend(list(tokens), enforce=enforce)))
+
+
+def test_ac26_enforce_off_with_the_bearer_keeps_the_markers_and_forwards_identity(crm):
+    with _app_with([TOKEN], enforce=False) as client:
+        _call(client, "crm_inventory_stock_balance_list", {}, STAFF)
+    sent = _crm_requests(crm)
+    assert sent and all(r.headers.get(IDENTITY) == STAFF_ID for r in sent)
+
+
+def test_ac26_enforce_off_with_no_bearer_strips_the_markers_and_forwards_none(crm):
+    """Today's rule, pinned: the call runs unauthenticated and as act-as (the backend client
+    refuses to make it, AC-26 backend half)."""
+    no_bearer = {k: v for k, v in STAFF.items() if k != "Authorization"}
+    with _app_with([], enforce=False) as client:
+        _call(client, "crm_inventory_warehouses_list", {}, no_bearer)
+    sent = _crm_requests(crm)
+    assert all(IDENTITY not in r.headers for r in sent)
+
+
+def test_ac26_enforce_on_with_no_bearer_is_401(crm):
+    no_bearer = {k: v for k, v in STAFF.items() if k != "Authorization"}
+    body = {"jsonrpc": "2.0", "id": "1", "method": "tools/call",
+            "params": {"name": "crm_inventory_stock_balance_list", "arguments": {}}}
+    with _app_with([TOKEN], enforce=True) as client:
+        resp = client.post("/mcp", json=body, headers=no_bearer)
+    assert resp.status_code == 401
+    assert _crm_requests(crm) == []
