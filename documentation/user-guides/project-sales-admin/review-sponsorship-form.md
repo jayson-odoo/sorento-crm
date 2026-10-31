@@ -37,7 +37,7 @@ The link is token-based, one-time use, and expires after 24 hours.
 ## After approval / rejection
 
 * **Approved:** status flips to **Approved**. The rep is notified through Respond.io (WhatsApp).
-* **Rejected:** status flips to **Rejected**. The rep is notified and can edit and re-submit. You can re-issue an approval link by clicking **Change to pending approval** again, then **Send for approval**.
+* **Rejected:** status flips to **Rejected**. The rep is notified and can edit and send it again; it then reads **Appealed**. You can re-issue an approval link by clicking **Change to pending approval** again, then **Send for approval**.
 
 ## Other actions on the toolbar
 

@@ -66,7 +66,7 @@ submitting.* and the names of the missing fields; nothing is saved or numbered. 
 submit again. (For a Complaint that includes at least one product; for a Stock Inquiry the
 salesperson; for a Purchase Request or Sponsorship Form the requestor.)
 
-If you spot a mistake after submitting, you'll need to wait for the relevant team to **reject** the submission. Once it's rejected the form unlocks and you can edit and re-submit.
+If you spot a mistake after submitting, you'll need to wait for the relevant team to **reject** the submission. Once it's rejected the form unlocks; edit it and submit it again. Its status then reads **Appealed** (this used to read Resubmitted).
 
 ## Cancel
 
@@ -140,7 +140,7 @@ The WhatsApp message contains a link back to the portal so you can open the subm
 
 ## Editing after a rejection
 
-If a submission is rejected, the form is unlocked. Open it from the dashboard, fix what needs fixing, **Save as draft** if you need to think about it, and **Submit** again when ready. The cycle repeats until it's approved (PR / sponsorship), flowed to purchasing (stock inquiry), or responded to (complaint).
+If a submission is rejected, the form is unlocked. Open it from the dashboard, fix what needs fixing, **Save as draft** if you need to think about it, and **Submit** again when ready; it then reads **Appealed**. The cycle repeats until it's approved (PR / sponsorship), flowed to purchasing (stock inquiry), or responded to (complaint).
 
 ## See also
 
