@@ -163,23 +163,45 @@ class PortalService:
     def __init__(self, db: Session):
         self.db = db
 
-    def _resolve_contact(self, contact_id: str) -> RespondContact:
+    def _resolve_contact(self, contact_id: str, space_id: Optional[str] = None) -> RespondContact:
         """Resolve a RespondContact by internal `id` or `respond_io_id`.
 
         External callers (MCP/n8n) pass the Respond.io contact id (e.g. "900000008"),
         while internal endpoints pass the internal UUID. Accept either; raise NOT_FOUND
         if neither matches.
+
+        A Respond.io id is unique per workspace only, so it is resolved inside the
+        workspace `space_id` names (a contact with no workspace yet still resolves
+        when it is the only row for that id and the workspace holds none). An id
+        that matches no row, or more than one, is refused rather than resolved to
+        an arbitrary row.
         """
-        contact = (
-            self.db.query(RespondContact)
-            .filter(
-                or_(
-                    RespondContact.id == contact_id,
-                    RespondContact.respond_io_id == contact_id,
+        from app.models.respond_workspace import RespondWorkspace
+
+        key = (contact_id or "").strip()
+        space_id = (space_id or "").strip()
+        contact = self.db.query(RespondContact).filter(RespondContact.id == key).first()
+        if contact is None and key:
+            by_rid = self.db.query(RespondContact).filter(RespondContact.respond_io_id == key)
+            if space_id:
+                rows = (
+                    by_rid.join(RespondWorkspace, RespondWorkspace.id == RespondContact.workspace_id)
+                    .filter(RespondWorkspace.space_id == space_id)
+                    .limit(2)
+                    .all()
                 )
-            )
-            .first()
-        )
+                if not rows:
+                    rows = by_rid.filter(RespondContact.workspace_id.is_(None)).limit(2).all()
+            else:
+                rows = by_rid.limit(2).all()
+            if len(rows) > 1:
+                logger.warning(
+                    "portal: respond_io_id %s matches %s contacts for space %s; refusing",
+                    key,
+                    len(rows),
+                    space_id,
+                )
+            contact = rows[0] if len(rows) == 1 else None
         if contact is None:
             raise handle_not_found("Contact", contact_id)
         return contact
@@ -294,7 +316,7 @@ class PortalService:
         space_id = (space_id or "").strip()
         if not contact_id or not space_id:
             raise handle_validation_error("contact_id and space_id are required.")
-        contact = self._resolve_contact(contact_id)
+        contact = self._resolve_contact(contact_id, space_id)
         # Every minted link should carry the stable slug URL - mint it now.
         self.get_or_create_slug(contact)
         token = PortalToken(
@@ -332,7 +354,7 @@ class PortalService:
         space_id = (space_id or "").strip()
         if not contact_id or not space_id:
             raise handle_validation_error("contact_id and space_id are required.")
-        contact = self._resolve_contact(contact_id)
+        contact = self._resolve_contact(contact_id, space_id)
         live = (
             self.db.query(PortalToken)
             .filter(
@@ -371,7 +393,7 @@ class PortalService:
 
         Raises httpx.HTTPStatusError on upstream failure (caller maps to 502).
         """
-        contact = self._resolve_contact(contact_id)
+        contact = self._resolve_contact(contact_id, space_id)
         respond_io_id = (contact.respond_io_id or "").strip()
         if not respond_io_id:
             raise handle_validation_error(
@@ -674,7 +696,7 @@ class PortalService:
         space_id = (space_id or "").strip()
         if not contact_id or not space_id:
             raise handle_validation_error("contact_id and space_id are required.")
-        contact = self._resolve_contact(contact_id)
+        contact = self._resolve_contact(contact_id, space_id)
 
         from app.tasks.respond_io_tasks import send_portal_otp_respond_message
 
@@ -740,7 +762,7 @@ class PortalService:
         code = (code or "").strip()
         if not contact_id or not space_id or not code:
             raise handle_validation_error("contact_id, space_id and code are required.")
-        contact = self._resolve_contact(contact_id)
+        contact = self._resolve_contact(contact_id, space_id)
 
         otp = (
             self.db.query(PortalOtpCode)
@@ -1426,17 +1448,11 @@ class PortalService:
         base = (settings.respond_app_base_url or "").rstrip("/")
         if not base:
             return None
-        contact = (
-            self.db.query(RespondContact)
-            .filter(
-                or_(
-                    RespondContact.id == contact_id.strip(),
-                    RespondContact.respond_io_id == contact_id.strip(),
-                )
-            )
-            .first()
-        )
-        respond_io_id = (contact.respond_io_id or "").strip() if contact else ""
+        try:
+            contact = self._resolve_contact(contact_id.strip(), space_id.strip())
+        except AppException:
+            return None
+        respond_io_id = (contact.respond_io_id or "").strip()
         if not respond_io_id:
             return None
         return f"{base}/space/{space_id.strip()}/inbox/{respond_io_id}"
