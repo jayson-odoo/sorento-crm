@@ -48,7 +48,7 @@ def http_error_body(text: str, *, status_code: int, path: str, method: str) -> s
 class CRMClient:
     """Thin async client with X-API-Key and response size guard."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._settings = settings
         self._base = settings.crm_base_url.rstrip("/")
         self._client = httpx.AsyncClient(
@@ -58,6 +58,7 @@ class CRMClient:
             # Avoid stale keep-alive sockets causing first-request read timeouts.
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=0),
             follow_redirects=True,
+            transport=transport,
         )
 
     async def aclose(self) -> None:
