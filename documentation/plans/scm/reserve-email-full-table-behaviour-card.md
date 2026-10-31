@@ -1,7 +1,6 @@
 # Behaviour card: reserve request / reserved emails, full table (RESERVE-EMAIL-FULL-TABLE)
 
-Status: card v4 (31 Oct 2026). Owner has answered Q1-Q4 and annotated mockups v2 and v3. Mockup v4 sits at the same path, `mockups/reserve-email-full-table-mock-v2.html`, so the review session carries on.
-No code until the owner OKs mockup v4.
+Status: approved (31 Oct 2026). Owner approved mockup v4 with one change, OI NO first, and left the Excel download as it is (`mockups/reserve-email-full-table-mock-v2.html`, same path by brief). Contract: `reserve-email-full-table-acceptance-criteria.md`.
 
 **This reverses owner note 3 on OI-STAGED-NOTIFY mock v1** (the 5-OI cap with "and N more order
 inquiries", `oi-staged-notify-behaviour-card.md` :94-97). **It also reverses owner rule 6 of
@@ -61,11 +60,11 @@ holds the seeded text, and leave an admin-edited template alone. No schema chang
 ### (1) Full per-line table in both emails, no cap
 
 One flat table for one OI and for a batch. Column names and order come from the export's
-`EXPORT_HEADINGS` (`order_inquiry_worklist_service.py:196-240`), and OI NO and REASON go after them, by
-the export's own rule that a new column goes after the existing ones (`:216-219`):
+`EXPORT_HEADINGS` (`order_inquiry_worklist_service.py:196-240`). OI NO goes first (owner, v4), and REASON
+goes last, by the export's own rule that a new column goes after the existing ones (`:216-219`):
 
-- **Request email (8 columns):** `SO DATE | S/O NO | ITEM CODE | QTY | REQUESTED RESERVE | DELIVERY DATE | PROJECT/CUSTOMER | OI NO`
-- **Reserved email (9 columns, 10 with REASON):** `SO DATE | S/O NO | ITEM CODE | QTY | REQUESTED RESERVE | STATUS | DELIVERY DATE | PROJECT/CUSTOMER | OI NO | REASON`
+- **Request email (8 columns):** `OI NO | SO DATE | S/O NO | ITEM CODE | QTY | REQUESTED RESERVE | DELIVERY DATE | PROJECT/CUSTOMER`
+- **Reserved email (9 columns, 10 with REASON):** `OI NO | SO DATE | S/O NO | ITEM CODE | QTY | REQUESTED RESERVE | STATUS | DELIVERY DATE | PROJECT/CUSTOMER | REASON`
 
 | CS's answer on the line | STATUS shows | REASON shows |
 | --- | --- | --- |
@@ -154,10 +153,8 @@ The PDF prints the same 19 columns as the Excel (`export_pdf`, `order_inquiry_wo
 
 **The gap:** in the Excel, a rejected line reads the same as one still waiting for CS. REQUESTED RESERVE
 stays filled after CS answers (`:516-522`, `:2601`), RESERVED prints blank at 0 (`:258-262`), and the
-reason appears nowhere. This lane leaves the Excel alone unless the owner says otherwise: the
-stakeholder asked for the email to follow the Excel, not the reverse, and no real rejected line exists
-on the dev copy yet. Trigger for the follow-up: the first time someone needs a rejected line's reason
-from the download.
+reason appears nowhere. **Owner left the Excel as it is** (31 Oct, on mockup v4). Trigger for a follow-up:
+the first time someone needs a rejected line's reason from the download.
 
 ### (2) The button opens exactly this email's OIs
 
