@@ -47,19 +47,15 @@ class AgentContext:
     operator_user_id: str | None = None
 
 
-def build_context(db, contact_respond_id: str) -> AgentContext:
-    # Scope note for P1: reads are limited by the contact's brand scope, its reveal grants and
-    # what the routes allow for the contact id. Company scope of the linked user is not applied
-    # here, because the routes scope by contact id and the call itself runs as the integration.
+def eligible_contact(db, contact_respond_id: str):
+    """(contact, user, refusal): the oldest contact row for the id, its active linked user, and
+    the reason the agent may not run for it (None when it may). One definition of who may reach
+    the agent. Company scope off for the lookup, as the brand scope resolver does: a contact row
+    must not read as missing because of the caller's scope."""
     from app.models.access import RespondContact
-    from app.models.base import company_scope, set_brand_scope, set_company_scope
+    from app.models.base import company_scope
     from app.models.user import User, UserStatus
-    from app.services.chatbot.head.access import default_space_id
-    from app.services.contact_brand_scope import NO_BRAND_ID, contact_brand_scope
-    from app.services.contact_field_reveal_service import granted_keys
 
-    # Company scope off for the lookup, as the brand scope resolver does: a contact row must
-    # not read as missing because of the caller's scope.
     with company_scope(db, None):
         contact = (
             db.query(RespondContact)
@@ -68,11 +64,11 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
             .first()
         )
         if contact is None:
-            raise AgentRefused("contact_not_found")
+            return None, None, "contact_not_found"
         if not contact.chatbot_allowed:
-            raise AgentRefused("ai_replies_off")
+            return contact, None, "ai_replies_off"
         if not contact.chatbot_agent_enabled:
-            raise AgentRefused("switch_off")
+            return contact, None, "switch_off"
         user = (
             db.query(User)
             .filter(User.respond_contact_id == contact.id, User.status == UserStatus.ACTIVE.value)
@@ -80,10 +76,30 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
             .first()
         )
         if user is None:
-            raise AgentRefused("no_linked_user")
-        pk = str(contact.id)
-        user_id = str(user.id)
-        user_name = user.name or ""
+            return contact, None, "no_linked_user"
+        return contact, user, None
+
+
+def agent_eligibility(db, contact_respond_id: str) -> str | None:
+    """Why the agent may not run for this contact (a reason `AgentRefused` carries), or None."""
+    return eligible_contact(db, contact_respond_id)[2]
+
+
+def build_context(db, contact_respond_id: str) -> AgentContext:
+    # Scope note for P1: reads are limited by the contact's brand scope, its reveal grants and
+    # what the routes allow for the contact id. Company scope of the linked user is not applied
+    # here, because the routes scope by contact id and the call itself runs as the integration.
+    from app.models.base import set_brand_scope, set_company_scope
+    from app.services.chatbot.head.access import default_space_id
+    from app.services.contact_brand_scope import NO_BRAND_ID, contact_brand_scope
+    from app.services.contact_field_reveal_service import granted_keys
+
+    contact, user, refusal = eligible_contact(db, contact_respond_id)
+    if refusal is not None:
+        raise AgentRefused(refusal)
+    pk = str(contact.id)
+    user_id = str(user.id)
+    user_name = user.name or ""
 
     space_id = default_space_id(db)
     try:

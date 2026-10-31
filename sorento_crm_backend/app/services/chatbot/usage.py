@@ -73,8 +73,10 @@ def record_turn_llm_usage(
     contact_respond_id: str | None,
     answered: bool,
     chatbot_turn_id: str | None = None,
+    row_id: str | None = None,
 ) -> None:
-    """One `ai_assistant_usage_logs` row for one LLM call a chatbot turn made."""
+    """One `ai_assistant_usage_logs` row for one LLM call a chatbot turn made. `row_id` lets a
+    caller that learns the turn id later (the console router) point the row at it afterwards."""
     try:
         from app.models.access import RespondContact
         from app.models.ai_assistant import AIAssistantUsageLog
@@ -96,6 +98,7 @@ def record_turn_llm_usage(
         )
         db.add(
             AIAssistantUsageLog(
+                **({"id": row_id} if row_id else {}),
                 user_id=None,
                 contact_id=internal_id,
                 feature=feature,

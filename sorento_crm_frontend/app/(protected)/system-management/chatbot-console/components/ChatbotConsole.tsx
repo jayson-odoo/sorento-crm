@@ -16,6 +16,7 @@ import { formatElapsed, useVoiceRecorder } from '@/components/common/conversatio
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { getRespondContactsOutbound } from '../../respond-contacts/services/respondContactOutboundService';
+import { RoutePill } from './RoutePill';
 import { useChatbotConsole } from '../hooks/useChatbotConsole';
 import type { ChatbotConsoleMessage, ConsoleMediaInput, ConsoleQuote } from '../types/chatbotConsole.types';
 
@@ -150,6 +151,11 @@ function MessageBubble({
           >
             {message.routingLine}
           </p>
+        ) : null}
+        {!isUser && message.route ? (
+          <div className="mt-1.5">
+            <RoutePill route={message.route} />
+          </div>
         ) : null}
         {message.quickReplies && message.quickReplies.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
