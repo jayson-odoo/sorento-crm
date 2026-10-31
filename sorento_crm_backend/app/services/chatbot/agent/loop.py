@@ -126,14 +126,15 @@ def _normal(token: str) -> str:
 
 _UUID_TEXT = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
 #: A URL is ASCII URL characters only (no comma, no space), so the text around it is never taken with it.
-_URL = re.compile(r"https?://[A-Za-z0-9\-._~:/?#@!$&'*+;=%\[\]()]*")
-_MARKDOWN_LINK = re.compile(r"\[([^\[\]]*)\]\((https?://[^\s)]*)\)")
+_URL = re.compile(r"https?://[A-Za-z0-9\-._~:/?#@!$&'*+;=%\[\]()]*", re.I)
+#: Label and URL are bounded, so a long run of `[x](http://` cannot make the scan quadratic.
+_MARKDOWN_LINK = re.compile(r"\[([^\[\]]{0,200})\]\((https?://[^\s)]{0,2048})\)", re.I)
 _URL_TAIL = ".,;:!?)]}'\""
 
 
 def _drop_id_urls(text: str) -> str:
     """Model text without any URL that carries an id (never left as `.../(id)`): `[label](url)` becomes
-    `label`, a bare URL goes whole except the punctuation that closed it. Linear: no nested quantifiers."""
+    `label`, a bare URL goes whole except the punctuation that closed it. Both patterns are bounded or single-pass."""
 
     def link(m: re.Match) -> str:
         return m.group(1) if _UUID_TEXT.search(m.group(2)) else m.group(0)
@@ -250,7 +251,7 @@ def _value_forms(value: Any) -> set[str]:
 #: scoring fields, any `*_id` / `*_ids`, and name-like text ("Basin 600" is not 600 units).
 _NOT_FIGURE_KEYS = frozenset(
     {"more", "page", "limit", "offset", "total_count", "score", "has_result", "rank",
-     "name", "product_name", "label", "description", "title", "display"}
+     "name", "product_name", "label", "description", "title", "display", "problem"}
 )
 
 
