@@ -1023,6 +1023,9 @@ def _dispatch_inner(
         # A model-supplied contact or space is dropped, never forwarded.
         args = {k: v for k, v in args.items() if k not in GUARD_PARAMS and k != VIEW_PARAM}
         allowed = {"query"}
+        query = args.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return ToolResult("invalid", message="query must be the guide's name or a question, as text.")
     unknown = sorted(k for k in args if k not in allowed)
     if unknown:
         return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")

@@ -20,7 +20,13 @@ vi.mock('../services/chatbotConsoleService', () => ({
   postConsoleTurn: (...args: unknown[]) => postConsoleTurn(...args),
   getConsolePromptVersions: (...args: unknown[]) => getConsolePromptVersions(...args),
   getConsoleMediaStatus: vi.fn(),
+  getConsoleThread: vi.fn().mockResolvedValue({ turns: [], pending_action: null }),
 }));
+
+vi.mock('../services/agentConsoleService', async () => {
+  const actual = await vi.importActual<typeof import('../services/agentConsoleService')>('../services/agentConsoleService');
+  return { ...actual, newAgentConversation: vi.fn().mockResolvedValue({ conversation_id: 'cv-new' }) };
+});
 
 vi.mock('@/lib/toast', () => ({
   toast: {
@@ -243,8 +249,8 @@ describe('ChatbotConsole - composer keyboard', () => {
   });
 });
 
-describe('ChatbotConsole - reset', () => {
-  it('clears the thread back to the two greeting lines and rotates run_id', async () => {
+describe('ChatbotConsole - new conversation', () => {
+  it('New conversation clears the thread back to the two greeting lines and rotates run_id', async () => {
     postConsoleTurn.mockResolvedValue({
       turn_id: 't1',
       branch_kind: null,
@@ -261,9 +267,9 @@ describe('ChatbotConsole - reset', () => {
     const firstRunId = postConsoleTurn.mock.calls[0][0].run_id as string;
     expect(await screen.findByText('first reply')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /reset/i }));
+    fireEvent.click(screen.getByRole('button', { name: /new conversation/i }));
 
-    expect(screen.queryByText('first reply')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('first reply')).not.toBeInTheDocument());
     expect(
       screen.getByText('Sorento chat console (dry run, nothing reaches WhatsApp).'),
     ).toBeInTheDocument();

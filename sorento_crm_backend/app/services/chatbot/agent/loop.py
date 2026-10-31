@@ -31,6 +31,7 @@ from app.services.chatbot.agent.tools import (
     PLAN_SCHEMA,
     redact_ids,
     GUARD_PARAMS,
+    REGISTRY,
     RESOLVE,
     TOOL_LABELS,
     ToolResult,
@@ -599,7 +600,7 @@ class AgentBusy(Exception):
 
 def enforce_agent_rate_limit(operator_user_id: str) -> None:
     """Each agent turn can spend a dozen model calls, so they are limited per operator (fail-open
-    without Redis). The one check for POST /agent/turn and for console turns the router sends here."""
+    without Redis). The one check for console turns that go to the agent."""
     from app.services import rate_limit
     from app.services.error_handler import AppException
 
@@ -706,6 +707,16 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
     # The knowledge paragraph only where the tool is offered this turn.
     if knowledge_service.KNOWLEDGE_TOOL in tool_names:
         text = knowledge_service.with_knowledge_protocol(text)
+    # What this user's permissions leave out, by the constant labels (never outside text in the system role).
+    names = set(tool_names)
+    left_out = list(dict.fromkeys(
+        TOOL_LABELS[n] for n in [*REGISTRY, *writes.USER_READS, *writes.WRITES] if n not in names and n in TOOL_LABELS
+    ))
+    if left_out:
+        text = (
+            f"{text}\n\nOutside this user's or this contact's access: {'; '.join(left_out)}. When asked about these, say they "
+            "are outside this user's or this contact's access; never say the CRM lacks them."
+        )
     today = datetime.now(timezone.utc).date().isoformat()
     if principal == "contact":
         return f"{text}\n\nToday's date is {today}. You are answering a Sorento customer on WhatsApp."
@@ -754,8 +765,12 @@ def tool_detail(name: str, args: Any, out: ToolResult, names: dict[str, str]) ->
         if key in GUARD_PARAMS:
             continue
         values = value if isinstance(value, list) else [value]
-        if key.endswith(("_id", "_ids")):
-            words = [names[str(v).lower()] for v in values if str(v).lower() in names]
+        guide_id = name == "user_guides_read" and key == "query" and any(
+            isinstance(v, str) and _UUID_TEXT.fullmatch(v.strip()) for v in values
+        )
+        if key.endswith(("_id", "_ids")) or guide_id:
+            # A guide is read by its id: show the title a result gave, nothing when it is not known.
+            words = [names[str(v).strip().lower()] for v in values if str(v).strip().lower() in names]
         else:
             words = [str(v) for v in values if isinstance(v, (str, int, float)) and not isinstance(v, bool)]
         if words:
@@ -811,9 +826,15 @@ def run_agent_turn(
     clock: Callable[[], float] = time.monotonic,
     operator_user_id: str | None = None,
     is_test: bool = True,
+    context_before: str = "",
+    context_after: str = "",
 ) -> AgentTurnResult:
     """`is_test=False` is a live customer turn (WhatsApp): it is written as a real turn and, with no
-    operator behind it, its rate limit keys on the contact."""
+    operator behind it, its rate limit keys on the contact.
+
+    `context_before` and `context_after` are quoted data for the model (the console passes the thread's bot
+    replies from before and after the last agent turn). Each goes in a message of its own, never the system
+    role, and neither goes in at all while a change waits for a yes: only the model reads that yes."""
     ctx = build_context(db, contact_respond_id)  # AgentRefused propagates
     if not is_test and not operator_user_id:
         enforce_agent_rate_limit(contact_respond_id)
@@ -821,13 +842,14 @@ def run_agent_turn(
         return _run(
             db, ctx, contact_respond_id=contact_respond_id, text=text, provider=provider,
             mcp_call=mcp_call, mcp_builder=mcp_builder, catalog=catalog, clock=clock,
-            operator_user_id=operator_user_id, is_test=is_test,
+            operator_user_id=operator_user_id, is_test=is_test, context_before=context_before,
+            context_after=context_after,
         )
 
 
 def _run(
     db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
-    is_test=True,
+    is_test=True, context_before="", context_after="",
 ):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
@@ -980,17 +1002,25 @@ def _run(
             ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
         waiting = actions.pending_action(db, contact_respond_id, user_id=ctx.user_id or None)
         offered = permitted_tools(db, ctx)
-        system = _system_prompt(db, ctx.user_name, {t.name for t in offered}, principal=ctx.principal)
+        reads, write_tools = writes.permitted_user_reads(db, ctx), writes.permitted_writes(db, ctx)
+        system = _system_prompt(
+            db, ctx.user_name, {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools)},
+            principal=ctx.principal,
+        )
         if waiting is not None:
             system = f"{system}\n\n{waiting_line(waiting)}"
         messages: list[dict] = [{"role": "system", "content": system}]
+        if context_before and waiting is None:
+            messages.append({"role": "user", "content": context_before})
         messages.extend(memory.history_messages(db, conv))
         if waiting is not None:
             messages.append({"role": "assistant", "content": waiting_reference(waiting)})
+        if context_after and waiting is None:
+            messages.append({"role": "user", "content": context_after})
         messages.append({"role": "user", "content": text})
         schemas = tool_schemas(offered, catalog)
-        schemas += [r.schema for r in writes.permitted_user_reads(db, ctx)]
-        schemas += [w.schema for w in writes.permitted_writes(db, ctx)]
+        schemas += [r.schema for r in reads]
+        schemas += [w.schema for w in write_tools]
         if waiting is not None and actions.operator_may_decide(db, ctx, waiting):
             schemas += decision_schemas(str(waiting.id))
         schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]
@@ -1042,6 +1072,10 @@ def _run(
             return f"{reply_text}\n\n{limit_sentence(word, run.unchecked)}".strip()
 
         while True:
+            if run.rounds >= 1:
+                # Confirming acts on the user's own message only: from the second round on, tool
+                # output and document text of this turn have reached the model, so it is not offered.
+                schemas = [s for s in schemas if s.get("function", {}).get("name") != CONFIRM_ACTION]
             try:
                 result = chat(messages, schemas, kind="round")
             except (_ProviderFailed, TimeoutError):
@@ -1111,9 +1145,11 @@ def _run(
                     # contains, so each extra call gets one; the digest and trace carry one note.
                     skipped += 1
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
-                    replies[idx] = ToolResult(
-                        "denied", message="Too many calls this round; ask again next round."
-                    ).to_json(call_id)
+                    retry = (
+                        "ask the user to confirm in their next message."
+                        if name == CONFIRM_ACTION else "ask again next round."
+                    )
+                    replies[idx] = ToolResult("denied", message=f"Too many calls this round; {retry}").to_json(call_id)
                     continue
                 tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.
@@ -1122,6 +1158,12 @@ def _run(
                     out = _propose(db, ctx, name, args, steps, seen_ids, action_id)
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
+                elif name == CONFIRM_ACTION and run.rounds > 1:
+                    out = ToolResult(
+                        "denied",
+                        message="Not done: a change is confirmed only from the user's own message, "
+                        "before any tool runs this turn. Ask the user to confirm in their next message.",
+                    )
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id)
                 else:

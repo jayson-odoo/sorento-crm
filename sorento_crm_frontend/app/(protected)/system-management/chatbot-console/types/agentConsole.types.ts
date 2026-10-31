@@ -96,29 +96,6 @@ export interface AgentSteps {
   reasoning?: AgentReasoning[];
 }
 
-export interface AgentConversationTurn {
-  turn_id: string;
-  text: string;
-  reply_text: string;
-  status: string;
-  created_at: string;
-  /** Absent on a turn stored before rounds were kept. */
-  rounds?: number | null;
-  limit_hit?: AgentTurnResponse['limit_hit'];
-  tool_calls?: { name: string; status: string }[];
-  steps?: AgentSteps;
-  /** The actions this turn proposed, with what they changed. */
-  actions?: AgentConversationAction[];
-}
-
-export interface AgentConversationResponse {
-  /** Null until the first turn: reading a conversation never creates one. */
-  conversation_id: string | null;
-  turns: AgentConversationTurn[];
-  /** The contact's proposal still waiting for a decision, if any. */
-  pending_action?: AgentPendingAction | null;
-}
-
 /** What a finished turn shows under its reply. Only turns run in this visit carry it. */
 export interface AgentReplyMeta {
   rounds: number | null;

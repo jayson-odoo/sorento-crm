@@ -31,20 +31,27 @@ def test_turn_posts_contact_and_text_with_bearer_token():
             200,
             json={
                 "turn_id": "t1",
-                "conversation_id": "c1",
                 "reply_text": "Stock is 12.",
-                "status": "answered",
-                "limit_hit": None,
-                "rounds": 2,
-                "usage": {"prompt_tokens": 900, "completion_tokens": 40, "cached_tokens": 100, "calls": 2},
-                "tool_calls": [{"name": "crm_inventory_stock_balance_list", "status": "ok", "ms": 80}],
+                "route": {"side": "agent", "reason": "forced"},
+                "agent": {
+                    "turn_id": "t1",
+                    "conversation_id": "c1",
+                    "reply_text": "Stock is 12.",
+                    "status": "answered",
+                    "limit_hit": None,
+                    "rounds": 2,
+                    "usage": {"prompt_tokens": 900, "completion_tokens": 40, "cached_tokens": 100, "calls": 2},
+                    "tool_calls": [{"name": "crm_inventory_stock_balance_list", "status": "ok", "ms": 80}],
+                },
             },
         )
 
     out = engine_with(handler).turn(make_case(), "final q", None, "run-1")
-    assert seen["url"] == "http://fake.invalid/api/v1/system/chatbot/agent/turn"
+    assert seen["url"] == "http://fake.invalid/api/v1/system/chatbot/console/turn"
     assert seen["auth"] == "Bearer tok-1"
-    assert seen["body"] == {"contact_respond_id": "9001", "text": "final q"}
+    assert seen["body"] == {
+        "contact_respond_id": "9001", "text": "final q", "run_id": "run-1", "force_agent": True,
+    }
     assert out.reply_text == "Stock is 12."
     assert out.branch_kind == "agent:answered"
     assert out.dry_run is True
@@ -58,13 +65,16 @@ def test_denied_and_failed_tool_calls_are_tool_errors():
         return httpx.Response(
             200,
             json={
-                "turn_id": "t1", "conversation_id": "c1", "reply_text": "x", "status": "limited",
-                "limit_hit": "rounds", "rounds": 8, "usage": {},
-                "tool_calls": [
-                    {"name": "crm_report_ask", "status": "denied", "ms": 1},
-                    {"name": "crm_lookup_resolve", "status": "ok", "ms": 5},
-                    {"name": "crm_procurement_grn_summary", "status": "timeout", "ms": 10000},
-                ],
+                "turn_id": "t1", "reply_text": "x",
+                "agent": {
+                    "turn_id": "t1", "conversation_id": "c1", "reply_text": "x", "status": "limited",
+                    "limit_hit": "rounds", "rounds": 8, "usage": {},
+                    "tool_calls": [
+                        {"name": "crm_report_ask", "status": "denied", "ms": 1},
+                        {"name": "crm_lookup_resolve", "status": "ok", "ms": 5},
+                        {"name": "crm_procurement_grn_summary", "status": "timeout", "ms": 10000},
+                    ],
+                },
             },
         )
 
@@ -81,6 +91,17 @@ def test_refused_turn_is_an_http_error_outcome():
     out = engine_with(handler).turn(make_case(), "final q", None, "r")
     assert out.reply_text == ""
     assert out.tool_errors == ["http 409 switch_off"]
+
+
+def test_a_refusal_answered_as_reply_text_is_a_tool_error_with_that_text():
+    """The console answers a refused contact with 200 and reply text and no agent block."""
+
+    def handler(request):
+        return httpx.Response(200, json={"turn_id": None, "reply_text": "The agent is off for this contact.", "route": {"side": "agent", "reason": "forced"}})
+
+    out = engine_with(handler).turn(make_case(), "final q", None, "r")
+    assert out.reply_text == "The agent is off for this contact."
+    assert out.tool_errors == ["no agent turn"]
 
 
 def test_reset_contact_starts_a_new_conversation():

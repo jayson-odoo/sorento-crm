@@ -7,6 +7,7 @@ import type { ConsoleRoute } from '../types/chatbotConsole.types';
 /** Plain words for the router's reason codes; `router_failed:*` and `not_eligible:*` carry a detail after the colon. */
 const REASON_WORDS: Record<string, string> = {
   classified: 'Classified',
+  forced: 'Forced',
   low_confidence: 'Low confidence',
   open_question: 'Open question',
   media: 'Media',

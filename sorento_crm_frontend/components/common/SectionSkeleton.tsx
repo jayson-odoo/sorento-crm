@@ -5,6 +5,8 @@ export interface SectionSkeletonProps {
   /** How many bars to draw. Three reads as "a short list of rows is coming". */
   rows?: number;
   className?: string;
+  /** The status name a screen reader announces. */
+  label?: string;
 }
 
 /**
@@ -20,14 +22,14 @@ export interface SectionSkeletonProps {
  * is a fair stand-in for a paragraph, a short list or a form's fields alike,
  * without becoming a second copy of each caller's real layout.
  */
-export function SectionSkeleton({ rows = 3, className }: SectionSkeletonProps) {
+export function SectionSkeleton({ rows = 3, className, label = 'Loading' }: SectionSkeletonProps) {
   return (
     <div
       className={cn('space-y-2', className)}
       data-slot="section-skeleton"
       role="status"
       aria-busy="true"
-      aria-label="Loading"
+      aria-label={label}
     >
       {Array.from({ length: rows }).map((_, index) => (
         <Skeleton key={index} className="h-4 w-full" />

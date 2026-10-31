@@ -411,7 +411,9 @@ def test_provider_failure_degrades_to_empty_extraction(configured):
     ):
         out = extract_ideate_turn(configured, message_text="hello", status="collecting")
 
-    assert out == IdeateExtraction()
+    # Empty, and flagged as a failed read so the capture turn does not take it for "no idea"
+    # (AI-KEY-PER-PROVIDER).
+    assert out == IdeateExtraction(failed=True)
 
 
 # --------------------------------------------------------------------------- #

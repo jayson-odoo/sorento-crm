@@ -33,7 +33,7 @@ from app.services.conversation_variables_service import (
     get_for_contact,
     overwrite_for_contact,
 )
-from app.services.llm_provider import get_provider
+from app.services.llm_provider import get_provider, resolve_api_key
 from app.services.respond_workspace_service import RespondWorkspaceService
 
 logger = logging.getLogger(__name__)
@@ -84,7 +84,7 @@ def _call_ideate_reply_llm(db: Session, *, user_message: str) -> str | None:
         logger.warning("ideate_reply: config read failed; falling back", exc_info=True)
         return None
 
-    api_key = config.api_key_ciphertext or settings.openai_api_key
+    api_key = resolve_api_key(config, config.provider)
     if not api_key:
         return None
 
