@@ -248,10 +248,20 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 - **Test ideas in `crm_ideas_list` are read live by id**, not rebuilt from stored steps, so ss stays the one source of truth and
   an edit on the board shows too. The cost is one ss call per listed test idea, capped.
 
+- **A code-added note is opt-in per write**, on `crm_idea_create` only. The first version added any step's note, which changed the
+  purchase-request reply from #2021 and could say "It applies in N seconds" after the window had lapsed. That side effect is gone,
+  so #2021's reply is unchanged.
+- **The list reads only the 5 newest test ideas**, with the rest counted in `more`, instead of adding a time budget across calls.
+  Pushing back on the review's deadline: test ideas exist only for console trials, and a hung call already stops at the first
+  failure. Older test ideas cannot be edited through the agent during the test phase.
+
 ### To do when `IDEA_IS_TEST` flips (the lane that puts the agent on WhatsApp)
 
 - Drop the second source in `crm_ideas_list`, and the test-only edit rule.
 - Decide whether a view-only operator may create an idea in another user's name. R9 allows it, and the test flag hides it today.
+- The proposal now hands full values back to the model while it waits (`waiting_reference`, history), up to 4000 characters a
+  field, which gives injected text more room right where the model decides `confirm_action`. Look at this together with the
+  pre-existing chat-confirm item below before real ideas are at stake.
 - A re-proposed idea whose ss status has moved past `captured` replays and reads "could not be reached" (`call_create_idea`
   requires `captured`), and any ss 4xx reads the same. Unlikely while ideas are off the board; give these their own line then.
 
@@ -259,6 +269,8 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 
 - The proposal's similar line can show a view-only operator the linked user's similar titles: test lane only for now.
 - `_recheck` repeats the similar lookup at confirm and discards it, up to 15 s more if ss hangs.
+- In the console, `~x~` in a value renders struck through though it is sent in full, and a URL in a value is clickable.
+- A model answer that is only an id-bearing URL becomes "no answer", and a URL with no scheme still reads `/(id)`. Both were dead links before.
 
 ### Found by review, pre-existing, reported to crew, not in this lane
 

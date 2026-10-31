@@ -173,7 +173,9 @@ Q4 is (a), owner 31 Oct: any bot question.
   the reply carries the idea's working link with its real id, exactly once, added by code after verification, whatever the
   model wrote. A model that repeats the tool's text word for word leaves no broken link behind: a URL with an id in it is
   dropped whole from model text, not turned into `.../(id)`. A bare id in model text still reads `(id)`.
-- **AC-RV-2 [BE]** A write that sets no `note` gets no added line on a chat confirm: its reply is unchanged.
+- **AC-RV-2 [BE]** Only a write that declares it gets its note added on a chat confirm (`WriteDef.note_in_reply`, on
+  `crm_idea_create` only). Every other write's reply is unchanged, including a deferred purchase-request decision, whose fixed
+  "It applies in N seconds" line can be false by the time the reply goes out.
 - **AC-RV-3 [BE]** The proposal shows every given value in full, never cut: on a create the title and each given field, on an
   update each field's new value. A value of over 1000 characters appears whole in the summary.
 - **AC-RV-4 [BE]** `crm_ideas_list` reads each of this contact's created test ideas live from ss by id, as the linked user, so
@@ -185,7 +187,24 @@ Q4 is (a), owner 31 Oct: any bot question.
 - **AC-RV-7 [BE]** With an operator acting for someone else, `crm_ideas_list` needs the operator to hold `ideation.ideas.manage`,
   else it is `denied`, with no ss call and no list of the linked user's ideas. With it, the rows come back.
 - **AC-RV-8 [BE]** `idea_id` must be one valid uuid: a comma-joined or JSON-list value is refused before any ss call.
-- **AC-RV-9 [BE]** `use_cases` takes at most 10 items, each at most 4000 characters. More is `invalid`, and nothing is sent to ss.
+- **AC-RV-9 [BE]** `use_cases` takes at most 5 items (the shared cleaner keeps 5, so more would be cut silently), each at most
+  4000 characters. More is `invalid`, and nothing is sent to ss.
 - **AC-RV-10 [BE]** While `IDEA_IS_TEST` is true, `crm_idea_update` on a real idea (`isTest` not true) is refused at the proposal,
   with a plain line pointing to the board, and no PATCH is sent. A test idea of the user's still works. When the flag is false,
   a real idea of the user's works.
+
+## Recheck round (31 Oct)
+
+- **AC-RC-1 [BE]** The model never receives a `note_in_reply` note: `confirm_action`'s tool result carries neither the note nor the
+  link, so a word-for-word relay leaves the note in the reply exactly once.
+- **AC-RC-2 [BE]** A model failure after the confirm ran still shows the note: status `failed`, and the reply holds the idea's
+  number and link, because the idea exists.
+- **AC-RC-3 [BE]** A URL with an id is removed from model text BEFORE number verification, so verification and the reply read the
+  same text: `Stock is 5000https://x.example/<uuid> units` gets the number flagged as not verified.
+- **AC-RC-4 [BE]** Only the URL goes: URL characters are ASCII, so Chinese or Malay text directly after it stays. Trailing punctuation
+  stays. `[label](url)` becomes `label`. A good URL next to it stays. 100k characters of `http://` repeats finish in under 1 second.
+- **AC-RC-5 [BE]** `crm_ideas_list` reads the 5 newest test ideas (`MAX_TEST_IDEAS`) and reports the rest in `more`. Every row carries a
+  short problem (at most 120 characters), so an untitled idea can be named.
+- **AC-RC-6 [BE]** In the proposal, a `"` inside a value is escaped, so a crafted value cannot read as another field or a second step.
+- **AC-RC-7 [BE]** Format characters (Unicode category Cf: zero-width, bidi overrides, tag characters) are removed from every idea
+  value before it is shown or sent, so what the person reads is what is sent.
