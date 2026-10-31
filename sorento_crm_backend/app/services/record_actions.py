@@ -101,15 +101,26 @@ def _delete_product_combo_part(db: Session, payload: dict):
     return ProductComboService(db).delete_part(_entity_id(payload))
 
 
-def _delete_price_tag_request_tag(db: Session, payload: dict):
+def price_tag_request_tag_in_scope(db: Session, tag_id: str):
+    """The tag, or None when its request is outside the caller's company scope.
+
+    Neither the tag nor its line carries a company (the request does), so a query naming
+    only them is not scoped; the request is read through `get_request` as the direct
+    route's `_tag_or_404` does.
+    """
     from app.models.price_tag import PriceTagRequestTag
     from app.services.price_tag_request_service import PriceTagRequestService
 
-    tag = (
-        db.query(PriceTagRequestTag)
-        .filter(PriceTagRequestTag.id == _entity_id(payload))
-        .first()
-    )
+    tag = db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag_id).first()
+    if tag is None or PriceTagRequestService.get_request(db, tag.line.request_id) is None:
+        return None
+    return tag
+
+
+def _delete_price_tag_request_tag(db: Session, payload: dict):
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    tag = price_tag_request_tag_in_scope(db, _entity_id(payload))
     if tag is None:
         return None
     return PriceTagRequestService.delete_tag(db, tag)

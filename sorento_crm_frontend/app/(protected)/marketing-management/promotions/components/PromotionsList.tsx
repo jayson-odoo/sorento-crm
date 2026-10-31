@@ -88,6 +88,7 @@ export default function PromotionsList() {
   // Re-extraction rewrites a promotion's groups and products, so it is gated on the
   // same permission as editing one by hand.
   const canResubmit = useHasPermission('marketing.promotions.edit');
+  const canDelete = useHasPermission('marketing.promotions.delete');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterAccessLevel, setFilterAccessLevel] = useState<string>('');
   const [filterAttachmentState, setFilterAttachmentState] = useState<string>('');
@@ -544,13 +545,17 @@ export default function PromotionsList() {
                     },
                   ]
                 : []),
-              {
-                key: 'delete',
-                label: 'Delete',
-                icon: Trash2,
-                destructive: true,
-                onClick: () => setBulkDeleteDialogOpen(true),
-              },
+              ...(canDelete
+                ? [
+                    {
+                      key: 'delete',
+                      label: 'Delete',
+                      icon: Trash2,
+                      destructive: true,
+                      onClick: () => setBulkDeleteDialogOpen(true),
+                    },
+                  ]
+                : []),
             ]}
           />
         </CardHeader>

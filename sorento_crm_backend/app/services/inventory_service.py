@@ -1915,11 +1915,19 @@ class StockService:
         )
 
     def bulk_delete_stock(self, stock_ids: list[str]) -> dict:
-        """Delete multiple stock records by id. Returns deleted_count and message."""
+        """Delete multiple stock records by id. Returns deleted_count and message.
+
+        Row by row through the ORM read, never `query(...).delete()`: the company scope
+        filter covers SELECTs only, so an id from another company is not found and not
+        counted here.
+        """
         if not stock_ids:
             return {"deleted_count": 0, "message": "No stock records to delete."}
-        deleted = self.db.query(Stock).filter(Stock.id.in_(stock_ids)).delete(synchronize_session=False)
+        rows = self.db.query(Stock).filter(Stock.id.in_(stock_ids)).all()
+        for stock in rows:
+            self.db.delete(stock)
         self.db.commit()
+        deleted = len(rows)
         return {"deleted_count": deleted, "message": f"Deleted {deleted} stock record(s)."}
 
     def list_stock_ledger(
