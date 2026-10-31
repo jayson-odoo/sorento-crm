@@ -693,7 +693,7 @@ class _WrappedProvider:
         )
 
 
-def _system_prompt(db, user_name: str, tool_names: Any = ()) -> str:
+def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "user") -> str:
     from app.services import ai_prompt_registry
 
     text = ai_prompt_registry.get_prompt(db, PROMPT_KEY).text
@@ -707,6 +707,8 @@ def _system_prompt(db, user_name: str, tool_names: Any = ()) -> str:
     if knowledge_service.KNOWLEDGE_TOOL in tool_names:
         text = knowledge_service.with_knowledge_protocol(text)
     today = datetime.now(timezone.utc).date().isoformat()
+    if principal == "contact":
+        return f"{text}\n\nToday's date is {today}. You are answering a Sorento customer on WhatsApp."
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
 
@@ -808,17 +810,25 @@ def run_agent_turn(
     catalog=None,
     clock: Callable[[], float] = time.monotonic,
     operator_user_id: str | None = None,
+    is_test: bool = True,
 ) -> AgentTurnResult:
+    """`is_test=False` is a live customer turn (WhatsApp): it is written as a real turn and, with no
+    operator behind it, its rate limit keys on the contact."""
     ctx = build_context(db, contact_respond_id)  # AgentRefused propagates
+    if not is_test and not operator_user_id:
+        enforce_agent_rate_limit(contact_respond_id)
     with single_flight(contact_respond_id):  # AgentBusy propagates
         return _run(
             db, ctx, contact_respond_id=contact_respond_id, text=text, provider=provider,
             mcp_call=mcp_call, mcp_builder=mcp_builder, catalog=catalog, clock=clock,
-            operator_user_id=operator_user_id,
+            operator_user_id=operator_user_id, is_test=is_test,
         )
 
 
-def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id):
+def _run(
+    db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
+    is_test=True,
+):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
     from app.services.chatbot.usage import record_turn_llm_usage
@@ -826,7 +836,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
     t0 = clock()
     budgets = budgets_from_settings(db)
     conv = memory.current_conversation(
-        db, contact_respond_id, user_id=ctx.user_id, grants_hash=grants_hash(ctx)
+        db, contact_respond_id, user_id=ctx.user_id or None, grants_hash=grants_hash(ctx)
     )
     trace = TurnTrace()
     run = _Run()
@@ -838,7 +848,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         id=str(uuid.uuid4()),
         contact_respond_id=contact_respond_id,
         ingress="agent",
-        is_test=True,
+        is_test=is_test,
         status="processing",
         envelope=envelope,
         started_at=datetime.now(timezone.utc),
@@ -968,9 +978,9 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
 
         if operator_user_id and str(operator_user_id) != str(ctx.user_id):
             ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
-        waiting = actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
+        waiting = actions.pending_action(db, contact_respond_id, user_id=ctx.user_id or None)
         offered = permitted_tools(db, ctx)
-        system = _system_prompt(db, ctx.user_name, {t.name for t in offered})
+        system = _system_prompt(db, ctx.user_name, {t.name for t in offered}, principal=ctx.principal)
         if waiting is not None:
             system = f"{system}\n\n{waiting_line(waiting)}"
         messages: list[dict] = [{"role": "system", "content": system}]

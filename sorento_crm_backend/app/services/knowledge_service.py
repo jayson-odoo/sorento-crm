@@ -659,6 +659,88 @@ def search(
     return {"status": "ok", "passages": passages, "handoff_teams": sorted(name for (name,) in teams)}
 
 
+def search_for_contact(
+    db: Session,
+    *,
+    access_codes,
+    query: str,
+    top_k: int = 5,
+    embed: Optional[Callable[[list[str]], list[list[float]]]] = None,
+) -> dict:
+    """Passages a WhatsApp contact may read, best first (AGENTIC-KNOWLEDGE W1 S2).
+
+    The same query as `search`, but the gate is the contact's ACTIVE access codes against the file's
+    `access_levels`, by the type's audience: `dealer` needs an overlap with the codes other than
+    `end_user`, `public` needs an overlap with any code, `staff` and `off` are never read. Company
+    scope is the session's. No hand-off teams (team names are staff data).
+
+    `{"status": "ok" | "error", "passages": [...]}`."""
+    from sqlalchemy import and_, or_
+    from sqlalchemy.dialects.postgresql import ARRAY
+
+    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+    from app.models.resources import Attachment, AttachmentType
+    from app.services.embedding_service import _embedding_company_filter
+
+    codes = sorted({str(c) for c in (access_codes or ()) if c})
+    if not codes:
+        return {"status": "ok", "passages": []}
+    dealer_codes = [c for c in codes if c != "end_user"]
+
+    def overlaps(values: list[str]):
+        # jsonb `?|`: the file's levels hold at least one of the codes.
+        return Attachment.access_levels.op("?|")(cast(values, ARRAY(String)))
+
+    audience = [and_(AttachmentType.ai_audience == "public", overlaps(codes))]
+    if dealer_codes:
+        audience.append(and_(AttachmentType.ai_audience == "dealer", overlaps(dealer_codes)))
+
+    top_k = max(1, min(int(top_k or 5), MAX_TOP_K))
+    try:
+        vector = (embed or _default_embed(db, QUERY_EMBED_TIMEOUT_SECONDS))([query])[0]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("knowledge: query embedding failed: %s", _readable_error(exc))
+        return {"status": "error", "passages": []}
+
+    distance = EmbeddingChunk.embedding.cosine_distance(vector)
+    similarity = (1 - distance).label("similarity")
+    filters = [
+        EmbeddingChunk.source_type == KNOWLEDGE_SOURCE,
+        EmbeddingChunk.model_name == KNOWLEDGE_MODEL,
+        EmbeddingChunk.is_current.is_(True),
+        EmbeddingDocument.is_active.is_(True),
+        Attachment.is_deleted.is_(False),
+        or_(*audience),
+        (1 - distance) >= KNOWLEDGE_SIMILARITY_FLOOR,
+    ]
+    company_filter = _embedding_company_filter(db)
+    if company_filter is not None:
+        filters.append(company_filter)
+    rows = (
+        db.query(EmbeddingChunk, Attachment.original_filename, similarity)
+        .join(EmbeddingDocument, EmbeddingDocument.id == EmbeddingChunk.document_id)
+        .join(Attachment, cast(Attachment.id, String) == EmbeddingChunk.source_id)
+        .join(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
+        .filter(*filters)
+        .order_by(distance)
+        .limit(top_k)
+        .all()
+    )
+    passages = []
+    for chunk, filename, sim in rows:
+        meta = chunk.metadata_json or {}
+        passages.append(
+            {
+                "document": os.path.splitext(filename or "")[0] or (filename or ""),
+                "page": meta.get("page"),
+                "heading": meta.get("heading"),
+                "text": chunk.chunk_text,
+                "similarity": round(float(sim), 4),
+            }
+        )
+    return {"status": "ok", "passages": passages}
+
+
 # ---------------------------------------------------------------- the prompt paragraph
 
 KNOWLEDGE_PROTOCOL = (

@@ -920,7 +920,9 @@ def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
         return ToolResult("denied", message=f"{KNOWLEDGE} is outside this user's access.")
     if status != "ok":
         return ToolResult("error", message=FIXED_ERROR)
-    data = {"passages": found.get("passages", []), "handoff_teams": found.get("handoff_teams", [])}
+    data = {"passages": found.get("passages", [])}
+    if not is_contact_principal(ctx):  # team names are staff data
+        data["handoff_teams"] = found.get("handoff_teams", [])
     return ToolResult("ok", data=data)
 
 
