@@ -125,6 +125,10 @@ def _normal(token: str) -> str:
 
 
 _UUID_TEXT = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
+#: A whole URL with an id in it: dropped from model text, never left as `.../(id)`.
+_URL_WITH_ID = re.compile(
+    r"https?://\S*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\S*", re.I
+)
 # An identifier: letters and digits joined by "-" or "/" (a product code, an order or packing number).
 _IDENTIFIER = re.compile(r"\b[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+\b")
 
@@ -428,8 +432,8 @@ def final_reply(
     left = open_parts(args, plan or [], on_limit)
     if left:
         text = f"{text}\n\nI did not get to: {'; '.join(left)}.".strip()
-    # No UUIDs in what a person reads.
-    return _UUID_TEXT.sub("(id)", text), bool(not_checked)
+    # No UUIDs in what a person reads. A link that carries one is added by code from the stored step instead.
+    return _UUID_TEXT.sub("(id)", _URL_WITH_ID.sub("", text)), bool(not_checked)
 
 
 def violation_message(bad_numbers: list[str], bad_not_found: list[str], empty_text: bool) -> str:
@@ -522,7 +526,7 @@ def _propose(db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str
     )
 
 
-def _decide(db, ctx, name: str, args: Any, turn_id: str) -> ToolResult:
+def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str]) -> ToolResult:
     """`confirm_action` / `cancel_action`: the model read the user's message; the server limits are `actions`."""
     action_id = args.get("action_id") if isinstance(args, dict) else None
     if not isinstance(action_id, str) or not action_id.strip():
@@ -539,6 +543,7 @@ def _decide(db, ctx, name: str, args: Any, turn_id: str) -> ToolResult:
             )
     except actions.ActionRefused as exc:
         return ToolResult("invalid", message=f"Not done: {exc.reason.replace('_', ' ')}.")
+    notes.extend(outcome.notes)
     return ToolResult(
         "ok", data={"status": outcome.status, "reply_text": outcome.reply_text, "steps": outcome.steps}
     )
@@ -841,6 +846,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
     conversation_id = str(conv.id)
 
     steps: list[dict] = []
+    confirm_notes: list[str] = []
     action_id = ""
     provider_name = DEFAULT_PROVIDER
     model = DEFAULT_MODEL
@@ -1103,7 +1109,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
-                    out = _decide(db, ctx, name, args, turn_id)
+                    out = _decide(db, ctx, name, args, turn_id, confirm_notes)
                 else:
                     out = dispatch(
                         db, ctx, name, args,
@@ -1206,6 +1212,9 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         reply = "The agent has no answer for this."
     if status != "failed":
         reply = to_whatsapp(reply)
+    if status != "failed" and confirm_notes:
+        # After verification, like the proposal block: built by code from the stored steps, so a link is whole.
+        reply = f"{reply}\n\n" + "\n".join(confirm_notes)
     pending = None
     if status != "failed" and steps:
         # After verification: the block is built by code from the stored steps, so its figures are not flagged.
@@ -1232,7 +1241,7 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         "rounds": run.rounds,
     }
     # Only a real final answer can ask back; a forced final at a limit never does.
-    if status != "failed" and final_args is not None and final_args.get("asked_back") is True:
+    if status != "failed" and final_args is not None and final_args.get("asked_back") is True and not steps:
         turn.response["asked_back"] = True
     turn.trace = trace.persisted()
     turn.finished_at = datetime.now(timezone.utc)
