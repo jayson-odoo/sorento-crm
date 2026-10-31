@@ -1,6 +1,6 @@
 # PLAN: REGEX-PURGE (chatbot understanding comes from the parser only)
 
-Status: Step 1 done, card filed (`regex-purge-behaviour-card.md`). Track: M, LEAD pattern. Owner answers pending, no code yet.
+Status: Parked by the owner, 31 Oct 2026 ("it is fine, don't purge first"). Step 1 done, card filed (`regex-purge-behaviour-card.md`); Q1-Q5 unanswered, no code written, no PR. Track: M, LEAD pattern. On pick-up: re-verify the card's file:line against current main first (audit was at b440c715e5, before #2030).
 
 ## Rule
 

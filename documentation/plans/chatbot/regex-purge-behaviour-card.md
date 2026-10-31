@@ -1,5 +1,8 @@
 # REGEX-PURGE behaviour card (step 1, no code)
 
+**Parked by the owner, 31 Oct 2026: "it is fine, don't purge first". Q1-Q5 below are unanswered. No code was written.
+Re-verify every file:line against current main before using this card.**
+
 Audit at origin/main b440c715e5. Paths are under `sorento_crm_backend/app/services/chatbot/`, `../` is
 `app/services/`. Every file:line below was grepped at that commit. Risk is judgement from code comments and
 PR history; no eval has run yet.
