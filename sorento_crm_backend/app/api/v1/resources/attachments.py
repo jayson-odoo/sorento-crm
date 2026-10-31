@@ -1909,7 +1909,8 @@ def read_attachment_again(
             detail="Too many read requests. Try again shortly.",
             headers={"Retry-After": str(limit.retry_after_seconds)},
         )
-    knowledge_service.queue_read(db, attachment)
+    # read_block_reason has just asked whether a job is live, so queue_read need not ask again.
+    knowledge_service.queue_read(db, attachment, check_pending=False)
     db.refresh(attachment)
     return {"ai_read_status": attachment.ai_read_status}
 

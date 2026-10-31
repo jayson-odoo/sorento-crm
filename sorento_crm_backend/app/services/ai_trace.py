@@ -190,6 +190,38 @@ class _SpanRecord:
     top_k: int | None = None
 
 
+def _messages_for_trace(messages: Any) -> Any:
+    """A copy of the LLM input that may be stored: the result of every `crm_knowledge_search` call
+    (a tool message carrying one of its call ids) loses its passage text, so company documents never
+    land in a stored span. The live list the model reads is never touched."""
+    if not isinstance(messages, list):
+        return messages
+    from app.services.chatbot.agent import tools as agent_tools
+
+    knowledge_ids: set[str] = set()
+    for m in messages:
+        if isinstance(m, dict) and m.get("role") == "assistant":
+            for call in m.get("tool_calls") or []:
+                fn = (call or {}).get("function") or {}
+                if fn.get("name") == "crm_knowledge_search" and call.get("id"):
+                    knowledge_ids.add(str(call["id"]))
+    out: list[Any] = []
+    for m in messages:
+        if isinstance(m, dict) and m.get("role") == "tool" and str(m.get("tool_call_id")) in knowledge_ids:
+            content = m.get("content")
+            try:
+                parsed = json.loads(content) if isinstance(content, str) else content
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                safe = agent_tools.trace_safe("crm_knowledge_search", parsed)
+                m = {**m, "content": json.dumps(safe, default=str)}
+            else:  # unreadable: keep nothing rather than risk the text
+                m = {**m, "content": "(knowledge search result)"}
+        out.append(m)
+    return out
+
+
 class TurnTrace:
     """In-memory span buffer for one assistant turn."""
 
@@ -331,7 +363,7 @@ class TurnTrace:
         return self.add_span(
             kind=KIND_LLM,
             name=name,
-            input_json={"messages": messages_in},
+            input_json={"messages": _messages_for_trace(messages_in)},
             output_json={"content": content, "tool_calls": tool_calls or []},
             status=status,
             error=error,

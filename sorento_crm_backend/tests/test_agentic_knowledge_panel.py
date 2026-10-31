@@ -315,3 +315,56 @@ def test_the_panel_strips_through_tools_trace_safe(db, monkeypatch):
     _run_knowledge_turn(db, monkeypatch)
 
     assert TOOL in calls
+
+
+# ================================================================ FIX ROUND 3: the LLM spans carry the tool messages too
+
+
+class _CapturingProvider(_KnowledgeTurnProvider):
+    """Like the two-round provider, and it keeps a copy of what it was sent on each round."""
+
+    def __init__(self):
+        super().__init__()
+        self.sent: list[list[dict]] = []
+
+    def chat(self, messages, tools=None, **kw):  # noqa: ANN001
+        import copy
+
+        self.sent.append(copy.deepcopy(list(messages)))
+        return super().chat(messages, tools=tools, **kw)
+
+
+def test_no_buffered_span_of_a_knowledge_turn_carries_the_passage_text_but_the_model_still_reads_it(db, monkeypatch):
+    import copy
+
+    import app.services.ai_assistant_service as svc_module
+    from app.services import knowledge_service
+    from app.services.ai_trace import TurnTrace
+
+    provider = _CapturingProvider()
+    monkeypatch.setattr(svc_module, "MCPRuntimeClient", _GuideMcp)
+    monkeypatch.setattr(svc_module, "get_provider", lambda *_a, **_k: provider)
+    monkeypatch.setattr(knowledge_service, "search", lambda db_, **kw: copy.deepcopy(HIT_WITH_TEXT))
+    user_id = seed_reader(db)
+    service = _service(db)
+    cfg = service.cfg.get()
+    cfg.api_key_ciphertext = "fake-key"
+    cfg.provider, cfg.model, cfg.is_enabled = "openai", "gpt-4o-mini", True
+    db.commit()
+    service._turn_trace = TurnTrace(user_id=user_id, conversation_id=None, session_id=None)
+
+    service._run_agent_loop(
+        config=cfg, history=[], user_message="annual leave?", standalone_query="annual leave",
+        selected_tools=[], sources=[], user_id=user_id, turn_cache=None,
+    )
+
+    assert len(provider.sent) >= 2
+    round_two = json.dumps(provider.sent[1], default=str)
+    assert PASSAGE_TEXT in round_two, "the model itself must still read the passage"
+    spans = service._turn_trace._spans
+    assert any(s.span_kind == "LLM" for s in spans) and any(s.tool_name == TOOL for s in spans)
+    for span in spans:
+        stored = json.dumps([span.input_json, span.output_json, span.tool_args, span.tool_result], default=str)
+        assert PASSAGE_TEXT not in stored, f"span {span.name} stores the passage text"
+    llm_inputs = json.dumps([s.input_json for s in spans if s.span_kind == "LLM"], default=str)
+    assert "Employee Handbook 2026" in llm_inputs, "document and page stay in the trace"

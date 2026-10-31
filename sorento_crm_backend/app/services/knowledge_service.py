@@ -374,11 +374,11 @@ def read_attachment(
             _finish(db, attachment, "failed", error=error)
             return
 
-        # A replace upload during the read changed the file: what was read is stale, so write nothing.
-        # The replace queued its own read.
         if db.query(Attachment.id).filter(Attachment.id == attachment_id).first() is None:
             logger.info("knowledge read for %s dropped: the file was deleted while it was read", attachment_id)
             return
+        # A replace upload during the read changed the file: what was read is stale, so write nothing.
+        # The replace queued its own read.
         db.refresh(attachment)
         if attachment.file_hash != started_hash:
             logger.info("knowledge read for %s dropped: the file changed while it was read", attachment_id)
@@ -491,7 +491,7 @@ def move_company(db: Session, attachment_ids: list[str], company_id: Optional[st
 # ---------------------------------------------------------------- queueing
 
 
-def queue_read(db: Session, attachment) -> bool:
+def queue_read(db: Session, attachment, *, check_pending: bool = True) -> bool:
     """Queue one read when the file's type is AI readable. True when a job was queued."""
     from app.models.resources import AttachmentType
 
@@ -505,7 +505,7 @@ def queue_read(db: Session, attachment) -> bool:
     attachment.ai_read_error = None
     attachment.ai_read_at = _now()
     db.commit()
-    return _enqueue_or_fail(db, attachment)
+    return _enqueue_or_fail(db, attachment, check_pending)
 
 
 def read_block_reason(db: Session, attachment) -> Optional[str]:
@@ -563,7 +563,9 @@ def queue_type_files(db: Session, attachment_type_id: str) -> int:
         return sum(1 for row in rows if _enqueue_or_fail(db, row))
 
 
-def _enqueue_or_fail(db: Session, attachment) -> bool:
+def _enqueue_or_fail(db: Session, attachment, check_pending: bool = True) -> bool:
+    if check_pending and _job_pending(str(attachment.id)):
+        return True  # the job with this id is still live; it will read the file
     try:
         _enqueue(str(attachment.id))
     except Exception:  # noqa: BLE001 - Redis down: the row says so, the save still stands

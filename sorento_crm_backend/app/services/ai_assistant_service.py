@@ -744,6 +744,9 @@ class AIAssistantChatService:
         # Never compress guide markdown - inline links are load-bearing.
         if "user_guides_read" in (tool_name or ""):
             return raw_output
+        # Passages carry the document, page and exact wording the answer cites.
+        if "crm_knowledge_search" in (tool_name or ""):
+            return raw_output
         # Only worth compressing sizeable data payloads.
         if len(raw_output or "") < 400:
             return raw_output

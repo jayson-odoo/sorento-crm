@@ -341,6 +341,8 @@ def test_reading_a_pdf_writes_a_gemini_knowledge_document_and_chunks(db):
     from app.services import knowledge_service as ks
 
     att = seed_attachment(db, seed_type(db), "Employee Handbook 2026.pdf")
+    att.file_hash = "file-hash-for-the-handbook"
+    db.flush()
     embed = EmbedSpy()
     ocr_calls: list[int] = []
 
@@ -363,6 +365,7 @@ def test_reading_a_pdf_writes_a_gemini_knowledge_document_and_chunks(db):
     docs = _knowledge_docs(db, att)
     assert len(docs) == 1
     assert docs[0].source_type == ks.KNOWLEDGE_SOURCE == "knowledge"
+    assert docs[0].source_hash == "file-hash-for-the-handbook", "the file's hash, so Read again can tell it is unchanged"
     assert docs[0].company_id == row.company_id
 
     chunks = _knowledge_chunks(db, att)
@@ -883,3 +886,18 @@ def test_a_file_deleted_during_the_read_writes_nothing_and_does_not_raise(db):
     assert db.query(EmbeddingChunk).filter(
         EmbeddingChunk.source_type == "knowledge", EmbeddingChunk.source_id == att_id
     ).count() == 0
+
+
+# ================================================================ FIX ROUND 3
+
+
+def test_queue_read_does_not_enqueue_a_second_job_while_one_is_pending(db, enqueued, monkeypatch):
+    from app.services import knowledge_service as ks
+
+    monkeypatch.setattr(ks, "_job_pending", lambda attachment_id: True)
+    att = seed_attachment(db, seed_type(db, audience="staff"))
+
+    assert ks.queue_read(db, att) is True
+
+    assert enqueued == [], "a live job with this id already exists; a second would run the read twice"
+    assert _fresh(db, att).ai_read_status == "queued"
