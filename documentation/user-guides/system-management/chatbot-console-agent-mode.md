@@ -7,7 +7,7 @@ incoming shipments, orders, sales) and, when you confirm, makes a small set of c
 
 ## Where to find it
 
-Open **System Management > Chatbot Console** (`/system-management/chatbot-console`). Page header:
+Open **System > Messaging > Chatbot Console** (`/system-management/chatbot-console`). Page header:
 **Chatbot Console**. You need the **Chat History** view permission
 (`system.chat_history.view`); without it the menu item is hidden and the page refuses to open.
 
@@ -166,11 +166,11 @@ wait a few minutes.*
 
 ## Settings (admins)
 
-* **User Management > Settings**, **Chatbot Media** tab (`/user-management/settings/chatbot-media`), card **Agent budgets**: **Tool rounds**, **Seconds per turn**,
+* **Users & Access > Settings**, **Chatbot Media** tab (`/user-management/settings/chatbot-media`), card **Agent budgets**: **Tool rounds**, **Seconds per turn**,
   **Input tokens per turn**, **Compact history above (tokens)**, **Router minimum score**
   (0.5 to 0.95; below this Jev's choice is ignored and the bot answers) and **Agent turns per
   contact per day** (0 means no cap).
-* **System Management > AI Assistant > Settings** (`/system-management/ai-assistant`): **TypeSafe (Jev) API key**. Without it every
+* **System > AI Assistant > Settings** (`/system-management/ai-assistant`): **TypeSafe (Jev) API key**. Without it every
   Bot-tab message goes to the bot (reason **Router failed**).
 
 ## See also
