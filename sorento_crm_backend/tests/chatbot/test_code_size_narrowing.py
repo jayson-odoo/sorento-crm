@@ -393,7 +393,7 @@ def test_turn_short_head_scoped_contact_sees_only_its_brand(
 
 
 # --------------------------------------------------------------------------- #
-# Owner ruling 31 Oct: a size no variant holds says the existing "None with ..." clause (answer.py:3098), #
+# Owner ruling 31 Oct: a size no variant holds says the existing "None with ..." clause (answer.py:3119), #
 # then lists the variants as today. Never "Couldn't find".                                                  #
 # --------------------------------------------------------------------------- #
 
@@ -446,12 +446,11 @@ def test_a_named_key_no_variant_holds_says_none_with_that_label(session_factory,
 # --------------------------------------------------------------------------- #
 
 
-def _rows_turn(session_factory, stub_access, monkeypatch, verdict, ids_by_code, *, hidden=None, text_body="x", item_for=None, result_type="stock", only=None, envelope_for=None):
+def _rows_turn(session_factory, stub_access, monkeypatch, verdict, ids_by_code, *, hidden=None, text_body="x", envelope_for=None):
     """One turn like `_turns`, but the tools answer with REAL rows for the product ids asked, so the
     reply is composed on the HIT path (the stock `_turns` stub answers empty and only ever shows the miss)."""
     import json
 
-    from app.models.base import set_company_scope  # noqa: F401
     from app.services.ai_assistant_service import MCPRuntimeClient
     from app.services.chatbot import engine as engine_mod
     from app.services.chatbot.head import parser as parser_mod
@@ -473,12 +472,10 @@ def _rows_turn(session_factory, stub_access, monkeypatch, verdict, ids_by_code, 
     def call_tool(self, name, args):
         calls.append((name, args))
         asked = [code_of[i] for i in (args.get("product_ids") or []) if i in code_of]
-        if only is not None:
-            asked = [c for c in asked if c in only]
         if envelope_for is not None:
             return json.dumps(envelope_for([(c, ids_by_code[c]) for c in asked]))
         items = [
-            item_for(c) if item_for else {
+            {
                 "title": c,
                 "fields": [
                     {"key": "product_code", "label": "Product Code", "value": c},
@@ -487,7 +484,7 @@ def _rows_turn(session_factory, stub_access, monkeypatch, verdict, ids_by_code, 
             }
             for c in asked
         ]
-        return json.dumps({"result_type": result_type, "intro": "Stock summary for the requested products.", "items": items, "has_result": bool(items)})
+        return json.dumps({"result_type": "stock", "intro": "Stock summary for the requested products.", "items": items, "has_result": bool(items)})
 
     monkeypatch.setattr(MCPRuntimeClient, "call_tool", call_tool)
     stub_access(hidden_spec_keys=hidden if hidden is not None else real_hidden_spec_keys(session_factory))
@@ -859,3 +856,31 @@ def test_r2_the_contacts_own_hidden_policy_reaches_the_narrower_without_a_caller
     assert _route_codes(got) == _route_codes(control), (got, control)
     assert "trap_length" not in json.dumps(got.get("spec_none") or []), got.get("spec_none")
 
+
+
+# ---- round 3: a refusal is the bare refusal, the clause never sits above it (the refusals are raised in
+# `run_fetch` AFTER `resolve_kinds`, so the route already produced `spec_none`)
+
+DEFAULT_ENTITIES = [
+    {"raw": "ZZSRT286", "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+    {"raw": "300MM", "hint": "specification", "spec_key": "size", "spec_value": 300, "canonical_code": None, "current_message": True, "confident": True},
+]
+REFUSALS = [("purchase_cost", "check_po_cost"), ("order", "check_order"), ("sales", "check_sales")]
+
+
+@pytest.mark.parametrize("domain, intent", REFUSALS)
+def test_r3_a_refusal_is_the_bare_refusal_with_no_none_with(session_factory, seeded, stub_access, monkeypatch, domain, intent):  # noqa: F811
+    ids = _seed(session_factory, tuple((_code(s), WC, {"trap_length": v}) for s, v in TRAP.items()))
+    with_size, _ = _rows_turn(session_factory, stub_access, monkeypatch, _verdict(intent, domain, DEFAULT_ENTITIES), ids)
+    without_size, _ = _rows_turn(session_factory, stub_access, monkeypatch, _verdict(intent, domain, DEFAULT_ENTITIES[:1]), ids)
+    assert "None with" not in with_size, with_size
+    assert with_size == without_size, (with_size, without_size)
+
+
+def test_r3_control_stock_and_cost_asks_keep_the_clause_above_stock_and_denial(session_factory, seeded, stub_access, monkeypatch):  # noqa: F811
+    ids = _seed(session_factory, tuple((_code(s), WC, {"trap_length": v}) for s, v in TRAP.items()))
+    verdict = _verdict(None, None, DEFAULT_ENTITIES)
+    verdict["asks"] = [{"domain": "inventory", "intent": "check_stock"}, {"domain": "purchase_cost", "intent": "check_po_cost"}]
+    text_, _ = _rows_turn(session_factory, stub_access, monkeypatch, verdict, ids)
+    assert text_.startswith("None with size 300"), text_
+    assert "not allowed to access purchase cost" in text_, text_
