@@ -128,6 +128,7 @@ function orderInquiryHeaderListParamsFromUrl(
     agent: params.filters.agent || undefined,
     project: params.filters.project || undefined,
     reserve: (params.filters.reserve as OrderInquiryHeaderListParams['reserve']) || undefined,
+    inquiry_no: params.filters.inquiry_no || undefined,
   };
 }
 
