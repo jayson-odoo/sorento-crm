@@ -5353,6 +5353,7 @@ class StockInquiryService:
             getattr(inquiry, "contact_id", None),
             "stock_inquiry",
             inquiry_id,
+            space_id=getattr(inquiry, "space_id", None),
         )
         if portal:
             return portal.strip()
@@ -7125,6 +7126,7 @@ class StockInquiryService:
             getattr(inquiry, "contact_id", None),
             "stock_inquiry",
             str(inquiry.id),
+            space_id=getattr(inquiry, "space_id", None),
         ) or view_url
         # Structured-template vars: LEAN `update` core (status only) + links
         # "Rejected, reason: X" (no preamble, no inline URL). Mirrors complaint.
@@ -7204,6 +7206,7 @@ class StockInquiryService:
             getattr(inquiry, "contact_id", None),
             "stock_inquiry",
             str(inquiry.id),
+            space_id=getattr(inquiry, "space_id", None),
         ) or view_url
         # Structured-template vars: LEAN `update` core (status only) + links
         # "Rejected, reason: X" (no preamble, no inline URL). Mirrors complaint.
@@ -7519,6 +7522,7 @@ class PurchaseRequestService:
             getattr(header, "contact_id", None),
             getattr(header, "request_type", None) or "purchase_request",
             request_id,
+            space_id=getattr(header, "space_id", None),
         )
         if portal:
             return portal.strip()
@@ -7752,6 +7756,7 @@ class PurchaseRequestService:
             getattr(header, "contact_id", None),
             getattr(header, "request_type", None) or "purchase_request",
             str(header.id),
+            space_id=getattr(header, "space_id", None),
         ) or view_url
         rt = getattr(header, "request_type", None) or ""
         if rt == "sponsorship_form":
@@ -7790,6 +7795,7 @@ class PurchaseRequestService:
             getattr(header, "contact_id", None),
             getattr(header, "request_type", None) or "purchase_request",
             str(header.id),
+            space_id=getattr(header, "space_id", None),
         ) or view_url
         rt = getattr(header, "request_type", None) or ""
         if rt == "sponsorship_form":
@@ -7901,6 +7907,7 @@ class PurchaseRequestService:
             getattr(header, "contact_id", None),
             getattr(header, "request_type", None) or "purchase_request",
             str(header.id),
+            space_id=getattr(header, "space_id", None),
         ) or view_url
         note_clean = (note or "").strip()
         note_part = f" Note: {note_clean}." if note_clean else ""

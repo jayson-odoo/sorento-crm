@@ -201,15 +201,16 @@ def _message_timestamp(item: dict) -> Optional[datetime]:
     return None
 
 
-def _last_incoming_from_respond(identifier: str) -> Optional[datetime]:
+def _last_incoming_from_respond(identifier: str, client=None) -> Optional[datetime]:
     """Latest incoming-message timestamp from the Respond.io API (UTC naive).
 
     Scans one page (newest 50). No incoming message in the page means the
-    last reply is old → closed either way.
+    last reply is old → closed either way. ``client`` is the contact's own
+    workspace client when the caller has one (default workspace otherwise).
     """
     from app.services.integration_service import RespondClient
 
-    raw = RespondClient().list_messages(identifier, limit=50)
+    raw = (client or RespondClient()).list_messages(identifier, limit=50)
     items = (raw or {}).get("items") or []
     latest: Optional[datetime] = None
     for item in items:
@@ -279,6 +280,7 @@ def _resolve_last_incoming(
     db: Session,
     identifier: str,
     respond_contact_id: Optional[str],
+    client=None,
 ) -> tuple:
     """(last incoming datetime | None, source) straight from upstream.
 
@@ -287,7 +289,7 @@ def _resolve_last_incoming(
     closed (the template branch is the safe one). Uncached - the caller decides.
     """
     try:
-        return _last_incoming_from_respond(identifier), "respond_api"
+        return _last_incoming_from_respond(identifier, client), "respond_api"
     except Exception as e:
         logger.warning(
             "Window check: Respond.io list_messages failed for %s (%s); "
@@ -310,6 +312,7 @@ def get_window_state(
     identifier: str,
     *,
     respond_contact_id: Optional[str] = None,
+    client=None,
 ) -> Dict[str, Any]:
     """Whether the contact's 24h WhatsApp window is open (23h margin).
 
@@ -324,11 +327,17 @@ def get_window_state(
     """
     now = datetime.utcnow()
     cache_key = str(identifier or "")
+    if client is not None:
+        # A Respond.io id is unique per workspace only: twins in two workspaces
+        # must not share a cached window.
+        cache_key = f"{getattr(client, 'space_id', None) or ''}|{cache_key}"
     cached = _window_cache.get(cache_key)
     if cached is not None and (_monotonic() - cached[0]) < WINDOW_CACHE_TTL_SECONDS:
         last_incoming, source = cached[1], cached[2]
     else:
-        last_incoming, source = _resolve_last_incoming(db, identifier, respond_contact_id)
+        last_incoming, source = _resolve_last_incoming(
+            db, identifier, respond_contact_id, client
+        )
         _window_cache[cache_key] = (_monotonic(), last_incoming, source)
 
     is_open = bool(last_incoming and last_incoming >= now - timedelta(hours=WINDOW_HOURS))
@@ -471,9 +480,11 @@ def send_template_for_use_case(
     identifier: str,
     use_case: str,
     context_vars: Dict[str, Any],
+    client=None,
 ) -> Dict[str, Any]:
     """Send the use case's default template. Raises TemplateSendSkipped when
-    no valid default is configured."""
+    no valid default is configured. ``client`` is the contact's own workspace
+    client when the caller has one (default workspace otherwise)."""
     from app.services.integration_service import RespondClient
 
     built = build_template_request(db, use_case=use_case, context_vars=context_vars)
@@ -481,11 +492,8 @@ def send_template_for_use_case(
     params = built["params"]
     button_payload = built["button"]
     request_payload = built["request_payload"]
-    # Single-workspace today: RespondClient() resolves the default workspace key.
-    # Switch to RespondClient.for_identifier(db, identifier) when multi-workspace
-    # routing per contact is needed.
     try:
-        response = RespondClient().send_template_message(
+        response = (client or RespondClient()).send_template_message(
             identifier,
             channel_id=template.channel.respond_channel_id,
             template_name=template.name,
@@ -576,11 +584,16 @@ def send_text_or_template(
     context_vars: Optional[Dict[str, Any]] = None,
     respond_contact_id: Optional[str] = None,
     render_template_in_window: bool = True,
+    client=None,
 ) -> Dict[str, Any]:
     """The choke point for every CRM auto-send to a Respond.io contact.
 
     ``render_template_in_window=False`` sends the caller's ``text`` verbatim inside the
     window (ideation status update: the owner asked for a natural session message).
+
+    ``client`` routes the window check and the send through one workspace (the
+    contact's own, from ``RespondClient.for_contact_id``); omitted, both use the
+    default workspace as before.
 
     Returns {sent_as, response, window_state, template_name?, request_payload}
   - callers attach ``request_payload`` to their integration log so template
@@ -593,7 +606,9 @@ def send_text_or_template(
     """
     from app.services.integration_service import RespondClient
 
-    window = get_window_state(db, identifier, respond_contact_id=respond_contact_id)
+    window = get_window_state(
+        db, identifier, respond_contact_id=respond_contact_id, client=client
+    )
 
     vars_resolved = dict(context_vars or {})
     vars_resolved.setdefault("message", text)
@@ -651,7 +666,7 @@ def send_text_or_template(
         )
         text_payload = {"message": {"type": "text", "text": out_text}}
         try:
-            response = RespondClient().send_message(identifier, out_text)
+            response = (client or RespondClient()).send_message(identifier, out_text)
         except Exception as e:
             # Attach the actual attempted payload + window so callers log the
             # truth in the Respond outbox (was a hardcoded text default before).
@@ -672,6 +687,7 @@ def send_text_or_template(
             identifier=identifier,
             use_case=use_case,
             context_vars=vars_resolved,
+            **({"client": client} if client is not None else {}),
         )
     except Exception as e:
         # Window closed -> a TEMPLATE was attempted. send_template_for_use_case

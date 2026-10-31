@@ -413,7 +413,11 @@ class PortalService:
 
         request_payload = {"message": {"type": "text", "text": text}}
         try:
-            response = RespondClient().send_message(respond_io_id, text)
+            # The contact's own workspace, keyed on the contact row: a Respond.io
+            # id is unique per workspace only, so the bare id cannot pick it.
+            response = RespondClient.for_contact_id(self.db, contact.id).send_message(
+                respond_io_id, text
+            )
         except Exception as e:
             log_respond_send(
                 self.db,
@@ -527,6 +531,7 @@ class PortalService:
         submission_type: str,
         entity_id: Optional[str] = None,
         base_url: Optional[str] = None,
+        space_id: Optional[str] = None,
     ) -> Optional[str]:
         """Deep link to a contact's submission in the portal.
 
@@ -537,12 +542,15 @@ class PortalService:
         ``entity_id`` is omitted it links to the type's portal index
         ``/portal/c/{slug}/{type}``. Returns None when the contact/slug can't be
         resolved - callers fall back to the read-only view link.
+
+        ``space_id`` is the submission row's workspace: a row that stores the
+        Respond.io id (unique per workspace only) resolves inside it.
         """
         try:
             cid = (str(contact_id) if contact_id else "").strip()
             if not cid:
                 return None
-            contact = self._resolve_contact(cid)
+            contact = self._resolve_contact(cid, space_id)
             slug = (self.get_or_create_slug(contact) or "").strip()
             if not slug:
                 return None

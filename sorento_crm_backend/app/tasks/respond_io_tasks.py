@@ -32,6 +32,7 @@ def _send_and_log(
     emit_outbound_webhook: bool = True,
     mirror_locally: Optional[bool] = None,
     render_template_in_window: bool = True,
+    respond_contact_id: Optional[str] = None,
 ) -> dict:
     """Shared worker body: window-aware send, outbound webhook, integration log.
 
@@ -45,6 +46,10 @@ def _send_and_log(
     ``emit_outbound_webhook``), for a CRM message the thread must show but n8n must
     not read as a human answer. ``render_template_in_window=False`` sends the text
     verbatim inside the window instead of the use case's default template body.
+
+    ``respond_contact_id`` (internal ``respond_contacts.id``) routes the window
+    check and the send through that contact's own workspace; omitted, the
+    default workspace is used as before.
 
     OTP sends (sign-in and portal) keep the real code in the outbox row:
     owner ruling 29 Sep 2026 overruled security round B1 (#1280), because
@@ -78,6 +83,11 @@ def _send_and_log(
             # Only passed when it differs from the default, so callers (and test
             # doubles) of the plain signature are untouched.
             verbatim = {} if render_template_in_window else {"render_template_in_window": False}
+            if respond_contact_id:
+                from app.services.integration_service import RespondClient
+
+                verbatim["respond_contact_id"] = respond_contact_id
+                verbatim["client"] = RespondClient.for_contact_id(db, respond_contact_id)
             result = send_text_or_template(
                 db,
                 identifier=identifier,
@@ -192,6 +202,21 @@ def _send_and_log(
         db.close()
 
 
+def _otp_contact_id(otp_id: str) -> Optional[str]:
+    """The contact an OTP row was issued to, so the code goes out through that
+    contact's own workspace. The bare identifier cannot pick it: a Respond.io id
+    is unique per workspace only."""
+    from app.database import SessionLocal
+    from app.models.portal import PortalOtpCode
+
+    db = SessionLocal()
+    try:
+        row = db.query(PortalOtpCode.contact_id).filter(PortalOtpCode.id == otp_id).first()
+        return row[0] if row else None
+    finally:
+        db.close()
+
+
 def send_portal_otp_respond_message(
     otp_id: str,
     identifier: str,
@@ -220,6 +245,7 @@ def send_portal_otp_respond_message(
         sla_entity_type="",
         extra_context_vars={"otp_code": otp_code},
         emit_outbound_webhook=False,
+        respond_contact_id=_otp_contact_id(otp_id),
     )
 
 
@@ -268,6 +294,7 @@ def send_login_otp_respond_message(
         sla_entity_type="",
         extra_context_vars={"otp_code": otp_code},
         emit_outbound_webhook=False,
+        respond_contact_id=_otp_contact_id(otp_id),
     )
 
 
