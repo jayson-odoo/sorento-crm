@@ -43,12 +43,15 @@ EXPECTED_LABELS = [
     "change a dealer contact",
     "approve or reject a purchase request",
     "take back a purchase request action",
+    "submit a new idea or feature request",
+    "change one of your ideas",
     "your customer asks",
     "recent changes",
     "your sales opportunities",
     "opportunity stages",
     "finding dealer contacts",
     "purchase requests and sponsorship forms",
+    "your ideas",
 ]
 
 
