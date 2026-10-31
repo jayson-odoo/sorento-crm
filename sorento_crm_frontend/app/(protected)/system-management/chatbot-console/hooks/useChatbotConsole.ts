@@ -1,26 +1,44 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { extractTurnAttachments } from '@/components/chatbot/TurnAttachments';
 import { toast } from '@/lib/toast';
 import { getChatbotTurns } from '../../chat-history/services/chatbotTurnService';
 import { getRespondContactsOutbound } from '../../respond-contacts/services/respondContactOutboundService';
 import {
+  ActionRefusedError,
+  AgentRefusedError,
+  cancelAgentAction,
+  confirmAgentAction,
+  newAgentConversation,
+  withdrawAgentStep,
+} from '../services/agentConsoleService';
+import {
   getConsoleMediaStatus,
   getConsolePromptVersions,
+  getConsoleThread,
   postConsoleTurn,
 } from '../services/chatbotConsoleService';
+import type {
+  AgentActionResponse,
+  AgentPendingAction,
+  AgentReplyMeta,
+  AgentSteps,
+} from '../types/agentConsole.types';
 import {
   CONSOLE_GREETING_MESSAGES,
   type ChatbotConsoleMessage,
   type ConsoleMediaInput,
   type ConsoleQuote,
   type ConsolePromptVersion,
+  type ConsoleThreadTurn,
   type ConsoleTurnResponse,
 } from '../types/chatbotConsole.types';
 
 const LAST_CONTACT_STORAGE_KEY = 'chatbot-console:last-contact';
+// One run id per contact, so a reload finds the same bot turns; "New conversation" replaces it.
+const RUN_STORAGE_PREFIX = 'chatbot-console:run:';
 // How often the "still reading/transcribing" poll checks back, once a media turn's own
 // synchronous wait already timed out server-side. Matches the plan's own "every 2 s".
 const MEDIA_POLL_INTERVAL_MS = 2000;
@@ -36,6 +54,25 @@ function newRunId(): string {
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return `console-${rand}`;
+}
+
+function uniqueId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+/** The run this contact's console is in: the stored one, else a new one that is stored. */
+function runIdFor(contactId: string, fresh = false): string {
+  const key = `${RUN_STORAGE_PREFIX}${contactId}`;
+  if (typeof window === 'undefined') return newRunId();
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (stored && !fresh) return stored;
+    const created = newRunId();
+    window.localStorage.setItem(key, created);
+    return created;
+  } catch {
+    return newRunId(); // Storage is off: the run lasts this visit.
+  }
 }
 
 function greetingMessages(): ChatbotConsoleMessage[] {
@@ -87,26 +124,95 @@ function contactLabel(row: { name: string | null; phone_number: string | null; r
   return row.name || row.phone_number || row.respond_io_id || 'Unknown contact';
 }
 
+/** What a bubble needs of a turn: a `POST /console/turn` answer, or a `GET /console/thread` turn made to look like one. */
+type BubbleSource = Pick<ConsoleTurnResponse, 'turn_id' | 'branch_kind' | 'reply_text' | 'prompt_version'> &
+  Partial<Pick<ConsoleTurnResponse, 'send_messages' | 'quick_replies' | 'trace_summary' | 'actions' | 'route' | 'agent'>>;
+
+/** The agent bubble's chips: rounds, each tool and why it stopped. Null when there is nothing to show. */
+function agentMetaOf(
+  steps: AgentSteps | undefined,
+  rounds: number | undefined,
+  limitHit: AgentReplyMeta['limit_hit'] | undefined,
+): AgentReplyMeta | null {
+  const tools = (steps?.tool_calls ?? []).map((c) => ({ name: c.name, status: c.status }));
+  const count = rounds ?? steps?.rounds ?? null;
+  if (!count && tools.length === 0 && !limitHit) return null;
+  return { rounds: count, tool_calls: tools, limit_hit: limitHit ?? null };
+}
+
 /** `reply_text` plus one bubble per `send_messages` entry, exactly the shape the plan
  * describes - shared between a plain text turn and the tail of a resolved media turn.
  * The turn's own `send_attachments` files (if any) ride the LAST bubble, the same
- * place `quickReplies` already rides. */
-function turnBubbles(result: ConsoleTurnResponse, fallbackId: string): ChatbotConsoleMessage[] {
-  const bodies = [...(result.reply_text ? [result.reply_text] : []), ...result.send_messages];
+ * place `quickReplies` already rides. An agent turn is one bubble that also carries its
+ * steps and the changes it proposed. */
+function turnBubbles(result: BubbleSource, fallbackId: string): ChatbotConsoleMessage[] {
+  const sends = result.send_messages ?? [];
+  const bodies = [...(result.reply_text ? [result.reply_text] : []), ...sends];
   if (bodies.length === 0) bodies.push('(no reply)');
   const attachments = extractTurnAttachments(result.actions);
-  return bodies.map((body, index) => ({
-    id: `bot-${result.turn_id ?? fallbackId}-${index}`,
-    role: 'bot' as const,
-    text: body,
-    turnId: result.turn_id,
-    branchKind: index === 0 ? result.branch_kind : undefined,
-    promptVersion: result.prompt_version ?? null,
-    routingLine: index === 0 ? (result.trace_summary?.routing_line ?? null) : undefined,
-    route: index === bodies.length - 1 ? (result.route ?? null) : undefined,
-    quickReplies: index === bodies.length - 1 ? result.quick_replies : undefined,
-    attachments: index === bodies.length - 1 && attachments.length > 0 ? attachments : undefined,
-  }));
+  const agent = result.agent ?? null;
+  return bodies.map((body, index) => {
+    const last = index === bodies.length - 1;
+    return {
+      id: `bot-${result.turn_id ?? fallbackId}-${index}`,
+      role: 'bot' as const,
+      text: body,
+      turnId: result.turn_id,
+      branchKind: index === 0 ? result.branch_kind : undefined,
+      promptVersion: result.prompt_version ?? null,
+      routingLine: index === 0 ? (result.trace_summary?.routing_line ?? null) : undefined,
+      route: last ? (result.route ?? null) : undefined,
+      quickReplies: last ? result.quick_replies : undefined,
+      attachments: last && attachments.length > 0 ? attachments : undefined,
+      ...(agent && last
+        ? {
+            agentSteps: agent.steps,
+            agentActions: agent.actions ?? [],
+            agentMeta: agentMetaOf(agent.steps, agent.rounds, agent.limit_hit),
+          }
+        : {}),
+    };
+  });
+}
+
+/** A stored thread turn as the bubbles it was shown as: the question, then the answer. */
+function threadMessages(turns: ConsoleThreadTurn[]): ChatbotConsoleMessage[] {
+  return turns.flatMap((t) => [
+    {
+      id: `user-${t.turn_id}`,
+      role: 'user' as const,
+      text: t.user_text,
+      messageId: t.side === 'chat' ? (t.message_id ?? null) : null,
+    },
+    ...turnBubbles(
+      {
+        turn_id: t.turn_id,
+        branch_kind: t.branch_kind ?? null,
+        reply_text: t.reply_text,
+        send_messages: t.send_messages ?? [],
+        prompt_version: t.prompt_version ?? null,
+        route: t.route,
+        agent:
+          t.side === 'agent'
+            ? { turn_id: t.turn_id, status: 'answered', pending_action: null, steps: t.steps, actions: t.actions }
+            : null,
+      },
+      t.turn_id,
+    ),
+  ]);
+}
+
+const isGreeting = (m: ChatbotConsoleMessage) => m.id.startsWith('greeting-');
+
+/** The first read of a thread replaces the greeting; a later read only brings the agent turns' steps and
+ * write cards up to date, so the bubbles of this visit keep their chips and files. */
+function applyThread(prev: ChatbotConsoleMessage[], turns: ConsoleThreadTurn[]): ChatbotConsoleMessage[] {
+  if (prev.every(isGreeting)) return turns.length > 0 ? threadMessages(turns) : prev;
+  const agentTurns = new Map(turns.filter((t) => t.side === 'agent').map((t) => [t.turn_id, t]));
+  return prev.map((m) => {
+    const t = m.role === 'bot' && m.turnId ? agentTurns.get(m.turnId) : undefined;
+    return t ? { ...m, agentSteps: t.steps, agentActions: t.actions } : m;
+  });
 }
 
 function mediaReadLine(kind: 'image' | 'audio', text: string): string {
@@ -131,9 +237,15 @@ export function useChatbotConsole() {
   const [sessionVars, setSessionVars] = useState<Record<string, unknown> | null>({});
   const [messages, setMessages] = useState<ChatbotConsoleMessage[]>(() => greetingMessages());
   const [sending, setSending] = useState(false);
+  const [startingNew, setStartingNew] = useState(false);
+  // The agent's waiting proposal, and what Confirm / Cancel did per proposing turn in this visit.
+  const [pendingAction, setPendingAction] = useState<AgentPendingAction | null>(null);
+  const [outcomeByTurn, setOutcomeByTurn] = useState<Record<string, AgentActionResponse>>({});
+  // Why a proposal could no longer be decided or withdrawn, in words.
+  const [notice, setNotice] = useState<string | null>(null);
   const bootstrapped = useRef(false);
   // A poll scheduled against a Reset/contact-switch mid-flight must not keep writing
-  // bubbles into a thread that has moved on - bumped by `resetThread` and `setContact`,
+  // bubbles into a thread that has moved on - bumped by `clearThread`,
   // and every poll tick checks it is still the generation that scheduled it.
   const generationRef = useRef(0);
 
@@ -165,6 +277,7 @@ export function useChatbotConsole() {
     if (stored) {
       setContactIdState(stored.id);
       setContactLabelState(stored.label);
+      setRunId(runIdFor(stored.id));
       return;
     }
     (async () => {
@@ -181,6 +294,7 @@ export function useChatbotConsole() {
         const label = row ? contactLabel(row) : latestId;
         setContactIdState(latestId);
         setContactLabelState(label);
+        setRunId(runIdFor(latestId));
       } catch {
         // No default resolvable (no prior turns, or the lookups failed) - the contact
         // picker simply opens empty and the operator picks one.
@@ -188,27 +302,106 @@ export function useChatbotConsole() {
     })();
   }, []);
 
-  const resetThread = useCallback(() => {
+  /** Empty the thread for `nextRun`: no bubble, session, waiting proposal or decision carries over. */
+  const clearThread = useCallback((nextRun: string) => {
     generationRef.current += 1;
-    setRunId(newRunId());
+    setRunId(nextRun);
     setSessionVars({});
     setMessages(greetingMessages());
+    setPendingAction(null);
+    setOutcomeByTurn({});
+    setNotice(null);
   }, []);
 
   const setContact = useCallback(
     (id: string, label: string) => {
+      if (id === contactId) return; // the same contact keeps its thread
       setContactIdState(id);
       setContactLabelState(label);
       writeStoredContact({ id, label });
       // A different contact is a different borrowed session - carrying the old one
-      // forward would silently mix two contacts' state in one reply.
-      resetThread();
+      // forward would silently mix two contacts' state in one reply. It comes back with
+      // its own thread, read from the server.
+      clearThread(runIdFor(id));
     },
-    [resetThread],
+    [clearThread, contactId],
   );
 
+  // The thread as the server holds it: read on load, on a contact switch and after a new run.
+  const threadQuery = useQuery({
+    queryKey: ['chatbot-console', 'thread', contactId, runId],
+    queryFn: () => getConsoleThread(contactId as string, runId),
+    enabled: Boolean(contactId),
+    retry: false,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+  });
+  const thread = threadQuery.data;
+  const refetchThread = threadQuery.refetch;
+  useEffect(() => {
+    if (!thread) return;
+    setPendingAction(thread.pending_action);
+    setMessages((prev) => applyThread(prev, thread.turns));
+  }, [thread]);
+
+  /** A waiting change's window closed, or a card was decided: read the thread again so the cards stay true. */
+  const refreshThread = useCallback(() => {
+    if (contactId) void refetchThread();
+  }, [contactId, refetchThread]);
+
+  /** One "New conversation": a new agent conversation and a new run for the bot. */
+  const startNew = useCallback(async () => {
+    if (startingNew) return;
+    setStartingNew(true);
+    try {
+      if (contactId) {
+        try {
+          await newAgentConversation(contactId);
+        } catch (err) {
+          // A contact the agent cannot run for has no agent side to start afresh: the bot side still does.
+          if (!(err instanceof AgentRefusedError)) {
+            toast.error(err instanceof Error ? err.message : 'Failed to start a new conversation');
+            return;
+          }
+        }
+      }
+      clearThread(contactId ? runIdFor(contactId, true) : newRunId());
+    } finally {
+      setStartingNew(false);
+    }
+  }, [clearThread, contactId, startingNew]);
+
+  const decide = useMutation({
+    mutationFn: ({ actionId, decision }: { actionId: string; turnId: string; decision: 'confirm' | 'cancel' }) =>
+      decision === 'confirm'
+        ? confirmAgentAction(contactId as string, actionId)
+        : cancelAgentAction(contactId as string, actionId),
+    onMutate: () => setNotice(null),
+    onSuccess: (result, { turnId }) => {
+      setOutcomeByTurn((prev) => ({ ...prev, [turnId]: result }));
+      setPendingAction(null);
+    },
+    onError: (err) =>
+      err instanceof ActionRefusedError
+        ? setNotice(err.message)
+        : toast.error(err instanceof Error ? err.message : 'Failed to decide the changes'),
+    onSettled: refreshThread,
+  });
+
+  const withdraw = useMutation({
+    mutationFn: ({ actionId, index }: { actionId: string; index: number }) =>
+      withdrawAgentStep(contactId as string, actionId, index),
+    onMutate: () => setNotice(null),
+    onSuccess: (result) => toast.success(result.reply_text),
+    onError: (err) =>
+      err instanceof ActionRefusedError
+        ? setNotice(err.message)
+        : toast.error(err instanceof Error ? err.message : 'Failed to withdraw the change'),
+    onSettled: refreshThread,
+  });
+
   const sendText = useCallback(
-    async (text: string, quote?: ConsoleQuote | null) => {
+    async (text: string, quote?: ConsoleQuote | null, options?: { forceAgent?: boolean }) => {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
       if (!contactId) {
@@ -231,11 +424,16 @@ export function useChatbotConsole() {
           prompt_version_id: promptVersionId,
           run_id: runId,
           ...(quote ? { reply_to: { id: quote.id, text: quote.text, source: quote.source } } : {}),
+          ...(options?.forceAgent ? { force_agent: true } : {}),
         });
         setMessages((prev) => [
           ...prev.map((m) => (m.id === userMessage.id ? { ...m, messageId: result.message_id ?? null } : m)),
-          ...turnBubbles(result, runId),
+          ...turnBubbles(result, uniqueId('local')),
         ]);
+        if (result.agent) {
+          if (result.agent.pending_action) setPendingAction(result.agent.pending_action);
+          refreshThread();
+        }
         // Membership matters (see the service doc-comment): only overwrite when this
         // turn actually produced a patch. A turn that produced none (a failed lane)
         // must not be read as "the contact now remembers nothing".
@@ -249,7 +447,7 @@ export function useChatbotConsole() {
         setSending(false);
       }
     },
-    [contactId, contactLabelState, promptVersionId, runId, sending, sessionVars],
+    [contactId, contactLabelState, promptVersionId, refreshThread, runId, sending, sessionVars],
   );
 
   const sendQuickReply = useCallback((text: string) => sendText(text), [sendText]);
@@ -274,7 +472,7 @@ export function useChatbotConsole() {
           run_id: runId,
           ...(quote ? { reply_to: quote } : {}),
         });
-        setMessages((prev) => [...prev, ...turnBubbles(result, runId)]);
+        setMessages((prev) => [...prev, ...turnBubbles(result, uniqueId('local'))]);
         if (result.session_vars !== null) setSessionVars(result.session_vars);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to run the turn');
@@ -381,7 +579,7 @@ export function useChatbotConsole() {
           ]);
           // A caption fallback may still have produced a real turn (turn_id present).
           if (result.turn_id) {
-            setMessages((prev) => [...prev, ...turnBubbles(result, runId)]);
+            setMessages((prev) => [...prev, ...turnBubbles(result, uniqueId('local'))]);
             if (result.session_vars !== null) setSessionVars(result.session_vars);
           }
           return;
@@ -400,7 +598,7 @@ export function useChatbotConsole() {
             },
           ]);
         }
-        setMessages((prev) => [...prev, ...turnBubbles(result, runId)]);
+        setMessages((prev) => [...prev, ...turnBubbles(result, uniqueId('local'))]);
         if (result.session_vars !== null) setSessionVars(result.session_vars);
         writeStoredContact({ id: contactId, label: contactLabelState });
       } catch (err) {
@@ -481,7 +679,17 @@ export function useChatbotConsole() {
     sendQuickReply,
     sendMedia,
     retryMedia,
-    reset: resetThread,
+    startNew,
+    startingNew,
     runId,
+    pendingAction,
+    outcomeByTurn,
+    notice,
+    deciding: decide.isPending,
+    confirmAction: (actionId: string, turnId: string) => decide.mutate({ actionId, turnId, decision: 'confirm' }),
+    cancelAction: (actionId: string, turnId: string) => decide.mutate({ actionId, turnId, decision: 'cancel' }),
+    withdrawing: withdraw.isPending,
+    withdrawStep: (actionId: string, index: number) => withdraw.mutate({ actionId, index }),
+    refreshThread,
   };
 }

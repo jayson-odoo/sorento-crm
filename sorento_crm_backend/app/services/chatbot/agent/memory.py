@@ -123,12 +123,13 @@ def maybe_compact(
     summarize: Callable[[str | None, list[ChatbotTurn]], str],
     threshold_tokens: int,
     keep_last: int = 6,
+    extra_tokens: int = 0,
 ) -> bool:
     """Fold the older verbatim turns into the running summary when the verbatim part is above
-    the threshold (characters / 4). A failing summarizer changes nothing."""
+    the threshold (characters / 4, plus `extra_tokens` of context shown beside the history). A failing summarizer changes nothing."""
     turns = _verbatim_turns(db, conv)
     chars = sum(len(m["content"]) for t in turns for m in _turn_messages(t))
-    if chars // 4 <= threshold_tokens or len(turns) <= keep_last:
+    if chars // 4 + extra_tokens <= threshold_tokens or len(turns) <= keep_last:
         return False
     folded = turns[: len(turns) - keep_last]
     try:

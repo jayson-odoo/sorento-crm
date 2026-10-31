@@ -799,17 +799,24 @@ def run_agent_turn(
     catalog=None,
     clock: Callable[[], float] = time.monotonic,
     operator_user_id: str | None = None,
+    context_note: str = "",
+    context_tokens: int = 0,
 ) -> AgentTurnResult:
+    """`context_note` is extra evidence for the system prompt (the console passes the thread's recent bot
+    replies); `context_tokens` is its size, counted toward the compaction threshold like history."""
     ctx = build_context(db, contact_respond_id)  # AgentRefused propagates
     with single_flight(contact_respond_id):  # AgentBusy propagates
         return _run(
             db, ctx, contact_respond_id=contact_respond_id, text=text, provider=provider,
             mcp_call=mcp_call, mcp_builder=mcp_builder, catalog=catalog, clock=clock,
-            operator_user_id=operator_user_id,
+            operator_user_id=operator_user_id, context_note=context_note, context_tokens=context_tokens,
         )
 
 
-def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id):
+def _run(
+    db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
+    context_note="", context_tokens=0,
+):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
     from app.services.chatbot.usage import record_turn_llm_usage
@@ -955,12 +962,16 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             return res.content or ""
 
         if remaining() >= SIDE_CALL_MIN:
-            memory.maybe_compact(db, conv, summarize=summarize, threshold_tokens=budgets.compact_tokens)
+            memory.maybe_compact(
+                db, conv, summarize=summarize, threshold_tokens=budgets.compact_tokens, extra_tokens=context_tokens
+            )
 
         if operator_user_id and str(operator_user_id) != str(ctx.user_id):
             ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
         waiting = actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
         system = _system_prompt(db, ctx.user_name)
+        if context_note:
+            system = f"{system}\n\n{context_note}"
         if waiting is not None:
             system = f"{system}\n\n{waiting_line(waiting)}"
         messages: list[dict] = [{"role": "system", "content": system}]

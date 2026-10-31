@@ -385,3 +385,35 @@ def withdraw(
     db.execute(update(AgentAction).where(AgentAction.id == action.id).values(steps=steps))
     db.commit()
     return ActionOutcome(str(action.id), action.status, WITHDRAWN_REPLY, _out_steps(steps))
+
+
+def actions_by_turn(db, turn_ids: list[str], user_id: str) -> dict[str, list[dict]]:
+    """This user's actions per proposing turn, as they stand now (so a reload still shows what was done)."""
+    from app.models.user import User
+
+    if not turn_ids:
+        return {}
+    found = (
+        db.query(AgentAction)
+        .filter(AgentAction.turn_id.in_(turn_ids), AgentAction.user_id == str(user_id))
+        .order_by(AgentAction.created_at, AgentAction.id)
+        .all()
+    )
+    names = {
+        str(i): n
+        for i, n in db.query(User.id, User.name).filter(
+            User.id.in_({a.decided_by_user_id for a in found if a.decided_by_user_id})
+        )
+    } if found else {}
+    out: dict[str, list[dict]] = {}
+    for a in found:
+        out.setdefault(str(a.turn_id), []).append(
+            {
+                "id": str(a.id),
+                "status": a.status,
+                "decided_at": a.decided_at,
+                "decided_by_name": names.get(str(a.decided_by_user_id)) if a.decided_by_user_id else None,
+                "steps": [step_out(st, default_status="proposed") for st in a.steps or []],
+            }
+        )
+    return out

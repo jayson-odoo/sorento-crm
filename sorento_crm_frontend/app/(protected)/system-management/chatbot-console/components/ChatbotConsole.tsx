@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { CornerUpLeft, Loader2, Mic, Paperclip, RotateCcw, SendHorizonal, Trash2, X } from 'lucide-react';
+import { CornerUpLeft, Loader2, Mic, Paperclip, Plus, SendHorizonal, Sparkles, Trash2, X } from 'lucide-react';
 import { TurnAttachments } from '@/components/chatbot/TurnAttachments';
 import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
 import MessageBubbleActions from '@/components/common/conversation/MessageBubbleActions';
@@ -16,8 +16,16 @@ import { formatElapsed, useVoiceRecorder } from '@/components/common/conversatio
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { getRespondContactsOutbound } from '../../respond-contacts/services/respondContactOutboundService';
+import {
+  ActionOutcome,
+  ActionsBlock,
+  ProposalActions,
+  ReplyMeta,
+  StepsDisclosure,
+} from './AgentTurnParts';
 import { RoutePill } from './RoutePill';
 import { useChatbotConsole } from '../hooks/useChatbotConsole';
+import type { AgentActionResponse, AgentPendingAction } from '../types/agentConsole.types';
 import type { ChatbotConsoleMessage, ConsoleMediaInput, ConsoleQuote } from '../types/chatbotConsole.types';
 
 /** A press on the mic shorter than this is a tap (recording keeps going, with a bar to
@@ -62,18 +70,36 @@ function MediaPreview({ message }: { message: ChatbotConsoleMessage }) {
   );
 }
 
+/** What an agent turn's write cards need from the hook. */
+interface AgentCards {
+  pendingAction: AgentPendingAction | null;
+  outcomeByTurn: Record<string, AgentActionResponse>;
+  deciding: boolean;
+  withdrawing: boolean;
+  onConfirm: (actionId: string, turnId: string) => void;
+  onCancel: (actionId: string, turnId: string) => void;
+  onWithdraw: (actionId: string, index: number) => void;
+  onRefresh: () => void;
+}
+
 function MessageBubble({
   message,
+  cards,
   onQuickReply,
   onRetryMedia,
   onReply,
 }: {
   message: ChatbotConsoleMessage;
+  cards: AgentCards;
   onQuickReply: (text: string) => void;
   onRetryMedia: (media: ConsoleMediaInput, quote: ConsoleQuote | null) => void;
   /** Absent = nothing the backend can quote (greeting, status line, unacknowledged send). */
   onReply?: () => void;
 }) {
+  const waiting =
+    cards.pendingAction && message.turnId && cards.pendingAction.turn_id === message.turnId && !cards.outcomeByTurn[message.turnId]
+      ? cards.pendingAction
+      : null;
   const isUser = message.role === 'user';
   const isMediaPending = message.mediaStatus === 'pending';
   return (
@@ -105,6 +131,24 @@ function MessageBubble({
         {message.attachments && message.attachments.length > 0 ? (
           <TurnAttachments attachments={message.attachments} />
         ) : null}
+        {message.agentActions && message.agentActions.length > 0 ? (
+          <ActionsBlock
+            actions={message.agentActions}
+            withdrawing={cards.withdrawing}
+            onWithdraw={cards.onWithdraw}
+            onExpire={cards.onRefresh}
+          />
+        ) : null}
+        {message.agentMeta ? <ReplyMeta meta={message.agentMeta} /> : null}
+        {message.agentSteps && message.agentSteps.rounds > 0 ? <StepsDisclosure steps={message.agentSteps} /> : null}
+        {waiting ? (
+          <ProposalActions
+            action={waiting}
+            busy={cards.deciding}
+            onConfirm={() => cards.onConfirm(waiting.id, message.turnId as string)}
+            onCancel={() => cards.onCancel(waiting.id, message.turnId as string)}
+          />
+        ) : null}
         {message.mediaStatus === 'failed' && message.mediaRetry ? (
           <div className="mt-1.5">
             <button
@@ -116,7 +160,7 @@ function MessageBubble({
             </button>
           </div>
         ) : null}
-        {message.branchKind || (!isUser && message.promptVersion != null) ? (
+        {message.branchKind || (!isUser && message.promptVersion != null) || (!isUser && message.turnId) ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             {message.branchKind ? (
               <Badge variant="secondary" size="sm">
@@ -206,9 +250,30 @@ export default function ChatbotConsole() {
     sendQuickReply,
     sendMedia,
     retryMedia,
-    reset,
+    startNew,
+    startingNew,
     runId,
+    pendingAction,
+    outcomeByTurn,
+    notice,
+    deciding,
+    confirmAction,
+    cancelAction,
+    withdrawing,
+    withdrawStep,
+    refreshThread,
   } = useChatbotConsole();
+
+  const cards: AgentCards = {
+    pendingAction,
+    outcomeByTurn,
+    deciding,
+    withdrawing,
+    onConfirm: confirmAction,
+    onCancel: cancelAction,
+    onWithdraw: withdrawStep,
+    onRefresh: refreshThread,
+  };
 
   const [draft, setDraft] = useState('');
   const [replyToId, setReplyToId] = useState('');
@@ -216,6 +281,8 @@ export default function ChatbotConsole() {
   const [staged, setStaged] = useState<File | null>(null);
   const [stagedUrl, setStagedUrl] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // The Agent toggle: the next message goes to the agent, then it switches itself off. Media always goes to the bot.
+  const [forceNext, setForceNext] = useState(false);
   const threadEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -259,7 +326,8 @@ export default function ChatbotConsole() {
 
   // The bubbles a message can quote: bot replies of a real turn and the customer's own sent messages
   // (never the greeting lines).
-  const isQuotable = (m: ChatbotConsoleMessage) => (m.role === 'bot' ? Boolean(m.turnId) : Boolean(m.messageId));
+  const isQuotable = (m: ChatbotConsoleMessage) =>
+    m.role === 'bot' ? Boolean(m.turnId) && m.route?.side !== 'agent' : Boolean(m.messageId);
   const quoted = messages.find((m) => m.id === replyToId && isQuotable(m));
   const quote: ConsoleQuote | null = quoted
     ? quoted.role === 'user'
@@ -295,7 +363,9 @@ export default function ChatbotConsole() {
     const text = draft;
     setDraft('');
     setReplyToId('');
-    void sendText(text, quote);
+    const forced = forceNext && !staged;
+    setForceNext(false);
+    void sendText(text, quote, { forceAgent: forced });
   };
 
   /** Ctrl/Cmd+V (or a phone's Paste) with an image on the clipboard stages it; text pastes
@@ -454,6 +524,7 @@ export default function ChatbotConsole() {
     setHolding(false);
     setReplyToId('');
     setStaged(null);
+    setForceNext(false);
   }, [runId]);
 
   const recordingBar = voice.recording ? (
@@ -476,7 +547,7 @@ export default function ChatbotConsole() {
       className="flex min-h-[70dvh] flex-col gap-3 lg:h-[calc(100dvh-13rem)]"
       data-testid="chatbot-console"
     >
-      {/* Header row: contact, prompt version, reset. */}
+      {/* Header row: contact, prompt version, new conversation. */}
       <div className="flex flex-wrap items-end gap-3 border-b pb-3">
         <div className="min-w-[220px] flex-1 sm:flex-none">
           <Label className="mb-1 block text-xs text-muted-foreground">Contact</Label>
@@ -505,9 +576,16 @@ export default function ChatbotConsole() {
             size="sm"
           />
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={reset} className="gap-1.5">
-          <RotateCcw className="size-3.5" />
-          Reset
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={startingNew || sending}
+          onClick={() => void startNew()}
+          className="gap-1.5"
+        >
+          <Plus className="size-3.5" />
+          New conversation
         </Button>
       </div>
 
@@ -516,16 +594,29 @@ export default function ChatbotConsole() {
         className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden pr-1"
         data-testid="chatbot-console-thread"
       >
-        {messages.map((message) => (
-          <MessageBubble
-            key={message.id}
-            message={message}
-            onQuickReply={sendQuickReply}
-            onRetryMedia={retryMedia}
-            onReply={isQuotable(message) ? () => startReply(message.id) : undefined}
-          />
-        ))}
+        {messages.map((message) => {
+          const outcome = message.turnId ? outcomeByTurn[message.turnId] : undefined;
+          return (
+            <div key={message.id} className="space-y-3">
+              <MessageBubble
+                message={message}
+                cards={cards}
+                onQuickReply={sendQuickReply}
+                onRetryMedia={retryMedia}
+                onReply={isQuotable(message) ? () => startReply(message.id) : undefined}
+              />
+              {outcome && !message.agentActions?.some((a) => a.status !== 'proposed') ? (
+                <ActionOutcome outcome={outcome} />
+              ) : null}
+            </div>
+          );
+        })}
         {sending ? <TypingIndicator /> : null}
+        {notice ? (
+          <p role="alert" className="text-sm text-destructive">
+            {notice}
+          </p>
+        ) : null}
         <div ref={threadEndRef} />
       </div>
 
@@ -717,6 +808,21 @@ export default function ChatbotConsole() {
               ) : null}
             </>
           )}
+        </div>
+        <div className="flex">
+          <button
+            type="button"
+            aria-pressed={forceNext && !staged}
+            disabled={Boolean(staged)}
+            onClick={() => setForceNext((on) => !on)}
+            className={cn(
+              'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs hover:bg-secondary/80 disabled:cursor-not-allowed disabled:opacity-50',
+              forceNext && !staged ? 'border-primary bg-primary/10 font-semibold text-primary' : 'bg-secondary',
+            )}
+          >
+            <Sparkles className="size-3.5" />
+            Agent
+          </button>
         </div>
       </div>
 

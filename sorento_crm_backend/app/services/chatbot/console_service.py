@@ -48,6 +48,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import run_turn
+from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
 from app.services.chatbot.agent.loop import AgentBusy, enforce_agent_rate_limit, run_agent_turn
 from app.services.chatbot.contracts import BRANCH_KINDS, TurnRequest
 from app.services.chatbot.lanes.escalation import routing_line
@@ -429,8 +430,12 @@ def run_console_turn(
     media: dict[str, Any] | None = None,
     reply_to: dict[str, Any] | None = None,
     operator_user_id: str | None = None,
+    force_agent: bool = False,
 ) -> ConsoleTurnResult:
     """Run one dry-run turn for the in-app console page, in process.
+
+    `force_agent` sends a text turn to the agent without asking the router (the reason reads
+    `forced`); media always stays on the bot, so the two together are a 422.
 
     `db` is used only for the reads that never touch the engine's own sessions
     (borrowing the envelope, reading the trace back after, and - with `media` - the
@@ -443,6 +448,12 @@ def run_console_turn(
     path, not a second extractor - see that function's own docstring for the shape and the
     D14 deviation it carries.
     """
+    if force_agent and media is not None:
+        raise AppException(
+            status_code=422,
+            message="An attachment always goes to the bot, so it cannot be sent to the agent.",
+            code="CHATBOT_CONSOLE_FORCE_AGENT_MEDIA",
+        )
     if media is not None:
         result = _run_console_media_turn(
             db,
@@ -461,13 +472,16 @@ def run_console_turn(
         return result
 
     # AGENTIC-P2-ROUTE: the router picks the side once per text turn. Media stayed on the bot above.
-    decision = decide_route(
-        db, contact_respond_id=contact_respond_id, text=text, session_vars=session_vars, has_media=False
-    )
+    if force_agent:
+        decision = RouteDecision("agent", "forced")
+    else:
+        decision = decide_route(
+            db, contact_respond_id=contact_respond_id, text=text, session_vars=session_vars, has_media=False
+        )
     if decision.side == "agent":
         return _run_agent_side(
             db, contact_respond_id=contact_respond_id, text=text, decision=decision,
-            operator_user_id=operator_user_id,
+            operator_user_id=operator_user_id, run_id=run_id,
         )
 
     base = _borrow_envelope(db, contact_respond_id)
@@ -510,6 +524,13 @@ def run_console_turn(
 
 AGENT_BUSY_REPLY = "The agent is busy with an earlier message for this contact. Try again in a moment."
 AGENT_FAILED_REPLY = "The agent could not answer this message. Try again."
+AGENT_REFUSED_REPLY = "The agent cannot run for this contact."
+#: What the agent is shown of the run's bot replies: at most this many characters in all (about 3000
+#: tokens), each reply clipped. It is also held under a quarter of the compaction threshold, and counted
+#: in it (`memory.maybe_compact(extra_tokens=)`), so it sits inside the agent's input budget.
+BOT_CONTEXT_CHARS = 12_000
+BOT_CONTEXT_PER_REPLY = 1_500
+BOT_CONTEXT_USER_TEXT = 300
 
 
 def _stamp_route(db: Session, turn_id: str | None, decision: RouteDecision) -> None:
@@ -541,8 +562,58 @@ def _stamp_route(db: Session, turn_id: str | None, decision: RouteDecision) -> N
         db.rollback()
 
 
+def _bot_text(envelope: Any) -> str:
+    """The customer text of a bot turn's stored envelope."""
+    inner = (((envelope or {}).get("message") or {}).get("message") or {}).get("message") or {}
+    return str(inner.get("text") or "")
+
+
+def _bot_turns_of_run(db: Session, contact_respond_id: str, run_id: str, limit: int) -> list[ChatbotTurn]:
+    """This contact's console bot turns of one run that have answered, newest first."""
+    return (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(True),
+            ChatbotTurn.ingress != "agent",
+            ChatbotTurn.envelope["test_run_id"].astext == run_id,
+            ChatbotTurn.response.isnot(None),
+        )
+        .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def _recent_bot_context(db: Session, contact_respond_id: str, run_id: str, compact_tokens: int) -> tuple[str, int]:
+    """`(note, tokens)`: the run's latest bot replies as one block for the agent's system prompt, newest
+    kept first, bounded by `BOT_CONTEXT_CHARS` and a quarter of the compaction threshold. ("", 0) when
+    there are none."""
+    # A quarter of the compaction threshold: compact_tokens / 4 tokens is compact_tokens characters.
+    cap = min(BOT_CONTEXT_CHARS, max(compact_tokens, 0))
+    lines: list[str] = []
+    used = 0
+    for row in _bot_turns_of_run(db, contact_respond_id, run_id, 20):
+        reply = _customer_texts(row.response if isinstance(row.response, dict) else {})[0].strip()
+        if not reply:
+            continue
+        line = f"Customer: {_bot_text(row.envelope)[:BOT_CONTEXT_USER_TEXT]}\nBot: {reply[:BOT_CONTEXT_PER_REPLY]}"
+        if used + len(line) > cap:
+            break
+        lines.append(line)
+        used += len(line)
+    if not lines:
+        return "", 0
+    note = (
+        "Earlier in this same conversation the chat bot answered the customer as follows (oldest first). "
+        "It is what the customer was told, not a lookup:\n\n" + "\n\n".join(reversed(lines))
+    )
+    return note, len(note) // 4
+
+
 def _run_agent_side(
-    db: Session, *, contact_respond_id: str, text: str, decision: RouteDecision, operator_user_id: str | None
+    db: Session, *, contact_respond_id: str, text: str, decision: RouteDecision, operator_user_id: str | None,
+    run_id: str | None = None,
 ) -> ConsoleTurnResult:
     """The router chose the agent: run it, and never fall back to the bot (card rule 6). A busy or
     failed agent says so in the reply."""
@@ -554,9 +625,21 @@ def _run_agent_side(
             route=decision.as_response(), reply_text=AGENT_FAILED_REPLY, quick_replies=[], send_messages=[], trace_summary={}
         )
     enforce_agent_rate_limit(operator_user_id)
+    note, note_tokens = "", 0
+    if run_id:
+        from app.services.chatbot.agent.loop import budgets_from_settings
+
+        note, note_tokens = _recent_bot_context(
+            db, contact_respond_id, run_id, budgets_from_settings(db).compact_tokens
+        )
     try:
         result = run_agent_turn(
-            db, contact_respond_id=contact_respond_id, text=text, operator_user_id=operator_user_id
+            db, contact_respond_id=contact_respond_id, text=text, operator_user_id=operator_user_id,
+            context_note=note, context_tokens=note_tokens,
+        )
+    except AgentRefused:
+        return ConsoleTurnResult(
+            route=decision.as_response(), reply_text=AGENT_REFUSED_REPLY, quick_replies=[], send_messages=[], trace_summary={}
         )
     except AgentBusy:
         return ConsoleTurnResult(
@@ -586,8 +669,74 @@ def _run_agent_side(
             "tool_calls": result.tool_calls,
             "steps": agent_memory.steps_for_turn(db, result.turn_id),
             "pending_action": result.pending_action,
+            "actions": _agent_actions_of(db, contact_respond_id, result.turn_id),
         },
     )
+
+
+def _agent_actions_of(db: Session, contact_respond_id: str, turn_id: str) -> list[dict]:
+    """The proposals this agent turn made, as the conversation read carries them."""
+    from app.services.chatbot.agent import actions as agent_actions
+
+    try:
+        uuid.UUID(str(turn_id))
+        ctx = build_context(db, contact_respond_id)
+    except (ValueError, AgentRefused):
+        return []
+    return agent_actions.actions_by_turn(db, [str(turn_id)], ctx.user_id).get(str(turn_id), [])
+
+
+def _route_of(trace: Any) -> dict[str, Any] | None:
+    """The router's decision stamped on a turn's trace, or None for a turn that carries none."""
+    for record in trace if isinstance(trace, list) else []:
+        if isinstance(record, dict) and record.get("stage") == "route" and isinstance(record.get("facts"), dict):
+            return record["facts"]
+    return None
+
+
+def console_thread(db: Session, *, contact_respond_id: str, run_id: str) -> dict[str, Any]:
+    """The console thread of one contact: its console bot turns of `run_id` plus the turns of the
+    agent's current conversation, oldest first, and the proposal waiting for a yes. Read only: no
+    conversation is made. A contact the agent cannot run for still gets its bot turns."""
+    from app.schemas.common import MAX_PAGE_LIMIT
+    from app.services.chatbot.agent import actions as agent_actions
+    from app.services.chatbot.agent import memory as agent_memory
+
+    turns: list[dict[str, Any]] = []
+    for row in _bot_turns_of_run(db, contact_respond_id, run_id, MAX_PAGE_LIMIT):
+        reply_text, send_messages = _customer_texts(row.response if isinstance(row.response, dict) else {})
+        turns.append({
+            "turn_id": str(row.id), "side": "chat", "user_text": _bot_text(row.envelope), "reply_text": reply_text,
+            "send_messages": send_messages, "branch_kind": row.branch_kind,
+            "prompt_version": trace_prompt_version(row.trace),
+            "message_id": (((row.envelope or {}).get("message") or {}).get("message") or {}).get("messageId"),
+            "route": _route_of(row.trace),
+            "steps": agent_memory.steps_from_trace(None), "actions": [], "created_at": row.created_at,
+        })
+
+    pending = None
+    try:
+        ctx = build_context(db, contact_respond_id)
+    except AgentRefused:
+        ctx = None
+    if ctx is not None:
+        waiting = agent_actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
+        pending = agent_actions.pending_dict(waiting) if waiting is not None else None
+        conv = agent_memory.latest_conversation(db, contact_respond_id)
+        if conv is not None and agent_memory.belongs_to(conv, ctx.user_id, grants_hash(ctx)):
+            rows = [r for r in agent_memory.conversation_turns(db, conv) if r.response is not None]
+            by_turn = agent_actions.actions_by_turn(db, [str(r.id) for r in rows], ctx.user_id)
+            for row in rows:
+                envelope = row.envelope if isinstance(row.envelope, dict) else {}
+                response = row.response if isinstance(row.response, dict) else {}
+                turns.append({
+                    "turn_id": str(row.id), "side": "agent", "user_text": str(envelope.get("text") or ""),
+                    "reply_text": str(response.get("reply_text") or ""), "send_messages": [],
+                    "route": _route_of(row.trace), "steps": agent_memory.steps_from_trace(row.trace),
+                    "actions": by_turn.get(str(row.id), []), "created_at": row.created_at,
+                })
+    turns.sort(key=lambda t: (t["created_at"], t["turn_id"]))
+    return {"turns": turns, "pending_action": pending}
 
 
 # --------------------------------------------------------------------------- #

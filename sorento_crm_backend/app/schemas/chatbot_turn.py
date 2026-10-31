@@ -146,6 +146,8 @@ class ConsoleTurnRequest(BaseModel):
     run_id: str
     media: ConsoleMediaInput | None = None
     reply_to: ConsoleReplyTo | None = None
+    # Send this message to the agent without asking the router. Media with it is refused.
+    force_agent: bool = False
 
 
 class ConsoleTraceSummary(BaseModel):
@@ -228,13 +230,6 @@ class ConsoleMediaStatusResponse(BaseModel):
 # --------------------------------------------------------------------------- #
 
 
-class AgentTurnRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    contact_respond_id: str = Field(min_length=1, max_length=64)
-    text: str = Field(min_length=1, max_length=4000)
-
-
 class AgentUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -298,6 +293,7 @@ class AgentTurnResponse(BaseModel):
     tool_calls: list[AgentToolCall] = Field(default_factory=list)
     steps: AgentSteps = Field(default_factory=AgentSteps)
     pending_action: AgentPendingAction | None = None
+    actions: list["AgentConversationAction"] = Field(default_factory=list)
 
 
 class AgentConversationToolCall(BaseModel):
@@ -382,5 +378,30 @@ class AgentActionResponse(BaseModel):
     steps: list[AgentActionStep] = Field(default_factory=list)
 
 
+class ConsoleThreadTurn(BaseModel):
+    """One turn of the console thread, bot or agent, as a reload shows it."""
+
+    turn_id: str
+    side: Literal["chat", "agent"]
+    user_text: str = ""
+    reply_text: str = ""
+    send_messages: list[str] = Field(default_factory=list)
+    # Bot turns only: what the bubble wears (branch badge, parser version) and the id a later message quotes.
+    branch_kind: str | None = None
+    prompt_version: int | None = None
+    message_id: str | None = None
+    route: ConsoleRoute | None = None
+    steps: AgentSteps = Field(default_factory=AgentSteps)
+    actions: list[AgentConversationAction] = Field(default_factory=list)
+    created_at: datetime
+
+
+class ConsoleThreadResponse(BaseModel):
+    turns: list[ConsoleThreadTurn] = Field(default_factory=list)
+    #: The contact's current proposal waiting for a yes, so a reloaded console can still show it.
+    pending_action: AgentPendingAction | None = None
+
+
 # `ConsoleTurnResponse.agent` names `AgentTurnResponse`, declared after it.
+AgentTurnResponse.model_rebuild()
 ConsoleTurnResponse.model_rebuild()

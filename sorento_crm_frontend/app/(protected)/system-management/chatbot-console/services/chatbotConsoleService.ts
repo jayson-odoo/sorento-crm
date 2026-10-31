@@ -10,7 +10,8 @@
  *   `ingress=console` (D14: nothing reaches a real customer, zero writes outside
  *   `chatbot.turns`).
  *   Body -> { contact_respond_id, text, session_vars: object|null, prompt_version_id:
- *             string|null, run_id, media?: {kind, filename, mime, content_base64}|null }
+ *             string|null, run_id, media?: {kind, filename, mime, content_base64}|null,
+ *             force_agent?: boolean }   (force_agent skips the router; with media it is a 422)
  *   200 ->
  *   {
  *     "turn_id": "<uuid>" | null,
@@ -32,6 +33,10 @@
  *   404 `{code: "CHATBOT_CONSOLE_NO_ENVELOPE", ...}` - the contact has no prior chatbot
  *   turn to borrow a session shape from.
  *
+ * GET /api/v1/system/chatbot/console/thread?contact_respond_id=&run_id=
+ *   200 -> { turns: ConsoleThreadTurn[], pending_action: AgentPendingAction | null }
+ *   The contact's console bot turns of the run plus the agent's current conversation, oldest first.
+ *
  * GET /api/v1/system/chatbot/console/prompt-versions
  *   Permission: `system.chat_history.view`. `chatbot_semantic_parser` versions, newest
  *   first.
@@ -46,6 +51,7 @@ import { extractApiError } from '@/lib/api-client';
 import type {
   ConsoleMediaStatusResponse,
   ConsolePromptVersion,
+  ConsoleThreadResponse,
   ConsoleTurnRequest,
   ConsoleTurnResponse,
 } from '../types/chatbotConsole.types';
@@ -60,6 +66,16 @@ export async function postConsoleTurn(body: ConsoleTurnRequest): Promise<Console
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to run the turn'));
+  }
+  return response.json();
+}
+
+/** This contact's thread for a run: its bot turns and the agent's current conversation, oldest first. */
+export async function getConsoleThread(contactRespondId: string, runId: string): Promise<ConsoleThreadResponse> {
+  const params = new URLSearchParams({ contact_respond_id: contactRespondId, run_id: runId });
+  const response = await apiFetch(`${BASE}/thread?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the conversation'));
   }
   return response.json();
 }

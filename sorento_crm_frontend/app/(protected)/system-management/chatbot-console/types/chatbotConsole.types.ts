@@ -3,6 +3,13 @@
  * (D14) - nothing here reaches a real customer.
  */
 import type { TurnAttachment } from '@/components/chatbot/TurnAttachments';
+import type {
+  AgentConversationAction,
+  AgentPendingAction,
+  AgentReplyMeta,
+  AgentSteps,
+  AgentTurnResponse,
+} from './agentConsole.types';
 
 export interface ConsoleMediaInput {
   kind: 'image' | 'audio';
@@ -23,6 +30,8 @@ export interface ConsoleTurnRequest {
   /** The bubble this message quotes (WhatsApp reply-to), text or media turn alike.
    * Omitted when nothing is quoted. */
   reply_to?: ConsoleQuote;
+  /** Send this message to the agent without asking the router. Never with `media`. */
+  force_agent?: boolean;
 }
 
 /** A quoted bubble: a bot reply (`n8n`) or the customer's own earlier message (`contact`). */
@@ -78,8 +87,42 @@ export interface ConsoleTurnResponse {
   actions?: Record<string, unknown>[] | null;
   /** The router's decision for this turn. */
   route?: ConsoleRoute | null;
-  /** Set when the router sent the turn to the agent: the agent's own turn block. */
-  agent?: { turn_id: string; status: string; pending_action: unknown | null } | null;
+  /** Set when the turn went to the agent: the agent's own turn block. */
+  agent?: ConsoleAgentBlock | null;
+}
+
+export interface ConsoleAgentBlock {
+  turn_id: string;
+  status: string;
+  limit_hit?: AgentTurnResponse['limit_hit'];
+  rounds?: number;
+  tool_calls?: { name: string; status: string }[];
+  pending_action: AgentPendingAction | null;
+  steps?: AgentSteps;
+  actions?: AgentConversationAction[];
+}
+
+/** One turn of `GET /console/thread`: a bot turn (`chat`) or an agent turn, oldest first. */
+export interface ConsoleThreadTurn {
+  turn_id: string;
+  side: 'chat' | 'agent';
+  user_text: string;
+  reply_text: string;
+  send_messages?: string[];
+  branch_kind?: string | null;
+  prompt_version?: number | null;
+  message_id?: string | null;
+  /** Null on a turn stored before routing was recorded. */
+  route: ConsoleRoute | null;
+  steps: AgentSteps;
+  actions: AgentConversationAction[];
+  created_at: string;
+}
+
+export interface ConsoleThreadResponse {
+  turns: ConsoleThreadTurn[];
+  /** The contact's proposal still waiting for a decision, if any. */
+  pending_action: AgentPendingAction | null;
 }
 
 export type ConsolePromptBase = 'full' | 'compact' | 'other';
@@ -122,6 +165,10 @@ export interface ChatbotConsoleMessage {
   routingLine?: string | null;
   /** Only the LAST bot bubble of a turn carries the route pill's data. */
   route?: ConsoleRoute | null;
+  /** Agent turn only (the bubble that holds the reply): its steps, the changes it proposed and the chips. */
+  agentSteps?: AgentSteps;
+  agentActions?: AgentConversationAction[];
+  agentMeta?: AgentReplyMeta | null;
   /** Only the LAST bot bubble of a turn carries these - chips send that text on click. */
   quickReplies?: string[];
   /** Media status/preview, wired in commit 2. */
