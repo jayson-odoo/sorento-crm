@@ -30,7 +30,7 @@ Names used below. **Staff** = the logged-in user the panel is answering. **Act-a
   `current_user["id"]` is staff, `current_user["key_user_id"]` is act-as, and the integration fields and `auth_method` are unchanged.
 - **AC-6** Fails closed, never falling back to act-as: a malformed, unknown, inactive or deleted id gets 403 with code
   `staff_identity_invalid`. So does the header with any key other than the shared `EXTERNAL_API_KEY`, naming an integration user, on a read route off the list, or with a
-  non-blank contact pair (the panel always blanks the pair).
+  non-blank contact pair, in the query or the body (the panel always blanks the pair).
 - **AC-7** On any other write, the header is ignored: act-as and today's company scope, so attribution cannot be forged.
 - **AC-8** With no header, nothing changes: a key with no contact still reads all companies, a key with a contact pair still reads the
   contact's companies, a session is untouched.
@@ -58,10 +58,10 @@ Names used below. **Staff** = the logged-in user the panel is answering. **Act-a
 | `crm_procurement_grn_summary` | `procurement/grn/summary` | `procurement.grn.view` |
 | `crm_master_product_attachments_list` | `master-data/product-attachments` | `master_data.product_attachments.view` |
 | `crm_purchase_request_by_number` | `procurement/purchase-requests/by-number/{number}` | `procurement.purchase_requests.view` or `.view_own`, or `procurement.sponsorship_forms.view` or `.view_own` |
-| `crm_sales_opportunity_customer_options` | `external/sales-opportunities/customer-options` | `sales.opportunities.view` or `.view_own` (the staff route's own rule; named by the AC-22 guard) |
 
 - **AC-14** Stay open to any staff, as pickers (owner ruling L10, `dependencies.py:499-505`): products list, warehouses, `lookup/resolve`,
   tool capabilities, guides.
+  `crm_sales_opportunity_customer_options` needs no staff slug: it answers 422 with no contact pair, and the header refuses a pair, so no staff read reaches its data.
 
 ## Own scope and company
 
