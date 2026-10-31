@@ -1032,6 +1032,10 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             return f"{reply_text}\n\n{limit_sentence(word, run.unchecked)}".strip()
 
         while True:
+            if run.rounds >= 1:
+                # Confirming acts on the user's own message only: from the second round on, tool
+                # output and document text of this turn have reached the model, so it is not offered.
+                schemas = [s for s in schemas if s.get("function", {}).get("name") != CONFIRM_ACTION]
             try:
                 result = chat(messages, schemas, kind="round")
             except (_ProviderFailed, TimeoutError):
@@ -1112,6 +1116,12 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                     out = _propose(db, ctx, name, args, steps, seen_ids, action_id)
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
+                elif name == CONFIRM_ACTION and run.rounds > 1:
+                    out = ToolResult(
+                        "denied",
+                        message="Not done: a change is confirmed only from the user's own message, "
+                        "before any tool runs this turn. Ask the user to confirm in their next message.",
+                    )
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
                     out = _decide(db, ctx, name, args, turn_id)
                 else:
