@@ -120,6 +120,16 @@ class Provider:
 
 
 @pytest.fixture()
+def audit_listeners():
+    from app.audit_context import clear_actor
+    from app.services.audit_service import register_audit_listeners
+
+    register_audit_listeners()
+    yield
+    clear_actor()
+
+
+@pytest.fixture()
 def jev(monkeypatch, session_factory, system_settings_row):
     """Jev armed (key and router prompt present) and scripted."""
     arm(session_factory())
@@ -190,7 +200,7 @@ class TestRouting:
 
         assert result.route == "agent"
         assert result.agent is not None and "ZZT stock is fine." in result.reply_text
-        assert [(c["name"], c["status"]) for c in result.agent["tool_calls"]] == [(STOCK, "ok")]
+        assert [(c["name"], c["status"]) for c in result.agent["tool_calls"]] == [(STOCK, "empty")]  # the fake MCP returns no items
         assert world.blocks == [], "the parser ran for an agent turn"
         rows = agent_turn_rows(session_factory, panel_key(staff))
         assert len(rows) == 1  # present: the agent turn is recorded under the panel key
@@ -745,12 +755,14 @@ def seed_salesperson(session_factory, staff_: Staff, world_):
 
 class TestOpportunity:
     def test_a_user_with_the_slug_gets_a_real_row_with_their_name_on_it(
-        self, session_factory, monkeypatch, staff, grants, world
+        self, session_factory, monkeypatch, staff, grants, world, audit_listeners
     ):
         from app.models.audit import AuditLog
+        from app.models.base import company_scope
         from app.models.sales import SalesOpportunity
 
         grants.add("sales.opportunities.add")
+        world.opportunity = True
         seed_salesperson(session_factory, staff, world)
         world.parser_output = _all_four()
         run_panel(session_factory, monkeypatch, staff, "log an opportunity for Bath Idea")
@@ -759,30 +771,33 @@ class TestOpportunity:
         result = run_panel(session_factory, monkeypatch, staff, "yes")
 
         db = session_factory()
-        rows = db.query(SalesOpportunity).filter(SalesOpportunity.title == "condo job Taman X").all()
-        assert len(rows) == 1, f"no opportunity row: {result.reply_text!r}"
-        assert rows[0].created_by_user_id == staff.user_id
-        assert rows[0].company_id == staff.company_a
-        assert "crm_sales_opportunity_log" not in [c["name"] for c in world.mcp], "the write went out through MCP, not as the user"
-        audit = db.query(AuditLog).filter(AuditLog.entity_id == str(rows[0].id), AuditLog.action == "INSERT").all()
-        assert audit and all(a.user_id == staff.user_id for a in audit), "the audit row does not name the user"
+        with company_scope(db, None):  # this read is not the staff session: see every company's rows
+            rows = db.query(SalesOpportunity).filter(SalesOpportunity.title == "condo job Taman X").all()
+            assert len(rows) == 1, f"no opportunity row: {result.reply_text!r}"
+            assert rows[0].created_by_user_id == staff.user_id
+            assert str(rows[0].company_id) == staff.company_a
+            assert "crm_sales_opportunity_log" not in [c["name"] for c in world.mcp], "the write went out through MCP, not as the user"
+            audit = db.query(AuditLog).filter(AuditLog.entity_id == str(rows[0].id), AuditLog.action == "CREATE").all()
+        assert audit and all(str(a.user_id) == staff.user_id for a in audit), "the audit row does not name the user"
 
-    def test_a_user_without_the_slug_is_refused_in_words_and_nothing_is_written(
+    def test_a_user_with_agents_and_without_the_slug_is_refused_in_words_on_the_first_message(
         self, session_factory, monkeypatch, staff, grants, world
     ):
+        from app.models.base import company_scope
         from app.models.sales import SalesOpportunity
 
         assert "sales.opportunities.add" not in grants
+        world.opportunity = True
         seed_salesperson(session_factory, staff, world)
         world.parser_output = _all_four()
-        run_panel(session_factory, monkeypatch, staff, "log an opportunity for Bath Idea")
-        world.parser_output = _yes()
 
-        result = run_panel(session_factory, monkeypatch, staff, "yes")
+        result = run_panel(session_factory, monkeypatch, staff, "log an opportunity for Bath Idea")
 
-        assert session_factory().query(SalesOpportunity).count() == 0
-        assert result.reply_text and "saved" not in result.reply_text.lower().replace("not saved", "")
-        assert "permission" in result.reply_text.lower() or "not enabled" in result.reply_text.lower() or "not allowed" in result.reply_text.lower(), result.reply_text
+        said = result.reply_text.lower()
+        assert "opportunit" in said and ("not enabled" in said or "permission" in said or "not allowed" in said), result.reply_text
+        assert "reply yes" not in said, "a read-back was offered to someone who may not log"
+        with company_scope(session_factory(), None):
+            assert session_factory().query(SalesOpportunity).count() == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -822,6 +837,23 @@ def add_member(session_factory, company_id: str, name: str) -> str:
     return user.id
 
 
+def bind_policy(session_factory, company_id: str) -> str:
+    """Bind the company's NORMAL SLA policy to its agent_teams links. `_seed_pair` binds none, and a
+    pair with no bound policy fails honestly (no fallback), on the panel as on WhatsApp."""
+    from app.models.access import AgentTeam
+    from app.models.sla import SLAPolicy
+    from app.services.chatbot.lanes.escalation import NEXT_ASSIGNEE_POLICY_CODE
+    from tests.chatbot.test_fail_triage_escalation import _db
+
+    db = _db(session_factory, company_id)
+    policy_id = db.query(SLAPolicy.id).filter(
+        SLAPolicy.code == NEXT_ASSIGNEE_POLICY_CODE, SLAPolicy.company_id == company_id
+    ).scalar()
+    db.query(AgentTeam).filter(AgentTeam.company_id == company_id).update({"policy_id": policy_id})
+    db.commit()
+    return str(policy_id)
+
+
 def panel_trackings(session_factory):
     from app.models.sla import ConversationSLATracking
 
@@ -839,6 +871,7 @@ class TestPanelEscalation:
         self, session_factory, monkeypatch, staff, grants, world
     ):
         first = _seed_pair(session_factory, company_id=staff.company_a, agent_code=AGENT_CODE, team_code=TEAM)
+        bind_policy(session_factory, staff.company_a)
         second = add_member(session_factory, staff.company_a, "ZZT Second PIC")
 
         one = self._escalate(session_factory, monkeypatch, staff, world)
@@ -860,6 +893,7 @@ class TestPanelEscalation:
         from app.services.sla_service import ConversationSLATrackingService
 
         member = _seed_pair(session_factory, company_id=staff.company_a, agent_code=AGENT_CODE, team_code=TEAM)
+        bind_policy(session_factory, staff.company_a)
         db = session_factory()
         db.query(User).filter(User.id == member).update(
             {"notify_whatsapp_on_assignment": True, "notify_email_on_assignment": False}
@@ -892,6 +926,7 @@ class TestPanelEscalation:
         self, session_factory, monkeypatch, staff, grants, world
     ):
         _seed_pair(session_factory, company_id=staff.company_a, agent_code=AGENT_CODE, team_code=TEAM)
+        bind_policy(session_factory, staff.company_a)
 
         result = self._escalate(session_factory, monkeypatch, staff, world)
 
@@ -901,6 +936,25 @@ class TestPanelEscalation:
         assert "reply shortly" not in lowered and "routed to your pic" not in lowered
         kinds = {a.get("kind") for a in (turn_row(session_factory, result.turn_id).response or {}).get("actions", [])}
         assert not kinds & {"assign_conversation", "add_comment"}, kinds
+
+    def test_an_unbound_pair_fails_honestly_with_no_row_and_no_draw(
+        self, session_factory, monkeypatch, staff, grants, world
+    ):
+        """The pair links a team but no SLA policy is bound to it: no fallback, so no row and no
+        promise, as on WhatsApp."""
+        import app.api.v1.external.next_assignee as next_assignee_mod
+
+        draws: list[Any] = []
+        real = next_assignee_mod.post_next_assignee
+        monkeypatch.setattr(next_assignee_mod, "post_next_assignee", lambda *a, **k: draws.append(1) or real(*a, **k))
+        _seed_pair(session_factory, company_id=staff.company_a, agent_code=AGENT_CODE, team_code=TEAM)  # no policy bound
+
+        result = self._escalate(session_factory, monkeypatch, staff, world)
+
+        lowered = result.reply_text.lower()
+        assert result.reply_text.strip() and "follow up" not in lowered
+        assert "reply shortly" not in lowered and "routed to your pic" not in lowered
+        assert panel_trackings(session_factory) == []
 
     def test_no_team_gives_an_honest_reply_no_row_and_the_cursor_unmoved(
         self, session_factory, monkeypatch, staff, grants, world
@@ -953,3 +1007,207 @@ class TestWhatsAppEscalationUnchanged:
         payload = seams.sla[0]
         assert getattr(payload, "contact_phone_number", None) == "+60970000002"
         assert _assigned(result), result.actions
+
+
+# --------------------------------------------------------------------------- #
+# Escalation runner: contactless rows never starve a customer's escalation
+# --------------------------------------------------------------------------- #
+
+
+def _overdue_row(db, *, company_id: str, policy_id: str, contact_id: str | None):
+    from datetime import timedelta
+
+    from app.models.sla import ConversationSLATracking
+
+    now = datetime.utcnow()
+    row = ConversationSLATracking(
+        id=str(uuid.uuid4()), respond_contact_id=contact_id, policy_id=policy_id, current_tier=1,
+        initiated_at=now - timedelta(hours=30), current_tier_started_at=now - timedelta(hours=30),
+        due_at=now - timedelta(hours=20), company_id=company_id, is_responded=False, is_resolved=False,
+        message_id=uuid.uuid4().int % 10**12,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_list_due_escalations_skips_contactless_rows_and_still_returns_a_customers(session_factory, staff):
+    """services/sla_service.py:3386. A null-contact row (a panel escalation) and a row whose contact was
+    deleted (the FK sets it NULL) would answer 404 at the runner and block everything behind them."""
+    from sqlalchemy import text
+
+    from app.services.sla_service import ConversationSLATrackingService
+
+    _seed_pair(session_factory, company_id=staff.company_a, agent_code=AGENT_CODE, team_code=TEAM)
+    policy_id = bind_policy(session_factory, staff.company_a)
+    db = session_factory()
+    pks = []
+    for tag in ("gone", "kept"):
+        pk = str(uuid.uuid4())
+        db.execute(
+            text("INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) VALUES (:i, :r, :p, '{}'::jsonb)"),
+            {"i": pk, "r": unique_code(tag), "p": "+6012" + uuid.uuid4().hex[:7]},
+        )
+        pks.append(pk)
+    null_row = _overdue_row(db, company_id=staff.company_a, policy_id=policy_id, contact_id=None)
+    deleted_row = _overdue_row(db, company_id=staff.company_a, policy_id=policy_id, contact_id=pks[0])
+    customer_row = _overdue_row(db, company_id=staff.company_a, policy_id=policy_id, contact_id=pks[1])
+    db.commit()
+    db.execute(text("DELETE FROM respond_contacts WHERE id = :i"), {"i": pks[0]})
+    db.commit()
+    db.expire_all()
+    assert db.get(type(deleted_row), deleted_row.id).respond_contact_id is None, "fixture: the delete did not null the contact"
+
+    due = {item["tracking_id"] for item in ConversationSLATrackingService(session_factory()).list_due_escalations()}
+
+    assert str(customer_row.id) in due, "a customer's overdue row was not returned"
+    assert str(null_row.id) not in due and str(deleted_row.id) not in due
+
+
+# --------------------------------------------------------------------------- #
+# Notification channels on a contactless row: reassign, deadline extended, coverage copies
+# --------------------------------------------------------------------------- #
+
+
+class TestNoWhatsAppOnAContactlessRow:
+    def test_reassign_extend_and_coverage_copies_never_ask_for_whatsapp(
+        self, session_factory, monkeypatch, staff, grants, world
+    ):
+        from app.services import coverage_subscription_service
+        from app.services.notification_service import NotificationService
+        from app.services.sla_service import ConversationSLATrackingService
+
+        member = _seed_pair(session_factory, company_id=staff.company_a, agent_code=AGENT_CODE, team_code=TEAM)
+        bind_policy(session_factory, staff.company_a)
+        db = session_factory()
+        db.query(User).filter(User.id == member).update({
+            "notify_whatsapp_on_assignment": True, "notify_whatsapp_on_escalation": True,
+            "notify_whatsapp_on_deadline_extended": True,
+        })
+        db.commit()
+        TestPanelEscalation()._escalate(session_factory, monkeypatch, staff, world)
+        row = panel_trackings(session_factory)[0]
+
+        asked: list[dict[str, Any]] = []
+        real = NotificationService.create_with_channel_preferences
+        monkeypatch.setattr(
+            NotificationService, "create_with_channel_preferences",
+            lambda self, **kw: asked.append({"event": kw.get("event_type"), "wa": kw.get("send_whatsapp")}) or real(self, **kw),
+        )
+        copies: list[Any] = []
+        monkeypatch.setattr(
+            coverage_subscription_service, "fan_out_coverage_copies",
+            lambda *a, **kw: copies.append(kw.get("send_whatsapp")),
+        )
+        service = ConversationSLATrackingService(session_factory())
+        other = seed_staff(session_factory)
+
+        service._notify_reassignment(row, actor_id=other.user_id, new_assignee_id=member, old_assignee_id=None)
+        service._notify_user_deadline_extended(row, recipient_user_id=member, reason="ZZT more time")
+        service._fan_out_assignment_coverage(row)
+
+        assert asked, "no notification was made at all"
+        assert all(a["wa"] is False for a in asked), asked
+        assert copies and all(c is False for c in copies), f"coverage copies asked for WhatsApp: {copies}"
+        assert world.respond_sends == [] and not [u for u in world.http if "respond" in u]
+
+
+# --------------------------------------------------------------------------- #
+# AC-22: Withdraw, through the panel route, on a parked step
+# --------------------------------------------------------------------------- #
+
+
+def test_withdraw_through_the_panel_route_cancels_a_parked_step_as_the_user(
+    session_factory, monkeypatch, staff, grants, as_user, note_write
+):
+    from datetime import timedelta
+
+    import app.api.v1.sla.form_actions as form_actions
+
+    grants.add(NOTE_SLUG)
+    pending_id = str(uuid.uuid4())
+    cancelled: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        form_actions, "cancel_form_action",
+        lambda action_id, current_user, db: cancelled.append({"id": action_id, "user": current_user.get("id")}),
+    )
+    due = (datetime.utcnow() + timedelta(seconds=60)).isoformat()
+    db = session_factory()
+    action_id = str(uuid.uuid4())
+    db.add(AgentAction(
+        id=action_id, conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()),
+        contact_respond_id=panel_key(staff), user_id=staff.user_id, status="executed",
+        steps=[{"tool": NOTE_TOOL, "args": {}, "before": {}, "shown": {}, "summary": "ZZT parked", "status": "done",
+                "after": {"deferred": True, "commit_at": due, "window_seconds": 60, "pending_action_id": pending_id}}],
+    ))
+    db.commit()
+
+    resp = as_user(staff.user_id).post(f"{PANEL_ACTIONS}/{action_id}/steps/0/withdraw", json={})
+
+    assert resp.status_code == 200, resp.text
+    assert cancelled == [{"id": pending_id, "user": staff.user_id}]
+    db.expire_all()
+    assert db.get(AgentAction, action_id).steps[0]["status"] == "withdrawn"
+
+
+# --------------------------------------------------------------------------- #
+# AC-8: a deleted thread still counts toward the cap
+# --------------------------------------------------------------------------- #
+
+
+def test_a_deleted_thread_still_counts_toward_the_daily_cap(
+    session_factory, monkeypatch, staff, grants, world, jev, agent_model
+):
+    """Deleting a thread must not hand the user their turns back. The cap counts the user's agent turns
+    today, not their surviving threads."""
+    set_settings(session_factory, chatbot_agent_daily_turns=2)
+    gone = new_thread(session_factory, staff)
+    db = session_factory()
+    for n in range(2):
+        db.add(ChatbotTurn(
+            contact_respond_id=panel_key(gone), message_id=f"ZZT-gone-{n}", ingress="agent", envelope={"text": "q", "user_id": staff.user_id},
+            is_test=True, status="done", trace=[], response={"reply_text": "a", "status": "answered"},
+        ))
+    db.commit()
+    db.delete(db.get(AIAssistantConversation, gone.conv_id))
+    db.commit()
+    jev.answer = jev_answer("agent", 0.95)
+    world.parser_output = stock_output("ZZTGONE")
+
+    result = run_panel(session_factory, monkeypatch, staff, "stock ZZTGONE")
+
+    assert result.route == "chat", "deleting a thread reset the user's cap"
+    assert jev.calls == []
+
+
+# --------------------------------------------------------------------------- #
+# AC-5/AC-7: staff reveals and the chat dataset
+# --------------------------------------------------------------------------- #
+
+
+def test_staff_reveal_keys_follow_the_users_slugs(env):
+    """contact_field_reveal_service._STAFF_REVEAL_SLUGS: one real reveal, a holder and a non-holder."""
+    from app.services.contact_field_reveal_service import staff_reveal_keys
+
+    holder = mk_user(env.db, "rev-holder", perms=("sales.reports.view",))
+    other = mk_user(env.db, "rev-other", perms=("inventory.stock.view",))
+
+    assert "sales_orders.sales_report" in staff_reveal_keys(env.db, holder)
+    assert "sales_orders.sales_report" not in staff_reveal_keys(env.db, other)
+    assert "inventory.sellable" in staff_reveal_keys(env.db, other)  # present for the user who holds its slug
+
+
+def test_report_ask_chat_dataset_has_a_staff_path_gated_by_the_analytics_reveal(env):
+    perms = ("order_management.orders.view",)
+    holder = mk_user(env.db, "chat-holder", perms=perms + ("chatbot.analytics.view",), companies=(env.co_a,), last_active=env.co_a)
+    other = mk_user(env.db, "chat-other", perms=perms, companies=(env.co_a,), last_active=env.co_a)
+    env.use_actas(perms=perms + ("chatbot.analytics.view",))
+    query = f"dataset=chat&{RANGE}"
+
+    ok = env.client.get(f"{REPORT}?{query}", headers=env.ident(holder))
+    refused = env.client.get(f"{REPORT}?{query}", headers=env.ident(other))
+    plain = env.client.get(f"{REPORT}?{query}", headers=env.plain())
+
+    assert ok.status_code not in (403, 422), (ok.status_code, ok.text[:300])
+    assert refused.status_code == 403, (refused.status_code, refused.text[:300])
+    assert plain.status_code == 422

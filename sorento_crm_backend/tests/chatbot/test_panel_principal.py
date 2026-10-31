@@ -42,6 +42,7 @@ from app.services.ai_assistant_service import AIAssistantChatService, MCPRuntime
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import INGRESS_KINDS
 from app.services.chatbot.head import parser as parser_mod
+from app.services.chatbot.head.parser import OPPORTUNITY_LINE
 from app.services.user_service import UserPermissionService
 from tests._pg_fixture import unique_code
 from tests.chatbot.conftest import session_factory  # noqa: F401
@@ -143,6 +144,8 @@ class World:
     brand_scopes: list[Any] = field(default_factory=list)
     parser_output: dict[str, Any] = field(default_factory=_parser_output)
     lookup_lists: bool = False
+    #: A live label carries the LOG OPPORTUNITY line, so the parser offers the `opportunity` key.
+    opportunity: bool = False
 
     def stock_product_ids(self) -> set[str]:
         return {
@@ -169,8 +172,9 @@ def world(monkeypatch) -> World:
 
     def fake_resolve_config(db, *, current_date, override_version_id=None):
         return parser_mod.ParserConfig(
-            system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
-            closed_lists=True, lookup_lists=w.lookup_lists,
+            system_prompt="stub\n" + (OPPORTUNITY_LINE + "\n" if w.opportunity else ""),
+            prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            closed_lists=True, lookup_lists=w.lookup_lists, opportunity=w.opportunity,
         )
 
     def fake_parse(config, user_block):
