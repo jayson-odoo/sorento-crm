@@ -224,3 +224,16 @@ describe('AC-RF-24 state All on arrival', () => {
     expect(document.body.textContent ?? '').not.toMatch(UUID);
   });
 });
+
+describe('AC-RF-26 choosing Outstanding keeps state=outstanding in the URL', () => {
+  it.each([
+    ['inquiry_no', `inquiry_no=${NUMBERS}`],
+    ['reserve', 'reserve=needs_reserve'],
+  ])('with %s in the URL', async (_name, query) => {
+    searchParamsValue = query;
+    renderList();
+    await screen.findByText('OI-2610-001');
+    fireEvent.click(await screen.findByRole('radio', { name: /outstanding/i }));
+    await waitFor(() => expect(lastReplaceQuery().get('state')).toBe('outstanding'));
+  });
+});

@@ -834,6 +834,24 @@ def test_ac_rf_22_headers_inquiry_no_filter_exact_match(sn):
     assert listed({"inquiry_no": "OI-2610-007"}) == set(), "another company's OI never shows"
 
 
+def test_ac_rf_25_inquiry_no_has_no_200_value_cap_other_filters_keep_theirs(sn):
+    client, world = sn
+    inquiry = _new_oi(world, world.requester)
+    inquiry.inquiry_no = "OI-2610-900"
+    world.db.commit()
+    numbers = ["OI-2610-900"] + [f"OI-9999-{n:03d}" for n in range(200)]
+    assert len(numbers) == 201
+    response = client.get(HEADERS_URL, params={"state": "all", "inquiry_no": ",".join(numbers)})
+    assert response.status_code == 200, response.text
+    assert [r["inquiry_no"] for r in response.json()["data"]] == ["OI-2610-900"]
+    # Repeated params take the same path.
+    repeated = client.get(HEADERS_URL, params=[("state", "all")] + [("inquiry_no", n) for n in numbers])
+    assert repeated.status_code == 200, repeated.text
+    # Another filter on the same route keeps its cap.
+    capped = client.get(HEADERS_URL, params={"raised_by": ",".join(_uid() for _ in range(201))})
+    assert capped.status_code == 422, capped.text
+
+
 # --------------------------------------------------------------------------------- #
 # E. One email per raising CS                                                        #
 # --------------------------------------------------------------------------------- #

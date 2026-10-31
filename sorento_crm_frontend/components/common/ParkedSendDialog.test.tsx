@@ -169,3 +169,13 @@ describe('AC-SN-44 ParkedSendDialog', () => {
     expect(screen.queryByRole('button', { name: /^send \d+ emails?$/i })).not.toBeInTheDocument();
   });
 });
+
+describe('AC-RF-28 desktop preview width', () => {
+  it('gives the email preview the 900 px card width', () => {
+    renderDialog();
+    expect(frameProps).toHaveBeenCalled();
+    expect(frameProps.mock.calls[frameProps.mock.calls.length - 1][0]).toEqual(
+      expect.objectContaining({ desktopWidth: 900 }),
+    );
+  });
+});
