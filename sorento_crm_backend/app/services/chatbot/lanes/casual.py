@@ -45,11 +45,6 @@ logger = logging.getLogger(__name__)
 
 PROMPT_KEY = "chatbot_clarifier"
 
-# The `OpenAI Chat Model` node feeding `Basic LLM Chain` hard-codes this. An
-# `ai_prompt_registry.agent_model` override for the key wins over it, the same way the
-# semantic parser's does.
-DEFAULT_MODEL = "gpt-4.1-mini"
-
 CLARIFIER_MAX_TOKENS = 512
 
 # The SETUP arm's customer text. n8n has no reply for these paths at all - a missing API
@@ -283,9 +278,13 @@ def resolve_clarifier_config(
     if config is None:
         raise ClarifierError("AI assistant configuration is not set")
     from app.services.contact_llm_choice import apply_choice
+    from app.services.llm_provider import resolve_model
 
+    # NO-OPENAI: the label's model, else the config's when it runs on the same provider, else
+    # that provider's default; never one vendor's model id on another (was `gpt-4.1-mini`).
+    provider = provider_override or config.provider
     provider, model, api_key, _source = apply_choice(
-        llm_choice, config, provider_override or config.provider, model_override or DEFAULT_MODEL,
+        llm_choice, config, provider, resolve_model(config, provider, model_override),
         model_from_label=bool(model_override),
     )
     if not api_key:

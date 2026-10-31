@@ -107,8 +107,13 @@ def test_the_retry_script_passes_it(monkeypatch):
         return True
 
     monkeypatch.setattr(online_index, "ensure_indexes_online", spy)
+    with engine.connect() as probe:
+        before = probe.exec_driver_sql("SHOW maintenance_work_mem").scalar()
     assert retry.run(engine) is True
     assert embedding_indexes.COVERAGE_INDEXES[0] in captured["indexes"]
+    # The 512MB SET must not ride the pooled connection into the next test (release #10, G6).
+    with engine.connect() as probe:
+        assert probe.exec_driver_sql("SHOW maintenance_work_mem").scalar() == before != "512MB"
 
 
 def test_the_model_declares_the_same_index_so_create_all_databases_get_it_too():

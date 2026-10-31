@@ -23,6 +23,13 @@ When you're viewing the record itself, the same escalation is available on its *
 | You need more time but can still handle it | **Extend** the deadline |
 | You're away and want someone to cover all your tasks | Set up **Coverage** |
 
+## Not the same: Escalate on a quotation line
+
+On a project quotation, the **Drawing** and **Photo** cells of a line can show an **Escalate**
+button too. That one does not move a task up a tier: it opens a new request to the marketing
+product team for a missing drawing or photo. See
+[Quote a project, send it, and handle the customer's suggestions](../project-sales-rep/work-a-project-quotation.md).
+
 ## Notes
 
 * Escalation always records your **reason** and notifies the new assignee, so the next person has context.

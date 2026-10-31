@@ -38,7 +38,20 @@ Toolbar:
 | **Billing Address ID** / **Shipping Address ID** | Optional | UUID references to address records. |
 | **ID** | Optional | UUID. If present, the row updates an existing order; if missing, a new order is created. |
 
-Accepted date formats: ISO, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`. Numeric fields tolerate currency symbols (`RM`, `$`), commas, and spaces.
+**A row without a usable Date still imports.** The upload never fails because of a delivery order
+date, and it never wipes a date the delivery order already has:
+
+* A blank or unreadable **Date** on a new delivery order imports it **undated**, with a warning
+  (`<DO no>: no Date, imported without a DO date (left out of reports until it has one)`; outcome
+  **No document date**, or **Unreadable document date** for a date it could not read).
+* A blank **Date** on a delivery order that already has one changes nothing. An unreadable one
+  keeps the stored date and says so (`kept the stored DO date`).
+* An undated delivery order is left out of delivered-sales and pending-delivery reports until
+  someone fills in its date on the edit form.
+* Delivery orders that come from AutoCount always carry AutoCount's own date; the sheet's Date is
+  ignored for them.
+
+Accepted date formats: ISO, `YYYY-MM-DD`, `DD/MM/YYYY`, `MM/DD/YYYY`, and Excel date cells. Numeric fields tolerate currency symbols (`RM`, `$`), commas, and spaces.
 
 ## Step 2 - Import delivery order lines
 

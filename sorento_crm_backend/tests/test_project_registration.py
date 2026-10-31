@@ -92,7 +92,23 @@ def test_registering_a_project_stamps_code_owner_and_comparison_key():
         assert project.normalised_title == "setia alam phase 3b"
 
 
-def test_a_blocking_clash_refuses_the_registration_and_writes_nothing():
+def _pin_permissions(monkeypatch, slugs) -> None:
+    """Pin the permission lookup for this test only.
+
+    The refusal message depends on whether the challenger holds projects.view, and
+    about a dozen helpers in this suite patch ``get_user_permission_slugs``. Reading
+    the real grants made this test order-dependent under xdist (release #10, run
+    41051859894), so the grant is stated here and monkeypatch undoes it afterwards.
+    """
+    from app.services.user_service import UserPermissionService
+
+    granted = list(slugs)
+    monkeypatch.setattr(
+        UserPermissionService, "get_user_permission_slugs", lambda self, uid: list(granted)
+    )
+
+
+def test_a_blocking_clash_refuses_the_registration_and_writes_nothing(monkeypatch):
     """ADR-0004 is a hard block: the second person is told WHICH project holds it.
 
     The message names the incumbent's title and code, so the user has somewhere to go
@@ -100,6 +116,7 @@ def test_a_blocking_clash_refuses_the_registration_and_writes_nothing():
     (#1991, owner ruling) shows a salesperson without projects.view only clash / no
     clash, never another salesperson's name.
     """
+    _pin_permissions(monkeypatch, [])
     with blank_session() as db:
         company_id = _sorento(db)
         _numbering_rule(db)
@@ -136,6 +153,38 @@ def test_a_blocking_clash_refuses_the_registration_and_writes_nothing():
             {"c": company_id},
         ).scalars().all()
         assert codes == ["PRJ-000123"]
+
+
+def test_a_blocking_clash_names_the_holder_to_a_user_with_projects_view(monkeypatch):
+    """The other half of #1991: a user who may view projects is told who holds it."""
+    _pin_permissions(monkeypatch, ["projects.projects.view"])
+    with blank_session() as db:
+        company_id = _sorento(db)
+        _numbering_rule(db)
+        incumbent_owner = _user(db, f"{MARKER} Ali")
+        challenger = _user(db, f"{MARKER} Siti")
+        developer = _developer(db, company_id, f"{MARKER} SP Setia")
+
+        first = register_project(
+            db,
+            company_id=company_id,
+            actor_user_id=incumbent_owner,
+            developer_party_id=developer.id,
+            title="Setia Alam Phase 3B",
+        )
+
+        with pytest.raises(AppException) as exc:
+            register_project(
+                db,
+                company_id=company_id,
+                actor_user_id=challenger,
+                developer_party_id=developer.id,
+                title="setia alam ph 3b",
+            )
+
+        assert exc.value.status_code == 409
+        assert first.project_code in exc.value.detail["message"]
+        assert f"held by {MARKER} Ali" in exc.value.detail["message"]
 
 
 def test_a_context_only_clash_still_registers():

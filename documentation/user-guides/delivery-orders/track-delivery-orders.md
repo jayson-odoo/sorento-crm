@@ -70,6 +70,11 @@ Bulk-importing lines is usually faster - see [Upload Delivery Orders → Step 2]
 * **Create Delivery Order** (toolbar) → opens the create form. **Delivery Order Number**, **Delivery Order Date**, and **Delivery Order Status** are required; everything else is optional.
 * **Edit** (detail header) → same form, pre-filled.
 
+**Undated delivery orders.** A delivery order imported without a date opens with an empty
+**Delivery Order Date** (not marked required), and saving it leaves the date empty; the form never
+fills in today for you. Type the real date to bring it into the sales reports. On a delivery
+order that already has a date, clearing it is refused with *Order date is required.*
+
 For more than a handful of orders, use the Excel import instead of typing each one - see the upload guide.
 
 ## Bulk delete

@@ -45,9 +45,8 @@ one shape, not a guess):
   semantic parser (`resolve_config` / `parse`), for the identical capacity reason (the
   96/100-connection incident; never hold a DB session across LLM I/O). `call_clarifier`
   raises `ClarifierError` on any provider failure; nothing here reaches a real LLM.
-- `casual.DEFAULT_MODEL == "gpt-4.1-mini"` - the `OpenAI Chat Model` node's hard-coded
-  model, used unless `ai_prompt_registry.agent_model(db, "chatbot_clarifier")` overrides
-  it (the same per-agent override mechanism `head/parser.py` already reads).
+- No hard-coded model: `ai_prompt_registry.agent_model(db, "chatbot_clarifier")` first, else
+  the AI assistant config's model (NO-OPENAI retired the n8n node's `gpt-4.1-mini`).
 - The engine wires `branch_kind == "low_signal"` to this lane in-process: `delegate` is
   `None`, the reply is the clarifier's `response` text (or the LLM-failure text on a
   `ClarifierError`), one `send_message` action, and the row's `branch_kind` stays
@@ -167,11 +166,11 @@ class TestClarifierRegistry:
             CLARIFIER_LIVE_PROMPT_SHA256
         )
 
-    def test_default_model_is_gpt_4_1_mini(self):
+    def test_no_hard_coded_default_model(self):
+        # NO-OPENAI: the n8n node's `gpt-4.1-mini` is gone; the model follows the label or the
+        # AI assistant config (tests/chatbot/test_clarifier_model_fallback.py).
         casual = _casual()
-        assert casual.DEFAULT_MODEL == "gpt-4.1-mini", (
-            "the OpenAI Chat Model node in sub-casual-llm hard-codes gpt-4.1-mini"
-        )
+        assert not hasattr(casual, "DEFAULT_MODEL")
 
 
 # --------------------------------------------------------------------------- #
