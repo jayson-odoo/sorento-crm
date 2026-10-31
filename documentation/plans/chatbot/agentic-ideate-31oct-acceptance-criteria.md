@@ -219,3 +219,14 @@ Q4 is (a), owner 31 Oct: any bot question.
 - **AC-RC-12 [BE]** The `proposed` tool result's message stays as it was, for every write. An attempt to tell the model not to repeat the proposal was reverted
   by review: the model's own text is the only place some write details reach the user, and the only restatement in the user's language.
 
+## Owner hand test round (31 Oct)
+
+Owner's message, used as the test case in every AC here: "I think we need to have sorento agentic ai".
+
+- **AC-HT-1 [BE]** `extract_ideate_turn` resolves the key per provider (`llm_provider.resolve_api_key(config, config.provider)`). With the provider `gemini`, a key only in the Gemini slot and none in the primary slot, the provider is built with the Gemini key and the owner's message comes back with a problem. A key for another provider is never handed to it. `ideation_turn_service.py:87` resolves the same way.
+- **AC-HT-2 [BE]** An extraction that FAILED (no key, a prompt that cannot render, a provider or parse error) is told apart from a real "no idea" (`IdeateExtraction.failed`). A model answer of `has_idea: false` is not a failure.
+- **AC-HT-3 [BE]** Through `handle_capture_turn` with the owner's message: a failed extraction returns a new status with an honest reply that it could not read the idea, nothing is created, and it opens no ask. The lane opens no `required_ask`, so the same message sent again is read fresh and never hits "I still couldn't find an idea". Replies go through `render_reply` in the user's language, or English when the language is unknown.
+- **AC-HT-4 [BE]** With the extractor working, the owner's message creates the idea in one turn (`complete`, with the fake ss), and a real intent-only message ("I have an idea") still gets `ask_idea`. No word list and no regex anywhere: the verdict stays the model's.
+- **AC-HT-5 [T]** The label of `crm_idea_create` is "record a suggestion or wish for what the system should have or do, an idea or a feature request". The snapshot in AC-R2-14 changes with it, and `agent_tool_labels()` equals `criteria_try_v1.json`, the list evaluated on the gold and held-out rows.
+- **AC-HT-6 [T]** The crew-only gold gains the owner's message, labelled agent. Whether the live extractor takes the message and whether Jev routes it are checked on the copy after the push.
+
