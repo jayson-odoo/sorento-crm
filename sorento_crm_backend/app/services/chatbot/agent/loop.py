@@ -1231,6 +1231,9 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         "limit_hit": limit_hit,
         "rounds": run.rounds,
     }
+    # Only a real final answer can ask back; a forced final at a limit never does.
+    if status != "failed" and final_args is not None and final_args.get("asked_back") is True:
+        turn.response["asked_back"] = True
     turn.trace = trace.persisted()
     turn.finished_at = datetime.now(timezone.utc)
     if status == "failed":

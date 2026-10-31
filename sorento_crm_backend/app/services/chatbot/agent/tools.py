@@ -275,6 +275,13 @@ ANSWER_SCHEMA: dict[str, Any] = {
                 },
                 "not_checked": {"type": "array", "items": {"type": "string"}},
                 "answered": {"type": "array", "items": {"type": "string"}},
+                "asked_back": {
+                    "type": "boolean",
+                    "description": (
+                        "Set true only when the reply asks the user something you need to finish, "
+                        "so their next message is read as the answer."
+                    ),
+                },
             },
             "required": ["text"],
         },

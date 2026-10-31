@@ -12,7 +12,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -42,6 +42,8 @@ RECENT_EXCHANGES = 3
 REPLY_CHARS = 300
 #: Longer (or empty) messages never go to Jev.
 MAX_TEXT_CHARS = 4000
+#: A reply this soon after the agent asked the user something stays with the agent.
+ASKED_BACK_MINUTES = 60
 
 
 @dataclass
@@ -126,9 +128,14 @@ def decide_route(
         return RouteDecision("chat", "router_failed:malformed", ms=ms, usage_id=usage_id)
     floor = settings.chatbot_router_min_score if settings is not None else DEFAULT_MIN_SCORE
     low = answer.confidence < float(floor)
+    # The agent's own question is answered on the agent unless Jev is sure it is a new chat question.
+    if _agent_asked_back(db, contact_respond_id) and not (answer.choice == "chat" and not low):
+        side, reason = "agent", "agent_asked"
+    else:
+        side, reason = ("chat", "low_confidence") if low else (answer.choice, "classified")
     return RouteDecision(
-        "chat" if low else answer.choice,
-        "low_confidence" if low else "classified",
+        side,
+        reason,
         score=answer.confidence,
         model=answer.model or model,
         ms=ms,
@@ -171,6 +178,22 @@ def _agent_turns_today(db, contact_respond_id: str) -> int:
         )
         .count()
     )
+
+
+def _agent_asked_back(db, contact_respond_id: str) -> bool:
+    """Is the contact's latest done turn an agent turn that asked the user something, under an hour ago?"""
+    row = (
+        db.query(ChatbotTurn.ingress, ChatbotTurn.response, ChatbotTurn.created_at)
+        .filter(ChatbotTurn.contact_respond_id == contact_respond_id, ChatbotTurn.status == "done")
+        .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.started_at.desc().nullslast())
+        .first()
+    )
+    if row is None or row[0] != "agent" or not isinstance(row[1], dict) or row[1].get("asked_back") is not True:
+        return False
+    created = row[2]
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - created < timedelta(minutes=ASKED_BACK_MINUTES)
 
 
 def _router_prompt(db) -> tuple[str, dict[str, Any], str] | None:
