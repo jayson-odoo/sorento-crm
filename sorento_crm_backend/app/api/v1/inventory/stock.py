@@ -58,6 +58,7 @@ from app.dependencies import (
     get_current_user_or_api_key,
     require_permission,
     require_permission_with_api_key,
+    require_staff_read_permission,
 )
 from app.services.inventory_service import StockService
 from app.services.uuid_list_param import parse_requested_quantities, parse_uuid_list
@@ -236,7 +237,11 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
     return JSONResponse(content=body)
 
 
-@router.get("/balance", response_model=StockBalanceListResponse)
+@router.get(
+    "/balance",
+    response_model=StockBalanceListResponse,
+    dependencies=[Depends(require_staff_read_permission("inventory.stock.view"))],
+)
 def get_stock_balance(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),

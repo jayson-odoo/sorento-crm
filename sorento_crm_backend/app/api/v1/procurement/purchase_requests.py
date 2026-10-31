@@ -13,6 +13,7 @@ from app.dependencies import (
     get_current_user_or_api_key,
     require_permission,
     require_permission_with_api_key,
+    require_staff_read_permission,
 )
 from app.services.procurement_service import PurchaseRequestService
 from app.schemas.procurement import (
@@ -99,7 +100,20 @@ def get_purchase_requests(
         raise handle_internal_error(str(e))
 
 
-@router.get("/by-number/{number}", response_model=PurchaseRequestHeaderResponse)
+@router.get(
+    "/by-number/{number}",
+    response_model=PurchaseRequestHeaderResponse,
+    dependencies=[
+        Depends(
+            require_staff_read_permission(
+                "procurement.purchase_requests.view",
+                "procurement.purchase_requests.view_own",
+                "procurement.sponsorship_forms.view",
+                "procurement.sponsorship_forms.view_own",
+            )
+        )
+    ],
+)
 def get_purchase_request_by_number(
     number: str,
     current_user: dict = Depends(get_current_user_or_api_key),

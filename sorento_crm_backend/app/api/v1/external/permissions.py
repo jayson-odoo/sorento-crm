@@ -25,6 +25,19 @@ from app.dependencies import get_db, get_external_api_user
 from app.services.user_service import UserPermissionService
 
 
+def _holds_external_permission(service: UserPermissionService, current_user: dict, slug: str) -> bool:
+    """The key's user must hold ``slug``, and on an identity read the staff member too. An
+    ``integration.*`` slug names what the integration may do, and staff never hold those."""
+    key_user_id = current_user.get("key_user_id")
+    if not key_user_id:
+        return service.check_user_has_permission(current_user["id"], slug)
+    if slug.startswith("integration."):
+        return service.check_user_has_permission(key_user_id, slug)
+    return service.check_user_has_permission(key_user_id, slug) and service.check_user_has_permission(
+        current_user["id"], slug
+    )
+
+
 def require_external_permission(permission_slug: str):
     """Authenticate the integration key, then require ``permission_slug``.
 
@@ -41,7 +54,7 @@ def require_external_permission(permission_slug: str):
         db: Session = Depends(get_db),
     ) -> dict:
         service = UserPermissionService(db)
-        if not service.check_user_has_permission(current_user["id"], permission_slug):
+        if not _holds_external_permission(service, current_user, permission_slug):
             # Name the missing slug: an operator seeing this needs to know which
             # grant to add, and it reveals nothing an attacker could use -- they
             # already hold a valid key at this point.

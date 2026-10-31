@@ -126,12 +126,27 @@ def test_api_key_principal_denied(db_and_app):
     assert res.status_code in (401, 403), res.text
 
 
-def test_stock_inquiry_no_extra_perm_required(db_and_app):
-    # stock_inquiry has no view permission slug → any authenticated user (even
-    # one lacking complaint.view) gets 200.
+def test_stock_inquiry_needs_a_view_permission(db_and_app):
+    # AC-19 (AGENTIC-UNIFY): stock_inquiry is no longer auth-only. A user holding neither
+    # view nor view_own gets 403; a holder of `view` gets the facts.
+    from app.models.user import User, UserPermission, UserRole, UserRolePermission, UserRoleAssignment
+
     db, get_current_user = db_and_app
     app.dependency_overrides[get_current_user] = lambda: {"id": _NOPERM_ID, "email": "rc-noperm@test.com"}
+    with TestClient(app) as c:
+        denied = c.get(f"/api/v1/assistant/record-context/stock_inquiry/{_INQUIRY_ID}")
+    assert denied.status_code == 403, denied.text
 
+    holder_id = str(uuid.uuid4())
+    db.add(User(id=holder_id, email="rc-si-view@test.com", name="SI Viewer", status="ACTIVE"))
+    role = UserRole(slug="zzt-si-view", name="zzt si view")
+    perm = UserPermission(slug="procurement.stock_inquiries.view", name="procurement.stock_inquiries.view")
+    db.add_all([role, perm])
+    db.flush()
+    db.add(UserRoleAssignment(user_id=holder_id, role_id=role.id))
+    db.add(UserRolePermission(role_id=role.id, permission_id=perm.id))
+    db.commit()
+    app.dependency_overrides[get_current_user] = lambda: {"id": holder_id, "email": "rc-si-view@test.com"}
     with TestClient(app) as c:
         res = c.get(f"/api/v1/assistant/record-context/stock_inquiry/{_INQUIRY_ID}")
     assert res.status_code == 200, res.text
