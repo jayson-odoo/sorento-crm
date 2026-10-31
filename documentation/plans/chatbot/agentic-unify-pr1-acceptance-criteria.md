@@ -37,8 +37,10 @@ Names used below. **Staff** = the logged-in user the panel is answering. **Act-a
 
 - **AC-10** `require_permission_with_api_key`: staff AND act-as must both hold the slug. Staff lacking it gets 403 even though act-as holds
   it. Act-as lacking it gets 403 even though staff holds it: the header can only narrow.
-- **AC-11** `require_any_permission_with_api_key`: same, including the superadmin shortcut. A superadmin staff does not get past an act-as who
-  lacks the slugs.
+- **AC-11** `require_any_permission_with_api_key`: staff must hold at least one slug of the list AND act-as must hold at least one, not necessarily
+  the same one; the module check runs per user. A superadmin staff does not get past an act-as who holds none of the slugs. The shared key's act-as is
+  not an admin and lacks some `.view_own` slugs (crew, read-only check on the 28 Oct prod copy), so a `.view_own`-only staff member with an act-as holding
+  only `.view` must pass: this role must not need `.view_own` granted to it.
 - **AC-12** External routes: a real slug needs both users; an `integration.*` slug is checked on act-as only, since staff never hold those.
 - **AC-13** These routes gate on a slug for an identity read only. A session and a plain key behave exactly as today.
 
