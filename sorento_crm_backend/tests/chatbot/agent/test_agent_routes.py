@@ -20,7 +20,7 @@ from tests.chatbot.test_console_turn_endpoint import (  # noqa: F401 - fixtures 
 )
 
 TURN = "/api/v1/system/chatbot/console/turn"
-CONVERSATION = "/api/v1/system/chatbot/agent/conversation"
+THREAD = "/api/v1/system/chatbot/console/thread"
 NEW = "/api/v1/system/chatbot/agent/conversation/new"
 
 
@@ -61,6 +61,14 @@ def patch_run(monkeypatch):
     fake.calls = calls
     fake.box = box
     return fake
+
+
+REFUSAL_WORDS = {
+    "contact_not_found": "This contact was not found.",
+    "ai_replies_off": "AI replies are off for this contact.",
+    "switch_off": "Agent mode is off for this contact (Contact Details > Chatbot).",
+    "no_linked_user": "This contact has no linked active user.",
+}
 
 
 def _turn(client, **over):
@@ -104,7 +112,7 @@ def test_a_refusal_is_a_200_with_reply_text(client, patch_run, reason):
     resp = _turn(client)
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["reply_text"].strip()
+    assert resp.json()["reply_text"] == REFUSAL_WORDS[reason]
     assert resp.json()["route"]["side"] == "agent"
 
 
@@ -159,45 +167,26 @@ def _agent_contact_with_conversation(session_factory):
     return db, contact, conv
 
 
-def test_get_conversation_lists_the_current_conversations_turns(client, session_factory):
+def _read(client, contact, run="ZZT-run-1"):
+    resp = client.get(THREAD, params={"contact_respond_id": contact["respond_id"], "run_id": run})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_the_thread_lists_the_current_conversations_agent_turns_in_order(client, session_factory):
     db, contact, conv = _agent_contact_with_conversation(session_factory)
     t1 = seed_turn(db, conv, minute=1, text="first", reply="reply one")
     t2 = seed_turn(db, conv, minute=2, text="second", reply="reply two")
     db.commit()
 
-    resp = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]})
+    body = _read(client, contact)
 
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["conversation_id"] == str(conv.id)
     assert [t["turn_id"] for t in body["turns"]] == [t1.id, t2.id]
     first = body["turns"][0]
-    assert first["text"] == "first"
+    assert first["side"] == "agent"
+    assert first["user_text"] == "first"
     assert first["reply_text"] == "reply one"
-    assert first["status"] == "done"
     assert first["created_at"]
-
-
-def test_get_conversation_for_a_new_contact_is_empty(client, session_factory):
-    from tests.chatbot.agent._seed import seed_agent_contact
-
-    db = session_factory()
-    contact = seed_agent_contact(db)
-    db.commit()
-    resp = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]})
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["conversation_id"] is None  # round 3: reading never creates a conversation
-    assert body["turns"] == []
-
-
-def test_get_conversation_without_the_view_permission_is_403(client):
-    _GRANTS.discard(VIEW)
-    assert client.get(CONVERSATION, params={"contact_respond_id": "ZZT-ROUTE-1"}).status_code == 403
-
-
-def test_get_conversation_needs_the_contact_id(client):
-    assert client.get(CONVERSATION).status_code == 422
 
 
 def test_new_conversation_returns_a_fresh_id_and_empties_the_next_read(client, session_factory):
@@ -210,9 +199,7 @@ def test_new_conversation_returns_a_fresh_id_and_empties_the_next_read(client, s
     assert resp.status_code == 200, resp.text
     new_id = resp.json()["conversation_id"]
     assert new_id and new_id != str(conv.id)
-    after = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]}).json()
-    assert after["conversation_id"] == new_id
-    assert after["turns"] == []
+    assert _read(client, contact)["turns"] == []
 
 
 def test_new_conversation_without_the_view_permission_is_403(client):

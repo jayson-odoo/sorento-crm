@@ -16,6 +16,7 @@ const postConsoleTurn = vi.fn();
 const getConsoleThread = vi.fn();
 const confirmAgentAction = vi.fn();
 const withdrawAgentStep = vi.fn();
+const cancelAgentAction = vi.fn();
 
 vi.mock('../services/chatbotConsoleService', () => ({
   postConsoleTurn: (...a: unknown[]) => postConsoleTurn(...a),
@@ -28,7 +29,7 @@ vi.mock('../services/agentConsoleService', async () => {
   return {
     ...actual,
     confirmAgentAction: (...a: unknown[]) => confirmAgentAction(...a),
-    cancelAgentAction: vi.fn(),
+    cancelAgentAction: (...a: unknown[]) => cancelAgentAction(...a),
     withdrawAgentStep: (...a: unknown[]) => withdrawAgentStep(...a),
     newAgentConversation: vi.fn().mockResolvedValue({ conversation_id: 'cv' }),
   };
@@ -69,7 +70,7 @@ function send(text: string) {
 
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
-  [postConsoleTurn, getConsoleThread, confirmAgentAction, withdrawAgentStep].forEach((m) => m.mockReset());
+  [postConsoleTurn, getConsoleThread, confirmAgentAction, cancelAgentAction, withdrawAgentStep].forEach((m) => m.mockReset());
   getConsoleThread.mockResolvedValue(thread([]));
   window.localStorage.clear();
   window.localStorage.setItem('chatbot-console:last-contact', JSON.stringify({ id: 'ZZT-1', label: 'Test Contact' }));
@@ -189,5 +190,80 @@ describe('decisions and withdraws', () => {
     renderConsole();
     fireEvent.click(await screen.findByRole('button', { name: /undo/i }));
     expect(await within(document.body).findByText('That change already applied, so it can no longer be withdrawn.')).toBeTruthy();
+  });
+});
+
+describe('a decision is made once', () => {
+  const PENDING = { id: 'a1', turn_id: 't1', lines: ['Mark it done', 'And this'], expires_at: '2099-01-01T00:00:00Z' };
+  const waitingThread = () => thread([agentTurn({ turn_id: 't1', reply_text: 'I will make these changes when you confirm.' })], PENDING);
+  const decided = thread([agentTurn({ turn_id: 't1', reply_text: 'I will make these changes when you confirm.' })]);
+
+  it('Confirm in flight disables Cancel, and once decided the Confirm and Cancel buttons are gone (no double confirm)', async () => {
+    getConsoleThread.mockResolvedValue(waitingThread());
+    let finish: (v: unknown) => void = () => {};
+    confirmAgentAction.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    renderConsole();
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm 2 changes' }));
+
+    await waitFor(() => expect(confirmAgentAction).toHaveBeenCalledWith('ZZT-1', 'a1'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled());
+
+    getConsoleThread.mockResolvedValue(decided);
+    finish({ action_id: 'a1', status: 'executed', reply_text: 'Done. I made these changes:\n1. Mark it done', steps: [] });
+
+    expect(await screen.findByTestId('agent-action-outcome')).toHaveTextContent('Done');
+    await waitFor(() => expect(screen.queryByTestId('agent-proposal')).not.toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: 'Confirm 2 changes' })).not.toBeInTheDocument();
+    expect(confirmAgentAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('Cancel in flight disables Confirm; once decided the buttons are gone and the outcome reads Cancelled', async () => {
+    getConsoleThread.mockResolvedValue(waitingThread());
+    let finish: (v: unknown) => void = () => {};
+    cancelAgentAction.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    renderConsole();
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    await waitFor(() => expect(cancelAgentAction).toHaveBeenCalledWith('ZZT-1', 'a1'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm 2 changes' })).toBeDisabled());
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+
+    getConsoleThread.mockResolvedValue(decided);
+    finish({ action_id: 'a1', status: 'cancelled', reply_text: 'Cancelled. Nothing was changed.', steps: [] });
+
+    expect(await screen.findByText('Cancelled. Nothing was changed.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('agent-proposal')).not.toBeInTheDocument());
+  });
+});
+
+describe('the reasoning stays out of the reply', () => {
+  const THOUGHT = 'I should look at the stock balance before answering.';
+  const steps = {
+    ...EMPTY_STEPS, rounds: 1,
+    tool_calls: [{ name: 'crm_inventory_stock_balance_list', status: 'ok', ms: 4, round: 1, detail: 'Stock balance: 1 row' }],
+    reasoning: [{ round: 1, text: THOUGHT, final: false }],
+  };
+
+  it('opening Thinking shows it in Steps and never in the reply text, on a reloaded turn', async () => {
+    getConsoleThread.mockResolvedValue(thread([agentTurn({ steps })]));
+    renderConsole();
+    const disclosure = await screen.findByTestId('agent-steps');
+    fireEvent.click(within(disclosure).getByRole('button', { name: 'Steps' }));
+    fireEvent.click(within(disclosure).getByRole('button', { name: 'Thinking (round 1)' }));
+    expect(disclosure).toHaveTextContent(THOUGHT);
+    expect(screen.getByText('There are 12 units.').closest('p')).not.toHaveTextContent(THOUGHT);
+  });
+
+  it('shows the thinking of a turn that has just been sent', async () => {
+    postConsoleTurn.mockResolvedValue({
+      turn_id: 'a9', branch_kind: null, reply_text: 'There are 12 units.', quick_replies: [], send_messages: [],
+      session_vars: null, trace_summary: {}, route: AGENT_ROUTE,
+      agent: { turn_id: 'a9', status: 'answered', pending_action: null, steps, actions: [] },
+    });
+    renderConsole();
+    send('stock?');
+    const disclosure = await screen.findByTestId('agent-steps');
+    fireEvent.click(within(disclosure).getByRole('button', { name: 'Steps' }));
+    expect(within(disclosure).getByRole('button', { name: 'Thinking (round 1)' })).toBeInTheDocument();
   });
 });

@@ -17,7 +17,7 @@ from tests.chatbot.agent.test_agent_writes_round1 import client, console, go  # 
 from tests._pg_fixture import blank_session
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
-CONVERSATION = "/api/v1/system/chatbot/agent/conversation"
+THREAD = "/api/v1/system/chatbot/console/thread"
 
 
 @pytest.fixture(autouse=True)
@@ -81,7 +81,7 @@ def test_a_uuid_in_a_step_error_is_scrubbed_from_the_outcome_and_the_reload(cons
     row.status, row.steps = "partial", steps
     s.commit()
 
-    body = console.get(CONVERSATION, params={"contact_respond_id": w.respond_id}).json()
+    body = console.get(THREAD, params={"contact_respond_id": w.respond_id, "run_id": "ZZT-run-1"}).json()
 
     shown = body["turns"][0]["actions"][0]["steps"][0]["error"]
     assert "not found" in shown and not UUID_RE.search(shown)

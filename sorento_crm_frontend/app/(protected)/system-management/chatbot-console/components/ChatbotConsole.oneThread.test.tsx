@@ -31,13 +31,14 @@ const cancelAgentAction = vi.fn();
 const withdrawAgentStep = vi.fn();
 const newAgentConversation = vi.fn();
 const getRespondContactsOutbound = vi.fn();
+const getConsoleMediaStatus = vi.fn();
 const toastError = vi.fn();
 
 vi.mock('../services/chatbotConsoleService', () => ({
   postConsoleTurn: (...a: unknown[]) => postConsoleTurn(...a),
   getConsolePromptVersions: (...a: unknown[]) => getConsolePromptVersions(...a),
   getConsoleThread: (...a: unknown[]) => getConsoleThread(...a),
-  getConsoleMediaStatus: vi.fn(),
+  getConsoleMediaStatus: (...a: unknown[]) => getConsoleMediaStatus(...a),
 }));
 vi.mock('../services/agentConsoleService', async () => {
   const actual = await vi.importActual<typeof import('../services/agentConsoleService')>(
@@ -138,7 +139,7 @@ const threadCalls = () => getConsoleThread.mock.calls.map((c) => JSON.stringify(
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   [postConsoleTurn, getConsolePromptVersions, getConsoleThread, confirmAgentAction, cancelAgentAction,
-    withdrawAgentStep, newAgentConversation, getRespondContactsOutbound, toastError].forEach((m) => m.mockReset());
+    withdrawAgentStep, newAgentConversation, getRespondContactsOutbound, getConsoleMediaStatus, toastError].forEach((m) => m.mockReset());
   getConsolePromptVersions.mockResolvedValue([]);
   getConsoleThread.mockResolvedValue(thread([]));
   newAgentConversation.mockResolvedValue({ conversation_id: 'cv-new' });
@@ -215,7 +216,10 @@ describe('AC-3: steps and reasoning inside an agent bubble', () => {
     const bubble = bubbleOf('There are 12 units.');
     fireEvent.click(within(bubble).getByRole('button', { name: 'Steps' }));
     expect(within(bubble).getByText('Read 12 units of stock')).toBeInTheDocument();
-    fireEvent.click(within(bubble).getByRole('button', { name: 'Thinking (round 1)' }));
+    const thinking = within(bubble).getByRole('button', { name: 'Thinking (round 1)' });
+    expect(thinking).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(thinking);
+    expect(thinking).toHaveAttribute('aria-expanded', 'true');
     expect(within(bubble).getByText('Checking the stock balance first.')).toBeInTheDocument();
   });
 
@@ -449,14 +453,67 @@ describe('AC-14: after a reload the thread is back', () => {
     await waitFor(() => expect(confirmAgentAction).toHaveBeenCalledWith('ZZT-contact-1', 'act-1'));
   });
 
-  it('while the thread loads the console is usable; an empty thread still shows the greeting', async () => {
+  it('shows a loading skeleton until the read lands, then drops it', async () => {
     let finish: (v: unknown) => void = () => {};
     getConsoleThread.mockReturnValue(new Promise((resolve) => (finish = resolve)));
     renderConsole();
+    expect(await screen.findByRole('status', { name: 'Loading the conversation' })).toBeInTheDocument();
     expect(box()).toBeInTheDocument();
-    finish(thread([]));
-    await waitFor(() => expect(getConsoleThread).toHaveBeenCalled());
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    finish(thread([chatTurn('c1', 'q', 'Old answer.', '2026-10-31T09:00:00Z')]));
+
+    await screen.findByText('Old answer.');
+    expect(screen.queryByRole('status', { name: 'Loading the conversation' })).not.toBeInTheDocument();
+  });
+
+  it('a message sent before the first read lands loses nothing: old turns and a waiting Confirm still appear', async () => {
+    let finish: (v: unknown) => void = () => {};
+    getConsoleThread.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    postConsoleTurn.mockResolvedValue(turnResponse('Fresh reply.'));
+    renderConsole();
+    send('sent too early');
+    await screen.findByText('Fresh reply.');
+
+    finish(
+      thread(
+        [
+          chatTurn('c1', 'old question', 'Old answer.', '2026-10-31T08:00:00Z'),
+          agentTurn('a1', 'mark it', 'I will mark it done when you confirm.', '2026-10-31T08:01:00Z'),
+        ],
+        { id: 'act-1', turn_id: 'a1', lines: ['Mark it done'], expires_at: '2099-01-01T00:00:00Z' },
+      ),
+    );
+
+    await screen.findByText('Old answer.');
+    expect(screen.getByText('old question')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Confirm change' })).toBeInTheDocument();
+    expect(screen.getByText('sent too early')).toBeInTheDocument();
+    expect(screen.getByText('Fresh reply.')).toBeInTheDocument();
+  });
+
+  it('a stored turn with no reply text adds no "(no reply)" line', async () => {
+    getConsoleThread.mockResolvedValue(
+      thread([
+        chatTurn('c1', 'still running', '', '2026-10-31T09:00:00Z'),
+        chatTurn('c2', 'done one', 'Real answer.', '2026-10-31T09:01:00Z'),
+      ]),
+    );
+    renderConsole();
+    await screen.findByText('Real answer.');
+    expect(screen.queryByText('(no reply)')).not.toBeInTheDocument();
+  });
+
+  it('files the bot sent come back under the reply after a reload', async () => {
+    getConsoleThread.mockResolvedValue(
+      thread([
+        chatTurn('c1', 'send me the sheet', 'Here it is.', '2026-10-31T09:00:00Z', {
+          attachments: [{ url: 'https://files.example.invalid/sheet.pdf', filename: 'sheet.pdf', mimeType: 'application/pdf', attachmentType: 'document' }],
+        }),
+      ]),
+    );
+    renderConsole();
+    await screen.findByText('Here it is.');
+    expect(within(bubbleOf('Here it is.')).getByText('sheet.pdf')).toBeInTheDocument();
   });
 });
 
@@ -563,5 +620,184 @@ describe('AC-20: a contact without the agent still gets chat, with the pill sayi
     await screen.findByText('Chat reply.');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
+// ------------------------------------------------------------------ AC-16 (in flight)
+
+describe('AC-16: a reply in flight for the first contact never lands in the second', () => {
+  const MARK_A = 'ZZTMARKERA';
+  const SESSION_A = {
+    focus: { customers: [{ canonical_code: MARK_A }] }, open_question: null, ideation: null, access_levels: [], contains_flyer: false,
+  };
+
+  it('keeps A reply, A session and the stored last contact out of B', async () => {
+    getConsoleThread.mockImplementation(async (contact: unknown) =>
+      JSON.stringify(contact).includes('ZZT-contact-2')
+        ? thread([chatTurn('c2', 'second question', 'Second answer.', '2026-10-31T09:00:00Z')])
+        : thread([]),
+    );
+    getRespondContactsOutbound.mockResolvedValue({
+      data: [{ respond_io_id: 'ZZT-contact-2', name: 'Second Contact', phone_number: null }],
+      pagination: { total: 1, page: 1, limit: 20 },
+      empty: false,
+    });
+    let finishA: (v: unknown) => void = () => {};
+    postConsoleTurn.mockReturnValueOnce(new Promise((resolve) => (finishA = resolve)));
+    renderConsole();
+    send('question for A');
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(document.querySelectorAll('[data-slot="searchable-select-trigger"]')[0]);
+    fireEvent.click(await screen.findByText('Second Contact'));
+    await screen.findByText('Second answer.');
+
+    finishA(turnResponse('A reply that is late.', { session_vars: SESSION_A }));
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(screen.queryByText('A reply that is late.')).not.toBeInTheDocument();
+    expect(screen.getByText('Second answer.')).toBeInTheDocument();
+    expect(JSON.parse(window.localStorage.getItem(CONTACT_KEY) ?? '{}').id).toBe('ZZT-contact-2');
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i) as string;
+      if (key.includes('ZZT-contact-2')) expect(window.localStorage.getItem(key)).not.toContain(MARK_A);
+    }
+    postConsoleTurn.mockResolvedValueOnce(turnResponse('B reply.'));
+    send('question for B');
+    await screen.findByText('B reply.');
+    const body = postConsoleTurn.mock.calls[1][0];
+    expect(body.contact_respond_id).toBe('ZZT-contact-2');
+    expect(JSON.stringify(body.session_vars)).not.toContain(MARK_A);
+  });
+});
+
+// ------------------------------------------------------------------ AC-4: a proposal straight after the turn
+
+describe('AC-4: Confirm shows right after the turn that made it, no reload', () => {
+  const PENDING = { id: 'act-1', turn_id: 'a-live', lines: ['Mark it done'], expires_at: '2099-01-01T00:00:00Z' };
+
+  it('a routed agent turn whose response carries pending_action shows Confirm and Cancel at once', async () => {
+    // The re-read after a turn never lands here, so Confirm can only come from the turn's own response.
+    getConsoleThread.mockResolvedValueOnce(thread([])).mockReturnValue(new Promise(() => {}));
+    postConsoleTurn.mockResolvedValue(
+      agentResponse('I will mark it done when you confirm.', {
+        agent: { turn_id: 'a-live', status: 'answered', pending_action: PENDING, steps: AGENT_STEPS, actions: [] },
+      }),
+    );
+    renderConsole();
+    await waitFor(() => expect(getConsoleThread).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 20)); // the first read has landed
+    send('mark it done');
+    await screen.findByText('I will mark it done when you confirm.');
+    expect(await screen.findByRole('button', { name: 'Confirm change' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+  });
+
+  it('a first read that lands after the turn does not wipe the proposal the turn made', async () => {
+    let landLate: (v: unknown) => void = () => {};
+    getConsoleThread
+      .mockReturnValueOnce(new Promise((resolve) => (landLate = resolve)))
+      .mockReturnValue(new Promise(() => {}));
+    postConsoleTurn.mockResolvedValue(
+      agentResponse('I will mark it done when you confirm.', {
+        agent: { turn_id: 'a-live', status: 'answered', pending_action: PENDING, steps: AGENT_STEPS, actions: [] },
+      }),
+    );
+    renderConsole();
+    send('mark it done');
+    await screen.findByRole('button', { name: 'Confirm change' });
+
+    landLate(thread([])); // read from before the turn: no proposal on it
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByRole('button', { name: 'Confirm change' })).toBeInTheDocument();
+  });
+
+  it('a slow voice note routed to the agent shows Confirm after the follow-up turn, no reload', async () => {
+    // The re-read after a turn never lands here, so Confirm can only come from the turn's own response.
+    getConsoleThread.mockResolvedValueOnce(thread([])).mockReturnValue(new Promise(() => {}));
+    postConsoleTurn
+      .mockResolvedValueOnce({
+        turn_id: null, branch_kind: null, reply_text: '', quick_replies: [], send_messages: [], session_vars: null,
+        trace_summary: {}, media_status: 'pending', media_id: 'job-1', media_text: null, media_error: null,
+      })
+      .mockResolvedValueOnce(
+        agentResponse('I will mark it done when you confirm.', {
+          agent: { turn_id: 'a-live', status: 'answered', pending_action: PENDING, steps: AGENT_STEPS, actions: [] },
+        }),
+      );
+    getConsoleMediaStatus.mockResolvedValue({ status: 'done', text: 'mark it done', error: null });
+    renderConsole();
+    await waitFor(() => expect(getConsoleThread).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 20)); // the first read has landed
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [new File(['x'], 'note.ogg', { type: 'audio/ogg' })] },
+    });
+    await screen.findByTestId('chatbot-console-staged');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    expect(await screen.findByRole('button', { name: 'Confirm change' }, { timeout: 8000 })).toBeInTheDocument();
+    expect(postConsoleTurn.mock.calls[1][0]).toMatchObject({ text: 'mark it done' });
+  }, 15000);
+});
+
+// ------------------------------------------------------------------ AC-7: chips and attachments
+
+describe('AC-7: the toggle with chips, voice and attachments', () => {
+  it('a quick-reply chip honours a toggle that is on, then turns it off', async () => {
+    postConsoleTurn
+      .mockResolvedValueOnce(turnResponse('Which product?', { quick_replies: ['Pump A'] }))
+      .mockResolvedValueOnce(agentResponse('Pump A is 12.'));
+    renderConsole();
+    send('price?');
+    await screen.findByText('Which product?');
+    fireEvent.click(agentToggle());
+    expect(isOn(agentToggle())).toBe(true);
+
+    fireEvent.click(within(bubbleOf('Which product?')).getByRole('button', { name: 'Pump A' }));
+
+    await screen.findByText('Pump A is 12.');
+    expect(postConsoleTurn.mock.calls[1][0]).toMatchObject({ text: 'Pump A', force_agent: true });
+    await waitFor(() => expect(isOn(agentToggle())).toBe(false));
+  });
+
+  it('an attachment goes to the bot and leaves the toggle off afterwards', async () => {
+    postConsoleTurn.mockResolvedValueOnce({
+      ...turnResponse('Read it.'), media_status: 'done', media_id: 'm1', media_text: 'a label', media_error: null,
+    });
+    renderConsole();
+    fireEvent.click(agentToggle());
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [new File(['x'], 'shot.png', { type: 'image/png' })] },
+    });
+    await screen.findByTestId('chatbot-console-staged');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await screen.findByText('Read it.');
+    const body = postConsoleTurn.mock.calls[0][0];
+    expect(body.media).toMatchObject({ kind: 'image' });
+    expect(body.force_agent).toBeFalsy();
+    await waitFor(() => expect(screen.queryByTestId('chatbot-console-staged')).not.toBeInTheDocument());
+    expect(isOn(agentToggle())).toBe(false);
+  });
+
+  it('a voice note goes to the bot and leaves the toggle off afterwards', async () => {
+    postConsoleTurn.mockResolvedValueOnce({
+      ...turnResponse('Heard it.'), media_status: 'done', media_id: 'm2', media_text: 'hello', media_error: null,
+    });
+    renderConsole();
+    fireEvent.click(agentToggle());
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [new File(['x'], 'note.ogg', { type: 'audio/ogg' })] },
+    });
+    await screen.findByTestId('chatbot-console-staged');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+
+    await screen.findByText('Heard it.');
+    expect(postConsoleTurn.mock.calls[0][0].media).toMatchObject({ kind: 'audio' });
+    expect(postConsoleTurn.mock.calls[0][0].force_agent).toBeFalsy();
+    await waitFor(() => expect(screen.queryByTestId('chatbot-console-staged')).not.toBeInTheDocument());
+    expect(isOn(agentToggle())).toBe(false);
   });
 });

@@ -9,7 +9,7 @@ Assumptions (the plan names fields, not every label or path):
   cancel responses carry the same key. Field labels: ask `State` (or `Status`) and `Note`; opportunity
   `Stage` (or `Status`) and `Customer`; contact `Role` and `AI replies`, links under a label containing "link".
   Values: `Open` / `Done`, stage labels, customer codes, role words `Employee` / `Business owner`, `On` / `Off`.
-- `GET agent/conversation` turns carry `actions: [{id, status, decided_at, decided_by_name, steps}]`.
+- `GET console/thread` turns carry `actions: [{id, status, decided_at, decided_by_name, steps}]`.
 - A tool call in `memory.steps_for_turn(...)["tool_calls"]` carries `detail`.
 - The audit description is `Agent change for <phone as stored> by <operator name>`.
 - The WhatsApp normaliser is `app.services.chatbot.agent.formatting.to_whatsapp(text: str) -> str`
@@ -73,7 +73,7 @@ from tests.chatbot.agent.test_agent_writes_round2 import console_confirm, make_o
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 AUDIT_EVENT = "contact.access_agent"
-CONVERSATION = "/api/v1/system/chatbot/agent/conversation"
+THREAD = "/api/v1/system/chatbot/console/thread"
 
 
 @pytest.fixture(autouse=True)
@@ -239,7 +239,7 @@ def test_v2_a_fresh_read_after_confirm_shows_the_action_with_its_changes_and_not
     w = ask_world(db)
     first, _ = go(db, w, proposal_script(w.asks))
     pending_id = first.pending_action["id"]
-    proposed_view = console.get(CONVERSATION, params={"contact_respond_id": w.respond_id}).json()
+    proposed_view = console.get(THREAD, params={"contact_respond_id": w.respond_id, "run_id": "ZZT-run-1"}).json()
     assert [a["status"] for a in proposed_view["turns"][0]["actions"]] == ["proposed"]  # control: shown while waiting
 
     chat_confirm(db, w, pending_id)
@@ -251,7 +251,7 @@ def test_v2_a_fresh_read_after_confirm_shows_the_action_with_its_changes_and_not
     db.add(foreign)
     db.commit()
 
-    body = console.get(CONVERSATION, params={"contact_respond_id": w.respond_id}).json()
+    body = console.get(THREAD, params={"contact_respond_id": w.respond_id, "run_id": "ZZT-run-1"}).json()
 
     actions = body["turns"][0]["actions"]
     assert [a["id"] for a in actions] == [pending_id]

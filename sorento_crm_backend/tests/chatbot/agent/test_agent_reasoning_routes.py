@@ -1,4 +1,4 @@
-"""AGENTIC-REASONING-VIS: both console routes return each round's reasoning beside its tool calls. Kept apart:
+"""AGENTIC-REASONING-VIS: both console routes (`POST /console/turn` and `GET /console/thread`) return each round's reasoning beside its tool calls. Kept apart:
 the console harness brings an autouse permission patch."""
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from tests.chatbot.test_console_turn_endpoint import (  # noqa: F401 - fixtures 
 )
 
 TURN = "/api/v1/system/chatbot/console/turn"
-CONVERSATION = "/api/v1/system/chatbot/agent/conversation"
+THREAD = "/api/v1/system/chatbot/console/thread"
 STOCK = "crm_inventory_stock_balance_list"
 
 TRACE = [
@@ -46,9 +46,9 @@ def _world(session_factory):
     return contact, conv, row
 
 
-def test_the_conversation_read_returns_each_rounds_reasoning(client, session_factory):
+def test_the_thread_read_returns_each_rounds_reasoning(client, session_factory):
     contact, _conv, _row = _world(session_factory)
-    turn = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]}).json()["turns"][0]
+    turn = client.get(THREAD, params={"contact_respond_id": contact["respond_id"], "run_id": "ZZT-run-1"}).json()["turns"][0]
     assert turn["steps"]["reasoning"] == EXPECTED_REASONING
     assert [(c["name"], c["round"]) for c in turn["steps"]["tool_calls"]] == [(STOCK, 1)]
     # Never the reply.
@@ -80,7 +80,7 @@ def test_the_reasoning_is_refused_without_the_console_permission(client, session
     contact, _conv, _row = _world(session_factory)
     _GRANTS.discard(VIEW)
     try:
-        response = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]})
+        response = client.get(THREAD, params={"contact_respond_id": contact["respond_id"], "run_id": "ZZT-run-1"})
     finally:
         _GRANTS.add(VIEW)
     assert response.status_code == 403

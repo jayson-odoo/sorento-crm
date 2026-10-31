@@ -94,6 +94,8 @@ describe('StepsDisclosure', () => {
     expect(second).toHaveAttribute('aria-expanded', 'false');
     expect(disclosure).not.toHaveTextContent(THOUGHT_1);
     fireEvent.click(first);
+    expect(first).toHaveAttribute('aria-expanded', 'true');
+    expect(second).toHaveAttribute('aria-expanded', 'false');
     expect(disclosure).toHaveTextContent(THOUGHT_1);
     expect(disclosure).not.toHaveTextContent(THOUGHT_2);
   });
