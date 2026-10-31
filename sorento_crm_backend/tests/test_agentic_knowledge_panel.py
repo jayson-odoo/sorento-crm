@@ -157,3 +157,65 @@ def test_other_tools_still_go_through_the_mcp(db, monkeypatch):
 
     assert out == "guide steps"
     assert client.mcp_calls == [("user_guides_read", {"query": "create an order"})]
+
+
+# ================================================================ FIX ROUND 1: RS7, what the panel binds and tells the model
+
+
+class _GuideMcp:
+    def __init__(self, *_a, **_k):
+        pass
+
+    def list_tools_with_schema(self):
+        return {"user_guides_read": {"description": "g", "inputSchema": {"type": "object", "properties": {}}}}
+
+    def call_tool(self, tool_name, args=None):  # noqa: ANN001
+        return '{"result": "ok"}'
+
+
+class _RecordingProvider:
+    def __init__(self):
+        self.tools: list[str] = []
+        self.system: str = ""
+
+    def chat(self, messages, tools=None, **_k):  # noqa: ANN001
+        self.tools = [t["function"]["name"] for t in (tools or [])]
+        self.system = "\n".join(str(m.get("content")) for m in messages if m.get("role") == "system")
+        from app.services.llm_provider import ChatResult
+
+        return ChatResult(content="final", prompt_tokens=1, completion_tokens=1, total_tokens=2, tool_calls=[])
+
+
+def _bound(db, monkeypatch, user_id):
+    import app.services.ai_assistant_service as svc_module
+
+    monkeypatch.setattr(svc_module, "MCPRuntimeClient", _GuideMcp)
+    provider = _RecordingProvider()
+    monkeypatch.setattr(svc_module, "get_provider", lambda *_a, **_k: provider)
+    service = _service(db)
+    cfg = service.cfg.get()
+    cfg.api_key_ciphertext = "fake-key"
+    cfg.provider, cfg.model, cfg.is_enabled = "openai", "gpt-4o-mini", True
+    db.commit()
+    service._run_agent_loop(
+        config=cfg, history=[], user_message="what is in the handbook?", standalone_query="handbook",
+        selected_tools=[], sources=[], user_id=user_id, turn_cache=None,
+    )
+    return provider
+
+
+def test_the_panel_binds_the_knowledge_tool_for_a_user_who_may_open_the_files(db, monkeypatch):
+    provider = _bound(db, monkeypatch, seed_reader(db))
+
+    assert TOOL in provider.tools
+    assert "user_guides_read" in provider.tools
+    assert "KNOWLEDGE PROTOCOL" in provider.system
+    assert "USER GUIDE PROTOCOL" in provider.system
+
+
+def test_the_panel_does_not_bind_the_knowledge_tool_or_its_protocol_without_the_slug(db, monkeypatch):
+    provider = _bound(db, monkeypatch, seed_reader(db, slugs=("inventory.stock.view",)))
+
+    assert TOOL not in provider.tools
+    assert "user_guides_read" in provider.tools
+    assert "KNOWLEDGE PROTOCOL" not in provider.system, "the protocol is added only where the tool is bound"

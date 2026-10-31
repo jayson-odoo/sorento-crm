@@ -223,4 +223,14 @@ describe('AttachmentDetail - Read by AI', () => {
 
     expect(rowText()).not.toMatch(/att-1|[0-9a-f]{8}-[0-9a-f]{4}-/i);
   });
+
+  it('shows three decimals when the estimated cost is under 0.01', async () => {
+    net.getAttachmentMetadata.mockResolvedValue(
+      attachment({ ...DONE, ai_read_pages: 5, ai_read_ocr_pages: 2, ai_read_cost_usd: '0.0040' }),
+    );
+    renderDetail();
+    await screen.findByText('Read by AI');
+
+    expect(rowText()).toMatch(/0\.004/);
+  });
 });

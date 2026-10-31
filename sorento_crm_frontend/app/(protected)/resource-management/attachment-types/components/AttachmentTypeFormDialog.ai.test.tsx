@@ -226,4 +226,13 @@ describe('AttachmentTypeFormDialog - AI can read', () => {
     await waitFor(() => expect(hooks.updateAsync).toHaveBeenCalledTimes(1));
     expect(hooks.updateAsync.mock.calls[0][0].data).toMatchObject({ ai_escalate_team_id: null });
   });
+
+  it('still shows the saved team name when the team list cannot be loaded', async () => {
+    hooks.getTeams.mockRejectedValue(new Error('teams unavailable'));
+    hooks.useAttachmentType.mockReturnValue({ data: savedType(), isLoading: false });
+    renderDialog({ attachmentTypeId: 'type-1' });
+
+    await waitFor(() => expect(selectOf('Escalate to').textContent).toMatch(/HR/));
+    expect(selectOf('Escalate to').textContent).not.toMatch(/team-hr/);
+  });
 });

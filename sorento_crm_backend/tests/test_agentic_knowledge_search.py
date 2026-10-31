@@ -279,3 +279,50 @@ def test_the_protocol_is_appended_once_and_names_both_tools():
     assert "user_guides_read" in once
     assert ks.with_knowledge_protocol(once) == once, "idempotent on its header"
     assert once.count(ks.KNOWLEDGE_PROTOCOL_HEADER) == 1
+
+
+# ================================================================ FIX ROUND 1 (review findings)
+
+
+def test_a_soft_deleted_attachment_is_not_returned(db):
+    user_id, _, att, _ = _world(db)
+    assert len(_ask(db, user_id)["passages"]) == 1
+
+    att.is_deleted = True
+    db.flush()
+
+    assert _ask(db, user_id)["passages"] == []
+
+
+def test_moving_a_file_to_another_company_moves_its_knowledge_chunks_with_it(db):
+    """RS4: the chunk's company follows the attachment, so the new company's search finds it."""
+    from sqlalchemy import text as sql
+
+    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+    from app.services.attachment_company_service import AttachmentCompanyService
+
+    other = seed_company(db)
+    user_id = seed_reader(db)
+    att = seed_attachment(db, seed_type(db, audience="staff"), company_id=SORENTO_COMPANY_ID)
+    seed_chunk(db, att, EXACT, text="moves with the file")
+
+    set_company_scope(db, frozenset({other}))
+    assert _ask(db, user_id)["passages"] == [], "not visible to the other company before the move"
+
+    set_company_scope(db, frozenset({SORENTO_COMPANY_ID}))
+    AttachmentCompanyService(db).apply(attachment_ids=[str(att.id)], directory_ids=[], company_id=other)
+
+    docs = db.execute(
+        sql("SELECT company_id FROM embedding_documents WHERE source_type = 'knowledge' AND source_id = :i"),
+        {"i": str(att.id)},
+    ).fetchall()
+    chunks = db.execute(
+        sql("SELECT company_id FROM embedding_chunks WHERE source_type = 'knowledge' AND source_id = :i"),
+        {"i": str(att.id)},
+    ).fetchall()
+    assert [str(r[0]) for r in docs] == [other]
+    assert [str(r[0]) for r in chunks] == [other]
+    set_company_scope(db, frozenset({other}))
+    assert [p["text"] for p in _ask(db, user_id)["passages"]] == ["moves with the file"]
+    set_company_scope(db, frozenset({SORENTO_COMPANY_ID}))
+    assert _ask(db, user_id)["passages"] == [], "and the old company no longer sees it"

@@ -18,6 +18,7 @@ from tests._knowledge_seed import (
     DIM,
     one_hot,
     seed_attachment,
+    seed_chunk,
     seed_type,
 )
 from tests._pg_fixture import blank_session
@@ -594,3 +595,208 @@ def test_knowledge_is_not_a_records_source():
     from app.services.embedding_settings import RECORD_KEEP_SET
 
     assert "knowledge" not in RECORD_KEEP_SET
+
+
+# ================================================================ FIX ROUND 1 (review findings)
+
+# ---------------------------------------------------------------- SS2: caps and the knowledge queue
+
+
+def test_the_read_caps_and_queue_are_named_constants():
+    from app.services import knowledge_service as ks
+
+    assert ks.MAX_PAGES == 300
+    assert ks.MAX_OCR_PAGES == 100
+    assert ks.MAX_DOCX_XML_BYTES == 20 * 1024 * 1024
+    assert ks.MAX_PAGE_AREA_PT2 > 0
+    assert ks.QUEUE == "knowledge"
+    assert ks.STALE_AFTER_SECONDS > 0
+
+
+def test_the_worker_drains_the_knowledge_queue_as_a_batch_queue():
+    import worker
+
+    assert ("knowledge", "batch") in tuple(worker.QUEUES)
+
+
+def test_a_pdf_over_the_page_cap_fails_with_a_readable_error_and_writes_nothing(db, monkeypatch):
+    import re
+
+    from app.services import knowledge_service as ks
+
+    monkeypatch.setattr(ks, "MAX_PAGES", 2)
+    att = seed_attachment(db, seed_type(db))
+
+    ks.read_attachment(db, str(att.id), fetch=lambda a: pdf_bytes([TEXT_A, TEXT_B, TEXT_A]), ocr=never_ocr, embed=fake_embed)
+
+    row = _fresh(db, att)
+    assert row.ai_read_status == "failed"
+    assert re.search(r"page", row.ai_read_error or "", re.I)
+    assert re.search(r"limit|more than|too many|maximum|at most", row.ai_read_error or "", re.I)
+    assert _knowledge_chunks(db, att) == [] and _knowledge_docs(db, att) == []
+
+
+def test_more_scanned_pages_than_the_ocr_cap_fails_and_ocr_stops_at_the_cap(db, monkeypatch):
+    from app.services import knowledge_service as ks
+
+    monkeypatch.setattr(ks, "MAX_OCR_PAGES", 1)
+    att = seed_attachment(db, seed_type(db))
+    calls: list[int] = []
+
+    def ocr(png, page_no):
+        calls.append(page_no)
+        return "A scanned page with plenty of words in it for the test"
+
+    ks.read_attachment(db, str(att.id), fetch=lambda a: pdf_bytes([None, None, None]), ocr=ocr, embed=fake_embed)
+
+    row = _fresh(db, att)
+    assert row.ai_read_status == "failed"
+    assert row.ai_read_error
+    assert len(calls) <= 1, "the vision reader is never called past the cap"
+    assert _knowledge_chunks(db, att) == [] and _knowledge_docs(db, att) == []
+
+
+def test_a_page_larger_than_the_area_cap_is_not_sent_to_ocr(db, monkeypatch):
+    from app.services import knowledge_service as ks
+
+    monkeypatch.setattr(ks, "MAX_PAGE_AREA_PT2", 1000)  # a default page is about 500,000 pt2
+
+    pages = ks.extract_pdf_pages(pdf_bytes([None]), ocr=never_ocr)
+
+    assert all(not p.ocr for p in pages), "an oversize page is treated as having no text"
+
+
+def test_a_docx_whose_document_xml_is_over_the_cap_fails_and_writes_nothing(db, monkeypatch):
+    from app.services import knowledge_service as ks
+
+    monkeypatch.setattr(ks, "MAX_DOCX_XML_BYTES", 100)
+    att = seed_attachment(db, seed_type(db), "Big.docx")
+    content = docx_bytes([("Heading1", "Leave"), (None, "Annual leave is fourteen days after three years. " * 10)])
+
+    ks.read_attachment(db, str(att.id), fetch=lambda a: content, ocr=never_ocr, embed=fake_embed)
+
+    row = _fresh(db, att)
+    assert row.ai_read_status == "failed"
+    assert row.ai_read_error
+    assert _knowledge_chunks(db, att) == [] and _knowledge_docs(db, att) == []
+
+
+def test_extract_docx_sections_refuses_an_oversize_document_xml(monkeypatch):
+    from app.services import knowledge_service as ks
+
+    monkeypatch.setattr(ks, "MAX_DOCX_XML_BYTES", 100)
+
+    with pytest.raises(Exception):
+        ks.extract_docx_sections(docx_bytes([(None, "word " * 100)]))
+
+
+# ---------------------------------------------------------------- SN1: no key fragment in any log line
+
+
+def test_a_failed_read_logs_no_key_fragment(db, caplog):
+    import logging
+
+    from app.services import knowledge_service as ks
+
+    att = seed_attachment(db, seed_type(db))
+
+    def embed(texts):
+        raise RuntimeError("400 Bad Request for url https://example.test/embed?key=AIzaSyFAKEFAKEFAKEFAKEFAKEFAKEFAKE12345")
+
+    with caplog.at_level(logging.DEBUG):
+        ks.read_attachment(db, str(att.id), fetch=lambda a: pdf_bytes([TEXT_A]), ocr=never_ocr, embed=embed)
+
+    formatter = logging.Formatter()
+    rendered = "\n".join(formatter.format(r) for r in caplog.records)
+    assert "AIza" not in rendered
+    assert _fresh(db, att).ai_read_status == "failed"
+
+
+# ---------------------------------------------------------------- RS1: a file that changed, a doc that appeared
+
+
+def test_a_file_that_changes_while_it_is_read_writes_nothing(db):
+    """The hash read at the start must still be the file's hash at write time."""
+    from app.services import knowledge_service as ks
+
+    att = seed_attachment(db, seed_type(db))
+    att.file_hash = "hash-one"
+    att.ai_read_status = "queued"
+    db.flush()
+
+    def embed(texts):
+        att.file_hash = "hash-two"  # a replace upload lands during the embedding call
+        db.flush()
+        return fake_embed(texts)
+
+    ks.read_attachment(db, str(att.id), fetch=lambda a: pdf_bytes([TEXT_A]), ocr=never_ocr, embed=embed)
+
+    row = _fresh(db, att)
+    assert _knowledge_chunks(db, att) == [], "stale content is never written"
+    assert _knowledge_docs(db, att) == []
+    assert row.ai_read_status != "done"
+    assert row.ai_read_status != "failed" or not row.ai_read_error
+
+
+def test_a_knowledge_document_that_appears_during_the_read_is_replaced_not_a_duplicate_key(db):
+    """Two reads of one file racing: the second must replace, never fail on the unique index."""
+    from app.services import knowledge_service as ks
+
+    att = seed_attachment(db, seed_type(db))
+
+    def embed(texts):
+        seed_chunk(db, att, one_hot(5), text="written by the other read", index=0)
+        return fake_embed(texts)
+
+    ks.read_attachment(db, str(att.id), fetch=lambda a: pdf_bytes([TEXT_A]), ocr=never_ocr, embed=embed)
+
+    row = _fresh(db, att)
+    assert row.ai_read_status == "done", row.ai_read_error
+    low = (row.ai_read_error or "").lower()
+    for fragment in ("duplicate", "integrityerror", "insert into", "select "):
+        assert fragment not in low
+    assert len(_knowledge_docs(db, att)) == 1
+    texts = " ".join(c.chunk_text for c in _knowledge_chunks(db, att) if c.is_current)
+    assert "written by the other read" not in texts
+    assert TEXT_A in texts
+
+
+# ---------------------------------------------------------------- RB1: re-queue across companies
+
+
+def test_turning_a_type_on_queues_files_of_every_company_under_a_single_company_scope(db, enqueued):
+    from sqlalchemy import text as sql
+
+    from app.models.base import set_company_scope
+    from app.services import knowledge_service as ks
+    from tests._knowledge_seed import SORENTO_COMPANY_ID, seed_company
+
+    other = seed_company(db)
+    att_type = seed_type(db, audience="staff")
+    mine = seed_attachment(db, att_type, "mine.pdf", company_id=SORENTO_COMPANY_ID)
+    theirs = seed_attachment(db, att_type, "theirs.pdf", company_id=other)
+    shared = seed_attachment(db, att_type, "shared.pdf")
+    db.execute(sql("UPDATE attachments SET company_id = NULL WHERE id = :i"), {"i": str(shared.id)})
+    db.flush()
+
+    set_company_scope(db, frozenset({SORENTO_COMPANY_ID}))
+    ks.queue_type_files(db, str(att_type.id))
+
+    assert sorted(enqueued) == sorted([str(mine.id), str(theirs.id), str(shared.id)])
+
+
+# ---------------------------------------------------------------- bulk import
+
+
+def test_the_bulk_import_queues_a_file_of_a_readable_type_and_skips_an_off_type(db, enqueued):
+    from app.tasks import import_tasks
+
+    readable = seed_attachment(db, seed_type(db, audience="staff"), "a.pdf")
+    off = seed_attachment(db, seed_type(db, audience="off"), "b.pdf")
+
+    import_tasks._queue_ai_read(db, readable)
+    import_tasks._queue_ai_read(db, off)
+
+    assert enqueued == [str(readable.id)]
+    assert _fresh(db, readable).ai_read_status == "queued"
+    assert _fresh(db, off).ai_read_status is None

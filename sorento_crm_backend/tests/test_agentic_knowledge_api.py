@@ -56,9 +56,13 @@ def api(monkeypatch):
                 "resource.attachments.view",
                 "resource.attachments.upload",
                 "resource.attachment_types.view",
+                "resource.attachment_types.create",
+                "resource.attachment_types.edit",
+                "resource.attachment_types.delete",
             ),
         )
         plain = seed_reader(db, slugs=("resource.attachments.view",))
+        nobody = seed_reader(db, slugs=())
         who = {"id": manager}
 
         def _db():
@@ -72,7 +76,7 @@ def api(monkeypatch):
         app.dependency_overrides[get_current_user_or_api_key] = _user
         try:
             with TestClient(app) as c:
-                yield type("Api", (), {"c": c, "db": db, "enqueued": enqueued, "who": who, "manager": manager, "plain": plain})
+                yield type("Api", (), {"c": c, "db": db, "enqueued": enqueued, "who": who, "manager": manager, "plain": plain, "nobody": nobody})
         finally:
             app.dependency_overrides.clear()
 
@@ -402,3 +406,232 @@ def test_external_rag_search_never_returns_a_knowledge_chunk(api, monkeypatch, s
     assert all("HR handbook passage" not in r["chunk_text"] for r in rows)
     if source_type != "knowledge":
         assert any(r["chunk_text"] == "plain record row" for r in rows), "the control record is returned"
+
+
+# ================================================================ FIX ROUND 1 (review findings)
+
+from datetime import datetime, timedelta  # noqa: E402
+
+
+# ---------------------------------------------------------------- SS1: attachment-type writes are permission gated
+
+
+def test_a_signed_in_user_with_no_role_cannot_create_a_type(api):
+    api.who["id"] = api.nobody
+
+    res = api.c.post(f"{TYPES}/", json=_type_body(ai_audience="staff"))
+
+    assert res.status_code == 403, res.text
+
+
+def test_a_signed_in_user_with_no_role_cannot_edit_a_type(api):
+    created = api.c.post(f"{TYPES}/", json=_type_body()).json()
+    api.who["id"] = api.nobody
+
+    res = api.c.put(f"{TYPES}/{created['id']}", json={"ai_audience": "staff"})
+
+    assert res.status_code == 403, res.text
+    api.who["id"] = api.manager
+    assert api.c.get(f"{TYPES}/{created['id']}").json()["ai_audience"] == "off"
+
+
+def test_a_signed_in_user_with_no_role_cannot_delete_a_type(api):
+    created = api.c.post(f"{TYPES}/", json=_type_body()).json()
+    api.who["id"] = api.nobody
+
+    res = api.c.delete(f"{TYPES}/{created['id']}")
+
+    assert res.status_code == 403, res.text
+    api.who["id"] = api.manager
+    assert api.c.get(f"{TYPES}/{created['id']}").status_code == 200
+
+
+def test_each_type_write_needs_its_own_slug(api):
+    """create / edit / delete are three slugs: holding one does not open the others."""
+    created = api.c.post(f"{TYPES}/", json=_type_body()).json()
+    only_edit = seed_reader(api.db, slugs=("resource.attachment_types.edit",))
+    api.who["id"] = only_edit
+
+    assert api.c.put(f"{TYPES}/{created['id']}", json={"description": "x"}).status_code == 200
+    assert api.c.post(f"{TYPES}/", json=_type_body()).status_code == 403
+    assert api.c.delete(f"{TYPES}/{created['id']}").status_code == 403
+
+
+# ---------------------------------------------------------------- nit: a team that does not exist
+
+
+def test_create_with_an_unknown_team_is_422(api):
+    res = api.c.post(f"{TYPES}/", json=_type_body(ai_escalate_team_id=str(uuid.uuid4())))
+
+    assert res.status_code == 422, res.text
+
+
+def test_update_with_an_unknown_team_is_422_and_changes_nothing(api):
+    created = api.c.post(f"{TYPES}/", json=_type_body()).json()
+
+    res = api.c.put(f"{TYPES}/{created['id']}", json={"ai_escalate_team_id": str(uuid.uuid4())})
+
+    assert res.status_code == 422, res.text
+    assert api.c.get(f"{TYPES}/{created['id']}").json()["ai_escalate_team_id"] is None
+
+
+# ---------------------------------------------------------------- SS3: Read again guards
+
+
+def _stamped(api, status, *, age_seconds, audience="staff"):
+    att = seed_attachment(api.db, seed_type(api.db, audience=audience))
+    att.ai_read_status = status
+    att.ai_read_at = datetime.utcnow() - timedelta(seconds=age_seconds)
+    api.db.flush()
+    return att
+
+
+@pytest.mark.parametrize("status", ["queued", "processing"])
+def test_read_again_while_a_recent_read_is_in_flight_is_409(api, status):
+    att = _stamped(api, status, age_seconds=5)
+
+    res = api.c.post(f"{FILES}/{att.id}/ai-read")
+
+    assert res.status_code == 409, res.text
+    assert api.enqueued == []
+
+
+@pytest.mark.parametrize("status", ["queued", "processing"])
+def test_read_again_recovers_a_read_stuck_past_the_stale_window(api, status):
+    from app.services.knowledge_service import STALE_AFTER_SECONDS
+
+    att = _stamped(api, status, age_seconds=STALE_AFTER_SECONDS + 60)
+
+    res = api.c.post(f"{FILES}/{att.id}/ai-read")
+
+    assert res.status_code == 202, res.text
+    assert api.enqueued == [str(att.id)]
+
+
+def test_read_again_on_a_type_that_is_now_off_is_409_with_a_readable_detail(api):
+    att = _stamped(api, "failed", age_seconds=5000, audience="off")
+
+    res = api.c.post(f"{FILES}/{att.id}/ai-read")
+
+    assert res.status_code == 409, res.text
+    detail = res.json()["detail"]
+    assert isinstance(detail, str) and detail.strip()
+    assert api.enqueued == []
+
+
+def test_read_again_is_rate_limited(api, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services import rate_limit
+
+    hits: list[tuple] = []
+
+    def hit(bucket, ident, *, limit, window_seconds):
+        hits.append((bucket, ident))
+        return SimpleNamespace(allowed=False, retry_after_seconds=60)
+
+    monkeypatch.setattr(rate_limit, "hit", hit)
+    att = _stamped(api, "failed", age_seconds=5000)
+
+    res = api.c.post(f"{FILES}/{att.id}/ai-read")
+
+    assert hits, "the route consults the shared rate limiter"
+    assert res.status_code == 429, res.text
+    assert api.enqueued == []
+
+
+# ---------------------------------------------------------------- RS3: a retype queues (or not)
+
+
+def test_retyping_a_file_to_a_readable_type_queues_it(api):
+    att = seed_attachment(api.db, seed_type(api.db, audience="off"))
+    target = seed_type(api.db, audience="staff")
+
+    res = api.c.put(f"{FILES}/{att.id}", json={"attachment_type_id": str(target.id)})
+
+    assert res.status_code == 200, res.text
+    assert api.enqueued == [str(att.id)]
+    api.db.expire_all()
+    assert api.db.get(Attachment, att.id).ai_read_status == "queued"
+
+
+def test_retyping_a_file_to_an_off_type_queues_nothing(api):
+    att = seed_attachment(api.db, seed_type(api.db, audience="staff"))
+    target = seed_type(api.db, audience="off")
+
+    res = api.c.put(f"{FILES}/{att.id}", json={"attachment_type_id": str(target.id)})
+
+    assert res.status_code == 200, res.text
+    assert api.enqueued == []
+    api.db.expire_all()
+    assert api.db.get(Attachment, att.id).ai_read_status is None
+
+
+def test_a_bulk_retype_queues_the_files_moved_to_a_readable_type(api):
+    a = seed_attachment(api.db, seed_type(api.db, audience="off"), "a.pdf")
+    b = seed_attachment(api.db, seed_type(api.db, audience="off"), "b.pdf")
+    target = seed_type(api.db, audience="staff")
+
+    res = api.c.post(f"{FILES}/bulk-attachment-type", json={"attachment_ids": [str(a.id), str(b.id)], "attachment_type_id": str(target.id)})
+
+    assert res.status_code == 200, res.text
+    assert sorted(api.enqueued) == sorted([str(a.id), str(b.id)])
+
+
+def test_a_bulk_retype_to_an_off_type_queues_nothing(api):
+    a = seed_attachment(api.db, seed_type(api.db, audience="staff"), "a.pdf")
+    target = seed_type(api.db, audience="off")
+
+    res = api.c.post(f"{FILES}/bulk-attachment-type", json={"attachment_ids": [str(a.id)], "attachment_type_id": str(target.id)})
+
+    assert res.status_code == 200, res.text
+    assert api.enqueued == []
+
+
+# ---------------------------------------------------------------- SN2: deleting a file removes what the AI read of it
+
+
+def _knowledge_rows(db, att):
+    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+
+    docs = db.query(EmbeddingDocument).filter(
+        EmbeddingDocument.source_type == "knowledge", EmbeddingDocument.source_id == str(att.id)
+    ).count()
+    chunks = db.query(EmbeddingChunk).filter(
+        EmbeddingChunk.source_type == "knowledge", EmbeddingChunk.source_id == str(att.id)
+    ).count()
+    return docs, chunks
+
+
+def test_deleting_an_attachment_removes_its_knowledge_document_and_chunks(api, monkeypatch):
+    from app.services import queue_service
+    from app.services.resources_service import AttachmentService
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: None)
+    att = seed_attachment(api.db, seed_type(api.db, audience="staff"))
+    other = seed_attachment(api.db, seed_type(api.db, audience="staff"), "other.pdf")
+    seed_chunk(api.db, att, EXACT_VEC, index=0)
+    seed_chunk(api.db, att, EXACT_VEC, index=1, text="second")
+    seed_chunk(api.db, other, EXACT_VEC)
+    assert _knowledge_rows(api.db, att) == (1, 2)
+
+    AttachmentService(api.db).delete_attachment(str(att.id), api.manager)
+
+    assert _knowledge_rows(api.db, att) == (0, 0)
+    assert _knowledge_rows(api.db, other) == (1, 1), "another file's chunks are untouched"
+
+
+def test_bulk_deleting_attachments_removes_their_knowledge_rows(api, monkeypatch):
+    from app.services import queue_service
+    from app.services.resources_service import AttachmentService
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: None)
+    a = seed_attachment(api.db, seed_type(api.db, audience="staff"), "a.pdf")
+    b = seed_attachment(api.db, seed_type(api.db, audience="staff"), "b.pdf")
+    seed_chunk(api.db, a, EXACT_VEC)
+    seed_chunk(api.db, b, EXACT_VEC)
+
+    AttachmentService(api.db).delete_attachments([str(a.id), str(b.id)], api.manager)
+
+    assert _knowledge_rows(api.db, a) == (0, 0)
+    assert _knowledge_rows(api.db, b) == (0, 0)

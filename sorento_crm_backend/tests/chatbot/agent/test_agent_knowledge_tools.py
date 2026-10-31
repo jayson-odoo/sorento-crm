@@ -246,3 +246,185 @@ def test_guides_read_drops_a_model_supplied_contact_or_space(db):
     assert out.status in ("ok", "invalid")
     for _, args in rec.calls:
         assert args == {"query": "how do I create an order"}
+
+
+# ---------------------------------------------------------------- SB1: the console operator, not only the linked user
+
+
+def _operator_ctx(linked_user, operator_user):
+    import dataclasses
+
+    return dataclasses.replace(_ctx(linked_user), operator_user_id=operator_user)
+
+
+def test_an_operator_without_the_view_slug_is_denied_even_when_the_linked_user_holds_it(db, search_spy):
+    """SB1: a console operator acts through the contact's linked user, so BOTH must hold the slug."""
+    from app.services.chatbot.agent import tools
+
+    linked = seed_user(db, contact_pk=None, slugs=(VIEW,))
+    operator = seed_user(db, contact_pk=None, slugs=("inventory.stock.view",))
+    ctx = _operator_ctx(linked, operator)
+
+    assert tools.user_may_use(db, ctx, tools.REGISTRY[SEARCH]) is False
+    out = tools.dispatch(db, ctx, SEARCH, {"query": "annual leave"}, call=forbidden_call, catalog={}, timeout=5.0)
+
+    assert out.status == "denied"
+    assert search_spy == []
+
+
+def test_an_operator_who_holds_the_view_slug_is_allowed(db, search_spy):
+    from app.services.chatbot.agent import tools
+
+    linked = seed_user(db, contact_pk=None, slugs=(VIEW,))
+    operator = seed_user(db, contact_pk=None, slugs=(VIEW,))
+    ctx = _operator_ctx(linked, operator)
+
+    assert tools.user_may_use(db, ctx, tools.REGISTRY[SEARCH]) is True
+    out = tools.dispatch(db, ctx, SEARCH, {"query": "annual leave"}, call=forbidden_call, catalog={}, timeout=5.0)
+
+    assert out.status == "ok", out.message
+    assert len(search_spy) == 1
+
+
+def test_the_search_runs_as_the_linked_user_when_both_may_read(db, search_spy):
+    """The passages are scoped to the linked user (company scope, audience); the operator only has to be allowed."""
+    from app.services.chatbot.agent import tools
+
+    linked = seed_user(db, contact_pk=None, slugs=(VIEW,))
+    operator = seed_user(db, contact_pk=None, slugs=(VIEW,))
+
+    tools.dispatch(
+        db, _operator_ctx(linked, operator), SEARCH, {"query": "annual leave"}, call=forbidden_call, catalog={}, timeout=5.0
+    )
+
+    assert search_spy[0]["user_id"] == linked
+
+
+# ---------------------------------------------------------------- STrace: passage text never lands in the stored trace
+
+PASSAGE_TEXT = "ZZT SECRET PASSAGE: annual leave is 14 days after three years of service."
+HIT_WITH_TEXT = {
+    "status": "ok",
+    "passages": [
+        {"document": "Employee Handbook 2026", "page": 14, "heading": "Leave", "text": PASSAGE_TEXT, "similarity": 0.91}
+    ],
+    "handoff_teams": ["HR"],
+}
+
+
+def test_trace_safe_drops_the_passage_text_and_keeps_document_and_page():
+    """Seam: `tools.trace_safe(name, data)`, the form of a tool result that may be stored in a trace."""
+    import copy
+
+    from app.services.chatbot.agent import tools
+
+    data = copy.deepcopy(HIT_WITH_TEXT)
+
+    safe = tools.trace_safe(SEARCH, data)
+
+    assert PASSAGE_TEXT not in json.dumps(safe)
+    assert all("text" not in p for p in safe["passages"])
+    assert safe["passages"][0]["document"] == "Employee Handbook 2026"
+    assert safe["passages"][0]["page"] == 14
+    assert data == HIT_WITH_TEXT, "the live result the model reads is not mutated"
+
+
+def test_trace_safe_leaves_every_other_tool_unchanged():
+    from app.services.chatbot.agent import tools
+
+    data = {"items": [{"text": "a row that happens to carry a text field", "qty": 12}]}
+
+    assert tools.trace_safe("crm_inventory_stock_balance_list", data) == data
+    assert tools.trace_safe(GUIDES, {"text": "guide body"}) == {"text": "guide body"}
+
+
+def test_a_turn_that_searched_the_documents_stores_no_passage_text(db, monkeypatch):
+    """End to end: the turn row's trace and response, and the steps read back from it, carry no passage text."""
+    import copy
+
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.services import knowledge_service
+    from app.services.chatbot.agent.loop import run_agent_turn
+    from app.services.chatbot.agent.memory import steps_for_turn
+    from app.services.llm_provider import ChatResult
+    from tests.chatbot.agent._seed import seed_agent_contact
+
+    monkeypatch.setattr(knowledge_service, "search", lambda db_, **kw: copy.deepcopy(HIT_WITH_TEXT))
+    contact = seed_agent_contact(db, slugs=(VIEW,))
+
+    class Provider:
+        def __init__(self):
+            self.script = [
+                ChatResult(
+                    content="", prompt_tokens=10, completion_tokens=1, total_tokens=11,
+                    tool_calls=[{"id": "k1", "name": SEARCH, "arguments": {"query": "annual leave"}}],
+                ),
+                ChatResult(
+                    content="", prompt_tokens=10, completion_tokens=1, total_tokens=11,
+                    tool_calls=[{
+                        "id": "a1", "name": "answer",
+                        "arguments": {"text": "Fourteen days (Employee Handbook 2026, p.14).", "figures": [], "not_found": [], "not_checked": []},
+                    }],
+                ),
+            ]
+            self.seen_tool_results: list[str] = []
+
+        def chat(self, messages, *, tools=None, **kw):
+            for m in messages:
+                if m.get("role") == "tool":
+                    self.seen_tool_results.append(str(m.get("content")))
+            return self.script.pop(0)
+
+    provider = Provider()
+    result = run_agent_turn(
+        db, contact_respond_id=contact["respond_id"], text="annual leave after 3 years?",
+        provider=provider, mcp_call=forbidden_call, catalog={},
+    )
+
+    assert any(PASSAGE_TEXT in c for c in provider.seen_tool_results), "the model itself still reads the passage"
+    row = db.query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).one()
+    stored = json.dumps([row.trace, row.response, row.envelope, steps_for_turn(db, result.turn_id)], default=str)
+    assert PASSAGE_TEXT not in stored
+    assert "annual leave is 14 days" not in stored
+
+
+# ---------------------------------------------------------------- RS7: the protocol only where the tool is bound
+
+
+def _first_system_prompt(db, slugs, monkeypatch):
+    from app.services import knowledge_service
+    from app.services.chatbot.agent.loop import run_agent_turn
+    from app.services.llm_provider import ChatResult
+    from tests.chatbot.agent._seed import seed_agent_contact
+
+    monkeypatch.setattr(knowledge_service, "search", lambda db_, **kw: dict(HIT_WITH_TEXT))
+    contact = seed_agent_contact(db, slugs=slugs)
+    seen: list[list[dict]] = []
+
+    class Provider:
+        def chat(self, messages, *, tools=None, **kw):
+            seen.append(list(messages))
+            return ChatResult(
+                content="", prompt_tokens=10, completion_tokens=1, total_tokens=11,
+                tool_calls=[{"id": "a1", "name": "answer",
+                             "arguments": {"text": "Hello.", "figures": [], "not_found": [], "not_checked": []}}],
+            )
+
+    run_agent_turn(
+        db, contact_respond_id=contact["respond_id"], text="hello", provider=Provider(), mcp_call=forbidden_call, catalog={}
+    )
+    return seen[0][0]["content"]
+
+
+def test_the_agent_prompt_carries_both_protocols_when_the_knowledge_tool_is_offered(db, monkeypatch):
+    prompt = _first_system_prompt(db, (VIEW,), monkeypatch)
+
+    assert "KNOWLEDGE PROTOCOL" in prompt
+    assert "USER GUIDE PROTOCOL" in prompt
+    assert SEARCH in prompt
+
+
+def test_the_agent_prompt_has_no_knowledge_protocol_when_the_tool_is_not_offered(db, monkeypatch):
+    prompt = _first_system_prompt(db, ("inventory.stock.view",), monkeypatch)
+
+    assert "KNOWLEDGE PROTOCOL" not in prompt
