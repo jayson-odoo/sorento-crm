@@ -10,6 +10,15 @@ This guide walks you through filing a new submission from the portal. Stock Inqu
 1. On the `**/portal**` dashboard, switch the **Submission type** combobox to the type you want: **Stock Inquiry**, **Complaint**, **Purchase Request**, or **Sponsorship Form**.
 2. Click the **New {Type}** button (e.g. *New Complaint*). The form opens at `/portal/{type}/new`.
 
+### From the CRM: MY REQUESTS (salespeople)
+
+If you sign in to the CRM as a salesperson, the sidebar's **MY REQUESTS** section has one item per
+request kind: **Stock Inquiry**, **Complaint**, **Purchase Request**, **Sponsorship Form**,
+**Sample Request**, **New Product Application**, **Price Tag Request** and **Sales Opportunity**
+(only the ones your account is granted). Each opens the CRM's own page for that kind, but the form
+is the same portal form described here, and the list shows only your own requests. Registering a
+project is not under MY REQUESTS; it is on the **Projects** page.
+
 ## Fill in the form
 
 The form is split into sections (some only show for certain types):
@@ -51,6 +60,11 @@ Once submitted, the submission **becomes read-only**. You can no longer edit fie
 * **Purchase Request** → **Pending approval** (waiting on the project sales admin to send it for approval).
 * **Sponsorship Form** → **Pending approval** (same flow as purchase request).
 * **Complaint** → **New** (waiting on the technical / complaint-handling team).
+
+If a required field is empty, the submit is refused with *Fill in the required fields before
+submitting.* and the names of the missing fields; nothing is saved or numbered. Fill them in and
+submit again. (For a Complaint that includes at least one product; for a Stock Inquiry the
+salesperson; for a Purchase Request or Sponsorship Form the requestor.)
 
 If you spot a mistake after submitting, you'll need to wait for the relevant team to **reject** the submission. Once it's rejected the form unlocks and you can edit and re-submit.
 

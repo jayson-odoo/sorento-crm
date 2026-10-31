@@ -183,7 +183,13 @@ the balance.
    **Location** (defaults to the configured pool - see [Default location for the Reserve
    dialog](order-inquiry-reserve-email.md#default-location-for-the-reserve-dialog)). A **Note
    (optional)** box sits below the table, for the whole request.
-4. Press **Send request**. A toast reads `Request #<n> sent to <name>`.
+   Each row has a tick box and every line opens ticked. Untick a line to leave it out of this
+   request: its **Requested** and **Location** grey out and never block sending. The header reads
+   **N of M lines**, and **Send request** (or **Park request**) is greyed out while nothing is
+   ticked. (Opened from a
+   Stock Debt snapshot, a line that the snapshot already shows as covered, Short 0, opens
+   unticked; tick it to send it anyway.)
+4. Press **Send request**; only the ticked lines are sent. A toast reads `Request #<n> sent to <name>`.
 
 The lines now read an amber **Request to reserve \<qty\>** pill in the **State** column. One email
 leaves for CS - see [Reserve request and reserved-stock emails](order-inquiry-reserve-email.md).
