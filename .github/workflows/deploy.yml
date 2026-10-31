@@ -1827,6 +1827,20 @@ jobs:
           BASE_SHA: ${{ steps.merge.outputs.main || github.event.pull_request.base.sha || needs.changes.outputs.base_sha }}
         run: npx vitest run --changed "$BASE_SHA" --passWithNoTests
 
+      # `--changed` follows imports, so a guard that reads the source tree
+      # with fs (loading-strings, query-provider, the *.inventory tests) never
+      # looks related to the file it scans: #2051 broke two and only the
+      # release caught them. These run on every frontend change instead,
+      # selected by the fs call itself (see the script), ~1 min on 4 vCPUs.
+      # pipefail + `xargs -r`: a failed or empty selection must never fall
+      # through to a bare `vitest run`, which is the whole suite.
+      - name: Run the source-scanning guard tests (always)
+        if: needs.changes.outputs.frontend == 'true'
+        working-directory: sorento_crm_frontend
+        run: |
+          set -o pipefail
+          scripts/source-guard-tests.sh | xargs -0 -r npx vitest run
+
       # A release whose tests passed leaves a marker for its tree, so a
       # re-dispatch of the same tree (a rejected approval, a deploy hiccup)
       # skips the tests (`changes`, the workflow_dispatch case). A PR gate
