@@ -56,6 +56,14 @@ export interface Attachment {
   // out into per-row attachment_field_links rows.
   target_entity_type?: FieldLinkageEntityType | null;
   target_field_keys?: string[] | null;
+  /** How the AI's reading of this file went; null until a read is queued. */
+  ai_read_status?: 'queued' | 'processing' | 'done' | 'failed' | 'unsupported' | null;
+  ai_read_pages?: number | null;
+  ai_read_ocr_pages?: number | null;
+  /** Estimate only: OCR pages x a per-page rate. */
+  ai_read_cost_usd?: number | string | null;
+  ai_read_error?: string | null;
+  ai_read_at?: string | null;
 }
 
 export type FieldLinkageEntityType =
@@ -63,6 +71,8 @@ export type FieldLinkageEntityType =
   | 'promotion'
   | 'packing_list'
   | 'form';
+
+export type AiAudience = 'off' | 'staff' | 'dealer' | 'public';
 
 export interface AttachmentType {
   id: string;
@@ -88,6 +98,11 @@ export interface AttachmentType {
    *  batch 6 Sep 2026); null = no default, same as today. Editable on the type form and
    *  pre-selected in the generic Create Attachment dialog when this type is picked. */
   default_directory_id?: string | null;
+  /** Who the AI may answer from files of this type for; 'off' = never read. */
+  ai_audience?: AiAudience;
+  /** Team a question the documents do not cover is referred to; null = none. */
+  ai_escalate_team_id?: string | null;
+  ai_escalate_team_name?: string | null;
   created_at: Date;
 }
 

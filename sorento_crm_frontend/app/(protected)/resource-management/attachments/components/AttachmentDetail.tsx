@@ -34,12 +34,34 @@ import {
   useUpdateAttachment,
   attachmentsPagerQuery,
 } from '../hooks/useAttachments';
+import { useReadAttachmentAgain } from '../hooks/useReadAttachmentAgain';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 import { getAttachmentMetadata } from '../services/attachmentService';
 import { attachmentCompanyLabel, type Attachment, type LinkedEntityRef } from '../types/attachment.types';
 import SetCompanyDialog from './SetCompanyDialog';
 import { useAttachmentActions } from '../actions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
+
+const AI_READ_LABELS: Record<string, string> = {
+  queued: 'Queued',
+  processing: 'Processing',
+  done: 'Done',
+  failed: 'Failed',
+  unsupported: 'Not supported',
+};
+
+function aiReadSummary(a: Attachment): string {
+  const parts = [AI_READ_LABELS[a.ai_read_status ?? ''] ?? String(a.ai_read_status)];
+  if (a.ai_read_status === 'done') {
+    if (a.ai_read_pages != null) parts.push(`${a.ai_read_pages} ${a.ai_read_pages === 1 ? 'page' : 'pages'}`);
+    const ocr = a.ai_read_ocr_pages ?? 0;
+    if (ocr > 0) {
+      const cost = Number(a.ai_read_cost_usd ?? 0);
+      parts.push(`${ocr} read by OCR (est. USD ${cost.toFixed(2)})`);
+    }
+  }
+  return parts.join(', ');
+}
 
 const ENTITY_ROUTES = {
   product: { label: 'Product', path: '/master-data-management/products' },
@@ -267,6 +289,7 @@ export default function AttachmentDetail({
   const codeToName = Object.fromEntries(accessTypeOptions.map((o) => [o.code, o.name || o.code]));
   const deleteMutation = useDeleteAttachment();
   const updateMutation = useUpdateAttachment();
+  const readAgainMutation = useReadAttachmentAgain();
 
   const { data: attachment, isLoading } = useQuery({
     queryKey: ['attachment-metadata', attachmentId],
@@ -423,6 +446,27 @@ export default function AttachmentDetail({
                 {attachment.is_deleted ? 'Deleted' : 'Active'}
               </Badge>
             </div>
+            {attachment.ai_read_status && (
+              <div className="min-w-0">
+                <p className="text-sm text-muted-foreground">Read by AI</p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium">{aiReadSummary(attachment)}</p>
+                  {(attachment.ai_read_status === 'done' || attachment.ai_read_status === 'failed') && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={readAgainMutation.isPending}
+                      onClick={() => readAgainMutation.mutate(attachment.id)}
+                    >
+                      Read again
+                    </Button>
+                  )}
+                </div>
+                {attachment.ai_read_status === 'failed' && attachment.ai_read_error && (
+                  <p className="text-sm text-destructive break-words">{attachment.ai_read_error}</p>
+                )}
+              </div>
+            )}
           </div>
           <div className="space-y-2">
             <Label className="text-sm text-muted-foreground">Description</Label>
