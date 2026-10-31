@@ -280,8 +280,10 @@ def test_a_set_code_plus_an_attribute_answers_the_picked_variant_only(
     assert VARIANT in text, text
 
 
-def test_gate_off_the_set_only_code_is_todays_forced_miss(session_factory, seeded, stub_access, monkeypatch):
-    """Control (green today): closed lists only, the set-only code is not a product."""
+def test_gate_off_the_set_only_code_answers_its_members(session_factory, seeded, stub_access, monkeypatch):
+    """CHATBOT-SET-STOCK (owner, 30 Oct 2026: "the resolver should be able to identify it as set
+    also", no prompt change): with closed lists only, a set-only code answers its members too.
+    Was `test_gate_off_the_set_only_code_is_todays_forced_miss`."""
     ids = _seed(session_factory)
 
     text, calls = _run(
@@ -289,6 +291,7 @@ def test_gate_off_the_set_only_code_is_todays_forced_miss(session_factory, seede
         domain="inventory", intent="check_stock", code_lookup=False,
     )
 
-    assert not (_all_ids(calls) & {ids[c] for c in BASE_PARTS}), calls
-    assert "S-trap 250" not in text and "Name of" not in text, text
-    assert "search every stock" in text or "Did you mean" in text or "Couldn't find" in text, text
+    _no_miss(text)
+    stock = [a for n, a in calls if n == "crm_inventory_stock_balance_list" and a.get("product_ids")]
+    assert stock and sorted(stock[0]["product_ids"]) == sorted(ids[c] for c in BASE_PARTS), calls
+    assert BASE in text, text

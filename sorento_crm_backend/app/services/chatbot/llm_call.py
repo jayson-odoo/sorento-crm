@@ -8,8 +8,10 @@ Owner console test of round 4 (26 Sep 2026, PR #1247, ruling 3): two turns faile
 200000, Used 200000" and that raw text went to the dealer. A rate limit is a wait, not a
 failure: it is retried here with a growing backoff, inside the turn, honouring the
 server's own "try again in Ns" when it gives one. Only when every attempt is refused does
-the caller get `RateLimited`, and the caller then says `RATE_LIMITED_REPLY`, never the
-provider's text (the operator still sees that on the turn row and the trace).
+the caller get `RateLimited`, and the caller then says its own honest sentence, never the
+provider's text (the operator still sees that on the turn row and the trace): a parser
+that did not answer says "our AI service did not answer" (`CHATBOT_REPLY_AI_DID_NOT_ANSWER`),
+a clarifier sends the canned offer (CHATBOT-FAIL-TRIAGE, owner 30 Oct 2026).
 
 A tokens-per-minute limit clears over tens of seconds, which is why these waits are long.
 
@@ -18,8 +20,8 @@ is 600 s with two silent retries, and one call took 230 s while the contact's qu
 waited on it. Every attempt now carries `ATTEMPT_TIMEOUT_SECONDS` with the SDK's own retries
 off (this loop is the only retry), and the whole call, backoff included, stops at
 `CALL_DEADLINE_SECONDS`. A timeout raises `TimedOut`, which IS a `RateLimited`: to the dealer
-both mean "the model is busy, send that again", so every caller that already says
-`RATE_LIMITED_REPLY` says it for a hang too, and the row keeps the real reason. With the SDK
+both mean "the model did not answer, send that again", so every caller answers a hang the
+way it answers a 429, and the row keeps the real reason. With the SDK
 retries off, a 5xx / 529 / dropped connection (`is_transient`) is retried here on the same
 backoff as a 429, and ends the same way.
 """
@@ -36,6 +38,8 @@ from app.services.llm_provider import is_timeout  # noqa: F401 - re-exported, ca
 
 logger = logging.getLogger(__name__)
 
+# RETIRED from every reply path (CHATBOT-FAIL-TRIAGE, owner 30 Oct 2026: never "Sorry, I am
+# busy"). No caller sends it; kept only as the banned text the tests check replies against.
 RATE_LIMITED_REPLY = "Sorry, I am busy right now, please send that again in a minute."
 
 #: The wait before each retry, in seconds: four attempts in all.

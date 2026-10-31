@@ -27,6 +27,8 @@ class PromptKeySummary(BaseModel):
     # The LLM this agent runs on in production. None = the global assistant model.
     provider: Optional[str] = None
     model: Optional[str] = None
+    #: How hard the production model thinks. None = the caller's default (low for chatbot_agent).
+    reasoning_effort: Optional[str] = None
     latest_version: Optional[int] = None
     updated_at: Optional[datetime] = None
     updated_by_name: Optional[str] = None
@@ -99,11 +101,14 @@ class SetAgentModelRequest(BaseModel):
     label: str = Field(default="production", description="production | staging")
     provider: Optional[str] = Field(default=None, max_length=64)
     model: Optional[str] = Field(default=None, max_length=128)
+    #: none | minimal | low | medium | high; "" clears it; left out = unchanged.
+    reasoning_effort: Optional[str] = Field(default=None, max_length=16)
 
 
 class SetAgentModelResponse(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
 
 class DryRunRequest(BaseModel):

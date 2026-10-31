@@ -1075,11 +1075,19 @@ class PromotionService:
         self.db.commit()
 
     def bulk_delete_promotions(self, promotion_ids: list[str]):
-        """Delete multiple promotions. Returns count deleted."""
+        """Delete multiple promotions. Returns count deleted.
+
+        Row by row through the ORM read, like `delete_promotion` (so its cascades run),
+        never `query(...).delete()`: the company scope filter covers SELECTs only, so an
+        id from another company is not found and not counted here.
+        """
         if not promotion_ids:
             return {"message": "No promotions to delete", "deleted_count": 0}
-        deleted = self.db.query(Promotion).filter(Promotion.id.in_(promotion_ids)).delete(synchronize_session=False)
+        rows = self.db.query(Promotion).filter(Promotion.id.in_(promotion_ids)).all()
+        for promotion in rows:
+            self.db.delete(promotion)
         self.db.commit()
+        deleted = len(rows)
         return {"message": f"{deleted} promotion(s) deleted", "deleted_count": deleted}
 
     def bulk_update_access_levels(self, promotion_ids: list[str], access_levels: list[str]):

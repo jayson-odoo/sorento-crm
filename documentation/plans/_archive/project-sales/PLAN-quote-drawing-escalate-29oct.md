@@ -1,6 +1,6 @@
 # PLAN: Escalate a missing technical drawing from a quotation line
 
-Status: Owner hand-test fix (30 Oct 17:35, Escalate on an unsaved row posted an empty version id): fixed, browser re-pass pending; standard track, no migration, no setup.
+Status: merged (#1983, 30 Oct). Follow-up: `PLAN-quote-media-chat-30oct.md` (chat-flow reuse).
 (M lane, standard track: new endpoints + several files, expected diff over 300 lines; no new
 table, no migration)
 

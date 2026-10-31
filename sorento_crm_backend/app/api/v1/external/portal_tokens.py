@@ -27,7 +27,7 @@ class PortalTokenRequest(BaseModel):
         default=None,
         description=(
             "Optional submission tab to deep-link: complaint | stock_inquiry | "
-            "purchase_request | sponsorship_form. When provided, the portal opens "
+            "purchase_request | sponsorship_form | price_tag_request. When provided, the portal opens "
             "directly on that tab after token verify."
         ),
     )

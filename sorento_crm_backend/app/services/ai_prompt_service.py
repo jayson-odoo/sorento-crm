@@ -21,6 +21,10 @@ from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.error_handler import AppException
 
 LABELS = ("production", "staging")
+# What `ai_prompt_labels.reasoning_effort` may hold (the providers map each one; llm_provider.py).
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high")
+# `set_agent_model` leaves the effort as it is unless the caller names one.
+_KEEP = object()
 
 
 class AIPromptRegistryError(AppException):
@@ -127,6 +131,7 @@ class AIPromptService:
                     # assistant model, which is what every agent used before this.
                     "provider": prod_label.provider if prod_label is not None else None,
                     "model": prod_label.model if prod_label is not None else None,
+                    "reasoning_effort": prod_label.reasoning_effort if prod_label is not None else None,
                     "staging_version": labels.get("staging"),
                     "latest_version": int(latest.version) if latest is not None else None,
                     "updated_at": updated_at,
@@ -251,9 +256,13 @@ class AIPromptService:
         }
 
     def set_agent_model(
-        self, name: str, *, label: str, provider: Optional[str], model: Optional[str]
+        self, name: str, *, label: str, provider: Optional[str], model: Optional[str], reasoning_effort: Any = _KEEP
     ) -> dict[str, Optional[str]]:
         """Point one agent at one LLM. Empty/None means "use the global default".
+
+        `reasoning_effort` (one of REASONING_EFFORTS; empty clears it) is left as it is unless given.
+        A key whose production label was never seeded (a key added after the database's seed ran) gets
+        one here, on a version holding its built-in text: the text the agent already reads without a label.
 
         Deliberately separate from `set_label`: publishing a prompt version and
         changing the model are different decisions with different blast radii, and
@@ -266,11 +275,20 @@ class AIPromptService:
                 message=f"Unknown label '{label}'. Allowed: {', '.join(LABELS)}.",
                 code="INVALID_LABEL",
             )
+        effort = _KEEP if reasoning_effort is _KEEP else ((reasoning_effort or "").strip().lower() or None)
+        if effort is not _KEEP and effort is not None and effort not in REASONING_EFFORTS:
+            raise AppException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                message=f"Unknown reasoning effort '{reasoning_effort}'. Allowed: {', '.join(REASONING_EFFORTS)}.",
+                code="INVALID_REASONING_EFFORT",
+            )
         row = (
             self.db.query(AIPromptLabel)
             .filter(AIPromptLabel.name == name, AIPromptLabel.label == label)
             .first()
         )
+        if row is None and label == "production" and name in PROMPT_KEYS:
+            row = self._publish_built_in(name)
         if row is None:
             raise AppException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -279,8 +297,32 @@ class AIPromptService:
             )
         row.provider = (provider or "").strip() or None
         row.model = (model or "").strip() or None
+        if effort is not _KEEP:
+            row.reasoning_effort = effort
         self.db.commit()
-        return {"provider": row.provider, "model": row.model}
+        ai_prompt_registry.bust_cache(name)
+        return {"provider": row.provider, "model": row.model, "reasoning_effort": row.reasoning_effort}
+
+    def _publish_built_in(self, name: str) -> AIPromptLabel:
+        """A production label on a new version holding the key's built-in text."""
+        spec = PROMPT_KEYS[name]
+        latest = (
+            self.db.query(func.max(AIPromptVersion.version)).filter(AIPromptVersion.name == name).scalar()
+        ) or 0
+        version = AIPromptVersion(
+            name=name,
+            version=int(latest) + 1,
+            type="text",
+            template=spec.fallback(),
+            variables=list(spec.variables),
+            commit_message="Built-in text, published to configure the model",
+        )
+        self.db.add(version)
+        self.db.flush()
+        row = AIPromptLabel(name=name, label="production", version_id=version.id)
+        self.db.add(row)
+        self.db.flush()
+        return row
 
     def set_label(
         self, name: str, *, label: str, version_id: str, user_id: Optional[str]

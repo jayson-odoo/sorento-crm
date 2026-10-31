@@ -37,7 +37,41 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_actor_user_id, get_current_user
+from app.models.access import Team
 from app.models.base import company_scope, get_company_scope
+from app.models.certificate import Certificate
+from app.models.cost_price import CostPriceChangeSet, ProductSupplierCost
+from app.models.country import Country
+from app.models.dealer_kit import (
+    Asset,
+    Bundle,
+    Collection,
+    FlyerReadingRecord,
+    Page,
+    TagSizePreset,
+    TagTemplate,
+    TileTemplate,
+)
+from app.models.inventory import Warehouse
+from app.models.marketing import MarketingCampaign, PromotionGroup, PromotionProduct, PromotionType
+from app.models.onboarding import OnboardingRequest
+from app.models.order import Order, SalesOrder
+from app.models.price_tag import PriceTagRequest
+from app.models.procurement import ProductSupplier
+from app.models.product import Brand, ItemClass, Product, ProductCategory, UnitOfMeasure
+from app.models.product_companion import ProductCompanionRule
+from app.models.product_set import ProductSet
+from app.models.project_so import OrderInquiryReserveRequest, OrderInquiryRow, ProjectSalesOrder
+from app.models.resources import Attachment, AttachmentDirectory
+from app.models.sales import SalesOpportunity, SalesTarget, SalesTeam, SetApartCustomer
+from app.models.saved_view import SavedView
+from app.models.scm import (
+    LoadingPlan,
+    ProformaInvoice,
+    ProformaInvoicePackingLine,
+    SupplierProductCodeAlias,
+)
+from app.services.uuid_path_param import validate_uuid_path
 from app.services.company_scope_resolver import _user_grant_ids, grants_scope_value
 from app.models.sla import (
     FORM_ACTION_CANCELLED,
@@ -183,12 +217,13 @@ def _assert_entity_visible(
     actor_id: Optional[str] = None,
     entity_type: Optional[str] = None,
 ) -> None:
-    """Park-time existence check for the contact-customers and customer-group actions.
+    """Park-time existence check for every record action on a company-owned record.
 
-    The record is read under the requester's company scope, so a link or customer in
-    another company (or one that does not exist) refuses 404 before anything is parked -
-    the same answer either way, and no countdown for a record the caller cannot see.
-    Deliberately just these keys: no other action asked for it."""
+    The record is read under the requester's company scope, so a record in another
+    company (or one that does not exist) refuses 404 before anything is parked - the
+    same answer either way, and no countdown for a record the caller cannot see. Keys
+    with their own refusals have a branch below; the rest go through
+    `_PARK_SCOPED_MODELS`."""
     from app.services import own_scope
 
     own_scope.assert_pending_action_allowed(db, action_key, entity_id, actor_id)
@@ -253,6 +288,151 @@ def _assert_entity_visible(
 
         if get_customer_in_scope(db, entity_id) is None:
             raise handle_not_found("Customer", entity_id)
+    elif action_key == "price_tag_request_tag.delete":
+        from app.services.record_actions import price_tag_request_tag_in_scope
+
+        validate_uuid_path(entity_id, resource="Tag")
+        if price_tag_request_tag_in_scope(db, entity_id) is None:
+            raise handle_not_found("Tag", entity_id)
+    model = _PARK_SCOPED_MODELS.get(action_key)
+    if model is not None:
+        # Every other key on a company-owned record: read it under the caller's scope, so
+        # nobody starts a countdown on (or learns of) another company's record by id.
+        validate_uuid_path(entity_id, resource="Record")
+        if db.query(model).filter(model.id == entity_id).first() is None:
+            raise handle_not_found("Record", entity_id)
+
+
+# The company-owned record each action key is parked against (`entity_id` is its id).
+# `_assert_entity_visible` reads it under the caller's company scope before anything is
+# parked. A new record action goes here or, with its reason, in `_PARK_SCOPE_EXEMPT`
+# (tests/test_bulk_delete_company_scope.py fails until it is in one of them).
+_PARK_SCOPED_MODELS: dict = {
+    "attachment.set_company": Attachment,
+    "attachment_directory.set_company": AttachmentDirectory,
+    "brand.delete": Brand,
+    "campaign.delete": MarketingCampaign,
+    "certificate.delete": Certificate,
+    "cost_price_change_set.discard": CostPriceChangeSet,
+    "country.delete": Country,
+    "dealer_kit_asset.delete": Asset,
+    "dk_bundle.delete": Bundle,
+    "dk_collection.delete": Collection,
+    "dk_flyer_reading.delete": FlyerReadingRecord,
+    "dk_page.delete": Page,
+    "dk_tile_design.delete": TileTemplate,
+    "item_class.delete": ItemClass,
+    "loading_plan.cancel": LoadingPlan,
+    "loading_plan.delete": LoadingPlan,
+    "onboarding_request.delete": OnboardingRequest,
+    "order.delete": Order,
+    "order.set_status": Order,
+    "order_inquiry_reserve_request.cancel": OrderInquiryReserveRequest,
+    "order_inquiry_row.unlink": OrderInquiryRow,
+    "price_tag_request.void": PriceTagRequest,
+    "product.delete": Product,
+    "product_category.delete": ProductCategory,
+    "product_companion_rule.delete": ProductCompanionRule,
+    "product_set.delete": ProductSet,
+    "product_supplier.unlink": ProductSupplier,
+    "product_supplier_cost.delete": ProductSupplierCost,
+    "proforma_invoice.delete": ProformaInvoice,
+    "proforma_invoice_packing_line.dismiss": ProformaInvoicePackingLine,
+    "project_sales_order.undo_confirm": ProjectSalesOrder,
+    "promotion_group.delete": PromotionGroup,
+    "promotion_product.unlink": PromotionProduct,
+    "promotion_type.delete": PromotionType,
+    "sales_opportunity.delete": SalesOpportunity,
+    "sales_set_apart.delete": SetApartCustomer,
+    "sales_target.delete": SalesTarget,
+    "sales_team.delete": SalesTeam,
+    "saved_view.delete": SavedView,
+    "scm_sales_order.delete": SalesOrder,
+    "supplier_code_alias.forget": SupplierProductCodeAlias,
+    "tag_size_preset.delete": TagSizePreset,
+    "tag_template.delete": TagTemplate,
+    "team.delete": Team,
+    "uom.delete": UnitOfMeasure,
+    "warehouse.delete": Warehouse,
+}
+
+# Record actions NOT read through `_PARK_SCOPED_MODELS`, each for a reason.
+_PARK_SCOPE_EXEMPT: frozenset = frozenset({
+    # Checked by their own branch in `_assert_entity_visible` (or `own_scope`).
+    "contact_customer_link.unlink",
+    "customer.remove_from_group",
+    "customer.unassign_sales_agent",
+    "customer_group.delete",
+    "form_comment.delete",
+    "my_request.delete",
+    "my_request_attachment.unlink",
+    "new_product_application.delete",
+    "new_product_application_attachment.unlink",
+    "price_tag_request_tag.delete",
+    "product_alternative.unlink",
+    "product_alternatives.reset_auto",
+    "product_compatibility.unlink",
+    "quotation_document.delete",
+    "sample_request.delete",
+    "stock_debt_snapshot.delete",
+    # `entity_id` is not a company-owned row's id: a click token (the templates ride in
+    # the payload and the handler refuses foreign ids), a `product:key` pair, a document
+    # number, a contact or access type, or nothing at all.
+    "tag_template.bulk_delete",
+    "product_spec_value.clear",
+    "spo_document.delete",
+    "spec_visibility_policy.remove",
+    "stock_visibility_policy.remove",
+    "signin_background.remove",
+    "flyer_code_adoption.undo",
+    # The record lives in a table with no company column (global settings, users and
+    # roles, the chatbot, SLA, tickets, workflows, specs, SCM reference data), or in
+    # the ideation service. Some (an SO line attachment, a shipment line photo) hang off
+    # a company-owned parent: parking on another company's id is not refused here, but
+    # the commit runs under the requester's stored scope and finds nothing.
+    "access_agent.delete",
+    "automation.delete",
+    "chatbot_domain.delete",
+    "chatbot_status_word.delete",
+    "contact_chatbot_fact.delete",
+    "contact_tag.delete",
+    "container_size.delete",
+    "currency_rate.delete",
+    "email_template.delete",
+    "idea.archive",
+    "idea.delete",
+    "idea_comment.delete",
+    "import_field_alias.forget",
+    "integration.delete",
+    "integration_key.revoke",
+    "llm_model_price.delete",
+    "lookup_binding.unlink",
+    "lookup_option.delete",
+    "market_segment.delete",
+    "market_topic.delete",
+    "message_snippet.delete",
+    "notification.delete",
+    "product_combo.delete",
+    "product_combo_part.delete",
+    "reorder_policy.delete",
+    "role.delete",
+    "sales_agent_class.delete",
+    "sales_order_line_attachment.delete",
+    "shipment_line_photo.delete",
+    "sla_tracking.delete",
+    "spec_key.delete",
+    "spec_rule.remove",
+    "spec_value.remove",
+    "spec_verification.unverify",
+    "spec_word.remove",
+    "ticket.cancel_draft",
+    "ticket.delete",
+    "translation_memory.delete",
+    "user.delete",
+    "user.unlink_contact",
+    "workflow_definition.delete",
+    "workflow_submission.delete",
+})
 
 
 def _assert_undo_not_refused(

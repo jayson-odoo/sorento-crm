@@ -751,3 +751,8 @@ runs (confirmed: `pytest -k` on each reports `SKIPPED`, not a divergence) - this
 specific fixture move does not apply to them today, and hand-correcting only their
 `pending` field would not make them green regardless (they each fail on 3+ other
 fields per the composite-chain note they are already filed under).
+
+## CHATBOT-FAIL-TRIAGE AC-7c, no-topic escalate clarifies, 30 Oct 2026 (tester)
+
+- console/case-013-escalate-to-a-named-person-routes-by-staff-lookup.json: step 1: action_kinds: `['assign_conversation', 'add_comment', 'send_message']` -> `['send_message']`, escalate with no topic this turn and none held no longer assigns to the default team (customer_service / general_enquiries): it sends ONE clarifying question and mints a pending whose options are the reachable topics (rule: CHATBOT-FAIL-TRIAGE AC-7c; owner ruling 30 Oct 2026: "we shouldn't do no topic escalate to marketing product, we should clarify") (signed tester 2026-10-30, AC-7c)
+- console/case-013-escalate-to-a-named-person-routes-by-staff-lookup.json: step 1: pending: `null` -> options `['Orders & delivery', 'Stock & ETA', 'Product info', 'Promotions', 'Forms']`, same rule: the clarifying question's quick replies are the reachable topics (signed tester 2026-10-30, AC-7c)

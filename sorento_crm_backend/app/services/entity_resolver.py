@@ -908,7 +908,7 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
     if not tokens:
         return result
 
-    from app.models.product_set import ProductSet, ProductSetMember
+    from app.models.product_set import ProductSet
 
     normalized_tokens = [_strip_all_ws(t.lower()) for t in tokens]
     norm_to_token = dict(zip(normalized_tokens, tokens))
@@ -920,6 +920,17 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
     )
     if not rows:
         return result
+
+    for product_set, entity in _product_set_entities(db, rows):
+        token = norm_to_token.get(_strip_all_ws(str(product_set.set_code).lower()))
+        if token:
+            result[token].append(entity)
+    return result
+
+
+def _product_set_entities(db: Session, rows: list, *, match_tier: str = "exact") -> list[tuple[Any, ResolvedEntity]]:
+    """One `product_set` entity per set row, members, stock and the complete-sets figure on it."""
+    from app.models.product_set import ProductSetMember
 
     members_by_set: dict[str, list] = {}
     for product_set in rows:
@@ -943,11 +954,8 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
         ):
             available[str(pid)] = int(total or 0)
 
+    out: list[tuple[Any, ResolvedEntity]] = []
     for product_set in rows:
-        token = norm_to_token.get(_strip_all_ws(str(product_set.set_code).lower()))
-        if not token:
-            continue
-
         rendered = []
         complete = None
         limiting = None
@@ -980,12 +988,14 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
             if complete is None or supplies < complete:
                 complete, limiting = supplies, product.product_code
 
-        result[token].append(
+        out.append((
+            product_set,
             ResolvedEntity(
                 entity_type="product_set",
                 canonical_code=product_set.set_code,
                 uuid=str(product_set.id),
                 match_field="set_code",
+                match_tier=match_tier,
                 display={
                     "name": product_set.name,
                     "member_count": len(rendered),
@@ -994,8 +1004,8 @@ def _probe_product_set(db: Session, tokens: list[str]) -> dict[str, list[Resolve
                     "members": rendered,
                 },
             )
-        )
-    return result
+        ))
+    return out
 
 
 def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
@@ -2067,33 +2077,35 @@ def _product_family_order():
     return (Product.product_code, Product.id)
 
 
-def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
+def _code_prefix_then_substring(query, code_col, token: str, order_by) -> tuple[list, str]:
+    """The tier-2 code rule, ONE for every code-carrying entity (products and product sets,
+    CHATBOT-SET-STOCK owner ruling 31 Oct: "it should work same as how we resolve product code"):
+    the rows whose code (whitespace removed, case folded) starts with the token, else the rows
+    that hold it ("wc8826" inside SRTWC8826-P). `(rows, tier)`; no rows for a token of separators
+    only (an ILIKE '%' matches every code)."""
     # Strip whitespace from both sides so 'cgb9032b- new' matches 'CGB9032B-NEW'.
     norm_token = _strip_all_ws(token)
     if not re.sub(r"[^0-9A-Za-z]", "", norm_token):
-        return []  # separators only: nothing to probe a code with (an ILIKE '%' matches every code)
+        return [], "prefix"
     # LIKE wildcards in the token are literal characters, as `_code_candidates` autoescapes them.
     escaped = norm_token.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    prefix = f"{escaped}%"
-    substr = f"%{escaped}%"
-    code_norm = _ws_insensitive_lower(Product.product_code)
-    rows = (
-        db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-        .filter(code_norm.ilike(prefix, escape="\\"), chat_searchable_products())
-        .order_by(*_product_family_order())
-        .limit(PREFIX_LIMIT)
-        .all()
+    code_norm = _ws_insensitive_lower(code_col)
+    for pattern, tier in ((f"{escaped}%", "prefix"), (f"%{escaped}%", "substring")):
+        rows = query.filter(code_norm.ilike(pattern, escape="\\")).order_by(*order_by).limit(PREFIX_LIMIT).all()
+        if rows:
+            return rows, tier
+    return [], "substring"
+
+
+def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
+    rows, tier = _code_prefix_then_substring(
+        db.query(Product.id, Product.product_code, Product.product_name, Product.is_active).filter(
+            chat_searchable_products()
+        ),
+        Product.product_code,
+        token,
+        _product_family_order(),
     )
-    tier = "prefix"
-    if not rows:
-        rows = (
-            db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-            .filter(code_norm.ilike(substr, escape="\\"), chat_searchable_products())
-            .order_by(*_product_family_order())
-            .limit(PREFIX_LIMIT)
-            .all()
-        )
-        tier = "substring"
     # Product resolution is CODE-ONLY by design: exact/prefix/substring probes
     # (and the trgm fallback) all match on product_code. Name/description
     # free-text matching was intentionally removed - a phrase like "basin" is
@@ -2109,6 +2121,26 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
         )
         for pid, code, name, is_active in rows
     ]
+
+
+def _prefix_probe_product_set(db: Session, token: str) -> list[ResolvedEntity]:
+    """CHATBOT-SET-STOCK: the product sets a code token finds, by the product code rule
+    (`_code_prefix_then_substring`: prefix, else substring).
+
+    The catalogue prints the family code (SRTWC7405, SRTWC8826) and the sets carry it as their
+    head (SRTWC7405-RL-S-PJ, SRTWC8826-P), while their parts carry a role letter inside it
+    (SRTWCX7405-..., SRTWCY7405-...), so `_prefix_probe_product` finds only the seat cover.
+    Scoped by the ORM listener as `_probe_product_set`.
+    """
+    from app.models.product_set import ProductSet
+
+    rows, tier = _code_prefix_then_substring(
+        db.query(ProductSet).filter(ProductSet.is_active.is_(True)),
+        ProductSet.set_code,
+        token,
+        (ProductSet.set_code, ProductSet.id),
+    )
+    return [entity for _set, entity in _product_set_entities(db, rows, match_tier=tier)]
 
 
 def _prefix_probe_customer_order(db: Session, token: str) -> list[ResolvedEntity]:
@@ -2866,6 +2898,7 @@ def _prefix_probe_certificate(db: Session, token: str) -> list[ResolvedEntity]:
 # out of probes that can't return anything they accept.
 _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], frozenset[str]], ...] = (
     (_prefix_probe_product, frozenset({"product"})),
+    (_prefix_probe_product_set, frozenset({"product_set"})),
     (_prefix_probe_customer_order, frozenset({"customer_order"})),
     (_prefix_probe_inbound_shipment, frozenset({"inbound_shipment"})),
     (_prefix_probe_customer, frozenset({"customer"})),
@@ -3222,6 +3255,54 @@ PRE_EXTRACTED_TOKEN_CEILING = 50
 FREE_TEXT_CANDIDATES = 8
 
 
+def visible_set_clauses(db: Session) -> list:
+    """The filters that leave only the product sets this contact may be told about: active,
+    with members, and EVERY member id among the products they may see (chat-searchable, the
+    set's own company, brand scope through the ORM listener). Checked positively, so a member
+    the scope hides fails the set instead of dropping out of a "hidden" read. Moved here from
+    `chatbot/head/candidates.py` (CHATBOT-SET-STOCK) so the resolver's set tiers and the chat
+    read one rule."""
+    from sqlalchemy import not_
+
+    from app.models.product_set import ProductSet, ProductSetMember
+
+    members = db.query(ProductSetMember.id).filter(ProductSetMember.product_set_id == ProductSet.id)
+    visible = (
+        db.query(Product.id)
+        .filter(chat_searchable_products(), Product.company_id == ProductSet.company_id)
+        .correlate(ProductSet)
+    )
+    unseen = members.filter(not_(ProductSetMember.product_id.in_(visible.scalar_subquery())))
+    return [ProductSet.is_active.is_(True), members.exists(), not_(unseen.exists())]
+
+
+def _trgm_product_sets(db: Session, norm: str) -> list[ResolvedEntity]:
+    """CHATBOT-SET-STOCK: the product tier's did-you-mean, over set codes (owner, 31 Oct: a set
+    resolves "same as how we resolve product code"). Same fold, threshold, limit and variant
+    ordering as the product probe; ORM, so the company listener scopes it. Only sets the contact
+    may be told about are offered (`visible_set_clauses`, the chat's own rule)."""
+    from app.models.product_set import ProductSet
+
+    code = _ws_insensitive_lower(ProductSet.set_code)
+    sim = func.similarity(code, norm)
+    is_variant = func.left(code, len(norm)) == norm
+    with db.begin_nested():
+        rows = (
+            db.query(ProductSet, sim.label("sim"), is_variant.label("is_variant"))
+            .filter(sim >= TRGM_THRESHOLD, code != norm, *visible_set_clauses(db))
+            .order_by(is_variant.desc(), sim.desc(), ProductSet.set_code)
+            .limit(TRGM_LIMIT)
+            .all()
+        )
+    score = {r[0].id: (float(r.sim or 0.0), bool(r.is_variant)) for r in rows}
+    out = []
+    for product_set, entity in _product_set_entities(db, [r[0] for r in rows], match_tier="trgm"):
+        entity.similarity, variant = score[product_set.id]
+        entity.display["is_variant"] = variant
+        out.append(entity)
+    return out
+
+
 def _trgm_lookup(
     db: Session,
     phrase: str,
@@ -3309,6 +3390,12 @@ def _trgm_lookup(
                 )
         except Exception:
             logger.exception("trgm product probe failed for phrase=%s", phrase)
+
+    if "product_set" in allowed_entity_types:
+        try:
+            out.extend(_trgm_product_sets(db, norm))
+        except Exception:
+            logger.exception("trgm product set probe failed for phrase=%s", phrase)
 
     if "customer" in allowed_entity_types:
         try:
@@ -3892,6 +3979,26 @@ def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     ]
 
 
+def _and_probe_product_set(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
+    """CHATBOT-SET-STOCK: the product sets whose code holds every token, the same code-only
+    match as `_and_probe_product`. The chatbot resolves in AND mode, so without this a
+    catalogue code (SRTWC7405) found only the seat cover: the sets carry it as their head,
+    their tank and bowl parts carry SRTWCX / SRTWCY. Scoped by the ORM listener."""
+    from app.models.product_set import ProductSet
+
+    counts = _and_token_match_counts(ProductSet.set_code, tokens)
+    base = db.query(ProductSet).filter(ProductSet.is_active.is_(True))
+    tier = _and_max_tier_filter(base, counts)
+    if tier is None:
+        return []
+    rows = base.filter(tier).order_by(ProductSet.set_code, ProductSet.id).limit(AND_MODE_LIMIT).all()
+    out = []
+    for product_set, entity in _product_set_entities(db, rows, match_tier="and"):
+        entity.match_blob = product_set.set_code
+        out.append(entity)
+    return out
+
+
 def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     counts = _and_token_match_counts(Promotion.description, tokens)
     base = db.query(Promotion.id, Promotion.description, Promotion.is_active)
@@ -4226,6 +4333,7 @@ def _and_probe_customer_order(db: Session, tokens: list[str]) -> list[ResolvedEn
 
 _AND_PROBES: tuple[tuple[Callable[[Session, list[str]], list[ResolvedEntity]], frozenset[str]], ...] = (
     (_and_probe_product, frozenset({"product"})),
+    (_and_probe_product_set, frozenset({"product_set"})),
     (_and_probe_promotion, frozenset({"promotion"})),
     (_and_probe_attachment, frozenset({"attachment"})),
     (_and_probe_customer, frozenset({"customer"})),
@@ -5881,8 +5989,13 @@ def resolve_references(
         tok_types = _types_for(tr.token)
         if tok_types is not None and not tok_types:
             continue
+        # A token that DID match (only kinds the caller did not ask for, D10b) is offered what
+        # it was offered before sets had a trigram tier (CHATBOT-SET-STOCK): every kind but
+        # sets, so a set code that matched exactly is never offered its sibling sets instead. A
+        # token that matched nothing is offered every kind it may resolve to, sets included.
+        scope = (tok_types - {"product_set"}) if (tr.matches and tok_types is not None) else tok_types
         try:
-            hits = _trgm_lookup(db, tr.token, tok_types if tok_types is not None else _ALL_TRGM_TYPES)
+            hits = _trgm_lookup(db, tr.token, scope if scope is not None else _ALL_TRGM_TYPES)
         except Exception:
             logger.exception("resolve alternatives trgm lookup failed for token=%s", tr.token)
             hits = []

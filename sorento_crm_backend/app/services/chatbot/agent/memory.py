@@ -151,11 +151,14 @@ _HIDDEN_STEP_TOOLS = frozenset({"answer", "plan"})
 
 
 def steps_from_trace(trace: object) -> dict:
-    """What one turn did, read from its stored trace: model rounds, tokens and each tool call.
+    """What one turn did, read from its stored trace: model rounds, tokens, each tool call (with the round it
+    ran in) and the model's reasoning per round (`agent_reasoning`, AGENTIC-REASONING-VIS).
     `agent_round` events carry the tokens of every model call (a final or repair call adds tokens,
     not a round); `agent_tool` events are the tool calls, minus the hidden `answer` / `plan` calls
     and the note that stands for calls past the per-round cap."""
-    steps: dict = {"rounds": 0, "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "tool_calls": []}
+    steps: dict = {
+        "rounds": 0, "prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "tool_calls": [], "reasoning": [],
+    }
     if not isinstance(trace, list):
         return steps
     for event in trace:
@@ -181,7 +184,18 @@ def steps_from_trace(trace: object) -> dict:
             }
             if event.get("detail"):  # a turn stored before slice 6 has none
                 call["detail"] = str(event["detail"])
+            call["round"] = max(steps["rounds"], 1)
             steps["tool_calls"].append(call)
+        elif kind == "agent_reasoning":
+            text = event.get("text")
+            number = event.get("round")
+            if isinstance(text, str) and text.strip():
+                ok = isinstance(number, int) and not isinstance(number, bool) and number > 0
+                steps["reasoning"].append({
+                    "round": number if ok else max(steps["rounds"], 1),
+                    "text": text,
+                    "final": event.get("kind_of_call") == "final",
+                })
     return steps
 
 

@@ -625,8 +625,8 @@ def test_unlink_of_another_companys_row_is_refused_UL(list_api):
     try:
         with company_scope(db, frozenset({company_id})):
             parked = _park(action_client, UNLINK_KEY, "order_inquiry_row", str(row_a.id))
-            assert parked.status_code == 202, parked.text
-            _lapse(db, parked.json()["id"])
+            # Refused at park time: the row is read under the requester's scope first.
+            assert parked.status_code == 404, parked.text
             _sweep(db)
 
         db.expire_all()

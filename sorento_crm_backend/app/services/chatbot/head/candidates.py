@@ -296,23 +296,11 @@ def _fold_code(code: str) -> str:
 
 
 def _visible_set_clauses(db: "Session") -> list:
-    """The filters that leave only the product sets this contact may be told about: active,
-    with members, and EVERY member id among the products they may see (chat-searchable, the
-    set's own company, brand scope through the ORM listener). Checked positively, so a member
-    the scope hides fails the set instead of dropping out of a "hidden" read."""
-    from sqlalchemy import not_
+    """The product sets this contact may be told about: `entity_resolver.visible_set_clauses`,
+    the one rule the resolver's own set tiers use too."""
+    from app.services.entity_resolver import visible_set_clauses
 
-    from app.models.product import Product, chat_searchable_products
-    from app.models.product_set import ProductSet, ProductSetMember
-
-    members = db.query(ProductSetMember.id).filter(ProductSetMember.product_set_id == ProductSet.id)
-    visible = (
-        db.query(Product.id)
-        .filter(chat_searchable_products(), Product.company_id == ProductSet.company_id)
-        .correlate(ProductSet)
-    )
-    unseen = members.filter(not_(ProductSetMember.product_id.in_(visible.scalar_subquery())))
-    return [ProductSet.is_active.is_(True), members.exists(), not_(unseen.exists())]
+    return visible_set_clauses(db)
 
 
 def visible_set_ids(db: "Session", set_ids: list[str]) -> set[str]:

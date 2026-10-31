@@ -4950,8 +4950,9 @@ class ConversationSLATrackingService:
         # conversation because ONE ticket resolved would sever transport for the
         # sibling ticket's unfinished work - a real regression this predates only
         # because there used to be at most one open ticket per contact. Only close
-        # Respond when this was the contact's LAST open conversation-scope ticket;
-        # skip (byte-identical to "do nothing") while any sibling remains open. Full
+        # Respond when this was the contact's LAST open ticket of any kind (see
+        # `_contact_has_other_open_tickets`); skip (byte-identical to "do
+        # nothing") while any sibling remains open. Full
         # retirement of this side effect even for the single-ticket case (the literal
         # reading of AC-C3: "no Respond API call is made" on ANY ticket resolve) is an
         # open product question for the dedicated ticket-resolve build - not applied
@@ -4966,7 +4967,7 @@ class ConversationSLATrackingService:
             # whether or not others are still open. The CRM is the only
             # sender; n8n's respond-close-convo no longer messages.
             self._enqueue_ticket_resolved_message_best_effort(tracking)
-            if not self._has_other_open_conversation_siblings(tracking):
+            if not self._contact_has_other_open_tickets(tracking):
                 self._close_respond_conversation_best_effort(tracking)
                 # AC-M3: and tell n8n directly, so respond-close-convo runs with
                 # a real resolver identity instead of inferring one from an API
@@ -5005,12 +5006,17 @@ class ConversationSLATrackingService:
         )
         return tracking
 
-    def _has_other_open_conversation_siblings(
+    def _contact_has_other_open_tickets(
         self, tracking: ConversationSLATracking
     ) -> bool:
-        """True when another OPEN conversation-scope tracking exists for the same
-        contact (AC-F1: multi-open tickets). Used to gate the Respond-close side
-        effect on resolve - see the caller's comment."""
+        """True when another OPEN row shares this tracking's contact, so the
+        Respond conversation must stay open. ONE rule for both close paths, the
+        chat resolve and the media request resolve
+        (``product_drawing_request_service``): another open chat ticket (AC-F1,
+        multi-open), an open drawing or photo request on the contact
+        (PLAN-quote-media-chat-30oct), or any other open form-SLA row on it. All
+        three are "an open, not voided row on the contact", which is the filter.
+        """
         contact_id = getattr(tracking, "respond_contact_id", None)
         if not contact_id:
             return False
@@ -5019,8 +5025,7 @@ class ConversationSLATrackingService:
             .filter(
                 ConversationSLATracking.respond_contact_id == contact_id,
                 ConversationSLATracking.id != tracking.id,
-                ConversationSLATracking.is_resolved.is_(False),
-                conversation_tracking_scope(),
+                *open_tracker_scope(),
             )
             .first()
             is not None
@@ -5888,10 +5893,14 @@ class ConversationSLATrackingService:
         saved, so a broker outage may cost liveness (the FE's slow poll takes
         over) but must never surface as a failure for work that succeeded.
         """
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
 
         try:
-            if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+            # A drawing or photo request on a contact is worked in the ticket
+            # panel, so it live-updates the way a chat ticket does.
+            if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES and not is_media_conversation(
+                tracking
+            ):
                 return
             contact_id = self._respond_io_identifier_for_tracking(tracking)
             entity_id = str(getattr(tracking, "id", "") or "") or None
@@ -6055,10 +6064,13 @@ class ConversationSLATrackingService:
         stranger. Same rule and same shape as ``get_ticket_detail`` and
         ``TicketCommentService._tracking_in_scope``.
         """
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
 
         tracking = self.get_tracking(tracking_id, load_event_logs=False)
-        if not tracking or getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+        if not tracking or (
+            getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES
+            and not is_media_conversation(tracking)
+        ):
             raise handle_not_found("Conversation SLA tracking", tracking_id)
         if not self.can_user_act_on_tracking(viewer_user_id, tracking):
             raise handle_not_found("Conversation SLA tracking", tracking_id)
@@ -6296,7 +6308,7 @@ class ConversationSLATrackingService:
       - already responded -> ``mark_ticket_responded`` no-ops (only the FIRST
           reply stops the clock).
         """
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
 
         # Direct query, not get_tracking(): a stale queued job naming a deleted
         # row must be a no-op, not a 404 that fails the RQ job.
@@ -6307,7 +6319,9 @@ class ConversationSLATrackingService:
         )
         if not tracking:
             return None
-        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES and not is_media_conversation(
+            tracking
+        ):
             return None
         if expect_respond_io_id:
             actual = self._respond_io_identifier_for_tracking(tracking)
@@ -6555,10 +6569,13 @@ class ConversationSLATrackingService:
         ``handle_not_found`` both for a missing tracking and for a viewer
         outside its visibility scope (never leaks existence via a 403).
         """
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
 
         tracking = self.get_tracking(tracking_id, load_event_logs=False)
-        if not tracking or getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+        if not tracking or (
+            getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES
+            and not is_media_conversation(tracking)
+        ):
             raise handle_not_found("Conversation SLA tracking", tracking_id)
         if not self.can_user_act_on_tracking(viewer_user_id, tracking):
             raise handle_not_found("Conversation SLA tracking", tracking_id)
@@ -6718,12 +6735,14 @@ class ConversationSLATrackingService:
         (not implemented yet - tracked separately from this fix).
         """
         from app.services.crm_chat_outbound_webhook import notify_human_ticket_send
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES, is_media_conversation
 
         tracking = self.get_tracking(tracking_id, load_event_logs=False)
         if not tracking:
             raise handle_not_found("Conversation SLA tracking", tracking_id)
-        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+        if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES and not is_media_conversation(
+            tracking
+        ):
             raise handle_validation_error(
                 "This is a form-SLA stage; reply from the form record's chat panel instead."
             )

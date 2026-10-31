@@ -97,6 +97,27 @@ CHATBOT_TURN_ERROR_REPLY = (
     "Sorry, I ran into a problem understanding that. Please try again in a moment."
 )
 
+# CHATBOT-FAIL-TRIAGE (owner rule, 30 Oct 2026): the bot never replies the generic apology
+# above or `llm_call.RATE_LIMITED_REPLY`. Each failure says what actually went wrong. All are
+# whole sentences with MS / ZH entries in `chatbot/label_catalog.py`, which prints them in the
+# contact's language at the final reply pass. The real reason stays in `chatbot.turns.error`.
+CHATBOT_REPLY_AI_DID_NOT_ANSWER = (
+    "I could not read your message just now because our AI service did not answer. Please send it again."
+)
+CHATBOT_REPLY_TURN_FAILED = (
+    "I hit an error while answering this and could not finish it. Please send it again."
+)
+CHATBOT_REPLY_PREVIOUS_STILL_RUNNING = (
+    "I was still answering your previous message, so I could not take this one. Please send it again."
+)
+CHATBOT_REPLY_ESCALATION_FAILED = "I could not pass this to the {team} team just now. Please contact them directly."
+# Review round 2 S1: the same failure when there is no reachable topic-map team to name.
+CHATBOT_REPLY_ESCALATION_FAILED_NO_TEAM = "I could not pass this to our team just now. Please contact us directly."
+CHATBOT_REPLY_NONE_FOUND = "No current {label} found for {subject}."
+CHATBOT_REPLY_ASK_SUBJECT = "Which customer or salesperson should I check the {label} for?"
+CHATBOT_REPLY_ASK_PRODUCT = "Which product do you want the {label} for? Send me the code."
+CHATBOT_REPLY_REPORT_NOT_PERMITTED = "That report is not available on your account."
+
 # `sorento-sub-respond-sendmsg-respond5`'s `message` expression - the ENTIRE reply on the
 # access-denied lane, which never reaches `compile-current-state` at all. `{{team}}` is
 # the parser's `suggested_agent`, em-dash folded to a hyphen by the caller (the fold is
@@ -379,6 +400,13 @@ CHATBOT_REPLY_PORTAL_LINK_SPONSORSHIP_FORM = {
     "ms": "Berikut pautan portal anda untuk borang tajaan.",
     "zh": "这是您填写赞助表格的门户链接。",
 }
+# CHATBOT-FAIL-TRIAGE AC-3 / R1: the price tag request form is a portal link target
+# (`portal_service.LINK_TYPES`), so its link names the form like the four above.
+CHATBOT_REPLY_PORTAL_LINK_PRICE_TAG_REQUEST = {
+    "en": "Here is your portal link for a price tag request.",
+    "ms": "Berikut pautan portal anda untuk permintaan tanda harga.",
+    "zh": "这是您申请价格标签的门户链接。",
+}
 
 # Release gate #1829, round 7 (crew ruling): the one acknowledgement of a reset turn ("clear
 # all"). Nothing is looked up on that turn, so the sentence promises nothing.
@@ -397,6 +425,7 @@ FALLBACK_REPLY_COPY: dict[str, tuple[dict[str, str], tuple[str, ...]]] = {
     "portal_link_stock_inquiry": (CHATBOT_REPLY_PORTAL_LINK_STOCK_INQUIRY, ()),
     "portal_link_purchase_request": (CHATBOT_REPLY_PORTAL_LINK_PURCHASE_REQUEST, ()),
     "portal_link_sponsorship_form": (CHATBOT_REPLY_PORTAL_LINK_SPONSORSHIP_FORM, ()),
+    "portal_link_price_tag_request": (CHATBOT_REPLY_PORTAL_LINK_PRICE_TAG_REQUEST, ()),
     "fallback_ack": (CHATBOT_REPLY_FALLBACK_ACK, ()),
     "reset_ack": (CHATBOT_REPLY_RESET_ACK, ()),
     "fallback_offer": (CHATBOT_REPLY_FALLBACK_OFFER, ()),

@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { LoaderCircleIcon } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useSettings } from '../components/settings-context';
+import McpTokenCard from './components/McpTokenCard';
 import RuntimeSettingsCards from './components/RuntimeSettingsCards';
 import { RUNTIME_SETTINGS_PERMISSION } from './services/runtimeSettingsService';
 
@@ -187,6 +188,7 @@ export default function IntegrationsSettingsPage() {
           </Form>
         </CardContent>
       </Card>
+      {canManageSecrets && <McpTokenCard />}
       {canManageSecrets && <RuntimeSettingsCards />}
     </div>
   );

@@ -37,7 +37,7 @@ def test_addendum_lists_every_deep_linkable_form() -> None:
         assert code in text
 
 
-@pytest.mark.parametrize("code", SUPPORTED_TYPES)
+@pytest.mark.parametrize("code", [*SUPPORTED_TYPES, "price_tag_request"])
 def test_named_form_becomes_submission_type(code: str) -> None:
     parse = {"domain_hint": "portal_link", "portal_form": code}
     assert fetch.portal_submission_type(parse) == code
@@ -48,8 +48,7 @@ def test_named_form_becomes_submission_type(code: str) -> None:
     [
         {"domain_hint": "portal_link", "portal_form": None},
         {"domain_hint": "portal_link"},
-        # A code the portal cannot deep-link (the price tag request has its own routes) is no form.
-        {"domain_hint": "portal_link", "portal_form": "price_tag_request"},
+        # A code the portal cannot deep-link is no form.
         {"domain_hint": "portal_link", "portal_form": "made_up"},
         # Only a portal link ask carries it.
         {"domain_hint": "forms", "portal_form": "complaint"},

@@ -9,6 +9,7 @@ from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import (
     get_current_user,
     require_any_permission_with_api_key,
+    require_permission,
     require_permission_with_api_key,
 )
 
@@ -448,7 +449,7 @@ def export_promotions_pdf(
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
 def bulk_delete_promotions(
     body: BulkDeletePromotionsRequest = Body(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("marketing.promotions.delete")),
     db: Session = Depends(get_db)
 ):
     """Bulk delete promotions by ID."""
@@ -480,7 +481,7 @@ def bulk_update_access_levels(
 @router.delete("/{promotion_id}", status_code=status.HTTP_200_OK)
 def delete_promotion(
     promotion_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("marketing.promotions.delete")),
     db: Session = Depends(get_db)
 ):
     """Delete a promotion."""

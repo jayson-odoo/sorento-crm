@@ -9,8 +9,9 @@ Public checks on 14 Oct found three problems:
 - The CRM origin answers direct traffic, so Cloudflare can be bypassed.
 - MCP 8765 is plain http on the raw origin address.
 
-**MCP 8765 login (since SEC-MCP-AUTH, 16 Oct).** Every call needs `Authorization: Bearer <MCP_AUTH_TOKEN>`
-(`sorento_crm_mcp/sorento_crm_mcp/auth.py`), and a company-scoped tool without a contact answers nothing
+**MCP 8765 login (since SEC-MCP-AUTH, 16 Oct).** Every call needs `Authorization: Bearer <token>` once
+Enforce is on (token and switch on Settings > Integrations since MCP-TOKEN-UI, 30 Oct;
+`sorento_crm_mcp/sorento_crm_mcp/auth.py`), and a company-scoped tool without a contact answers nothing
 (`documentation/plans/security/PLAN-sec-mcp-auth-16oct.md`). Before that lane the MCP server checked nothing on
 an incoming call. It adds
 the integration key itself on every backend call (`sorento_crm_mcp/sorento_crm_mcp/http_client.py:56`).
@@ -270,8 +271,8 @@ direct to the origin.
 
 - Check: from the n8n box,
   `curl -s -o /dev/null -w '%{http_code}\n' http://<CRM_ORIGIN>:8765/mcp` prints `401`: the
-  MCP bearer gate answered (SEC-MCP-AUTH), so MCP was reached. While `MCP_AUTH_MODE=permit`
-  (the first release), a call with no header is let through and this prints `406` instead; add
+  MCP bearer gate answered (SEC-MCP-AUTH), so MCP was reached. While Enforce is off
+  (Settings > Integrations), a call with no header is let through and this prints `406` instead; add
   `-H 'Authorization: Bearer x'` to get `401` in both modes. Before that release it printed
   `200`, `405` or `406`. The release check sends a wrong token and accepts only `401`
   (`.github/workflows/deploy.yml`, "Verify public endpoints").

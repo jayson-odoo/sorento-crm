@@ -21,6 +21,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import Envelope, TurnRequest
 from app.services.chatbot.head import parser as parser_mod
+from tests.chatbot import fail_triage_texts as FT
 from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures are used by name
     CONTACT_ID,
@@ -64,7 +65,7 @@ class TestNothingEscapesRunTurn:
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
         assert result.status == "failed"
-        assert result.reply["text"] == parser_mod.PARSER_ERROR_REPLY
+        assert result.reply["text"] == FT.H_AI
         row = _only_row(session_factory)
         assert row.status == "failed"
         assert row.stage == "received"
@@ -476,7 +477,8 @@ class TestTheBusinessLaneOnFetchFailure:
             "an absence the read never established"
         )
         assert result.stage == "looked_up"
-        assert result.reply["text"] == engine_mod.GENERIC_ERROR_REPLY
+        assert result.reply["text"].startswith("I could not fetch ")
+        FT.assert_no_banned_text(result.reply["text"])
         assert result.actions[-1]["kind"] == "send_message"
         assert result.branch_kind == "business_query", "the turn keeps where it got to"
         row = _only_row(session_factory)

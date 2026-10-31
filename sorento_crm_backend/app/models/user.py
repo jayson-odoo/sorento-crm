@@ -423,6 +423,14 @@ class SystemSetting(Base):
     respond_webhook_secret_ciphertext = Column(Text, nullable=True)
     # DO-BACKFILL-SETTING: the DO-HISTORY cutover (NULL = DO_ASSUME_DELIVERED_BEFORE).
     do_assume_delivered_before = Column(Date, nullable=True)
+    # MCP-TOKEN-UI: the MCP server's bearer token, set on Settings > Integrations, never env
+    # (`app/services/mcp_auth_token.py`). The previous token stays valid until its expiry so
+    # n8n can be re-pasted after a rotation without an outage.
+    mcp_auth_token_ciphertext = Column(Text, nullable=True)
+    mcp_auth_token_rotated_at = Column(DateTime(timezone=True), nullable=True)
+    mcp_auth_previous_token_ciphertext = Column(Text, nullable=True)
+    mcp_auth_previous_expires_at = Column(DateTime(timezone=True), nullable=True)
+    mcp_auth_enforce = Column(Boolean, nullable=False, server_default="false", default=False)
 
     # Takeover cooldown: seconds between a takeover confirm and the actual reassignment,
     # during which the original assignee can reject and the initiator can cancel.

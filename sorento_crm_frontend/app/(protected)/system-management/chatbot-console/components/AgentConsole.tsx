@@ -23,6 +23,7 @@ import {
   type AgentConversationAction,
   type AgentConversationTurn,
   type AgentPendingAction,
+  type AgentReasoning,
   type AgentReplyMeta,
   type AgentStepWaiting,
   type AgentSteps,
@@ -78,10 +79,84 @@ function Bubble({
   );
 }
 
-/** The turn's steps, collapsed until asked for: rounds, tokens and each tool call with its time. */
+type StepCall = AgentSteps['tool_calls'][number];
+
+function callLine(call: StepCall): string {
+  return call.detail
+    ? call.detail
+    : `${agentToolLabel(call.name)}: ${call.status} (${call.ms} ms)`;
+}
+
+/** One round's reasoning, collapsed until asked for. */
+function ReasoningItem({ label, text }: { label: string; text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li data-testid="agent-reasoning">
+      <button
+        type="button"
+        className="underline-offset-2 hover:underline"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label}
+      </button>
+      {open ? (
+        <p
+          data-testid="agent-reasoning-text"
+          className="mt-0.5 whitespace-pre-wrap break-words border-l-2 border-border pl-2"
+        >
+          {text}
+        </p>
+      ) : null}
+    </li>
+  );
+}
+
+/** Each round's thinking, then the tool calls of that round. */
+function roundItems(calls: StepCall[], reasoning: AgentReasoning[]) {
+  const last = Math.max(
+    0,
+    ...reasoning.map((r) => r.round),
+    ...calls.map((c) => c.round ?? 1),
+  );
+  const items: React.ReactNode[] = [];
+  for (let round = 1; round <= last; round += 1) {
+    reasoning
+      .filter((r) => r.round === round && !r.final)
+      .forEach((r, index) =>
+        items.push(
+          <ReasoningItem
+            key={`r${round}-${index}`}
+            label={`Thinking (round ${round})`}
+            text={r.text}
+          />,
+        ),
+      );
+    calls
+      .filter((c) => (c.round ?? 1) === round)
+      .forEach((c, index) =>
+        items.push(<li key={`c${round}-${c.name}-${index}`}>{callLine(c)}</li>),
+      );
+    reasoning
+      .filter((r) => r.round === round && r.final)
+      .forEach((r, index) =>
+        items.push(
+          <ReasoningItem
+            key={`f${round}-${index}`}
+            label="Thinking (final answer)"
+            text={r.text}
+          />,
+        ),
+      );
+  }
+  return items;
+}
+
+/** The turn's steps, collapsed until asked for: rounds, tokens, each round's thinking and its tool calls. */
 function StepsDisclosure({ steps }: { steps: AgentSteps }) {
   const [open, setOpen] = useState(false);
   const calls = steps.tool_calls.filter((c) => !AGENT_HIDDEN_TOOLS.has(c.name));
+  const reasoning = steps.reasoning ?? [];
   return (
     <div
       className="mt-1 text-xs text-muted-foreground"
@@ -102,13 +177,11 @@ function StepsDisclosure({ steps }: { steps: AgentSteps }) {
             Tokens: {steps.prompt_tokens.toLocaleString('en-US')} in,{' '}
             {steps.completion_tokens.toLocaleString('en-US')} out
           </li>
-          {calls.map((call, index) => (
-            <li key={`${call.name}-${index}`}>
-              {call.detail
-                ? call.detail
-                : `${agentToolLabel(call.name)}: ${call.status} (${call.ms} ms)`}
-            </li>
-          ))}
+          {reasoning.length > 0
+            ? roundItems(calls, reasoning)
+            : calls.map((call, index) => (
+                <li key={`${call.name}-${index}`}>{callLine(call)}</li>
+              ))}
         </ul>
       ) : null}
     </div>
