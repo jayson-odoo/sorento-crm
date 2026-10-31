@@ -5922,6 +5922,12 @@ def _run_stages_body(  # noqa: PLR0915
             raw=access,
         )
 
+        # AC-5 (CHATBOT-FAIL-TRIAGE-B2, owner ruling 31 Oct 2026, decided in code): a dealer without the
+        # purchase cost grant who asks for cost is answered by the promotion lookup, so the turn is a
+        # promotion turn from here on (tier gate, fetch, compose, held state). The parser's own verdict
+        # stays on the trace as `parser_verdict`; this event names the swap.
+        verdict = _dealer_cost_as_promotion(db, verdict, access, remembered_before.get("_contact_pk"), turn_trace)
+
         stage[0] = "routed"
         settings_row = switches
         stock_denial_enabled = _stock_denial_enabled(db, settings_row)
@@ -8300,6 +8306,23 @@ def _run_stages_body(  # noqa: PLR0915
                     envelopes=envelopes,
                     order_status=parsed_output.get("order_status"),
                 )
+                # AC-6: a size or named spec no variant of the typed code's family holds is said ONCE, on
+                # a miss and on a hit alike, above the reply (the route's `spec_none`, this turn's own).
+                # Placed BELOW `_stock_ask_reply` and `list_reply` on purpose: they rebuild the text and
+                # would drop a clause put on earlier. A turn whose every envelope is a refusal gets the bare
+                # refusal (a mixed turn, stock beside a denial, keeps the clause above both).
+                all_refused = bool(envelopes) and all(
+                    isinstance(e, dict) and (e.get("denied") or e.get("refused")) for e in envelopes
+                )
+                if answer is not None and answer.text and not all_refused:
+                    from app.services.chatbot.lanes.business.answer import no_variant_clause
+
+                    none_with = no_variant_clause(
+                        resolver_payload.get("resolved") if isinstance(resolver_payload, dict) else None,
+                        verdict.get("entities"),
+                    )
+                    if none_with:
+                        answer = dataclasses_replace(answer, text=none_with + "\n\n" + answer.text)
                 # Chatbot stock ask v2 S3, AC-SA314: an `incoming` entry answered
                 # with its own packing list attaches it to THIS reply. `answer.files`
                 # is the same seam every other domain's attachment already flows
@@ -9801,6 +9824,52 @@ def _media_source_modality(media_box: dict[str, Any]) -> str | None:
         # A caption fallback answers the caption as typed text, not "that photo".
         return None if outcome.caption_fallback else outcome.modality
     return media_box.get("patched_modality")
+
+
+def _dealer_cost_as_promotion(
+    db: Session, verdict: dict[str, Any], access: dict[str, Any], contact_pk: Any, turn_trace: Any
+) -> dict[str, Any]:
+    """The verdict with a `purchase_cost` ask read as the `promotion` ask when the contact is a dealer
+    (an active `chatbot.tier` "dealer" tag, no other tier) and holds no `purchase_orders.cost` grant;
+    the verdict itself otherwise. The planner reads `asks` before `domain_hint`, so both move: every
+    purchase_cost entry of `asks` becomes promotion (dropped when promotion is already there), and a
+    purchase_cost `domain_hint` or `check_po_cost` `intent_hint` follows. Only that domain, only a dealer."""
+    asks = [a for a in verdict.get("asks") or [] if isinstance(a, dict)]
+    cost_in_asks = any(a.get("domain") == "purchase_cost" for a in asks)
+    if not (verdict.get("domain_hint") == "purchase_cost" or cost_in_asks) or access.get("allowed") is not True or not contact_pk:
+        return verdict
+    if "purchase_orders.cost" in set(access.get("attributes") or []):
+        return verdict
+    from app.services.contact_tag_settings import contact_is_dealer
+
+    if not contact_is_dealer(db, str(contact_pk)):
+        return verdict
+    out = dict(verdict)
+    if verdict.get("domain_hint") == "purchase_cost":
+        out["domain_hint"] = "promotion"
+    if verdict.get("intent_hint") == "check_po_cost":
+        out["intent_hint"] = "check_promotion"
+    if cost_in_asks:
+        swapped: list[dict[str, Any]] = []
+        for a in verdict.get("asks") or []:
+            if isinstance(a, dict) and a.get("domain") == "purchase_cost":
+                a = {**a, "domain": "promotion", "intent": "check_promotion" if a.get("intent") else a.get("intent")}
+                if any(isinstance(x, dict) and x.get("domain") == "promotion" for x in swapped):
+                    continue
+            elif isinstance(a, dict) and a.get("domain") == "promotion" and any(
+                isinstance(x, dict) and x.get("domain") == "promotion" for x in swapped
+            ):
+                continue
+            swapped.append(a)
+        out["asks"] = swapped
+    turn_trace.add(
+        "dealer_cost_as_promotion",
+        {
+            "from": [verdict.get("domain_hint"), verdict.get("intent_hint"), [a.get("domain") for a in asks]],
+            "to": [out.get("domain_hint"), out.get("intent_hint"), [a.get("domain") for a in out.get("asks") or [] if isinstance(a, dict)]],
+        },
+    )
+    return out
 
 
 def _attributes_summary(attributes: list[Any]) -> str | None:

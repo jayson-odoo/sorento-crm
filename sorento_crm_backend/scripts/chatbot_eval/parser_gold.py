@@ -53,9 +53,14 @@ EXPECT_KEYS = frozenset({
     "access_levels",
     # SALES-TOTAL-ASK: the sales analysis's own basis key (null: the bot asks).
     "sales_basis",
+    # CHATBOT-FAIL-TRIAGE-B2: the portal form key (equality), the routing's suggested team, and the
+    # number a specification entity keyed "size" carries (null: no such entity).
+    "portal_form", "suggested_team", "size",
+    # a product entity whose `raw`, folded like `product`, equals this.
+    "product_raw",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
-_REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
+_REPORT_KEYS = ("portal_form", "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
                 "document", "sales_basis")
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
@@ -75,6 +80,10 @@ _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "broaden_axis": (str, type(None)),
     "state_ops_include": (list,),
     "state_ops_exclude": (list,),
+    "portal_form": (str, type(None)),
+    "suggested_team": (str, type(None)),
+    "size": (int, float, type(None)),
+    "product_raw": (str,),
 }
 #: PARSER-TEMPLATE F1-B: what a gold row may say the conversation held before its message. Each
 #: value is the text as the user block shows it, or null.
@@ -173,6 +182,10 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         codes = {_fold(e.get("canonical_code")) for e in entities if e.get("hint") == "product"}
         if _fold(expect["product"]) not in codes:
             reasons.append(f"no product entity {expect['product']!r}")
+    if "product_raw" in expect:
+        raws = {_fold(e.get("raw")) for e in entities if e.get("hint") == "product"}
+        if _fold(expect["product_raw"]) not in raws:
+            reasons.append(f"no product entity with raw {expect['product_raw']!r}")
     if "canonical" in expect:
         picks = [_fold(e.get("canonical_code")) for e in entities if e.get("hint") == "product"]
         if expect["canonical"] is None:
@@ -276,7 +289,26 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
     for key in _REPORT_KEYS:
         if key in expect and verdict.get(key) != expect[key]:
             reasons.append(f"{key} {verdict.get(key)!r} != {expect[key]!r}")
+    if "suggested_team" in expect:
+        routing = verdict.get("routing")
+        team = routing.get("suggested_team") if isinstance(routing, dict) else None
+        if team != expect["suggested_team"]:
+            reasons.append(f"suggested_team {team!r} != {expect['suggested_team']!r}")
+    if "size" in expect:
+        sizes = [e.get("spec_value") for e in entities if e.get("hint") == "specification" and e.get("spec_key") == "size"]
+        if expect["size"] is None:
+            if sizes:
+                reasons.append(f"size entity {sizes!r} present but none expected")
+        elif not any(_same_number(v, expect["size"]) for v in sizes):
+            reasons.append(f"size {sizes!r} != {expect['size']!r}")
     return (not reasons, reasons)
+
+
+def _same_number(a: Any, b: Any) -> bool:
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return False
 
 
 def summarise(rows: list[dict[str, Any]]) -> dict[str, dict[str, int]]:

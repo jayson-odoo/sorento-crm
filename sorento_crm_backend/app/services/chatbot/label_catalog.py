@@ -419,6 +419,7 @@ LABELS: dict[str, dict[str, str]] = {
     # WA-MSG-TRIM (owner, 3 Oct 2026): the escalation lane's ONE customer message.
     'Routed to your PIC, they will reply shortly.': {"ms": 'Telah diserahkan kepada PIC anda, mereka akan membalas tidak lama lagi.', "zh": '已转交给您的负责人（PIC），他们会尽快回复。'},
     'and {n} others, reply with the full code.': {"ms": 'dan {n} lagi, balas dengan kod penuh.', "zh": '还有 {n} 个，请回复完整代码。'},
+    "None with {label} {value}.": {"ms": "Tiada dengan {label} {value}.", "zh": "没有{label} {value}。"},
     "Couldn't find {names}.": {"ms": 'Tidak dapat menemui {names}.', "zh": '找不到 {names}。'},
     'I have {names}.': {"ms": 'Saya ada {names}.', "zh": '我已记下 {names}。'},
     'What would you like me to know?': {"ms": 'Apa yang anda mahu saya tahu?', "zh": '您想让我了解什么？'},
