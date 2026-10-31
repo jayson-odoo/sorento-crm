@@ -57,7 +57,7 @@ function aiReadSummary(a: Attachment): string {
     const ocr = a.ai_read_ocr_pages ?? 0;
     if (ocr > 0) {
       const cost = Number(a.ai_read_cost_usd ?? 0);
-      parts.push(`${ocr} read by OCR (est. USD ${cost.toFixed(2)})`);
+      parts.push(`${ocr} read by OCR (est. USD ${cost.toFixed(cost > 0 && cost < 0.01 ? 3 : 2)})`);
     }
   }
   return parts.join(', ');

@@ -64,6 +64,15 @@ export default function AttachmentTypeFormDialog({
   const directoryOptions = flattenDirectoryOptions(directoryTree);
   const { data: teams = [] } = useAttachmentTypeTeams(open);
   const teamOptions = teams.map((t) => ({ value: t.id, label: t.name }));
+  // The saved team stays selectable by name even when the team list could not be loaded.
+  if (
+    isEditMode &&
+    attachmentType?.ai_escalate_team_id &&
+    attachmentType.ai_escalate_team_name &&
+    !teamOptions.some((o) => o.value === attachmentType.ai_escalate_team_id)
+  ) {
+    teamOptions.push({ value: attachmentType.ai_escalate_team_id, label: attachmentType.ai_escalate_team_name });
+  }
 
   const form = useForm<AttachmentTypeSchemaType>({
     resolver: zodResolver(AttachmentTypeSchema),
