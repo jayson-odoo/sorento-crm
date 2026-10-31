@@ -1850,14 +1850,18 @@ class AttachmentService:
         if not type_row:
             raise handle_validation_error("Invalid attachment_type_id.")
 
-        count = (
+        # Row by row through the ORM read, never `query(...).update()`: the company scope
+        # filter covers SELECTs only, so another company's file is not found and not counted.
+        rows = (
             self.db.query(Attachment)
             .filter(Attachment.id.in_(unique_aids), Attachment.is_deleted == False)
-            .update({"attachment_type_id": type_id}, synchronize_session=False)
+            .all()
         )
+        for attachment in rows:
+            attachment.attachment_type_id = type_id
         self.db.commit()
         return {
-            "updated_attachments": int(count or 0),
+            "updated_attachments": len(rows),
             "attachment_type_id": type_id,
         }
 
@@ -1868,7 +1872,7 @@ class AttachmentService:
         propagate_to_linked: bool,
     ) -> dict:
         """Set access_levels on attachments; optionally cascade to linked product links, promotions, forms, packing lists."""
-        from sqlalchemy import update
+        from sqlalchemy import or_, update
         from app.services.contact_access_type_service import ContactAccessTypeService
         from app.models.product import ProductAttachment
         from app.models.marketing import Promotion, PromotionAttachment
@@ -1883,11 +1887,19 @@ class AttachmentService:
         if not unique_aids:
             raise handle_validation_error("No attachments in scope.")
 
-        count_att = (
+        # Every write below reads its rows through the scoped ORM query and sets them one by
+        # one, never a bulk `update()`: the company scope filter covers SELECTs only, and a
+        # shared (company-less) file can be linked from every company's records.
+        attachments = (
             self.db.query(Attachment)
             .filter(Attachment.id.in_(unique_aids), Attachment.is_deleted == False)
-            .update({"access_levels": validated}, synchronize_session=False)
+            .all()
         )
+        for attachment in attachments:
+            attachment.access_levels = list(validated)
+        count_att = len(attachments)
+        # Propagate only from the files the caller can see.
+        unique_aids = [str(a.id) for a in attachments]
 
         propagated: dict = {
             "product_links": 0,
@@ -1896,27 +1908,26 @@ class AttachmentService:
             "packing_lists": 0,
         }
 
-        if propagate_to_linked:
-            r1 = self.db.execute(
-                update(ProductAttachment)
-                .where(ProductAttachment.attachment_id.in_(unique_aids))
-                .values(access_levels=validated)
-            )
-            propagated["product_links"] = r1.rowcount or 0
-
-            promo_ids = [
-                str(x[0])
-                for x in self.db.query(PromotionAttachment.promotion_id)
-                .filter(PromotionAttachment.attachment_id.in_(unique_aids))
-                .distinct()
+        if propagate_to_linked and unique_aids:
+            product_links = (
+                self.db.query(ProductAttachment)
+                .filter(ProductAttachment.attachment_id.in_(unique_aids))
                 .all()
-            ]
-            if promo_ids:
-                r2 = self.db.execute(
-                    update(Promotion).where(Promotion.id.in_(promo_ids)).values(access_levels=validated)
-                )
-                propagated["promotions"] = r2.rowcount or 0
+            )
+            for link in product_links:
+                link.access_levels = list(validated)
+            propagated["product_links"] = len(product_links)
 
+            promo_ids = (
+                self.db.query(PromotionAttachment.promotion_id)
+                .filter(PromotionAttachment.attachment_id.in_(unique_aids))
+            )
+            promotions = self.db.query(Promotion).filter(Promotion.id.in_(promo_ids)).all()
+            for promotion in promotions:
+                promotion.access_levels = list(validated)
+            propagated["promotions"] = len(promotions)
+
+            # Forms carry no company.
             r3 = self.db.execute(
                 update(Form).where(Form.attachment_id.in_(unique_aids)).values(access_levels=validated)
             )
@@ -1932,20 +1943,19 @@ class AttachmentService:
                 .distinct()
                 .all()
             ]
-            direct_ids = [
-                str(x[0])
-                for x in self.db.query(InboundShipment.id)
-                .filter(InboundShipment.attachment_id.in_(unique_aids))
-                .all()
-            ]
-            ship_ids = list(dict.fromkeys(link_ids + direct_ids))
-            if ship_ids:
-                r4 = self.db.execute(
-                    update(InboundShipment)
-                    .where(InboundShipment.id.in_(ship_ids))
-                    .values(access_levels=validated)
+            shipments = (
+                self.db.query(InboundShipment)
+                .filter(
+                    or_(
+                        InboundShipment.id.in_(link_ids),
+                        InboundShipment.attachment_id.in_(unique_aids),
+                    )
                 )
-                propagated["packing_lists"] = r4.rowcount or 0
+                .all()
+            )
+            for shipment in shipments:
+                shipment.access_levels = list(validated)
+            propagated["packing_lists"] = len(shipments)
 
         self.db.commit()
         return {"updated_attachments": count_att, "propagated": propagated if propagate_to_linked else None}
