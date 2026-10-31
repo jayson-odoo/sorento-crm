@@ -34,6 +34,17 @@ def narrowed_miss_lines(
     return lines
 
 
+def _sets_as_products(hits: dict[str, int] | None) -> dict[str, int] | None:
+    """CHATBOT-SET-STOCK: a product set is a product to the customer (the resolver asks for both
+    under "product", `entity_resolver._expand_entity_types`, and the gate answers a set as its
+    member products), so "srtwc7405" matching both is one kind, never a "set or product?" pick."""
+    if not hits or "product_set" not in hits:
+        return hits
+    folded = {k: v for k, v in hits.items() if k != "product_set"}
+    folded["product"] = (folded.get("product") or 0) + (hits.get("product_set") or 0)
+    return folded
+
+
 def hits_for_token(resolved: dict[str, dict[str, int]] | None, raw: Any) -> dict[str, int] | None:
     """The resolver's own `{kind: hit count}` for the token a customer typed.
 
@@ -105,11 +116,11 @@ def apply_reconciliation(
 
     for e in entities:
         raw = e.get("raw")
-        hits = hits_for_token(resolved, raw)
+        hits = _sets_as_products(hits_for_token(resolved, raw))
         if not hits:
             result.entities.append(e)
             continue
-        whole = hits if exact is None else (hits_for_token(exact, raw) or {})
+        whole = hits if exact is None else (_sets_as_products(hits_for_token(exact, raw)) or {})
         matched = [k for k, count in hits.items() if count and count > 0]
         # #1262 slice 7 (F1b): the resolver's own hit-dict order is an accident of
         # however its callers happened to run, not a contract - the SAME ambiguity

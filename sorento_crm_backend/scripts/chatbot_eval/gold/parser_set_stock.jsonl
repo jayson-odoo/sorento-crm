@@ -1,0 +1,16 @@
+{"id": "ss-stem-01", "message": "Pls check stock srtwc7405 x 6 sets", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
+{"id": "ss-stem-02", "message": "stock srtwc8826", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
+{"id": "ss-stem-03", "message": "srtwc8608 ada stok?", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
+{"id": "ss-stem-04", "message": "check srtwc8826 3 set", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
+{"id": "ss-stem-05", "message": "how many srtwc7405 sets left", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
+{"id": "ss-stem-06", "message": "srtwc8840 got stock or not", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
+{"id": "ss-full-01", "message": "stock SRTWC8826-S", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
+{"id": "ss-full-02", "message": "SRTWC7405-RL-S-PJ x 6 stock", "expect": {"canonical": null, "domain_hint": "inventory", "intent_hint": "check_stock"}}
+{"id": "ss-eta-01", "message": "srtwc8826 eta", "expect": {"canonical": null, "domain_hint": "incoming"}}
+{"id": "ss-eta-02", "message": "bila srtwc7405 sampai?", "expect": {"canonical": null, "domain_hint": "incoming"}}
+{"id": "ss-photo-01", "message": "photo srtwc8826-s", "expect": {"canonical": null, "domain_hint": "product_attachment"}}
+{"id": "ss-delivery-01", "message": "delivery for srtwc8608-rl", "expect": {"canonical": null}}
+{"id": "ss-partial-01", "message": "photo wc8826", "expect": {"canonical": null, "domain_hint": "product_attachment"}}
+{"id": "ss-partial-02", "message": "wc8826 eta", "expect": {"canonical": null, "domain_hint": "incoming"}}
+{"id": "ss-partial-03", "message": "stock wc7405", "expect": {"canonical": null, "domain_hint": "inventory"}}
+{"id": "ss-partial-04", "message": "ada stok wc7405?", "expect": {"canonical": null, "domain_hint": "inventory"}}

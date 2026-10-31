@@ -670,6 +670,9 @@ def _exact_codes_only(
     def code_of(row: dict[str, Any]) -> str:
         return turn_state.token_key(row.get("canonical_code") or row.get("code") or row.get("raw") or "")
 
+    def set_keys(row: dict[str, Any]) -> list[str]:
+        return [turn_state.token_key(sc) for sc in (row.get("set_codes") or [row.get("set_code")]) if sc]
+
     tokens: list[tuple[str, str]] = []
     for e in parse_output.get("entities") or []:
         if not isinstance(e, dict) or e.get("hint") not in (None, "product"):
@@ -697,15 +700,13 @@ def _exact_codes_only(
         code = (read_values or {}).get(fold) or fold
         # CHAT-CODE-LOOKUP R2: a member of the product set the customer typed (the gate puts
         # `set_code` on its rows) belongs to that token.
-        exact = [
-            c for c in candidates
-            if code_of(c) == code
-            or any(turn_state.token_key(sc) == code for sc in (c.get("set_codes") or [c.get("set_code")]) if sc)
-        ]
+        exact = [c for c in candidates if code == code_of(c) or code in set_keys(c)]
         family: list[dict[str, Any]] = []
         if turn_task.code_or_number(code):
-            family = [c for c in candidates if code_of(c).startswith(code)] or [
-                c for c in candidates if code in code_of(c)
+            # CHATBOT-SET-STOCK: a member of a set the typed catalogue code heads (SRTWC8826 ->
+            # SRTWC8826-P) is in its family, though its own code (SRTWCX8826-P) is not.
+            family = [c for c in candidates if any(k.startswith(code) for k in (code_of(c), *set_keys(c)))] or [
+                c for c in candidates if any(code in k for k in (code_of(c), *set_keys(c)))
             ]
         chosen = exact or family
         if chosen:

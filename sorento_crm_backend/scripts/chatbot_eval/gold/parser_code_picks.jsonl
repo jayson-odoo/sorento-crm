@@ -25,3 +25,5 @@
 {"id": "cp-trans-04", "message": "srt2042-gy available?", "expect": {"canonical": "SRT2402-GY", "attributes_only": []}}
 {"id": "cp-amb-05", "message": "cb5112b ada stok tak?", "expect": {"canonical": null, "attributes_only": []}}
 {"id": "cp-amb-06", "message": "ch6004m in stock?", "expect": {"canonical": null, "attributes_only": []}}
+{"id": "cp-member-01", "message": "stock SRTWC7405-SC", "expect": {"canonical": "SRTWC7405-SC", "attributes_only": []}}
+{"id": "cp-member-02", "message": "SRTWCY8826 how many left", "expect": {"canonical": "SRTWCY8826", "attributes_only": []}}
