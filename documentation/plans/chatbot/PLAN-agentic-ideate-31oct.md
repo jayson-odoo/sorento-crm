@@ -135,8 +135,7 @@ new product variants and is the same message as gold row t033, so that miss is n
 those follow-ups answered the retired draft flow, so each carries a synthetic exchange: the row it follows plus one
 fixed agent question.
 
-**Final labels (the exact 15 from AC-R2-14, 42 Jev calls, USD 0.0015).** Measures the wording before the code exists, so
-the gate step checks `agent_tool_labels()` still equals this list (`criteria_final_15.json`).
+**Final labels (the exact 15 from AC-R2-14, 42 Jev calls, USD 0.0015).** Measures the wording before the code exists, and the label was later reworded, so the gate step compares `agent_tool_labels()` against the later list, `criteria_try_v1.json`.
 
 | Group | Right | Bar |
 | --- | --- | --- |
