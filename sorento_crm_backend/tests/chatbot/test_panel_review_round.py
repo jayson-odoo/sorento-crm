@@ -691,10 +691,11 @@ def test_a_holder_of_the_add_slug_with_no_sales_agent_logs_a_new_prospect(
 
     result = run_panel(session_factory, monkeypatch, staff, "yes")
 
-    with company_scope(session_factory(), None):
-        rows = session_factory().query(SalesOpportunity).filter(SalesOpportunity.title == "new shop fit out").all()
-    assert len(rows) == 1, f"no opportunity row: {result.reply_text!r}"
-    assert rows[0].created_by_user_id == staff.user_id and rows[0].sales_agent_id is None
+    db = session_factory()
+    with company_scope(db, None):
+        rows = db.query(SalesOpportunity).filter(SalesOpportunity.title == "new shop fit out").all()
+        assert len(rows) == 1, f"no opportunity row: {result.reply_text!r}"
+        assert rows[0].created_by_user_id == staff.user_id and rows[0].sales_agent_id is None
 
 
 # --------------------------------------------------------------------------- #
@@ -1172,6 +1173,28 @@ class TestStaffRevealIsAskedOfBothUsers:
         staff_lacks = mk_user(env.db, "staff-lacks", perms=self.BASE, companies=(env.co_a,), last_active=env.co_a)
         also = env.client.get(path, headers=env.ident(staff_lacks))
         assert also.status_code == 403, (name, also.status_code, also.text[:300])
+
+    def test_the_sales_analysis_reveal_is_asked_of_both_users(self, env, monkeypatch):
+        from app.services import queue_service
+
+        monkeypatch.setattr(queue_service, "enqueue_job", lambda f, *a, **k: SimpleNamespace(id="zzt"))
+        path = "/api/v1/sales/analysis"
+        slug = ("sales.reports.view",)
+        # act-as lacks the key, the staff member holds it
+        env.use_actas(perms=self.BASE)
+        staff_has = mk_user(env.db, "an-has", perms=self.BASE + slug, companies=(env.co_a,), last_active=env.co_a)
+        refused = env.client.get(path, headers=env.ident(staff_has))
+        assert refused.status_code == 403, (refused.status_code, refused.text[:300])
+
+        # control: both hold it
+        env.use_actas(perms=self.BASE + slug)
+        both = mk_user(env.db, "an-both", perms=self.BASE + slug, companies=(env.co_a,), last_active=env.co_a)
+        ok = env.client.get(path, headers=env.ident(both))
+        assert ok.status_code not in (403, 422), (ok.status_code, ok.text[:300])
+
+        # control: act-as holds it, the staff member lacks it
+        lacks = mk_user(env.db, "an-lacks", perms=self.BASE, companies=(env.co_a,), last_active=env.co_a)
+        assert env.client.get(path, headers=env.ident(lacks)).status_code == 403
 
     @pytest.mark.parametrize(
         "staff_perms, actas_perms, expect_supplier",
