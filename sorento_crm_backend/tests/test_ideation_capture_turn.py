@@ -1706,7 +1706,10 @@ def test_ak_failed_extraction_keeps_a_held_list(env):
     env.extractions["something else"] = IdeateExtraction(failed=True)
     out = env.turn("something else", session_vars_in=pointer)
     assert out["status"] == "read_failed"
+    # Both the row and the blob handed back to the chatbot (which persists it) keep the list.
     assert env.persisted().get("ideation", {}).get("status") == "similar_offered"
+    assert out["session_vars"].get("ideation", {}).get("status") == "similar_offered"
+    _no_ss(env)
 
 
 @pytest.mark.parametrize(
