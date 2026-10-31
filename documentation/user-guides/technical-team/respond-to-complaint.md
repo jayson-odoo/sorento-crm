@@ -10,7 +10,7 @@ Click a row to open the complaint detail page (`/complaint-management/complaints
 
 ## Step 1 - Open the response editor
 
-On the complaint detail page click **[Edit technical team response](#guide_target=complaint-management.complaints.tech-team.edit-response)** in the top action bar.
+On the complaint detail page click [**Edit technical team response**](#guide_target=complaint-management.complaints.tech-team.edit-response) in the top action bar.
 
 A dialog opens with:
 
@@ -28,9 +28,8 @@ A dialog opens with:
 
 You have two options:
 
-* **[Save only](#guide_target=complaint-management.complaints.tech-team.save-response)** - persists the response on the complaint record. No message is sent to the customer. The complaint stays in its current status. Use this when you're drafting internally.
-
-* **[Update & Reply](#guide_target=complaint-management.complaints.tech-team.update-reply)** - saves the response **and** posts it to the customer's Respond.io thread. The complaint moves to **Responded**, which unlocks the **Approve** and **Reject** actions for whoever has those permissions.
+* [**Save only**](#guide_target=complaint-management.complaints.tech-team.save-response) - persists the response on the complaint record. No message is sent to the customer. The complaint stays in its current status. Use this when you're drafting internally.
+* [**Update & Reply**](#guide_target=complaint-management.complaints.tech-team.update-reply) - saves the response **and** posts it to the customer's Respond.io thread. The complaint moves to **Responded**, which unlocks the **Approve** and **Reject** actions for whoever has those permissions.
 
   Disabled when the complaint has no `respond_inbox_url` (i.e. there is no linked Respond.io conversation). In that case you must use **Save only** and the salesperson can later forward the response manually.
 

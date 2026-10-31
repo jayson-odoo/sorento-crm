@@ -2,7 +2,7 @@
 
 Maintain the units of measure (UoM) products are stocked and sold in - e.g. *Each*, *Box*, *Carton*, *Kilogram*. Every product must have a **Base Unit of Measure**.
 
-Open **[Product Management → Units of Measure](/master-data-management/units-of-measure)** (URL: `/master-data-management/units-of-measure`). The page is titled **Units of Measure**.
+Open [**Product Management → Units of Measure**](/master-data-management/units-of-measure) (URL: `/master-data-management/units-of-measure`). The page is titled **Units of Measure**.
 
 ## The list
 
@@ -24,9 +24,7 @@ The form fields:
 
 There is a UoM **detail** page (`/master-data-management/units-of-measure/{id}`), and **new**/**edit** pages.
 
-A **UOM Code** that differs from one you already hold only by case or spacing is refused with
-*"UOM code already exists."* rather than silently creating a near-duplicate - the same check
-applies to warehouses, suppliers and product categories.
+A **UOM Code** that differs from one you already hold only by case or spacing is refused with *"UOM code already exists."* rather than silently creating a near-duplicate - the same check applies to warehouses, suppliers and product categories.
 
 ## Delete a unit of measure
 

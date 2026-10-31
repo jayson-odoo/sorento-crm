@@ -4,11 +4,11 @@ If you can't handle or resolve an enquiry/task in time (you need someone more se
 
 ## From the dashboard (your pending tasks)
 
-Open the [**Dashboard**](/) (home) → the **My pending tasks** widget → the **My Pending** tab → find the task → click **[Escalate](#guide_target=dashboard.sla-tasks.escalate)**.
+Open the [**Dashboard**](/) (home) → the **My pending tasks** widget → the **My Pending** tab → find the task → click [**Escalate**](#guide_target=dashboard.sla-tasks.escalate).
 
-- You'll be asked for a **reason** (why it needs escalating).
-- On confirm: the task moves to the **next tier**, is **reassigned per policy**, and the **new assignee is notified**.
-- **Escalate** isn't available once a task is already at the **top tier (3)** - there's nowhere higher to send it. At that point, handle it directly or use **Reassign** to hand it to a specific colleague.
+* You'll be asked for a **reason** (why it needs escalating).
+* On confirm: the task moves to the **next tier**, is **reassigned per policy**, and the **new assignee is notified**.
+* **Escalate** isn't available once a task is already at the **top tier (3)** - there's nowhere higher to send it. At that point, handle it directly or use **Reassign** to hand it to a specific colleague.
 
 ## From inside a record (complaint / purchase request / stock inquiry)
 
@@ -25,10 +25,7 @@ When you're viewing the record itself, the same escalation is available on its *
 
 ## Not the same: Escalate on a quotation line
 
-On a project quotation, the **Drawing** and **Photo** cells of a line can show an **Escalate**
-button too. That one does not move a task up a tier: it opens a new request to the marketing
-product team for a missing drawing or photo. See
-[Quote a project, send it, and handle the customer's suggestions](../project-sales-rep/work-a-project-quotation.md).
+On a project quotation, the **Drawing** and **Photo** cells of a line can show an **Escalate** button too. That one does not move a task up a tier: it opens a new request to the marketing product team for a missing drawing or photo. See [Quote a project, send it, and handle the customer's suggestions](../project-sales-rep/work-a-project-quotation.md).
 
 ## Notes
 

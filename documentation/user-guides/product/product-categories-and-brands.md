@@ -2,11 +2,12 @@
 
 Manage the **categories** and **brands** that products are classified under. Every product must have a category; a brand is optional.
 
+
 ---
 
 ## Product categories
 
-Open **[Product Management → Product Categories](/master-data-management/product-categories)** (URL: `/master-data-management/product-categories`). The page is titled **Product Categories**.
+Open [**Product Management → Product Categories**](/master-data-management/product-categories) (URL: `/master-data-management/product-categories`). The page is titled **Product Categories**.
 
 Categories are shown as a **tree** - parent categories can be expanded/collapsed to reveal nested children. Each row shows the category and its product count.
 
@@ -25,9 +26,7 @@ Click **Create Category**, or use the per-row **Edit** / **Duplicate** action. T
 
 Save with **Create** / **Update**. **Duplicate** opens the create modal pre-filled from an existing category (code suffixed `-COPY`, name suffixed `(copy)`).
 
-A **Category Code** that differs from one you already hold only by case or spacing is refused
-with *"Category code already exists."* rather than silently creating a near-duplicate - the same
-check applies to warehouses, suppliers and units of measure.
+A **Category Code** that differs from one you already hold only by case or spacing is refused with *"Category code already exists."* rather than silently creating a near-duplicate - the same check applies to warehouses, suppliers and units of measure.
 
 > **Setting a parent (nesting):** the category tree displays parent → child hierarchy, but the create/edit **modal does not expose a parent picker**. Nesting (`parent_category_id`) is assigned through the product master / category import or the API, not from this form. Flag this to your admin if you need to re-parent a category from the UI.
 
@@ -35,11 +34,12 @@ check applies to warehouses, suppliers and units of measure.
 
 Use the per-row **Delete** action. It opens a confirmation dialog; **delete is a hard delete and cannot be undone.** A category in use by products cannot be deleted while products still reference it.
 
+
 ---
 
 ## Brands
 
-Open **[Product Management → Brands](/master-data-management/brands)** (URL: `/master-data-management/brands`). The page is titled **Brands**.
+Open [**Product Management → Brands**](/master-data-management/brands) (URL: `/master-data-management/brands`). The page is titled **Brands**.
 
 The list columns are **Name**, **Code**, **Description**, **Active**, **Products** (product count).
 
@@ -65,6 +65,7 @@ There is also a brand **detail** page (`/master-data-management/brands/{id}`). E
 ### Delete a brand
 
 Use the per-row **Delete** action → confirmation dialog. **Hard delete, cannot be undone.** A product's `brand_id` is cleared (set to null) if its brand is removed - products are not deleted with the brand.
+
 
 ---
 

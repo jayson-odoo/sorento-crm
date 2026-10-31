@@ -34,13 +34,13 @@ This is why there are two separate listing pages and why the **KPI Dashboard** h
 
 ## Quick comparison
 
-| | Conversation SLA | Form SLA |
-|---|---|---|
+|     | Conversation SLA | Form SLA |
+|-----|------------------|----------|
 | Timer is keyed to | a WhatsApp **contact** | a **form record** (and stage) |
 | Open timers at once | **one** per contact | **many** (one per active stage) |
 | Started by | chat automation (n8n) | a form transition (per config) |
 | Resolving it | closes the Respond.io conversation | closes the stage; may spawn the next stage |
-| Has a **Reference** / **Type** / **Next action** column | no | yes |
+| Has a **Reference** / **Type** / **Next action** column | no               | yes      |
 | Listing page | [Conversation SLA Tracking](/sla-management/conversation-sla-tracking) | [Form SLA Tracking](/sla-management/form-sla-tracking) |
 
 ## See also

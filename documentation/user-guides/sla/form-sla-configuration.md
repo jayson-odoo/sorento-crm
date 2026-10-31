@@ -30,6 +30,7 @@ A stage is uniquely identified by its **form type + team set** - that pair is wh
 
 ## How a chain runs (example: stock inquiry)
 
+
 1. A **Start** event (e.g. the inquiry is submitted) spawns the first stage's timer, assigned to the **Agent**'s tier team for that **Team set**.
 2. A **Respond** event stops the response clock; a **Resolve** event closes the stage.
 3. If the stage has a **Next stage**, resolving it spawns that next stage's timer (e.g. project sales → purchasing). The chain continues until a stage with no next stage resolves.

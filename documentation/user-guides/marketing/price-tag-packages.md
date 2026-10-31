@@ -4,9 +4,9 @@ Use this when a product is sold as a catalogue package rather than on its own: a
 
 ## Where
 
-* Record a package: **[Products → Products → All Products](/master-data-management/products)** (URL: `/master-data-management/products`), open the product, **Overview** tab, the **Combos** card.
-* Work a request: **[Dealer Kit → Room Designer → Price Tag Requests](/dealer-kit/price-tag-requests)** (URL: `/dealer-kit/price-tag-requests`).
-* Choose which product classes are checked for a missing package: **[User Management → Settings](/user-management/settings)**, the **Price tag guarded classes** field.
+* Record a package: [**Products → Products → All Products**](/master-data-management/products) (URL: `/master-data-management/products`), open the product, **Overview** tab, the **Combos** card.
+* Work a request: [**Dealer Kit → Room Designer → Price Tag Requests**](/dealer-kit/price-tag-requests) (URL: `/dealer-kit/price-tag-requests`).
+* Choose which product classes are checked for a missing package: [**User Management → Settings**](/user-management/settings), the **Price tag guarded classes** field.
 
 ## What a combo is, and what it is not
 
@@ -20,6 +20,7 @@ A combo has two kinds of part:
 * **A choice group** - two or more parts sharing one label, and the customer picks one of them. The salesperson can answer it on the request, or leave it open for you.
 
 ## Steps - record a package on a product
+
 
 1. Open the product and stay on the **Overview** tab. The **Combos** card sits below the existing cards; a product with none shows **No combos.**
 2. Click **Add combo**. Type the catalogue's wording into **Name** (for example *3 in 1*) and click **Add combo** again. A name is used once per product: a second combo with the same name is refused under the field.
@@ -40,6 +41,7 @@ Open any part (the mirror, the tap, a basin) and the **Sold with** card on its *
 Nothing is asked of them that they did not already know. They pick the cabinet code they have in front of them, and the parts appear under the line on their own. They can drop a part, add one the package missed, answer a choice group, or leave it open for you. A missing package never blocks their submit; it arrives to you as a note on the line instead. Their side is written up in [Submit via portal](../project-sales-rep/submit-via-portal.md#packages-and-parts-on-a-line).
 
 ## Steps - prepare the tags on a request
+
 
 1. Open the request from **Price Tag Requests** and go to the **Lines** tab. Each line is the product the salesperson asked for, with its parts indented under it and its tags under those. A part the salesperson left open reads *Basin: SRTBS100-WH / SRTBS100-BL / SRTBS100-GR*.
 2. Read any **Package warning** pill next to the line name. Three texts are possible, all of them written by the check at submit:
