@@ -551,6 +551,11 @@ def create_through(db, w, ss, *, title, number, idea_id, ok=True, cancel=False):
             "POST", CREATE_PATH,
             json_body={"idea_id": idea_id, "idea_number": number, "status": "captured", "title": title},
         )
+        # the list reads each created test idea live by id (review round, AC-RV-4)
+        ss.route(
+            "GET", f"/embed/ideas/{idea_id}",
+            json_body=idea_body(id=idea_id, ideaNumber=number, title=title, problem=FIELDS["problem"]),
+        )
     else:
         ss.route("POST", CREATE_PATH, status=500, json_body={"error": {"code": "boom", "message": "x"}})
     _, row = store(db, w, [(CREATE, {**FIELDS, "title": title})])
@@ -651,7 +656,7 @@ IDEA_PATH = f"/embed/ideas/{IDEA}"
 
 def idea_body(**over):
     body = {
-        "id": IDEA, "ideaNumber": "IDEA-0042", "isMine": True, "title": "Old title", "problem": "Old problem",
+        "id": IDEA, "ideaNumber": "IDEA-0042", "isMine": True, "isTest": True, "title": "Old title", "problem": "Old problem",
         "desiredOutcome": "Old outcome", "useCases": ["Old use"], "currentWorkaround": "Old workaround",
     }
     body.update(over)
@@ -853,7 +858,7 @@ def test_AC_R2_13_propose_confirm_list_propose_update_confirm_through_a_turn(db,
     )
     ss.route("GET", "/embed/ideas", json_body=[])  # ss's list omits the new test idea
     idea_path = f"/embed/ideas/{made_id}"
-    ss.route("GET", idea_path, json_body={**idea_body(id=made_id), "isMine": True})
+    ss.route("GET", idea_path, json_body={**idea_body(id=made_id), "isMine": True, "isTest": True})
     ss.route("PATCH", idea_path, json_body=idea_body(id=made_id, title="Nearest warehouse first"))
 
     # turn 1: the model proposes the idea, nothing is created yet
