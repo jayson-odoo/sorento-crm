@@ -258,9 +258,23 @@ def test_ac_d6_flipping_is_shared_leaves_existing_rows_alone(db):
 # --------------------------------------------------------------------------- #
 
 
+# The attachment-type routes are permission-gated (#2036); this principal has no users row, so grant
+# it exactly the slugs the round trip below exercises, nothing else.
+_GRANTED = frozenset({
+    "resource.attachment_types.view",
+    "resource.attachment_types.add",
+    "resource.attachment_types.edit",
+})
+
+
 @pytest.fixture
-def client(db):
+def client(db, monkeypatch):
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+    from app.services.user_service import UserPermissionService
+
+    monkeypatch.setattr(
+        UserPermissionService, "check_user_has_permission", lambda self, uid, slug: slug in _GRANTED
+    )
 
     def _override_get_db():
         yield db

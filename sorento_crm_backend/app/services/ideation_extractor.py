@@ -56,10 +56,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.services import ai_prompt_registry
 from app.services.ai_assistant_service import AIAssistantConfigService
-from app.services.llm_provider import get_provider
+from app.services.llm_provider import get_provider, resolve_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +253,11 @@ class IdeateExtraction:
     language: str | None = None
     #: False when the message only announces an idea without stating one; None when unknown.
     has_idea: bool | None = None
+    #: True when the message could not be read at all (config read, no key for the configured
+    #: provider, prompt render, provider or parse error). An empty extraction with
+    #: ``failed`` set says nothing about the message, so callers must not read it as "no
+    #: idea" (AI-KEY-PER-PROVIDER).
+    failed: bool = False
 
 
 # #1279 round 2 (owner ruling, 26 Sep 2026): "only a yes creates the idea", in the
@@ -361,7 +365,7 @@ def extract_ideate_turn(
 ) -> IdeateExtraction:
     """Extract the ideate NLU output from ``message_text`` given the draft context.
 
-    Never raises - degrades to an empty extraction on any failure. ``confirm`` is
+    Never raises - degrades to an empty extraction with ``failed=True`` on any failure. ``confirm`` is
     derived here (AC-1201) by ``derive_confirm``: only a yes while ``status ==
     "review"`` (D-CONFIRM / AC-1208 / AC-1211, owner ruling 26 Sep 2026) - a
     confirmation only means anything once the draft is being reviewed. The old draft flow
@@ -378,17 +382,22 @@ def extract_ideate_turn(
         config = AIAssistantConfigService(db).get()
     except Exception:  # noqa: BLE001 - never break the turn on a config read
         logger.warning("ideate_extractor: config read failed; empty extraction", exc_info=True)
-        return IdeateExtraction()
+        return IdeateExtraction(failed=True)
 
-    api_key = config.api_key_ciphertext or settings.openai_api_key
+    # The key of the CONFIGURED provider: a gemini config with its key only in the gemini
+    # slot must not fall through to the (empty) OpenAI key (AI-KEY-PER-PROVIDER).
+    api_key = resolve_api_key(config, config.provider)
     if not api_key:
-        return IdeateExtraction()
+        logger.warning(
+            "ideate_extractor: no API key for provider %r; empty extraction", config.provider
+        )
+        return IdeateExtraction(failed=True)
 
     try:
         system, _version = ai_prompt_registry.render(db, "ideate_extractor")
     except Exception:  # noqa: BLE001
         logger.warning("ideate_extractor: prompt render failed; empty extraction", exc_info=True)
-        return IdeateExtraction()
+        return IdeateExtraction(failed=True)
 
     context_lines: list[str] = []
     context_lines.append(f"Current draft status: {status or 'new'}")
@@ -442,7 +451,7 @@ def extract_ideate_turn(
         data = json.loads((result.content or "").strip() or "{}")
     except Exception:  # noqa: BLE001 - provider/parse error → empty extraction
         logger.warning("ideate_extractor: LLM call failed; empty extraction", exc_info=True)
-        return IdeateExtraction()
+        return IdeateExtraction(failed=True)
 
     fields: dict[str, str] = {}
     for pair in data.get("fields") or []:
