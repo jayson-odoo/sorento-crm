@@ -94,6 +94,11 @@ Names used below. **Staff** = the logged-in user the panel is answering. **Act-a
 - `resolve_references` keeps its picker-level behaviour inside the active company.
 - Contact-only routes (`report-ask`, `sales/target-progress`) keep refusing without a contact; PR 2 gives them a staff path.
 
+## Known limit, accepted
+
+An any-of route with staff holding `.view` and act-as holding only `.view_own` returns the staff member's rows, which is more than act-as alone, and never more than that
+staff member's own session (measured on the projects and complaints lists). The narrowing guarantee is against the staff member's screens, and only the shared key can send the header.
+
 ## Hand test
 
 A low-permission staff member and a two-company staff member each ask the panel about stock, orders and a record they should not see.

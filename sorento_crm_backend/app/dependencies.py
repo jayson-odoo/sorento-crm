@@ -626,8 +626,9 @@ def require_permission_with_api_key(permission_slug: str):
 def require_any_permission_with_api_key(permission_slugs: List[str]):
     """Like require_any_permission but uses get_current_user_or_api_key (read/automation only).
 
-    On an identity read the staff member and the act-as user must share one of the slugs. The
-    superadmin/admin shortcut is per user: it never lifts the other one.
+    On an identity read the staff member and the act-as user are each asked separately: both must
+    hold one of the slugs, not necessarily the same one. The superadmin/admin shortcut and the
+    module check are per user, so one user never lifts the other.
     """
 
     def _require(
@@ -635,42 +636,42 @@ def require_any_permission_with_api_key(permission_slugs: List[str]):
         db: Session = Depends(get_db),
     ) -> dict:
         service = UserPermissionService(db)
-        gated = [
-            uid
-            for uid in _users_to_gate(current_user)
-            if not (service.get_user_role_slugs(uid) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"})
-        ]
-        if not gated:
-            return current_user
-        user_slugs = set.intersection(*(set(service.get_user_permission_slugs(uid)) for uid in gated))
-        if getattr(settings, "module_guard_strict", False):
-            from app.modules.runtime.installer import (
-                DEFAULT_TENANT_ID,
-                is_module_enabled,
-                tenant_has_any_module_row,
-            )
-            from app.modules.runtime.permission_module_map import module_for_permission
 
-            if tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
-                allowed = False
-                for slug in permission_slugs:
-                    if slug not in user_slugs:
-                        continue
-                    mod = module_for_permission(slug)
-                    if not mod or is_module_enabled(db, DEFAULT_TENANT_ID, mod):
-                        allowed = True
-                        break
-                if not allowed:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"One of these permissions required (module may be disabled): {', '.join(permission_slugs)}",
-                    )
-                return current_user
-        if not any(s in user_slugs for s in permission_slugs):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"One of these permissions required: {', '.join(permission_slugs)}",
-            )
+        def _check(uid: str) -> None:
+            if service.get_user_role_slugs(uid) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
+                return
+            user_slugs = service.get_user_permission_slugs(uid)
+            if getattr(settings, "module_guard_strict", False):
+                from app.modules.runtime.installer import (
+                    DEFAULT_TENANT_ID,
+                    is_module_enabled,
+                    tenant_has_any_module_row,
+                )
+                from app.modules.runtime.permission_module_map import module_for_permission
+
+                if tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
+                    allowed = False
+                    for slug in permission_slugs:
+                        if slug not in user_slugs:
+                            continue
+                        mod = module_for_permission(slug)
+                        if not mod or is_module_enabled(db, DEFAULT_TENANT_ID, mod):
+                            allowed = True
+                            break
+                    if not allowed:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"One of these permissions required (module may be disabled): {', '.join(permission_slugs)}",
+                        )
+                    return
+            if not any(s in user_slugs for s in permission_slugs):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"One of these permissions required: {', '.join(permission_slugs)}",
+                )
+
+        for uid in _users_to_gate(current_user):
+            _check(uid)
         return current_user
 
     return _require
