@@ -276,3 +276,104 @@ def test_ns5_key_without_a_production_label_is_skipped_without_error(db):
     versions, label, _current = _state(db, KEYS["en"])
     assert len(versions) == 1 and label is None
     assert _state(db, KEYS["ms"])[2].template == NEW["ms"]
+
+
+# --------------------------------------------------------------------------- #
+# Review round: every language, the "next" version, one head, no other prompt  #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("status_code", [503, None])
+@pytest.mark.parametrize("lang", ["en", "ms", "zh"])
+def test_ns2_similar_lookup_failure_answers_in_the_turns_language(env, lang, status_code):
+    env.ready()
+    env.idea_message(language=lang)
+    env.similar_result = _ss_error(status_code)
+    out = env.turn(MSG)
+    assert out["status"] == "error"
+    assert out["reply_text"] == NEW[lang]
+
+
+@pytest.mark.parametrize("status_code", [503, None])
+@pytest.mark.parametrize("lang", ["en", "ms", "zh"])
+def test_ns2_fresh_create_failure_answers_in_the_turns_language(env, lang, status_code):
+    env.ready()
+    env.idea_message(language=lang)
+    env.create_result = _ss_error(status_code)
+    out = env.turn(MSG)
+    assert out["status"] == "error"
+    assert out["reply_text"] == NEW[lang]
+
+
+@pytest.mark.parametrize("lang", ["en", "ms", "zh"])
+def test_ns2_held_new_create_failure_answers_in_the_held_lists_language(env, lang):
+    env.ready()
+    env.create_result = _ss_error(503)
+    held = env.idea_message("held original idea text")
+    similar = [{"idea_id": _uid_(), "idea_number": "IDEA-0151", "title": "Held"}]
+    sv = env.pointer(similar, message=held, language=lang)
+    out = env.turn("NEW", session_vars_in=sv)
+    assert out["status"] == "error"
+    assert out["reply_text"] == NEW[lang]
+
+
+def _uid_() -> str:
+    import uuid
+
+    return str(uuid.uuid4())
+
+
+def test_ns3_next_version_is_above_an_unpublished_draft(db):
+    mig = _load_migration()
+    key = KEYS["en"]
+    _seed(db, key, OLD["en"])
+    draft = AIPromptVersion(name=key, version=2, type="text", template="UNPUBLISHED DRAFT", variables=[])
+    db.add(draft)
+    db.flush()
+    mig.publish(db.connection())
+
+    versions, label, current = _state(db, key)
+    assert [v.version for v in versions] == [1, 2, 3]
+    assert versions[1].template == "UNPUBLISHED DRAFT", "the draft is neither reused nor edited"
+    assert current.version == 3 and current.template == NEW["en"]
+    assert label.version_id == versions[2].id
+
+
+def test_ns6_alembic_heads_is_single():
+    revisions, parents = set(), set()
+    for p in VERSIONS_DIR.glob("*.py"):
+        p_src = p.read_text(encoding="utf-8")
+        rev = _assign(p_src, "revision")
+        if not isinstance(rev, str):
+            continue
+        revisions.add(rev)
+        down = _assign(p_src, "down_revision")
+        parents.update(down if isinstance(down, (tuple, list)) else [down])
+    assert len(revisions - parents) == 1, f"alembic heads: {sorted(revisions - parents)}"
+
+
+def test_ns7_upgrade_moves_no_other_prompts_label(db, monkeypatch):
+    """The seed re-pins agent_system to the config's prompt; upgrade() must not run it."""
+    from types import SimpleNamespace
+
+    from app.models.ai_assistant import AIAssistantConfig
+
+    mig = _load_migration()
+    db.add(AIAssistantConfig(system_prompt="Legacy admin prompt from the config row"))
+    db.flush()
+    _seed(db, "agent_system", "stock agent text")
+    v2 = AIPromptVersion(name="agent_system", version=2, type="text", template="legacy copy", variables=[])
+    v3 = AIPromptVersion(name="agent_system", version=3, type="text", template="OWNER NEWER TEXT", variables=[])
+    db.add_all([v2, v3])
+    db.flush()
+    label = (
+        db.query(AIPromptLabel)
+        .filter(AIPromptLabel.name == "agent_system", AIPromptLabel.label == "production")
+        .one()
+    )
+    label.version_id = v3.id
+    db.flush()
+
+    monkeypatch.setattr(mig, "op", SimpleNamespace(get_bind=lambda: db.connection()))
+    mig.upgrade()
+
+    _versions, _label, current = _state(db, "agent_system")
+    assert current.version == 3 and current.template == "OWNER NEWER TEXT"
