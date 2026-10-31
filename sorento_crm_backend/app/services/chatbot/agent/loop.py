@@ -542,7 +542,10 @@ def _propose(db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str
     return ToolResult(
         "proposed",
         data={"action_id": action_id, "step": len(steps), "summary": step["summary"]},
-        message="Proposed, not done. The user must confirm in a later message.",
+        message=(
+            "Proposed, not done. The user must confirm in a later message. The change is listed for the "
+            "user automatically, so do not repeat it."
+        ),
     )
 
 

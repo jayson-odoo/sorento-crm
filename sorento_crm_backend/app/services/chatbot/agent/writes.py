@@ -2054,7 +2054,8 @@ WRITES[CREATE_IDEA] = WriteDef(
             "name": CREATE_IDEA,
             "description": (
                 "Propose logging one new idea or feature request from the user. Nothing is created until the "
-                "user confirms. Fill the fields from what they said; problem is required. Call once per idea."
+                "user confirms. Use only what the user said and leave any other field out. As soon as you have the "
+                "problem, propose it: do not ask the user to adjust or add more first. Call once per idea."
             ),
             "parameters": {"type": "object", "properties": {"problem": {"type": "string", "maxLength": MAX_NOTE_CHARS}, **_IDEA_PROPS}, "required": ["problem"]},
         },
@@ -2075,7 +2076,8 @@ WRITES[UPDATE_IDEA] = WriteDef(
             "description": (
                 "Propose a change to one of the user's own ideas: any of its title, problem, desired outcome, "
                 "use cases or current workaround. Nothing changes until the user confirms. idea_id must come "
-                "from crm_ideas_list. Only test ideas can be changed for now. Call once per idea."
+                "from crm_ideas_list. Only test ideas can be changed for now. Use only what the user said and "
+                "leave other fields out. Call once per idea."
             ),
             "parameters": {
                 "type": "object",
