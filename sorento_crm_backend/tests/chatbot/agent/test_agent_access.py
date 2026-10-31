@@ -93,17 +93,17 @@ def test_permitted_tools_returns_only_tools_whose_slug_the_user_holds(db):
 
     tools = permitted_tools(db, ctx)
 
-    assert [t.name for t in tools] == ["crm_inventory_stock_balance_list"]
+    assert [t.name for t in tools] == ["crm_inventory_stock_balance_list", "user_guides_read"]
 
 
-def test_a_user_with_no_role_gets_no_tools(db):
+def test_a_user_with_no_role_gets_only_the_user_guides_tool(db):
     from app.services.chatbot.agent.access import build_context, permitted_tools
 
     contact = seed_contact(db)
     seed_user(db, contact_pk=contact["pk"], slugs=[])
     ctx = build_context(db, contact["respond_id"])
 
-    assert permitted_tools(db, ctx) == []
+    assert [t.name for t in permitted_tools(db, ctx)] == ["user_guides_read"]
 
 
 def test_two_slugs_expose_every_tool_behind_them(db):
@@ -122,4 +122,5 @@ def test_two_slugs_expose_every_tool_behind_them(db):
         "crm_order_management_orders_by_product_list",
         "crm_incoming_stock_by_product",
         "crm_incoming_stock_shipments",
+        "user_guides_read",
     }

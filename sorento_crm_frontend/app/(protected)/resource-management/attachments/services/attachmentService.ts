@@ -580,6 +580,17 @@ export async function resubmitAttachmentWebhook(id: string): Promise<{ message: 
   return response.json();
 }
 
+/** Queue the AI's reading of this file again (done or failed files). */
+export async function readAttachmentAgain(id: string): Promise<{ ai_read_status: string | null }> {
+  const response = await apiFetch(`/api/v1/resource-management/attachments/${id}/ai-read`, {
+    method: 'POST',
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to queue the AI read'));
+  }
+  return response.json();
+}
+
 export async function linkAttachmentToPackingList(attachmentId: string, packingListId: string): Promise<{ message: string; link_id: string }> {
   const response = await apiFetch(`/api/v1/resource-management/attachments/${attachmentId}/link-packing-list`, {
     method: 'POST',

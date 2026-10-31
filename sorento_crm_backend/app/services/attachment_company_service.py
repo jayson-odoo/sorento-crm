@@ -98,6 +98,9 @@ class AttachmentCompanyService:
                 folder.company_id = company_id
             for attachment in files.values():
                 attachment.company_id = company_id
+            from app.services import knowledge_service
+
+            knowledge_service.move_company(self.db, list(files.keys()), company_id)
 
             links_added, links_removed = self._sync_product_links(
                 files, company_id, actor_id

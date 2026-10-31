@@ -156,6 +156,8 @@ EXPECTED_GRANTS = {
     "crm_order_management_orders_by_product_list": None,
     "crm_resolve": None,
     "crm_products_find": None,
+    "crm_knowledge_search": None,
+    "user_guides_read": None,
 }
 
 
@@ -195,14 +197,14 @@ def test_permitted_tools_needs_the_contact_grant_too(db, held, monkeypatch):
     seed_user(db, contact_pk=contact["pk"])
     monkeypatch.setattr("app.services.contact_field_reveal_service.granted_keys", lambda d, c: [])
     ctx = build_context(db, contact["respond_id"])
-    assert permitted_tools(db, ctx) == []
+    assert [t.name for t in permitted_tools(db, ctx)] == ["user_guides_read"]
 
     monkeypatch.setattr(
         "app.services.contact_field_reveal_service.granted_keys", lambda d, c: ["purchase_orders.placed"]
     )
     ctx = build_context(db, contact["respond_id"])
     assert {t.name for t in permitted_tools(db, ctx)} == {
-        "crm_procurement_po_placed_list", "crm_procurement_grn_summary",
+        "crm_procurement_po_placed_list", "crm_procurement_grn_summary", "user_guides_read",
     }
 
 
@@ -216,7 +218,7 @@ def test_a_contact_that_may_not_check_stock_is_not_offered_the_stock_tool(db, he
     db.flush()
     ctx = build_context(db, contact["respond_id"])
     assert ctx.stock_allowed is False
-    assert permitted_tools(db, ctx) == []
+    assert [t.name for t in permitted_tools(db, ctx)] == ["user_guides_read"]
 
 
 # ------------------------------------------------------------------ H2
@@ -525,7 +527,9 @@ GRN = "crm_procurement_grn_summary"
 def test_only_the_resolver_and_grn_are_not_render_tools():
     from app.services.chatbot.agent.tools import REGISTRY
 
-    assert {n for n, d in REGISTRY.items() if not d.render} == {"crm_resolve", "crm_products_find", GRN}
+    assert {n for n, d in REGISTRY.items() if not d.render} == {
+        "crm_resolve", "crm_products_find", GRN, "crm_knowledge_search", "user_guides_read",
+    }
 
 
 def test_a_non_render_tool_gets_no_view_and_a_model_supplied_view_is_dropped(held):
@@ -597,7 +601,7 @@ def test_build_context_carries_the_permitted_tool_names(db, held):
     contact = seed_contact(db)
     seed_user(db, contact_pk=contact["pk"])
     ctx = build_context(db, contact["respond_id"])
-    assert ctx.tool_names == (STOCK,)
+    assert ctx.tool_names == (STOCK, "user_guides_read")
 
 
 def test_losing_a_user_permission_starts_a_new_conversation(db, contact, held):

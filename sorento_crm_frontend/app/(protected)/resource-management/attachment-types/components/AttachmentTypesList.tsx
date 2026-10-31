@@ -21,6 +21,7 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useAttachmentTypes } from '../hooks/useAttachmentTypes';
 import type { AttachmentType } from '../types/attachmentType.types';
 import AttachmentTypeFormDialog from './AttachmentTypeFormDialog';
@@ -37,6 +38,10 @@ export default function AttachmentTypesList() {
     debouncedValue: searchQuery,
     isSettling: searchSettling,
   } = useDebouncedSearch();
+  // The server checks these three slugs on the type routes; a button that can only answer 403 is not offered.
+  const canAdd = useHasPermission('resource.attachment_types.add');
+  const canEdit = useHasPermission('resource.attachment_types.edit');
+  const canDelete = useHasPermission('resource.attachment_types.delete');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [isFormDialogOpen, setIsFormDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -97,6 +102,7 @@ export default function AttachmentTypesList() {
           const type = row.original;
           return (
             <div className="flex items-center gap-2">
+              {canEdit && (
               <Button
                 mode="icon"
                 variant="ghost"
@@ -110,6 +116,8 @@ export default function AttachmentTypesList() {
               >
                 <Edit2 className="size-4" />
               </Button>
+              )}
+              {canDelete && (
               <Button
                 mode="icon"
                 variant="ghost"
@@ -123,13 +131,14 @@ export default function AttachmentTypesList() {
               >
                 <Trash2 className="size-4 text-destructive" />
               </Button>
+              )}
             </div>
           );
         },
         size: 100,
       },
     ],
-    [],
+    [canEdit, canDelete],
   );
 
   const table = useReactTable({
@@ -152,7 +161,7 @@ export default function AttachmentTypesList() {
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
-  const listPrimaryAction = (
+  const listPrimaryAction = canAdd ? (
     <Button
       onClick={() => {
         setSelectedTypeId(null);
@@ -162,7 +171,7 @@ export default function AttachmentTypesList() {
       <Plus />
       Create Attachment Type
     </Button>
-  );
+  ) : undefined;
 
   return (
     <DataGrid
