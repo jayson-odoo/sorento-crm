@@ -8,7 +8,7 @@ module carries its own uninstall story.
 
 Three rules govern what is in here:
 
-* **Module-owned tables only, and the model file is what says so.** All 49 live in the
+* **Module-owned tables only, and the model file is what says so.** Every one of them lives in the
   ``projects`` Postgres schema (ADR-0011), which is a second, mechanically checkable
   expression of the same fact - but ownership is still "declared in
   ``app/models/projects.py`` or ``app/models/project_so.py``", which is exactly what
