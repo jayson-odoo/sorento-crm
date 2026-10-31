@@ -1,7 +1,9 @@
 # PLAN: chatbot failure review (1 Nov 2026)
 
-**Status:** Plan, Phase 1 (no code). Feature track M, lead pattern. Waiting for crew's masked extract
-(`crew/state/eval/fail-review-1nov/failures-masked.md`). UAC is written after the owner picks the fixes.
+**Status:** Plan, Phase 1 cause table filed with crew 1 Nov, waiting for the owner's choices (no code yet).
+Feature track M, lead pattern. The table holds production counts and stays outside the repo
+(`crew/state/eval/fail-review-1nov/cause-table.md`). UAC is written after the owner picks the fixes.
+Reply templates mapped to code: `chatbot-fail-review-template-map.md`.
 
 ## Goal
 
