@@ -6,7 +6,6 @@ from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import (
     get_current_user,
-    require_any_permission,
     require_permission,
     require_permission_with_api_key,
     require_session_or_api_key_permission,
@@ -66,10 +65,7 @@ def get_attachment_type(
 @router.post("/", response_model=AttachmentTypeResponse, status_code=status.HTTP_201_CREATED)
 def create_attachment_type(
     type_data: AttachmentTypeCreate,
-    # The registry seeds `.add`; `.create` is accepted too so either spelling of the grant opens it.
-    current_user: dict = Depends(
-        require_any_permission(["resource.attachment_types.add", "resource.attachment_types.create"])
-    ),
+    current_user: dict = Depends(require_permission("resource.attachment_types.add")),
     db: Session = Depends(get_db)
 ):
     """Create a new attachment type."""

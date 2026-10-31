@@ -1870,7 +1870,7 @@ class AttachmentService:
         """A file now of an AI-readable type is read (a type that is off queues nothing)."""
         from app.services import knowledge_service
 
-        for row in rows:
+        for row in rows[: knowledge_service.MAX_REQUEUE_PER_SAVE]:
             try:
                 knowledge_service.queue_read(self.db, row)
             except Exception:  # noqa: BLE001 - a retype never fails because of the AI read
@@ -1909,10 +1909,11 @@ class AttachmentService:
             .filter(Attachment.id.in_(unique_aids), Attachment.is_deleted == False)
             .all()
         )
+        changed = [a for a in rows if str(a.attachment_type_id or "") != type_id]
         for attachment in rows:
             attachment.attachment_type_id = type_id
         self.db.commit()
-        self._queue_ai_reads(rows)
+        self._queue_ai_reads(changed)
         return {
             "updated_attachments": len(rows),
             "attachment_type_id": type_id,
@@ -2164,6 +2165,9 @@ class AttachmentService:
         # is immutable (it is the object-key basename - uuid-segregated key, independent of the
         # name, like portal submissions). The generic setattr loop applies stored_filename
         # directly; no storage work. See docs/plans/PLAN-attachment-key-uuid-segregation.md.
+        type_changed = "attachment_type_id" in update_data and str(attachment.attachment_type_id or "") != str(
+            update_data["attachment_type_id"] or ""
+        )
         for key, value in update_data.items():
             setattr(attachment, key, value)
 
@@ -2186,7 +2190,7 @@ class AttachmentService:
 
         self.db.commit()
         self.db.refresh(attachment)
-        if "attachment_type_id" in update_data:
+        if type_changed:
             self._queue_ai_reads([attachment])
         publish_embedding_event(
             self.db,

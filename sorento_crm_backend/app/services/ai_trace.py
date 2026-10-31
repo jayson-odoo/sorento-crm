@@ -363,6 +363,11 @@ class TurnTrace:
                 parsed = json.loads(result_text)
             except Exception:
                 parsed = {"text": result_text}
+        # Company documents never land in a stored trace: a knowledge search keeps document, page
+        # and heading, not the passage text. Called through the module so it has one definition.
+        from app.services.chatbot.agent import tools as agent_tools
+
+        parsed = agent_tools.trace_safe(tool_name, parsed)
         return self.add_span(
             kind=KIND_TOOL,
             name=f"tool {tool_name}",

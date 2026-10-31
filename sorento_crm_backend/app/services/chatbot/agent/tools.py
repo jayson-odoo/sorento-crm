@@ -824,6 +824,33 @@ def _find_products(db: Any, args: dict, seen: set[str]) -> ToolResult:
     return ToolResult("ok", data={"products": products, "more": total - len(products)}, more=total - len(products))
 
 
+def _search_in_scope(db: Any, ctx: Any, query: str) -> dict:
+    """The knowledge search under the contact's company scope (already on the session) narrowed by
+    the own scope of the linked user and of the console operator, so a person never reads a
+    company their own session could not. The session scope comes back afterwards."""
+    from app.models.base import UNSET, get_company_scope, set_company_scope
+    from app.services import company_scope_resolver, knowledge_service
+    from app.services.chatbot.agent import writes
+
+    previous = get_company_scope(db)
+    scope = previous
+    for person in writes.people(ctx):
+        own = company_scope_resolver._scope_for_user(db, person, None)
+        if scope is None:  # the contact is unrestricted: the person's scope is the bound
+            scope = own
+        elif own is None:
+            pass
+        elif scope is UNSET or own is UNSET:
+            scope = UNSET
+        else:
+            scope = frozenset(scope) & frozenset(own)
+    set_company_scope(db, scope)
+    try:
+        return knowledge_service.search(db, user_id=ctx.user_id, query=query)
+    finally:
+        set_company_scope(db, previous)
+
+
 def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
     """`crm_knowledge_search`: passages of uploaded documents for the turn's linked user, in process."""
     from app.services import knowledge_service
@@ -837,7 +864,7 @@ def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
     if not _operator_may_read(db, ctx, REGISTRY[KNOWLEDGE].user_permission):
         return ToolResult("denied", message=f"{KNOWLEDGE} is outside this operator's access.")
     try:
-        found = knowledge_service.search(db, user_id=ctx.user_id, query=query.strip())
+        found = _search_in_scope(db, ctx, query.strip())
     except Exception:  # noqa: BLE001 - a tool failure is a result the model can work around
         logger.warning("agent: %s failed", KNOWLEDGE, exc_info=True)
         return ToolResult("error", message=FIXED_ERROR)

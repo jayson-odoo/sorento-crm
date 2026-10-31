@@ -43,6 +43,9 @@ AI_AUDIENCES = ("off", "staff", "dealer", "public")
 #: Audiences a staff caller may read in P1 (everything that is not off).
 READABLE_AUDIENCES = ("staff", "dealer", "public")
 MAX_REQUEUE_PER_SAVE = 500
+#: Most chunks one document may produce; a longer one fails with a readable error and writes nothing.
+MAX_CHUNKS = 2000
+FETCH_ERROR = "The file could not be downloaded from storage."
 
 #: A PDF page with fewer stripped characters than this has no usable text layer and is read by OCR.
 OCR_TEXT_MIN_CHARS = 40
@@ -243,22 +246,60 @@ def _default_embed(db: Session, timeout: Optional[float] = None) -> Callable[[li
     return lambda texts: embed_search_texts(texts, KNOWLEDGE_MODEL, db=db, timeout=timeout)
 
 
+def _job_id(attachment_id: str) -> str:
+    return f"knowledge-read-{attachment_id}"
+
+
 def _enqueue(attachment_id: str) -> None:
-    """Put one read job on the worker's `media` queue (looked up at call time so tests stub it)."""
+    """Put one read job on the worker's `knowledge` queue (looked up at call time so tests stub it).
+    The job id is deterministic, so a route can ask whether the job is still alive."""
     from app.services import queue_service
     from app.tasks.knowledge_tasks import read_attachment_job
 
     queue_service.enqueue_job(
-        read_attachment_job, str(attachment_id), queue_name="knowledge", job_timeout=JOB_TIMEOUT
+        read_attachment_job,
+        str(attachment_id),
+        queue_name="knowledge",
+        job_timeout=JOB_TIMEOUT,
+        job_id=_job_id(attachment_id),
     )
+
+
+def _job_pending(attachment_id: str) -> bool:
+    """Is the RQ job for this file still waiting or running? False when it is gone or Redis fails."""
+    try:
+        from rq.exceptions import NoSuchJobError
+        from rq.job import Job
+
+        from app.services import queue_service
+
+        try:
+            job = Job.fetch(_job_id(attachment_id), connection=queue_service.redis_conn)
+        except NoSuchJobError:
+            return False
+        return job.get_status(refresh=True) in ("queued", "started", "deferred", "scheduled")
+    except Exception:  # noqa: BLE001 - an unreachable Redis means no known live job
+        return False
 
 
 # ---------------------------------------------------------------- reading a file
 
 
+def _log_text(exc: Exception) -> str:
+    from app.services.document_extraction import redact_key_fragments
+
+    return redact_key_fragments(str(exc))[:ERROR_MAX_CHARS]
+
+
+class _FetchFailed(Exception):
+    """The file's bytes could not be read from storage; the message is safe to show staff."""
+
+
 def _readable_error(exc: Exception) -> str:
     from app.services.document_extraction import redact_key_fragments
 
+    if isinstance(exc, _FetchFailed):
+        return str(exc)
     text = redact_key_fragments(str(exc)).strip() or exc.__class__.__name__
     return text[:ERROR_MAX_CHARS]
 
@@ -306,7 +347,11 @@ def read_attachment(
         attachment.ai_read_at = _now()
         db.commit()
         try:
-            content = (fetch or _default_fetch)(attachment)
+            try:
+                content = (fetch or _default_fetch)(attachment)
+            except Exception as fetch_exc:  # noqa: BLE001 - raw storage config text stays in the log only
+                logger.warning("knowledge fetch failed for %s: %s", attachment_id, _log_text(fetch_exc))
+                raise _FetchFailed(FETCH_ERROR) from None
             if ext == "pdf":
                 pages = extract_pdf_pages(content, ocr=ocr or _default_ocr(db))
             else:
@@ -314,6 +359,8 @@ def read_attachment(
             chunks = chunk_pages(pages)
             if not chunks:
                 raise ValueError("No text could be read from this file.")
+            if len(chunks) > MAX_CHUNKS:
+                raise ValueError("This document is too long for the AI to read.")
             embedder = embed or _default_embed(db)
             texts = [c.text for c in chunks]
             vectors: list[list[float]] = []
@@ -329,6 +376,9 @@ def read_attachment(
 
         # A replace upload during the read changed the file: what was read is stale, so write nothing.
         # The replace queued its own read.
+        if db.query(Attachment.id).filter(Attachment.id == attachment_id).first() is None:
+            logger.info("knowledge read for %s dropped: the file was deleted while it was read", attachment_id)
+            return
         db.refresh(attachment)
         if attachment.file_hash != started_hash:
             logger.info("knowledge read for %s dropped: the file changed while it was read", attachment_id)
@@ -336,7 +386,8 @@ def read_attachment(
 
         ocr_pages = sum(1 for p in pages if p.ocr)
         source_id = str(attachment.id)
-        source_hash = hashlib.sha256("\n".join(texts).encode()).hexdigest()
+        # The file's own hash, so Read again can tell an unchanged file; the text hash when it has none.
+        source_hash = started_hash or hashlib.sha256("\n".join(texts).encode()).hexdigest()
         company_id = attachment.company_id
         written = False
         error = ""
@@ -466,10 +517,25 @@ def read_block_reason(db: Session, attachment) -> Optional[str]:
         audience = db.query(AttachmentType.ai_audience).filter(AttachmentType.id == attachment.attachment_type_id).scalar()
     if audience not in READABLE_AUDIENCES:
         return "The AI does not read files of this type."
-    at = attachment.ai_read_at
-    if attachment.ai_read_status in ("queued", "processing") and at is not None:
-        if (_now() - at).total_seconds() < STALE_AFTER_SECONDS:
+    status = attachment.ai_read_status
+    if status == "queued":
+        # A queued row follows its RQ job: alive means wait, gone means the job was lost.
+        if _job_pending(str(attachment.id)):
             return "This file is already being read."
+    elif status == "processing":
+        at = attachment.ai_read_at
+        if at is not None and (_now() - at).total_seconds() < STALE_AFTER_SECONDS:
+            return "This file is already being read."
+    elif status == "done" and attachment.file_hash:
+        from app.models.embeddings import EmbeddingDocument
+
+        read_hash = (
+            db.query(EmbeddingDocument.source_hash)
+            .filter(EmbeddingDocument.source_type == KNOWLEDGE_SOURCE, EmbeddingDocument.source_id == str(attachment.id))
+            .scalar()
+        )
+        if read_hash == attachment.file_hash:
+            return "This file is already read and has not changed."
     return None
 
 
