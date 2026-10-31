@@ -606,8 +606,11 @@ def send_text_or_template(
     """
     from app.services.integration_service import RespondClient
 
+    # `client` only when set, so callers (and test doubles) of the plain
+    # signature are untouched.
+    with_client = {"client": client} if client is not None else {}
     window = get_window_state(
-        db, identifier, respond_contact_id=respond_contact_id, client=client
+        db, identifier, respond_contact_id=respond_contact_id, **with_client
     )
 
     vars_resolved = dict(context_vars or {})
@@ -687,7 +690,7 @@ def send_text_or_template(
             identifier=identifier,
             use_case=use_case,
             context_vars=vars_resolved,
-            **({"client": client} if client is not None else {}),
+            **with_client,
         )
     except Exception as e:
         # Window closed -> a TEMPLATE was attempted. send_template_for_use_case

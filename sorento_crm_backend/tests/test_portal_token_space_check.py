@@ -168,3 +168,15 @@ def test_slug_info_names_the_contacts_workspace_over_a_stale_token(db, setup):
     _token_row(db, contact, other.space_id)
     slug = PortalService(db).get_or_create_slug(contact)
     assert PortalService(db).slug_info(slug)["space_id"] == home.space_id
+
+
+def test_token_info_names_the_contacts_workspace(db, setup):
+    """The verify page recovers (contact_id, space_id) from token-info and OTPs with
+    it: a stale token space must not be echoed back, or the OTP request 404s."""
+    from fastapi.testclient import TestClient
+
+    home, other, contact = setup
+    row = _token_row(db, contact, other.space_id)
+    res = TestClient(app).get("/api/v1/public/portal/token-info", params={"token": row.token})
+    assert res.status_code == 200, res.text
+    assert res.json()["space_id"] == home.space_id

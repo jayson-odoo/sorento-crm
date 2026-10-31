@@ -238,6 +238,10 @@ class RespondClient:
     RESPOND_API_KEY is a deprecated last-resort fallback only - being phased out.
     """
 
+    # Set by `for_contact_id`: the outbound switch then checks THIS contact, not
+    # whichever row the bare identifier happens to match first.
+    contact_id: Optional[str] = None
+
     def __init__(
         self,
         *,
@@ -264,9 +268,6 @@ class RespondClient:
         self.base_url = (base_url or settings.respond_base_url or "https://api.respond.io").rstrip("/")
         self.api_key = api_key
         self.space_id = space_id or settings.respond_space_id
-        # Set by `for_contact_id`: the outbound switch then checks THIS contact,
-        # not whichever row the bare identifier happens to match first.
-        self.contact_id: Optional[str] = None
 
     @classmethod
     def for_workspace(cls, workspace) -> "RespondClient":

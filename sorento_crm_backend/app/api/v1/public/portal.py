@@ -265,9 +265,12 @@ def portal_token_info(token: str, db: Session = Depends(get_db)):
         .first()
     )
     hint = service.identity_hint(contact) if contact else {}
+    # The space the OTP request accepts: the contact's own workspace, not a
+    # stale space a token was minted under.
+    space_id = (service._contact_space_id(contact) if contact else None) or row.space_id
     return PortalTokenInfoResponse(
         contact_id=row.contact_id,
-        space_id=row.space_id,
+        space_id=space_id,
         expires_at=row.expires_at.isoformat(),
         expired=row.expires_at <= _utcnow(),
         revoked=row.revoked_at is not None,
