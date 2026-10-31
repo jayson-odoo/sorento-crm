@@ -1023,3 +1023,28 @@ def test_AC17_each_exchange_is_one_json_line_whatever_the_text_holds(
         parsed = [json.loads(line) for line in lines]
         assert parsed[-1]["customer"] == nasty and parsed[-1]["bot"] == nasty.strip()
         assert not any(line.startswith(("Customer:", "Bot:")) for line in lines)
+
+
+@pytest.mark.parametrize("waiting", [False, True])
+def test_AC17_pin_a_bot_turn_newer_than_the_last_agent_turn_is_left_out_while_a_proposal_waits(
+    client, eligible, jev, real_agent, stub_console_seams, bot_parser, waiting,
+):
+    """The after-note (bot replies newer than the agent's last turn) is guarded by `waiting is None` in
+    `agent/loop.py` as the before-note is; the control run shows it reaches the model otherwise."""
+    db = eligible["db"]
+    run = _run_id()
+    older = _bot_turn(client, eligible, jev, run, text_="older marker question")
+    conv = _conversation(db, eligible)
+    _agent_row(db, eligible, conv, created_at=_now() + timedelta(minutes=1), text_="agent question marker", reply="agent reply marker")
+    _clone_bot_turn(db, older, run=run, created_at=_now() + timedelta(minutes=2), envelope_inner={"type": "text", "text": "newer marker question"})
+    if waiting:
+        _proposal(db, eligible)
+
+    resp = _post(client, eligible, "what is the weather like?", run_id=run, force_agent=True)
+
+    assert resp.status_code == 200, resp.text
+    seen = _provider_text(real_agent)
+    if waiting:
+        assert "newer marker question" not in seen and "older marker question" not in seen
+    else:
+        assert "newer marker question" in seen

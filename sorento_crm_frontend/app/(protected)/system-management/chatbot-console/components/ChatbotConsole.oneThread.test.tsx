@@ -1103,3 +1103,78 @@ describe('a slow media follow-up for A never lands in B', () => {
     }
   }, 15000);
 });
+
+// ------------------------------------------------------------------ last small round
+
+describe('AC-16: coming back to a contact whose neighbour read never landed', () => {
+  it("shows A's history again after A, then B (read fails), then A", async () => {
+    getConsoleThread.mockImplementation(async (contact: unknown) => {
+      if (JSON.stringify(contact).includes('ZZT-contact-2')) throw new Error('read failed');
+      return thread([chatTurn('c1', 'a question for A', 'History of A.', '2026-10-31T09:00:00Z')]);
+    });
+    getRespondContactsOutbound.mockResolvedValue({
+      data: [
+        { respond_io_id: 'ZZT-contact-1', name: 'Alpha Contact', phone_number: null },
+        { respond_io_id: 'ZZT-contact-2', name: 'Second Contact', phone_number: null },
+      ],
+      pagination: { total: 2, page: 1, limit: 20 }, empty: false,
+    });
+    renderConsole();
+    await screen.findByText('History of A.');
+    const trigger = () => document.querySelectorAll('[data-slot="searchable-select-trigger"]')[0];
+
+    fireEvent.click(trigger());
+    fireEvent.click(await screen.findByText('Second Contact'));
+    await waitFor(() => expect(getConsoleThread.mock.calls.some((c) => JSON.stringify(c).includes('ZZT-contact-2'))).toBe(true));
+    await waitFor(() => expect(screen.queryByText('History of A.')).not.toBeInTheDocument());
+    fireEvent.click(trigger());
+    fireEvent.click(await screen.findByText('Alpha Contact'));
+
+    expect(await screen.findByText('History of A.')).toBeInTheDocument();
+  });
+});
+
+describe('AC-13: New conversation and the decision in flight', () => {
+  const newButton = () => screen.getByRole('button', { name: 'New conversation' });
+  const future = () => new Date(Date.now() + 600_000).toISOString().replace('Z', '');
+
+  it('stays disabled from the Confirm click until the read lands, even when the outcome still has a waiting step', async () => {
+    getConsoleThread
+      .mockResolvedValueOnce(thread([agentTurn('a1', 'mark it', 'I will mark it.', '2026-10-31T09:00:00Z')], AGENT_PENDING))
+      .mockReturnValue(new Promise(() => {})); // the re-read after the decision has not landed
+    let finish: (v: unknown) => void = () => {};
+    confirmAgentAction.mockReturnValue(new Promise((r) => (finish = r)));
+    renderConsole();
+    expect(newButton()).toBeEnabled();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm change' }));
+    await waitFor(() => expect(confirmAgentAction).toHaveBeenCalled());
+    expect(newButton()).toBeDisabled();
+
+    finish({
+      action_id: 'act-1', status: 'executed', reply_text: 'Done.',
+      steps: [{ summary: 'Mark it', status: 'done', error: null, changes: [], waiting: { commit_at: future(), window_seconds: 600 } }],
+    });
+    await screen.findByTestId('agent-action-outcome');
+    await flush();
+
+    expect(newButton()).toBeDisabled();
+  });
+
+  it('is not stuck disabled once a step commit_at has passed, though the read still says waiting', async () => {
+    const past = new Date(Date.now() - 120_000).toISOString().replace('Z', '');
+    getConsoleThread.mockResolvedValue(
+      thread([
+        agentTurn('a1', 'mark it', 'Marked.', '2026-10-31T09:00:00Z', {
+          actions: [{ id: 'act-9', status: 'executed', decided_at: null, decided_by_name: null,
+            steps: [{ summary: 'Mark it', status: 'done', error: null, changes: [], waiting: { commit_at: past, window_seconds: 60 } }] }],
+        }),
+      ]),
+    );
+    renderConsole();
+    await screen.findByText('Marked.');
+    expect(screen.queryByTestId('agent-step-waiting')).not.toBeInTheDocument();
+
+    await waitFor(() => expect(newButton()).toBeEnabled());
+  });
+});
