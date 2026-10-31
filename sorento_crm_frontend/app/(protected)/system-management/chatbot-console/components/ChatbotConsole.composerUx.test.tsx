@@ -573,7 +573,8 @@ describe('review round: quote on the follow-up and Retry, reset hygiene, never-l
 
     fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
     await waitFor(() => expect(screen.queryByTestId('chatbot-console-reply-to')).not.toBeInTheDocument());
-    expect(screen.queryByTestId('chatbot-console-staged')).not.toBeInTheDocument();
+    // The staged file is cleared by the run-change effect, one render after the quote bar goes with the messages.
+    await waitFor(() => expect(screen.queryByTestId('chatbot-console-staged')).not.toBeInTheDocument());
   });
 
   it('a clip finished while another turn is in flight stages instead of vanishing', async () => {
