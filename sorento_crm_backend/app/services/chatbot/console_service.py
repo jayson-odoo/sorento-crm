@@ -448,6 +448,12 @@ def run_console_turn(
     path, not a second extractor - see that function's own docstring for the shape and the
     D14 deviation it carries.
     """
+    if force_agent and not (1 <= len(text) <= 4000):
+        raise AppException(
+            status_code=422,
+            message="A message for the agent is 1 to 4000 characters.",
+            code="CHATBOT_CONSOLE_FORCE_AGENT_TEXT",
+        )
     if force_agent and media is not None:
         raise AppException(
             status_code=422,
@@ -732,6 +738,7 @@ def console_thread(db: Session, *, contact_respond_id: str, run_id: str) -> dict
                 turns.append({
                     "turn_id": str(row.id), "side": "agent", "user_text": str(envelope.get("text") or ""),
                     "reply_text": str(response.get("reply_text") or ""), "send_messages": [],
+                    "limit_hit": response.get("limit_hit"),
                     "route": _route_of(row.trace), "steps": agent_memory.steps_from_trace(row.trace),
                     "actions": by_turn.get(str(row.id), []), "created_at": row.created_at,
                 })

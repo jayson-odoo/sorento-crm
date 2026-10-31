@@ -390,6 +390,8 @@ class ConsoleThreadTurn(BaseModel):
     branch_kind: str | None = None
     prompt_version: int | None = None
     message_id: str | None = None
+    # Agent turns only: why it stopped early (rounds, seconds, input_tokens, error).
+    limit_hit: str | None = None
     route: ConsoleRoute | None = None
     steps: AgentSteps = Field(default_factory=AgentSteps)
     actions: list[AgentConversationAction] = Field(default_factory=list)

@@ -75,6 +75,28 @@ function runIdFor(contactId: string, fresh = false): string {
   }
 }
 
+const SESSION_STORAGE_PREFIX = 'chatbot-console:session:';
+
+/** The bot's session as this contact's run last left it, so a reload does not forget a pending question. */
+function readSession(contactId: string, runId: string): Record<string, unknown> {
+  try {
+    const raw = window.localStorage.getItem(`${SESSION_STORAGE_PREFIX}${contactId}`);
+    const parsed = raw ? (JSON.parse(raw) as { run?: string; vars?: Record<string, unknown> }) : null;
+    if (parsed && parsed.run === runId && parsed.vars && typeof parsed.vars === 'object') return parsed.vars;
+  } catch {
+    // A corrupt value is the same as absent.
+  }
+  return {};
+}
+
+function writeSession(contactId: string, runId: string, vars: Record<string, unknown>): void {
+  try {
+    window.localStorage.setItem(`${SESSION_STORAGE_PREFIX}${contactId}`, JSON.stringify({ run: runId, vars }));
+  } catch {
+    // Storage can be full or disabled; the session lasts this visit.
+  }
+}
+
 function greetingMessages(): ChatbotConsoleMessage[] {
   return CONSOLE_GREETING_MESSAGES.map((text, index) => ({
     id: `greeting-${index}`,
@@ -194,7 +216,14 @@ function threadMessages(turns: ConsoleThreadTurn[]): ChatbotConsoleMessage[] {
         route: t.route,
         agent:
           t.side === 'agent'
-            ? { turn_id: t.turn_id, status: 'answered', pending_action: null, steps: t.steps, actions: t.actions }
+            ? {
+                turn_id: t.turn_id,
+                status: 'answered',
+                limit_hit: t.limit_hit ?? null,
+                pending_action: null,
+                steps: t.steps,
+                actions: t.actions,
+              }
             : null,
       },
       t.turn_id,
@@ -277,7 +306,9 @@ export function useChatbotConsole() {
     if (stored) {
       setContactIdState(stored.id);
       setContactLabelState(stored.label);
-      setRunId(runIdFor(stored.id));
+      const run = runIdFor(stored.id);
+      setRunId(run);
+      setSessionVars(readSession(stored.id, run));
       return;
     }
     (async () => {
@@ -294,7 +325,9 @@ export function useChatbotConsole() {
         const label = row ? contactLabel(row) : latestId;
         setContactIdState(latestId);
         setContactLabelState(label);
-        setRunId(runIdFor(latestId));
+        const run = runIdFor(latestId);
+        setRunId(run);
+        setSessionVars(readSession(latestId, run));
       } catch {
         // No default resolvable (no prior turns, or the lookups failed) - the contact
         // picker simply opens empty and the operator picks one.
@@ -303,10 +336,10 @@ export function useChatbotConsole() {
   }, []);
 
   /** Empty the thread for `nextRun`: no bubble, session, waiting proposal or decision carries over. */
-  const clearThread = useCallback((nextRun: string) => {
+  const clearThread = useCallback((nextRun: string, session: Record<string, unknown> = {}) => {
     generationRef.current += 1;
     setRunId(nextRun);
-    setSessionVars({});
+    setSessionVars(session);
     setMessages(greetingMessages());
     setPendingAction(null);
     setOutcomeByTurn({});
@@ -322,7 +355,8 @@ export function useChatbotConsole() {
       // A different contact is a different borrowed session - carrying the old one
       // forward would silently mix two contacts' state in one reply. It comes back with
       // its own thread, read from the server.
-      clearThread(runIdFor(id));
+      const run = runIdFor(id);
+      clearThread(run, readSession(id, run));
     },
     [clearThread, contactId],
   );
@@ -336,6 +370,10 @@ export function useChatbotConsole() {
     gcTime: 0,
     refetchOnWindowFocus: false,
   });
+  useEffect(() => {
+    if (contactId && sessionVars) writeSession(contactId, runId, sessionVars);
+  }, [contactId, runId, sessionVars]);
+
   const thread = threadQuery.data;
   const refetchThread = threadQuery.refetch;
   useEffect(() => {

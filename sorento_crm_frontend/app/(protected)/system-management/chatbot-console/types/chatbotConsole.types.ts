@@ -112,6 +112,8 @@ export interface ConsoleThreadTurn {
   branch_kind?: string | null;
   prompt_version?: number | null;
   message_id?: string | null;
+  /** Agent turns: why it stopped early. */
+  limit_hit?: AgentTurnResponse['limit_hit'];
   /** Null on a turn stored before routing was recorded. */
   route: ConsoleRoute | null;
   steps: AgentSteps;
