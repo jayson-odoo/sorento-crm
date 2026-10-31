@@ -1,6 +1,6 @@
 # PLAN: ideas through the agent, and routing that follows the agent's tools (AGENTIC-IDEATE)
 
-**Status:** code complete on PR #2038, main merged with #2054 and #2056. Owner's first hand test led to a label rewording, the last change here, and the reviewer passed that delta. Crew's hidden gate on the new label
+**Status:** PR #2038, main merged with #2054 and #2056. Owner's first hand test led to a label rewording, and the reviewer passed that delta. The failed-save line round is in progress (see "The bot's failed-save line"). Crew's hidden gate on the new label
 and the owner's retest are still to come. Track: size M, lead pattern.
 UAC: `agentic-ideate-31oct-acceptance-criteria.md`. No screen changes, so Phase 1 (frontend mock) does not apply.
 
@@ -299,6 +299,14 @@ Nothing was invented in any proposal, and no create succeeded, since copies reac
 - A short request, a bare "I have an idea", "I want to submit an idea" plus a short answer, a Chinese idea and a labelled idea all behaved: proposed at once, or asked first where no idea was given.
 - A Malay idea did NOT propose. The agent called `crm_ideas_list` twice, got the copy's error, said the feature does not exist yet and asked whether to register it. The error is the copy. The claim has nothing behind it and is the model's own doing. One case, so its frequency is unknown.
 - The proposal appeared once in these runs against twice in the first pass, on the same message wording. No code changed that, so the repeat may still show.
+
+### The bot's failed-save line (crew ruling, 31 Oct)
+
+Owner rule: no sorry or busy bot replies. The live check showed `IDEATION_CAPTURE_ERROR` (`chatbot_reply_copy.py:371`, from 08403a29a9) saying "Sorry", on the path a below-floor idea takes. It predates this lane, and crew placed the fix here so the owner's retest does not hit it.
+
+- **This PR's one migration.** The reply resolves through `get_prompt`, which prefers the stored `production` row, and `seed_prompt_registry` never updates a live row. So editing the text in code would change nothing on a seeded install. The migration copies `idea_capture_fields_0001`: publish the new text as the next version and move the label, only where the row is still the old stock text. An owner's edit stays.
+- **Only this key.** The other "Sorry" lines in that file (`:29`, `:53`, `:57`, `:97`, `:125`) are not idea lines and are listed for crew to place.
+- **Routing still needs no migration or publish** (R1). This one concerns a reply's wording.
 
 ### Accepted, not changed
 
