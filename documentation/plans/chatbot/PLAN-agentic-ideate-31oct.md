@@ -1,7 +1,7 @@
 # PLAN: ideas through the agent, and routing that follows the agent's tools (AGENTIC-IDEATE)
 
-**Status:** code complete on PR #2038, in review. All four owner questions answered. Crew's hidden gate, console pass
-and hand test are still to come. Track: size M, lead pattern.
+**Status:** code complete on PR #2038. Reviewer READY and security PASS at 2cf0483d55, then three small fixes with their own red and
+kill proof. Waiting for crew's CI label and hidden gate, the console pass and the owner's hand test. Track: size M, lead pattern.
 UAC: `agentic-ideate-31oct-acceptance-criteria.md`. No screen changes, so Phase 1 (frontend mock) does not apply.
 
 Slices: **S1** = R1 routing. **S2** = R3 multi-turn. **S3** = R2 idea tools. They land as commits on this one lane branch.
