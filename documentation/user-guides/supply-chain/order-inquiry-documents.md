@@ -107,7 +107,7 @@ reorder plan is built from](upload-plan-data.md#the-order-inquiries-page)), neve
 
 When CS moves the date or quantity on a line you have already been asked to buy, the same line
 is restated in place - never a second row. You see a **Changed** tag beside the **Delivery
-date** and the line's **State** reads **To confirm** until you confirm it again. What it was
+date** and the line's **State** reads **To order** until its live links cover the new figures again (or you **Confirm** it by hand). What it was
 before ("Was 100.") is read in the line's **History** - the clock icon in the **State** cell -
 on its **Rows** tab, not on the line itself. Every PO/SPO link the line already carried stays
 exactly as it was.
@@ -139,8 +139,8 @@ reads the most urgent of them, in the same words the worklist and the board use:
 
 Three more words belong to this tab alone:
 
-* **To confirm** - CS changed a line you had already confirmed, and it waits on your **Confirm**
-  again.
+* **To order** - CS changed a line after it was taken on, or a used row is waiting; it turns
+  Done on its own once its live links cover it, or when you **Confirm** it by hand.
 * **Line cancelled** - the sales order line itself was cancelled (greyed).
 * **Nothing to buy** - every instruction on the line has been used up or cancelled (greyed).
 
