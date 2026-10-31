@@ -388,3 +388,52 @@ def test_turn_short_head_scoped_contact_sees_only_its_brand(
     assert mine["SH-200"].id in matched, (matched, text)
     assert theirs["SH-200"].id not in matched and theirs["SH-250"].id not in matched, matched
     assert MCH_BRAND_HEAD not in text, text
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling 31 Oct: a size no variant holds says the existing "None with ..." clause (answer.py:3098), #
+# then lists the variants as today. Never "Couldn't find".                                                  #
+# --------------------------------------------------------------------------- #
+
+
+def _reply_for(session_factory, stub_access, monkeypatch, intent, domain, entities):  # noqa: F811
+    from tests.chatbot.test_closed_lists_hidden_keys_entries import real_hidden_spec_keys
+    from tests.chatbot.test_closed_lists_spec_over_held import _turns
+    from tests.chatbot.test_engine import _parser_output
+
+    _seed(session_factory, tuple((_code(s), WC, {"trap_length": v}) for s, v in TRAP.items()))
+    verdict = _parser_output(intent_hint=intent, domain_hint=domain, user_goal=intent, entities=entities)
+    stub_access(hidden_spec_keys=real_hidden_spec_keys(session_factory))
+    [(r, _calls)] = _turns(session_factory, lambda: None, monkeypatch, [("x", verdict)], gate=True)
+    return (r.reply or {}).get("text") or ""
+
+
+ASKS = [("check_stock", "inventory"), ("check_product", "master_products")]
+
+
+@pytest.mark.parametrize("intent, domain", ASKS)
+def test_a_size_no_variant_holds_says_none_with_size_then_lists_the_variants(session_factory, seeded, stub_access, monkeypatch, intent, domain):  # noqa: F811
+    text_ = _reply_for(session_factory, stub_access, monkeypatch, intent, domain, [_ent(HEAD, "product"), _spec("300MM", "size", 300)])
+    import re
+
+    assert re.search(r"None with size 300\s?mm", text_), text_
+    assert "ZZSRT286-SH" in text_, text_  # the variants are still listed, as today
+    assert "Couldn't find" not in text_, text_
+
+
+@pytest.mark.parametrize("intent, domain", ASKS)
+def test_a_size_some_variant_holds_has_no_none_with_clause(session_factory, seeded, stub_access, monkeypatch, intent, domain):  # noqa: F811
+    text_ = _reply_for(session_factory, stub_access, monkeypatch, intent, domain, [_ent(HEAD, "product"), _spec("200MM", "size", 200)])
+    assert "None with" not in text_, text_
+    assert "Couldn't find" not in text_, text_
+
+
+@pytest.mark.parametrize("intent, domain", ASKS)
+def test_a_named_key_no_variant_holds_says_none_with_that_label(session_factory, seeded, stub_access, monkeypatch, intent, domain):  # noqa: F811
+    """The clause builds `None with {label.lower()} {value}`; the label is the registry's own for the key
+    (this fixture's `trap_length` label is "Trap outlet length"), the value as said (300 mm, with or without the space)."""
+    text_ = _reply_for(session_factory, stub_access, monkeypatch, intent, domain, [_ent(HEAD, "product"), _spec("trap length 300mm", "trap_length", 300)])
+    import re
+
+    assert re.search(r"None with trap outlet length 300\s?mm", text_), text_
+    assert "Couldn't find" not in text_, text_
