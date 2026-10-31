@@ -12,7 +12,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -22,6 +22,9 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.chatbot import jev_client, session_state
 from app.services.chatbot.agent import actions as agent_actions
+from app.services.chatbot.agent import memory as agent_memory
+from app.services.chatbot.agent import tools as agent_tools
+from app.services.chatbot.agent import writes as agent_writes
 from app.services.chatbot.agent.access import eligible_contact
 from app.services.chatbot.jev_client import JevError
 from app.services.chatbot.usage import record_turn_llm_usage
@@ -40,6 +43,8 @@ RECENT_EXCHANGES = 3
 REPLY_CHARS = 300
 #: Longer (or empty) messages never go to Jev.
 MAX_TEXT_CHARS = 4000
+#: A reply this soon after the agent asked the user something stays with the agent.
+ASKED_BACK_MINUTES = 60
 
 
 @dataclass
@@ -72,7 +77,7 @@ def decide_route(
 
     # `None` = the contact's stored session, `{}` = a console Reset (remembers nothing).
     block = {"session_vars": contact.session_vars if session_vars is None else session_vars}
-    if session_state.pending_of(block) is not None:
+    if session_state.pending_of(block) is not None or _bot_asked(block):
         return RouteDecision("chat", "open_question")
 
     settings = db.query(SystemSetting).first()
@@ -91,6 +96,7 @@ def decide_route(
     if prompt is None:
         return RouteDecision("chat", "router_failed:no_prompt")
     instructions, criteria, model = prompt
+    criteria = _with_agent_tools(criteria)
 
     state = _state(db, contact_respond_id, text)
     started = time.perf_counter()
@@ -123,9 +129,14 @@ def decide_route(
         return RouteDecision("chat", "router_failed:malformed", ms=ms, usage_id=usage_id)
     floor = settings.chatbot_router_min_score if settings is not None else DEFAULT_MIN_SCORE
     low = answer.confidence < float(floor)
+    # The agent's own question is answered on the agent unless Jev is sure it is a new chat question.
+    if _agent_asked_back(db, contact_respond_id) and not (answer.choice == "chat" and not low):
+        side, reason = "agent", "agent_asked"
+    else:
+        side, reason = ("chat", "low_confidence") if low else (answer.choice, "classified")
     return RouteDecision(
-        "chat" if low else answer.choice,
-        "low_confidence" if low else "classified",
+        side,
+        reason,
         score=answer.confidence,
         model=answer.model or model,
         ms=ms,
@@ -170,6 +181,38 @@ def _agent_turns_today(db, contact_respond_id: str) -> int:
     )
 
 
+def _bot_asked(block: dict[str, Any]) -> bool:
+    """Is the bot waiting on this contact: a required ask on the focus, or a fresh held similar list
+    (either lane's pointer)? Their next message answers it, whatever Jev would make of it."""
+    from app.services.ideation_capture_service import _held_pointer
+
+    keys = session_state.five_keys(block)
+    focus = keys.get("focus")
+    if isinstance(focus, dict) and focus.get("required_ask"):
+        return True
+    ideation = keys.get("ideation")
+    return isinstance(ideation, dict) and _held_pointer(ideation, bool(ideation.get("is_test"))) is not None
+
+
+def _agent_asked_back(db, contact_respond_id: str) -> bool:
+    """Is the contact's latest done turn an agent turn in their newest conversation that asked the user something, under an hour ago?"""
+    row = (
+        db.query(ChatbotTurn.ingress, ChatbotTurn.response, ChatbotTurn.created_at, ChatbotTurn.envelope)
+        .filter(ChatbotTurn.contact_respond_id == contact_respond_id, ChatbotTurn.status == "done")
+        .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.started_at.desc().nullslast())
+        .first()
+    )
+    if row is None or row[0] != "agent" or not isinstance(row[1], dict) or row[1].get("asked_back") is not True:
+        return False
+    latest = agent_memory.latest_conversation(db, contact_respond_id)
+    if latest is None or not isinstance(row[3], dict) or row[3].get("agent_conversation_id") != str(latest.id):
+        return False
+    created = row[2]
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - created < timedelta(minutes=ASKED_BACK_MINUTES)
+
+
 def _router_prompt(db) -> tuple[str, dict[str, Any], str] | None:
     """(instructions, criteria, Jev model) of the production `chatbot_router` prompt, or None when
     it is missing or unreadable. Read straight from the label: the registry's code fallback would
@@ -191,6 +234,28 @@ def _router_prompt(db) -> tuple[str, dict[str, Any], str] | None:
     if not isinstance(criteria, dict) or not criteria:
         return None
     return instructions, criteria, row[1] or jev_client.DEFAULT_MODEL
+
+
+def agent_tool_labels() -> list[str]:
+    """Plain labels of what the agent can do: every write, then every per-user read. `tools.REGISTRY`
+    (stock, ETA, cost) is left out on purpose: the bot answers those lookups too and the static
+    criteria text already covers them. A tool without a label is skipped (a guard test catches it)."""
+    labels: list[str] = []
+    for name in [*agent_writes.WRITES, *agent_writes.USER_READS]:
+        label = agent_tools.TOOL_LABELS.get(name)
+        if label and label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _with_agent_tools(criteria: dict[str, Any]) -> dict[str, Any]:
+    """A copy of the criteria whose agent entry lists the tools; the stored prompt is never changed."""
+    if "agent" not in criteria:
+        return criteria
+    agent = criteria["agent"]
+    agent = dict(agent) if isinstance(agent, dict) else {"what": str(agent)}
+    agent["tools"] = agent_tool_labels()
+    return {**criteria, "agent": agent}
 
 
 def _state(db, contact_respond_id: str, text: str) -> dict[str, Any]:

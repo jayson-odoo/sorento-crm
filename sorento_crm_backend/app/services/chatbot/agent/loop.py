@@ -126,6 +126,30 @@ def _normal(token: str) -> str:
 
 
 _UUID_TEXT = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
+#: A URL is ASCII URL characters only (no comma, no space), so the text around it is never taken with it.
+_URL = re.compile(r"https?://[A-Za-z0-9\-._~:/?#@!$&'*+;=%\[\]()]*", re.I)
+#: Label and URL are bounded, so a long run of `[x](http://` cannot make the scan quadratic.
+_MARKDOWN_LINK = re.compile(r"\[([^\[\]]{0,200})\]\((https?://[^\s)]{0,2048})\)", re.I)
+_URL_TAIL = ".,;:!?)]}'\""
+
+
+def _drop_id_urls(text: str) -> str:
+    """Model text without any URL that carries an id (never left as `.../(id)`): `[label](url)` becomes
+    `label`, a bare URL goes whole except the punctuation that closed it. Both patterns are bounded or single-pass."""
+
+    def link(m: re.Match) -> str:
+        return m.group(1) if _UUID_TEXT.search(m.group(2)) else m.group(0)
+
+    def bare(m: re.Match) -> str:
+        url = m.group(0)
+        if not _UUID_TEXT.search(url):
+            return url
+        kept = url[len(url.rstrip(_URL_TAIL)):]
+        # Glued to a word or number on the left, the gap keeps "5000<url> units" from reading as "5000 units".
+        before = m.string[m.start() - 1] if m.start() else ""
+        return (" " if before.isascii() and before.isalnum() else "") + kept
+
+    return _URL.sub(bare, _MARKDOWN_LINK.sub(link, text))
 # An identifier: letters and digits joined by "-" or "/" (a product code, an order or packing number).
 _IDENTIFIER = re.compile(r"\b[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+\b")
 
@@ -228,7 +252,7 @@ def _value_forms(value: Any) -> set[str]:
 #: scoring fields, any `*_id` / `*_ids`, and name-like text ("Basin 600" is not 600 units).
 _NOT_FIGURE_KEYS = frozenset(
     {"more", "page", "limit", "offset", "total_count", "score", "has_result", "rank",
-     "name", "product_name", "label", "description", "title", "display"}
+     "name", "product_name", "label", "description", "title", "display", "problem"}
 )
 
 
@@ -327,7 +351,7 @@ def _answer_parts(args: Any) -> tuple[str, list[dict], list[dict], list[str]]:
     not_found = [n for n in (args.get("not_found") or []) if isinstance(n, dict)] if isinstance(args.get("not_found"), list) else []
     checked = args.get("not_checked")
     not_checked = [str(x).strip() for x in checked if str(x).strip()] if isinstance(checked, list) else []
-    return (text.strip() if isinstance(text, str) else ""), figures, not_found, not_checked
+    return (_drop_id_urls(text).strip() if isinstance(text, str) else ""), figures, not_found, not_checked
 
 
 def _found_ids(ledger: dict[str, dict]) -> set[str]:
@@ -429,7 +453,7 @@ def final_reply(
     left = open_parts(args, plan or [], on_limit)
     if left:
         text = f"{text}\n\nI did not get to: {'; '.join(left)}.".strip()
-    # No UUIDs in what a person reads.
+    # No UUIDs in what a person reads. A link that carries one is added by code from the stored step instead.
     return _UUID_TEXT.sub("(id)", text), bool(not_checked)
 
 
@@ -523,7 +547,7 @@ def _propose(db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str
     )
 
 
-def _decide(db, ctx, name: str, args: Any, turn_id: str) -> ToolResult:
+def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str]) -> ToolResult:
     """`confirm_action` / `cancel_action`: the model read the user's message; the server limits are `actions`."""
     action_id = args.get("action_id") if isinstance(args, dict) else None
     if not isinstance(action_id, str) or not action_id.strip():
@@ -540,8 +564,15 @@ def _decide(db, ctx, name: str, args: Any, turn_id: str) -> ToolResult:
             )
     except actions.ActionRefused as exc:
         return ToolResult("invalid", message=f"Not done: {exc.reason.replace('_', ' ')}.")
+    notes.extend(outcome.notes)
+    reply_text, message = outcome.reply_text, ""
+    if outcome.notes:
+        # The notes are added to the reply in code; the model never reads them, so it cannot invent or repeat one.
+        for note in outcome.notes:
+            reply_text = reply_text.replace(f" {note}", "").replace(note, "")
+        message = "The idea's number and link are added to your reply automatically. Do not write them."
     return ToolResult(
-        "ok", data={"status": outcome.status, "reply_text": outcome.reply_text, "steps": outcome.steps}
+        "ok", data={"status": outcome.status, "reply_text": reply_text, "steps": outcome.steps}, message=message
     )
 
 
@@ -873,6 +904,7 @@ def _run(
     conversation_id = str(conv.id)
 
     steps: list[dict] = []
+    confirm_notes: list[str] = []
     action_id = ""
     provider_name = DEFAULT_PROVIDER
     model = DEFAULT_MODEL
@@ -1155,7 +1187,7 @@ def _run(
                         "before any tool runs this turn. Ask the user to confirm in their next message.",
                     )
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
-                    out = _decide(db, ctx, name, args, turn_id)
+                    out = _decide(db, ctx, name, args, turn_id, confirm_notes)
                 else:
                     out = dispatch(
                         db, ctx, name, args,
@@ -1258,6 +1290,10 @@ def _run(
         reply = "The agent has no answer for this."
     if status != "failed":
         reply = to_whatsapp(reply)
+    if confirm_notes:
+        # After verification, like the proposal block: built by code from the stored steps, so a link is whole.
+        # Whatever the status: a confirm that ran made the idea even if the model then failed.
+        reply = f"{reply}\n\n" + "\n".join(confirm_notes)
     pending = None
     if status != "failed" and steps:
         # After verification: the block is built by code from the stored steps, so its figures are not flagged.
@@ -1283,6 +1319,9 @@ def _run(
         "limit_hit": limit_hit,
         "rounds": run.rounds,
     }
+    # Only a real final answer can ask back; a forced final at a limit never does.
+    if status != "failed" and final_args is not None and final_args.get("asked_back") is True and not steps:
+        turn.response["asked_back"] = True
     turn.trace = trace.persisted()
     turn.finished_at = datetime.now(timezone.utc)
     if status == "failed":
