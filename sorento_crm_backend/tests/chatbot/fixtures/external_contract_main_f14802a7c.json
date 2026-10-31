@@ -250,7 +250,8 @@
               "poller",
               "retry",
               "console",
-              "respond_webhook"
+              "respond_webhook",
+              "panel"
             ],
             "title": "Ingress",
             "type": "string"

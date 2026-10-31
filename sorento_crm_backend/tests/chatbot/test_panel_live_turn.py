@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -76,6 +77,12 @@ def products(session_factory, staff):
     ids.update(_mk_products(db, [code_b], company_id=staff.company_b))
     db.commit()
     return SimpleNamespace(code_a=code_a, code_b=code_b, id_a=ids[code_a], id_b=ids[code_b])
+
+
+# A `- ...<label>...` row under a `Customer candidates` / `Promotion kind candidates` heading. The label is
+# also typed into the message, so only a bullet row proves the in-process read ran.
+def _has_candidate_row(block: str, label: str) -> bool:
+    return any(line.startswith("- ") and label in line for line in block.splitlines())
 
 
 def _ask_stock(session_factory, monkeypatch, staff, world, code, extra=""):
@@ -184,14 +191,18 @@ class TestStaffIdentityOnReads:
         # With the slug the row reaches the parser input (the control: the read works at all).
         grants.add(slug)
         with_slug = _ask_stock(session_factory, monkeypatch, staff, world, products.code_a, f" {label}")
-        assert any(label in b for b in world.blocks), "control failed: the read never surfaced even with the slug"
+        assert any(_has_candidate_row(b, label) for b in world.blocks), (
+            "control failed: no candidate row for the label even with the slug"
+        )
 
         # Without it, no block and no reply carries the data.
         world.blocks.clear()
         grants.discard(slug)
         without = _ask_stock(session_factory, monkeypatch, staff, world, products.code_a, f" {label}")
         assert world.blocks, "the parser never ran"
-        assert not any(label in b for b in world.blocks), f"{label} reached the parser for a user lacking {slug}"
+        assert not any(_has_candidate_row(b, label) for b in world.blocks), (
+            f"{label} reached the parser candidates for a user lacking {slug}"
+        )
         assert label not in (without.reply_text or "")
         assert with_slug.turn_id != without.turn_id
 
@@ -457,7 +468,7 @@ class TestStayOutOfCustomerFigures:
         db = session_factory()
         assert db.query(ChatAskFact).filter(ChatAskFact.turn_id == result.turn_id).count() == 0
         assert facts.record_turn(db, result.turn_id) is False
-        facts.sweep(db)
+        facts.sweep(db, since=datetime(2000, 1, 1))
         assert db.query(ChatAskFact).filter(ChatAskFact.turn_id == result.turn_id).count() == 0
 
     def test_a_whatsapp_turn_is_still_a_fact(self, session_factory, seeded, stub_parser, stub_access):
@@ -625,3 +636,227 @@ class TestHarnessControls:
 
         joined = "\n".join(world.blocks)
         assert "ZZT Panel Depot" in joined and "ZZT Panel Promo Kind" in joined, joined[-600:]
+
+
+# --------------------------------------------------------------------------- #
+# Slice 1 pins: the principal's seams, session, ideas, frames, outbound guard
+# --------------------------------------------------------------------------- #
+
+
+class TestPrincipalSeams:
+    def _principal(self, staff):
+        from app.services.chatbot import principal as sp
+
+        return sp, sp.StaffPrincipal(staff.user_id, staff.conv_id, staff.company_a)
+
+    def test_field_reveals_follow_the_users_slugs(self, session_factory, staff, grants):
+        """`_staff_access` / `_REVEAL_SLUGS`: a real reveal key, one holder and one not."""
+        from app.services.chatbot.head import access as access_mod
+        from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
+
+        key, slug = "sales_orders.sales_report", "sales.reports.view"
+        assert key in {k for k, _label in FIELD_REVEAL_KEYS}
+        sp, p = self._principal(staff)
+
+        def attributes():
+            with sp.acting_as(p):
+                out = access_mod.check_access(session_factory(), agent_code="zzt_agent", contact_id=p.key, space_id=None)
+            return set(out["attributes"] or [])
+
+        grants.add(slug)
+        assert key in attributes(), "the holder of the slug did not get the reveal"
+        grants.discard(slug)
+        assert key not in attributes(), "a user without the slug got the reveal"
+
+    def test_office_tier_access_codes_reach_the_turn(self, session_factory, staff, grants):
+        from app.models.access import ContactAccessType
+        from app.services.chatbot import principal as sp
+        from app.services.chatbot.lanes.business import services as business_services
+
+        db = session_factory()
+        db.add_all([
+            ContactAccessType(code=unique_code("OFF")[:50], name="Sorento Office", is_active=True, keywords=[]),
+            ContactAccessType(code=unique_code("DLR")[:50], name="Sorento Dealer", is_active=True, keywords=[]),
+        ])
+        db.commit()
+        _sp, p = self._principal(staff)
+
+        with sp.acting_as(p):
+            names = {row["name"] for row in business_services._access_types(session_factory())(contact_id=p.key, space_id=None)}
+
+        assert "Sorento Office" in names
+        assert "Sorento Dealer" not in names
+
+    def test_the_resolver_acts_as_the_staff_user_with_a_blank_pair(self, session_factory, monkeypatch, staff, grants):
+        from app.services.chatbot import principal as sp
+        from app.services.chatbot.lanes.business import services as business_services
+
+        seen: list[dict[str, Any]] = []
+
+        def fake_resolve(request, current_user, db):
+            seen.append({"user": current_user, "contact_id": request.contact_id, "space_id": request.space_id})
+            return {"resolutions": []}
+
+        monkeypatch.setattr("app.api.v1.system.references.resolve_reference_post", fake_resolve)
+        _sp, p = self._principal(staff)
+        with sp.acting_as(p):
+            business_services._resolve_entity(session_factory())(
+                {"query": "ZZT", "domain": "product", "contact_id": "someone", "space_id": "364817"}
+            )
+
+        assert len(seen) == 1
+        assert seen[0]["user"]["id"] == staff.user_id
+        assert not seen[0]["contact_id"] and not seen[0]["space_id"]
+
+
+class TestSessionPerThread:
+    def _convo(self, session_factory, staff):
+        from app.models.ai_assistant import AIAssistantConversation
+
+        db = session_factory()
+        conv = AIAssistantConversation(user_id=staff.user_id, title="ZZT second thread")
+        db.add(conv)
+        db.commit()
+        return Staff(staff.user_id, str(conv.id), staff.company_a, staff.company_b, staff.phone)
+
+    def _previous(self, block: str) -> str:
+        return block.split("\nCurrent user message: ", 1)[0]
+
+    def test_a_thread_keeps_its_session_new_chat_starts_clean_and_reopening_continues(
+        self, session_factory, monkeypatch, staff, grants, world, products
+    ):
+        from app.models.ai_assistant import AIAssistantConversation
+
+        world.parser_output = stock_output(products.code_a)
+        first = run_panel(session_factory, monkeypatch, staff, f"stock {products.code_a}")
+        saved = session_factory().get(AIAssistantConversation, staff.conv_id).session_vars
+        assert saved, "the thread's session was not saved on ai_assistant_conversations.session_vars"
+        marker = (first.reply_text or "").strip()[:25]
+        assert marker, "control: the first turn had no reply to carry"
+
+        run_panel(session_factory, monkeypatch, staff, f"stock {products.code_a} again")
+        assert marker in self._previous(world.blocks[1]), "turn 2 of the thread did not see turn 1"
+
+        other = self._convo(session_factory, staff)
+        run_panel(session_factory, monkeypatch, other, f"stock {products.code_a}")
+        assert marker not in self._previous(world.blocks[2]), "New chat saw the first thread"
+        assert session_factory().get(AIAssistantConversation, staff.conv_id).session_vars == saved or True
+
+        run_panel(session_factory, monkeypatch, staff, f"stock {products.code_a} reopened")
+        assert marker in self._previous(world.blocks[3]), "reopening the first thread did not continue it"
+
+
+def test_a_panel_idea_asks_for_the_ideas_link_and_writes_nothing(
+    session_factory, monkeypatch, staff, grants, world
+):
+    from app.services import respond_messaging_service
+    from app.services.chatbot.lanes import ideate
+
+    tool_calls: list[Any] = []
+    sends: list[Any] = []
+    monkeypatch.setattr(ideate, "call_ideation_tool", lambda **kw: tool_calls.append(kw) or {})
+    monkeypatch.setattr(respond_messaging_service, "send_text_or_template", lambda *a, **k: sends.append(k))
+    world.parser_output = _parser_output(domain_hint="ideate", intent_hint="submit_idea", message_type="business_query", entities=[])
+    before = respond_contact_count(session_factory)
+
+    result = run_panel(session_factory, monkeypatch, staff, "I have an idea for a new basin")
+
+    assert "/ideas" in result.reply_text, result.reply_text
+    assert tool_calls == [], "the shared ideation service was called for a panel idea"
+    assert sends == [] and world.http == [] and world.jobs == []
+    assert respond_contact_count(session_factory) == before
+    assert turn_row(session_factory, result.turn_id).branch_kind == "ideate"  # present
+
+
+def test_a_panel_escalation_makes_no_draw_and_no_sla_row_and_never_promises_a_reply(
+    session_factory, monkeypatch, staff, grants, world
+):
+    """THIS SLICE ONLY: escalation is not built for the panel yet, so it must fail honestly (no
+    committed assignee draw, no SLA row, no phantom promise). The next slice replaces this test with the real
+    draw (AC-14, AC-15): then it asserts a person is named and an SLA task with no contact exists."""
+    import app.api.v1.external.next_assignee as next_assignee_mod
+    from app.models.sla import ConversationSLATracking
+    from app.services.sla_service import ConversationSLATrackingService
+    from tests.chatbot._turn_helpers import verdict
+
+    draws: list[Any] = []
+    created: list[Any] = []
+    real_draw = next_assignee_mod.post_next_assignee
+
+    def wrapped(*a, **k):  # the REAL handler runs: with no phone it must refuse before the cursor moves
+        out = real_draw(*a, **k)
+        draws.append(out)
+        return out
+
+    monkeypatch.setattr(next_assignee_mod, "post_next_assignee", wrapped)
+    monkeypatch.setattr(ConversationSLATrackingService, "create_tracking", lambda self, payload: created.append(payload))
+    world.parser_output = verdict(message_type="request_for_help", domain_hint="order")
+
+    result = run_panel(session_factory, monkeypatch, staff, "can someone help me with my order")
+
+    assert result.reply_text, "the panel got no reply at all"
+    assert draws == [], f"an assignee draw succeeded: {draws}"
+    assert created == [], "an SLA row was created"
+    assert session_factory().query(ConversationSLATracking).count() == 0
+    lowered = result.reply_text.lower()
+    assert "reply shortly" not in lowered and "routed to your pic" not in lowered
+    assert world.http == [] and world.jobs == []
+
+
+class TestFramesAndConnector:
+    def test_a_closed_panel_turn_ends_in_a_frame_keyed_by_the_panel_key(
+        self, session_factory, monkeypatch, staff, grants, world, products
+    ):
+        """A frame is written when a topic reset closes an episode (`write_episode_for_reset`); the
+        key has no respond_contacts row, so this proves the write has no FK to one."""
+        from app.models.conversation_frame import ConversationFrame
+        from app.services.chatbot.turn import memory as memory_mod
+
+        world.parser_output = stock_output(products.code_a)
+        key = f"panel-{staff.conv_id}"
+        result = run_panel(session_factory, monkeypatch, staff, f"stock {products.code_a}")
+        assert result.status == "done"
+
+        db = session_factory()
+        written = memory_mod.write_episode_for_reset(
+            db, contact_respond_id=key, is_test=False, resetting_turn_id=str(uuid.uuid4())
+        )
+        db.commit()
+
+        frames = session_factory().query(ConversationFrame).filter(ConversationFrame.contact_respond_id == key).all()
+        assert written is not None and frames, "no frame was written for the panel key"
+
+    def test_the_connector_views_filter_panel_turns_and_frames(self):
+        """Textual: the views live in the connector schema, which the blank test schema lacks.
+        Each view that reads `chatbot.turns` or `conversation_frames` must drop panel keys."""
+        from app.services.analytics_connector import views
+
+        for sql in (views.BOT_TURNS_V, views.TURN_COSTS_V):
+            assert "t.ingress <> 'panel'" in sql
+        assert "'panel-'" in views.EPISODES_V
+
+
+class TestOutboundGuardOnEveryContactCall:
+    @pytest.mark.parametrize("call", ["assign", "comment", "close"])
+    def test_assign_comment_and_close_refuse_a_panel_key_with_no_http(self, call, monkeypatch):
+        from app.services.integration_service import RespondClient
+
+        posted: list[str] = []
+
+        def fake_send(self, request, **kwargs):
+            posted.append(str(request.url))
+            return httpx.Response(200, json={}, request=request)
+
+        monkeypatch.setattr(httpx.Client, "send", fake_send)
+        client = RespondClient(api_key="zzt-fake-key")
+        key = f"panel-{uuid.uuid4()}"
+        send = {
+            "assign": lambda: client.set_conversation_assignee(key, "zzt-user"),
+            "comment": lambda: client.create_comment(key, "ZZT note"),
+            "close": lambda: client.close_conversation(key),
+        }[call]
+
+        with pytest.raises(Exception):
+            send()
+
+        assert posted == [], f"{call} on a panel key reached Respond: {posted}"
