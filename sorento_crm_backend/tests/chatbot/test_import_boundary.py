@@ -100,6 +100,15 @@ ALLOWED = {
     # doorway shape as `app/api/v1/system/chatbot.py` above: a core surface that
     # happens to need one chatbot-module read/write path.
     "app/services/contact_service.py",
+    # AGENTIC-KNOWLEDGE P1 (#2036): the staff AI panel binds the module's `crm_knowledge_search`
+    # (`agent.tools.KNOWLEDGE_SCHEMA`) and strips passage text via `agent.tools.trace_safe`, so the
+    # panel and the chatbot share one tool definition instead of a drifting copy in core.
+    "app/services/ai_assistant_service.py",
+    # Same feature: a stored panel trace drops knowledge passage text through `agent.tools.trace_safe`,
+    # the one definition of what a knowledge search may keep in a span.
+    "app/services/ai_trace.py",
+    # Its test: patches `agent.tools.trace_safe` to prove the panel strips through that one function.
+    "tests/test_agentic_knowledge_panel.py",
 }
 ALLOWED_PREFIXES = (
     "app/services/chatbot/",
