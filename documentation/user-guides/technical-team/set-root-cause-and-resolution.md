@@ -10,6 +10,7 @@ The Root Cause and Resolution panels sit just under the complaint summary.
 
 ## Step 1 - Pick a Root Cause
 
+
 1. Click **Edit** on the action menu, or use the inline edit on the detail page.
 2. Pick a value from the **Root Cause** dropdown.
    * The list is managed under [**Complaint Management → Root Causes**](/complaint-management/complaint-root-causes) (admins maintain this; ask if you need a new value added).
@@ -19,7 +20,7 @@ The complaint detail page now shows the Root Cause name and an enabled **Notify 
 
 ## Step 2 - Notify salesperson about the Root Cause
 
-Click **[Notify salesperson](#guide_target=complaint-management.complaints.tech-team.notify-root-cause)** in the Root Cause panel.
+Click [**Notify salesperson**](#guide_target=complaint-management.complaints.tech-team.notify-root-cause) in the Root Cause panel.
 
 * Confirms in a dialog before sending.
 * On confirm, posts a templated message to the salesperson's Respond.io inbox.
@@ -34,12 +35,13 @@ The button is **disabled** when:
 
 Same flow as Root Cause:
 
+
 1. Edit the complaint and pick a value from the **Resolution** dropdown (managed under [**Complaint Management → Resolutions**](/complaint-management/complaint-resolutions)).
 2. Save.
 
 ## Step 4 - Notify salesperson about the Resolution
 
-Click **[Notify salesperson](#guide_target=complaint-management.complaints.tech-team.notify-resolution)** in the Resolution panel.
+Click [**Notify salesperson**](#guide_target=complaint-management.complaints.tech-team.notify-resolution) in the Resolution panel.
 
 Same dialog → confirm → message posted → "Last notified" timestamp recorded.
 

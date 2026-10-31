@@ -11,19 +11,19 @@ Requires the `inventory.stock_batches.view` permission to open.
 ## The list
 
 | Column | What it shows |
-|--------|----------------|
+|--------|---------------|
 | **Product Code** | The product the batch belongs to. |
 | **Batch Code** | The batch / lot identifier (globally unique). |
 | **Quantity** | Items currently in the batch. |
 | **Manufactured Date** | When the batch was produced (may be blank). |
 | **Expiry Date** | Use-by date (may be blank). A red **Expires in {days} days** badge appears when the batch expires within the next 30 days. |
 | **Warehouse** | Where the batch is held. |
-| **Status** | Lifecycle status badge - see below. A batch with no status shows ** - **. |
+| **Status** | Lifecycle status badge - see below. A batch with no status shows \*\* - \*\*. |
 
 ### Status values
 
 | Status | Meaning |
-|--------|----------|
+|--------|---------|
 | **Available** | In stock and usable. |
 | **Reserved** | Allocated to an order. |
 | **Damaged** | Contains damaged items. |

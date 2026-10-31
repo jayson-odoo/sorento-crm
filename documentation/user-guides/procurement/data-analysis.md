@@ -20,6 +20,7 @@ Stock Inquiry (a separate sales→purchasing question/answer record)
 
 The seven entities and their backing tables: **Supplier** (`suppliers`), **Product-Supplier** (`product_suppliers`), **Packing List / inbound shipment** (`inbound_shipments`, lines in `inbound_shipment_lines`), **SPO Allocation** (`spo_allocations`), **GRN** (`picking_headers` where `picking_type = 'goods_received'`), **Picking Line** (`picking_lines`), **Stock Inquiry** (`stock_inquiries`).
 
+
 ---
 
 ## Supplier - `suppliers`
@@ -30,8 +31,7 @@ A vendor we buy from. Menu: [**Procurement → Suppliers**](/procurement-managem
 
 **Date columns:** `created_at`, `updated_at`.
 
-**Filters (list endpoint `GET /api/v1/procurement/suppliers`):** `query` (free text - matches supplier code / name). No server-side active-only filter on the main list (the **Status** column is read off `is_active`).
-**Sortable:** `supplier_code`, `supplier_name`, `created_at`. Default sort `created_at` ascending.
+**Filters (list endpoint** `**GET /api/v1/procurement/suppliers**`**):** `query` (free text - matches supplier code / name). No server-side active-only filter on the main list (the **Status** column is read off `is_active`). **Sortable:** `supplier_code`, `supplier_name`, `created_at`. Default sort `created_at` ascending.
 
 > The `/suppliers/select` helper endpoint returns active suppliers for pickers; the main list returns all.
 
@@ -46,18 +46,18 @@ A vendor we buy from. Menu: [**Procurement → Suppliers**](/procurement-managem
 * "How many suppliers do we have?"
 * "Show suppliers created this year."
 
+
 ---
 
 ## Product-Supplier - `product_suppliers`
 
 A link saying "this **product** can be bought from this **supplier**", with an optional lead time. Menu: [**Procurement → Product-Suppliers**](/procurement-management/product-suppliers). This list is **read-only** in the UI (columns: **Product Code**, **Product Name**, **Supplier Code**, **Supplier Name**).
 
-**Fields:** `id`, `product_id` (FK → products), `supplier_id` (FK → suppliers), `standard_lead_time_days` (optional), `created_at`. The link is **unique per `(product, supplier)`**. Response embeds the product (`product_code`, `product_name`) and supplier (`supplier_code`, `supplier_name`).
+**Fields:** `id`, `product_id` (FK → products), `supplier_id` (FK → suppliers), `standard_lead_time_days` (optional), `created_at`. The link is **unique per** `**(product, supplier)**`. Response embeds the product (`product_code`, `product_name`) and supplier (`supplier_code`, `supplier_name`).
 
 **Date columns:** `created_at`.
 
-**Filters (list endpoint `GET /api/v1/procurement/product-suppliers`):** `product_id`, `supplier_id`. A convenience endpoint `GET /api/v1/procurement/product-suppliers/product/{product_id}` returns all suppliers for one product.
-**Sortable:** `created_at` only.
+**Filters (list endpoint** `**GET /api/v1/procurement/product-suppliers**`**):** `product_id`, `supplier_id`. A convenience endpoint `GET /api/v1/procurement/product-suppliers/product/{product_id}` returns all suppliers for one product. **Sortable:** `created_at` only.
 
 **Example questions**
 
@@ -68,6 +68,7 @@ A link saying "this **product** can be bought from this **supplier**", with an o
 * "Does supplier {X} supply product {Y}?" (filter both)
 * "How many products does each supplier cover?" (group by `supplier_id`)
 
+
 ---
 
 ## Packing List (inbound shipment) - `inbound_shipments`
@@ -76,16 +77,15 @@ An inbound shipment from a supplier, with header dates and a `lines[]` of produc
 
 **Header fields:** `id`, `shipment_number` (UI **Shipment Number**), `supplier_id` (FK; UI **Supplier**), `shipment_date` (UI **Shipment Date**, required), `estimated_arrival_date` (UI **Expected Arrival** / form **Estimated Arrival Date** - the ETA), `actual_arrival_date`, `bill_of_lading_number`, `shipping_container_number` (UI **Container Number**), `invoice_number`, `shipment_status` (UI **Status**), `total_items_shipped`, `total_cartons`, `notes`, `attachment_id` (linked packing-list file), `access_levels`, `created_at`, `updated_at`. List rows also carry `lines_count`, `spo_allocations_count`, `display_total_items` (UI **Items**), `display_total_cartons`.
 
-**Line fields (`inbound_shipment_lines`):** `product_id`, `quantity_shipped`, `uom_id`, `batch_number`, `serial_number_range_from`/`_to`, `carton_number`, `cartons_count`, `weight_per_carton`, `unit_cost`, `spo_allocated_quantity` (qty already allocated to SPOs), `quantity_received`, `line_status`.
+**Line fields (**`**inbound_shipment_lines**`**):** `product_id`, `quantity_shipped`, `uom_id`, `batch_number`, `serial_number_range_from`/`_to`, `carton_number`, `cartons_count`, `weight_per_carton`, `unit_cost`, `spo_allocated_quantity` (qty already allocated to SPOs), `quantity_received`, `line_status`.
 
 **Date columns:** `shipment_date`, `estimated_arrival_date` (ETA), `actual_arrival_date`, `created_at`, `updated_at`.
 
-**Status (`shipment_status`):** stored default `in_transit`; the service recomputes a shipment to `fully_received` when every line is received. UI re-labels: `in_transit` → **In Transit**, `fully_received`/`completed` → **Completed** / **Delivered**, `cancelled` → **Cancelled**, `draft` → **Draft**. *(Persisted set beyond `in_transit` / `fully_received` is partly UI-formatted - see audit flags.)*
+**Status (**`**shipment_status**`**):** stored default `in_transit`; the service recomputes a shipment to `fully_received` when every line is received. UI re-labels: `in_transit` → **In Transit**, `fully_received`/`completed` → **Completed** / **Delivered**, `cancelled` → **Cancelled**, `draft` → **Draft**. *(Persisted set beyond* `*in_transit*` */* `*fully_received*` *is partly UI-formatted - see audit flags.)*
 
-**Line status (`line_status`):** `in_transit`, `allocated`, `partially_allocated`, `received`, `partially_received`.
+**Line status (**`**line_status**`**):** `in_transit`, `allocated`, `partially_allocated`, `received`, `partially_received`.
 
-**Filters (list endpoint `GET /api/v1/procurement/packing-lists`):** `query` (free text), `supplier_id`, `shipment_status`.
-**Sortable:** `shipment_number`, `shipment_date`, `created_at`, `updated_at`. Default sort `created_at` ascending.
+**Filters (list endpoint** `**GET /api/v1/procurement/packing-lists**`**):** `query` (free text), `supplier_id`, `shipment_status`. **Sortable:** `shipment_number`, `shipment_date`, `created_at`, `updated_at`. Default sort `created_at` ascending.
 
 **Example questions**
 
@@ -98,20 +98,20 @@ An inbound shipment from a supplier, with header dates and a `lines[]` of produc
 * "List shipments with no SPO allocations yet." (`spo_allocations_count = 0`)
 * "What products and batches are on shipment {X}?" (read `lines[]`: `product_code`, `batch_number`, `quantity_shipped`)
 
+
 ---
 
 ## SPO Allocation - `spo_allocations`
 
 An allocation of part of a shipment line to a **warehouse** against an **SPO number** (the procurement/stock purchase order reference). Menu: [**Procurement → SPO Allocations**](/procurement-management/spo-allocations). This is the table for "how much of SPO X is going where, and how much has arrived".
 
-**Fields:** `id`, `spo_number` (UI **SPO Number**), `spo_line_number`, `inbound_shipment_id` (FK → packing list; UI **Packing List**), `warehouse_id` (FK; UI **Location** / form **Warehouse**), `storage_zone_id`, `product_id` (UI **Product**), `allocated_quantity` (UI **Allocated**), `uom_id`, `receipt_status` (UI **Status**), `quantity_received` (UI **Received**), `quantity_rejected`, `allocation_notes`, `created_at`, `updated_at`. List rows also carry `grn_lines_count` and `linked_grns` (GRN navigation), and the grouped views add the shipment's shipped qty (UI **Shipped**). **Unique per `(spo_number, product_id, warehouse_id)`.**
+**Fields:** `id`, `spo_number` (UI **SPO Number**), `spo_line_number`, `inbound_shipment_id` (FK → packing list; UI **Packing List**), `warehouse_id` (FK; UI **Location** / form **Warehouse**), `storage_zone_id`, `product_id` (UI **Product**), `allocated_quantity` (UI **Allocated**), `uom_id`, `receipt_status` (UI **Status**), `quantity_received` (UI **Received**), `quantity_rejected`, `allocation_notes`, `created_at`, `updated_at`. List rows also carry `grn_lines_count` and `linked_grns` (GRN navigation), and the grouped views add the shipment's shipped qty (UI **Shipped**). **Unique per** `**(spo_number, product_id, warehouse_id)**`**.**
 
-**Date columns:** `created_at`, `updated_at`. *(No business/PO date column - SPO allocations have no own date field; use `created_at` for time windows.)*
+**Date columns:** `created_at`, `updated_at`. *(No business/PO date column - SPO allocations have no own date field; use* `*created_at*` *for time windows.)*
 
-**Status (`receipt_status`):** stored default `pending`; service sets `fully_received` when fully received. UI re-labels: `pending` → **Pending**, `allocated` → **Allocated**, `partially_received` → **Partially Received**, `fully_received` → **Fully Received**. *(Canonical persisted set beyond `pending` / `fully_received` is partly UI-formatted - see audit flags.)*
+**Status (**`**receipt_status**`**):** stored default `pending`; service sets `fully_received` when fully received. UI re-labels: `pending` → **Pending**, `allocated` → **Allocated**, `partially_received` → **Partially Received**, `fully_received` → **Fully Received**. *(Canonical persisted set beyond* `*pending*` */* `*fully_received*` *is partly UI-formatted - see audit flags.)*
 
-**Filters (list endpoint `GET /api/v1/procurement/spo-allocations`):** `query` (free text), `shipment_id`, `warehouse_id`, `receipt_status`. Two grouped views also exist - `GET …/spo-allocations/grouped-by-shipment` and `…/grouped-by-spo-number` - which additionally accept `product_code` and `warehouse_id`.
-**Sortable:** `spo_number`, `created_at`, `updated_at`. Default sort `created_at` ascending (grouped views default to `shipment_number` / `spo_number`).
+**Filters (list endpoint** `**GET /api/v1/procurement/spo-allocations**`**):** `query` (free text), `shipment_id`, `warehouse_id`, `receipt_status`. Two grouped views also exist - `GET …/spo-allocations/grouped-by-shipment` and `…/grouped-by-spo-number` - which additionally accept `product_code` and `warehouse_id`. **Sortable:** `spo_number`, `created_at`, `updated_at`. Default sort `created_at` ascending (grouped views default to `shipment_number` / `spo_number`).
 
 **Example questions**
 
@@ -124,21 +124,20 @@ An allocation of part of a shipment line to a **warehouse** against an **SPO num
 * "Which allocations don't have a GRN yet?" (`grn_lines_count = 0`)
 * "Group allocations by SPO number for product {code}." (grouped-by-spo-number view + `product_code`)
 
+
 ---
 
 ## GRN (Goods Receipt Note) - `picking_headers` (`picking_type = 'goods_received'`)
 
-A goods-receipt header recording what was physically received against an SPO. Menu: [**Procurement → GRN**](/procurement-management/grn). **The backing table is `picking_headers`; a GRN is a picking header whose `picking_type = 'goods_received'`** - every GRN query is filtered on that. Its lines are [Picking Lines](#picking-line--picking_lines).
+A goods-receipt header recording what was physically received against an SPO. Menu: [**Procurement → GRN**](/procurement-management/grn). **The backing table is** `**picking_headers**`**; a GRN is a picking header whose** `**picking_type = 'goods_received'**` - every GRN query is filtered on that. Its lines are [Picking Lines](#picking-line--picking_lines).
 
 **Fields:** `id`, `picking_number` (UI **GRN Number**, unique), `spo_number` (UI **SPO Number**), `picking_type` (always `goods_received` for GRNs), `source_entity_type`, `source_entity_id`, `picking_date` (UI **Picking Date**), `picked_by_user_id`, `inspection_status`, `quality_remarks`, `inspected_by_user_id`, `inspection_date`, `picking_status` (UI **Status**), `total_items_picked`, `total_items_discrepancy`, `total_cost`, `notes`, `created_at`, `updated_at`. List rows add `lines_count` and `items_count` (distinct products; UI **Number of Items**).
 
 **Date columns:** `picking_date`, `inspection_date`, `created_at`, `updated_at`.
 
-**Status (`picking_status`, the UI "Status"):** `draft` → **Draft**, `approved` → **Approved**, `rejected` → **Rejected** (default `draft`). These are the values in the list's **Status** filter (**All statuses** / **Draft** / **Approved** / **Rejected**).
-**Inspection status (`inspection_status`):** default `pending` (e.g. `pending` / `passed` / `failed`). Filterable on the list endpoint but **not surfaced as a column or filter control in the list UI** - it shows on the detail page.
+**Status (**`**picking_status**`**, the UI "Status"):** `draft` → **Draft**, `approved` → **Approved**, `rejected` → **Rejected** (default `draft`). These are the values in the list's **Status** filter (**All statuses** / **Draft** / **Approved** / **Rejected**). **Inspection status (**`**inspection_status**`**):** default `pending` (e.g. `pending` / `passed` / `failed`). Filterable on the list endpoint but **not surfaced as a column or filter control in the list UI** - it shows on the detail page.
 
-**Filters (list endpoint `GET /api/v1/procurement/grn`):** `query` (matches GRN number, SPO number, and linked product code/name), `entities` (free-text entity bag resolved server-side via substring → trigram → RAG; one entity per array element), `product_query` (partial product filter on lines), `picking_status`, `inspection_status`.
-**Sortable:** `picking_number`, `picking_date`, `created_at`, `updated_at`, plus `lines_count` and `items_count`. Default sort `created_at` ascending.
+**Filters (list endpoint** `**GET /api/v1/procurement/grn**`**):** `query` (matches GRN number, SPO number, and linked product code/name), `entities` (free-text entity bag resolved server-side via substring → trigram → RAG; one entity per array element), `product_query` (partial product filter on lines), `picking_status`, `inspection_status`. **Sortable:** `picking_number`, `picking_date`, `created_at`, `updated_at`, plus `lines_count` and `items_count`. Default sort `created_at` ascending.
 
 **Example questions**
 
@@ -151,6 +150,7 @@ A goods-receipt header recording what was physically received against an SPO. Me
 * "Show GRN {picking number} - its lines, status, and inspection result."
 * "How many GRNs were created this week?"
 
+
 ---
 
 ## Picking Line - `picking_lines`
@@ -161,8 +161,7 @@ A single received line under a GRN: product, expected vs picked quantity, condit
 
 **Date columns:** `expiry_date` (of the picked batch), `created_at`, `updated_at`.
 
-**Filters (list endpoint `GET /api/v1/procurement/picking-lines`):** `query` only (matches SPO allocation number, stated SPO number, product code, product name).
-**Sortable:** `spo_allocation` (by SPO number), `product` (by product code), `quantity_expected`, `quantity_picked`. Default sort `spo_allocation` ascending.
+**Filters (list endpoint** `**GET /api/v1/procurement/picking-lines**`**):** `query` only (matches SPO allocation number, stated SPO number, product code, product name). **Sortable:** `spo_allocation` (by SPO number), `product` (by product code), `quantity_expected`, `quantity_picked`. Default sort `spo_allocation` ascending.
 
 **Example questions**
 
@@ -173,6 +172,7 @@ A single received line under a GRN: product, expected vs picked quantity, condit
 * "List lines picked into warehouse {name}." (read `destination_warehouse`)
 * "Sort picking lines by quantity picked, highest first." (`sort=quantity_picked&dir=desc`)
 
+
 ---
 
 ## Stock Inquiry - `stock_inquiries`
@@ -181,22 +181,21 @@ A "can we supply this?" question raised by sales, routed through project sales t
 
 **Fields:** `id`, `inquiry_number` (UI **Stock inquiry number**), `salesperson` (UI **Salesperson**), `product_code` (UI **Product Code**), `item_description` (UI **Item Description**), `project_customer` (UI **Project Customer**), `project_name` (UI **Project Name**), `quantity` (UI **Quantity** - **stored as TEXT**, free-form), `delivery_date` (UI **Delivery Date** - **stored as TEXT**, not a real date column), `remark` (UI **Remark**), `additional_remark`, `purchasing_response` (the answer), `status` (UI **Status**), `last_responded_by` / `last_responded_at`, `rejection_reason` / `rejected_at` / `rejected_by` / `rejected_from`, `reopen_reason` / `reopened_at` / `reopened_by`, `contact_id` / `space_id` / `respond_inbox_url` (Respond.io chat), `created_at` (UI **Created**), `updated_at`.
 
-**Date columns:** `created_at` (default sort), `updated_at`, `last_responded_at`, `rejected_at`, `reopened_at`. **`delivery_date` is free TEXT** - do **not** do date-window math on it; treat it as a label.
+**Date columns:** `created_at` (default sort), `updated_at`, `last_responded_at`, `rejected_at`, `reopened_at`. `**delivery_date**` **is free TEXT** - do **not** do date-window math on it; treat it as a label.
 
-**Status (`status`) - lifecycle values:**
+**Status (**`**status**`**) - lifecycle values:**
 
 | Code | UI label | Meaning |
 |------|----------|---------|
-| `new` | **New** | Just raised, not yet submitted. |
+| `new` | **New**  | Just raised, not yet submitted. |
 | `pending_project_sales` | **Pending project sales** | Waiting for project sales to review. |
 | `pending_purchasing` | **Pending purchasing** | Approved by project sales; waiting on purchasing to answer. |
 | `responded` | **Responded** | Purchasing has answered - handled. |
 | `rejected` | **Rejected** | Turned down (by project sales or purchasing); can be reopened. |
 
-*(Create accepts only `new`, `pending_project_sales`, `pending_purchasing`; the rest are reached by lifecycle actions. The list filter also shows an **Updated** option - see audit flags.)*
+*(Create accepts only* `*new*`*,* `*pending_project_sales*`*,* `*pending_purchasing*`*; the rest are reached by lifecycle actions. The list filter also shows an **Updated** option - see audit flags.)*
 
-**Filters (list endpoint `GET /api/v1/procurement/stock-inquiries`):** `query` (free text), `status` (**comma-separated** - pass multiple values to match any).
-**Sortable:** `inquiry_number`, `product_code`, `item_description`, `project_customer`, `project_name`, `quantity`, `delivery_date`, `remark`, `salesperson`, `status`, `last_responded_at`, `created_at`, `updated_at`. Default sort `created_at` **descending**.
+**Filters (list endpoint** `**GET /api/v1/procurement/stock-inquiries**`**):** `query` (free text), `status` (**comma-separated** - pass multiple values to match any). **Sortable:** `inquiry_number`, `product_code`, `item_description`, `project_customer`, `project_name`, `quantity`, `delivery_date`, `remark`, `salesperson`, `status`, `last_responded_at`, `created_at`, `updated_at`. Default sort `created_at` **descending**.
 
 **Example questions**
 
@@ -209,6 +208,7 @@ A "can we supply this?" question raised by sales, routed through project sales t
 * "List inquiries for project customer {X}." (`query`)
 * "Show inquiries created between 1 Jan and 31 Mar, newest first." (`created_at` window - default sort already desc)
 
+
 ---
 
 ## What the assistant can and can't query directly
@@ -218,7 +218,7 @@ The AI assistant's read tools only cover procurement **from the incoming-stock a
 **Has dedicated MCP tools (incoming-stock family - packing lists / inbound shipments / SPO arrivals):**
 
 | Tool | Use it for | Required narrower |
-|------|-----------|-------------------|
+|------|------------|-------------------|
 | `crm_incoming_stock_by_product` | "Is SKU X arriving? / how much is pending? / where will it be stocked?" - one-shot per product. Returns total remaining incoming qty, per-warehouse allocation summary, per-shipment breakdown (shipment number, container, ETA, batch, packing-list attachment), nearest ETA. | `product_ids` (optional ETA window `eta_from`/`eta_to`) |
 | `crm_incoming_stock_shipments` | "Any incoming shipments this month? / arriving on date X? / open shipments from supplier Y" - shipment headers. | at least one of `shipment_ids`, `supplier_ids`, `eta_from`/`eta_to` |
 | `crm_incoming_stock_list` | Unified incoming list - shipment rows with nested product `lines[]` (product code/name, batch, remaining qty, warehouse allocations). Covers both "incoming for product X" and "arriving this month / from supplier Y / shipment Z". | at least one of `product_ids`, `shipment_ids`, `supplier_ids`, `eta_from`/`eta_to` |

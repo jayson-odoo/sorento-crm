@@ -4,14 +4,14 @@ Folders help organise attachments (packing lists, product attachments, promotion
 
 ## Where to manage folders
 
-Open **[Resource Management → Files](/resource-management/attachment-directories)** (URL: `/resource-management/attachment-directories`). The page is titled **Files**. The folder tree is on the left; the attachments table is on the right.
+Open [**Resource Management → Files**](/resource-management/attachment-directories) (URL: `/resource-management/attachment-directories`). The page is titled **Files**. The folder tree is on the left; the attachments table is on the right.
 
 ## Folder operations
 
 Click **Folder actions** (the `⋯` button on a folder row) to see the menu:
 
 | Action | Menu item |
-|----|----|
+|--------|-----------|
 | Create a child folder | **Add subfolder** |
 | Rename a folder | **Rename** |
 | Delete a folder | **Delete** |
@@ -19,7 +19,7 @@ Click **Folder actions** (the `⋯` button on a folder row) to see the menu:
 | Pin folder to Quick Access | **Pin to Quick Access** |
 | Remove from Quick Access | **Unpin from Quick Access** |
 
-To **create a top-level folder**, click **[Add](/resource-management/attachment-directories#guide_target=resource-management.files.add-folder-button)** at the top of the **Folders** sidebar (next to the **Expand all** / **Collapse all** buttons). The dialog is titled **New folder** for top-level and **New subfolder** for children.
+To **create a top-level folder**, click [**Add**](/resource-management/attachment-directories#guide_target=resource-management.files.add-folder-button) at the top of the **Folders** sidebar (next to the **Expand all** / **Collapse all** buttons). The dialog is titled **New folder** for top-level and **New subfolder** for children.
 
 ## Search folders
 
@@ -30,8 +30,8 @@ Type into the **Search folders…** box at the top of the sidebar to filter the 
 File rows in the attachments table no longer have a pencil / **Actions** column on the right. Instead, **right-click the file row** (or **long-press** on a touch device) to open its action menu. The menu items are:
 
 | Action | Menu item |
-|----|----|
-| Open the file | **Open** |
+|--------|-----------|
+| Open the file | **Open**  |
 | Preview in-app | **Preview** |
 | Download | **Download** |
 | Rename the file | **Rename** |
@@ -42,6 +42,7 @@ File rows in the attachments table no longer have a pencil / **Actions** column 
 (In **Trash**, the menu shows **Restore** and **Permanently delete** instead.)
 
 ### Rename a file
+
 
 1. **Right-click** the file row in the attachments table (right pane) - or long-press on touch.
 2. Choose **Rename** from the context menu.

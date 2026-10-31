@@ -13,7 +13,7 @@ Requires the `inventory.stock_ledger.view` permission to open. (The same movemen
 Newest entries first.
 
 | Column | What it shows |
-|--------|----------------|
+|--------|---------------|
 | **Product** | Product code (with the product name beneath it). |
 | **Warehouse** | The warehouse the movement hit. |
 | **Type** | The transaction type - see below. |
@@ -28,7 +28,7 @@ Newest entries first.
 The values you'll see in **Type** today:
 
 | Type | Meaning |
-|------|----------|
+|------|---------|
 | **BULK_IMPORT** | A balance was created or updated by a stock import (Excel / file). |
 | **SYSTEM_ADJUSTMENT** | The system set a balance to `0` because the product was absent from a full-snapshot stock import. |
 

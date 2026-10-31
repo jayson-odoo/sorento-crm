@@ -17,7 +17,7 @@ Open [**Complaint Management → Complaints**](/complaint-management/complaints)
 
 ## Approve
 
-Click **[Approve](#guide_target=complaint-management.complaints.tech-team.approve)**.
+Click [**Approve**](#guide_target=complaint-management.complaints.tech-team.approve).
 
 * A confirmation dialog asks you to acknowledge that the customer will be notified.
 * On confirm: status → **Approved**, a closing message is sent to the customer's Respond.io thread, and the complaint is closed.
@@ -29,7 +29,7 @@ Use this when:
 
 ## Reject
 
-Click **[Reject](#guide_target=complaint-management.complaints.tech-team.reject)**.
+Click [**Reject**](#guide_target=complaint-management.complaints.tech-team.reject).
 
 * A dialog asks for a **Rejection reason** (required).
 * On confirm: status → **Rejected**, the rejection reason is posted to the customer's Respond.io thread, and the complaint reverts to an open state so the salesperson can pick it up again.

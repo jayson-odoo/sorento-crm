@@ -4,6 +4,7 @@ A zero-knowledge orientation to the Sorento CRM: how to sign in, what each part 
 
 ## 1. Sign in
 
+
 1. Open the CRM in your browser.
 2. On the **Sign In** page, enter your work email and password, then click **Sign In**. (If your organisation uses Google sign-in, click **Sign in with Google** instead.)
 3. After signing in you land on **Dashboards** - the home page. The left-hand **sidebar** is your main way to move around; the top bar holds search, notifications, your profile, and the AI assistant.
@@ -36,7 +37,7 @@ Each entry below is a top-level group in the left sidebar. Click a group to expa
 ## 3. Where each kind of information lives
 
 | You're looking for… | Go to |
-|----|----|
+|---------------------|-------|
 | A product, its price, brand, or dimensions | **Product Management → All Products** |
 | A brochure, datasheet, or product photo | **Product Management → Product Attachments** |
 | The product catalogue PDF, price list, or any uploaded file | **Resource Management → Files** |

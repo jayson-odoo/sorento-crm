@@ -17,7 +17,6 @@ End-user documentation organised by department. The AI assistant is intended to 
 * `**[sla/](./sla/)**` - SLA policies, Form SLA configuration, KPI dashboard, event logs, conversation vs form SLA, and searching the Conversations inbox by message text.
 * `**[product/](./product/)**`, `**[inventory/](./inventory/)**`, `**[delivery-orders/](./delivery-orders/)**`, `**[procurement/](./procurement/)**`, `**[complaints/](./complaints/)**`, `**[technical-team/](./technical-team/)**` - module guides and data references; product pages include who may create, edit, import and delete products, and the SO line description switch.
 
-
 ## Conventions
 
 Every guide follows the same shape:
@@ -48,7 +47,7 @@ UI labels (menu items, page titles, button text, dialog titles) are quoted **ver
 
 * **Auto-link is the default.** Generic file uploads (Pattern A) fire an outbound webhook to **n8n** with the file URL and the attachment-type name. The integration workflow attached to that type parses the file, creates the relevant business records, and **calls back into the CRM** to attach the file to those records. Users do **not** link files manually after upload.
 * The columns the parser expects (e.g. for a packing-list Excel) are defined in the n8n workflow attached to that attachment type, **not** in this codebase. Ask your integrations admin for the current template if a parser fails.
-* The only attachment types seeded by Alembic migrations are **Promotion** (`code = 'promotion'`) and **Complaint Document** (`code = 'complaint_document'`). All other types (*Packing List*, *Product Attachments*, *Marketing Form*, etc.) are tenant-specific and must be created under **[Resource Management → Attachment Types](/resource-management/attachment-types)**.
+* The only attachment types seeded by Alembic migrations are **Promotion** (`code = 'promotion'`) and **Complaint Document** (`code = 'complaint_document'`). All other types (*Packing List*, *Product Attachments*, *Marketing Form*, etc.) are tenant-specific and must be created under [**Resource Management → Attachment Types**](/resource-management/attachment-types).
 * Module-specific imports (Pattern B) - `product_import`, `spo_import`, `grn_listing_import`, `grn_lines_import`, `stock_import`, `order_tracking_import`, `delivery_order_detail_import` - are processed by the backend's import-job pipeline and surface progress via the `Latest … import` panel on the relevant module's list page.
 * **Approval links are token-based, one-time use, and expire after 24 hours.** Project sales managers approve / reject purchase requests and sponsorship forms via the emailed link without logging in to the CRM. If a link expires, the project sales admin can re-issue one from the request detail page.
 * **Project sales reps are notified only via WhatsApp** through Respond.io - there is no in-portal notification inbox. WhatsApp covers: complaint reply, stock-inquiry decisions (flowed / rejected / responded), and PR / sponsorship-form approval / rejection.

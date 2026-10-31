@@ -5,8 +5,8 @@ This page describes the generic file-upload flow that several departments use (p
 There are **two distinct upload patterns** in the CRM. Use the right one for the task:
 
 | Pattern | When to use | Where |
-|----|----|----|
-| **A. File upload tagged by Attachment Type** (this page) | Uploading a file that needs to be tagged with an attachment type - packing list, product attachments, promotion, marketing form, etc. The system links it to the right business record automatically. | **[Resource Management → Files](/resource-management/attachment-directories)** |
+|---------|-------------|-------|
+| **A. File upload tagged by Attachment Type** (this page) | Uploading a file that needs to be tagged with an attachment type - packing list, product attachments, promotion, marketing form, etc. The system links it to the right business record automatically. | [**Resource Management → Files**](/resource-management/attachment-directories) |
 | **B. Module-specific Excel import** | Bulk-loading structured data into a specific module (products, SPO, GRN, order tracking, stock). | The **Import** / **Upload** button on each module's list page |
 
 If you are uploading **a single file or a folder of files** that the system should link to a product / promotion / packing list / etc., use **Pattern A** (this page). If you are uploading **an Excel spreadsheet of records** to create or update many rows in one shot, use the relevant Pattern B guide instead.
@@ -17,23 +17,23 @@ If you are uploading **a single file or a folder of files** that the system shou
 ## Pattern A - Single-file upload
 
 
-1. Open **[Resource Management → Files](/resource-management/attachment-directories)** in the left menu (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
+1. Open [**Resource Management → Files**](/resource-management/attachment-directories) in the left menu (URL: `/resource-management/attachment-directories`). The page is titled **Files**.
 2. (Optional) Click a folder in the **Folders** sidebar on the left so the new file is filed under that folder. Otherwise the file lives at the root.
-3. Click **[Upload](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button)** in the top toolbar of the attachments table.
+3. Click [**Upload**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-button) in the top toolbar of the attachments table.
 4. The **Create Attachment** dialog opens.
-5. Pick the **Attachment Type** from the dropdown (required) - for example *Packing List*, *Product Attachments*, *Promotion*, *Marketing Form*. The list comes from your tenant's configured types. If the type you need is missing, ask an admin to add it under **[Resource Management → Attachment Types](/resource-management/attachment-types)** (the only types seeded by default are *Promotion* and *Complaint Document*).
+5. Pick the **Attachment Type** from the dropdown (required) - for example *Packing List*, *Product Attachments*, *Promotion*, *Marketing Form*. The list comes from your tenant's configured types. If the type you need is missing, ask an admin to add it under [**Resource Management → Attachment Types**](/resource-management/attachment-types) (the only types seeded by default are *Promotion* and *Complaint Document*).
 6. Drag your file(s) into the **Files** drop zone, or click **Select Files** to browse.
-7. (Optional) Tick / untick **[Access Levels](/resource-management/attachment-directories#guide_target=resource-management.files.access-levels)** - these control which contact-access groups (e.g. *End User*, *Dealer*, *Manager*) can see this file from the portal. All three are ticked by default.
-8. Click **[Upload N Attachments](/resource-management/attachment-directories#guide_target=resource-management.files.upload-confirm-button)**. A toast confirms the upload, and the file appears in the table.
+7. (Optional) Tick / untick [**Access Levels**](/resource-management/attachment-directories#guide_target=resource-management.files.access-levels) - these control which contact-access groups (e.g. *End User*, *Dealer*, *Manager*) can see this file from the portal. All three are ticked by default.
+8. Click [**Upload N Attachments**](/resource-management/attachment-directories#guide_target=resource-management.files.upload-confirm-button). A toast confirms the upload, and the file appears in the table.
 
 ## Pattern A - Bulk ZIP import
 
 
-1. Open **[Resource Management → Files](/resource-management/attachment-directories)**.
-2. Click **[Bulk import (ZIP)](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-button)** (top toolbar, archive icon).
+1. Open [**Resource Management → Files**](/resource-management/attachment-directories).
+2. Click [**Bulk import (ZIP)**](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-button) (top toolbar, archive icon).
 3. Pick the attachment type - every file inside the ZIP will be tagged with this type.
 4. Drag your `.zip` in (or click to browse).
-5. Click **[Import](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-confirm-button)**. The system extracts files in the background.
+5. Click [**Import**](/resource-management/attachment-directories#guide_target=resource-management.files.bulk-import-confirm-button). The system extracts files in the background.
 6. The dialog closes when the import job is queued. Progress shows on the same page.
 
 ## How files are linked to business records (auto-link)
@@ -48,13 +48,13 @@ You do **not** need to link the file manually after upload. As soon as the integ
 
 * **In-app toast** appears immediately when the upload completes (e.g. `Successfully uploaded 1 file(s)`).
 * **Asynchronous processing** (parsing + linking) happens after the upload. When the integration workflow finishes, you receive a follow-up notification depending on how the workflow for that attachment type is configured (in-app and/or email).
-* If parsing fails, an integration log is recorded - admins can review it under **[System Management → Integration Logs](/system-management/integration-logs)**.
+* If parsing fails, an integration log is recorded - admins can review it under [**System Management → Integration Logs**](/system-management/integration-logs).
 
 ## Folder management
 
 Folder operations live on the same **Files** page, on the left sidebar.
 
-* **Create a top-level folder:** click **[Add](/resource-management/attachment-directories#guide_target=resource-management.files.add-folder-button)** at the top of the **Folders** sidebar.
+* **Create a top-level folder:** click [**Add**](/resource-management/attachment-directories#guide_target=resource-management.files.add-folder-button) at the top of the **Folders** sidebar.
 * **Add a subfolder, rename, delete, or adjust access levels:** click **Folder actions** (`⋯`) on the folder row → pick the action.
 * **Pin a folder to Quick Access:** **Folder actions** (`⋯`) → **Pin to Quick Access**.
 * **Search folders:** type into the **Search folders…** box at the top of the sidebar.
@@ -63,11 +63,7 @@ To **rename a single file**, click the pencil icon on the file row in the attach
 
 ## Opening a file to view it
 
-Wherever a file preview shows an **Open** button (Files, packing lists, complaints, price tag
-requests, project documents, and elsewhere), **Open** shows PDFs, images, and plain text files in
-a new browser tab. Other file types (e.g. Excel, Word) can't be shown in a tab, so **Open**
-downloads them instead and shows a toast saying so. **Download**, next to it, always downloads
-the file regardless of type.
+Wherever a file preview shows an **Open** button (Files, packing lists, complaints, price tag requests, project documents, and elsewhere), **Open** shows PDFs, images, and plain text files in a new browser tab. Other file types (e.g. Excel, Word) can't be shown in a tab, so **Open** downloads them instead and shows a toast saying so. **Download**, next to it, always downloads the file regardless of type.
 
 ## Quick Access (menu pinning)
 

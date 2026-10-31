@@ -17,6 +17,7 @@ If your session has expired (or if you've just been issued a new link), the brow
 
 The card shows, in order:
 
+
 1. A line telling you where the code is going: *"We'll send a code to your WhatsApp <your masked number>"*.
 2. A **Not your number?** link directly under that line (only shown when you arrived on your own portal link; not shown on the older, generic verify link).
 3. The **Verification code** field - type or paste the 6-digit code you receive on WhatsApp. Verification fires automatically the moment the sixth digit lands; you don't need to click anything.
@@ -58,6 +59,7 @@ If a filter or your search leaves nothing to show, the list reads *"No submissio
 ## Duplicate an existing submission
 
 Any submission type can be copied into a fresh draft:
+
 
 1. Long-press (or right-click) a card and choose **Duplicate** from the preview, or open the submission and choose **Duplicate** from its gear menu.
 2. A new form opens with every field (and every line - product, complaint, etc.) copied from the source. Attachments are **not** copied - the sales order / photos / quotes start empty.

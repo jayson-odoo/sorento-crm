@@ -8,7 +8,8 @@ Open [**Complaint Management → Complaints**](/complaint-management/complaints)
 
 ## Steps
 
-1. Click **[Download PDF](#guide_target=complaint-management.complaints.download-pdf)**. The button shows **Preparing…** and a message confirms *"Preparing PDF… it will appear in My Downloads."* The file is now being built in the background - you don't have to wait on this button.
+
+1. Click [**Download PDF**](#guide_target=complaint-management.complaints.download-pdf). The button shows **Preparing…** and a message confirms *"Preparing PDF… it will appear in My Downloads."* The file is now being built in the background - you don't have to wait on this button.
 2. Next to it is a **printer icon** with a small number badge - click it to open the **Downloads** panel for this complaint.
 3. In the panel the file appears with a status: **Queued** → **Processing** → **Ready**. It refreshes itself every few seconds.
 4. When the status is **Ready**, click the file row. The PDF opens in a new tab / downloads to your computer.

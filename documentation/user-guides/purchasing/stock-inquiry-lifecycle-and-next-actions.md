@@ -19,6 +19,7 @@ New ──Submit for project sales──▶ Pending project sales
 
 Plain English:
 
+
 1. An inquiry is raised as **New**.
 2. Sales submits it for review → **Pending project sales**.
 3. Project sales either approves it (passes it to purchasing → **Pending purchasing**) or rejects it (**Rejected**).
@@ -29,7 +30,7 @@ Plain English:
 ## Status labels
 
 | Status | What it means |
-|--------|----------------|
+|--------|---------------|
 | **New** | Just raised, not yet submitted. |
 | **Pending project sales** | Waiting for project sales to review. |
 | **Pending purchasing** | Approved by project sales; waiting on purchasing to answer. |
@@ -38,22 +39,18 @@ Plain English:
 
 ## What should I do now - by status
 
-**New**
-Submit it for review with **Submit for project sales**. The status moves to **Pending project sales**.
+**New** Submit it for review with **Submit for project sales**. The status moves to **Pending project sales**.
 
-**Pending project sales**
-Project sales reviews. Either:
-- **[Approve (send to purchasing)](#guide_target=procurement.stock-inquiries.approve-button)** - passes it to purchasing; status → **Pending purchasing**.
-- **[Reject](#guide_target=procurement.stock-inquiries.reject-button)** - a reason is required; status → **Rejected**. Full steps: [Stock inquiry flow](../project-sales-manager/flow-stock-inquiry.md).
+**Pending project sales** Project sales reviews. Either:
 
-**Pending purchasing**
-Purchasing handles it. Write the answer with **[Edit purchasing response](#guide_target=procurement.stock-inquiries.edit-purchasing-response-button)** and send it - the status moves to **Responded**. Or **[Reject](#guide_target=procurement.stock-inquiries.reject-button)** with a reason if it can't proceed. Full steps: [Review a stock inquiry](review-stock-inquiry.md).
+* [**Approve (send to purchasing)**](#guide_target=procurement.stock-inquiries.approve-button) - passes it to purchasing; status → **Pending purchasing**.
+* [**Reject**](#guide_target=procurement.stock-inquiries.reject-button) - a reason is required; status → **Rejected**. Full steps: [Stock inquiry flow](../project-sales-manager/flow-stock-inquiry.md).
 
-**Responded**
-Purchasing has answered the inquiry - **nothing more is required**. The answer and who sent it are recorded on the record. If something needs to change, you can send a further reply with **[Edit purchasing response](#guide_target=procurement.stock-inquiries.edit-purchasing-response-button)**; otherwise the inquiry is handled.
+**Pending purchasing** Purchasing handles it. Write the answer with [**Edit purchasing response**](#guide_target=procurement.stock-inquiries.edit-purchasing-response-button) and send it - the status moves to **Responded**. Or [**Reject**](#guide_target=procurement.stock-inquiries.reject-button) with a reason if it can't proceed. Full steps: [Review a stock inquiry](review-stock-inquiry.md).
 
-**Rejected**
-Review the rejection reason shown on the record. If it should continue, **[Reopen](#guide_target=procurement.stock-inquiries.reopen-button)** - it goes back to the stage it was rejected from (project sales or purchasing). Reopening clears the rejection details (the change stays in the audit history).
+**Responded** Purchasing has answered the inquiry - **nothing more is required**. The answer and who sent it are recorded on the record. If something needs to change, you can send a further reply with [**Edit purchasing response**](#guide_target=procurement.stock-inquiries.edit-purchasing-response-button); otherwise the inquiry is handled.
+
+**Rejected** Review the rejection reason shown on the record. If it should continue, [**Reopen**](#guide_target=procurement.stock-inquiries.reopen-button) - it goes back to the stage it was rejected from (project sales or purchasing). Reopening clears the rejection details (the change stays in the audit history).
 
 ## Notes
 
