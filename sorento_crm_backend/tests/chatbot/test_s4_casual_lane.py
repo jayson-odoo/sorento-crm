@@ -517,9 +517,9 @@ class TestLowSignalLaneIntegration:
 
         assert result.delegate is None
         # AC-MEM086: the apology, never the exception text (the row keeps the reason).
-        from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
+        from tests.chatbot import fail_triage_texts as FT
 
-        assert result.reply["text"] == CHATBOT_TURN_ERROR_REPLY
+        assert result.reply["text"] == FT.H_OFFER
         assert "provider timeout" not in result.reply["text"]
         assert not result.reply["text"].startswith(CLARIFIER_ERROR_PREFIX)
         assert [a["kind"] for a in result.actions] == ["send_message"]

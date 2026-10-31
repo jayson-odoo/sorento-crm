@@ -29,6 +29,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import httpx
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -225,6 +226,17 @@ def _probe(db: Session | None = None) -> ProbeFn:
     return call
 
 
+# CHATBOT-FAIL-TRIAGE R5: the allow-listed tools that are NOT retried on a timeout. Both
+# pass `ensure_read_only` (no customer-visible write) but each call still creates something:
+# `crm_low_stock_report` starts a report run and writes its workbook, `crm_portal_link_get`
+# mints a portal token, and `crm_sales_analysis` builds its Excel file and pushes it to the
+# chat (review round 2 security nit). The MCP catalogue's `read_only` flag is true for all
+# three, so there is no marker on the capability rows to read this from.
+_NOT_RETRIED_ON_TIMEOUT: frozenset[str] = frozenset(
+    {"crm_low_stock_report", "crm_portal_link_get", "crm_sales_analysis"}
+)
+
+
 def _mcp_call(db: Session | None = None, *, timeout_seconds: int | None = None) -> McpCallFn:
     def call(name: str, args: dict[str, Any]) -> Any:
         """One MCP tool call at the CONFIGURED url (H52, D10).
@@ -273,7 +285,18 @@ def _mcp_call(db: Session | None = None, *, timeout_seconds: int | None = None) 
         # `timeout_seconds` is a caller's own tighter budget (the agent's turn clock).
         timeout = int(timeout_seconds or getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
         client = MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=timeout)
-        result = parse_mcp_content(client.call_tool(name, args))
+        try:
+            raw = client.call_tool(name, args)
+        except (TimeoutError, httpx.TimeoutException):
+            # CHATBOT-FAIL-TRIAGE AC-2d: a read that timed out is tried once more; a second
+            # timeout reaches the caller. R5: never for a tool that creates something per
+            # call, and never inside a caller's own budget (`timeout_seconds`, the agent
+            # loop's turn clock), which a second full wait would overrun.
+            if timeout_seconds or name in _NOT_RETRIED_ON_TIMEOUT:
+                raise
+            logger.warning("chatbot: MCP tool %s timed out, retrying once", name)
+            raw = client.call_tool(name, args)
+        result = parse_mcp_content(raw)
         # CONTACT-BRAND-SCOPE: the probes (cross-domain, did-you-mean, siblings) read through
         # this seam too, so a brand-scoped session's result is guarded here as well.
         if db is not None:

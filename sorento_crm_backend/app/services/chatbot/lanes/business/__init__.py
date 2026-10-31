@@ -1520,6 +1520,13 @@ def run_fetch(
     for key, values in narrow.items():
         semantic_input[key] = list(values)
     submission_type = fetch_mod.portal_submission_type(parse_output)
+    if submission_type and db is not None and not fetch_mod.portal_form_granted(
+        db, contact_id, space_id, submission_type
+    ):
+        # CHATBOT-FAIL-TRIAGE AC-3: no link to a form the portal would refuse this contact.
+        if trace is not None:
+            trace.add("portal_link", {"refused": "form_not_granted", "form": submission_type})
+        return _fixed_reply(fetch_mod.FORM_NOT_AVAILABLE_MESSAGE, refused=True)
     if submission_type:
         semantic_input["submission_type"] = submission_type
     # PLAN-chatbot-customer-scope-29sep.md D3/D4: a customer-scoped contact's turn
@@ -2574,7 +2581,14 @@ def run_fetch(
             if trace is not None:
                 trace.add("report_ask", {"refused": envelope.get("status_code")})
             return _fixed_reply(refusal, refused=True)
-        return _error_fragment(envelope["error"])
+        # CHATBOT-FAIL-TRIAGE AC-2: the route's own `detail.code` rides on the reason, so the
+        # composer can word the refusal (`subject_required`, `customer_not_permitted`).
+        reason = envelope["error"]
+        detail = envelope.get("detail")
+        code = detail.get("code") if isinstance(detail, dict) else None
+        if isinstance(code, str) and code and code not in reason:
+            reason = f"{reason} ({code})"
+        return _error_fragment(reason)
 
     # PRODUCT-ALTERNATIVES round B (card Addendum 1, owner 8 Oct 2026): an asked product
     # that is discontinued and has a stored alternative gets the SAME tool's answer for the

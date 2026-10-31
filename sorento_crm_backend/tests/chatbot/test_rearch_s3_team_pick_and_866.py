@@ -222,6 +222,18 @@ class TestPort866AsRunTurnCases:
         self, session_factory, stub_parser, stub_access
     ) -> None:
         self._seed(session_factory)
+        # CHATBOT-FAIL-TRIAGE AC-7c: a turn with no topic asks one instead of taking the
+        # default team (contract 77, overruled), so this case holds a product topic.
+        import json
+
+        from sqlalchemy import text
+
+        db = session_factory()
+        db.execute(
+            text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
+            {"cid": str(CONTACT_ID), "sv": json.dumps({"variables": {}, "focus": {"domains": ["master_products"]}})},
+        )
+        db.commit()
         v = verdict(
             message_type="escalation",
             entities=[entity("SRTWC287", hint="product", current_message=True)],
