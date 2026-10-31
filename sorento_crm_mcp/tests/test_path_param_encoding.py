@@ -102,3 +102,16 @@ async def test_paramless_path_is_unchanged(client, captured):
     assert captured[0]["url"] == "/api/v1/external/stock"
     assert captured[0]["params"] == {"q": "a/b?c"}
     assert captured[1]["url"] == "/api/v1/external/stock"
+
+
+@pytest.mark.asyncio
+async def test_promotion_active_check_goes_through_the_encoder(client, captured):
+    """`_ensure_promotion_active` used to build its URL with an f-string, outside the encoder."""
+    from sorento_crm_mcp.server import _ensure_promotion_active
+
+    await _ensure_promotion_active(client, "a?b")
+    assert captured[0]["url"] == "/api/v1/marketing/promotions/a%3Fb"
+
+    captured.clear()
+    assert await _ensure_promotion_active(client, "x/y") is None
+    assert captured == []
