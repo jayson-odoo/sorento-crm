@@ -208,3 +208,7 @@ Q4 is (a), owner 31 Oct: any bot question.
 - **AC-RC-6 [BE]** In the proposal, a `"` inside a value is escaped, so a crafted value cannot read as another field or a second step.
 - **AC-RC-7 [BE]** Format characters (Unicode category Cf: zero-width, bidi overrides, tag characters) are removed from every idea
   value before it is shown or sent, so what the person reads is what is sent.
+- **AC-RC-8 [BE]** A list row's `problem` does not back a figure in the agent's answer (`_NOT_FIGURE_KEYS`), as `title` already does not.
+- **AC-RC-9 [BE]** An id-bearing URL is recognised whatever the scheme's case: `5000HTTPS://x.example/<uuid> units` gets the number flagged.
+  100k characters of `[x](http://` repeats finish in under 1 second, as AC-RC-4 requires of `http://` repeats.
+

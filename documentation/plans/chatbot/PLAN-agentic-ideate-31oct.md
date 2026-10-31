@@ -262,6 +262,11 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 - The proposal now hands full values back to the model while it waits (`waiting_reference`, history), up to 4000 characters a
   field, which gives injected text more room right where the model decides `confirm_action`. Look at this together with the
   pre-existing chat-confirm item below before real ideas are at stake.
+- Invisible text: format characters (Cf) are removed, but variation selectors (Mn, from U+E0100), CGJ, Hangul filler and braille blank
+  still survive, so a value can carry text the person cannot see. Close this before ideas reach the board.
+- Editing use cases replaces the whole list, and list rows carry no use cases, so "add a use case" can drop the others (the card does
+  show the new value). Give the rows their use cases, or a merge rule.
+- Look-alike quotes (U+201D, U+FF02) are not escaped in the proposal. All the text stays visible.
 - A re-proposed idea whose ss status has moved past `captured` replays and reads "could not be reached" (`call_create_idea`
   requires `captured`), and any ss 4xx reads the same. Unlikely while ideas are off the board; give these their own line then.
 
