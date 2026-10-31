@@ -12,7 +12,8 @@ Two cases cannot be made safe by encoding and are refused before any request is 
 - a value that is ``.`` or ``..``: those characters are unreserved, so encoding leaves
   them alone and URL normalisation treats them as dot segments.
 
-Empty or whitespace-only values are refused too: they would collapse the segment.
+Empty or whitespace-only values are refused too (they would collapse the segment), and so
+are control characters, which no identifier carries.
 """
 import json
 
@@ -76,7 +77,7 @@ async def test_value_is_encoded_as_one_segment(client, captured, value, encoded)
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "value",
-    ["a/b", "../../other", "/", "x/..", "..", ".", "", "   ", "\t"],
+    ["a/b", "../../other", "/", "x/..", "..", ".", "", "   ", "\t", "a\x00b", "a\r\nb", "a\x7f"],
 )
 async def test_unsafe_or_empty_value_is_refused_without_a_request(client, captured, value):
     out = await client.get(TEMPLATE, path_params={"number": value}, tool_name="t")

@@ -115,7 +115,12 @@ class CRMClient:
                 # it; "/" and dot segments are refused because encoding cannot hold them
                 # (the backend's ASGI server decodes %2F before routing, and "." / ".."
                 # are unreserved so normalisation still treats them as dot segments).
-                if not text.strip() or "/" in text or text in (".", ".."):
+                if (
+                    not text.strip()
+                    or "/" in text
+                    or text in (".", "..")
+                    or any(ord(c) < 0x20 or ord(c) == 0x7F for c in text)
+                ):
                     return json.dumps(
                         {
                             "error": "invalid_path_param",
