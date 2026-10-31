@@ -176,7 +176,7 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
   ],
   [
     'app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx',
-    'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}. (Line moved 1223 -> 1251 when the Decision column gained the Verdict actions and the Product column its chip; 1251 -> 1268 when PLAN-oi-decision-trail-ui.md round 2 added a DecisionTrailButton after the verdict chip in the same cell renderer; 1268 -> 1293 when #1362 round 2 gave a fulfilled line its own card in place of the Suggestion card; 1293 -> 1294 when #1362 round 4 imported soLineLabel; 1294 -> 1304 when #1622 showed OrderInquiryRejectedBadge in place of the state pill of a rejected inquiry; 1306 -> 1321 when STOCK-STATUS round 6 read AutoCount for the Stock tab; 1321 -> 1343 when OI-LINE-SPLIT added the per-line Split delivery icon; the census is keyed by line, so a site that moves is a one-line diff here rather than a silent pass)',
+    'Contributing lines, in a dialog opened as a sibling of the board (a hand-rolled matrix). Already scrollerMaxHeight={false}. (Line moved 1223 -> 1251 when the Decision column gained the Verdict actions and the Product column its chip; 1251 -> 1268 when PLAN-oi-decision-trail-ui.md round 2 added a DecisionTrailButton after the verdict chip in the same cell renderer; 1268 -> 1293 when #1362 round 2 gave a fulfilled line its own card in place of the Suggestion card; 1293 -> 1294 when #1362 round 4 imported soLineLabel; 1294 -> 1304 when #1622 showed OrderInquiryRejectedBadge in place of the state pill of a rejected inquiry; 1306 -> 1321 when STOCK-STATUS round 6 read AutoCount for the Stock tab; 1321 -> 1343 when OI-LINE-SPLIT added the per-line Split delivery icon)',
   ],
   [
     'app/(protected)/project-sales/fulfilment-planning/components/FulfilmentPlanningSheet.tsx',
@@ -188,7 +188,7 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
   ],
   [
     'app/(protected)/project-sales/order-inquiries/components/OrderInquiryMatrixCellDrilldown.tsx',
-    'Drilldown dialog, rendered BEFORE the list grid in OrderInquiriesClient, not inside it. Already scrollerMaxHeight={false}. (Line moved 57 -> 97 when the cell drilldown gained its `axis`/`axis_key` filters; the census is keyed by line, so a site that moves is a one-line diff here rather than a silent pass)',
+    'Drilldown dialog, rendered BEFORE the list grid in OrderInquiriesClient, not inside it. Already scrollerMaxHeight={false}. (Line moved 57 -> 97 when the cell drilldown gained its `axis`/`axis_key` filters)',
   ],
   [
     'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx',

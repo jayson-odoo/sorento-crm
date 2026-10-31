@@ -40,7 +40,11 @@ def run(engine) -> bool:
         finally:
             # A session-level SET outlives this block on a pooled engine: the connection goes back
             # to the pool still at 512MB and the next borrower inherits it.
-            bind.exec_driver_sql("RESET maintenance_work_mem")
+            # On a broken connection the RESET fails too; keep the build's own error the headline.
+            try:
+                bind.exec_driver_sql("RESET maintenance_work_mem")
+            except Exception:  # noqa: BLE001
+                log.debug("RESET maintenance_work_mem failed", exc_info=True)
 
 
 def main() -> None:
