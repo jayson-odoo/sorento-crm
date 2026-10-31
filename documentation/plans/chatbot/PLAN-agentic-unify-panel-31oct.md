@@ -143,6 +143,13 @@ Reviewers at fdef525938. Fixed red first:
 
 Not changed, shown at hand test: the closing line of a proposal ("Reply yes to go ahead", `CHAT/agent/loop.py:510`) and of `composers/status.py:38-40` sits inside the last list item, one indent. A blank line before it would change WhatsApp and console text, and the words are unchanged either way.
 
+## Round 3: the browser pass and the last review
+
+- **Found live, tests could not:** every tool with a required contact pair failed for a panel user, in 12 ms, before any CRM call. `sorento_crm_mcp/server.py:1815` refuses a blank pair ahead of the staff opt-out in `scope.check_scope`, and every panel test stubs MCP. Tools: `crm_report_ask`, `crm_sales_analysis`, `crm_low_stock_report`, `crm_sales_opportunity_customer_options`. Fix: a staff-marked read skips that check for the contact pair alone, at the same rule as the opt-out (`staff_may_skip`). A caller without the staff mark, and a scoped write, stay refused. The route already takes the blank pair (200 on the copy).
+- **New thread reopened during its first turn:** its reply was dropped. Draw when the open thread is the one the send started on, or the one the reply belongs to.
+- **Not this lane:** `GET /system/chat-history` returns 500 on all four running copies, so the trace page shows a toast though its drawer opens. Thread times read 8 hours off because `updated_at` is naive UTC: same field and same read on the old path. Both reported to crew.
+- **Not changed, known limit:** `crm_portal_link_get` has no meaning without a contact, so "How do I upload a GRN" can reply "I could not fetch this request just now". How-to questions go to the guides in PR 4, and the labelled set measures them before default. The parser did read the page line on that turn, and it answered from the question, not the page.
+
 Accepted for hand test: `*Co B:*` under `3. Carol` sits inside that item, since it has no blank line before it (`tail/member_offer.py:255-262`). It needs more than one routing company, and the principal has one.
 
 ## Still to count or prove
