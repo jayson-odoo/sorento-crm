@@ -14,13 +14,13 @@ _BOLD = re.compile(r"(?<![\w*.])\*\*(?=\S)(.+?)(?<=\S)\*\*(?![\w*])")
 _ITALIC = re.compile(r"(?<![\w_.])__(?=\S)(.+?)(?<=\S)__(?![\w_])")
 # [label](target): the label alone for a path inside the CRM, label plus address for a full address. The
 # bold-around-link forms (`[**label**](x)`, `**[label](x)**`) lose their stars here and get them back below.
-_LINK = re.compile(r"\[([^\]\n]+)\]\(([^)\s]+)\)")
+_LINK = re.compile(r"\[([^\]\n]+)\]\(((?:[^()\s]|\([^()\s]*\))+)\)")
 _BULLET = re.compile(r"(?m)^([ \t]*)\*[ \t]+(?=\S)")
 
 
 def _link(m: "re.Match[str]") -> str:
     label, target = m.group(1), m.group(2)
-    return f"{label} ({target})" if re.match(r"https?://", target, re.I) else label
+    return label if target.startswith("/") else f"{label} ({target})"
 
 
 def to_whatsapp(text: str) -> str:

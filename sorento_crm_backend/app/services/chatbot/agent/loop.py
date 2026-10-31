@@ -714,8 +714,8 @@ def _system_prompt(db, user_name: str, tool_names: Any = ()) -> str:
     ))
     if left_out:
         text = (
-            f"{text}\n\nOutside this user's access: {'; '.join(left_out)}. When asked about these, say they are "
-            "outside this user's access; never say the CRM lacks them."
+            f"{text}\n\nOutside this user's or this contact's access: {'; '.join(left_out)}. When asked about these, say they "
+            "are outside this user's or this contact's access; never say the CRM lacks them."
         )
     today = datetime.now(timezone.utc).date().isoformat()
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
