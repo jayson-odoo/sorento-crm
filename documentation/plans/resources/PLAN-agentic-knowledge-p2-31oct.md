@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-KNOWLEDGE P2 - the agent and knowledge on WhatsApp
 
-Status: CARD v2 (owner re-scope 31 Oct ~23:30: agent + knowledge on WhatsApp, phased). Owner questions W-Q1..W-Q5 open,
+Status: CARD v2.1 (crew data folded in; owner re-scope 31 Oct ~23:30: agent + knowledge on WhatsApp, phased). Owner questions W-Q1..W-Q5 open,
 no code yet. Track: L (new principal, external ingest surface, auth review).
 Parent plan: `PLAN-agentic-knowledge-31oct.md` P2. P1 merged in #2036 (994ed00680).
 Owner, 31 Oct ~23:30: "Actually I want to eventually expose the agentic and the knowledge capabilities to whatsapp
@@ -113,25 +113,55 @@ replies when Jev picks chat; every router failure.
 - **W-Q1 Staff contacts on WhatsApp.** A contact linked to a CRM user: (a) runs as that user, staff documents
   included, exactly the console agent; (b) runs as a contact like a dealer. Recommendation: (a), because the bot
   already treats a linked contact as that user and UNIFY's staff principal is that rule; one rule everywhere.
-- **W-Q2 Hand-off target (was v1 Q2).** (a) "Couldn't find" + the bot's existing offer to `marketing_product` via
-  the general-enquiry route, the ticket made on the contact's own "yes"; the type's "Escalate to" stays staff side.
-  (b) per type team, needs a bot code on core teams. Recommendation: (a), owner ruling for drawings/photos, no
-  mapping layer, and no write inside the agent turn.
+- **W-Q2 Hand-off on a miss (was v1 Q2, revised by the data).** Escalation is off for nearly every dealer and
+  end-user contact (ESCALATION-CONTROL), so the offer reaches almost no dealer. (a) Follow the contact's switch:
+  escalation on -> "Couldn't find" + the open offer to `marketing_product` (general-enquiry route, ticket on the
+  contact's own "yes"); off -> "Couldn't find" + "Please refer to your salesman."; the type's "Escalate to" stays
+  staff side. (b) A knowledge miss always offers `marketing_product`, whatever the switch. Recommendation: (a),
+  because the switch is your dealer ruling of 30 Sep, and (b) would reopen escalation for 200+ dealers through one
+  door.
 - **W-Q3 W1 read tools.** (a) the table above, each under the bot's own reveal key (never more than the bot gives);
   (b) knowledge search only in W1. Recommendation: (a), because the gates already exist per contact and the pilot is
   per contact; (b) makes the agent weaker than the bot it replaces for that contact.
 - **W-Q4 W2 first write for dealers.** (a) warranty / complaint claim first, (b) order request first, (c) drawing /
   quotation request first. Recommendation: decide from the W1 pilot data; default (a), because it sits next to the
   Warranty Policy knowledge and has no stock or price risk.
-- **W-Q5 Audience rules (were v1 Q4 + Q5).** (a) `public` needs no attachment-type grant (file `access_levels` +
-  company decide) AND a contact with no access code reads no document; (b) `public` needs the grant like `dealer`.
-  Recommendation: (a), the Warranty Policy is for end users who never get grants, and an empty code fails closed.
+- **W-Q5 Audience rules (were v1 Q4 + Q5, revised by the data).** No dealer or end-user contact holds an
+  attachment-type grant today, and the product PDFs dealers ask about sit in types that are not direct access.
+  (a) No type grant for `dealer` or `public`: the type's audience is the admin's decision, then the file's
+  `access_levels` must overlap the contact's access codes, plus company scope (`is_shared` types reach every
+  company); a contact with no access code reads no document. (b) `dealer` types also need the type in
+  `visible_type_ids` (direct access or granted). Recommendation: (a), because under (b) no dealer reads anything until
+  someone grants types contact by contact; the grant keeps governing file downloads, which is a different act.
   (v1 Q3 becomes a default, not a question: types are ticked on the type form, default Off.)
 
-## Real examples
+## What the crew data changed (31 Oct, prod restore of 28 Oct, read only; details stay in the crew folder)
 
-Pending the crew-data-request on #2053 (now also: how many contacts have the Agent switch on, and 3-5 masked dealer
-questions that would route to the agent).
+The crew's masked extract is not for the public repo, so only the design conclusions are recorded here.
+
+- **Q1 is settled by the data:** almost every dealer who uses WhatsApp is NOT linked to a CRM user, so an agent that
+  needs a linked user reaches a handful of dealers. The contact principal is required, not optional.
+- **Access codes are per brand:** dealer codes are `dealer`, `mocha_dealer`, `cabana_dealer` (and an inactive
+  `nl_dealer`); office codes are per brand too. The file check is therefore "the file's `access_levels` overlaps the
+  contact's codes", never a literal `dealer` (corrects the v1 table below).
+- **Where the documents are:** the Warranty Policies (one per brand) and the catalogues sit in the existing
+  "Direct Access" type (shared, every code); the "Installation Guide" type is empty; Technical Specifications are
+  mostly images with a small set of PDFs, Certification PDFs are named by cert body. So W1's first readable set is
+  Direct Access (as Everyone) plus Technical Specifications PDFs (as Dealers). Direct Access also holds brand-scoped
+  price-tag templates, which the `access_levels` overlap keeps away from other brands.
+- **Size limits:** one catalogue is ~80 MB; P1's read limits (300 pages, 100 OCR pages) apply, and a catalogue that
+  exceeds them fails visibly on the file ("Read by AI: failed"). Image-only tech specs are OCR pages.
+- **A brand's document can be tagged to another company** (a Cabana policy under SRT). Harmless for a shared type,
+  but the eval must include a cross-brand question per brand.
+- **The Agent switch column is not on prod yet** (its migration was not applied at the 28 Oct restore): W1 pilot
+  rollout starts after that deploy.
+- **What the agent would fix (real question shapes, paraphrased):** warranty term for a product of brand X (the bot
+  sent file lists, once the wrong brand's); warranty of two brands compared; "does model X still work when the
+  battery runs out" (bot printed the product card); difference between two near-identical codes; "which of brand X's
+  products of type Y are discontinued" (bot: couldn't find); recommendation by type + finish; list by type + size.
+  These become the W1 gold set seeds, each scored against the right document and page.
+- **Escalations to the marketing product team are mostly requests for files that do not exist** (photos, tech
+  specs, installation guides), not questions a stored document answers; knowledge does not change that route.
 
 ## Appendix: card v1.1 (dealer knowledge on the bot lane; Q1 superseded by v2)
 
