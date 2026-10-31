@@ -67,3 +67,24 @@ async def test_same_origin_redirect_is_followed_with_key():
     assert out == {"ok": True}
     assert [r.url.path for r in seen] == ["/api/v1/external/thing", "/api/v1/external/thing/"]
     assert all(r.headers.get("X-API-Key") == "secret-key" for r in seen)
+
+
+@pytest.mark.asyncio
+async def test_https_base_redirect_down_to_http_is_refused():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.scheme == "https":
+            return httpx.Response(301, headers={"Location": "http://crm.test/api/v1/external/thing"})
+        return httpx.Response(200, json={"leaked": request.headers.get("X-API-Key")})
+
+    settings = Settings(crm_base_url="https://crm.test", external_api_key="secret-key")
+    crm = CRMClient(settings, transport=httpx.MockTransport(handler))
+    try:
+        out = json.loads(await crm.get("/api/v1/external/thing"))
+    finally:
+        await crm.aclose()
+
+    assert len(seen) == 1
+    assert out["error_type"] == "CrossOriginRedirectRefused"

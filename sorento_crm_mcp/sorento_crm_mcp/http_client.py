@@ -55,8 +55,8 @@ class CrossOriginRedirectRefused(httpx.RequestError):
 
 
 def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
-    port = url.port or {"http": 80, "https": 443}.get(url.scheme)
-    return (url.scheme, url.host, port)
+    # httpx lowercases scheme/host and reports a default port as None.
+    return (url.scheme, url.host, url.port)
 
 
 class CRMClient:
@@ -82,7 +82,7 @@ class CRMClient:
         if _origin(request.url) != self._origin:
             raise CrossOriginRedirectRefused(
                 f"refused to send credentials to {request.url.scheme}://{request.url.netloc.decode('ascii')}"
-                " (redirect off the CRM origin)",
+                " (off the CRM origin)",
                 request=request,
             )
 
