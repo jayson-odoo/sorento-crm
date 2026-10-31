@@ -17,7 +17,8 @@ Names used below. **Staff** = the logged-in user the panel is answering. **Act-a
 ## MCP to backend
 
 - **AC-2** While serving a staff-marked call to a read tool (GET, or `read_only` in the catalog), every CRM request the MCP server makes
-  carries the identity header. That covers catalog tools and hand-written tools alike, however deep the client call.
+  carries the identity header. That covers catalog tools and hand-written tools alike, however deep the client call. Excluded: the routing
+  hint `system/mcp-routing` (separate client, no CRM data, no such backend route).
 - **AC-3** A call that is not staff-marked never carries it, whatever headers it sent. A write tool never carries it.
 - **AC-4** A staff-marked read of a company-scoped tool with no staff id is refused, with no backend request.
 
