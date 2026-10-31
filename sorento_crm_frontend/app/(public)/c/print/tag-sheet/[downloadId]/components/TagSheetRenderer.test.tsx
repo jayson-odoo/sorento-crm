@@ -402,6 +402,41 @@ describe('bound text and pictures on the print page', () => {
     expect(screen.queryByText('placeholder')).not.toBeInTheDocument();
   });
 
+  // PRICETAG-PDF-FIELDS: the owner's PT-202610-0008 printed no description
+  // lines because the PDF payload never carried the field. This pins the
+  // other half: once the row carries it, the print page draws it.
+  it("prints the tag's price tag description lines from the payload", () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-desc',
+            type: 'text',
+            props: {
+              kind: 'text',
+              text: '{{product.price_tag_description}}',
+              fontFamily: 'DM Sans',
+              fontSize: 8,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+            },
+          }),
+        ])}
+        resolvedData={{
+          [TAG_ID]: resolved({ price_tag_description: 'Angle Valve\nS/Steel\nGunmetal' }),
+        }}
+      />,
+    );
+
+    // One `white-space: pre` block, one line per row of the description.
+    const printed = (_content: string, node: Element | null) =>
+      node?.children.length === 0 && node.textContent === 'Angle Valve\nS/Steel\nGunmetal';
+    expect(screen.getByText(printed)).toBeInTheDocument();
+  });
+
   it('prints the typed text when the layer was unlinked', () => {
     render(
       <TagSheetRenderer
