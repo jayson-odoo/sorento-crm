@@ -1,7 +1,18 @@
 # CARD v2: The side panel runs the chatbot's brain
 
-Status: v2 filed 31 Oct 2026, waiting on the owner's Q1-Q3. No product code yet. Replaces sections (b) and (d) of
-`CARD-agentic-unify-31oct.md`; its section (a), the console's one thread, stands.
+Status: owner answered Q1-Q3 on 31 Oct 2026 (below). Replaces sections (b) and (d) of `CARD-agentic-unify-31oct.md`; its
+section (a), the console's one thread, stands. Crew ruled three PRs. The console switch flip moved to lane
+CONSOLE-SWITCH-OVERRIDE, so PR 1 is the leak fix only.
+
+Owner on this card (verbatim): "Q1 panel also can, panel also can have agent mode, Q2 add them as general tools yes, Q3
+same, but our panel shoild render the formatting properly la".
+
+| Q | Ruling (crew's reading) | Effect, overrides the text below |
+| --- | --- | --- |
+| Q1 | (b), and the panel also has agent mode | Panel chat lanes change data as on WhatsApp, so section 2's test path does not stand: a panel turn is a live turn with no WhatsApp send. Every live switch is audited for the staff principal, and a panel escalation must reach a real team or person, never a phantom SLA row (`CHAT/lanes/escalation.py:1608`). A delivery target that needs a product choice comes back as one ask. Agent writes keep Confirm |
+| Q2 | (a) | Missing domains become general agent tools before the pilot |
+| Q3 | (a), rendered | Same reply content as WhatsApp; the panel renders the formatting (bold, italic, lists, links, line breaks), never a raw `*` or `_` |
+| Q3 on card v1 | My reading stands | Leak fix reaches every panel user, not behind the rollout permission |
 
 Owner, 31 Oct ~14:55, on Q1: "hmm I need the thinking and brain process to be same as chatbot, simple as that".
 Also: Q2 (a) any staff with the rollout permission, as themselves. Q3 (a) fix the permission and company leak now, whole

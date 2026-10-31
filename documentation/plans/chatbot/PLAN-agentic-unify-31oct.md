@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY, one console thread and one brain for the AI side panel
 
-Status: card v2 filed 31 Oct 2026, waiting on owner Q1-Q3 (`CARD-agentic-unify-v2-31oct.md`) and crew's call on three PRs. Full pipeline, size L.
+Status: owner answered card v2 and crew ruled three PRs, 31 Oct 2026. Mock v1 being filed; PR 1 (leak fix only) in build. Full pipeline, size L.
 Lane: AGENTIC-UNIFY, branch `crew/agentic-unify`, LEAD pattern.
 
 Behaviour, facts and questions live in the two cards; nothing is stated twice here. UAC
@@ -17,29 +17,35 @@ Behaviour, facts and questions live in the two cards; nothing is stated twice he
 
 ## Slices (assuming the recommended answers)
 
-**PR 1: leak fix + console**
+**PR 1: leak fix only**
 
 1. Staff identity on API-key reads, ungated: `require_permission_with_api_key` (`dependencies.py:524`), `_resolve_api_key_scope`,
    MCP pass-through, `staff_user_id` from every panel call site. Can only narrow. Security-reviewer scope.
-2. Per-turn lanes override replacing `_lanes_on` (`console_service.py:257-289`).
-3. Console backend: `force_agent` on `/console/turn` with a `forced` reason; merged thread read; agent reads recent bot replies;
+
+The console switch flip belongs to lane CONSOLE-SWITCH-OVERRIDE; later PRs build on its override API once merged.
+
+**PR 2: console one thread + staff principal + panel (rollout permission `system.ai_assistant_chat.agent`, granted to nobody)**
+
+2. Console backend: `force_agent` on `/console/turn` with a `forced` reason; merged thread read; agent reads recent bot replies;
    remove `/agent/turn`.
-4. Console frontend: move step and card components out of `AgentConsole.tsx`; one thread, one New conversation, composer toggle.
-
-**PR 2: staff principal + panel (rollout permission `system.ai_assistant_chat.agent`, granted to nobody)**
-
-5. Principal object at the seams listed in the card; panel envelope built from scratch; `panel-<conversation id>` key; outbound refusal.
-6. Permission checks for in-process lane reads (count first).
-7. Page context layer: parser, agent prompt, Jev state. Byte-parity test with the layer absent.
-8. Usage on the panel path; honest replies where a test-path lane previews an action.
-9. Panel backend: route split, confirm, cancel, withdraw routes gated by `ai_assistant_chat.use`; replies stored as panel messages;
+3. Console frontend: move step and card components out of `AgentConsole.tsx`; one thread, one New conversation, composer toggle.
+4. Principal object at the seams listed in the card; panel envelope built from scratch; `panel-<conversation id>` key; outbound refusal.
+5. Permission checks for in-process lane reads (count first).
+6. Page context layer: parser, agent prompt, Jev state. Byte-parity test with the layer absent.
+7. **Live panel turn (owner Q1):** audit every switch keyed on a live turn for the staff principal (ordering, phone gate, stock asks,
+   salesman job, escalation draw, usage, session, frames, profile facts, idea and opportunity saves, file delivery, reminders). Each gets a
+   decision and a test. No WhatsApp send. Escalation is delivered to a real team or person, or it does not write; if the target needs a
+   product choice, one ask to the owner.
+8. Panel backend: route split, confirm, cancel, withdraw routes gated by `ai_assistant_chat.use`; replies stored as panel messages;
    session state on the thread.
-10. Panel frontend: `WhatsAppText`, `TurnAttachments`, write cards; pill and steps for trace viewers; 375 and 1280.
+9. Panel frontend: render WhatsApp formatting via `WhatsAppText` (owner Q3: no raw `*` or `_`), `TurnAttachments`, write cards; pill and
+   steps for trace viewers; 375 and 1280.
 
-**PR 3: ported agent tools**
+**PR 3: ported agent tools (owner Q2: general tools, before the pilot)**
 
-11. Reads: complaints, SLA tracking, projects, order analytics, find, capability. Writes: complaint close, order cancel, IT ticket.
-12. `crm_report_ask` staff branch (or in PR 2 if the stock and report examples need it first).
+10. Reads: complaints, SLA tracking, projects, order analytics, find, capability. Writes: complaint close, order cancel, IT ticket. Guides
+    from AGENTIC-KNOWLEDGE #2036.
+11. `crm_report_ask` staff branch (or in PR 2 if the stock and report examples need it first).
 
 **Then:** labelled real panel questions run through both paths; pilot; default; retire `respond()`.
 
