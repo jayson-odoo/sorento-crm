@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY panel, the staff principal on the chatbot brain
 
-Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slices 1 (staff principal, live chat turn) and 2 (agent side, write routes, report path, opportunity, escalation) in Phase 2. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
+Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slices 1 (staff principal, live chat turn) and 2 (agent side, write routes, report path, opportunity, escalation) built; slice 3 (page context) in Phase 2, slice 4 (panel screen) next. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
 
 Behaviour: `CARD-agentic-unify-v2-31oct.md` and its owner table (on branch `crew/agentic-unify`, #2048). Its section 2 (test path) was overruled by the owner: a panel turn is live, with no WhatsApp send. This plan replaces that section.
 
@@ -75,6 +75,22 @@ AC-6: every read a lane makes inside the process rather than through MCP, for a 
 | Teams and agents for an escalation | `CHAT/lanes/escalation_services.py` | Not reached in this slice | Escalation is slice 3 |
 
 Trigger to centralise: none needed while one line at the read does it; a second principal type would pay for a table.
+
+## Slice 3: the page reaches the brain (AC-19, AC-20)
+
+**Architecture.** Layer: `panel_service` is the only reader of the client's snapshot; it decides what may go on, once, before the turn. Shared mechanism: the principal already carries a turn's staff facts to every seam, so the small page summary rides it. Classes this fixes: any question about the open page, for all four record kinds and for pages with no record, not one shape of question. No registry, no new table.
+
+| Consumer | Receives | Where | Why this shape |
+| --- | --- | --- | --- |
+| Parser | One line, `Current page: {json}`, directly above `Current user message:`, at every context level | `ContextLayers.page_line`, `turn/context.py` `_render_l1` and `_assemble_off`, filled at `engine.py:5378` from the principal | JSON-quoted and bounded (400 bytes) as the L5 rule requires: a title holding a newline or `Current user message:` cannot make a line of its own. No visible text: it would pollute a mini parser's reading |
+| Jev | `state["current_page"]`, the same dict; key absent with no page | `router.py` `_state`, panel branch | Published criteria already send "a why or an explanation drawn from the records" to the agent, so no prompt changes. A live probe checks this; if Jev picks chat, the owner publishes a criterion |
+| Agent | One data message: title, path, visible text (cut at 6000, the frontend's own cap, `raw.slice(0, 6000)`), record facts JSON | Joined onto `context_after`, so it sits right before the question | Never the system role: outside text stays out of it (`agent/loop.py:711`). Dropped while a proposal waits, as all bot context is. Says to quote `display_ref`, never a UUID, as `respond()` does today |
+
+The summary on the principal: `page: dict | None`, keys `title`, `path`, `record_kind`, `record_ref`, the last two only when the record may be read. It reaches the turn's envelope, so it carries no visible text and no facts. All blank snapshot means `page` is None.
+
+**Permission.** Facts come from `RecordContextService.assemble`, behind `can_read_record_context`, the same two calls as `ai_assistant_service.py:1143-1154`. Refused, unknown kind, missing row or any failure: no facts and no record keys, the turn still answers, title and path stay (they are the user's own screen). A failed read rolls back so the turn's next query runs (an id that is not a UUID is a DataError on Postgres).
+
+**Parity.** No page: not one byte changes for the parser, Jev or the agent, on any ingress. No prompt is touched, so no gate. The chat lanes get no record tool: a page question Jev sends to chat is measured in the labelled set before default.
 
 ## Still to count or prove
 
