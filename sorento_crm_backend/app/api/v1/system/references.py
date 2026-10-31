@@ -3333,7 +3333,12 @@ def _typed_text_after_narrowing(
     return [typed_by_token.get(tok, "") for tok in narrowed]
 
 
-def _narrowed_payload(db: Session, payload: "ResolveReferenceRequest") -> "ResolveReferenceRequest":
+def _narrowed_payload(
+    db: Session,
+    payload: "ResolveReferenceRequest",
+    exact_kept: list[str] | None = None,
+    spec_none: list[dict[str, Any]] | None = None,
+) -> "ResolveReferenceRequest":
     """The typed codes narrowed to the variants the message picks, two ways: by the words on
     the code's line (`narrow_code_tokens`, PR #833) and by grounded spec values
     (`narrow_code_tokens_by_specs`, PR #1513). Neither runs on a find turn
@@ -3369,12 +3374,19 @@ def _narrowed_payload(db: Session, payload: "ResolveReferenceRequest") -> "Resol
         from app.services.entity_resolver import _pin_key_norm
         from app.services.product_code_family import narrow_code_tokens_by_specs
 
+        exact_codes: list[str] = []
         by_specs = narrow_code_tokens_by_specs(
             db,
             tokens=payload.tokens,
             allowed_types=payload.allowed_entity_types,
-            specs=payload.extracted_specs,
+            specs=_without_hidden_specs(list(payload.extracted_specs), _contact_hidden_spec_keys(db, payload)),
+            exact_out=exact_codes,
+            none_out=spec_none,
         )
+        if exact_codes and exact_kept is not None:
+            # An exact code that holds the size is the answer: the route keeps its exact
+            # match only, never the longer codes its prefix probe also finds.
+            exact_kept.extend(exact_codes)
         if by_specs is not None:
             kept = {_pin_key_norm(t) for t in by_specs}
             replaced = {_pin_key_norm(t) for t in payload.tokens} - kept
@@ -3447,6 +3459,7 @@ def _keep_exact_variants(result: dict[str, Any], picked: list[str]) -> None:
     from app.services.product_code_family import _fold
 
     wanted = {_fold(t) for t in picked}
+    kept: set[str] = set()  # the tokens that had an exact row; a token with none is left as the resolver answered it
     for resolution in result.get("resolutions") or []:
         if not isinstance(resolution, dict) or _fold(resolution.get("token")) not in wanted:
             continue
@@ -3462,6 +3475,18 @@ def _keep_exact_variants(result: dict[str, Any], picked: list[str]) -> None:
             resolution["matches"] = exact
             resolution["ambiguous"] = len(exact) > 1
             resolution["resolved"] = len(exact) == 1
+            kept.add(token)
+    # A single-token AND answer reads `intersection`: drop the longer codes of a kept token there too,
+    # for a token that has an exact row there (a token with none is left as the resolver answered it).
+    if isinstance(result.get("intersection"), list):
+        def _code(m: Any) -> str:
+            return _fold(m.get("canonical_code") or m.get("code")) if isinstance(m, dict) else ""
+
+        kept = kept | {w for w in wanted if any(_code(m) == w for m in result["intersection"])}
+        result["intersection"] = [
+            m for m in result["intersection"]
+            if _code(m) in kept or not any(_code(m).startswith(w) for w in kept)
+        ]
 
 
 @router.post("/resolve")
@@ -3472,12 +3497,15 @@ def resolve_reference_post(
 ):
     """POST variant for external callers that send JSON body (e.g. n8n HTTP node)."""
     typed_tokens = list(payload.tokens or [])
-    payload = _narrowed_payload(db, payload)
+    exact_kept: list[str] = []
+    spec_none: list[dict[str, Any]] = []
+    payload = _narrowed_payload(db, payload, exact_kept, spec_none)
     picked_variants = (
         _picked_variants(typed_tokens, payload.tokens)
         if (payload.match_mode or "").strip().lower() == "or"
         else []
     )
+    picked_variants = [*picked_variants, *exact_kept]
     # A contact's packing list regions (unresolved = West) bound the shipments it can be
     # shown; no contact_id = no filter.
     regions = None
@@ -3546,6 +3574,9 @@ def resolve_reference_post(
 
     if picked_variants:
         _keep_exact_variants(result, picked_variants)
+    if spec_none and isinstance(result, dict):
+        # A size or named spec no variant of the typed code's family holds; the reply says so.
+        result["spec_none"] = spec_none
     if payload.exact_match:
         _drop_word_neighbours(result)
     if payload.require or payload.spec_fallback:

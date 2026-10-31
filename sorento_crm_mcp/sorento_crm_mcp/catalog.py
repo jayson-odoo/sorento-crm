@@ -1245,10 +1245,10 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_portal_link_get",
         (
             "Mint a 7-day user submission portal link for the active contact. Use when the user wants to file "
-            "a complaint, stock inquiry, purchase request or sponsorship form. Send the returned `portal_url`. "
-            "Required: `contact_id` (string) and `space_id` (string). Optional: `submission_type` "
-            "(PREFERRED: complaint | stock_inquiry | purchase_request | sponsorship_form - opens the portal "
-            "directly on that tab) and `base_url` (host override)."
+            "a complaint, stock inquiry, purchase request or sponsorship form, or to request price tags. Send "
+            "the returned `portal_url`. Required: `contact_id` (string) and `space_id` (string). Optional: "
+            "`submission_type` (PREFERRED: complaint | stock_inquiry | purchase_request | sponsorship_form | "
+            "price_tag_request - opens the portal directly on that tab) and `base_url` (host override)."
         ),
         "/api/v1/external/portal-tokens/",
         (),

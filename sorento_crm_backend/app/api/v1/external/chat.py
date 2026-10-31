@@ -56,9 +56,9 @@ from app.schemas.integration import IntegrationLogCreate
 from app.services.chatbot import complete_turn, inbox_queue, run_turn
 # The head's OWN lookup for "which row is this message's turn" (D15), so the id-less
 # complete route and the duplicate-delivery check can never pick different rows.
-from app.services.chatbot.engine import find_turn_for_message
+from app.services.chatbot.engine import _send_actions, find_turn_for_message
 from app.services.error_handler import AppException
-from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
+from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
 from app.services.chatbot.contracts import (
     DIRECT_INGRESS,
     CompleteRequest,
@@ -132,7 +132,7 @@ def _logged_payload(payload: BaseModel, *, reference: str = "") -> str:
 # parser reads, in a core module the package does not own, so the two can never drift
 # into two different apologies for the same silence and the package keeps exporting
 # exactly its two entry points (D3).
-TAIL_ERROR_REPLY = CHATBOT_TURN_ERROR_REPLY
+TAIL_ERROR_REPLY = CHATBOT_REPLY_TURN_FAILED
 
 
 # H6, AC-701: the thin spine has ONE trigger. In S7 mode `/turn` runs the whole turn and
@@ -547,8 +547,16 @@ def chat_turn_complete(
         row = _turn_row(db, turn_id)
         dry_run = bool(getattr(row, "is_test", False))
         row_is_test = dry_run
-        reply = {
-            "text": TAIL_ERROR_REPLY,
+        # CHATBOT-FAIL-TRIAGE AC-1g: a tail that failed AFTER it closed the row `done` had
+        # composed its answer; that answer is sent and the failure is only logged. The
+        # error sentence is for a turn with no composed answer.
+        stored = getattr(row, "response", None)
+        composed = stored.get("reply") if getattr(row, "status", None) == "done" and isinstance(stored, dict) else None
+        text = composed.get("text") if isinstance(composed, dict) else None
+        if not (isinstance(text, str) and text.strip()):
+            composed, text = None, TAIL_ERROR_REPLY
+        reply = composed or {
+            "text": text,
             "quick_replies": None,
             "result_set": None,
             "attachments_src": None,
@@ -558,17 +566,10 @@ def chat_turn_complete(
             reply=reply,
             # NEVER a null reply and never an empty `actions`: the caller executes
             # `actions` and nothing else (the executor ruling, 5 Sep), so an answer whose
-            # words are only on `reply.text` is a customer left in silence. Same four keys
-            # `_send_actions` emits, so the sender reads one shape on every turn.
-            actions=[
-                {
-                    "kind": "send_message",
-                    "text": TAIL_ERROR_REPLY,
-                    "quick_replies": None,
-                    "result_set": None,
-                    "dry_run": dry_run,
-                }
-            ],
+            # words are only on `reply.text` is a customer left in silence. Built by the
+            # engine's own `_send_actions`, so a composed answer keeps its
+            # `send_attachments` (CHATBOT-FAIL-TRIAGE N1) and the sender reads one shape.
+            actions=_send_actions({**reply, "text": text}, dry_run=dry_run),
             is_test=dry_run,
         )
 

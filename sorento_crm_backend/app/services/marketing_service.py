@@ -1091,18 +1091,22 @@ class PromotionService:
         return {"message": f"{deleted} promotion(s) deleted", "deleted_count": deleted}
 
     def bulk_update_access_levels(self, promotion_ids: list[str], access_levels: list[str]):
-        """Set access_levels on multiple promotions. Returns count updated. Validates against contact access type catalog."""
+        """Set access_levels on multiple promotions. Returns count updated. Validates against contact access type catalog.
+
+        Row by row through the ORM read, never `query(...).update()`: the company scope
+        filter covers SELECTs only, so an id from another company is not found and not
+        counted here.
+        """
         if not promotion_ids:
             return {"message": "No promotions selected", "updated_count": 0}
         access_svc = ContactAccessTypeService(self.db)
         normalized = access_svc.validate_access_levels(access_levels, field_name="access_levels")
 
-        updated = (
-            self.db.query(Promotion)
-            .filter(Promotion.id.in_(promotion_ids))
-            .update({"access_levels": normalized}, synchronize_session=False)
-        )
+        rows = self.db.query(Promotion).filter(Promotion.id.in_(promotion_ids)).all()
+        for promotion in rows:
+            promotion.access_levels = list(normalized)
         self.db.commit()
+        updated = len(rows)
         return {"message": f"Access levels set for {updated} promotion(s).", "updated_count": updated}
 
     def sync_promotion_active_by_calendar_window(self) -> dict[str, Any]:

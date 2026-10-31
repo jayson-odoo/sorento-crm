@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from tests.chatbot import fail_triage_texts as FT
 
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot import llm_call
@@ -222,11 +223,9 @@ def test_a_parser_rate_limit_replies_with_the_plain_sentence(
     stub_parser(error=parser_mod.ParserError(f"parser provider call failed: {OWNER_429}", rate_limited=True))
     stub_access()
     result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-    assert result.reply["text"] == llm_call.RATE_LIMITED_REPLY
+    assert result.reply["text"] == FT.H_AI
     assert "429" not in result.reply["text"] and "error" not in result.reply["text"].lower()
-    assert [a["text"] for a in result.actions if a["kind"] == "send_message"] == [
-        llm_call.RATE_LIMITED_REPLY
-    ]
+    assert [a["text"] for a in result.actions if a["kind"] == "send_message"] == [FT.H_AI]
     row = _turn_row(session_factory, result.turn_id)
     assert row.status == "failed" and "429" in row.error, "the operator still sees why"
 
@@ -246,7 +245,7 @@ def test_a_clarifier_rate_limit_replies_with_the_plain_sentence(
     result = engine_mod.run_turn(
         _envelope(message=_message("what can you do")), session_factory=session_factory
     )
-    assert result.reply["text"] == llm_call.RATE_LIMITED_REPLY
+    assert result.reply["text"] == FT.H_OFFER
     assert not result.reply["text"].startswith("There is some error encountered by the AI: ")
     row = _turn_row(session_factory, result.turn_id)
     assert row.status == "failed" and row.stage == "casual_llm" and "429" in row.error

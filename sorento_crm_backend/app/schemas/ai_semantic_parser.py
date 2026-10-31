@@ -35,7 +35,7 @@ Intent = Literal[
 ]
 
 FormTarget = Literal[
-    "complaint", "stock_inquiry", "purchase_request", "sponsorship_form"
+    "complaint", "stock_inquiry", "purchase_request", "sponsorship_form", "price_tag_request"
 ]
 
 Domain = Literal[
@@ -128,7 +128,7 @@ PARSE_RESULT_JSON_SCHEMA: dict = {
         },
         "form_target": {
             "type": ["string", "null"],
-            "enum": ["complaint", "stock_inquiry", "purchase_request", "sponsorship_form", None],
+            "enum": ["complaint", "stock_inquiry", "purchase_request", "sponsorship_form", "price_tag_request", None],
             "description": "Which form, when intent=form_submit; else null.",
         },
         "entities": {

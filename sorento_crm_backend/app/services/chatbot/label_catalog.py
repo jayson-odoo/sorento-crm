@@ -372,7 +372,30 @@ LABELS: dict[str, dict[str, str]] = {
     'Okay, noted.': {"ms": 'Baik, dicatat.', "zh": '好的，已记录。'},
     'Escalation declined.': {"ms": 'Rujukan dibatalkan.', "zh": '已取消转交。'},
     'Sorry, I ran into a problem understanding that. Please try again in a moment.': {"ms": 'Maaf, saya menghadapi masalah memahami mesej itu. Sila cuba lagi sebentar lagi.', "zh": '抱歉，我暂时无法理解您的信息，请稍后再试。'},
+    "I could not fetch {label} for {codes} just now, please try again.": {"ms": "Saya tidak dapat mendapatkan {label} untuk {codes} sekarang, sila cuba lagi.", "zh": "暂时无法获取{codes}的{label}，请稍后再试。"},
+    # CHATBOT-FAIL-TRIAGE: the honest failure replies (`chatbot_reply_copy.py`).
+    "I could not read your message just now because our AI service did not answer. Please send it again.": {"ms": "Saya tidak dapat membaca mesej anda sekarang kerana perkhidmatan AI kami tidak menjawab. Sila hantar semula.", "zh": "由于我们的 AI 服务没有响应，暂时无法读取您的信息。请重新发送。"},
+    "I hit an error while answering this and could not finish it. Please send it again.": {"ms": "Saya menemui ralat semasa menjawab dan tidak dapat menyelesaikannya. Sila hantar semula.", "zh": "回答时出现错误，无法完成。请重新发送。"},
+    "I was still answering your previous message, so I could not take this one. Please send it again.": {"ms": "Saya masih menjawab mesej anda sebelum ini, jadi tidak dapat menerima yang ini. Sila hantar semula.", "zh": "我还在回复您上一条信息，所以没能处理这一条。请重新发送。"},
+    "I could not pass this to the {team} team just now. Please contact them directly.": {"ms": "Saya tidak dapat menyerahkan ini kepada pasukan {team} sekarang. Sila hubungi mereka secara terus.", "zh": "暂时无法转交给{team}团队。请直接联系他们。"},
+    "I could not pass this to our team just now. Please contact us directly.": {"ms": "Saya tidak dapat menyerahkan ini kepada pasukan kami sekarang. Sila hubungi kami secara terus.", "zh": "暂时无法转交给我们的团队。请直接联系我们。"},
+    "No current {label} found for {subject}.": {"ms": "Tiada {label} semasa ditemui untuk {subject}.", "zh": "找不到{subject}的当前{label}。"},
+    "Which customer or salesperson should I check the {label} for?": {"ms": "Pelanggan atau jurujual mana yang patut saya semak {label}nya?", "zh": "请问要查哪位客户或销售员的{label}？"},
+    "Which product do you want the {label} for? Send me the code.": {"ms": "Produk mana yang anda mahu {label}nya? Hantarkan kod produk.", "zh": "您要哪个产品的{label}？请发送产品代码。"},
+    "That report is not available on your account.": {"ms": "Laporan itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法查看该报告。"},
+    # CHATBOT-FAIL-TRIAGE AC-7c: the escalation's topic clarify (`lanes/escalation.py`). Its
+    # `{topics}` token is said label by label (`Localizer._names`), and the five topic labels
+    # are quick-reply labels, replaced whole (never INLINE; at most 20 characters, the
+    # WhatsApp button limit `quick_reply_guard.MAX_TITLE_CHARS`).
+    "Which topic is this about - {topics}?": {"ms": "Perkara ini tentang topik apa - {topics}?", "zh": "这是关于哪个主题 - {topics}？"},
+    "Orders & delivery": {"ms": "Pesanan & hantaran", "zh": "订单与送货"},
+    "Stock & ETA": {"ms": "Stok & ETA", "zh": "库存与到货时间"},
+    "Product info": {"ms": "Maklumat produk", "zh": "产品信息"},
+    "Promotions": {"ms": "Promosi", "zh": "促销"},
+    "Forms": {"ms": "Borang", "zh": "表格"},
     'Low stock report is not enabled for your account.': {"ms": 'Laporan stok rendah tidak diaktifkan untuk akaun anda.', "zh": '您的账户未开通低库存报告。'},
+    # CHATBOT-FAIL-TRIAGE AC-3: a portal link ask for a form the contact is not granted.
+    "That form is not available on your account.": {"ms": "Borang itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法使用该表格。"},
     'Could not run the low stock report right now.': {"ms": 'Laporan stok rendah tidak dapat dijalankan sekarang.', "zh": '暂时无法生成低库存报告。'},
     # REPORT-SMART-1021 step 5: a report failure is a plain sentence.
     "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.": {"ms": "Saya belum dapat membandingkan pecahan bulan demi bulan. Minta jumlah keseluruhan, atau pecahkan mengikut dimensi lain.", "zh": "暂时无法对比逐月明细。请查看总计，或按其他维度拆分。"},
@@ -396,6 +419,7 @@ LABELS: dict[str, dict[str, str]] = {
     # WA-MSG-TRIM (owner, 3 Oct 2026): the escalation lane's ONE customer message.
     'Routed to your PIC, they will reply shortly.': {"ms": 'Telah diserahkan kepada PIC anda, mereka akan membalas tidak lama lagi.', "zh": '已转交给您的负责人（PIC），他们会尽快回复。'},
     'and {n} others, reply with the full code.': {"ms": 'dan {n} lagi, balas dengan kod penuh.', "zh": '还有 {n} 个，请回复完整代码。'},
+    "None with {label} {value}.": {"ms": "Tiada dengan {label} {value}.", "zh": "没有{label} {value}。"},
     "Couldn't find {names}.": {"ms": 'Tidak dapat menemui {names}.', "zh": '找不到 {names}。'},
     'I have {names}.': {"ms": 'Saya ada {names}.', "zh": '我已记下 {names}。'},
     'What would you like me to know?': {"ms": 'Apa yang anda mahu saya tahu?', "zh": '您想让我了解什么？'},
@@ -706,7 +730,19 @@ INLINE = frozenset(
         "Okay, noted.",
         "Escalation declined.",
         "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "I could not fetch {label} for {codes} just now, please try again.",
+        "I could not read your message just now because our AI service did not answer. Please send it again.",
+        "I hit an error while answering this and could not finish it. Please send it again.",
+        "I was still answering your previous message, so I could not take this one. Please send it again.",
+        "I could not pass this to the {team} team just now. Please contact them directly.",
+        "I could not pass this to our team just now. Please contact us directly.",
+        "No current {label} found for {subject}.",
+        "Which customer or salesperson should I check the {label} for?",
+        "Which product do you want the {label} for? Send me the code.",
+        "That report is not available on your account.",
+        "Which topic is this about - {topics}?",
         "Low stock report is not enabled for your account.",
+        "That form is not available on your account.",
         "Could not run the low stock report right now.",
         "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.",
         "I couldn't read that period. Which period? For example this month, September, 2026, or 1 to 15 Sep.",
@@ -1069,11 +1105,42 @@ class Localizer:
         return out
 
     def _names(self, values: dict[str, str]) -> dict[str, str]:
-        """`values` with a `{names}` tail "... and 3 others" said in the table's wording, when it has one."""
+        """`values` with a `{names}` tail "... and 3 others" said in the table's wording, when it
+        has one, and a `{topics}` list said label by label (`_topics`)."""
         tail, m = self.table.get(_NAMES_TAIL), _OTHERS.fullmatch(values.get("names") or "")
-        if tail is None or m is None:
+        if tail is not None and m is not None:
+            values = {**values, "names": m.group(1) + tail.replace("{n}", m.group(2))}
+        return self._topics(values)
+
+    def _topics(self, values: dict[str, str]) -> dict[str, str]:
+        """CHATBOT-FAIL-TRIAGE B3: a `{topics}` token ("A, B or C" of catalogued labels) with
+        each label said whole in the table's wording and the table's own " or " joiner. A label
+        the table lacks leaves the token as printed, never half translated."""
+        listed = values.get("topics")
+        if not listed:
             return values
-        return {**values, "names": m.group(1) + tail.replace("{n}", m.group(2))}
+        head, joiner, last = listed.rpartition(" or ")
+        labels = [*(head.split(", ") if joiner else []), last]
+        said = [self.table.get(label) for label in labels]
+        if None in said:
+            return values
+        joined = said[0] if len(said) == 1 else ", ".join(said[:-1]) + self.table.get(" or ", " or ") + said[-1]
+        return {**values, "topics": joined}
+
+    def quick_replies(self, labels: str) -> str:
+        """n8n's comma-joined quick-reply set with every label replaced whole (B3), or as
+        printed when one label is not catalogued (never half translated). This runs after the
+        engine's button guard, so a set whose translation would put any title past the
+        WhatsApp limit (`quick_reply_guard.MAX_TITLE_CHARS`) is sent in English whole."""
+        from app.services.chatbot.quick_reply_guard import MAX_TITLE_CHARS
+
+        if not self.table or not labels:
+            return labels
+        parts = [part.strip() for part in labels.split(",")]
+        said = [None if part in DIRECT_ONLY else self.table.get(part) for part in parts]
+        if None in said or any(len(title.strip()) > MAX_TITLE_CHARS for title in said):
+            return labels
+        return ", ".join(said)
 
     def _inline_line(self, text: str) -> str:
         found: list[tuple[int, int, int, str]] = []

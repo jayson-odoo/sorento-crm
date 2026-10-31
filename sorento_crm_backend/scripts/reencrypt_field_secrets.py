@@ -67,6 +67,7 @@ COLUMNS = (
     ("ai_assistant_configs", "anthropic_api_key_ciphertext", True),
     ("ai_assistant_configs", "gemini_api_key_ciphertext", True),
     ("ai_assistant_configs", "openai_api_key_ciphertext", True),
+    ("ai_assistant_configs", "typesafe_api_key_ciphertext", True),
 )
 STATES = ("current", "old_key", "plaintext", "unreadable", "empty")
 

@@ -16,6 +16,13 @@ change chatbot resolution even when its own PR has no chatbot file in the diff -
 nothing wrong, because nothing in #713 was. A deploy that touches ANY reference table the
 resolver searches is chatbot-relevant.
 
+**Console turns are routed (AGENTIC-P2-ROUTE).** `/console/turn` (this check, and
+`scripts/chatbot_journey.py`) now asks the router first for a contact with the Agent switch on, AI
+replies on and an active linked user, once a TypeSafe (Jev) key is set in AI assistant settings.
+Such a turn can go to the agent and spend on Jev and the agent's model. Run these checks on
+contacts with the Agent switch OFF to test today's bot; the response's `route` block says which side
+answered.
+
 ```bash
 cd sorento_crm_backend
 venv/bin/python scripts/chatbot_console_check.py \

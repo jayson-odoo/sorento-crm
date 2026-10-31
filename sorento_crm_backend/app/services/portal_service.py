@@ -80,6 +80,9 @@ OTP_DAILY_CAP = 10
 # include ORDER as the only thing keeping the generic handler off the real price
 # tag writes.
 SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorship_form")
+# The tabs a portal LINK may open on (`?type=`): the portal landing also opens the price tag
+# request form, which is a link target and nothing else here.
+LINK_TYPES = SUPPORTED_TYPES + ("price_tag_request",)
 
 # What the generic submission routes, neighbours, list and attachments accept: the always-visible
 # base plus `project_registration` (PROJECT-REG-PORTAL D1). SUPPORTED_TYPES stays the VISIBILITY
@@ -530,10 +533,10 @@ class PortalService:
         if not base:
             base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
         kind = (submission_type or "").strip().lower()
-        if kind and kind not in SUPPORTED_TYPES:
+        if kind and kind not in LINK_TYPES:
             raise handle_validation_error(
                 f"Unsupported submission type: {submission_type!r}. "
-                f"Allowed: {', '.join(SUPPORTED_TYPES)}."
+                f"Allowed: {', '.join(LINK_TYPES)}."
             )
         slug = None
         row = token_row

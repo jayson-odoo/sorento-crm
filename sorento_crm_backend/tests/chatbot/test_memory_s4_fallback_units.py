@@ -334,7 +334,8 @@ class TestNeverSilentNeverAnException:
 
         monkeypatch.setattr(casual, "call_clarifier", boom)
         result = _turn(session_factory, stub_access, "hello", {"message_type": "casual"}, 0)
-        assert sent_text(result) == CHATBOT_TURN_ERROR_REPLY
+        from tests.chatbot import fail_triage_texts as FT
+        assert sent_text(result) == FT.H_OFFER
         assert result.status == "failed"
 
     def test_the_exception_prefix_is_gone_from_the_code(self) -> None:

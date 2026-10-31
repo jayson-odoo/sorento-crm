@@ -597,6 +597,20 @@ class AgentBusy(Exception):
     """Another turn for the same contact is still running."""
 
 
+def enforce_agent_rate_limit(operator_user_id: str) -> None:
+    """Each agent turn can spend a dozen model calls, so they are limited per operator (fail-open
+    without Redis). The one check for POST /agent/turn and for console turns the router sends here."""
+    from app.services import rate_limit
+    from app.services.error_handler import AppException
+
+    if not rate_limit.hit("agent_turn", str(operator_user_id), limit=30, window_seconds=600).allowed:
+        raise AppException(
+            status_code=429,
+            message="Too many agent messages, wait a few minutes.",
+            code="agent_turn_rate_limited",
+        )
+
+
 @contextmanager
 def single_flight(contact_respond_id: str):
     """One agent turn at a time per contact: a Postgres advisory lock held on a connection of

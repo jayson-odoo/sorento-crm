@@ -1439,11 +1439,11 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # ==================================================================
     "crm_portal_link_get": ToolIntent(
         category="user_submission_portal",
-        intent="Hand the contact a 7-day portal link for filing complaints, stock inquiries (a.k.a. stock enquiries / product enquiries), purchase requests, or sponsorship forms.",
+        intent="Hand the contact a 7-day portal link for filing complaints, stock inquiries (a.k.a. stock enquiries / product enquiries), purchase requests, sponsorship forms, or price tag requests.",
         description=(
             "POST /api/v1/external/portal-tokens/ with payload_json containing contact_id, space_id, "
             "and (strongly preferred) submission_type - one of complaint, stock_inquiry, purchase_request, "
-            "sponsorship_form. submission_type makes the portal open directly on the matching tab after "
+            "sponsorship_form, price_tag_request. submission_type makes the portal open directly on the matching tab after "
             "the contact verifies, so always derive it from the user's request. "
             "Returns a `portal_url` to send to the user. The portal lets them save drafts, attach photos "
             "(including pasted screenshots), submit, and review submission status. After 7 days the link "

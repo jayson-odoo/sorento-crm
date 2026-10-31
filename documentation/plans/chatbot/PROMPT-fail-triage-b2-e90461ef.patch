@@ -1,0 +1,20 @@
+# Parser version for CHATBOT-FAIL-TRIAGE-B2. Base: production chatbot_semantic_parser text, md5 57d7d4126f28b8df812e2be2de3a3893.
+# Result: md5 e90461efac72529ef0df7138e726593c. Gated by crew on the hidden split, 31 Oct 2026. No further edit without a new gate.
+# Line numbers are of the base text. Not applied by any code; how it ships is an owner decision.
+--- A_production
++++ E_e90461ef
+@@ -82 +82 @@
+-  portal_link / get_portal_link → complaint, stock inquiry, product inquiry, purchase request, sponsorship form.
++  portal_link / get_portal_link → complaint, stock inquiry, product inquiry, purchase request, sponsorship form, price tag request.
+@@ -211,0 +212 @@
++A CODE WITH A SIZE STUCK ON ITS END: a product code never ends in mm or cm. Emit two entities, never one: "ABC123150MM" -> product "ABC123" + specification {raw "150mm", spec_key size, spec_value 150}; "abc123-150mm" -> the same. The number is in millimetres, with or without a Spec candidates line. A trailing number with no unit stays part of the code.
+@@ -276,0 +278,2 @@
++A domain_hint from this map always fills both, on every ask: a plain stock, order or product question is a routing signal, not only an escalation.
++A team the user NAMES decides over this map: the name of exactly one team of the routing enum -> that team ("the warehouse team" -> "warehouse", "certification" -> "purchasing_certification"). A word that fits several teams, or none -> suggested_team is the user's OWN word, lowercased, VERBATIM ("marketing", "sales"), suggested_agent null: the code asks which.
+@@ -431,0 +435 @@
++  "portal_form": on a portal_link ask, the form it names: "complaint|stock_inquiry|purchase_request|sponsorship_form|price_tag_request"; else null
+@@ -553,0 +558 @@
++The asker's OWN cost is this same ask, in any language: "my cost", "dealer cost", "costing"; the code answers it by who the contact is.
+@@ -781 +786 @@
+-      a mounting, a trap, a material, a thickness, a size, a flush type, ... ONLY a key that a Spec candidates line of the user message names in its "(key: value)" bracket (spec_key and spec_value come from that bracket); the lines of that block are the whole vocabulary, in any language. raw = the
++      a mounting, a trap, a material, a thickness, a size, a flush type, ... ONLY a key that a Spec candidates line of the user message names in its "(key: value)" bracket (spec_key and spec_value come from that bracket); the lines of that block are the whole vocabulary, in any language, except a size stuck on a code (see A CODE WITH A SIZE STUCK ON ITS END). raw = the
