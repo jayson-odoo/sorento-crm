@@ -9,8 +9,8 @@ whatever we can do, wq5 a but i feel like we need to work on the control to be e
 flexible, keep route cutoff")
 
 - W-Q1 (a): a contact linked to an active CRM user runs as that user (today's agent, unchanged).
-- W-Q2 (b): a knowledge miss offers the marketing product team whatever the contact's escalation switch. Crew is
-  confirming the "shoundlt" wording; slice S4 is built last so the wording can still flip it (one condition).
+- W-Q2 (a), owner correction 1 Nov ("shouldn't"): a knowledge miss follows the contact's escalation switch (on: the
+  marketing product team offer; off: "Please refer to your salesman."). No switch.
 - W-Q3 (a): the bot's read tools plus knowledge, each under the bot's own reveal key.
 - W-Q4: W2 = every dealer write the agent can do safely, confirm-before-write, least risk first (section W2).
 - W-Q5 (a) + a simpler access control model as a follow-up lane with its own mock (section "Access control lane").
@@ -86,34 +86,21 @@ Before `engine.run_turn` (`inbox_queue.py:857`):
 - `run_agent_turn` gains `is_test: bool = True` (console default unchanged; WhatsApp `False`) and the rate limit
   keys on the contact when there is no operator.
 
-### S4 - hand-off on a knowledge miss (W-Q2 b, one switch) - built last
+### S4 - hand-off on a knowledge miss (W-Q2 a, owner correction 1 Nov) - built last
 
-Crew ruling 1 Nov: build (b) for now, keep it a single switch (owner wording "should" vs "shouldn't" pending).
-- The agent arms the bot's existing single-team offer as the contact's open question
-  (`session_vars.open_question`, shape of `turn/chat_state.py:631-640`): `team_pick`, `expects="yes_no"`, team
-  `marketing_product`, agent `general_enquiries`, `payload.source = "knowledge_miss"`. Reply ends with
-  "I couldn't find that in our product documents." plus the offer line. No ticket in the agent turn.
-- The router sends the contact's answer to the bot (open question, `router.py:71-73`), so today's escalation lane
-  makes the ticket on the contact's own "yes".
-- Barred contacts: ONE switch `knowledge_service.KNOWLEDGE_MISS_IGNORES_ESCALATION_BAR = True`, read at ONE place,
-  the turn's profile load (`turn_runtime.py:534`, not `engine.py`): when the contact's open question is a
-  `knowledge_miss` offer and the switch is on, that turn's profile has `escalation_allowed = True`, so every
-  backstop (`engine.py`, `compose.py`, `answer_bridge.py`) lets the one answer through without being edited.
-  Switch off -> barred contacts get "Please refer to your salesman." and no offer is armed.
-- Staff-tier profiles (`is_staff_profile`) are never offered (unchanged rule).
-- Contract (names the tests use):
-  - `knowledge_service.KNOWLEDGE_MISS_IGNORES_ESCALATION_BAR = True` (the one switch),
-    `KNOWLEDGE_MISS_SOURCE = "knowledge_miss"`, `KNOWLEDGE_MISS_LINE = "I couldn't find that in our product documents."`.
-  - `knowledge_service.arm_knowledge_miss_offer(db, contact_pk) -> bool`: writes `respond_contacts.session_vars
-    ["open_question"]` = `pending.to_wire(team_pick ...)` (team `marketing_product`, option payload
-    `{"team": "marketing_product", "agent": "general_enquiries", "brand_code": None}`, `expects="yes_no"`,
-    `payload={"source": "knowledge_miss", "agent": "general_enquiries"}`), keeping every other session key.
-    Returns False and writes nothing when the contact is barred and the switch is off.
-  - Local agent tool `crm_knowledge_handoff` (no arguments), contact principal only, model-chosen (no word list):
-    the protocol tells the model to call it when the documents do not answer. It arms the offer; the loop then makes
-    sure the final reply carries `KNOWLEDGE_MISS_LINE` and the offer sentence (code-added, like IDEATE's note).
-  - `turn_runtime.load_profile`: barred row + switch on + the row's `session_vars.open_question.payload.source ==
-    "knowledge_miss"` -> `escalation_allowed=True`; anything else unchanged.
+Owner correction, 1 Nov: he meant "shouldn't" always go to marketing, so W-Q2 is (a): a knowledge miss FOLLOWS the
+contact's escalation switch. No switch, no change to the bot's barred checks or to `turn_runtime.load_profile`.
+- Escalation allowed: the reply says "I couldn't find that in our product documents." and the agent arms the bot's
+  existing single-team offer as the contact's open question (`session_vars.open_question`, shape of
+  `turn/chat_state.py:_hand_over`): `team_pick`, `expects="yes_no"`, team `marketing_product`, agent
+  `general_enquiries`, `payload.source = "knowledge_miss"`. The router sends the contact's answer to the bot (open
+  question), so today's escalation lane makes the ticket on the contact's own "yes". No ticket in the agent turn.
+- Escalation barred (ESCALATION-CONTROL, most dealers): "I couldn't find that in our product documents." plus
+  "Please refer to your salesman." (`turn/refer.py`), nothing armed. Staff-tier profiles are never offered.
+- Contract (names the tests use): `knowledge_service.KNOWLEDGE_MISS_SOURCE = "knowledge_miss"`,
+  `KNOWLEDGE_MISS_LINE`, `arm_knowledge_miss_offer(db, contact_pk) -> bool` (False and nothing written when barred);
+  local agent tool `crm_knowledge_handoff` (no arguments), contact principal only, chosen by the model (no word
+  list); the loop makes sure the final reply carries the tool's `say` text (code-added).
 
 ### S6 - ideas leave test mode (crew ruling 1 Nov, from AGENTIC-IDEATE #2038)
 

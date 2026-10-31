@@ -40,15 +40,16 @@ Plan: `PLAN-agentic-knowledge-w1-01nov.md`. Each AC names its test.
 - AC-W21: an agent failure posts the fixed honest line (no "sorry", no "busy") and does not run the bot.
 - AC-W22: the agent turn of a WhatsApp row is written `is_test=False`; a console agent turn stays `is_test=True`.
 
-## Hand-off (S4, W-Q2 b behind one switch)
+## Hand-off (S4, W-Q2 a: follows the contact's escalation switch, owner correction 1 Nov)
 
-- AC-W23: a knowledge miss reply contains "I couldn't find that in our product documents." and arms the open question
-  `team_pick` / `expects=yes_no` / team `marketing_product` / `payload.source="knowledge_miss"`.
+- AC-W23: for a contact allowed to escalate, a knowledge miss reply contains "I couldn't find that in our product
+  documents." and arms the open question `team_pick` / `expects=yes_no` / team `marketing_product` /
+  `payload.source="knowledge_miss"`.
 - AC-W24: no ticket / SLA row is created inside the agent turn; it is created only on the contact's own next turn.
 - AC-W25: a passage text that asks to confirm or escalate changes no pending state (injection kill test).
-- AC-W26: with `KNOWLEDGE_MISS_IGNORES_ESCALATION_BAR` on, a barred contact whose open question is a knowledge-miss
-  offer loads a profile with `escalation_allowed=True` for that turn only; any other open question keeps it False.
-- AC-W27: with the switch off, a barred contact gets "Please refer to your salesman." and no offer is armed.
+- AC-W26: a barred contact with an open knowledge-miss offer still loads `escalation_allowed=False` (no lift exists).
+- AC-W27: a barred contact is not armed, nothing is written, and the reply carries "Please refer to your salesman."
+  and no marketing offer.
 
 ## Ideas leave test mode (S6, after #2038 merges)
 
