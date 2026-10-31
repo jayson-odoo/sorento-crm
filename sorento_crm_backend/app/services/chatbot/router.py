@@ -76,7 +76,7 @@ def decide_route(
 
     # `None` = the contact's stored session, `{}` = a console Reset (remembers nothing).
     block = {"session_vars": contact.session_vars if session_vars is None else session_vars}
-    if session_state.pending_of(block) is not None:
+    if session_state.pending_of(block) is not None or _bot_asked(block):
         return RouteDecision("chat", "open_question")
 
     settings = db.query(SystemSetting).first()
@@ -178,6 +178,19 @@ def _agent_turns_today(db, contact_respond_id: str) -> int:
         )
         .count()
     )
+
+
+def _bot_asked(block: dict[str, Any]) -> bool:
+    """Is the bot waiting on this contact: a required ask on the focus, or a fresh held similar list
+    (either lane's pointer)? Their next message answers it, whatever Jev would make of it."""
+    from app.services.ideation_capture_service import _held_pointer
+
+    keys = session_state.five_keys(block)
+    focus = keys.get("focus")
+    if isinstance(focus, dict) and focus.get("required_ask"):
+        return True
+    ideation = keys.get("ideation")
+    return isinstance(ideation, dict) and _held_pointer(ideation, bool(ideation.get("is_test"))) is not None
 
 
 def _agent_asked_back(db, contact_respond_id: str) -> bool:
