@@ -76,7 +76,7 @@ def test_default_client_sends_no_staff_marker(seen):
 
 
 def test_staff_client_sends_the_staff_marker(seen):
-    MCPRuntimeClient("http://mcp:8765/mcp", staff=True).call_tool("crm_x", {})
+    MCPRuntimeClient("http://mcp:8765/mcp", staff=True, staff_user_id="u-1").call_tool("crm_x", {})
     assert seen[0].headers["x-mcp-scope"] == "staff"
 
 
@@ -90,3 +90,4 @@ def test_every_ai_assistant_client_is_staff():
     assert len(calls) >= 5
     for args in calls:
         assert "staff=True" in args, args
+        assert "staff_user_id=" in args, f"AGENTIC-UNIFY AC-1: every panel client carries the staff id: {args}"
