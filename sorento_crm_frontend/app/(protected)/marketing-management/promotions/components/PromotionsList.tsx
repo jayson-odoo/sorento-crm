@@ -87,7 +87,7 @@ export default function PromotionsList() {
   const [bulkResubmitDialogOpen, setBulkResubmitDialogOpen] = useState(false);
   // Re-extraction rewrites a promotion's groups and products, so it is gated on the
   // same permission as editing one by hand.
-  const canResubmit = useHasPermission('marketing.promotions.edit');
+  const canEdit = useHasPermission('marketing.promotions.edit');
   const canDelete = useHasPermission('marketing.promotions.delete');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterAccessLevel, setFilterAccessLevel] = useState<string>('');
@@ -529,14 +529,14 @@ export default function PromotionsList() {
                 onClick: handleCompilePdf,
                 disabled: compilePdf.isPending,
               },
-              {
-                key: 'access-levels',
-                label: 'Set Access Levels',
-                icon: Users,
-                onClick: () => setBulkAccessLevelsDialogOpen(true),
-              },
-              ...(canResubmit
+              ...(canEdit
                 ? [
+                    {
+                      key: 'access-levels',
+                      label: 'Set Access Levels',
+                      icon: Users,
+                      onClick: () => setBulkAccessLevelsDialogOpen(true),
+                    },
                     {
                       key: 'resubmit',
                       label: 'Resubmit',
