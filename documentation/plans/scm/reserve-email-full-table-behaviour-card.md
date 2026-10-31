@@ -1,6 +1,6 @@
 # Behaviour card: reserve request / reserved emails, full table (RESERVE-EMAIL-FULL-TABLE)
 
-Status: card v2 (31 Oct 2026). Owner has answered Q1-Q4. Next: the email mockup ask (open point L below).
+Status: card v2 (31 Oct 2026). Owner has answered Q1-Q4. Mockup v2: `mockups/reserve-email-full-table-mock-v2.html` (asked on PR #2046, with open point L below).
 No code until the owner OKs the mockup.
 
 **This reverses owner note 3 on OI-STAGED-NOTIFY mock v1** (the 5-OI cap with "and N more order
@@ -58,8 +58,8 @@ One table for one OI and for a batch, in the export's column order without TOTAL
   use the standard 600 px.
 
 **Size, measured** with the app's own renderer (`email_layout.render_document`, default theme,
-masked real rows): 22 lines = 28 KB, 50 = 52 KB, 100 = 94 KB, **about 110 = 102 KB, the size at
-which Gmail starts clipping**, and 200 = 178 KB. Most of each row's ~800 bytes is the per-cell default
+masked real rows, 9 columns): 100 lines = 86 KB, 110 = 94 KB, **about 120 lines = 102 KB, the
+size at which Gmail starts clipping**, and 200 = 163 KB. Most of each row's ~800 bytes is the per-cell default
 style `inline_defaults` adds (`email_layout.py:439-489`). Above the clip size, Gmail shows "[Message
 clipped] View entire message", which opens every row, so nothing is lost. Real volume on the 28 Oct
 dev copy was 71 request lines across 28 OIs in 30 days, from one requester. After the per-CS split
