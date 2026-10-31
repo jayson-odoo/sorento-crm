@@ -12,9 +12,9 @@ The route under test
 - assignee: the tier-1 team of that team set in the PRODUCT'S company, then
   `AccessAgentService.get_next_assignee(agent_id, team_id, brand_code=<product brand>)`;
 - policy: the `AgentTeam.policy_id` binding (`resolve_policy_id_for`);
-- brand: `focus_product_origin(db, [{"uuid": product_id, "hint": "product"}])["brand"]` (it
-  reads focus ENTRIES, dicts; a bare id string is ignored and answers None), kept on the tracker (`brand_code`)
-  and passed again when the overdue scan escalates a tier.
+- brand: `product_origin(db, [product_id])["brand"]` (`product_origin_service`, the core half of the
+  bot's `focus_product_origin`), kept on the tracker (`brand_code`) and passed again when the overdue
+  scan escalates a tier.
 No `form_sla_configs` row exists in any test here, and one is never needed.
 
 Service contract these tests pin (new in the rework)
@@ -68,6 +68,31 @@ NOT_SET_UP = "The marketing product team is not set up for this company"
 
 def _uid() -> str:
     return str(uuid.uuid4())
+
+
+def _legacy_line_without_product(db, scope):
+    """A line with neither product nor set, written straight to the table.
+
+    QUOTE-NO-FREE-TEXT (#2020) refuses such a line on every service write path, so it can no
+    longer be built through `upsert_line`. The column stays nullable with no DB constraint
+    (#2020 shipped no migration) and `products.id` cascades SET NULL, so a legacy or
+    raw-written row can still reach `escalate`, and its `line_has_no_product` guard still
+    protects it.
+    """
+    from app.models.projects import ProjectQuotationLine
+    from app.services import project_quotation_service as quotes
+
+    version = quotes.current_version(db, scope.id)
+    line = ProjectQuotationLine(
+        version_id=version.id,
+        description_snapshot="zzt typed description",
+        unit_price=250,
+        quantity=4,
+        line_total=1000,
+    )
+    db.add(line)
+    db.flush()
+    return line
 
 
 def _svc():
@@ -690,26 +715,12 @@ def test_a_pdf_drawing_also_refuses_the_escalation(db, env):
     assert trackers_for(db, product.id) == []
 
 
-def _typed_line(db, env, scope):
-    """A line with no catalogue product, as one typed before QUOTE-NO-FREE-TEXT would be.
-
-    The write paths refuse such a line now (#2020), so it is saved with a product and then
-    stripped of it underneath them: the escalate guard is what is under test, not the editor.
-    """
-    line = _priced_line(db, env, scope)
-    line.product_id = None
-    line.set_parts_snapshot = None
-    line.description_snapshot = "zzt bespoke feature wall"
-    db.flush()
-    return line
-
-
 def test_an_off_catalogue_line_is_refused_and_nothing_is_created(db, env):
     from app.services import project_quotation_service as quotes
 
     seed_drawing_team(db)
     _document, scope = _scope(db, env)
-    line = _typed_line(db, env, scope)
+    line = _legacy_line_without_product(db, scope)
     version = quotes.current_version(db, scope.id)
     db.commit()
     caller = _user(db, "zzt Sales One")
@@ -717,7 +728,7 @@ def test_an_off_catalogue_line_is_refused_and_nothing_is_created(db, env):
     with pytest.raises(AppException) as refused:
         _svc().escalate(db, version_id=version.id, line_id=line.id, user=actor(caller), kind="drawing")
 
-    assert refused.value.status_code in (404, 409)
+    assert (refused.value.status_code, refused.value.code) == (409, "line_has_no_product")
     assert (
         db.query(ConversationSLATracking)
         .filter(ConversationSLATracking.source_entity_type == SOURCE)
@@ -1797,14 +1808,14 @@ def test_an_off_catalogue_line_is_refused_for_a_photo_too(db, env):
 
     seed_drawing_team(db)
     _document, scope = _scope(db, env)
-    line = _typed_line(db, env, scope)
+    line = _legacy_line_without_product(db, scope)
     version = quotes.current_version(db, scope.id)
     db.commit()
 
     with pytest.raises(AppException) as refused:
         esc(db, version, line, _user(db, "zzt Sales One"), "photo")
 
-    assert refused.value.status_code in (404, 409)
+    assert (refused.value.status_code, refused.value.code) == (409, "line_has_no_product")
     assert (
         db.query(ConversationSLATracking)
         .filter(ConversationSLATracking.source_entity_type.in_(list(SOURCES.values())))
