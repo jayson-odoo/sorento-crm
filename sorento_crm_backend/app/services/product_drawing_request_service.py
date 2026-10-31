@@ -350,7 +350,6 @@ def _open_task(db: Session, source: str, product_id: str, company_id: Optional[s
     draw narrowed by the product's brand, the team set's own policy. Any missing piece is the
     same plain 409; the detail goes to the log, because it names agents and team sets.
     """
-    from app.services.chatbot.lanes.escalation_services import focus_product_origin
     from app.services.coverage_subscription_service import (
         coverage_note,
         resolve_assignee_with_coverage,
@@ -361,6 +360,7 @@ def _open_task(db: Session, source: str, product_id: str, company_id: Optional[s
         _working_clock_start_naive,
         _working_due_naive,
     )
+    from app.services.product_origin_service import product_origin
     from app.services.user_service import AccessAgentService
 
     def refuse(why: str) -> AppException:
@@ -401,9 +401,9 @@ def _open_task(db: Session, source: str, product_id: str, company_id: Optional[s
     if tier_row is None:
         raise refuse(f"SLA policy {policy_id} has no tier {tier}")
 
-    # What the bot's escalation reads: the brand is the product's, lower-cased. A bare id string
-    # is ignored by this helper, so the focus entry is the dict shape.
-    brand = focus_product_origin(db, [{"uuid": str(product_id), "hint": "product"}])["brand"]
+    # What the bot's escalation reads (`product_origin` is its core half): the brand is the
+    # product's, lower-cased.
+    brand = product_origin(db, [str(product_id)])["brand"]
     assignee = agents.get_next_assignee(str(agent.id), team_id, brand_code=brand or None)
     if not assignee:
         raise refuse(f"no member in the tier {tier} team of {team_set}")
