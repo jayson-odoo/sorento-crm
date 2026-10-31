@@ -1,7 +1,7 @@
 # PLAN: AGENTIC-KNOWLEDGE - ask the agent about documents uploaded in Resources (HR handbook, product knowledge)
 
-Status: CARD v1 filed for the owner (31 Oct 2026). No code. Track: L (migration, new access rule, new agent tool).
-UAC (`agentic-knowledge-acceptance-criteria.md`) is written after the owner answers K1-K5.
+Status: CARD v1.1 filed for the owner (31 Oct 2026; v1.1 adds the owner's side-panel add-on, K2 answered). No code. Track: L (migration, new access rule, new agent tool).
+UAC (`agentic-knowledge-acceptance-criteria.md`) is written after the owner answers K1, K3-K5.
 
 Owner, 31 Oct ~13:10: "what's next for our agentic? I want to upload some Sorento HR policy for users to ask, or
 some product knowledge... we don't have RAG on documents, right?"
@@ -47,6 +47,31 @@ Resources upload (type = "HR Policy" / "Product Knowledge", flagged "AI can read
      existing barred reply, escalation_control.py)
 ```
 
+Owner add-on, 31 Oct ~13:20: "the knowledge tool must also be available in the in-app AI assistant SIDE PANEL, not
+only the console agent and WhatsApp". AGENTIC-UNIFY (card stage) moves the panel onto the chatbot's router/agent
+pipeline; the tool must be an agent tool on that shared pipeline so the panel gets it for free.
+
+## One tool, three surfaces (and what if AGENTIC-UNIFY lands later)
+
+The tool is built the way most agent tools already are: one backend read endpoint
+(`GET /api/v1/knowledge/search`, audience decided from the principal: staff user, or contact + space) wrapped as
+one MCP tool `crm_knowledge_search` in `sorento_crm_mcp`, and named in the agent `REGISTRY`
+(`chatbot/agent/tools.py:61`). The access rule lives in the backend endpoint only, never in a surface.
+
+| Surface | How it gets the tool today | After AGENTIC-UNIFY |
+| --- | --- | --- |
+| Console agent (staff) | `REGISTRY` entry, dispatched like the other MCP tools | same |
+| WhatsApp chatbot agent (P2) | same `REGISTRY` entry, contact gate (`contact_allows`) | same |
+| In-app AI side panel | the panel already lists and calls MCP tools (`ai_assistant_service.py:417-438`, staff scope `X-MCP-Scope: staff`), so the new MCP tool shows up there with no panel code | the panel runs on the shared agent pipeline and uses the `REGISTRY` entry; the MCP path for the panel is deleted by AGENTIC-UNIFY, not by this lane |
+
+So P1 does not wait on AGENTIC-UNIFY in either order:
+- Unify lands FIRST: the panel uses the `REGISTRY` entry; nothing extra.
+- Unify lands LATER than P1: the panel reaches the tool through its existing MCP tool list from day one. Only the
+  answer-only-from-source rule and the HR hand-off differ, because the panel has its own prompt and no escalation
+  route: P1 adds the rule to the panel prompt (one paragraph, `ai_prompt_registry`), and in the panel the hand-off is
+  "this isn't in the documents, ask HR (<escalate-to name>)" as text, with no ticket. AGENTIC-UNIFY then brings the
+  real hand-off. Crew note to AGENTIC-UNIFY: keep `crm_knowledge_search` in the panel's tool set when it swaps paths.
+
 Owner direction "empower the model with more tools instead of hard coding": this is one more tool in the same
 registry, not a new lane or router branch. The model decides when to call it; the tool decides what the caller may see.
 
@@ -56,7 +81,7 @@ Access is decided by the attachment TYPE (one new column `ai_audience` on `attac
 narrowed by what already exists. The tool applies it inside the query, so a passage the caller may not see never
 reaches the model at all.
 
-| Audience on the type | Staff Console agent | Dealer on WhatsApp | End user on WhatsApp | Example types |
+| Audience on the type | Staff (Console agent, side panel) | Dealer on WhatsApp | End user on WhatsApp | Example types |
 | --- | --- | --- | --- | --- |
 | `off` (default, every existing type) | no | no | no | Delivery Orders, POs, everything today |
 | `staff` | yes, if the user holds `resource.attachments.view` | no | no | HR Policy, Employee Handbook, SOPs |
@@ -95,7 +120,7 @@ during a live switch it is also written with the current search model, exactly l
 - **P1 - staff-only HR handbook in the Console agent.** `ai_audience` column + type form checkbox/select (Resources
   type settings, no new screen), extraction job (PDF text + vision OCR fallback + DOCX), page chunks, `knowledge`
   source with audience filter in `search_current`, `crm_knowledge_search` tool for staff, answer-only-from-source
-  rule + HR hand-off, per-document status ("Read by AI: 42 pages, 3 OCR'd" / "failed: page 7") on the attachment
+  rule + HR hand-off, the same tool in the side panel (MCP path, see above), per-document status ("Read by AI: 42 pages, 3 OCR'd" / "failed: page 7") on the attachment
   detail and the existing Embeddings admin. Gold eval set for the handbook.
 - **P2 - product knowledge for dealers on WhatsApp.** Same tool exposed to the chatbot agent for contacts, with the
   contact grant + `access_levels` check; hand-off goes to the salesperson / marketing; `public` audience for the
@@ -129,8 +154,8 @@ during a live switch it is also written with the current search model, exactly l
 - **K1 - Who decides what the AI can read?** (a) a setting per attachment TYPE (`ai_audience`: off / staff / dealer /
   public), (b) a tick per uploaded file. Recommendation: (a), because HR uploads a new handbook version without
   having to remember a tick, and the type already carries every other rule (shared, direct access, n8n).
-- **K2 - Where does staff ask in P1?** (a) the Console agent only, (b) also the in-app AI bubble on every page.
-  Recommendation: (a) first, because it is where the tools live today; the bubble reuses the same tool later.
+- **K2 - ANSWERED (owner add-on 13:20):** Console agent AND the in-app side panel (and WhatsApp in P2); one tool on
+  the shared pipeline, see "One tool, three surfaces".
 - **K3 - Who gets the hand-off when the handbook doesn't answer?** (a) a named HR person/group set on the type
   ("Escalate to"), (b) the existing escalation queue with a "HR" label. Recommendation: (a), one column next to
   `ai_audience`, so marketing questions go to marketing and HR to HR without a routing table.
