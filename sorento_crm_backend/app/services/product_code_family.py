@@ -78,7 +78,8 @@ def _family_rows(
     does (`_prefix_probe_product`): the anchored head first, else the head anywhere in the
     code, so a short form ("wc287") reaches its family. It also drops the digit boundary when
     the typed word ends in a letter, so "SH-NEW" reaches the "SHNEW200" variant; a word ending
-    in a digit keeps it (SRTWC286 never reaches SRTWC2861)."""
+    in a digit keeps it (SRTWC286 never reaches SRTWC2861). `loose` also applies the chat searchable
+    filter (`chat_searchable_products`), as the resolver's probe does; the word path does not."""
     from app.models.product import Product, chat_searchable_products
     from app.models.product_spec import ProductSpecifications
 

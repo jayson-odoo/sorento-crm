@@ -8269,7 +8269,13 @@ def _run_stages_body(  # noqa: PLR0915
                 )
                 # AC-6: a size or named spec no variant of the typed code's family holds is said ONCE, on
                 # a miss and on a hit alike, above the reply (the route's `spec_none`, this turn's own).
-                if answer is not None and answer.text:
+                # Placed BELOW `_stock_ask_reply` and `list_reply` on purpose: they rebuild the text and
+                # would drop a clause put on earlier. A turn whose every envelope is a refusal gets the bare
+                # refusal (a mixed turn, stock beside a denial, keeps the clause above both).
+                all_refused = bool(envelopes) and all(
+                    isinstance(e, dict) and (e.get("denied") or e.get("refused")) for e in envelopes
+                )
+                if answer is not None and answer.text and not all_refused:
                     from app.services.chatbot.lanes.business.answer import no_variant_clause
 
                     none_with = no_variant_clause(
