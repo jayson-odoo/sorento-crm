@@ -211,4 +211,11 @@ Q4 is (a), owner 31 Oct: any bot question.
 - **AC-RC-8 [BE]** A list row's `problem` does not back a figure in the agent's answer (`_NOT_FIGURE_KEYS`), as `title` already does not.
 - **AC-RC-9 [BE]** An id-bearing URL is recognised whatever the scheme's case: `5000HTTPS://x.example/<uuid> units` gets the number flagged.
   100k characters of `[x](http://` repeats finish in under 1 second, as AC-RC-4 requires of `http://` repeats.
+- **AC-RC-10 [BE]** The bot-asked rule holds through the real path, `POST /console/turn` with only the parser, Jev and the ideation tool result faked:
+  a bot turn opens the ask, the `session_vars` it returned go back, and the next turn routes chat with `open_question` and no new Jev call. The turn
+  reaches the ideation tool as the answer to the ask (`ask_reply` true).
+- **AC-RC-11 [BE]** `crm_idea_create` tells the model to use only what the user said, write a short title from their words, leave any other field out, and
+  propose as soon as it has the problem. `crm_idea_update` tells it to use only what the user said. Whether the model obeys is checked by a live run.
+- **AC-RC-12 [BE]** The `proposed` tool result's message stays as it was, for every write. An attempt to tell the model not to repeat the proposal was reverted
+  by review: the model's own text is the only place some write details reach the user, and the only restatement in the user's language.
 

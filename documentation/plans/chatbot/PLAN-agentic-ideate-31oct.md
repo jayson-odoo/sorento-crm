@@ -285,6 +285,8 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 
 ### Accepted, not changed
 
+- The agent's own text repeats the proposal, and the card shows it again. Cosmetic. The fix was tried and reverted: see AC-RC-12.
+
 - The proposal's similar line can show a view-only operator the linked user's similar titles: test lane only for now.
 - `_recheck` repeats the similar lookup at confirm and discards it, up to 15 s more if ss hangs.
 - In the console, `~x~` in a value renders struck through though it is sent in full, and a URL in a value is clickable.
@@ -296,6 +298,8 @@ and crew's condition for the bar is met. The total did not improve, though, and 
   confirm a waiting proposal on any later message.
 - A pending proposal is checked before the daily cap (`router.py:74`, `:83`), so a chain of proposals stays on the agent over the
   cap. `/agent/turn` (`api/v1/system/chatbot.py:713`) has no daily cap, only the rate limit.
+- `crm_opportunity_create`'s proposal shows only title, target and close date (`writes.py:601`), so an `expected_amount` or another agent's
+  `sales_agent_id` is stored without appearing on the proposal or the Done line. The model's own text is the only cover.
 - Under impersonation, `run_as_user` records the target as `real_user_id` (`writes.py:148-155`), so the real admin is missing from
   the agent's actor. A shared-service write has no CRM audit row.
 
