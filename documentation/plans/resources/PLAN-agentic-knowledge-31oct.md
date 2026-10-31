@@ -1,8 +1,8 @@
 # PLAN: AGENTIC-KNOWLEDGE - ask the agent about documents uploaded in Resources (HR handbook, product knowledge)
 
-Status: CARD v1.2 filed for the owner (31 Oct 2026; v1.1 adds the side-panel add-on, K2 answered; v1.2 adds
-"how the system works" via `user_guides_read` in the agent, K6). No code. Track: L (migration, new access rule, new agent tool).
-UAC (`agentic-knowledge-acceptance-criteria.md`) is written after the owner answers K1, K3-K6.
+Status: BUILDING P1 (31 Oct 2026). Owner answered K1 (a), K3 (a), K4 gemini only, K5 (a), K6 two tools (~14:55).
+UAC `agentic-knowledge-acceptance-criteria.md`. Track: L (migration, permission-gated read path, new agent tools).
+Card history: v1 card, v1.1 side panel, v1.2 user guides + K6.
 
 Owner, 31 Oct ~13:10: "what's next for our agentic? I want to upload some Sorento HR policy for users to ask, or
 some product knowledge... we don't have RAG on documents, right?"
@@ -28,6 +28,29 @@ Attachments are embedded as a label card (file name, description, folder, linked
 The gap that matters for HR: every embedded record is `customer` visibility and the search does not filter by type
 or audience. Putting a handbook into today's store would make it findable by the dealer bot. That is the first thing
 this lane closes.
+
+## Build decisions after the owner's answers (supersede the card where they differ)
+
+- **No MCP tool in P1.** Measured: the panel's MCP calls reach the backend as the integration's act-as user and
+  `X-MCP-Staff-User` is log-only (`sorento_crm_mcp/scope.py:25-26`), so an MCP tool cannot tell which staff member
+  asks. Staff-only passages need the real user, so `crm_knowledge_search` runs IN PROCESS on both surfaces: a local
+  agent tool (like `crm_products_find`, `agent/tools.py:845-848`) with the turn's linked user, and a local binding
+  in the panel's tool loop (`ai_assistant_service.py:2182-2201`) with the panel's staff user. AGENTIC-UNIFY moves
+  the panel onto the agent and keeps the agent entry. An MCP tool for n8n waits for P2 (it needs the contact path).
+- **`knowledge` stays out of `RECORD_KEEP_SET`.** `/external/rag/search` (`api/v1/external/rag.py:45-70`) serves
+  every keep-set source with no audience filter; knowledge has its own read path that joins the attachment and
+  its type at query time, so changing a type to `off`, deleting a file or moving company takes effect at once.
+- **Gemini only (K4):** knowledge chunks are written and searched with `gemini-embedding-001` regardless of the
+  records-search model; nothing is dual-written.
+- **Audience is read live, not stamped:** the chunk keeps `attachment_id`; the search joins `attachments` and
+  `attachment_types.ai_audience` at query time.
+- **Hand-off (K3):** `attachment_types.ai_escalate_team_id` -> core `teams`. The agent has no escalation route
+  today (no escalate path in `agent/`; the escalation lane is the router's, `lanes/escalation.py`), so P1's hand-off
+  is a named referral in the reply. The real ticket arrives with AGENTIC-UNIFY / P2.
+- **Staff in P1** = holds `resource.attachments.view`, the slug that already lets a user open these files in
+  Resources: the AI shows nothing the user could not already open. The agent only runs for contacts linked to an
+  active CRM user (`agent/access.py:47-76`).
+- **DOCX** is read from `word/document.xml` with the stdlib (no new dependency).
 
 ## The flow, end to end
 
