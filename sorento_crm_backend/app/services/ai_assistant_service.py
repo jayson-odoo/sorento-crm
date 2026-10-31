@@ -3221,10 +3221,19 @@ class AIAssistantChatService:
                 "I could not produce an answer this turn. Please rephrase or provide more specific "
                 "identifiers (product code, order number, etc.)."
             )
+        from app.services.chatbot.agent import tools as agent_tools
+
         lines = ["Here is what I found from MCP tools:"]
         for r in tool_calls:
             prefix = "OK" if r.ok else "FAILED"
-            lines.append(f"- [{prefix}] {r.tool_name}: {r.output[:260]}")
+            output = r.output
+            if r.tool_name == agent_tools.KNOWLEDGE:
+                # This reply is stored and replayed into later turns' spans: document and page only.
+                try:
+                    output = json.dumps(agent_tools.trace_safe(r.tool_name, json.loads(output)), default=str)
+                except (TypeError, ValueError):
+                    output = "(document passages not shown)"
+            lines.append(f"- [{prefix}] {r.tool_name}: {output[:260]}")
         return "\n".join(lines)
 
     def _tool_output_is_error(self, output: str) -> tuple[bool, str]:

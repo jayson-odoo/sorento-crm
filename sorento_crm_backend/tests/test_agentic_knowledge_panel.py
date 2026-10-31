@@ -368,3 +368,25 @@ def test_no_buffered_span_of_a_knowledge_turn_carries_the_passage_text_but_the_m
         assert PASSAGE_TEXT not in stored, f"span {span.name} stores the passage text"
     llm_inputs = json.dumps([s.input_json for s in spans if s.span_kind == "LLM"], default=str)
     assert "Employee Handbook 2026" in llm_inputs, "document and page stay in the trace"
+
+
+def test_the_fallback_reply_after_a_knowledge_search_keeps_document_and_page_but_not_the_text(db):
+    """A turn that ends without a model answer (provider error, budget) prints its tool results as the
+    reply. That reply is stored as an assistant message and replayed into later turns' spans, so a
+    knowledge result is shown as document and page only (security fix round 3, S1)."""
+    from app.services.ai_assistant_service import MCPToolCallResult
+
+    output = json.dumps(
+        {
+            "status": "ok",
+            "passages": [{"document": "Leave Policy", "page": 2, "heading": None, "text": PASSAGE_TEXT, "similarity": 0.9}],
+            "handoff_teams": ["HR"],
+        }
+    )
+    reply = _service(db)._deterministic_fallback(
+        [MCPToolCallResult(tool_name="crm_knowledge_search", ok=True, output=output),
+         MCPToolCallResult(tool_name="crm_other", ok=True, output='{"rows": ["kept as before"]}')]
+    )
+    assert PASSAGE_TEXT[:20] not in reply
+    assert "Leave Policy" in reply
+    assert "kept as before" in reply

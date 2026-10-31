@@ -50,6 +50,9 @@ this lane closes.
 - **Staff in P1** = holds `resource.attachments.view`, the slug that already lets a user open these files in
   Resources: the AI shows nothing the user could not already open. The agent only runs for contacts linked to an
   active CRM user (`agent/access.py:47-76`).
+- **Traces:** passage text is removed from every persisted record of a turn (panel tool and LLM spans, the
+  fallback reply); the model still reads it in the turn. Accepted residual (security review): wording the model itself
+  writes in its answer or reasoning can repeat a passage, and is stored like any answer.
 - **DOCX** is read from `word/document.xml` with the stdlib (no new dependency).
 
 ## The flow, end to end
