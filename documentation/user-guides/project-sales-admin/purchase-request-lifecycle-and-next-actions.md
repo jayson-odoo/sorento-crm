@@ -55,5 +55,9 @@ End states - no further action.
 
 * Approve and reject happen **in the system** (the buttons on the record). The emailed approval-link flow is being retired.
 * The same component drives both purchase requests and sponsorship forms; the flow and buttons are identical - only the menu entry differs.
+* **Void is final.** A purchase request or sponsorship form voided while its approval was pending
+  can no longer be approved or rejected, in the system or through an emailed link: the attempt is
+  refused with *This request has been voided and can no longer be ...*. Its pending approval
+  closes when it is voided, and it drops out of the pending-approval queue.
 * Buttons are gated by status and permission - if one is missing, check the status pill and your role.
 * The approver's decision and any rejection reason are recorded in the audit history.
