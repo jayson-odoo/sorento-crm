@@ -240,7 +240,7 @@ def test_the_registry_names_and_the_test_flag():
     for name in (CREATE, UPDATE, LIST):
         entry = writes.WRITES.get(name) or writes.USER_READS.get(name)
         assert entry.user_permission == BOARD_VIEW
-    assert tools.TOOL_LABELS[CREATE] == "submit a new idea or feature request"
+    assert tools.TOOL_LABELS[CREATE] == "record a suggestion or wish for what the system should have or do, an idea or a feature request"
     assert tools.TOOL_LABELS[UPDATE] == "change one of your ideas"
     assert tools.TOOL_LABELS[LIST] == "your ideas"
 
