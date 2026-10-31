@@ -74,7 +74,11 @@ def eligible_contact(db, contact_respond_id: str):
         # As the bot: EVERY row sharing the id must allow AI replies (a namesake row cannot be undone).
         if not chatbot_allowed_service.is_allowed(db, contact_respond_id):
             return contact, None, "ai_replies_off"
-        if not contact.chatbot_agent_enabled:
+        # The agent switch follows the AI gate: EVERY row sharing the id must have it on.
+        flags = db.query(RespondContact.chatbot_agent_enabled).filter(
+            RespondContact.respond_io_id == contact_respond_id
+        ).all()
+        if not contact.chatbot_agent_enabled or not all(f[0] for f in flags):
             return contact, None, "switch_off"
         user = (
             db.query(User)

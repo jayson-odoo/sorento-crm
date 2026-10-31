@@ -787,3 +787,16 @@ def test_fr1_f3_a_staff_users_pending_action_does_not_reach_a_contact_turn_or_th
     sent = json.dumps(provider.calls[0]["messages"]) + json.dumps(provider.calls[0]["tools"])
     assert "ZZT Mark SRT-1" not in sent
     assert "confirm_action" not in provider.calls[0]["tools"]
+
+
+# ================================================================ FIX ROUND 2
+
+
+def test_fr2_a_a_namesake_row_with_the_agent_switch_off_refuses_the_agent(db):
+    from app.services.chatbot.agent.access import eligible_contact
+
+    contact = seed_contact(db)
+    assert eligible_contact(db, contact["respond_id"])[2] is None  # control
+    _second_row(db, contact["respond_id"], agent=False)
+
+    assert eligible_contact(db, contact["respond_id"])[2] == "switch_off"
