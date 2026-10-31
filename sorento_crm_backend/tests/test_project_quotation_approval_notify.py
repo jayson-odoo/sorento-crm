@@ -608,9 +608,9 @@ def test_whatsapp_portal_url_is_absolute_while_the_in_app_link_stays_relative(
     assert call["data"]["whatsapp_context_vars"]["portal_url"] == "https://crm.example.test" + link
 
 
-def test_commit_time_recheck_losing_edit_rights_before_the_commit_keeps_the_document(
-    api, monkeypatch
-):
+def test_commit_time_recheck_losing_edit_rights_before_the_commit_keeps_the_document(api):
+    from unittest.mock import patch
+
     from app.models.projects import ProjectQuotationDocument
     from app.models.sla import SlaFormAction
     from app.services.user_service import UserPermissionService
@@ -630,26 +630,30 @@ def test_commit_time_recheck_losing_edit_rights_before_the_commit_keeps_the_docu
 
     # The requester is no longer the owner, a collaborator or a manager.
     project.owner_user_id = _user(db, f"{MARKER} New owner")
-    monkeypatch.setattr(
+    # A context manager, not monkeypatch: the autouse _no_live_external_calls fixture
+    # takes monkeypatch, so it tears down AFTER `api` and would re-install api's
+    # all-slugs stub once api had restored the real method, leaking it to every later
+    # test on the worker (it flipped test_project_registration under xdist).
+    with patch.object(
         UserPermissionService,
         "get_user_permission_slugs",
         lambda self, uid: ["projects.projects.view", "projects.projects.edit",
                            "projects.projects.delete"],
-    )
-    db.query(SlaFormAction).filter(SlaFormAction.id == parked.json()["id"]).update(
-        {"commit_at": datetime.utcnow() - timedelta(seconds=1)}, synchronize_session=False
-    )
-    db.commit()
-    current = client.get(
-        f"{PENDING}/current",
-        params={"entity_type": "quotation_document", "entity_id": document["id"]},
-    )
-    assert current.status_code == 200, current.text
-    assert (current.json().get("last_outcome") or {}).get("status") != "committed", current.text
-    db.expire_all()
-    assert (
-        db.query(ProjectQuotationDocument)
-        .filter(ProjectQuotationDocument.id == document["id"])
-        .first()
-        is not None
-    )
+    ):
+        db.query(SlaFormAction).filter(SlaFormAction.id == parked.json()["id"]).update(
+            {"commit_at": datetime.utcnow() - timedelta(seconds=1)}, synchronize_session=False
+        )
+        db.commit()
+        current = client.get(
+            f"{PENDING}/current",
+            params={"entity_type": "quotation_document", "entity_id": document["id"]},
+        )
+        assert current.status_code == 200, current.text
+        assert (current.json().get("last_outcome") or {}).get("status") != "committed", current.text
+        db.expire_all()
+        assert (
+            db.query(ProjectQuotationDocument)
+            .filter(ProjectQuotationDocument.id == document["id"])
+            .first()
+            is not None
+        )
