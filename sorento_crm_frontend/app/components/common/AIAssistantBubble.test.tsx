@@ -953,3 +953,135 @@ describe('AIAssistantBubble: the decision latch and older reloads (review round 
     await act(async () => { await Promise.resolve(); });
   });
 });
+
+// ---------------------------------------------------------------------------
+// AGENTIC-UNIFY PR 3, review round 3: a new thread reopened during its first turn, and the draw counter.
+// ---------------------------------------------------------------------------
+
+async function pickFromHistory(id: string, title: string, messages: unknown[]) {
+  if (!screen.queryByLabelText('Show conversation history')) throw new Error('no history button');
+  vi.mocked(chatApi.listAIAssistantConversations).mockResolvedValueOnce({
+    items: [{ id, title, updated_at: '2026-10-30T10:00:05Z' }],
+  } as never);
+  fireEvent.click(screen.getByLabelText('Show conversation history'));
+  const row = await screen.findByText(title);
+  vi.mocked(chatApi.loadConversation).mockResolvedValueOnce({ id, title: null, created_at: '', updated_at: '', messages } as never);
+  fireEvent.click(row);
+  await waitFor(() => expect(vi.mocked(chatApi.loadConversation).mock.calls.at(-1)?.[0]).toBe(id));
+  await act(async () => { await Promise.resolve(); });
+}
+
+const NEW_THREAD_SO_FAR = [
+  { id: 'n1', role: 'user', content: 'ZZT first message', metadata_json: {}, created_at: '2026-10-30T11:00:00Z' },
+];
+const NEW_THREAD_DONE = [
+  ...NEW_THREAD_SO_FAR,
+  { id: 'n2', role: 'assistant', content: 'ZZT FIRST TURN REPLY', metadata_json: {}, created_at: '2026-10-30T11:00:05Z' },
+];
+
+async function startOnNewChat() {
+  grant();
+  await openThread(proposingThread());
+  fireEvent.click(screen.getByLabelText('Start new conversation'));
+  await waitFor(() => expect(screen.queryByText('ZZT question')).toBeNull());
+  const sending = deferred<unknown>();
+  vi.mocked(chatApi.sendAIAssistantMessage).mockReturnValueOnce(sending.promise as never);
+  typeAndSend('ZZT first message');
+  await waitFor(() => expect(chatApi.sendAIAssistantMessage).toHaveBeenCalled());
+  return sending;
+}
+
+describe('AIAssistantBubble: a new thread reopened while its first turn runs (review round 3)', () => {
+  it('draws the reply when the user picks that new thread from history before it arrives', async () => {
+    const sending = await startOnNewChat();
+    await pickFromHistory('conv-new', 'ZZT new thread', NEW_THREAD_SO_FAR);
+
+    sending.resolve({ id: 'conv-new', messages: NEW_THREAD_DONE });
+
+    await waitFor(() => expect(screen.getByText('ZZT FIRST TURN REPLY')).toBeDefined());
+  });
+
+  it('draws it too when an old thread was picked first, then the new one', async () => {
+    const sending = await startOnNewChat();
+    await pickFromHistory('conv-2', 'ZZT old thread', otherThread());
+    await pickFromHistory('conv-new', 'ZZT new thread', NEW_THREAD_SO_FAR);
+
+    sending.resolve({ id: 'conv-new', messages: NEW_THREAD_DONE });
+
+    await waitFor(() => expect(screen.getByText('ZZT FIRST TURN REPLY')).toBeDefined());
+  });
+
+  it('control: with an unrelated old thread picked, the reply is dropped and the old thread keeps its id', async () => {
+    const sending = await startOnNewChat();
+    await pickFromHistory('conv-2', 'ZZT old thread', otherThread());
+
+    sending.resolve({ id: 'conv-new', messages: NEW_THREAD_DONE });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.queryByText('ZZT FIRST TURN REPLY')).toBeNull();
+    expect(screen.getByText('ZZT other answer')).toBeDefined();
+    vi.mocked(chatApi.sendAIAssistantMessage).mockResolvedValueOnce({ id: 'conv-2', messages: otherThread() } as never);
+    typeAndSend('ZZT next');
+    await waitFor(() => expect(vi.mocked(chatApi.sendAIAssistantMessage).mock.calls.length).toBe(2));
+    expect(vi.mocked(chatApi.sendAIAssistantMessage).mock.calls[1][1]).toBe('conv-2');
+  });
+});
+
+describe('AIAssistantBubble: kill gaps on a failed send and on the draw counter (review round 3)', () => {
+  it('a failed send while another thread is open draws no error bubble there', async () => {
+    grant();
+    await openThread(proposingThread());
+    const sending = deferred<unknown>();
+    vi.mocked(chatApi.sendAIAssistantMessage).mockReturnValueOnce(sending.promise as never);
+    typeAndSend('ZZT on thread A');
+    await waitFor(() => expect(chatApi.sendAIAssistantMessage).toHaveBeenCalled());
+    await pickOtherThread();
+
+    sending.reject(new Error('ZZT WRONG THREAD ERROR'));
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.queryByText('ZZT WRONG THREAD ERROR')).toBeNull();
+    expect(screen.getByText('ZZT other answer')).toBeDefined();
+  });
+
+  it('a reload started before the same thread was picked again is dropped when it returns', async () => {
+    grant();
+    await openThread(proposingThread());
+    vi.mocked(chatApi.confirmPanelAction).mockResolvedValueOnce(OUTCOME as never);
+    const reload = deferred<unknown>();
+    vi.mocked(chatApi.loadConversation).mockReturnValueOnce(reload.promise as never);
+    fireEvent.click(within(screen.getByTestId('agent-proposal')).getByRole('button', { name: /Confirm/ }));
+    await waitFor(() => expect(vi.mocked(chatApi.loadConversation).mock.calls.length).toBe(2));
+    // the same thread is picked again from history and draws the decided state
+    const decidedNow = [user(), brain({}, { agent: { pending_action: null, actions: [] } }, 'm-prop')];
+    await pickFromHistory('conv-1', 'ZZT same thread', decidedNow);
+    await waitFor(() => expect(screen.queryByTestId('agent-proposal')).toBeNull());
+
+    reload.resolve({ id: 'conv-1', title: null, created_at: '', updated_at: '', messages: proposingThread() });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.queryByTestId('agent-proposal')).toBeNull();
+  });
+
+  it('a reload started during a send is dropped once the send has drawn its answer', async () => {
+    grant();
+    const waiting = () => waitingThread(inAMinute());
+    await openThread(waiting());
+    const sending = deferred<unknown>();
+    vi.mocked(chatApi.sendAIAssistantMessage).mockReturnValueOnce(sending.promise as never);
+    typeAndSend('ZZT question two');
+    await waitFor(() => expect(chatApi.sendAIAssistantMessage).toHaveBeenCalled());
+    vi.mocked(chatApi.withdrawPanelStep).mockResolvedValueOnce({ action_id: ACTION, status: 'executed', reply_text: 'Withdrawn.', steps: [] });
+    const reload = deferred<unknown>();
+    vi.mocked(chatApi.loadConversation).mockReturnValueOnce(reload.promise as never);
+    fireEvent.click(within(screen.getByTestId('agent-step-waiting')).getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(vi.mocked(chatApi.loadConversation).mock.calls.length).toBe(2));
+
+    sending.resolve({ id: 'conv-1', messages: [...waiting(), { id: 'm-ans', role: 'assistant', content: 'ZZT ANSWER TWO', metadata_json: {}, created_at: '2026-10-30T09:30:00Z' }] });
+    await waitFor(() => expect(screen.getByText('ZZT ANSWER TWO')).toBeDefined());
+    reload.resolve({ id: 'conv-1', title: null, created_at: '', updated_at: '', messages: waiting() });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(screen.getByText('ZZT ANSWER TWO')).toBeDefined();
+  });
+});

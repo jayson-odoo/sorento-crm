@@ -1414,3 +1414,48 @@ def test_a_task_open_in_the_focus_keeps_the_page_line_off_the_parser_alone(
 
     assert world.blocks, "the parser never ran"
     assert not [l for l in world.blocks[0].splitlines() if l.startswith("Current page")]
+
+
+# =========================================================================== #
+# Round 3: a contact's turn is untouched by the staff name filter
+# =========================================================================== #
+
+
+def _resolver_result() -> dict[str, Any]:
+    return {
+        "resolutions": [{
+            "token": "ZZT",
+            "matches": [
+                {"entity_type": "customer", "canonical_code": "ZZTCUST1", "display_name": "ZZT Customer One"},
+                {"entity_type": "customer_order", "canonical_code": "ZZTDO1", "display_name": "ZZT Debtor"},
+                {"entity_type": "product", "canonical_code": "ZZTP1", "display_name": "ZZT Product"},
+            ],
+        }],
+        "by_entity_type": {"customer": [{"canonical_code": "ZZTCUST1"}], "product": [{"canonical_code": "ZZTP1"}]},
+    }
+
+
+def test_without_denied_kinds_returns_a_contacts_result_untouched(session_factory):
+    from app.services.chatbot.lanes.business.services import without_denied_kinds
+
+    assert principal_mod.current() is None, "fixture: a principal is active"
+    result = _resolver_result()
+    before = json.loads(json.dumps(result))
+
+    out = without_denied_kinds(session_factory(), result)
+
+    assert out is result and out == before
+
+
+def test_the_casual_lane_hands_a_contacts_resolver_result_through_whole(session_factory, monkeypatch):
+    from app.services.chatbot.lanes import casual
+
+    result = _resolver_result()
+    expected = json.loads(json.dumps(result))
+    monkeypatch.setattr("app.api.v1.system.references._resolve_input", lambda db, query, tokens, **kw: result)
+    ctx = {"parse": {"output": {"user_goal": "checking", "entities": [{"raw": "ZZT", "hint": "customer"}]}}}
+
+    out = casual.resolve_for_prompt(session_factory(), ctx=ctx)
+
+    assert out == expected
+    assert len(out["resolutions"][0]["matches"]) == 3
