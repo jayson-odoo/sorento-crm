@@ -2,7 +2,7 @@
 
 The `ideation_capture_error` reply (en, ms, zh) no longer opens with an apology and now says
 what to do. `get_prompt` serves a fallback only when the `production` label has no row, and
-`seed_prompt_registry` never updates a live row, so a seeded install keeps the old texts. This
+`seed_prompt_registry` never changes a live row's text, so a seeded install keeps the old texts. This
 migration publishes each new text as the next immutable version and moves the label, but ONLY
 where production still equals the old stock text of that key (compared strip-normalised). A
 template the owner edited is left alone with a warning, and a re-run is a no-op because

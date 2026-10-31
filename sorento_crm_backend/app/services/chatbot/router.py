@@ -22,6 +22,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.chatbot import jev_client, session_state
 from app.services.chatbot.agent import actions as agent_actions
+from app.services.chatbot.agent import memory as agent_memory
 from app.services.chatbot.agent import tools as agent_tools
 from app.services.chatbot.agent import writes as agent_writes
 from app.services.chatbot.agent.access import eligible_contact
@@ -194,14 +195,17 @@ def _bot_asked(block: dict[str, Any]) -> bool:
 
 
 def _agent_asked_back(db, contact_respond_id: str) -> bool:
-    """Is the contact's latest done turn an agent turn that asked the user something, under an hour ago?"""
+    """Is the contact's latest done turn an agent turn in their newest conversation that asked the user something, under an hour ago?"""
     row = (
-        db.query(ChatbotTurn.ingress, ChatbotTurn.response, ChatbotTurn.created_at)
+        db.query(ChatbotTurn.ingress, ChatbotTurn.response, ChatbotTurn.created_at, ChatbotTurn.envelope)
         .filter(ChatbotTurn.contact_respond_id == contact_respond_id, ChatbotTurn.status == "done")
         .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.started_at.desc().nullslast())
         .first()
     )
     if row is None or row[0] != "agent" or not isinstance(row[1], dict) or row[1].get("asked_back") is not True:
+        return False
+    latest = agent_memory.latest_conversation(db, contact_respond_id)
+    if latest is None or not isinstance(row[3], dict) or row[3].get("agent_conversation_id") != str(latest.id):
         return False
     created = row[2]
     if created.tzinfo is None:

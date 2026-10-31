@@ -40,7 +40,14 @@ FLOOR = 0.7  # default chatbot_router_min_score
 
 
 def seed_flagged(db, respond_id, *, minutes_ago=5, asked_back=True, ingress="agent", flag=True):
+    from app.services.chatbot.agent import memory
+
     response = {"reply_text": "What is the idea?", "status": "answered"}
+    envelope = {"text": "I want to submit an idea"}
+    if ingress == "agent" and memory.latest_conversation(db, respond_id) is None:
+        # A contact with no conversation gets one, and the agent turn names it, as
+        # `run_agent_turn` writes it. A contact that already has one is left as seeded.
+        envelope["agent_conversation_id"] = str(memory.new_conversation(db, respond_id).id)
     if flag:
         response["asked_back"] = asked_back
     row = ChatbotTurn(
@@ -49,7 +56,7 @@ def seed_flagged(db, respond_id, *, minutes_ago=5, asked_back=True, ingress="age
         ingress=ingress,
         is_test=True,
         status="done",
-        envelope={"text": "I want to submit an idea"},
+        envelope=envelope,
         response=response,
         created_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
     )
