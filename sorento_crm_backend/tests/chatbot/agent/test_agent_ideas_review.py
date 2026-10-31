@@ -702,3 +702,55 @@ def test_AC_RC_7_a_problem_of_only_format_characters_is_invalid(db, ss):
     w = make_world(db)
     res, step = propose(db, w, CREATE, {"problem": "\u200b\u202e"})
     assert res.status == "invalid" and step is None
+
+
+# ------------------------------------------------------------------ AC-RC-8 a problem text backs no figure
+
+
+def _ideas_ledger(problem, call_id="c1"):
+    data = {"ideas": [{"id": str(uuid.uuid4()), "idea_number": "IDEA-0184", "title": "Cost note", "problem": problem}]}
+    return {call_id: {"name": LIST, "status": "ok", "args": {}, "data": data}}
+
+
+def test_AC_RC_8_a_number_inside_an_idea_problem_does_not_back_a_figure():
+    from app.services.chatbot.agent.loop import verify_answer
+
+    bad_numbers, _ = verify_answer({"text": "Stock is 5000 units"}, _ideas_ledger("Unit cost is 5000"), "")
+    assert "5000" in bad_numbers, bad_numbers
+
+
+def test_AC_RC_8_a_figure_from_a_real_data_key_is_still_backed():
+    from app.services.chatbot.agent.loop import verify_answer
+
+    ledger = {
+        "c1": {
+            "name": "crm_inventory_stock_balance_list", "status": "ok", "args": {},
+            "data": {"items": [{"qty": 12}], "has_result": True},
+        },
+        **_ideas_ledger("Unit cost is 5000", "c2"),
+    }
+    assert verify_answer({"text": "Stock is 12 units"}, ledger, "") == ([], [])
+
+
+# ------------------------------------------------------------------ AC-RC-9 scheme case and a bounded markdown link
+
+
+@pytest.mark.parametrize("scheme", ["HTTPS://", "Http://"])
+def test_AC_RC_9_a_url_scheme_in_any_case_is_removed_and_the_glued_figure_is_unverified(scheme):
+    from app.services.chatbot.agent.loop import final_reply, verify_answer
+
+    ident = str(uuid.uuid4())
+    args = {"text": f"Stock is 5000{scheme}x.example/{ident} units"}
+    bad_numbers, bad_not_found = verify_answer(args, {}, "")
+    assert "5000" in bad_numbers, bad_numbers
+    reply, _ = final_reply(args, bad_numbers, bad_not_found)
+    assert ident not in reply and scheme.lower() not in reply.lower() and "x.example" not in reply
+
+
+def test_AC_RC_9_a_hundred_thousand_characters_of_markdown_link_openers_finish_in_a_second():
+    import time
+
+    text = "[x](http://" * 9091
+    started = time.monotonic()
+    _clean(text)
+    assert time.monotonic() - started < 1.0
