@@ -119,11 +119,12 @@ default theme, masked real rows):
 | 200 | 141 KB | 159 KB | 174 KB |
 
 **Gmail starts clipping at about 102 KB: about 140 lines on the request email, about 125 on the reserved
-email, and about 110 when REASON prints** (estimated from these renders). Most of each row's size is the
+email, and about 105 when REASON prints** (estimated from these renders; the build measures about 881 B
+per row with REASON). Most of each row's size is the
 per-cell default style `inline_defaults` adds (`email_layout.py:439-489`). Above the clip size, Gmail shows "[Message
 clipped] View entire message", which opens every row, so nothing is lost. Real volume on the 28 Oct
 dev copy was 71 request lines across 28 OIs in 30 days, from one requester. After the per-CS split
-below, each email is smaller still. A test pins the rendered size of a 110-line email so a markup
+below, each email is smaller still. A test pins the rendered size of a 105-line email so a markup
 change that bloats rows is caught.
 
 On a desktop, measured in a browser, the email stays on the 900 px card, except when REASON prints:
@@ -227,8 +228,7 @@ The rule is the same either way (L1).
    so the email cannot drift from the export); REASON prints only when a line has one, and "No reason given"
    on a Rejected or Partial line without one; button URL lists exactly the email's OI numbers; split by raiser
    (two CS lead to two emails, each Cc only its CS, each table only its OIs); a single-raiser batch
-   stays one email; one OI with several requests is one email, parked and answered together; a size
-   test for 110 lines; the migration updates a seeded template and leaves an edited one alone; the
+   stays one email; one OI with several requests is one email, parked and answered together; a size test for 105 lines; the migration updates a seeded template and leaves an edited one alone; the
    headers list `inquiry_no` filter (BE + FE URL round trip).
 2. Build: `_groups` split by raiser and no more per-request split, flat `reserve.groups` context with
    each line's STATUS, template migration, `inquiry_no` filter.
