@@ -472,6 +472,15 @@ class MCPRuntimeClient:
         return text or json.dumps(result)
 
 
+def staff_mcp_client(staff_user_id: str, *, timeout_seconds: int) -> MCPRuntimeClient:
+    """The AI panel's MCP client, reading as this staff member, for the panel turn that runs on the
+    chatbot's lanes. Every staff-marked client is built in this module, so a lane reached from
+    WhatsApp cannot send an identity (AGENTIC-UNIFY PR 1 AC-25)."""
+    return MCPRuntimeClient(
+        settings.ai_assistant_mcp_url, timeout_seconds=timeout_seconds, staff=True, staff_user_id=staff_user_id
+    )
+
+
 class AIAssistantConfigService:
     def __init__(self, db: Session):
         self.db = db
@@ -891,6 +900,15 @@ class AIAssistantChatService:
         self.db.refresh(msg)
         return msg
 
+    def ensure_enabled(self) -> AIAssistantConfig:
+        """The feature switch and the config switch, for whichever path answers the panel."""
+        if not settings.ai_assistant_enabled:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI assistant feature is disabled")
+        config = self.cfg.get()
+        if not config.is_enabled:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="AI assistant is disabled")
+        return config
+
     def respond(
         self,
         *,
@@ -920,11 +938,7 @@ class AIAssistantChatService:
         # `*_submit` / `*_create` MCP tool to write a real complaint/PR/ticket
         # that survives cleanup. Suppress write-capable tools for the turn.
         self._suppress_write_tools = bool(dry_run)
-        if not settings.ai_assistant_enabled:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI assistant feature is disabled")
-        config = self.cfg.get()
-        if not config.is_enabled:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="AI assistant is disabled")
+        config = self.ensure_enabled()
         logger.info(
             "AI assistant request started user_id=%s conversation_id=%s message_len=%s",
             user_id,

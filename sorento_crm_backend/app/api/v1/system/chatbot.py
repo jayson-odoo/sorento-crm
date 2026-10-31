@@ -308,7 +308,8 @@ def list_turns(
             detail=f"Unknown status {turn_status!r}. Expected one of: {', '.join(TURN_STATUSES)}.",
         )
 
-    query = db.query(ChatbotTurn)
+    # AGENTIC-UNIFY AC-17: a panel turn is a staff member's own question, not a customer's to watch.
+    query = db.query(ChatbotTurn).filter(ChatbotTurn.ingress != "panel")
     if contact_respond_id:
         query = query.filter(ChatbotTurn.contact_respond_id == contact_respond_id)
     if from_ is not None:
@@ -386,7 +387,7 @@ def failed_contacts(
     if from_ is None and to is None:
         from_ = datetime.now(timezone.utc) - timedelta(days=FAILED_CONTACTS_DEFAULT_DAYS)
 
-    window = [ChatbotTurn.status == "failed"]
+    window = [ChatbotTurn.status == "failed", ChatbotTurn.ingress != "panel"]
     if not include_test:
         # H57: a contact whose only failed turn is a DRY RUN has nothing wrong with it. The
         # list this feeds is the operator's "who needs attention" filter, and a test turn
@@ -500,6 +501,17 @@ def retry_turn(
                     "ingress, so it would answer a real contact; run the test again from "
                     "where it was started instead."
                 ),
+            },
+        )
+
+    if row.ingress == "panel":
+        # AGENTIC-UNIFY AC-9: Retry posts at the live n8n ingress, which has no way back to a panel
+        # thread and would key a live turn to nobody. The staff member simply asks again.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "panel_turn_not_retryable",
+                "message": "This turn came from the AI panel. Retry re-posts at the live ingress, so ask it again in the panel instead.",
             },
         )
 

@@ -440,6 +440,11 @@ PERMISSION_REGISTRY.extend(
             "description": "Permission to use AI assistant chat in the application.",
         },
         {
+            "slug": "system.ai_assistant_chat.agent",
+            "name": "Use the AI Assistant on the chatbot's brain",
+            "description": "Answer this user's panel messages with the chatbot's Jev, parser, lanes and agent.",
+        },
+        {
             "slug": "system.ai_assistant_settings.view",
             "name": "View AI Assistant Settings",
             "description": "Permission to view AI assistant settings.",

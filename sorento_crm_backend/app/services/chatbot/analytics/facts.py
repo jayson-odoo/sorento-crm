@@ -65,6 +65,11 @@ _MAX_REPLY_MS = 2_147_483_647
 _SWEEP_CHUNK = 100
 
 
+#: Ingresses that are never customer facts: a console turn is a rehearsal, and a panel turn is a
+#: staff member's own question (AGENTIC-UNIFY Q3: it stays in the panel's usage views).
+_NOT_FACTS = ("console", "panel")
+
+
 def _turn_dict(row: ChatbotTurn) -> dict[str, Any]:
     """The slice of a turn `outcome` reads. Deliberately has no `message`."""
     return {
@@ -81,7 +86,7 @@ def _eligible(row: ChatbotTurn | None) -> bool:
     return (
         row is not None
         and not row.is_test
-        and row.ingress != "console"
+        and row.ingress not in _NOT_FACTS
         and row.status in _CLOSED
     )
 
@@ -360,7 +365,7 @@ def sweep(
         .where(
             _TURNS.c.created_at >= since,
             _TURNS.c.is_test.is_(False),
-            _TURNS.c.ingress != "console",
+            _TURNS.c.ingress.notin_(_NOT_FACTS),
             _TURNS.c.status.in_(_CLOSED),
             ~has_fact,
         )

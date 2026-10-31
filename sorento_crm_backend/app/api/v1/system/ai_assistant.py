@@ -40,6 +40,7 @@ from app.schemas.ai_prompt import (
     SetLabelResponse,
 )
 from app.api.v1.external.chat import (
+    panel_service,
     CHATBOT_PROMPT_KEYS,
     DryRunTurnRefused,
     run_prompt_dry_run_turn,
@@ -311,13 +312,26 @@ def send_ai_assistant_message(
     db: Session = Depends(get_db),
 ):
     chat = AIAssistantChatService(db)
-    conv, _ = chat.respond(
-        user_id=str(user["id"]),
-        conversation_id=payload.conversation_id,
-        message=payload.message,
-        page_snapshot=payload.page_snapshot,
-        confirm_action=payload.confirm_action,
-    )
+    # AGENTIC-UNIFY AC-1, AC-2: the rollout slug moves this user onto the chatbot's brain. A Confirm or
+    # Cancel click answers a card the old path wrote, so the old path finishes it.
+    if payload.confirm_action is None and UserPermissionService(db).check_user_has_permission(
+        str(user["id"]), panel_service.ROLLOUT_SLUG
+    ):
+        chat.ensure_enabled()
+        conv = chat.get_or_create_conversation(str(user["id"]), payload.conversation_id, payload.message)
+        chat.append_message(conv.id, "user", payload.message)
+        result = panel_service.run_panel_turn(
+            db, user=user, conversation=conv, text=payload.message, page_snapshot=payload.page_snapshot
+        )
+        chat.append_message(conv.id, "assistant", result.reply_text, metadata_json=panel_service.message_metadata(result))
+    else:
+        conv, _ = chat.respond(
+            user_id=str(user["id"]),
+            conversation_id=payload.conversation_id,
+            message=payload.message,
+            page_snapshot=payload.page_snapshot,
+            confirm_action=payload.confirm_action,
+        )
     rows = chat.list_messages(str(conv.id), str(user["id"]))
     return AIAssistantConversationResponse(
         id=str(conv.id),

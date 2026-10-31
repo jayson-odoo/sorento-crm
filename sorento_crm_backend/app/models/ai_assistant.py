@@ -75,6 +75,9 @@ class AIAssistantConversation(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # AGENTIC-UNIFY PR 3: this thread's chatbot session (the five keys `respond_contacts.session_vars`
+    # holds for a contact). NULL until the thread's first turn on the chatbot's brain.
+    session_vars: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

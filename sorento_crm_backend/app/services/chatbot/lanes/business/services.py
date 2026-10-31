@@ -32,6 +32,8 @@ from typing import Any, Protocol
 import httpx
 from sqlalchemy.orm import Session
 
+from app.services.chatbot import principal as staff_principal
+
 logger = logging.getLogger(__name__)
 
 
@@ -129,9 +131,19 @@ def _access_types(db: Session, *, default_space_id: str | None = None) -> Access
         404 did. n8n carries `onError: continueErrorOutput` on this node with the error
         branch unwired, so today that turn simply STOPS; in the port it becomes a failed
         turn with a reason, which `run_turn`'s handler records (H32).
+
+        A staff principal is at the office tier of every brand (AC-5), with no contact to ask.
         """
         from app.services.contact_access_type_service import ContactAccessTypeService
 
+        if staff_principal.current() is not None:
+            from app.services.chatbot.lanes.business.tier_gate import parse_level
+
+            return [
+                {"name": row["name"], "keywords": row["keywords"]}
+                for row in ContactAccessTypeService(db).list_types_for_api()
+                if (parse_level(row["name"]) or {}).get("tier") == "office"
+            ]
         workspace = space_id if space_id else default_space_id
         return ContactAccessTypeService(db).resolve_active_access_levels_for_contact(
             str(contact_id or "").strip(), str(workspace or "").strip()
@@ -153,6 +165,9 @@ def _resolve_entity(db: Session) -> ResolveEntityFn:
         `current_user` exists only to attribute the spec-search LLM usage log. It is the
         same principal the n8n key resolves to (`EXTERNAL_API_KEY_ACT_AS_USER_ID`), so the
         usage rows keep landing on the same user after the cut.
+
+        A staff principal is that user itself, with no contact pair for the route to resolve: the
+        resolver is the picker every staff member may use (#2048 AC-14).
         """
         from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
         from app.config import settings
@@ -164,7 +179,10 @@ def _resolve_entity(db: Session) -> ResolveEntityFn:
             # tried as a document type. Every sales ask resolved as `order` until it had
             # its own domain, so it still does.
             body = {**body, "domain": "order"}
-        principal = {"id": getattr(settings, "external_api_key_act_as_user_id", None)}
+        staff = staff_principal.current()
+        if staff is not None:
+            body = {**body, "contact_id": None, "space_id": None}
+        principal = {"id": staff.user_id if staff is not None else getattr(settings, "external_api_key_act_as_user_id", None)}
         return resolve_reference_post(
             ResolveReferenceRequest(**body), current_user=principal, db=db
         )
@@ -265,7 +283,7 @@ def _mcp_call(db: Session | None = None, *, timeout_seconds: int | None = None) 
         path's own `parse_mcp_content` returns a non-string unchanged.
         """
         from app.config import settings
-        from app.services.ai_assistant_service import MCPRuntimeClient
+        from app.services.ai_assistant_service import MCPRuntimeClient, staff_mcp_client
         from app.services.chatbot.lanes.business.fetch import ensure_read_only, parse_mcp_content
 
         ensure_read_only(name)
@@ -284,7 +302,14 @@ def _mcp_call(db: Session | None = None, *, timeout_seconds: int | None = None) 
         # `CHATBOT_MCP_TIMEOUT_SECONDS` overrides it per environment.
         # `timeout_seconds` is a caller's own tighter budget (the agent's turn clock).
         timeout = int(timeout_seconds or getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
-        client = MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=timeout)
+        # AGENTIC-UNIFY AC-6: every lane read ends here, so this one place makes a staff principal's
+        # read run as the user, with the blank contact pair #2048's backend insists on.
+        staff = staff_principal.current()
+        if staff is not None:
+            args = {**args, "contact_id": "", "space_id": ""}
+            client = staff_mcp_client(staff.user_id, timeout_seconds=timeout)
+        else:
+            client = MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=timeout)
         try:
             raw = client.call_tool(name, args)
         except (TimeoutError, httpx.TimeoutException):
@@ -500,7 +525,7 @@ def outstanding_customer_echo(db: Session, customer_ids: Any) -> str:
     from app.services.outstanding_report_service import _customer_echo
 
     ids = [str(uid) for uid in (customer_ids or []) if uid]
-    if not ids:
+    if not ids or staff_principal.lacks(db, staff_principal.CUSTOMERS_VIEW):
         return ""
     return _customer_echo(db, None, ids) or ""
 
@@ -589,7 +614,7 @@ def account_levels_reader(db: Session) -> Callable[[list[str]], dict[str, int | 
     def read(ids: list[str]) -> dict[str, int | None]:
         from app.models.order import Customer
 
-        if not ids:
+        if not ids or staff_principal.lacks(db, staff_principal.CUSTOMERS_VIEW):
             return {}
         return {
             str(i): lvl
@@ -605,7 +630,7 @@ def customer_names_reader(db: Session) -> Callable[[list[str]], dict[str, str]]:
     def read(ids: list[str]) -> dict[str, str]:
         from app.models.order import Customer
 
-        if not ids:
+        if not ids or staff_principal.lacks(db, staff_principal.CUSTOMERS_VIEW):
             return {}
         try:
             rows = db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(ids)).all()
@@ -621,7 +646,10 @@ def readable_customers(db: Any, rows: Any, contact_respond_id: Any, has_company_
     """CHAT-STATE S7: the carried customer rows this contact can still read, at turn start.
     One read through the contact's scope-stamped session (company scope applies), narrowed to
     the current customer links for an enforced contact. A row whose keys are all unreadable is
-    dropped; a row with no code and no key is dropped; token-only rows travel to the resolver."""
+    dropped; a row with no code and no key is dropped; token-only rows travel to the resolver.
+    A staff member who may not read customers can carry none."""
+    if staff_principal.lacks(db, staff_principal.CUSTOMERS_VIEW):
+        return []
     keys_of = lambda r: [  # noqa: E731
         str(k) for k in ([r.get("uuid")] if r.get("uuid") else []) + list(r.get("uuids") or []) if k
     ]
@@ -695,7 +723,10 @@ def customer_scope_and_staff(
     in-process number lookups (owner rule 11 Oct: a customer link does not make a staff
     member a dealer). `enforced` stays the core flag, so the customer-word gate, the
     lists and the order routes keep a linked staff user on its links as main does
-    (crew ruling (a); tests/chatbot/test_chat_report_scope_leak.py)."""
+    (crew ruling (a); tests/chatbot/test_chat_report_scope_leak.py). A staff principal is staff,
+    linked to no customer (AC-5): its reads are limited by its own slugs, not by links."""
+    if staff_principal.current() is not None:
+        return None, True
     from app.services import contact_asker
     from app.services import contact_customer_scope as scope_mod
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
@@ -794,7 +825,7 @@ def resolve_sales_agent_token(db: Session, token: str) -> list[tuple[str, str]]:
     from app.models.sales_agent import SalesAgent
 
     word = _norm(token)
-    if not word:
+    if not word or staff_principal.lacks(db, staff_principal.SALES_AGENTS_VIEW):
         return []
     from app.models.base import get_company_scope
     from app.services.scm.sales_agent_service import scope_filter
@@ -837,7 +868,7 @@ def customers_named(db: Session, token: str, *, limit: int = 50) -> list[tuple[s
     from app.services.sales_report_service import _LIKE_ESCAPE, _escape_like
 
     word = _norm(token)
-    if len(word) < 3:
+    if len(word) < 3 or staff_principal.lacks(db, staff_principal.CUSTOMERS_VIEW):
         return []
     rows = (
         db.query(Customer.id, Customer.customer_name)

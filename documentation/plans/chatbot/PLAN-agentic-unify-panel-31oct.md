@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY panel, the staff principal on the chatbot brain
 
-Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC next. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
+Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slice 1 (staff principal, live chat turn) in Phase 2. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
 
 Behaviour: `CARD-agentic-unify-v2-31oct.md` and its owner table (on branch `crew/agentic-unify`, #2048). Its section 2 (test path) was overruled by the owner: a panel turn is live, with no WhatsApp send. This plan replaces that section.
 
@@ -44,9 +44,39 @@ Audited 31 rows: keep 8, skip 13, redirect to the user 6, owner decision 4.
 **Q3. Do panel turns count in chatbot analytics?** (`CHAT/analytics/facts.py:84, 116, 363`.) (a) No, they stay in the panel's own usage views. (b) Yes, as an "unknown" audience.
 **Recommend (a):** keeps customer figures clean; adding them later is easy.
 
+## In-process reads
+
+AC-6: every read a lane makes inside the process rather than through MCP, for a staff principal. A gate is one line at the read, `staff_principal.lacks(db, slug)`; a staff member lacking the slug gets no rows, and a contact's turn never reaches the check. MCP reads carry the staff identity and the route's own gate (#2048), so they are not listed. `CHAT/lanes/business/services.py` is `S.py` below.
+
+| Read | Where | Slug or open | Why |
+| --- | --- | --- | --- |
+| Promotion kinds (parser list, kind check) | `CHAT/turn_runtime.py:829`, reached by `CHAT/head/lookup_lists.py:564` | `marketing.promotions.view` or `dealer_kit.page.view` | The promotions list's own readers (`api/v1/marketing/promotions.py:45`) |
+| Promotion hold check (menu choices) | `CHAT/turn_runtime.py:800` | Same | Runs the promotions read in process |
+| Promotion name check | `CHAT/turn_runtime.py:617` | Same | Denied means no word names a promotion |
+| No-such-kind reply | `CHAT/answer_bridge.py:664` | Same, by reach | Needs a kind `promotion_kind_rows` let through |
+| Customer list for the parser | `CHAT/head/lookup_lists.py:613`, gated at `CHAT/engine.py:1252` | `order_management.customers.view` | The customer screen's slug. Never narrowed to links: a staff principal has none |
+| Customer account levels | `S.py:613` | `order_management.customers.view` | Customer data |
+| Customer names for the gate | `S.py:629`, `CHAT/turn_runtime.py:3240` | `order_management.customers.view` | Customer data |
+| Carried customers at turn start | `S.py:647` | `order_management.customers.view` | Denied means nothing is carried |
+| Customers a word could name | `S.py:866` | `order_management.customers.view` | Customer data |
+| Customer line under a report | `S.py:512` | `order_management.customers.view` | Customer data |
+| Sales agent list for the parser | `CHAT/head/lookup_lists.py:589`, gated at `CHAT/engine.py:1252` | `master_data.sales_agents.view` | The sales agents screen's slug (`api/v1/master_data/sales_agents.py:51`) |
+| Sales agents a word names | `S.py:822`, `CHAT/lanes/business/report_ask.py:1194` | `master_data.sales_agents.view` | Same |
+| Supplier names in the low stock ask | `CHAT/lanes/business/low_stock_ask.py:162` | `procurement.suppliers.view` | The suppliers screen's slug |
+| Resolver | `S.py:155` (`resolve_reference_post`) | Open, called as the staff user with a blank contact pair | #2048 AC-14 keeps `lookup/resolve` open as a picker (owner ruling L10) |
+| Products, sets, families, spec values | `S.py:406, 588`, `CHAT/head/candidates.py`, `grounding.py`, `held_family.py`, `closed_lists_index.py`, `bare_size.py`, `lookup_lists.py:488, 754` | Open | #2048 AC-14 |
+| Categories and classes | `S.py:766, 981`, `CHAT/head/lookup_lists.py:628` | Open | #2048 AC-14 |
+| Brands | `CHAT/turn_runtime.py:554`, `S.py:535, 885`, `CHAT/head/lookup_lists.py:546` | Open | #2048 AC-14 |
+| Warehouses | `S.py:548`, `CHAT/head/lookup_lists.py:575` | Open | #2048 AC-14, pinned by `test_warehouse_names_stay_open_to_any_staff_member` |
+| File type and certificate names | `CHAT/turn_runtime.py:3427`, `CHAT/head/lookup_lists.py:526`, `scheme_index.py`, `closed_lists_index.py`, `grounding.py` | Open | Words to read a message by, no file. The files come through MCP on `master_data.product_attachments.view` |
+| Sales order PO ref behind a resolver hit | `CHAT/turn_runtime.py:5675` | Open | The value only filters the MCP read that follows, which asks the user's own slug |
+| Access level names | `S.py:126` | Open | Level names, no customer or price. The office level of every active brand |
+| Teams and agents for an escalation | `CHAT/lanes/escalation_services.py` | Not reached in this slice | Escalation is slice 3 |
+
+Trigger to centralise: none needed while one line at the read does it; a second principal type would pay for a table.
+
 ## Still to count or prove
 
-- In-process lane reads needing a user permission (card v2 section 1).
 - A live overridden turn has no test (`tests/chatbot/test_console_switch_override.py:150, 175`); runtime UNVERIFIED.
-- `frame_service` and `embedding_worker` on a key with no contact row: UNVERIFIED.
+- A panel reset writes its frame through `CHAT/turn/memory.py`, keyed on the thread and with no embedding enqueued; `S/frame_service.py` is n8n's path and is not reached. Read from the code, no test pins it.
 - Slices follow the answers; the page context layer and panel rendering are as in card v2 section 4 and mock v1.
