@@ -569,7 +569,7 @@ jobs:
           # comment fails when a test reads a documentation/ path this pair
           # would still classify as docs, so extend NOT_DOCS_RE when it does.
           DOCS_RE='^(documentation/|\.claude/|\.cursor/|[^/]+\.md$|\.github/PULL_REQUEST_TEMPLATE\.md$)'
-          NOT_DOCS_RE='^documentation/(reference/|user-guides/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$)'
+          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$)'
           non_docs=$({
             printf '%s\n' "$files" | grep -Ev "$DOCS_RE" || true
             printf '%s\n' "$files" | grep -E "$NOT_DOCS_RE" || true
