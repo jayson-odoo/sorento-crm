@@ -93,7 +93,7 @@ const DEFAULT_SORTING: SortingState = [{ id: 'raised_at', desc: false }];
  * purchasing already uses stays one toggle away, unchanged (AC-HL-01, `?view=lines`).
  *
  * Every piece of screen state that narrows or orders the list travels in the URL
- * (AC-HL-03) - `?state=&sort=&dir=&query=&page=&limit=&raised_by=&agent=&project=` -
+ * (AC-HL-03) - `?state=&sort=&dir=&query=&page=&limit=&raised_by=&agent=&project=&inquiry_no=` -
  * so a reload or a shared link reopens on exactly what was on screen, the same
  * `router.replace` pattern `OrderInquiriesClient.tsx` (the Lines view) already uses for
  * its own filters.
@@ -106,10 +106,16 @@ export function OrderInquiryHeadersList() {
   const [reserveFilter, setReserveFilter] = useState<OrderInquiryReserveStatus | ''>(() =>
     reserveFrom(searchParams.get('reserve')),
   );
-  // A reserve status spans outstanding and completed documents, so landing on one (the
-  // email link) with no explicit state shows All.
+  // The reserve emails' button lists exactly their OIs by number (comma-joined, like raised_by).
+  const [inquiryNoFilter, setInquiryNoFilter] = useState(() =>
+    joinMulti(splitMulti(searchParams.get('inquiry_no'))),
+  );
+  // A reserve status or an email's OI list spans outstanding and completed documents, so
+  // landing on one (the email link) with no explicit state shows All.
   const [stateFilter, setStateFilter] = useState<StateFilter>(() =>
-    searchParams.get('state') == null && reserveFrom(searchParams.get('reserve')) !== ''
+    searchParams.get('state') == null &&
+    (reserveFrom(searchParams.get('reserve')) !== '' ||
+      splitMulti(searchParams.get('inquiry_no')).length > 0)
       ? 'all'
       : stateFrom(searchParams.get('state')),
   );
@@ -140,11 +146,16 @@ export function OrderInquiryHeadersList() {
     pageSize: Number(searchParams.get('limit') ?? '25'),
   });
 
+  // Outstanding stays implicit unless an email's OI list or a reserve status widens the default.
+  const stateInUrl = stateFilter !== 'outstanding' || Boolean(reserveFilter || inquiryNoFilter);
+
   // URL-synced (AC-HL-03): a reload or a shared link opens on the same toggle, sort,
   // search and page. `replace`, not `push` - turning a dial is not a place to go back to.
   useEffect(() => {
     const next = new URLSearchParams();
-    if (stateFilter !== 'outstanding') next.set('state', stateFilter);
+    // Outstanding is the default only when nothing widens the default view: with an email's
+    // OI list or a reserve status in the URL it is written, so a reload keeps the choice.
+    if (stateInUrl) next.set('state', stateFilter);
     if (searchQuery) next.set('query', searchQuery);
     const sort = sorting[0];
     if (sort && (sort.id !== 'raised_at' || sort.desc)) {
@@ -157,11 +168,13 @@ export function OrderInquiryHeadersList() {
     for (const name of agentFilter) next.append('agent', name);
     for (const title of projectFilter) next.append('project', title);
     if (reserveFilter) next.set('reserve', reserveFilter);
+    if (inquiryNoFilter) next.set('inquiry_no', inquiryNoFilter);
     const nextQuery = next.toString();
     if (nextQuery === searchParams.toString()) return;
     router.replace(nextQuery ? `${pathname}?${nextQuery}` : pathname, { scroll: false });
   }, [
     stateFilter,
+    stateInUrl,
     searchQuery,
     sorting,
     pagination.pageIndex,
@@ -170,6 +183,7 @@ export function OrderInquiryHeadersList() {
     agentFilter,
     projectFilter,
     reserveFilter,
+    inquiryNoFilter,
     pathname,
     router,
     searchParams,
@@ -182,12 +196,21 @@ export function OrderInquiryHeadersList() {
     agentFilter,
     projectFilter,
     reserveFilter,
+    inquiryNoFilter,
   ]);
   // A tick on a row the new filter excludes is not a selection any more.
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   useEffect(() => {
     setRowSelection({});
-  }, [stateFilter, searchQuery, raisedByFilter, agentFilter, projectFilter, reserveFilter]);
+  }, [
+    stateFilter,
+    searchQuery,
+    raisedByFilter,
+    agentFilter,
+    projectFilter,
+    reserveFilter,
+    inquiryNoFilter,
+  ]);
   const [resendIds, setResendIds] = useState<string[] | null>(null);
   const closeResend = useCallback(() => setResendIds(null), []);
 
@@ -199,6 +222,7 @@ export function OrderInquiryHeadersList() {
       agent: agentFilter.length ? agentFilter : undefined,
       project: projectFilter.length ? projectFilter : undefined,
       reserve: reserveFilter || undefined,
+      inquiry_no: inquiryNoFilter || undefined,
       sort: sorting[0]?.id ?? 'raised_at',
       dir: sorting[0]?.desc ? 'desc' : 'asc',
       page: pagination.pageIndex + 1,
@@ -211,6 +235,7 @@ export function OrderInquiryHeadersList() {
       agentFilter,
       projectFilter,
       reserveFilter,
+      inquiryNoFilter,
       sorting,
       pagination.pageIndex,
       pagination.pageSize,
@@ -275,9 +300,10 @@ export function OrderInquiryHeadersList() {
     const base = buildDetailSearch(
         { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
         {
-          state: stateFilter !== 'outstanding' ? stateFilter : undefined,
+          state: stateInUrl ? stateFilter : undefined,
           raised_by: raisedByFilter || undefined,
           reserve: reserveFilter || undefined,
+          inquiry_no: inquiryNoFilter || undefined,
         },
       );
     if (!projectFilter.length && !agentFilter.length) return base;
@@ -290,11 +316,13 @@ export function OrderInquiryHeadersList() {
     pagination.pageSize,
     sorting,
     searchQuery,
+    stateInUrl,
     stateFilter,
     raisedByFilter,
     agentFilter,
     projectFilter,
     reserveFilter,
+    inquiryNoFilter,
   ]);
   const detailHref = useCallback(
     (header: OrderInquiryHeader) =>
@@ -528,7 +556,8 @@ export function OrderInquiryHeadersList() {
     (raisedByFilter ? 1 : 0) +
     (agentFilter.length ? 1 : 0) +
     (projectFilter.length ? 1 : 0) +
-    (reserveFilter ? 1 : 0);
+    (reserveFilter ? 1 : 0) +
+    (inquiryNoFilter ? 1 : 0);
   const isFiltered = Boolean(searchQuery) || filtersActive > 0;
 
   // AC-HL-07: Outstanding empty is a work-queue empty state with a way out; All empty is
@@ -614,12 +643,24 @@ export function OrderInquiryHeadersList() {
               modal: false,
               active: filtersActive > 0,
               activeCount: filtersActive,
-              activeSummary: reserveFilter
-                ? {
-                    label: `Reserve: ${orderInquiryReserveStatusLabel(reserveFilter)}`,
-                    onClear: () => setReserveFilter(''),
-                  }
-                : undefined,
+              activeSummary: [
+                ...(reserveFilter
+                  ? [
+                      {
+                        label: `Reserve: ${orderInquiryReserveStatusLabel(reserveFilter)}`,
+                        onClear: () => setReserveFilter(''),
+                      },
+                    ]
+                  : []),
+                ...(inquiryNoFilter
+                  ? [
+                      {
+                        label: multiChipLabel('Order inquiries', splitMulti(inquiryNoFilter)),
+                        onClear: () => setInquiryNoFilter(''),
+                      },
+                    ]
+                  : []),
+              ],
               content: (
                 <div className="space-y-4">
                   <div>
@@ -698,6 +739,7 @@ export function OrderInquiryHeadersList() {
                           setAgentFilter([]);
                           setProjectFilter([]);
                           setReserveFilter('');
+                          setInquiryNoFilter('');
                         }}
                       >
                         Clear filters

@@ -103,3 +103,22 @@ describe('orderInquiryHeadersPagerQuery.fetchPage (B3)', () => {
     expect((page as { total?: number }).total).toBe(32);
   });
 });
+
+describe('orderInquiryHeadersPagerQuery carries inquiry_no (AC-RF-27)', () => {
+  it('the list call and the key both carry the detail URL inquiry_no', async () => {
+    mockFetch.mockResolvedValue(ok({ data: [], pagination: { total: 0, page: 1, limit: 25 } }));
+    const params: ListPagerParams = {
+      pageIndex: 0,
+      pageSize: 25,
+      sorting: [],
+      searchQuery: '',
+      filters: { inquiry_no: 'OI-2610-001,OI-2610-002' },
+    };
+    await orderInquiryHeadersPagerQuery.fetchPage(params);
+    const url = String(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]);
+    expect(new URLSearchParams(url.split('?')[1]).get('inquiry_no')).toBe('OI-2610-001,OI-2610-002');
+    expect(orderInquiryHeadersPagerQuery.listQueryKey(params)).not.toEqual(
+      orderInquiryHeadersPagerQuery.listQueryKey({ ...params, filters: {} }),
+    );
+  });
+});

@@ -92,7 +92,7 @@ export function ParkedSendDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-4xl">
+      <DialogContent className="flex max-h-[90dvh] flex-col sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {ready ? (
@@ -182,7 +182,11 @@ export function ParkedSendDialog({
                     </p>
                     {emailNote ? emailNote(Math.min(selected, emails.length - 1)) : null}
                   </div>
-                  <EmailPreviewFrame html={current.body_html} subject={current.subject} />
+                  <EmailPreviewFrame
+                    html={current.body_html}
+                    subject={current.subject}
+                    desktopWidth={900}
+                  />
                 </div>
               ) : null}
             </>

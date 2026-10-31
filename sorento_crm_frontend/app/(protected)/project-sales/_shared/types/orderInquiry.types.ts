@@ -1484,6 +1484,8 @@ export interface OrderInquiryHeaderListParams {
   project?: string | string[];
   /** OIs with a reserve request row in this status (AC-SN-30). */
   reserve?: 'parked' | 'needs_reserve' | 'notice_parked' | 'reserved';
+  /** Exact OI numbers, comma-joined (the reserve emails' button). */
+  inquiry_no?: string;
   page?: number;
   limit?: number;
   sort?: string;

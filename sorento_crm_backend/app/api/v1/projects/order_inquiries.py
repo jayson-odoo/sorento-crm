@@ -1394,7 +1394,7 @@ def commit_order_inquiry_reserve(
     inquiry rows only; the service resolves each to its open (`reserves`) or latest
     answered (`amendments`) request row inside THIS inquiry, so a line of a finished
     request can be amended while another request is open. One transaction, one
-    `order_inquiry_reserved` dispatch per request touched. Returns the touched
+    `order_inquiry_reserved` dispatch per requester of the requests touched. Returns the touched
     requests. `projects.order_inquiries.reserve` alone (R1)."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")
@@ -1966,6 +1966,13 @@ def list_order_inquiry_headers(
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(
         None, description="OIs with a reserve request row in this status (AC-SN-30)."
     ),
+    inquiry_no: Optional[list[str]] = Query(
+        None,
+        description=(
+            "By OI no, exact (never a prefix); comma-separated or repeated, several are "
+            "OR-ed. The reserve emails' button lists exactly the OIs the email covers."
+        ),
+    ),
     sort: Optional[HeaderListSort] = Query(None, description="Defaults to raised_at."),
     direction: Optional[Literal["asc", "desc"]] = Query("asc", alias="dir"),
     page: int = Query(1, ge=1),
@@ -1979,6 +1986,9 @@ def list_order_inquiry_headers(
         for value in (multi_text(raw) or []):
             if len(value) > 200:
                 raise handle_unprocessable(f"{label}: value is too long")
+    for value in multi_values(inquiry_no, capped=False) or []:
+        if len(value) > 200:
+            raise handle_unprocessable("inquiry_no: value is too long")
     try:
         result = OrderInquiryHeaderService(db).list(
             state=state,
@@ -1987,6 +1997,7 @@ def list_order_inquiry_headers(
             agent=agent,
             project=project,
             reserve=reserve,
+            inquiry_no=inquiry_no,
             sort=sort,
             direction=direction,
             page=page,
