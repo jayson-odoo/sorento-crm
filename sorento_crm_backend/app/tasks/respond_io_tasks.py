@@ -206,9 +206,17 @@ def _otp_contact_id(otp_id: str) -> Optional[str]:
     """The contact an OTP row was issued to, so the code goes out through that
     contact's own workspace. The bare identifier cannot pick it: a Respond.io id
     is unique per workspace only."""
+    import uuid
+
     from app.database import SessionLocal
     from app.models.portal import PortalOtpCode
 
+    try:
+        uuid.UUID(str(otp_id))
+    except ValueError:
+        # Not a row id (portal_otp_codes.id is a UUID): nothing to key on, so the
+        # send keeps the default workspace.
+        return None
     db = SessionLocal()
     try:
         row = db.query(PortalOtpCode.contact_id).filter(PortalOtpCode.id == otp_id).first()
