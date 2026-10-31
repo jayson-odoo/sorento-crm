@@ -27,13 +27,12 @@ rejected for that reason - see the coder's report on this change for where that 
 up. If the two ever need to agree on a THIRD behaviour, the shared piece belongs in
 `contracts.py`, which both already read.
 
-Every call flips `system_settings.chatbot_business_lane_enabled` and
-`chatbot_completed_lanes` ON for the one turn and restores the PRIOR values in a `finally`,
-the same rule the script's `_lanes_on` states: without it a turn whose branch is not in
-`chatbot_completed_lanes` comes back with an empty reply (delegated to n8n), which would
-grade the handoff rather than the answer - and a console with a permanently-empty reply
-teaches nobody anything. Scoped to the single call, on a session of its own, never left
-flipped for the next request even if the turn itself raises.
+Every call runs with `chatbot_business_lane_enabled` and `chatbot_completed_lanes` ON for
+its own turn only, passed to `run_turn` as `switch_overrides` (see `_lanes_on`): without it
+a turn whose branch is not in `chatbot_completed_lanes` comes back with an empty reply
+(delegated to n8n), which would grade the handoff rather than the answer - and a console
+with a permanently-empty reply teaches nobody anything. `system_settings` is never
+written, so live turns running at the same time keep the owner's stored switches.
 """
 from __future__ import annotations
 
@@ -41,15 +40,13 @@ import base64
 import json
 import logging
 import uuid
-from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.chatbot_turn import ChatbotTurn
-from app.models.user import SystemSetting
 from app.services.chatbot import run_turn
 from app.services.chatbot.agent.loop import AgentBusy, enforce_agent_rate_limit, run_agent_turn
 from app.services.chatbot.contracts import BRANCH_KINDS, TurnRequest
@@ -238,55 +235,20 @@ def _build_envelope(
     return envelope
 
 
-def _read_switches(db: Session) -> tuple[bool, Any]:
-    row = db.query(SystemSetting).first()
-    if row is None:
-        return False, []
-    return bool(row.chatbot_business_lane_enabled), row.chatbot_completed_lanes
+def _lanes_on() -> dict[str, Any]:
+    """Business lane on and every branch answered, FOR THIS ONE TURN ONLY.
 
-
-def _write_switches(db: Session, enabled: bool, lanes: Any) -> None:
-    row = db.query(SystemSetting).first()
-    if row is None:
-        return
-    row.chatbot_business_lane_enabled = enabled
-    row.chatbot_completed_lanes = list(lanes or [])
-    db.commit()
-
-
-@contextmanager
-def _lanes_on() -> Iterator[None]:
-    """Business lane on and every branch answered FOR THIS ONE CALL, restored after.
-
-    On a FRESH session per read/write, each closed immediately - never one session held
-    open across the `yield`. `run_turn` opens and closes many of its own sessions on the
-    same underlying test connection (`tests/_pg_fixture.py`'s savepoint-per-`Session`
-    scheme); a session left idle-but-open here for the whole turn interleaves its
-    save point with theirs and can lose a write the turn made, discovered when the D14
-    zero-writes test for this endpoint undercounted `chatbot.turns` by exactly the row this
-    context manager's own held-open session's savepoint had shadowed. Same restore rule as
-    `chatbot_console_check.py::_lanes_on` otherwise, without that script's production
-    refusal: this endpoint is gated by `system.chat_history.view` rather than an operator's
-    own shell, so the permission system is what decides who may run a console turn at all.
+    Handed to `run_turn(switch_overrides=...)`, which lays it over the turn's own settings
+    snapshot. `system_settings` is never written: this used to flip the stored row and
+    restore it in a `finally`, which turned every live WhatsApp turn running meanwhile
+    into an all-lanes CRM turn, and two overlapping console turns could restore "all on"
+    for good (CONSOLE-SWITCH-OVERRIDE). A fresh dict per call, so no caller can mutate a
+    shared one.
     """
-    db = SessionLocal()
-    try:
-        before_enabled, before_lanes = _read_switches(db)
-    finally:
-        db.close()
-    db = SessionLocal()
-    try:
-        _write_switches(db, True, list(BRANCH_KINDS))
-    finally:
-        db.close()
-    try:
-        yield
-    finally:
-        db = SessionLocal()
-        try:
-            _write_switches(db, before_enabled, before_lanes or [])
-        finally:
-            db.close()
+    return {
+        "chatbot_business_lane_enabled": True,
+        "chatbot_completed_lanes": list(BRANCH_KINDS),
+    }
 
 
 def _next_state(body: dict[str, Any]) -> dict[str, Any] | None:
@@ -526,8 +488,7 @@ def run_console_turn(
     )
     envelope = TurnRequest(envelope=envelope_dict).envelope
 
-    with _lanes_on():
-        result = run_turn(envelope, session_factory=SessionLocal)
+    result = run_turn(envelope, session_factory=SessionLocal, switch_overrides=_lanes_on())
     body = result.as_dict()
 
     reply_text, send_messages = _customer_texts(body)
@@ -804,8 +765,7 @@ def _run_console_media_turn(
 
     envelope = TurnRequest(envelope=envelope_dict).envelope
 
-    with _lanes_on():
-        result = run_turn(envelope, session_factory=SessionLocal)
+    result = run_turn(envelope, session_factory=SessionLocal, switch_overrides=_lanes_on())
     body = result.as_dict()
 
     reply_text, send_messages = _customer_texts(body)
