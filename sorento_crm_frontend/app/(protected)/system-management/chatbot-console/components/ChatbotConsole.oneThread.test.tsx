@@ -460,6 +460,58 @@ describe('AC-14: after a reload the thread is back', () => {
   });
 });
 
+describe('AC-14: the bot session survives a reload', () => {
+  const SESSION = {
+    focus: { customers: [] },
+    open_question: { kind: 'customer_pick', options: [{ position: 1, label: 'Customer A' }], expects: 'pick', payload: {} },
+    ideation: null,
+    access_levels: [],
+    contains_flyer: false,
+  };
+
+  async function firstTurnThenReload() {
+    postConsoleTurn.mockResolvedValueOnce(turnResponse('Which customer?', { session_vars: SESSION }));
+    const first = renderConsole();
+    send('price?');
+    await screen.findByText('Which customer?');
+    const run = postConsoleTurn.mock.calls[0][0].run_id as string;
+    first.unmount();
+    getConsoleThread.mockResolvedValue({
+      ...thread([chatTurn('c1', 'price?', 'Which customer?', '2026-10-31T09:00:00Z')]),
+      // A server that hands the session back on the read, as well as whatever the page stored itself.
+      session_vars: SESSION,
+    });
+    renderConsole();
+    await screen.findByText('Which customer?');
+    return run;
+  }
+
+  it('the next message after a reload sends the same session_vars for that contact and run, not {}', async () => {
+    const run = await firstTurnThenReload();
+    postConsoleTurn.mockResolvedValueOnce(turnResponse('Customer A it is.'));
+
+    send('the first one');
+
+    await screen.findByText('Customer A it is.');
+    const body = postConsoleTurn.mock.calls[1][0];
+    expect(body.contact_respond_id).toBe('ZZT-contact-1');
+    expect(body.run_id).toBe(run);
+    expect(body.session_vars).toEqual(SESSION);
+  });
+
+  it('a new conversation clears them', async () => {
+    await firstTurnThenReload();
+    fireEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+    await waitFor(() => expect(newAgentConversation).toHaveBeenCalled());
+    postConsoleTurn.mockResolvedValueOnce(turnResponse('Fresh.'));
+
+    send('hello again');
+
+    await screen.findByText('Fresh.');
+    expect(postConsoleTurn.mock.calls[1][0].session_vars).toEqual({});
+  });
+});
+
 // ------------------------------------------------------------------ AC-16
 
 describe('AC-16: switching contact shows that contact thread', () => {

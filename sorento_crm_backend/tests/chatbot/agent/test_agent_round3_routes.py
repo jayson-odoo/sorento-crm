@@ -22,13 +22,14 @@ from tests.chatbot.test_console_turn_endpoint import (  # noqa: E402,F401
     client,
 )
 
-TURN = "/api/v1/system/chatbot/agent/turn"
+TURN = "/api/v1/system/chatbot/console/turn"
+BODY = {"contact_respond_id": "ZZT-C1", "text": "x", "run_id": "ZZT-run-1", "force_agent": True}
 CONVERSATION = "/api/v1/system/chatbot/agent/conversation"
 NEW = "/api/v1/system/chatbot/agent/conversation/new"
 
 
 @pytest.mark.parametrize("method, url", [("get", CONVERSATION), ("post", NEW)])
-def test_conversation_routes_refuse_like_the_turn_route(client, method, url):
+def test_conversation_routes_refuse_a_contact_that_does_not_exist(client, method, url):
     if method == "get":
         resp = client.get(url, params={"contact_respond_id": "ZZT-NOBODY"})
     else:
@@ -37,21 +38,22 @@ def test_conversation_routes_refuse_like_the_turn_route(client, method, url):
     assert resp.json()["detail"] == {"code": "agent_refused", "reason": "contact_not_found"}
 
 
-def test_turn_busy_is_a_409_agent_busy(client, monkeypatch):
-    import app.api.v1.system.chatbot as route_mod
+def test_turn_busy_is_a_200_with_the_busy_reply(client, monkeypatch):
+    """Meaning changed: busy was a 409 agent_busy; the console says so in the reply text."""
+    from app.services.chatbot import console_service
     from app.services.chatbot.agent.loop import AgentBusy
 
     def fake(db, **kw):
         raise AgentBusy()
 
-    monkeypatch.setattr(route_mod, "run_agent_turn", fake)
-    resp = client.post(TURN, json={"contact_respond_id": "ZZT-C1", "text": "x"})
-    assert resp.status_code == 409
-    assert resp.json()["detail"]["code"] == "agent_busy"
+    monkeypatch.setattr(console_service, "run_agent_turn", fake)
+    resp = client.post(TURN, json=BODY)
+    assert resp.status_code == 200
+    assert resp.json()["reply_text"] == console_service.AGENT_BUSY_REPLY
 
 
 def test_turn_passes_the_console_user_as_operator(client, monkeypatch):
-    import app.api.v1.system.chatbot as route_mod
+    from app.services.chatbot import console_service
     from app.services.chatbot.agent.loop import AgentTurnResult
 
     seen = {}
@@ -60,8 +62,8 @@ def test_turn_passes_the_console_user_as_operator(client, monkeypatch):
         seen.update(kw)
         return AgentTurnResult("t", "c", "ok", "answered", None, 1, {"prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "calls": 1}, [])
 
-    monkeypatch.setattr(route_mod, "run_agent_turn", fake)
-    assert client.post(TURN, json={"contact_respond_id": "ZZT-C1", "text": "x"}).status_code == 200
+    monkeypatch.setattr(console_service, "run_agent_turn", fake)
+    assert client.post(TURN, json=BODY).status_code == 200
     assert seen["operator_user_id"] == _ACTOR["id"]
 
 
@@ -107,7 +109,7 @@ def test_new_conversation_with_a_valid_contact_works(client, session_factory):
 
 
 def test_turns_are_rate_limited_per_operator(client, monkeypatch):
-    import app.api.v1.system.chatbot as route_mod
+    from app.services.chatbot import console_service
     from app.services import rate_limit
 
     seen = {}
@@ -118,8 +120,8 @@ def test_turns_are_rate_limited_per_operator(client, monkeypatch):
 
     monkeypatch.setattr(rate_limit, "hit", fake_hit)
     ran = []
-    monkeypatch.setattr(route_mod, "run_agent_turn", lambda db, **kw: ran.append(kw))
-    resp = client.post(TURN, json={"contact_respond_id": "ZZT-C1", "text": "x"})
+    monkeypatch.setattr(console_service, "run_agent_turn", lambda db, **kw: ran.append(kw))
+    resp = client.post(TURN, json=BODY)
     assert resp.status_code == 429
     assert "too many" in resp.text.lower()
     assert seen["ident"] == _ACTOR["id"] and seen["limit"] == 30 and seen["window"] == 600

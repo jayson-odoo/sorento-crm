@@ -12,7 +12,7 @@ from tests.chatbot.test_console_turn_endpoint import (  # noqa: F401 - fixtures 
     client,
 )
 
-TURN = "/api/v1/system/chatbot/agent/turn"
+TURN = "/api/v1/system/chatbot/console/turn"
 CONVERSATION = "/api/v1/system/chatbot/agent/conversation"
 
 EXPECTED = {
@@ -61,7 +61,7 @@ def test_a_turn_without_a_trace_has_empty_steps(client, session_factory):
 
 
 def test_the_turn_response_carries_the_steps_of_the_stored_row(client, session_factory, monkeypatch):
-    import app.api.v1.system.chatbot as route_mod
+    from app.services.chatbot import console_service
     from app.services.chatbot.agent.loop import AgentTurnResult
 
     contact, conv, row = _world(session_factory)
@@ -73,6 +73,8 @@ def test_the_turn_response_carries_the_steps_of_the_stored_row(client, session_f
             tool_calls=[{"name": "crm_report_ask", "status": "ok", "ms": 120}],
         )
 
-    monkeypatch.setattr(route_mod, "run_agent_turn", fake)
-    body = client.post(TURN, json={"contact_respond_id": contact["respond_id"], "text": "q"}).json()
-    assert body["steps"] == EXPECTED
+    monkeypatch.setattr(console_service, "run_agent_turn", fake)
+    body = client.post(
+        TURN, json={"contact_respond_id": contact["respond_id"], "text": "q", "run_id": "ZZT-run-1", "force_agent": True}
+    ).json()
+    assert body["agent"]["steps"] == EXPECTED

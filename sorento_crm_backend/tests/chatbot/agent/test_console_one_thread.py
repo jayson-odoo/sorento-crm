@@ -463,6 +463,36 @@ def test_AC15_a_limit_beyond_the_list_guard_is_refused_or_clamped(client, eligib
         assert len(resp.json()["turns"]) <= 1000
 
 
+def test_AC14_a_reloaded_bot_turn_keeps_its_badge_parser_version_and_message_id(
+    client, eligible, jev, stub_console_seams, bot_parser,
+):
+    """Pinned so a reloaded bot bubble keeps its branch badge, parser pill and quotability."""
+    run = _run_id()
+    jev.answer = jev_answer("chat", 0.95)
+    posted = _post(client, eligible, CHAT_TEXT, run_id=run).json()
+    assert posted["branch_kind"] == "not_supported"
+    assert posted["message_id"].startswith("console-")
+
+    turn = _thread(client, eligible, run).json()["turns"][0]
+
+    assert turn["branch_kind"] == posted["branch_kind"]
+    assert turn["prompt_version"] == posted["prompt_version"]
+    assert turn["message_id"] == posted["message_id"]
+
+
+def test_AC14_a_reloaded_agent_turn_keeps_why_it_stopped(client, eligible):
+    """The old conversation read carried `limit_hit`; the bubble's "Stopped: ..." text needs it after a reload."""
+    db = eligible["db"]
+    conv = _conversation(db, eligible)
+    row = _agent_row(db, eligible, conv, created_at=BASE, text_="q", reply="partial answer")
+    row.response = {**row.response, "limit_hit": "rounds", "status": "limited"}
+    db.commit()
+
+    turn = _thread(client, eligible, _run_id()).json()["turns"][0]
+
+    assert turn["limit_hit"] == "rounds"
+
+
 # ------------------------------------------------------------------ AC-20: no agent, still a thread
 
 
