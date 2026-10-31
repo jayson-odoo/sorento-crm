@@ -302,7 +302,12 @@ def _finish(
     db.commit()
     if not changed:
         raise ActionRefused("not_proposed")
-    notes = [s["note"] for s in steps if s.get("status") == "done" and s.get("note")]
+    # Only a write that opts in (`note_in_reply`) has its note repeated in a chat reply.
+    notes = [
+        s["note"] for s in steps
+        if s.get("status") == "done" and s.get("note")
+        and getattr(writes.WRITES.get(s.get("tool")), "note_in_reply", False)
+    ]
     return ActionOutcome(str(action.id), status, _reply(status, steps), _out_steps(steps), notes)
 
 

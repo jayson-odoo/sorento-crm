@@ -125,10 +125,29 @@ def _normal(token: str) -> str:
 
 
 _UUID_TEXT = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
-#: A whole URL with an id in it: dropped from model text, never left as `.../(id)`.
-_URL_WITH_ID = re.compile(
-    r"https?://\S*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\S*", re.I
-)
+#: A URL is ASCII URL characters only (no comma, no space), so the text around it is never taken with it.
+_URL = re.compile(r"https?://[A-Za-z0-9\-._~:/?#@!$&'*+;=%\[\]()]*")
+_MARKDOWN_LINK = re.compile(r"\[([^\[\]]*)\]\((https?://[^\s)]*)\)")
+_URL_TAIL = ".,;:!?)]}'\""
+
+
+def _drop_id_urls(text: str) -> str:
+    """Model text without any URL that carries an id (never left as `.../(id)`): `[label](url)` becomes
+    `label`, a bare URL goes whole except the punctuation that closed it. Linear: no nested quantifiers."""
+
+    def link(m: re.Match) -> str:
+        return m.group(1) if _UUID_TEXT.search(m.group(2)) else m.group(0)
+
+    def bare(m: re.Match) -> str:
+        url = m.group(0)
+        if not _UUID_TEXT.search(url):
+            return url
+        kept = url[len(url.rstrip(_URL_TAIL)):]
+        # Glued to a word or number on the left, the gap keeps "5000<url> units" from reading as "5000 units".
+        before = m.string[m.start() - 1] if m.start() else ""
+        return (" " if before.isascii() and before.isalnum() else "") + kept
+
+    return _URL.sub(bare, _MARKDOWN_LINK.sub(link, text))
 # An identifier: letters and digits joined by "-" or "/" (a product code, an order or packing number).
 _IDENTIFIER = re.compile(r"\b[A-Za-z0-9]+(?:[-/][A-Za-z0-9]+)+\b")
 
@@ -330,7 +349,7 @@ def _answer_parts(args: Any) -> tuple[str, list[dict], list[dict], list[str]]:
     not_found = [n for n in (args.get("not_found") or []) if isinstance(n, dict)] if isinstance(args.get("not_found"), list) else []
     checked = args.get("not_checked")
     not_checked = [str(x).strip() for x in checked if str(x).strip()] if isinstance(checked, list) else []
-    return (text.strip() if isinstance(text, str) else ""), figures, not_found, not_checked
+    return (_drop_id_urls(text).strip() if isinstance(text, str) else ""), figures, not_found, not_checked
 
 
 def _found_ids(ledger: dict[str, dict]) -> set[str]:
@@ -433,7 +452,7 @@ def final_reply(
     if left:
         text = f"{text}\n\nI did not get to: {'; '.join(left)}.".strip()
     # No UUIDs in what a person reads. A link that carries one is added by code from the stored step instead.
-    return _UUID_TEXT.sub("(id)", _URL_WITH_ID.sub("", text)), bool(not_checked)
+    return _UUID_TEXT.sub("(id)", text), bool(not_checked)
 
 
 def violation_message(bad_numbers: list[str], bad_not_found: list[str], empty_text: bool) -> str:
@@ -544,8 +563,14 @@ def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str]) -> To
     except actions.ActionRefused as exc:
         return ToolResult("invalid", message=f"Not done: {exc.reason.replace('_', ' ')}.")
     notes.extend(outcome.notes)
+    reply_text, message = outcome.reply_text, ""
+    if outcome.notes:
+        # The notes are added to the reply in code; the model never reads them, so it cannot invent or repeat one.
+        for note in outcome.notes:
+            reply_text = reply_text.replace(f" {note}", "").replace(note, "")
+        message = "The idea's number and link are added to your reply automatically. Do not write them."
     return ToolResult(
-        "ok", data={"status": outcome.status, "reply_text": outcome.reply_text, "steps": outcome.steps}
+        "ok", data={"status": outcome.status, "reply_text": reply_text, "steps": outcome.steps}, message=message
     )
 
 
@@ -1212,8 +1237,9 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
         reply = "The agent has no answer for this."
     if status != "failed":
         reply = to_whatsapp(reply)
-    if status != "failed" and confirm_notes:
+    if confirm_notes:
         # After verification, like the proposal block: built by code from the stored steps, so a link is whole.
+        # Whatever the status: a confirm that ran made the idea even if the model then failed.
         reply = f"{reply}\n\n" + "\n".join(confirm_notes)
     pending = None
     if status != "failed" and steps:

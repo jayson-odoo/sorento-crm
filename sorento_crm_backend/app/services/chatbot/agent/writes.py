@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -45,6 +46,8 @@ class WriteDef:
     changes: Callable[[dict, dict, dict, dict], list[dict]] | None = None
     #: True = `execute` also takes the confirmed `before` as a fourth argument, to refuse a different branch.
     execute_takes_before: bool = False
+    #: True = the step's `note` is repeated in a chat reply by code, and kept from the model (a link it must not invent).
+    note_in_reply: bool = False
 
 
 @dataclass(frozen=True)
@@ -1732,8 +1735,9 @@ MAX_SIMILAR_IDEAS = 3
 #: Newest agent actions of the contact read for ideas it made.
 MAX_IDEA_ACTIONS = 200
 #: Test ideas read live by id for one list.
-MAX_TEST_IDEAS = 20
-MAX_USE_CASES = 10
+MAX_TEST_IDEAS = 5
+MAX_USE_CASES = 5
+IDEA_PROBLEM_CHARS = 120
 IDEA_NOT_CREATED = "The idea was not created because the Ideas workspace could not be reached. Try again later."
 IDEA_OWN_ONLY = "You can only edit your own ideas."
 IDEA_TEST_ONLY = "While ideas are in test, only test ideas can be changed here. Change this one on the Ideas board."
@@ -1757,13 +1761,18 @@ def _idea_given(args: dict) -> dict:
     """The idea fields the model gave, cleaned like the bot's extracted ones; an empty result is left out."""
     from app.services.ideation_extractor import clean_use_cases, normalise_field_value, normalise_title
 
+    def plain(value: str) -> str:
+        """Format characters (zero-width, bidi overrides, tags) removed, so what is read is what is sent."""
+        return "".join(c for c in value if unicodedata.category(c) != "Cf")
+
     out: dict = {}
     for key in ("problem", "desired_outcome", "current_workaround"):
-        if isinstance(args.get(key), str) and (clean := normalise_field_value(key, args[key])):
+        if isinstance(args.get(key), str) and (clean := normalise_field_value(key, plain(args[key]))):
             out[key] = clean
-    if isinstance(args.get("title"), str) and (clean := normalise_title(args["title"])):
+    if isinstance(args.get("title"), str) and (clean := normalise_title(plain(args["title"]))):
         out["title"] = clean
-    if cases := clean_use_cases(args.get("use_cases")):
+    cases = args.get("use_cases")
+    if cases := clean_use_cases([plain(c) for c in cases] if isinstance(cases, list) else cases):
         out["use_cases"] = cases
     return out
 
@@ -1842,19 +1851,24 @@ def _idea_create_read_before(db, user: dict, args: dict) -> dict:
     return {"_show": {"similar": similar}}
 
 
+def _q(value: Any) -> str:
+    """A value quoted for the proposal line, with backslash and quote escaped so it cannot read as another field."""
+    return '"' + _line(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 def _idea_values(given: dict, keys: tuple[str, ...], joiner: str) -> list[str]:
     """The given values in full, each quoted, as `label "value"` (or `label "a", "b"` for use cases)."""
     parts = []
     for key in keys:
         if key in given:
-            value = ", ".join(_in_full(v) for v in given[key]) if key == "use_cases" else _in_full(given[key])
+            value = ", ".join(_q(v) for v in given[key]) if key == "use_cases" else _q(given[key])
             parts.append(f"{_IDEA_FIELDS[key][1]}{joiner}{value}")
     return parts
 
 
 def _idea_create_summary(args: dict, before: dict) -> str:
     given = _idea_given(args)
-    line = f'Log idea "{_line(given["title"])}"' if given.get("title") else "Log idea"
+    line = f"Log idea {_q(given['title'])}" if given.get("title") else "Log idea"
     line += ": " + ", ".join(_idea_values(given, ("problem", "desired_outcome", "use_cases", "current_workaround"), " "))
     similar = before.get("similar") or []
     if similar:
@@ -1940,7 +1954,7 @@ def _idea_update_read_before(db, user: dict, args: dict) -> dict:
 def _idea_update_summary(args: dict, before: dict) -> str:
     given = _idea_given(args)
     changes = _idea_values(given, ("title", "problem", "desired_outcome", "use_cases", "current_workaround"), " to ")
-    head = f'Idea {_line(before.get("number"))} "{_line(before.get("idea_title"))}": change '
+    head = f"Idea {_line(before.get('number'))} {_q(before.get('idea_title'))}: change "
     return head + " and ".join(changes)
 
 
@@ -1965,6 +1979,7 @@ def _idea_row(idea: dict) -> dict:
     return {
         "id": idea["id"], "idea_number": idea.get("ideaNumber"), "title": idea.get("title"),
         "status": idea.get("status"), "is_test": bool(idea.get("isTest")),
+        "problem": _line(idea.get("problem"))[:IDEA_PROBLEM_CHARS],
     }
 
 
@@ -2026,7 +2041,8 @@ def _ideas_list(db, ctx, args: dict) -> ToolResult:
         logger.warning("agent: the ideas list failed", exc_info=True)
         return ToolResult("error", message="Your ideas could not be read right now.")
     data, more = cap_result({"ideas": rows[:MAX_LIST]})
-    return ToolResult("ok", data=data, more=more)
+    # The test ideas not read (over MAX_TEST_IDEAS) count with the rows the size cap cut.
+    return ToolResult("ok", data=data, more=more + max(0, len(made) - MAX_TEST_IDEAS))
 
 
 WRITES[CREATE_IDEA] = WriteDef(
@@ -2047,6 +2063,7 @@ WRITES[CREATE_IDEA] = WriteDef(
     summary=_idea_create_summary,
     execute=_idea_create_execute,
     record_key="",
+    note_in_reply=True,
 )
 WRITES[UPDATE_IDEA] = WriteDef(
     name=UPDATE_IDEA,
