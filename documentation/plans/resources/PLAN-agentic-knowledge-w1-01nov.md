@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-KNOWLEDGE P2 W1 - the agent answers WhatsApp contacts (read only, knowledge included)
 
-Status: PLAN (owner answered card v2.1 on 31 Oct; build red-first next). Track: L (new principal, external ingest
+Status: IN PROGRESS (S1-S4 built, fix round 1 after review; S6 waits for #2038). Track: L (new principal, external ingest
 surface; security review required). UAC: `agentic-knowledge-w1-acceptance-criteria.md`.
 Card: `PLAN-agentic-knowledge-p2-31oct.md` (v2.1). Lane PR #2053, `crew-lane: AGENTIC-KNOWLEDGE-P2`.
 

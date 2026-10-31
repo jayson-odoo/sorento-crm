@@ -1,5 +1,7 @@
 # UAC: AGENTIC-KNOWLEDGE P2 W1 (agent on WhatsApp, read only)
 
+Status: IN PROGRESS with the W1 plan. Track: L.
+
 Plan: `PLAN-agentic-knowledge-w1-01nov.md`. Each AC names its test.
 
 ## Contact principal (S1)
