@@ -18,7 +18,7 @@ Contract: `CARD-agentic-unify-v2-31oct.md`, `PLAN-agentic-unify-panel-31oct.md` 
 - **AC-5** The principal answers the brain's questions: company = the user's active company; brand = all; tier = office; customers = staff; AI allowed = the permission passed. Tools and fields follow the user's permissions, never a contact's grants.
 - **AC-6** Lane and agent reads through MCP carry the staff identity from #2048, with a blank contact pair. In-process lane reads check the user's permission at the principal: every such read is listed in the plan with its slug, and a staff member lacking it gets no data.
 - **AC-7** `crm_report_ask` and the other contact-only reads have a staff path. The invoiced and unpaid gates (`services/sales/invoiced_sales.py:342,360`) ask both users on it, and the header still cannot widen beyond act-as.
-- **AC-8** One daily agent cap and one rate limit per user, across all their threads (default as `chatbot_agent_daily_cap`). One turn at a time per thread.
+- **AC-8** One daily agent cap and one rate limit per user, across all their threads (default from `system_settings.chatbot_agent_daily_turns`). One turn at a time per thread.
 
 ## A live turn that sends nothing
 
