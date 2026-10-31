@@ -12,6 +12,15 @@ import pytest
 
 from app.models.chatbot_turn import ChatbotTurn
 from tests.chatbot.agent._seed import seed_agent_contact, seed_contact, seed_user
+from tests.chatbot.agent.test_agent_asked_back_flag import answer_asking  # noqa: F401
+from tests.chatbot.agent.test_console_one_thread import console, real_agent  # noqa: F401 - fixtures
+from tests.chatbot.agent.test_router_console import eligible  # noqa: F401 - fixture
+from tests.chatbot.test_console_turn_endpoint import (  # noqa: F401 - fixtures
+    _run_id,
+    client,
+    seeded_contact_with_a_prior_turn,
+    stub_console_seams,
+)
 from tests.chatbot.agent.test_router import (  # noqa: F401
     OPEN_QUESTION_VARS,
     _fresh_prompt_cache,
@@ -196,3 +205,92 @@ def test_AC_R3b_9_the_flag_is_read_whatever_session_vars_the_console_sends(db, j
     jev.answer = jev_answer("chat", 0.4)
     decision = route(db, contact["respond_id"], "stock list too long on my phone", session_vars=session_vars)
     assert (decision.side, decision.reason) == ("agent", "agent_asked")
+
+
+# ------------------------------------------------------------------ New conversation ends the flag
+
+
+def seed_flagged_in(db, respond_id, conversation_id, *, minutes_ago=5):
+    """A flagged agent turn whose envelope names its conversation, as `run_agent_turn` writes it."""
+    row = ChatbotTurn(
+        id=str(uuid.uuid4()),
+        contact_respond_id=respond_id,
+        ingress="agent",
+        is_test=True,
+        status="done",
+        envelope={"text": "I want to submit an idea", "agent_conversation_id": str(conversation_id)},
+        response={"reply_text": "What is the idea?", "status": "answered", "asked_back": True},
+        created_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def flagged_in_a_conversation(db):
+    """An armed contact whose latest turn is a flagged agent turn inside its newest conversation."""
+    from app.services.chatbot.agent import memory
+
+    contact = seed_agent_contact(db)
+    arm(db)
+    conv = memory.new_conversation(db, contact["respond_id"])
+    db.commit()
+    seed_flagged_in(db, contact["respond_id"], conv.id)
+    return contact
+
+
+@pytest.mark.parametrize("choice", ["chat", "agent"])
+def test_AC_R3b_11_a_newer_conversation_ends_the_flag(db, jev, choice):
+    """The newer conversation is made with `agent_memory.new_conversation`, the call the route
+    `POST /agent/conversation/new` makes, not through the route itself."""
+    from app.services.chatbot.agent import memory
+
+    contact = flagged_in_a_conversation(db)
+    memory.new_conversation(db, contact["respond_id"])
+    db.commit()
+    jev.answer = jev_answer(choice, 0.4)
+    decision = route(db, contact["respond_id"], "hi")
+    assert (decision.side, decision.reason) == ("chat", "low_confidence")
+
+
+def test_AC_R3b_11_without_a_newer_conversation_the_flag_still_holds(db, jev):
+    contact = flagged_in_a_conversation(db)
+    jev.answer = jev_answer("chat", 0.4)
+    decision = route(db, contact["respond_id"], "stock list too long on my phone")
+    assert (decision.side, decision.reason) == ("agent", "agent_asked")
+
+
+def test_AC_R3b_11_a_flagged_turn_naming_no_conversation_is_not_honoured(db, jev):
+    from app.services.chatbot.agent import memory
+
+    contact = seed_agent_contact(db)
+    arm(db)
+    memory.new_conversation(db, contact["respond_id"])
+    db.commit()
+    seed_flagged(db, contact["respond_id"])
+    jev.answer = jev_answer("chat", 0.4)
+    decision = route(db, contact["respond_id"], "stock list too long on my phone")
+    assert (decision.side, decision.reason) == ("chat", "low_confidence")
+
+
+@pytest.mark.parser_prompt_rows
+@pytest.mark.parametrize(
+    "confidence, side, reason", [(0.4, "agent", "agent_asked"), (FLOOR, "chat", "classified")]
+)
+def test_AC_R3b_12_a_forced_turn_that_asked_back_holds_the_next_reply(
+    console, eligible, jev, real_agent, stub_console_seams, monkeypatch, confidence, side, reason,
+):
+    monkeypatch.setattr(real_agent, "chat", lambda *a, **k: answer_asking("What is the idea?"))
+    resp = console.post(
+        "/api/v1/system/chatbot/console/turn",
+        json={"contact_respond_id": eligible["respond_id"], "text": "I want to submit an idea",
+              "run_id": _run_id(), "force_agent": True},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["route"]["reason"] == "forced"
+
+    db = eligible["db"]
+    db.expire_all()
+    jev.answer = jev_answer("chat", confidence)
+    decision = route(db, eligible["respond_id"], "stock list too long on my phone")
+    assert (decision.side, decision.reason) == (side, reason)
