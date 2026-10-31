@@ -2,7 +2,7 @@
  * AttachmentDetail - the "Read by AI" row (AGENTIC-KNOWLEDGE P1, AC-K11, AC-K20).
  *
  * The row appears ONLY when the backend reports an `ai_read_status`: status, pages, OCR pages,
- * the estimated cost, and the error when failed. A done or failed file offers "Read again",
+ * the estimated cost, and the error when failed. Only a failed file offers "Read again" (with the upload permission),
  * which POSTs `/attachments/{id}/ai-read`. A file whose type the AI does not read (status null)
  * shows nothing at all.
  *
@@ -15,9 +15,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
+const perm = vi.hoisted(() => ({ canUpload: true }));
 vi.mock('@/hooks/usePermissions', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/usePermissions')>()),
-  useHasPermission: () => true,
+  useHasPermission: (slug: string) => slug !== 'resource.attachments.upload' || perm.canUpload,
 }));
 
 if (!window.matchMedia) {
@@ -131,6 +132,7 @@ function rowText(): string {
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
+  perm.canUpload = true;
   net.getAttachmentMetadata.mockResolvedValue(attachment());
   net.apiFetch.mockResolvedValue({
     ok: true,
@@ -165,12 +167,12 @@ describe('AttachmentDetail - Read by AI', () => {
     expect(text).toMatch(/0\.01/);
   });
 
-  it('a done file offers Read again', async () => {
+  it('a done file offers no Read again (it appears only for failed files)', async () => {
     net.getAttachmentMetadata.mockResolvedValue(attachment(DONE));
     renderDetail();
     await screen.findByText('Read by AI');
 
-    expect(screen.getByRole('button', { name: /Read again/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Read again/i })).not.toBeInTheDocument();
   });
 
   it('a failed file shows the error text and offers Read again', async () => {
@@ -189,6 +191,17 @@ describe('AttachmentDetail - Read by AI', () => {
     expect(screen.getByRole('button', { name: /Read again/i })).toBeInTheDocument();
   });
 
+  it('a failed file hides Read again from a user without the upload permission', async () => {
+    perm.canUpload = false;
+    net.getAttachmentMetadata.mockResolvedValue(
+      attachment({ ai_read_status: 'failed', ai_read_pages: null, ai_read_error: 'The file could not be read.' }),
+    );
+    renderDetail();
+    await screen.findByText('Read by AI');
+
+    expect(screen.queryByRole('button', { name: /Read again/i })).not.toBeInTheDocument();
+  });
+
   it.each(['queued', 'processing'])('a %s file shows its status and no Read again', async (status) => {
     net.getAttachmentMetadata.mockResolvedValue(attachment({ ai_read_status: status }));
     renderDetail();
@@ -199,7 +212,7 @@ describe('AttachmentDetail - Read by AI', () => {
   });
 
   it('Read again POSTs the ai-read route for this file', async () => {
-    net.getAttachmentMetadata.mockResolvedValue(attachment(DONE));
+    net.getAttachmentMetadata.mockResolvedValue(attachment({ ai_read_status: 'failed', ai_read_error: 'The file could not be read.' }));
     renderDetail();
     await screen.findByText('Read by AI');
 

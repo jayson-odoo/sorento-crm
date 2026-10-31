@@ -16,7 +16,7 @@ crew test copy
 3. Reopen the type and check both values stayed.
 4. Sidebar: Resources > Files. Upload "Leave Policy.pdf" with type Employee Handbook.
 5. Click the uploaded file in the list. Watch the "Read by AI" row in the file panel for up to 30 seconds without reloading.
-6. Click "Read again".
+6. Check the file panel: no Read again button on a Done file.
 7. Upload the scanned PDF with the same type and open it (optional).
 8. Open the in-app AI assistant side panel and ask: "How many days of annual leave do I get after 3 years?"
 9. In the side panel ask: "What is the company policy on crypto investments?"
@@ -31,7 +31,7 @@ crew test copy
 3. "Staff only" and "HR" are shown on reopen.
 4. Upload succeeds.
 5. The row goes Queued -> Processing -> "Done, 3 pages" on its own (no reload).
-6. Error toast: "This file is already read and has not changed." Nothing is queued.
+6. No Read again button is shown (it appears only for Failed files).
 7. Row ends "Done, 1 page, 1 read by OCR (est. USD 0.002)".
 8. The answer says 16 days and cites the document and page, e.g. "(Leave Policy, p.2)".
 9. The reply says this is not in the documents and to ask HR. No invented policy.

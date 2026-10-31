@@ -1,6 +1,7 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useReadAttachmentAgain } from '../hooks/useReadAttachmentAgain';
 import type { Attachment } from '../types/attachment.types';
 
@@ -33,13 +34,15 @@ function aiReadSummary(a: Attachment): string {
 /** The "Read by AI" row of an attachment: status, pages, OCR pages, est. cost, error, Read again. */
 export default function AttachmentAiReadRow({ attachment }: { attachment: Attachment }) {
   const readAgainMutation = useReadAttachmentAgain();
+  // The route takes the upload slug; a button that can only answer 403 is not offered.
+  const canRetry = useHasPermission('resource.attachments.upload');
   if (!attachment.ai_read_status) return null;
   return (
     <div className="min-w-0">
       <p className="text-sm text-muted-foreground">Read by AI</p>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="font-medium">{aiReadSummary(attachment)}</p>
-        {(attachment.ai_read_status === 'done' || attachment.ai_read_status === 'failed') && (
+        {attachment.ai_read_status === 'failed' && canRetry && (
           <Button
             variant="ghost"
             size="sm"
