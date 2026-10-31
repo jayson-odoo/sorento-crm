@@ -29,13 +29,18 @@ def run(engine) -> bool:
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as bind:
         # The keep-set HNSW build took 131 s at the default and 34 s at 512MB, against the 180 s budget.
         bind.exec_driver_sql("SET maintenance_work_mem = '512MB'")
-        return online_index.ensure_indexes_online(
-            bind,
-            online_index.GOODS_CHAIN_KEY_INDEXES
-            + online_index.BILLING_FROM_DOC_INDEXES
-            + embedding_indexes.MIGRATION_INDEXES
-            + embedding_indexes.COVERAGE_INDEXES,
-        )
+        try:
+            return online_index.ensure_indexes_online(
+                bind,
+                online_index.GOODS_CHAIN_KEY_INDEXES
+                + online_index.BILLING_FROM_DOC_INDEXES
+                + embedding_indexes.MIGRATION_INDEXES
+                + embedding_indexes.COVERAGE_INDEXES,
+            )
+        finally:
+            # A session-level SET outlives this block on a pooled engine: the connection goes back
+            # to the pool still at 512MB and the next borrower inherits it.
+            bind.exec_driver_sql("RESET maintenance_work_mem")
 
 
 def main() -> None:
