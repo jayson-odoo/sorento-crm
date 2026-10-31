@@ -182,7 +182,11 @@ export function ParkedSendDialog({
                     </p>
                     {emailNote ? emailNote(Math.min(selected, emails.length - 1)) : null}
                   </div>
-                  <EmailPreviewFrame html={current.body_html} subject={current.subject} />
+                  <EmailPreviewFrame
+                    html={current.body_html}
+                    subject={current.subject}
+                    desktopWidth={900}
+                  />
                 </div>
               ) : null}
             </>

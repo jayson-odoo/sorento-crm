@@ -150,7 +150,9 @@ export function OrderInquiryHeadersList() {
   // search and page. `replace`, not `push` - turning a dial is not a place to go back to.
   useEffect(() => {
     const next = new URLSearchParams();
-    if (stateFilter !== 'outstanding') next.set('state', stateFilter);
+    // Outstanding is the default only when nothing widens the default view: with an email's
+    // OI list or a reserve status in the URL it is written, so a reload keeps the choice.
+    if (stateFilter !== 'outstanding' || reserveFilter || inquiryNoFilter) next.set('state', stateFilter);
     if (searchQuery) next.set('query', searchQuery);
     const sort = sorting[0];
     if (sort && (sort.id !== 'raised_at' || sort.desc)) {
