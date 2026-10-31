@@ -9,6 +9,7 @@ readers the contract names (`resolve_visible_form_types`, `granted_keys_for`,
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
 
@@ -873,7 +874,14 @@ def contact_is_dealer(db: Session, contact_id: str) -> bool:
     if not tags:
         return False
     active = {str(t) for (t,) in db.execute(select(ContactTag.id).where(ContactTag.id.in_([t.id for t in tags]), ContactTag.is_active.is_(True)))}
-    tiers = {v for t in tags if t.id in active for section, key, v in leaves(t) if (section, key) == ("chatbot", "tier")}
+    tiers: set = set()
+    for t in tags:
+        if t.id not in active:
+            continue
+        try:
+            tiers |= {v for section, key, v in leaves(t) if (section, key) == ("chatbot", "tier")}
+        except Exception:  # noqa: BLE001 - a malformed tag sets no tier; the contact falls to the denial
+            logging.getLogger(__name__).warning("contact tag %s has malformed settings; read as setting no tier", t.id)
     return tiers == {"dealer"}
 
 

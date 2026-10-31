@@ -8064,6 +8064,17 @@ def _run_stages_body(  # noqa: PLR0915
                             answer = dataclasses_replace(
                                 answer, text="\n".join(narrowed_misses) + "\n\n" + answer.text
                             )
+                # AC-6: a size or named spec no variant of the typed code's family holds is said ONCE, on
+                # a miss and on a hit alike, above the reply (the route's `spec_none`, this turn's own).
+                if answer is not None and answer.text:
+                    from app.services.chatbot.lanes.business.answer import no_variant_clause
+
+                    none_with = no_variant_clause(
+                        resolver_payload.get("resolved") if isinstance(resolver_payload, dict) else None,
+                        verdict.get("entities"),
+                    )
+                    if none_with:
+                        answer = dataclasses_replace(answer, text=none_with + "\n\n" + answer.text)
             except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash
                 logger.exception("chatbot turn %s: fetch or compose failed", turn_id)
                 lane_error_text = f"{type(fetch_error).__name__}: {fetch_error}"
@@ -9767,8 +9778,12 @@ def _dealer_cost_as_promotion(
 ) -> dict[str, Any]:
     """The verdict with a `purchase_cost` ask read as the `promotion` ask when the contact is a dealer
     (an active `chatbot.tier` "dealer" tag, no other tier) and holds no `purchase_orders.cost` grant;
-    the verdict itself otherwise. Acts on the parser's domain only, for no other domain or contact."""
-    if verdict.get("domain_hint") != "purchase_cost" or access.get("allowed") is not True or not contact_pk:
+    the verdict itself otherwise. The planner reads `asks` before `domain_hint`, so both move: every
+    purchase_cost entry of `asks` becomes promotion (dropped when promotion is already there), and a
+    purchase_cost `domain_hint` or `check_po_cost` `intent_hint` follows. Only that domain, only a dealer."""
+    asks = [a for a in verdict.get("asks") or [] if isinstance(a, dict)]
+    cost_in_asks = any(a.get("domain") == "purchase_cost" for a in asks)
+    if not (verdict.get("domain_hint") == "purchase_cost" or cost_in_asks) or access.get("allowed") is not True or not contact_pk:
         return verdict
     if "purchase_orders.cost" in set(access.get("attributes") or []):
         return verdict
@@ -9776,8 +9791,32 @@ def _dealer_cost_as_promotion(
 
     if not contact_is_dealer(db, str(contact_pk)):
         return verdict
-    turn_trace.add("dealer_cost_as_promotion", {"from": [verdict.get("domain_hint"), verdict.get("intent_hint")], "to": ["promotion", "check_promotion"]})
-    return {**verdict, "domain_hint": "promotion", "intent_hint": "check_promotion"}
+    out = dict(verdict)
+    if verdict.get("domain_hint") == "purchase_cost":
+        out["domain_hint"] = "promotion"
+    if verdict.get("intent_hint") == "check_po_cost":
+        out["intent_hint"] = "check_promotion"
+    if cost_in_asks:
+        swapped: list[dict[str, Any]] = []
+        for a in verdict.get("asks") or []:
+            if isinstance(a, dict) and a.get("domain") == "purchase_cost":
+                a = {**a, "domain": "promotion", "intent": "check_promotion" if a.get("intent") else a.get("intent")}
+                if any(isinstance(x, dict) and x.get("domain") == "promotion" for x in swapped):
+                    continue
+            elif isinstance(a, dict) and a.get("domain") == "promotion" and any(
+                isinstance(x, dict) and x.get("domain") == "promotion" for x in swapped
+            ):
+                continue
+            swapped.append(a)
+        out["asks"] = swapped
+    turn_trace.add(
+        "dealer_cost_as_promotion",
+        {
+            "from": [verdict.get("domain_hint"), verdict.get("intent_hint"), [a.get("domain") for a in asks]],
+            "to": [out.get("domain_hint"), out.get("intent_hint"), [a.get("domain") for a in out.get("asks") or [] if isinstance(a, dict)]],
+        },
+    )
+    return out
 
 
 def _attributes_summary(attributes: list[Any]) -> str | None:

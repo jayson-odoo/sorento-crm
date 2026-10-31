@@ -79,7 +79,7 @@ def _family_rows(
     code, so a short form ("wc287") reaches its family. It also drops the digit boundary when
     the typed word ends in a letter, so "SH-NEW" reaches the "SHNEW200" variant; a word ending
     in a digit keeps it (SRTWC286 never reaches SRTWC2861)."""
-    from app.models.product import Product
+    from app.models.product import Product, chat_searchable_products
     from app.models.product_spec import ProductSpecifications
 
     letters, rest = _CODE_WORD.match(code_word).groups()  # type: ignore[union-attr]
@@ -91,7 +91,7 @@ def _family_rows(
         return (
             db.query(Product, ProductSpecifications.values)
             .outerjoin(ProductSpecifications, ProductSpecifications.product_id == Product.id)
-            .filter(Product.is_active.is_(True))
+            .filter(Product.is_active.is_(True), chat_searchable_products())
             .filter(folded_code.op("~")(pattern))
             .order_by(Product.product_code)
             .limit(_FAMILY_CAP)
@@ -190,6 +190,8 @@ def narrow_code_tokens_by_specs(
         return None
     aligned = bool(allowed_types) and len(allowed_types or []) == len(tokens)
     replaced: dict[int, list[str]] = {}
+    misses: list[dict[str, Any]] = []
+    some_token_holds = False
     for i, token in enumerate(tokens):
         kind = str((allowed_types or [])[i] or "").lower() if aligned else ""
         if kind not in ("", "product"):
@@ -205,11 +207,13 @@ def narrow_code_tokens_by_specs(
             for code, values, _text in family
             if all(any(_holds(values, k, value) for k in (any_keys or [key])) for key, value, any_keys in wanted)
         ]
-        if not picked and none_out is not None:
-            # A spec no variant of the family holds: told to the caller so the reply can say so.
+        some_token_holds = some_token_holds or bool(picked)
+        if not picked and len(family) < _FAMILY_CAP:
+            # A spec no variant of the family holds. A family cut at the cap may hold it beyond the cut,
+            # so it is not reported for one.
             for key, value, any_keys in wanted:
                 if not any(_holds(values, k, value) for _code, values, _text in family for k in (any_keys or [key])):
-                    none_out.append({"key": key, "value": value})
+                    misses.append({"key": key, "value": value})
         if not picked or len(picked) == len(family):
             continue
         if any(_fold(code) == code_word for code in picked):
@@ -222,6 +226,9 @@ def narrow_code_tokens_by_specs(
                 exact_out.append(token)
             continue
         replaced[i] = picked
+    if none_out is not None and not some_token_holds:
+        # Withheld when another code of the same ask holds a spec: the clause would be about a code it is not.
+        none_out.extend(misses)
     if not replaced:
         return None
     out: list[str] = []

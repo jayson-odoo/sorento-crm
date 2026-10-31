@@ -2866,8 +2866,12 @@ def no_variant_clause(result: Any, entities: Any) -> str:
             if jsc.get(e, "spec_key") != jsc.get(miss, "key") or jsc.get(e, "spec_value") != jsc.get(miss, "value"):
                 continue
             label = jsc.js_string(jsc.get(e, "spec_label") or jsc.get(e, "spec_key")).strip().lower()
-            unit = jsc.js_string(jsc.get(e, "spec_unit") or "").strip()
-            value = f"{jsc.js_string(jsc.get(e, 'spec_value'))} {unit}".strip()
+            said = jsc.get(e, "spec_value")
+            if isinstance(said, (int, float)) and not isinstance(said, bool):
+                unit = jsc.js_string(jsc.get(e, "spec_unit") or "").strip()
+                value = f"{jsc.js_string(said)} {unit}".strip()
+            else:
+                value = jsc.js_string(jsc.get(e, "raw") or said).strip()  # the customer's own word, never a stored key
             parts.append(f"None with {label} {value}.")
             break
     return " ".join(dict.fromkeys(parts))
@@ -4060,9 +4064,6 @@ def not_found_error_message(
                 head.append(f"Dates: {dates}")
                 parts.append("\n".join(head))
             if found_lines:
-                none_with = no_variant_clause(r, all_ents)
-                if none_with:
-                    parts.append(none_with)
                 parts.append("Here's what you want:\n" + "\n".join(found_lines))
             if nf:
                 from app.services.chatbot import composers

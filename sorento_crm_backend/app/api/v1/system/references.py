@@ -3378,7 +3378,7 @@ def _narrowed_payload(
             db,
             tokens=payload.tokens,
             allowed_types=payload.allowed_entity_types,
-            specs=payload.extracted_specs,
+            specs=_without_hidden_specs(list(payload.extracted_specs), _contact_hidden_spec_keys(db, payload)),
             exact_out=exact_codes,
             none_out=spec_none,
         )
@@ -3458,6 +3458,7 @@ def _keep_exact_variants(result: dict[str, Any], picked: list[str]) -> None:
     from app.services.product_code_family import _fold
 
     wanted = {_fold(t) for t in picked}
+    kept: set[str] = set()  # the tokens that had an exact row; a token with none is left as the resolver answered it
     for resolution in result.get("resolutions") or []:
         if not isinstance(resolution, dict) or _fold(resolution.get("token")) not in wanted:
             continue
@@ -3473,14 +3474,17 @@ def _keep_exact_variants(result: dict[str, Any], picked: list[str]) -> None:
             resolution["matches"] = exact
             resolution["ambiguous"] = len(exact) > 1
             resolution["resolved"] = len(exact) == 1
-    # A single-token AND answer reads `intersection`: drop the longer codes of a kept token there too.
+            kept.add(token)
+    # A single-token AND answer reads `intersection`: drop the longer codes of a kept token there too,
+    # for a token that has an exact row there (a token with none is left as the resolver answered it).
     if isinstance(result.get("intersection"), list):
         def _code(m: Any) -> str:
             return _fold(m.get("canonical_code") or m.get("code")) if isinstance(m, dict) else ""
 
+        kept = kept | {w for w in wanted if any(_code(m) == w for m in result["intersection"])}
         result["intersection"] = [
             m for m in result["intersection"]
-            if _code(m) in wanted or not any(_code(m).startswith(w) for w in wanted)
+            if _code(m) in kept or not any(_code(m).startswith(w) for w in kept)
         ]
 
 
