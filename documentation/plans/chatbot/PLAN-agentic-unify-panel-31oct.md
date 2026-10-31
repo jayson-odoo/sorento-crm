@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY panel, the staff principal on the chatbot brain
 
-Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slices 1 (staff principal, live chat turn) and 2 (agent side, write routes, report path, opportunity, escalation) built; slice 3 (page context) in Phase 2, slice 4 (panel screen) next. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
+Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slices 1 (staff principal, live chat turn) and 2 (agent side, write routes, report path, opportunity, escalation) and 3 (page context) built; slice 4 (panel screen) in Phase 2. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
 
 Behaviour: `CARD-agentic-unify-v2-31oct.md` and its owner table (on branch `crew/agentic-unify`, #2048). Its section 2 (test path) was overruled by the owner: a panel turn is live, with no WhatsApp send. This plan replaces that section.
 
@@ -91,6 +91,29 @@ The summary on the principal: `page: dict | None`, keys `title`, `path`, `record
 **Permission.** Facts come from `RecordContextService.assemble`, behind `can_read_record_context`, the same two calls as `ai_assistant_service.py:1143-1154`. Refused, unknown kind, missing row or any failure: no facts and no record keys, the turn still answers, title and path stay (they are the user's own screen). A failed read rolls back so the turn's next query runs (an id that is not a UUID is a DataError on Postgres).
 
 **Parity.** No page: not one byte changes for the parser, Jev or the agent, on any ingress. No prompt is touched, so no gate. The chat lanes get no record tool: a page question Jev sends to chat is measured in the labelled set before default.
+
+Caps on the client's text: title 255, path 500, search 500, visible text 6000 characters, before any of it reaches a consumer.
+
+## Slice 4: the panel screen (AC-18, AC-21 to AC-24)
+
+**Architecture.** Layer: the server decides what a reader may see and what state a card is in; the panel only draws what it reads back. Shared mechanism: the console's own parts (`AgentTurnParts.tsx`, `RoutePill.tsx`, `TurnAttachments.tsx`), imported where they stand, no move. Classes this fixes: every brain reply on the panel, chat or agent, and every card state, live or after a reload. Which renderer a message gets is decided by `metadata_json.route`: present means it came from the brain, absent means today's markdown, so old threads and users without the permission see no change (AC-26).
+
+**Server, gaps the audit found:**
+
+| Gap | Today | Fix |
+| --- | --- | --- |
+| Files | `panel_service._rendered` keeps only `filename` and `url`, and `TurnAttachments` also needs `mimeType` and `attachmentType` | Keep the stored file as it is |
+| A card after a reload | The turn's `pending_action` and `actions` are frozen in `metadata_json`, so a decided proposal still shows Confirm | Both are read live when a thread is read, one query per thread (`agent_actions.actions_by_turn`, `pending_action`), for both routes that return messages (`api/v1/system/ai_assistant.py:305, 336`) |
+| The outcome | A decision writes nothing to the thread, so it is gone after a reload | Confirm, cancel and withdraw append the outcome as an assistant message with `route` agent and the outcome's status. A refused decision appends nothing. A deleted thread still decides, and appends nothing |
+| AC-23 is a screen rule only | `_message_to_response` returns all of `metadata_json`, so steps, tool calls, usage and the route's score reach anyone's network tab | Stripped on read for a user without `system.ai_assistant_settings.view`: of `agent`, only `pending_action` and `actions` stay; `chatbot_turn_id` and the route decision go. `route` stays, it picks the renderer |
+| The pill's data | `message_metadata` keeps only the side | Store `decision.as_response()` as `route_decision`, the shape `RoutePill` reads |
+
+**Screen:**
+
+- `lib/whatsappText.ts` gains `parseWhatsAppBlocks`: text and list blocks. A list item starts with `- `, `* `, `• `, `1. ` or `1) `; a `*bold*` line is not an item, because the marker needs its space; numbering is kept; fenced code stays whole. New `components/chatbot/WhatsAppBlocks.tsx` draws real lists with a hanging indent and each line through `WhatsAppText`. `WhatsAppText` itself stays untouched, so the console and the inbox do not change (AC-25).
+- `AIAssistantBubble.tsx`: `WhatsAppBlocks` and `TurnAttachments` on a brain reply; `ProposalActions` and `ActionsBlock` for everyone on a reply that has them; `RoutePill`, `StepsDisclosure`, `ReplyMeta` only with `canViewTrace`. The trace link on a brain reply goes to `/system-management/chat-history?turn=<chatbot_turn_id>`, today's link stays on an old reply. Chips already read `suggestions`.
+- Confirm, Cancel, Undo and a countdown's end all reload the thread and draw what comes back, no local outcome state. So a reload and a live view cannot differ. A refused decision shows its plain reason as a toast and reloads too.
+- `lib/aiAssistantChatApi.ts` gains the three action calls, using `extractApiError`.
 
 ## Still to count or prove
 
