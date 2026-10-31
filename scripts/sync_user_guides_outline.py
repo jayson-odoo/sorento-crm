@@ -5,6 +5,8 @@ Modes:
   push   repo -> Outline (default)
   pull   Outline -> repo
   status diff repo vs Outline
+  dry-run print the push plan (no network call)
+  check  validate the repo layout + titles (no network, stdlib only; PR gate)
 
 Env:
   OUTLINE_BASE_URL          default https://doc.foundryx.my
@@ -40,8 +42,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import requests
-from dotenv import load_dotenv
+# `requests` and `python-dotenv` are imported where they are used, so `check`
+# and `dry-run` run on a bare python3 (the PR gate installs nothing for them).
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -82,6 +84,10 @@ HELD_FOLDERS = frozenset({"commercial"})
 
 ROOT_DOC_TITLE = "Overview"
 
+# Outline refuses a longer title with a 400 ("Document title must be 100
+# characters or less"); run 41178406314 died part-way through a push on one.
+MAX_TITLE_LEN = 100
+
 
 def _assert_no_held_folders() -> None:
     """Hard safeguard: refuse to publish if a held folder leaked into the allowlist.
@@ -100,6 +106,8 @@ def _assert_no_held_folders() -> None:
 
 
 def load_env() -> tuple[str, str, str]:
+    from dotenv import load_dotenv
+
     load_dotenv(REPO_ROOT / "sorento_crm_backend" / ".env")
     base_url = os.environ.get("OUTLINE_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
     token = os.environ.get("OUTLINE_API_TOKEN")
@@ -115,6 +123,8 @@ class Outline:
     token: str
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        import requests
+
         url = f"{self.base_url}/api/{path}"
         for attempt in range(3):
             r = requests.post(
@@ -229,6 +239,66 @@ def relpath(p: Path) -> str:
     return str(p.relative_to(GUIDES_DIR))
 
 
+def validate_guides() -> list[str]:
+    """Every reason a push would skip or fail a page, found with NO network call.
+
+    - a guide folder in neither PARENT_TITLES nor HELD_FOLDERS (its pages
+      would be skipped as "unknown folder" and never reach Outline);
+    - a markdown file outside the ``<folder>/<page>.md`` layout;
+    - a page, parent or root title longer than Outline's MAX_TITLE_LEN;
+    - a held folder present in PARENT_TITLES.
+
+    Returns the problems, one line each; empty means the push can publish all.
+    """
+    problems: list[str] = []
+    leaked = sorted(HELD_FOLDERS & set(PARENT_TITLES))
+    if leaked:
+        problems.append(f"held folder(s) {leaked} are in PARENT_TITLES (the publish allowlist)")
+
+    folders = sorted(p.name for p in GUIDES_DIR.iterdir() if p.is_dir())
+    for folder in folders:
+        if folder not in PARENT_TITLES and folder not in HELD_FOLDERS:
+            problems.append(
+                f"{folder}/: guide folder is not mapped - add it to PARENT_TITLES "
+                "(or HELD_FOLDERS) in scripts/sync_user_guides_outline.py"
+            )
+
+    def check_title(where: str, title: str) -> None:
+        if len(title) > MAX_TITLE_LEN:
+            problems.append(
+                f"{where}: title is {len(title)} characters, Outline allows "
+                f"{MAX_TITLE_LEN}: \"{title}\""
+            )
+
+    check_title("README.md", ROOT_DOC_TITLE)
+    for folder, title in PARENT_TITLES.items():
+        check_title(f"PARENT_TITLES[{folder!r}]", title)
+
+    for md in discover_files():
+        rel = relpath(md)
+        if rel == "README.md":
+            continue
+        parts = rel.split("/")
+        if len(parts) != 2:
+            problems.append(f"{rel}: unexpected layout, a guide must be <folder>/<page>.md")
+            continue
+        if parts[0] in HELD_FOLDERS:
+            continue
+        check_title(rel, first_h1_or_filename(md))
+    return problems
+
+
+def check(args: argparse.Namespace) -> None:
+    """PR gate: fail when a push would skip or reject any guide page."""
+    problems = validate_guides()
+    if problems:
+        print("User guides would not all publish to Outline:")
+        for line in problems:
+            print(f"  - {line}")
+        raise SystemExit(1)
+    print(f"OK: every guide under {GUIDES_DIR.relative_to(REPO_ROOT)} maps to Outline and fits its limits.")
+
+
 def plan_push() -> tuple[list[str], list[str]]:
     """Compute, with NO network call, the create/update plan for a push.
 
@@ -286,7 +356,6 @@ def dry_run(args: argparse.Namespace) -> None:
         print("\nSKIPPED (folder not in publish allowlist - will NOT publish):")
         for s in skipped:
             print(f" - {s}")
-    held_present = sorted(HELD_FOLDERS & {p.split('/')[0] for p in skipped})
     print(
         "\nHeld-folder check: "
         + (
@@ -295,7 +364,13 @@ def dry_run(args: argparse.Namespace) -> None:
             else "FAILED"
         )
     )
-    _ = held_present
+    problems = validate_guides()
+    if problems:
+        print("\nValidation FAILED (push would skip or reject these):")
+        for line in problems:
+            print(f"  - {line}")
+        raise SystemExit(1)
+    print("Validation: OK")
     print("Done (dry run).")
 
 
@@ -312,6 +387,7 @@ def push(args: argparse.Namespace) -> None:
     by_title_no_parent = {d["title"]: d for d in existing if not d.get("parentDocumentId")}
 
     parent_ids: dict[str, str] = {}
+    failures: list[str] = []
 
     def ensure_doc(
         title: str, body_md: str, parent_key: str | None, state_key: str
@@ -350,7 +426,11 @@ def push(args: argparse.Namespace) -> None:
     readme = GUIDES_DIR / "README.md"
     if readme.exists():
         body = strip_h1(readme.read_text())
-        state["README.md"] = ensure_doc(ROOT_DOC_TITLE, body, None, "README.md")
+        try:
+            state["README.md"] = ensure_doc(ROOT_DOC_TITLE, body, None, "README.md")
+        except Exception as exc:  # keep going: one bad page must not stop the rest
+            failures.append(f"README.md: {exc}")
+            print(f"  [FAIL] README.md  {exc}")
 
     for folder, title in PARENT_TITLES.items():
         folder_path = GUIDES_DIR / folder
@@ -358,7 +438,12 @@ def push(args: argparse.Namespace) -> None:
             continue
         body = f"Department guides for **{title}**.\n"
         key = f"{folder}/__parent__"
-        parent_ids[folder] = ensure_doc(title, body, None, key)
+        try:
+            parent_ids[folder] = ensure_doc(title, body, None, key)
+        except Exception as exc:
+            failures.append(f"{key}: {exc}")
+            print(f"  [FAIL] {key}  {exc}")
+            continue
         state[key] = parent_ids[folder]
 
     print("[2/3] Sync child docs")
@@ -376,13 +461,26 @@ def push(args: argparse.Namespace) -> None:
         if folder not in PARENT_TITLES:
             print(f"  [skip] unknown folder: {rel}")
             continue
+        if folder not in parent_ids:
+            failures.append(f"{rel}: not pushed, its parent {folder}/__parent__ failed")
+            print(f"  [FAIL] {rel}  parent failed")
+            continue
         title = first_h1_or_filename(md)
         body = strip_h1(md.read_text())
-        state[rel] = ensure_doc(title, body, folder, rel)
+        try:
+            state[rel] = ensure_doc(title, body, folder, rel)
+        except Exception as exc:
+            failures.append(f"{rel}: {exc}")
+            print(f"  [FAIL] {rel}  {exc}")
 
     print("[3/3] Save state")
     save_state(state)
     print(f"  state -> {STATE_FILE}")
+    if failures:
+        print(f"\n{len(failures)} page(s) FAILED to push:")
+        for line in failures:
+            print(f"  - {line}")
+        raise SystemExit(1)
     print("Done.")
 
 
@@ -422,14 +520,61 @@ def repo_is_newer(path: Path, doc: dict[str, Any]) -> bool:
     return committed is not None and updated is not None and updated <= committed
 
 
+def learn_state_by_title(state: dict[str, str], docs: list[dict[str, Any]]) -> list[str]:
+    """Fill state entries the repo lacks by matching Outline titles to repo pages.
+
+    The push saves new doc ids only in the runner; if that state never reached
+    main, pull would otherwise see the pushed docs as unmapped and write them
+    back under a slug filename, duplicating the page. Matches root docs to
+    PARENT_TITLES (and ROOT_DOC_TITLE), then children of a known parent to the
+    repo page in that folder with the same H1. Never overrides a saved id.
+    Returns the keys it learnt.
+    """
+    learnt: list[str] = []
+    known_ids = set(state.values())
+    roots = {d["title"]: d["id"] for d in docs if not d.get("parentDocumentId")}
+    for folder, title in PARENT_TITLES.items():
+        key = f"{folder}/__parent__"
+        if not state.get(key) and title in roots and roots[title] not in known_ids:
+            state[key] = roots[title]
+            known_ids.add(roots[title])
+            learnt.append(key)
+    if not state.get("README.md") and ROOT_DOC_TITLE in roots and roots[ROOT_DOC_TITLE] not in known_ids:
+        state["README.md"] = roots[ROOT_DOC_TITLE]
+        known_ids.add(roots[ROOT_DOC_TITLE])
+        learnt.append("README.md")
+
+    folder_by_parent = {
+        state[f"{f}/__parent__"]: f for f in PARENT_TITLES if state.get(f"{f}/__parent__")
+    }
+    page_by_title: dict[tuple[str, str], str] = {}
+    for md in discover_files():
+        parts = relpath(md).split("/")
+        if len(parts) == 2:
+            page_by_title.setdefault((parts[0], first_h1_or_filename(md)), relpath(md))
+    for d in docs:
+        folder = folder_by_parent.get(d.get("parentDocumentId") or "")
+        if folder is None or d["id"] in known_ids:
+            continue
+        rel = page_by_title.get((folder, d["title"]))
+        if rel and not state.get(rel):
+            state[rel] = d["id"]
+            known_ids.add(d["id"])
+            learnt.append(rel)
+    for key in learnt:
+        print(f"  [learn] {key}  -> {state[key]}  (matched by title)")
+    return learnt
+
+
 def pull(args: argparse.Namespace) -> None:
     base_url, token, collection_id = load_env()
     o = Outline(base_url=base_url, token=token)
 
     state = load_state()
-    rev = {v: k for k, v in state.items()}
 
     docs = o.list_documents(collection_id)
+    learn_state_by_title(state, docs)
+    rev = {v: k for k, v in state.items()}
     parent_id_to_folder = {}
     for folder, _title in PARENT_TITLES.items():
         pid = state.get(f"{folder}/__parent__")
@@ -508,8 +653,12 @@ def main() -> int:
         "dry-run",
         help="print exactly which docs would be created/updated on push (no network call)",
     )
+    sub.add_parser(
+        "check",
+        help="fail when a guide folder is unmapped or a title is too long (no network)",
+    )
     args = parser.parse_args()
-    {"push": push, "pull": pull, "status": status, "dry-run": dry_run}[args.cmd](args)
+    {"push": push, "pull": pull, "status": status, "dry-run": dry_run, "check": check}[args.cmd](args)
     return 0
 
 
