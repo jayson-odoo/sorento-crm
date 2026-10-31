@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import String, cast, literal, select
+from sqlalchemy import String, cast, literal, or_, select
 
 from app.models.ai_assistant import AIAssistantConfig, AIAssistantConversation, AIAssistantMessage
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
@@ -165,14 +165,16 @@ def _agent_turns_today(db, contact_respond_id: str) -> int:
     midnight = datetime.now(BUSINESS_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     principal = staff_principal.current()
     if principal is not None:
-        # The cap is the user's, whichever thread they ask in (AC-8).
+        # The cap is the user's, whichever thread they ask in (AC-8). A panel agent turn names its user
+        # on its own envelope, so deleting a thread hands nothing back; a usage row would miss a turn
+        # whose first model call failed. The thread keys count a row that names no user.
         keys = select(literal(PANEL_KEY_PREFIX) + cast(AIAssistantConversation.id, String)).where(
             AIAssistantConversation.user_id == principal.user_id
         )
         return (
             db.query(ChatbotTurn.id)
             .filter(
-                ChatbotTurn.contact_respond_id.in_(keys),
+                or_(ChatbotTurn.envelope["user_id"].astext == principal.user_id, ChatbotTurn.contact_respond_id.in_(keys)),
                 ChatbotTurn.ingress == "agent",
                 ChatbotTurn.created_at >= midnight,
             )

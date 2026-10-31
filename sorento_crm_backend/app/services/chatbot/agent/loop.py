@@ -21,6 +21,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions, memory, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
@@ -842,6 +843,8 @@ def _run(
     envelope = {"text": text, "agent_conversation_id": str(conv.id)}
     if operator_user_id:
         envelope["operator_user_id"] = str(operator_user_id)
+    if staff_principal.current() is not None:
+        envelope["user_id"] = str(ctx.user_id)  # the panel's daily cap outlives the thread (`router`)
     turn = ChatbotTurn(
         id=str(uuid.uuid4()),
         contact_respond_id=contact_respond_id,
