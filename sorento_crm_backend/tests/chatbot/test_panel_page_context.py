@@ -351,7 +351,7 @@ class TestOutsideTextIsContained:
 
         stored = json.dumps(turn_row(session_factory, result.turn_id).envelope)
         assert inquiry.ref in stored, "control: the page summary never rode the envelope"
-        for secret in (marker_of(snap), inquiry.project, inquiry.item, inquiry.status, "current_state"):
+        for secret in (snap.visible_text, inquiry.project, inquiry.item, inquiry.status, "current_state"):
             assert secret not in stored, f"{secret!r} was stored in chatbot.turns.envelope"
 
     def test_the_stored_agent_turn_envelope_holds_no_visible_text_and_no_facts(
@@ -366,6 +366,49 @@ class TestOutsideTextIsContained:
         stored = json.dumps(turn_row(session_factory, result.turn_id).envelope)
         for secret in (marker_of(snap), inquiry.project, inquiry.item, inquiry.status, "current_state"):
             assert secret not in stored, f"{secret!r} was stored in the agent turn envelope"
+
+
+    def test_a_huge_title_and_path_are_capped_for_jev_and_the_stored_envelope(
+        self, session_factory, monkeypatch, staff, grants, world, jev, inquiry
+    ):
+        grants.add(VIEW)
+        normal = snapshot(inquiry)
+        run_chat(session_factory, monkeypatch, staff, world, jev, normal)
+        assert jev.calls[0]["state"]["current_page"] == {
+            "title": normal.title, "path": normal.path, "record_kind": "stock_inquiry", "record_ref": inquiry.ref,
+        }, "control: normal length values must arrive unchanged"
+
+        jev.calls.clear()
+        huge = snapshot(inquiry, title="T" * 20000, path="/" + "P" * 20000)
+        result = run_chat(session_factory, monkeypatch, staff, world, jev, huge)
+
+        sent = jev.calls[0]["state"]["current_page"]
+        assert 0 < len(sent["title"]) <= 255 and sent["title"].startswith("TTT")
+        assert 0 < len(sent["path"]) <= 500 and sent["path"].startswith("/PPP")
+        stored = turn_row(session_factory, result.turn_id).envelope["staff_principal"]["page"]
+        assert 0 < len(stored["title"]) <= 255
+        assert 0 < len(stored["path"]) <= 500
+
+    def test_a_huge_title_path_and_search_are_capped_in_the_agent_message(
+        self, session_factory, monkeypatch, staff, grants, world, jev, agent_model, inquiry
+    ):
+        grants.add(VIEW)
+        normal = snapshot(inquiry, search="?tab=zzt")
+        _, messages = run_agent(session_factory, monkeypatch, new_thread(session_factory, staff), jev, agent_model, normal)
+        control = page_message(messages, marker_of(normal))
+        assert control is not None and normal.title in control["content"] and normal.path in control["content"]
+        assert "?tab=zzt" in control["content"], "control: normal length values must arrive unchanged"
+
+        huge = snapshot(inquiry, title="ZZT " + "q" * 20000, path="/" + "x" * 20000, search="?" + "z" * 20000)
+        huge.visible_text = f"ZZT VISIBLE {uuid.uuid4().hex[:10]} on the screen"
+        _, messages = run_agent(session_factory, monkeypatch, staff, jev, agent_model, huge)
+
+        data = page_message(messages, marker_of(huge))
+        assert data is not None, "the page never reached the agent"
+        longest = {c: max([len(r) for r in re.findall(c + "+", data["content"])] or [0]) for c in "qxz"}
+        assert 200 <= longest["q"] <= 255, longest
+        assert 400 <= longest["x"] <= 500, longest
+        assert 400 <= longest["z"] <= 500, longest
 
 
 # --------------------------------------------------------------------------- #
