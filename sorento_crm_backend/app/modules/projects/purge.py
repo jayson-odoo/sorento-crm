@@ -107,6 +107,8 @@ from app.models.projects import (
     ProjectTemplateRole,
     ProjectTemplateTask,
     ProjectType,
+    QuotationAmendmentRequest,
+    QuotationAmendmentRequestRow,
     QuotationSignature,
     QuotationTemplate,
 )
@@ -188,6 +190,12 @@ PURGE_ORDER: List[Type] = [
     ProjectPurchaseOrder,
     ProjectSample,
     # --- quotations: issues reference scopes and versions, documents sit under them -----
+    # quotation_amendment_request_rows CASCADEs off both the request and the issued line,
+    # and quotation_amendment_requests CASCADEs off the issue (QUOTE-CUSTOMER-AMEND), so
+    # either parent would take them; rows before requests, both before the issue, each its
+    # own statement so the operator sees the customer's suggestions counted.
+    QuotationAmendmentRequestRow,
+    QuotationAmendmentRequest,
     ProjectQuotationIssueScope,
     ProjectQuotationIssue,
     ProjectQuotationLine,

@@ -904,12 +904,41 @@ def test_editing_a_line_recomputes_its_arithmetic_and_the_totals(seeded):
 # arrived as a scan got none of the checking a hand-recorded PO gets.
 
 
-def _quotation(db, project, owner, scope: str, priced):
-    """One quotation scope, version 1, priced OFF-CATALOG.
+def _catalogue_product(db, code: str):
+    """The catalogue product printed as `code`: the existing one, or a fresh one in CI's
+    empty database. Reused rather than duplicated so a prod-copy DB that already carries the
+    code is not handed a second product under the same printed code."""
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
 
-    Off-catalog on purpose: a scanned PO gives us the code the customer printed, and the
-    cross-check matches that against the code the quotation printed. Going through a
-    catalogue product would test a path the scan cannot reach.
+    existing = db.query(Product).filter(Product.product_code == code).first()
+    if existing is not None:
+        return existing
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
+    category = ProductCategory(
+        id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} Sanitary"
+    )
+    db.add_all([uom, category])
+    db.flush()
+    product = Product(
+        id=_uid(),
+        product_code=code,
+        product_name=f"{MARKER} {code}",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("1.00"),
+    )
+    db.add(product)
+    db.flush()
+    return product
+
+
+def _quotation(db, project, owner, scope: str, priced):
+    """One quotation scope, version 1, every line a catalogue product.
+
+    A scanned PO gives us the code the customer printed, and the cross-check matches that
+    against the code the quotation printed. QUOTE-NO-FREE-TEXT (#2020) makes every line name
+    a catalogue product, so each code here is a real product whose `product_code` is what the
+    line snapshots and what the scan is matched against.
     """
     from app.services import project_quotation_service as quotes
 
@@ -923,7 +952,7 @@ def _quotation(db, project, owner, scope: str, priced):
             version=version,
             actor_user_id=owner,
             payload={
-                "product_code_snapshot": code,
+                "product_id": _catalogue_product(db, code).id,
                 "description_snapshot": f"{code} as quoted",
                 "unit_price": price,
                 "quantity": 1,
