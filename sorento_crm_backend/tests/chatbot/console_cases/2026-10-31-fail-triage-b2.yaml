@@ -14,10 +14,18 @@
 #
 # The code-plus-size cases need a copy whose catalogue holds the SRTWC286 family with
 # SRTWC286-SH-200 variants (a family_code SRTWC286, trap_length 200 and 250) and NO variant
-# holding 300. The dealer my-cost case needs a DEALER contact on the copy: a contact with an
-# active tag whose settings have `chatbot.tier` = dealer, and no purchase_orders.cost grant
-# (run that case alone with `--contact <dealer contact id>`; the other cases keep the default
-# contact). Until the tier is set on the dealer tags the dealer case is red for a known reason.
+# holding 300.
+#
+# TEXT E IS REQUIRED for the glued-size case and the dealer my-cost case: both depend on the
+# parser prompt edits (P1, P2), which are not promoted. Run the file with
+# `--prompt-version <id of candidate E>` (md5 e90461ef) or those two are red for a known reason.
+#
+# The dealer my-cost case carries its own case-level `contact:`. REPLACE THE PLACEHOLDER before
+# running: it must be a DEALER contact on the copy (an active tag whose settings have
+# `chatbot.tier` = dealer, no purchase_orders.cost grant). `--contact` is NOT used for this: it
+# overrides the whole file. A dealer whose promotion path asks the tier menu first is still a
+# pass: that case grades the negatives only, and a second turn answers the pick.
+#
 # Every case carries the banned failure texts as negatives (owner rule, 30 Oct 2026). No real
 # conversation, customer name or phone is quoted; this file is for a PUBLIC repo.
 
@@ -63,11 +71,15 @@ cases:
   - name: a dealer's my cost is answered through the promotions
     live_only: true
     cold: true
-    # Dealer contact required (see the header). Graded on promotion content, never a cost number.
+    contact: "REPLACE_WITH_DEALER_CONTACT_ID"
+    # Negatives only: a tier menu on turn 1 is today's planner for a contact with no tier, and is fine.
     turns:
       - text: "my cost for SRTWC286-SH"
         expect:
-          reply_contains: ["romotion"]
+          reply_not_contains: ["not allowed to access purchase cost", "dealer_cost", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+      - text: "1"
+        expect:
           reply_not_contains: ["not allowed to access purchase cost", "dealer_cost", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
           no_uuid: true
   - name: named product marketing team routes there

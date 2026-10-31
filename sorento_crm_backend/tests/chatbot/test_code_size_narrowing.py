@@ -446,7 +446,7 @@ def test_a_named_key_no_variant_holds_says_none_with_that_label(session_factory,
 # --------------------------------------------------------------------------- #
 
 
-def _rows_turn(session_factory, stub_access, monkeypatch, verdict, ids_by_code, *, hidden=None):
+def _rows_turn(session_factory, stub_access, monkeypatch, verdict, ids_by_code, *, hidden=None, text_body="x", item_for=None, result_type="stock", only=None, envelope_for=None):
     """One turn like `_turns`, but the tools answer with REAL rows for the product ids asked, so the
     reply is composed on the HIT path (the stock `_turns` stub answers empty and only ever shows the miss)."""
     import json
@@ -473,8 +473,12 @@ def _rows_turn(session_factory, stub_access, monkeypatch, verdict, ids_by_code, 
     def call_tool(self, name, args):
         calls.append((name, args))
         asked = [code_of[i] for i in (args.get("product_ids") or []) if i in code_of]
+        if only is not None:
+            asked = [c for c in asked if c in only]
+        if envelope_for is not None:
+            return json.dumps(envelope_for([(c, ids_by_code[c]) for c in asked]))
         items = [
-            {
+            item_for(c) if item_for else {
                 "title": c,
                 "fields": [
                     {"key": "product_code", "label": "Product Code", "value": c},
@@ -483,11 +487,11 @@ def _rows_turn(session_factory, stub_access, monkeypatch, verdict, ids_by_code, 
             }
             for c in asked
         ]
-        return json.dumps({"result_type": "stock", "intro": "Stock summary for the requested products.", "items": items, "has_result": bool(items)})
+        return json.dumps({"result_type": result_type, "intro": "Stock summary for the requested products.", "items": items, "has_result": bool(items)})
 
     monkeypatch.setattr(MCPRuntimeClient, "call_tool", call_tool)
     stub_access(hidden_spec_keys=hidden if hidden is not None else real_hidden_spec_keys(session_factory))
-    r = engine_mod.run_turn(_envelope(message=_message("x", 0)), session_factory=session_factory)
+    r = engine_mod.run_turn(_envelope(message=_message(text_body, 0)), session_factory=session_factory)
     return ((r.reply or {}).get("text") or ""), calls
 
 
@@ -726,3 +730,132 @@ def test_the_none_with_label_exists_in_ms_and_zh():
     assert entry and entry.get("ms") and entry.get("zh"), entry
     assert "{label}" in entry["ms"] and "{value}" in entry["ms"], entry
     assert "{label}" in entry["zh"] and "{value}" in entry["zh"], entry
+
+
+# ---------------------------------------------------------------------------------- #
+# Review round 2                                                                     #
+# ---------------------------------------------------------------------------------- #
+
+
+def _real_avail_envelope(with_qty: bool):
+    """The raw `stock_availability` wire (`inventory_service` entry shape) through the REAL MCP presenter."""
+    from tests.chatbot.test_stock_ask_availability_rendered_reply import _real_availability_envelope, _real_entry
+
+    def build(pairs):
+        entries = []
+        for code, pid in pairs:
+            if with_qty:
+                e = _real_entry(code, 5, "in_stock")
+            else:
+                e = {**_real_entry(code, 0, "in_stock"), "needs_quantity": True, "requested_qty": None, "branch": None}
+            entries.append({**e, "product_id": pid})
+        return _real_availability_envelope(entries)
+
+    return build
+
+
+@pytest.mark.parametrize("with_qty", [True, False], ids=["with_quantity", "without_quantity"])
+def test_r2_availability_contact_keeps_the_clause_above_the_rest_once(session_factory, seeded, stub_access, monkeypatch, with_qty):  # noqa: F811
+    """A REAL availability-only profile (the way every availability test sets it), and the real wire shape
+    through the real presenter, so the turn takes `_stock_ask_reply` and rebuilds the text."""
+    from app.services.chatbot import turn_runtime
+
+    monkeypatch.setattr(turn_runtime, "_stock_availability_only", lambda *a, **k: True)
+    ids = _seed(session_factory, tuple((_code(s), WC, {"trap_length": v}) for s, v in TRAP.items()))
+    head = _ent(HEAD, "product", **({"quantity": 5} if with_qty else {}))
+    text_, calls = _rows_turn(
+        session_factory, stub_access, monkeypatch, _verdict("check_stock", "inventory", [head, _spec("300MM", "size", 300)]),
+        ids, envelope_for=_real_avail_envelope(with_qty),
+    )
+    assert text_.startswith("None with size 300"), text_
+    assert text_.count("None with") == 1, text_
+
+
+def test_r2_the_clause_sits_above_the_reply_and_appears_exactly_once_on_rows(session_factory, seeded, stub_access, monkeypatch):  # noqa: F811
+    ids = _seed(session_factory, tuple((_code(s), WC, {"trap_length": v}) for s, v in TRAP.items()))
+    text_, _ = _rows_turn(session_factory, stub_access, monkeypatch, _verdict("check_stock", "inventory", [_ent(HEAD, "product"), _spec("300MM", "size", 300)]), ids)
+    assert text_.startswith("None with size 300"), text_
+    assert text_.count("None with") == 1, text_
+    text2, _ = _rows_turn(session_factory, stub_access, monkeypatch, _verdict("check_stock", "inventory", [_ent(HEAD, "product"), _spec("300MM", "size", 300)]), {})
+    assert text2.count("None with") <= 1, text2  # the empty-rows (miss) path says it once as well
+
+
+@pytest.mark.parametrize("lang, said, needle", [("ms", "ada stok ZZSRT286 300mm tak, boleh semak untuk saya", "Tiada dengan"), ("zh", "ZZSRT286 300mm 有库存吗", "没有")])
+def test_r2_ms_and_zh_end_to_end_through_the_turn(session_factory, seeded, stub_access, monkeypatch, lang, said, needle):  # noqa: F811
+    ids = _seed(session_factory, tuple((_code(s), WC, {"trap_length": v}) for s, v in TRAP.items()))
+    text_, _ = _rows_turn(
+        session_factory, stub_access, monkeypatch, _verdict("check_stock", "inventory", [_ent(HEAD, "product"), _spec("300MM", "size", 300)]),
+        ids, text_body=said,
+    )
+    assert needle in text_, text_
+    assert "None with" not in text_, text_
+
+
+# ---- 2: the word path pin, a non-searchable -P beside -S
+
+def test_r2_word_path_narrows_to_the_searchable_s_only_never_a_class_wide_set(world):
+    from app.services.product_code_family import narrow_code_tokens
+
+    world.product("ZZWORD500-S", "SORENTO WATER CLOSET S TRAP", stock=1)
+    p = world.product("ZZWORD500-P", "SORENTO WATER CLOSET P TRAP", stock=1)
+    p.is_searchable = False
+    world.db.flush()
+    got = narrow_code_tokens(world.db, query="ZZWORD500 s trap", tokens=["ZZWORD500", "s trap"], allowed_types=["product", "category"])
+    assert got is not None and [t for t in got if t.upper().startswith("ZZWORD500")] == ["ZZWORD500-S"], got
+    assert "ZZWORD500-P" not in got, got
+
+
+# ---- 4: spec data truth
+
+def test_r2_a_family_with_no_spec_rows_says_no_none_with(world):
+    for suffix in ("A", "B", "C"):
+        world.product(f"ZZNOSPEC77-{suffix}", f"SORENTO WC {suffix}", stock=1)
+    from app.models.product_spec import ProductSpecifications
+
+    world.db.query(ProductSpecifications).filter(
+        ProductSpecifications.product_id.in_([p.id for c, p in world.codes.items() if c.startswith("ZZNOSPEC77")])
+    ).delete(synchronize_session=False)
+    world.db.flush()
+    got, none = _none(world, ["ZZNOSPEC77"], [_size(150)])
+    assert not none, (got, none)  # nothing is known about any variant: not "none"
+
+
+def test_r2_a_family_holding_other_values_under_the_dimension_keys_keeps_the_clause(basin):
+    got, none = _none(basin, ["ZZSRB510"], [_size(999, ["dim_width", "dim_length"])])
+    assert [n for n in none if n.get("value") == 999], none
+
+
+def test_r2_word_path_control_with_both_searchable_narrows_to_s(world):
+    from app.services.product_code_family import narrow_code_tokens
+
+    world.product("ZZWORD500-S", "SORENTO WATER CLOSET S TRAP", stock=1)
+    world.product("ZZWORD500-P", "SORENTO WATER CLOSET P TRAP", stock=1)
+    got = narrow_code_tokens(world.db, query="ZZWORD500 s trap", tokens=["ZZWORD500", "s trap"], allowed_types=["product", "category"])
+    assert got is not None and [t for t in got if t.upper().startswith("ZZWORD500")] == ["ZZWORD500-S"], got
+
+
+def test_r2_the_contacts_own_hidden_policy_reaches_the_narrower_without_a_caller_list(client, srt):
+    """No `hidden_spec_keys` in the body: a default policy row hiding trap_length, read for the contact."""
+    from sqlalchemy import text
+
+    srt.db.execute(
+        text("INSERT INTO spec_visibility_policies (id, spec_keys, excluded_spec_keys) VALUES (gen_random_uuid(), NULL, :ex)"),
+        {"ex": ["trap_length"]},
+    )
+    srt.db.flush()
+
+    def post(specs):
+        body = {
+            "query": f"{HEAD} spec", "tokens": [HEAD], "raw_tokens": [HEAD], "allowed_entity_types": ["product"],
+            "match_mode": "and", "spec_fallback": True, "exact_match": True, "extracted_specs": specs,
+            "contact_id": "900000055", "space_id": "364817", "dry_run": True,
+        }
+        response = client.post(ENDPOINT, json=body)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    control = post([])
+    got = post([{"key": "trap_length", "value": 200, "grounded": True}])
+    assert _route_codes(got) == _route_codes(control), (got, control)
+    assert "trap_length" not in json.dumps(got.get("spec_none") or []), got.get("spec_none")
+

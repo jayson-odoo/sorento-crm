@@ -380,7 +380,6 @@ def test_asks_already_holding_promotion_beside_cost_runs_promotion_once(session_
     _, calls_both, _ = _say(session_factory, monkeypatch, "cost", _by_tool(ONE_PROMO), qf=both, msg="both")
     _reset_session(session_factory)
     _, calls_only, _ = _say(session_factory, monkeypatch, "promo", _by_tool(ONE_PROMO), qf=only, msg="only")
-    print('DBG', calls_only and _names(calls_only), _names(calls_both))
     assert PROMO_TOOL in _names(calls_both), calls_both
     assert _count(calls_both, PROMO_TOOL) == _count(calls_only, PROMO_TOOL), (calls_both, calls_only)
 
@@ -436,3 +435,42 @@ def test_malformed_tag_settings_are_not_a_dealer_and_the_turn_answers_the_denial
     reply, calls, _ = _say(session_factory, monkeypatch, "cost", lambda n, a: ONE_PROMO, levels=TWO_TIERS)
     assert reply == DENIAL, reply
     assert "problem understanding" not in reply and calls == [], (reply, calls)
+
+
+# ---------------------------------------------------------------- review round 2
+
+def test_r2_a_malformed_tag_logs_a_warning(session_factory, caplog):
+    import logging
+
+    from app.services.contact_tag_settings import contact_is_dealer
+
+    _seed_contact(session_factory, variables={})
+    _tag(session_factory, {"chatbot": "dealer"}, name="ZZT Malformed Log Tag")
+    db = session_factory()
+    pk = db.execute(text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(CONTACT_ID)}).scalar()
+    with caplog.at_level(logging.WARNING):
+        assert contact_is_dealer(db, str(pk)) is False
+    assert any("malformed settings" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), caplog.records
+
+
+def _entitled(levels) -> set[str]:
+    return {n.lower().replace(" ", "_") for n in levels}
+
+
+def test_r2_multi_ask_second_turn_after_a_pick_runs_promotion_and_stock_never_cost(session_factory, monkeypatch, dealer):
+    asks, dom, intent = ASK_SHAPES["cost_then_stock"]
+    p_asks, p_intent = _as_promotion(asks, intent)
+    behaviour = _by_tool(ONE_PROMO)
+    p1, pc1, _ = _say(session_factory, monkeypatch, "promo", behaviour, levels=TWO_TIERS, msg="m1", qf=_asks_qf(p_asks, domain_hint=dom, intent_hint=p_intent))
+    p2, pc2, _ = _say(session_factory, monkeypatch, "promo", behaviour, levels=TWO_TIERS, msg="m2", qf=_pick_qf(1))
+    _reset_session(session_factory)
+    c1, cc1, _ = _say(session_factory, monkeypatch, "cost", behaviour, levels=TWO_TIERS, msg="m1", qf=_asks_qf(asks, domain_hint=dom, intent_hint=intent))
+    c2, cc2, _ = _say(session_factory, monkeypatch, "cost", behaviour, levels=TWO_TIERS, msg="m2", qf=_pick_qf(1))
+    assert c2 == p2 and cc2 == pc2, (c2, p2)
+    assert PROMO_TOOL in _names(cc2) and STOCK_TOOL in _names(cc2), cc2
+    assert COST_TOOL not in _names(cc1 + cc2), (cc1, cc2)
+    assert DENIAL not in c1 + c2
+    ok = _entitled(TWO_TIERS)
+    for _name, args in cc1 + cc2:
+        used = {str(x).lower().replace(" ", "_") for x in (args.get("access_levels") or [])}
+        assert used <= ok, (used, ok, _name)
