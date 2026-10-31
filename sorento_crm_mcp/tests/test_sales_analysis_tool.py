@@ -93,7 +93,7 @@ def test_ac_r4_4_a_failed_build_is_said_not_promised():
 def test_ac_r4_3_a_question_or_a_refusal_carries_no_file():
     for payload in (
         {"status": "clarify", "message": "Sorento or Mocha?"},
-        {"status": "refused", "message": "Sorry, I can only share sales figures for your own account."},
+        {"status": "refused", "message": "I can only share sales figures for your own account."},
     ):
         env = _envelope(payload)
         assert env["response"] == payload["message"]

@@ -76,7 +76,7 @@ def refusal(*names: str) -> str:
     """AC-CS-11: `A.` / `A and B.` / `A, B and C.` in link order."""
     joined = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
     # A group name that ends in "." ("CO.SDN.BHD.") ends the sentence itself.
-    return f"Sorry, that isn't under your account. I can only check on {joined}{'' if joined.endswith('.') else '.'}"
+    return f"That isn't under your account. I can only check on {joined}{'' if joined.endswith('.') else '.'}"
 
 
 def _ent(raw: str, hint: str = "customer") -> dict[str, Any]:
@@ -669,7 +669,7 @@ class TestReviewRound1:
             ),
             "incoming stock and orders for hanlim", attributes=(), resolve_services=_hanlim_services(),
         )
-        assert reply.count("Sorry, that isn't under your account") == 1, reply
+        assert reply.count("That isn't under your account") == 1, reply
 
 
 # --------------------------------------------------------------------------- #

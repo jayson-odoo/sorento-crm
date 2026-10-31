@@ -131,7 +131,7 @@ class TestRunFetchAnswersAScopeViolationWithTheRefusal:
         from app.services.chatbot.lanes.business.services import FetchServices
 
         a, z = str(uuid.uuid4()), str(uuid.uuid4())
-        refusal = "Sorry, that isn't under your account. I can only check on ZZT OWN A."
+        refusal = "That isn't under your account. I can only check on ZZT OWN A."
         calls: list[tuple[str, dict[str, Any]]] = []
 
         def _mcp(name: str, args: dict[str, Any]) -> Any:
@@ -185,7 +185,7 @@ def _scoped_payload(*, scope: list[str], entities: list[dict[str, Any]], parse: 
             "parse": {"output": {"domain_hint": "order", "intent_hint": "check_order", "message_type": "business_query", "entities": [], **parse}},
             "customer_scope": {
                 "ids": scope, "enforced": True,
-                "refusal": "Sorry, that isn't under your account. I can only check on ZZT OWN A.",
+                "refusal": "That isn't under your account. I can only check on ZZT OWN A.",
             },
         },
     }
@@ -214,7 +214,7 @@ class TestRefusalsAreTraced:
             fragment = run_fetch(payload, services=FetchServices(mcp_call=lambda n, a_: "{}"), db=db, trace=trace)
         finally:
             db.close()
-        assert (fragment.get("fetch") or {}).get("response", "").startswith("Sorry, that isn't under your account")
+        assert (fragment.get("fetch") or {}).get("response", "").startswith("That isn't under your account")
         (event,) = [e for e in trace.events if e.get("kind") == "customer_scope"]
         assert event["refused"] == "customer_not_permitted"
         assert event["dropped"] == [z]
@@ -247,7 +247,7 @@ class TestRefusalsAreTraced:
         finally:
             db.close()
         assert calls == []
-        assert (fragment.get("fetch") or {}).get("response", "").startswith("Sorry, that isn't under your account")
+        assert (fragment.get("fetch") or {}).get("response", "").startswith("That isn't under your account")
         (event,) = [e for e in trace.events if e.get("kind") == "customer_scope"]
         assert event["reason"] == "tier_probe_customer_ids_outside_links"
         assert event["dropped"] == [z]

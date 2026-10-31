@@ -195,7 +195,7 @@ class TestAccessDeniedNeverWritesTheSession:
 
         assert result.branch_kind == "access_denied"
         assert result.delegate is None
-        assert result.reply["text"].startswith("Sorry, you are not allowed to access ")
+        assert result.reply["text"].startswith("You are not allowed to access ")
         assert _session_vars_raw(session_factory) == before, (
             "a contact refused the agent must not have the turn written into their memory"
         )

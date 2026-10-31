@@ -271,7 +271,7 @@ def test_a_miss_has_no_options_and_is_not_a_result():
 
 def test_a_refused_body_answers_with_the_message_and_arms_nothing():
     env = _envelope("refused")
-    assert env["response"] == "Sorry, REPAIR isn't one of the locations you can check.", env
+    assert env["response"] == "REPAIR isn't one of the locations you can check.", env
     assert env["has_result"] is True, "a refusal is a final answer, never the miss lane's escalate offer"
     assert env["options"] == [], env
 

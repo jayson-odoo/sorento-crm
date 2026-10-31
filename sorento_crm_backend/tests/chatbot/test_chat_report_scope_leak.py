@@ -3,7 +3,7 @@ not leak onto the other asks of a multi-ask turn.
 
 A contact with customer links that classifies SALESPERSON (active user, role slug `salesperson`,
 no office access type) is customer-scoped by the generic rule for an orders ask (main behaviour):
-a customer word outside its links is refused ("Sorry, that isn't under your account..."). A turn
+a customer word outside its links is refused ("That isn't under your account..."). A turn
 that ALSO carries a chat report must not change that, and a contact without the
 `chatbot.analytics` reveal must not trigger the chat scoping at all. Parser and MCP are fakes.
 """
@@ -146,7 +146,7 @@ import copy  # noqa: E402
 import pytest  # noqa: E402
 
 SCOPE = {"ids": ["c1"], "names": {"c1": "ZZT OWN"}, "linked": [["c1", "ZZT OWN", "ZZT-1"]],
-         "staff": False, "enforced": True, "refusal": "Sorry, that isn't under your account."}
+         "staff": False, "enforced": True, "refusal": "That isn't under your account."}
 
 
 @pytest.mark.parametrize("asker", ["salesperson", "staff", "unclassified", "dealer"])

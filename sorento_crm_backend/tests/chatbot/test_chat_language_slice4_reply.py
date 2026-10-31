@@ -56,13 +56,13 @@ TABLE4: dict[str, tuple[str, str]] = {
         "Adakah anda mahu saya rujuk kepada pasukan {team} *{company}*?",
         "需要我转交给 *{company}* 的 {team} 团队吗？",
     ),
-    "I am sorry the provided answer does not meet your requirements. Would you like me to escalate to {team} team?": (
-        "Maaf, jawapan yang diberikan tidak memenuhi keperluan anda. Adakah anda mahu saya rujuk kepada pasukan {team}?",
-        "抱歉，所提供的答案未能满足您的需求。需要我转交给 {team} 团队吗？",
+    "The provided answer does not meet your requirements. Would you like me to escalate to {team} team?": (
+        "Jawapan yang diberikan tidak memenuhi keperluan anda. Adakah anda mahu saya rujuk kepada pasukan {team}?",
+        "所提供的答案未能满足您的需求。需要我转交给 {team} 团队吗？",
     ),
-    "I am sorry the provided answer does not meet your requirements. Would you like me to escalate this to our team?": (
-        "Maaf, jawapan yang diberikan tidak memenuhi keperluan anda. Adakah anda mahu saya rujuk perkara ini kepada pasukan kami?",
-        "抱歉，所提供的答案未能满足您的需求。需要我转交给我们的团队吗？",
+    "The provided answer does not meet your requirements. Would you like me to escalate this to our team?": (
+        "Jawapan yang diberikan tidak memenuhi keperluan anda. Adakah anda mahu saya rujuk perkara ini kepada pasukan kami?",
+        "所提供的答案未能满足您的需求。需要我转交给我们的团队吗？",
     ),
     "No it's okay": ("Tidak mengapa", "不用了"),
     "Yes, escalate": ("Ya, rujuk", "是，转交"),
@@ -99,16 +99,16 @@ TABLE4: dict[str, tuple[str, str]] = {
         "找不到 {shown}。您是指：",
     ),
     "Please refer to your salesman.": ("Sila rujuk jurujual anda.", "请联系您的销售员。"),
-    "Sorry, you are not allowed to access {team}": (
-        "Maaf, anda tidak dibenarkan mengakses {team}",
-        "抱歉，您无权访问 {team}",
+    "You are not allowed to access {team}": (
+        "Anda tidak dibenarkan mengakses {team}",
+        "您无权访问 {team}",
     ),
     "Please specify your demand quantity": ("Sila nyatakan kuantiti yang anda perlukan", "请说明您需要的数量"),
     "Okay, noted.": ("Baik, dicatat.", "好的，已记录。"),
     "Escalation declined.": ("Rujukan dibatalkan.", "已取消转交。"),
-    "Sorry, I ran into a problem understanding that. Please try again in a moment.": (
-        "Maaf, saya menghadapi masalah memahami mesej itu. Sila cuba lagi sebentar lagi.",
-        "抱歉，我暂时无法理解您的信息，请稍后再试。",
+    "I ran into a problem understanding that. Please send it again.": (
+        "Saya menghadapi masalah memahami mesej itu. Sila hantar sekali lagi.",
+        "我刚才无法理解您的信息，请再发送一次。",
     ),
     "Low stock report is not enabled for your account.": (
         "Laporan stok rendah tidak diaktifkan untuk akaun anda.",
@@ -235,18 +235,18 @@ def test_cl40_the_company_offer_uses_its_own_template():
 
 def test_cl40_the_apology_offer_is_one_catalog_sentence_not_two_halves():
     out = _loc("ms").reply(
-        "I am sorry the provided answer does not meet your requirements. "
+        "The provided answer does not meet your requirements. "
         "Would you like me to escalate to warehouse team?"
     )
     assert out == (
-        "Maaf, jawapan yang diberikan tidak memenuhi keperluan anda. "
+        "Jawapan yang diberikan tidak memenuhi keperluan anda. "
         "Adakah anda mahu saya rujuk kepada pasukan warehouse?"
     )
     out = _loc("zh").reply(
-        "I am sorry the provided answer does not meet your requirements. "
+        "The provided answer does not meet your requirements. "
         "Would you like me to escalate this to our team?"
     )
-    assert out == "抱歉，所提供的答案未能满足您的需求。需要我转交给我们的团队吗？"
+    assert out == "所提供的答案未能满足您的需求。需要我转交给我们的团队吗？"
 
 
 def test_cl40_a_whole_dealer_miss_reply_renders_the_catalog_strings():

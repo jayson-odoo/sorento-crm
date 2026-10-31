@@ -2062,7 +2062,7 @@ TIER3_Q = {"kind": "tier_pick", "expects": "choice", "payload": {}, "asked_at_tu
 
 def test_r29_a_how_many_ask_of_unknown_type_passes_on_a_scope_item():
     r = row2(message="u help me check", reply="How many units of SRTWF12C-NEW?",
-             prev_bot="Sorry, that isn't under your account. I can only check on CUSTOMER A.")
+             prev_bot="That isn't under your account. I can only check on CUSTOMER A.")
     res = grade_turn(r, item("scope"))
     assert res["checks"].get("qty_ask_ok") is True, res["checks"]
     assert res["passed"] is True, (res["reason"], res["checks"])

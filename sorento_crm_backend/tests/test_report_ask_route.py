@@ -639,7 +639,7 @@ def test_a_named_location_outside_the_policy_is_refused(client, db):
     db.commit()
     body = _ok(client, contact, group_by="sales_agent", top_n=3, warehouse_codes=["ZZT-BARRED"])
     assert body["status"] == "refused", body
-    assert body["message"] == "Sorry, ZZT-BARRED isn't one of the locations you can check.", body
+    assert body["message"] == "ZZT-BARRED isn't one of the locations you can check.", body
     assert w is not None
 
 

@@ -130,7 +130,7 @@ def test_no_rows_names_its_scope_one_fact_per_line():
 
 
 def test_refused_prints_the_message_only():
-    msg = "Sorry, ZZT-REPAIR isn't one of the locations you can check."
+    msg = "ZZT-REPAIR isn't one of the locations you can check."
     assert _report_ask(_body(status="refused", message=msg, rows=[], total=None)) == msg
 
 

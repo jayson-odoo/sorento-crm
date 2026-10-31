@@ -691,7 +691,7 @@ class TestEveryLeakIsHuman:
         assert {o.get("entity_type") for o in result.kind_pick_options} == {"promotion", "attachment_type"}
 
     def test_the_not_allowed_reply_names_the_team_in_words(self) -> None:
-        """canned.py: "Sorry, you are not allowed to access incoming_stock_enquiries"
+        """canned.py: "You are not allowed to access incoming_stock_enquiries"
         (prod samples, 1 turn on dev)."""
         from app.services.chatbot.copy import CannedCopy
         from app.services.chatbot.lanes.canned import access_denied_text
@@ -699,7 +699,7 @@ class TestEveryLeakIsHuman:
         ctx = {"parse": {"output": {"routing": {"suggested_agent": "incoming_stock_enquiries"}}}}
         text = access_denied_text(None, ctx, CannedCopy(templates={}))
 
-        assert text == "Sorry, you are not allowed to access incoming stock enquiries", text
+        assert text == "You are not allowed to access incoming stock enquiries", text
 
     def test_the_access_level_ask_names_a_domain_the_label_map_lacked(self) -> None:
         """answer.py DOMAIN_LABELS: `purchase_cost` fell back to the raw key."""

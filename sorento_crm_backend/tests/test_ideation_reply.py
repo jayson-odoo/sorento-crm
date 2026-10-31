@@ -56,7 +56,7 @@ def _patched(provider):
 
 # --------------------------------------------------------------------------- #
 # AC-1301 / AC-1306 - facts + user message reach the model                    #
-FALLBACK = "Sorry, you are not allowed to access ideation"
+FALLBACK = "You are not allowed to access ideation"
 
 
 def test_user_message_reaches_the_model_for_language(configured):
@@ -86,17 +86,17 @@ def test_no_api_key_falls_back(db_session):
 def test_denial_reply_with_url_falls_back(configured):
     with _patched(_StubProvider("Not available. Try https://evil.test ?")):
         out = compose_ideate_denial_reply(
-            configured, user_message="i have an idea", fallback_text="Sorry, you are not allowed to access ideation"
+            configured, user_message="i have an idea", fallback_text="You are not allowed to access ideation"
         )
-    assert out == "Sorry, you are not allowed to access ideation"
+    assert out == "You are not allowed to access ideation"
 
 
 def test_denial_reply_with_question_falls_back(configured):
     with _patched(_StubProvider("Sorry, would you like to try a different agent?")):
         out = compose_ideate_denial_reply(
-            configured, user_message="i have an idea", fallback_text="Sorry, you are not allowed to access ideation"
+            configured, user_message="i have an idea", fallback_text="You are not allowed to access ideation"
         )
-    assert out == "Sorry, you are not allowed to access ideation"
+    assert out == "You are not allowed to access ideation"
 
 
 # --------------------------------------------------------------------------- #
@@ -105,7 +105,7 @@ def test_denial_reply_with_question_falls_back(configured):
 def test_denial_reply_uses_llm_output(configured):
     with _patched(_StubProvider("Sorry, idea capture isn't available for you right now.")):
         out = compose_ideate_denial_reply(
-            configured, user_message="i have an idea", fallback_text="Sorry, you are not allowed to access ideation"
+            configured, user_message="i have an idea", fallback_text="You are not allowed to access ideation"
         )
     assert out == "Sorry, idea capture isn't available for you right now."
 
@@ -113,14 +113,14 @@ def test_denial_reply_uses_llm_output(configured):
 def test_denial_reply_falls_back_on_provider_failure(configured):
     with _patched(_BoomProvider()):
         out = compose_ideate_denial_reply(
-            configured, user_message="i have an idea", fallback_text="Sorry, you are not allowed to access ideation"
+            configured, user_message="i have an idea", fallback_text="You are not allowed to access ideation"
         )
-    assert out == "Sorry, you are not allowed to access ideation"
+    assert out == "You are not allowed to access ideation"
 
 
 def test_denial_reply_falls_back_on_empty_output(configured):
     with _patched(_StubProvider("")):
         out = compose_ideate_denial_reply(
-            configured, user_message="i have an idea", fallback_text="Sorry, you are not allowed to access ideation"
+            configured, user_message="i have an idea", fallback_text="You are not allowed to access ideation"
         )
-    assert out == "Sorry, you are not allowed to access ideation"
+    assert out == "You are not allowed to access ideation"

@@ -840,17 +840,17 @@ def test_a_named_location_outside_the_policy_is_refused_with_the_exact_line(clie
     contact, _cust, _whs = _policy_world(db)
     body = _get(client, warehouse_codes="ZZT-REPAIR", location_token="ZZT-REPAIR", **_as_contact(contact))
     assert body["status"] == "refused", body
-    assert body["message"] == "Sorry, ZZT-REPAIR isn't one of the locations you can check.", body
+    assert body["message"] == "ZZT-REPAIR isn't one of the locations you can check.", body
     assert body["periods"] == [] and body["rows"] == [] and body["options"] == [], body
 
 
 def test_the_refusal_names_the_location_as_typed_else_the_code(client, db):
     contact, _cust, _whs = _policy_world(db)
     typed = _get(client, warehouse_codes="ZZT-REPAIR", location_token="zzt-repair", **_as_contact(contact))
-    assert typed["message"] == "Sorry, zzt-repair isn't one of the locations you can check.", typed
+    assert typed["message"] == "zzt-repair isn't one of the locations you can check.", typed
     bare = _get(client, warehouse_codes="ZZT-REPAIR", **_as_contact(contact))
     assert bare["status"] == "refused", bare
-    assert bare["message"] == "Sorry, ZZT-REPAIR isn't one of the locations you can check.", bare
+    assert bare["message"] == "ZZT-REPAIR isn't one of the locations you can check.", bare
 
 
 def test_an_excluded_location_is_outside_the_policy(client, db):

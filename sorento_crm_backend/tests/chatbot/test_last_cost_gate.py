@@ -160,7 +160,7 @@ class TestAC16DomainRefusedWithoutGrant:
         """A contact without `purchase_orders.cost` asking "last purchase cost for M218"
         gets the access_denied canned reply, its SUBJECT "purchase cost" rather than the
         parser's agent guess - captain's ruling: the exact string is
-        "Sorry, you are not allowed to access purchase cost". No MCP tool is called; the
+        "You are not allowed to access purchase cost". No MCP tool is called; the
         trace carries {"skipped": "not_granted", "needs": "purchase_orders.cost"}.
 
         The expected string is built off the FALLBACK template
@@ -172,7 +172,7 @@ class TestAC16DomainRefusedWithoutGrant:
         from app.services.chatbot_reply_copy import CHATBOT_REPLY_ACCESS_DENIED
 
         expected_text = CHATBOT_REPLY_ACCESS_DENIED.replace("{{team}}", "purchase cost")
-        assert expected_text == "Sorry, you are not allowed to access purchase cost"
+        assert expected_text == "You are not allowed to access purchase cost"
 
         calls: list[tuple[str, dict]] = []
 

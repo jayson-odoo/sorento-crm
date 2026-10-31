@@ -103,9 +103,9 @@ SLICE3: dict[str, tuple[str, str]] = {
         "Dihantar (dipindahkan ke DO) atau dipesan?",
         "已送货（已转 DO）还是已订购？",
     ),
-    "Sorry, I can only share sales figures for your own account.": (
-        "Maaf, saya hanya boleh berkongsi angka jualan untuk akaun anda sendiri.",
-        "抱歉，我只能提供您本人账户的销售数据。",
+    "I can only share sales figures for your own account.": (
+        "Saya hanya boleh berkongsi angka jualan untuk akaun anda sendiri.",
+        "我只能提供您本人账户的销售数据。",
     ),
     "Items with no sale in this period are not ranked.": (
         "Item tanpa jualan dalam tempoh ini tidak disenaraikan.",

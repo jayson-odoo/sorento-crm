@@ -160,7 +160,7 @@ SALES_REPORT_MISS: dict[str, Any] = {
 SALES_REPORT_REFUSED: dict[str, Any] = {
     **SALES_REPORT_MISS,
     "status": "refused",
-    "message": "Sorry, REPAIR isn't one of the locations you can check.",
+    "message": "REPAIR isn't one of the locations you can check.",
 }
 
 

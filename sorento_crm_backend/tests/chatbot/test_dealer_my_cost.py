@@ -29,7 +29,7 @@ from tests.chatbot.test_last_cost_gate import TOOL as COST_TOOL, _granted_cost_r
 from tests.chatbot.test_outstanding_lane import PRODUCT_CODE, PRODUCT_UUID, _run_turn, _seed_contact
 from tests.chatbot.test_promo_subject_filter import PROMO_TOOL, _pick_qf, _use_mcp
 
-DENIAL = "Sorry, you are not allowed to access purchase cost"
+DENIAL = "You are not allowed to access purchase cost"
 BANNED = ("busy right now", "problem understanding", "not allowed to access purchase cost")
 DEALER = {"chatbot": {"tier": "dealer"}}
 ONE_TIER = ["Sorento Dealer"]

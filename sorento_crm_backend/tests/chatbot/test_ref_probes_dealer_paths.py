@@ -169,7 +169,7 @@ def test_step14_dealer_foreign_dashed_so_gets_the_scope_refusal(session_factory,
     _seed_so(session_factory, FOREIGN_SO, customer_id=foreign, debtor_name=FOREIGN, lines=[(4, 0)])
     foreign_reply = _turn(session_factory, monkeypatch, FOREIGN_SO, "order", attributes=(OUTSTANDING_KEY,))
     missing_reply = _turn(session_factory, monkeypatch, MISSING_SO, "order", attributes=(OUTSTANDING_KEY,))
-    assert foreign_reply == f"Sorry, that isn't under your account. I can only check on {OWN}.", foreign_reply
+    assert foreign_reply == f"That isn't under your account. I can only check on {OWN}.", foreign_reply
     assert missing_reply == f"I could not find {MISSING_SO}.", missing_reply  # no did-you-mean onto the foreign SO
 
 

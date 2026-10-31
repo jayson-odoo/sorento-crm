@@ -183,7 +183,7 @@ def _setup_escalate_offer(session_factory, monkeypatch) -> tuple[Envelope, str]:
     )
     session_vars = {"routing": {"suggested_team": "purchasing", "suggested_agent": None}}
     expected = (
-        "I am sorry the provided answer does not meet your requirements. "
+        "The provided answer does not meet your requirements. "
         "Would you like me to escalate to purchasing team?"
     )
     return overrides, session_vars, expected
@@ -231,7 +231,7 @@ def _setup_not_supported(session_factory, monkeypatch) -> tuple[dict, Any, str]:
         escalation={"is_escalation_confirmation": False, "company_pick": None},
     )
     expected = (
-        "Sorry, we don't support direct goods receive & SPO at the moment. "
+        "We don't support direct goods receive & SPO at the moment. "
         "You may ask about incoming stock for a specific product or container"
     )
     return overrides, None, expected
@@ -480,7 +480,7 @@ class TestAccessDeniedNoSessionWrite:
 
         assert result.delegate is None
         assert result.branch_kind == "access_denied"
-        assert result.reply["text"] == "Sorry, you are not allowed to access general-enquiries"
+        assert result.reply["text"] == "You are not allowed to access general-enquiries"
         # See TestCannedBranchesFinishInTurn's comment: quick_replies / result_set are
         # the sealed compile-current-state values, not a bare `[]` - access_denied
         # seals no quick replies and no result set the same way the canned lanes do.
@@ -489,7 +489,7 @@ class TestAccessDeniedNoSessionWrite:
         assert result.actions == [
             {
                 "kind": "send_message",
-                "text": "Sorry, you are not allowed to access general-enquiries",
+                "text": "You are not allowed to access general-enquiries",
                 "quick_replies": result.reply.get("quick_replies"),
                 "result_set": result.reply.get("result_set"),
                 "dry_run": False,
@@ -522,7 +522,7 @@ _COPY_CASES = [
     (
         "chatbot_reply_access_denied",
         {"team": "general-enquiries"},
-        "Sorry, you are not allowed to access general-enquiries",
+        "You are not allowed to access general-enquiries",
     ),
     (
         "chatbot_reply_clarify_menu",
@@ -545,7 +545,7 @@ _COPY_CASES = [
         "chatbot_reply_not_supported",
         {},
         (
-            "Sorry, we don't support direct goods receive & SPO at the moment. "
+            "We don't support direct goods receive & SPO at the moment. "
             "You may ask about incoming stock for a specific product or container"
         ),
     ),
@@ -554,7 +554,7 @@ _COPY_CASES = [
         "chatbot_reply_escalate_offer",
         {"team": "purchasing"},
         (
-            "I am sorry the provided answer does not meet your requirements. "
+            "The provided answer does not meet your requirements. "
             "Would you like me to escalate to purchasing team?"
         ),
     ),

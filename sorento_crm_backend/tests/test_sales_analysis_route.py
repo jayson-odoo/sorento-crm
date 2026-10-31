@@ -207,7 +207,7 @@ def test_ac_s1_23_a_dealer_contact_is_refused_and_nothing_is_fetched(db, queue):
     with _client(db, _actor(db), [DEFAULT_COMPANY_ID]) as client:
         body = client.get(ROUTE, params=_q(contact)).json()
     assert body == {"status": "refused",
-                    "message": "Sorry, I can only share sales figures for your own account."}
+                    "message": "I can only share sales figures for your own account."}
     assert _downloads(db) == before and not queue
 
 
@@ -236,7 +236,7 @@ def test_security_b1_a_dealer_is_refused_under_the_empty_scope_production_gives(
     with _client(db, _actor(db), []) as client:
         body = client.get(ROUTE, params=_q(contact)).json()
     assert body == {"status": "refused",
-                    "message": "Sorry, I can only share sales figures for your own account."}
+                    "message": "I can only share sales figures for your own account."}
     assert not queue
 
 

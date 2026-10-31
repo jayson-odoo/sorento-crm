@@ -218,7 +218,7 @@ NOT_SUPPORTED_OUTPUT = _parser_output(
     escalation={"is_escalation_confirmation": False, "company_pick": None},
 )
 NOT_SUPPORTED_REPLY = (
-    "Sorry, we don't support direct goods receive & SPO at the moment. "
+    "We don't support direct goods receive & SPO at the moment. "
     "You may ask about incoming stock for a specific product or container"
 )
 

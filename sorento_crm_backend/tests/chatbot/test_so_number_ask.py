@@ -116,7 +116,7 @@ class TestUnresolvedSoNumberIsOneMissLine:
 # --------------------------------------------------------------------------- #
 
 OUTSTANDING_KEY = "sales_orders.outstanding"
-REFUSAL_PREFIX = "Sorry, that isn't under your account."
+REFUSAL_PREFIX = "That isn't under your account."
 SO_NOT_ENABLED = "Sales order figures are not enabled for your account."
 
 

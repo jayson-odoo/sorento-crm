@@ -116,17 +116,17 @@ def test_refusal_line_for_names_only_the_given_ledgers_groups_in_link_order() ->
     scope = _scope()
     assert (
         scope_mod.refusal_line_for(scope, ["s-1"])
-        == "Sorry, that isn't under your account. I can only check on SOON HENG HARDWARE CO.SDN.BHD."
+        == "That isn't under your account. I can only check on SOON HENG HARDWARE CO.SDN.BHD."
     )
     assert scope_mod.refusal_line_for(scope, ["h-4", "h-2"]) == (
-        "Sorry, that isn't under your account. I can only check on HANLIM TRADING SDN BHD."
+        "That isn't under your account. I can only check on HANLIM TRADING SDN BHD."
     )
 
 
 def test_refusal_line_for_two_groups_uses_and() -> None:
     line = scope_mod.refusal_line_for(_scope(), ["h-1", "h-2", "s-1"])
     assert line == (
-        "Sorry, that isn't under your account. I can only check on "
+        "That isn't under your account. I can only check on "
         "HANLIM TRADING SDN BHD and SOON HENG HARDWARE CO.SDN.BHD."
     )
 

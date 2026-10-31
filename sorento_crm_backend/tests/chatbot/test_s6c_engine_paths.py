@@ -320,7 +320,7 @@ class TestR1DemandQuantityAnswerEndToEnd:
         # so the rows this test's `_wire` stubs are never read on this arm and there is
         # no verdict to rewrite yet. Measured directly, not guessed.
         assert result.reply == {
-            "text": "Sorry, you are not allowed to access stock",
+            "text": "You are not allowed to access stock",
             "quick_replies": None,
             "attachments_src": None,
             "result_set": [],
