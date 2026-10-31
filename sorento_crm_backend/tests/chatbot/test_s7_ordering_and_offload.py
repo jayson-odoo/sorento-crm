@@ -715,7 +715,8 @@ class TestS7ModeRefusesADelegatingLane:
         assert result.delegate is None, "S7 mode must not hand the caller a lane to run"
         # The customer still gets today's error reply to send, like every other failure.
         assert [a["kind"] for a in result.actions] == ["send_message"]
-        assert result.actions[0]["text"] == engine_mod.GENERIC_ERROR_REPLY
+        from tests.chatbot import fail_triage_texts as FT
+        assert result.actions[0]["text"] == FT.H_ERROR
         # And the operator gets the two facts that let them fix it: which lane, and where
         # to switch it on.
         assert "business_query" in (result.error or "")

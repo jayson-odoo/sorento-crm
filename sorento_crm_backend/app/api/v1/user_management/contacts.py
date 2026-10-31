@@ -475,6 +475,9 @@ class ContactChatbotUpdate(BaseModel):
     chatbot_files_as_links: bool | None = None
     # AGENTIC-P1: "Agent mode" switch. Absent = leave alone.
     chatbot_agent_enabled: bool | None = None
+    # AGENTIC-P2-ROUTE: this contact's agent turns per day. A number sets it (0 = no cap),
+    # null clears it back to the global setting, absent leaves it alone.
+    chatbot_agent_daily_turns: int | None = Field(default=None, ge=0, le=100000)
     # CONTACT-REGION: absent = leave alone; empty, unknown or explicit null = 422.
     regions: list[Literal["west", "east"]] = Field(default=None, min_length=1)  # type: ignore[assignment]
     # MODEL-PER-CONTACT: object sets provider + model, null clears both, absent leaves alone.
@@ -535,6 +538,8 @@ def update_contact_chatbot(
             contact.chatbot_files_as_links = body.chatbot_files_as_links
         if body.chatbot_agent_enabled is not None:
             contact.chatbot_agent_enabled = body.chatbot_agent_enabled
+        if "chatbot_agent_daily_turns" in body.model_fields_set:
+            contact.chatbot_agent_daily_turns = body.chatbot_agent_daily_turns
         if "regions" in body.model_fields_set:
             contact.regions = [r for r in ("west", "east") if r in body.regions]
         if "llm" in body.model_fields_set:

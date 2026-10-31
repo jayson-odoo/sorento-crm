@@ -42,6 +42,16 @@ export interface ConsoleTraceSummary {
   routing_line?: string | null;
 }
 
+/** AGENTIC-P2-ROUTE: which side answered a text turn and why; absent on a media turn or an older response. */
+export interface ConsoleRoute {
+  side: 'chat' | 'agent';
+  reason: string;
+  score: number | null;
+  model: string | null;
+  ms: number | null;
+  error?: string | null;
+}
+
 export interface ConsoleTurnResponse {
   turn_id: string | null;
   branch_kind: string | null;
@@ -66,6 +76,10 @@ export interface ConsoleTurnResponse {
    * `extractTurnAttachments` can read a `send_attachments` action's own file list,
    * the same source Chat History's `ChatbotTurn.response.actions` already gives. */
   actions?: Record<string, unknown>[] | null;
+  /** The router's decision for this turn. */
+  route?: ConsoleRoute | null;
+  /** Set when the router sent the turn to the agent: the agent's own turn block. */
+  agent?: { turn_id: string; status: string; pending_action: unknown | null } | null;
 }
 
 export type ConsolePromptBase = 'full' | 'compact' | 'other';
@@ -106,6 +120,8 @@ export interface ChatbotConsoleMessage {
   promptVersion?: number | null;
   /** Only the FIRST bot bubble of an escalation turn carries this: where it went. */
   routingLine?: string | null;
+  /** Only the LAST bot bubble of a turn carries the route pill's data. */
+  route?: ConsoleRoute | null;
   /** Only the LAST bot bubble of a turn carries these - chips send that text on click. */
   quickReplies?: string[];
   /** Media status/preview, wired in commit 2. */

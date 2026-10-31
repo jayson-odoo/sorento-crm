@@ -465,7 +465,7 @@ def bulk_delete_promotions(
 @router.patch("/bulk", status_code=status.HTTP_200_OK)
 def bulk_update_access_levels(
     body: BulkUpdateAccessLevelsRequest = Body(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("marketing.promotions.edit")),
     db: Session = Depends(get_db)
 ):
     """Bulk set access levels for selected promotions."""

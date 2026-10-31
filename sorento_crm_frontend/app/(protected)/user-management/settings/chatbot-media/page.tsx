@@ -25,6 +25,7 @@ import {
   MODEL_OPTIONS,
   PROVIDER_OPTIONS,
 } from '@/lib/ai/modelOptions';
+import { numberFieldError } from '@/lib/number-field';
 import { wholeNumberRangeError } from '@/lib/whole-number-range';
 import { useProviderModels, useTestProviderModel } from '@/hooks/useProviderModels';
 
@@ -81,6 +82,8 @@ type Draft = {
   agentMaxSeconds: string;
   agentMaxInputTokens: string;
   agentCompactTokens: string;
+  routerMinScore: string;
+  agentDailyTurns: string;
 };
 
 function toDraft(settings: ChatbotMediaSettings): Draft {
@@ -111,6 +114,8 @@ function toDraft(settings: ChatbotMediaSettings): Draft {
     agentMaxSeconds: String(settings.chatbot_agent_max_seconds),
     agentMaxInputTokens: String(settings.chatbot_agent_max_input_tokens),
     agentCompactTokens: String(settings.chatbot_agent_compact_tokens),
+    routerMinScore: String(settings.chatbot_router_min_score ?? 0.7),
+    agentDailyTurns: String(settings.chatbot_agent_daily_turns ?? 50),
   };
 }
 
@@ -144,6 +149,8 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     chatbot_agent_max_seconds: Number(draft.agentMaxSeconds.trim()),
     chatbot_agent_max_input_tokens: Number(draft.agentMaxInputTokens.trim()),
     chatbot_agent_compact_tokens: Number(draft.agentCompactTokens.trim()),
+    chatbot_router_min_score: Number(draft.routerMinScore.trim()),
+    chatbot_agent_daily_turns: Number(draft.agentDailyTurns.trim()),
   };
 }
 
@@ -154,6 +161,8 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
  * the odd one out, not the norm.
  */
 const NUMBER_BOUNDS = {
+  // routerMinScore is a decimal, checked by `numberErrors` on its own; listed here for the key type.
+  routerMinScore: [0.5, 0.95],
   imageMonthlyLimit: [0, 100000],
   voiceMonthlyLimit: [0, 100000],
   voiceMaxSeconds: [1, 3600],
@@ -172,6 +181,8 @@ const NUMBER_BOUNDS = {
   agentMaxSeconds: [5, 300],
   agentMaxInputTokens: [10000, 2000000],
   agentCompactTokens: [5000, 500000],
+  // 0 turns a day is no cap.
+  agentDailyTurns: [0, 100000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 type NumberKey = keyof typeof NUMBER_BOUNDS;
@@ -189,12 +200,16 @@ const BLANK_ALLOWED: ReadonlySet<NumberKey> = new Set(['reportRateLimit']);
 function numberErrors(draft: Draft): Partial<Record<NumberKey, string>> {
   const errors: Partial<Record<NumberKey, string>> = {};
   for (const key of Object.keys(NUMBER_BOUNDS) as NumberKey[]) {
+    if (key === 'routerMinScore') continue;
     const [min, max] = NUMBER_BOUNDS[key];
     const error = wholeNumberRangeError(draft[key], min, max, {
       allowBlank: BLANK_ALLOWED.has(key),
     });
     if (error) errors[key] = error;
   }
+  // The one decimal field: the router's confidence floor.
+  const scoreError = numberFieldError(draft.routerMinScore, { min: 0.5, max: 0.95 });
+  if (scoreError) errors.routerMinScore = scoreError;
   if (!errors.syncWaitSeconds && !errors.extractionTimeoutSeconds) {
     const wait = Number(draft.syncWaitSeconds.trim());
     if (Number(draft.extractionTimeoutSeconds.trim()) < wait) {
@@ -417,6 +432,25 @@ export default function ChatbotMediaSettingsPage() {
             value={draft.agentCompactTokens}
             error={numberError.agentCompactTokens}
             onChange={(v) => set('agentCompactTokens', v)}
+          />
+          <NumberField
+            id="router-min-score"
+            label="Router minimum score"
+            value={draft.routerMinScore}
+            error={numberError.routerMinScore}
+            onChange={(v) => set('routerMinScore', v)}
+            min={0.5}
+            max={0.95}
+            step={0.05}
+            inputMode="decimal"
+          />
+          <NumberField
+            id="agent-daily-turns"
+            label="Agent turns per contact per day"
+            value={draft.agentDailyTurns}
+            error={numberError.agentDailyTurns}
+            onChange={(v) => set('agentDailyTurns', v)}
+            min={0}
           />
         </CardContent>
       </Card>
@@ -664,11 +698,19 @@ function NumberField({
   value,
   error,
   onChange,
+  min,
+  max,
+  step,
+  inputMode = 'numeric',
 }: {
   id: string;
   label: string;
   hint?: string;
   value: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  inputMode?: 'numeric' | 'decimal';
   /** Shown in place of the hint, so a rejected number says why before it is saved. */
   error?: string;
   onChange: (value: string) => void;
@@ -678,7 +720,10 @@ function NumberField({
       <Label htmlFor={id}>{label}</Label>
       <NumberInput
         id={id}
-        inputMode="numeric"
+        inputMode={inputMode}
+        min={min}
+        max={max}
+        step={step}
         value={value}
         error={error}
         onChange={(e) => onChange(e.target.value)}

@@ -32,6 +32,8 @@ SEED_PRICES: dict[str, tuple[str, str | None, str, str]] = {
         "0.30", "0.03", "2.50",
         "Google Standard tier, https://ai.google.dev/gemini-api/docs/pricing, read 28 Oct 2026 (owner-approved)",
     ),
+    # Jev, TypeSafe AI's classifier behind the console router (AGENTIC-P2-ROUTE); output is free.
+    "jev-1.14.0": ("0.042", "0", "0", "TypeSafe AI, https://docs.typesafe.ai/models, read 30 Oct 2026"),
 }
 
 

@@ -49,6 +49,10 @@ class AIAssistantConfig(Base):
     gemini_api_key_ciphertext: Mapped[str | None] = mapped_column(
         EncryptedText("ai_assistant_configs.gemini_api_key_ciphertext"), nullable=True
     )
+    # Dedicated TypeSafe (Jev) key - the console router's classifier. Not a chat provider.
+    typesafe_api_key_ciphertext: Mapped[str | None] = mapped_column(
+        EncryptedText("ai_assistant_configs.typesafe_api_key_ciphertext"), nullable=True
+    )
     # Dedicated OpenAI key - each provider resolves its own slot, so a contact-level
     # model pick on OpenAI works while the assistant row sits on another provider.
     openai_api_key_ciphertext: Mapped[str | None] = mapped_column(

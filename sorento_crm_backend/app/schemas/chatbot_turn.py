@@ -158,6 +158,18 @@ class ConsoleTraceSummary(BaseModel):
     routing_line: str | None = None
 
 
+class ConsoleRoute(BaseModel):
+    """Which side answered a console message and why (AGENTIC-P2-ROUTE); score, model and ms are
+    set only when Jev was asked."""
+
+    side: Literal["chat", "agent"]
+    reason: str
+    score: float | None = None
+    model: str | None = None
+    ms: int | None = None
+    error: str | None = None
+
+
 class ConsoleTurnResponse(BaseModel):
     turn_id: str | None = None
     branch_kind: str | None = None
@@ -188,6 +200,10 @@ class ConsoleTurnResponse(BaseModel):
     # action's own file list under the reply it belongs to, the same source
     # `ChatbotTurn.response.actions` already gives the Chat History screen.
     actions: list[dict[str, Any]] | None = None
+    # AGENTIC-P2-ROUTE: the router's decision for this message (null on a media turn), and, when it
+    # chose the agent, the agent's own turn block (`AgentTurnResponse`, declared below).
+    route: ConsoleRoute | None = None
+    agent: "AgentTurnResponse | None" = None
 
 
 class ConsolePromptVersion(BaseModel):
@@ -364,3 +380,7 @@ class AgentActionResponse(BaseModel):
     status: str
     reply_text: str
     steps: list[AgentActionStep] = Field(default_factory=list)
+
+
+# `ConsoleTurnResponse.agent` names `AgentTurnResponse`, declared after it.
+ConsoleTurnResponse.model_rebuild()

@@ -9,6 +9,7 @@ readers the contract names (`resolve_visible_form_types`, `granted_keys_for`,
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Optional
 
@@ -860,6 +861,28 @@ def tags_by_contact_with_settings(db: Session, contact_ids: list[str]) -> dict[s
     for cid, tid, name, settings in rows:
         out.setdefault(str(cid), []).append(TagRef(str(tid), name, settings or {}))
     return out
+
+
+def contact_is_dealer(db: Session, contact_id: str) -> bool:
+    """True when every ACTIVE tag of the contact that sets `chatbot.tier` sets "dealer", and at
+    least one does. A conflict (dealer beside another tier) is not a dealer, as
+    `contact_llm_choice` treats a conflict. Reads the tags' settings only: never the profile's
+    tier and never the access levels."""
+    from app.models.access import ContactTag
+
+    tags = tags_by_contact_with_settings(db, [str(contact_id)]).get(str(contact_id), [])
+    if not tags:
+        return False
+    active = {str(t) for (t,) in db.execute(select(ContactTag.id).where(ContactTag.id.in_([t.id for t in tags]), ContactTag.is_active.is_(True)))}
+    tiers: set = set()
+    for t in tags:
+        if t.id not in active:
+            continue
+        try:
+            tiers |= {v for section, key, v in leaves(t) if (section, key) == ("chatbot", "tier")}
+        except Exception:  # noqa: BLE001 - a malformed tag sets no tier; the contact falls to the denial
+            logging.getLogger(__name__).warning("contact tag %s has malformed settings; read as setting no tier", t.id)
+    return tiers == {"dealer"}
 
 
 def evaluate(

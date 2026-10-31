@@ -3713,17 +3713,21 @@ class SPOAllocationService:
         InboundShipmentService(self.db).refresh_shipment_line_statuses(shipment_id)
 
     def bulk_delete_allocations(self, allocation_ids: list[str]):
-        """Delete multiple SPO allocations by ID. Returns count of deleted."""
+        """Delete multiple SPO allocations by ID. Returns count of deleted.
+
+        Row by row through the ORM read, like `delete_allocation`, never
+        `query(...).delete()`: the company scope filter covers SELECTs only, so an id
+        from another company is not found and not counted here.
+        """
         if not allocation_ids:
             return {"message": "No allocations to delete", "deleted_count": 0}
-        # The rows themselves, not only their shipment ids: each one gets its own audit
-        # row before the query-level delete removes it (`_audit_spo_line`).
         rows = self.db.query(SPOAllocation).filter(SPOAllocation.id.in_(allocation_ids)).all()
         shipment_ids = {row.inbound_shipment_id for row in rows if row.inbound_shipment_id is not None}
         for row in rows:
             _audit_spo_line(self.db, row, "DELETE")
-        deleted = self.db.query(SPOAllocation).filter(SPOAllocation.id.in_(allocation_ids)).delete(synchronize_session=False)
+            self.db.delete(row)
         self.db.commit()
+        deleted = len(rows)
         inbound_svc = InboundShipmentService(self.db)
         for shipment_id in shipment_ids:
             inbound_svc.refresh_shipment_line_statuses(shipment_id)

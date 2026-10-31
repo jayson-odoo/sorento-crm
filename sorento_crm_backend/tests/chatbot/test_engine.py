@@ -21,6 +21,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import TURN_STAGES, Envelope
 from app.services.chatbot.head import parser as parser_mod
+from tests.chatbot import fail_triage_texts as FT
 
 # An INTEGER, the shape Respond.io actually puts on the wire (`contact.id` in the
 # webhook body is a JSON number). Every envelope in this suite built it as a string
@@ -264,7 +265,7 @@ class TestParserFailure:
 
         assert result.branch_kind is None
         assert result.delegate is None
-        assert result.reply["text"] == parser_mod.PARSER_ERROR_REPLY
+        assert result.reply["text"] == FT.H_AI
 
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "failed"
@@ -280,7 +281,7 @@ class TestParserFailure:
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
         assert [a["kind"] for a in result.actions] == ["send_message"]
-        assert result.actions[0]["text"] == parser_mod.PARSER_ERROR_REPLY
+        assert result.actions[0]["text"] == FT.H_AI
 
 
 class TestMediaWithoutUrl:

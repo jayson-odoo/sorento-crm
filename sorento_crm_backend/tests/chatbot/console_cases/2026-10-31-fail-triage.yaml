@@ -1,0 +1,84 @@
+# Console cases for CHATBOT-FAIL-TRIAGE (PR #2018): the honest failure replies and the
+# escalation topic question, graded as conversations.
+#
+# HOW TO RUN (by hand, never in CI; every case is `live_only`), against a crew test copy:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-10-31-fail-triage.yaml --live \
+#       --base-url http://127.0.0.1:<be port> --sleep-seconds 8
+#
+# The default contact is a dev contact that already has a chatbot turn row (the runner borrows
+# its envelope). Swap `contact:` for a staff contact and a dealer contact on your copy to run
+# the first case twice. The Malay case needs no Malay profile: the reply language follows the
+# words of the message. Every case also carries the four banned failure texts as negatives
+# (owner rule, 30 Oct 2026: never "busy right now" or "ran into a problem understanding").
+#
+# Quick-reply titles (20 characters at most) are not in the reply text, so the runner cannot
+# grade them: read the `quick_replies:` line that `--say` prints for the Malay case.
+# No real conversation, customer name or phone is quoted; this file is for a PUBLIC repo.
+
+contact: "900000008"
+
+cases:
+  - name: price tag request link (staff and dealer contacts)
+    live_only: true
+    cold: true
+    # The parser prompt does not emit `price_tag_request` until batch 2's prompt publish, so a
+    # live run TODAY may answer the honest "could not find portal link" text instead of the link.
+    # Both are accepted for now: the grade below only requires a portal answer or that honest
+    # text (reply_contains takes one needle, so it asks for the word "portal", which both carry).
+    # After the publish tighten this to the link and add reply_not_contains "Could not find portal link".
+    turns:
+      - text: "give me link to request pricetag"
+        expect:
+          reply_contains: ["portal"]
+          reply_not_contains: ["problem understanding", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: escalation with no topic asks one topic question
+    live_only: true
+    cold: true
+    turns:
+      - text: "can someone call me"
+        expect:
+          reply_contains: ["Which topic is this about"]
+          reply_not_contains: ["Would you like me to escalate", "assigned", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: escalation naming the customer service team routes there
+    live_only: true
+    cold: true
+    turns:
+      - text: "escalate to the customer service team"
+        expect:
+          reply_contains: ["customer service"]
+          reply_not_contains: ["Which topic is this about", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: escalation with no topic, Malay contact, topic question in Malay
+    live_only: true
+    cold: true
+    # Quick-reply titles must be 20 characters or fewer: check the `quick_replies:` line by eye.
+    turns:
+      - text: "boleh saya bercakap dengan seseorang"
+        expect:
+          reply_contains: ["Perkara ini tentang topik apa"]
+          reply_not_contains: ["Which topic is this about", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: sales report without a customer asks which customer or salesperson
+    live_only: true
+    cold: true
+    turns:
+      - text: "Total sale deliver for 1/10-9/10/26 Sorento brand"
+        expect:
+          reply_contains: ["Which customer or salesperson"]
+          reply_not_contains: ["could not fetch", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true
+  - name: promotion with nothing live says none found, not a fetch failure
+    live_only: true
+    cold: true
+    # On a copy that really has a live floor grating promotion the honest answer lists it
+    # instead; then this case is red for the right reason and the expectation is swapped.
+    turns:
+      - text: "Sorento floor grating promotion"
+        expect:
+          reply_contains: ["No current"]
+          reply_not_contains: ["could not fetch", "busy right now", "problem understanding", "menghadapi masalah memahami", "暂时无法理解"]
+          no_uuid: true

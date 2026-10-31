@@ -131,8 +131,9 @@ def test_engine_failure_posts_the_error_reply_once_and_the_next_row_continues(wo
 
     posts = world.wait_posts(2, contact)
     assert world.posted_messages(contact) == [str(m1), str(m2)]
-    assert engine_mod.GENERIC_ERROR_REPLY in action_texts(posts[0]), posts[0]["actions"]
-    assert engine_mod.GENERIC_ERROR_REPLY not in action_texts(posts[1])
+    from tests.chatbot import fail_triage_texts as FT
+    assert FT.H_AI in action_texts(posts[0]), posts[0]["actions"]
+    assert FT.H_AI not in action_texts(posts[1])
     assert world.row_for(contact, m1)["status"] == "failed"
     assert world.row_for(contact, m2)["status"] == "done"
 

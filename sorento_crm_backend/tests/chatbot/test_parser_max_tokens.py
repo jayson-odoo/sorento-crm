@@ -305,7 +305,8 @@ def test_a_turn_cut_short_writes_an_unanswered_usage_row_and_the_same_reply(
     envelope.message["message"]["messageId"] = "ZZT-pmt-cut-short-1"
     result = engine_mod.run_turn(envelope, session_factory=session_factory)
 
-    assert result.reply["text"] == parser_mod.PARSER_ERROR_REPLY
+    from tests.chatbot import fail_triage_texts as FT
+    assert result.reply["text"] == FT.H_AI
     rows = (
         session_factory()
         .query(AIAssistantUsageLog)

@@ -121,6 +121,8 @@ export interface ChatbotMediaSettings {
   chatbot_agent_max_seconds: number;
   chatbot_agent_max_input_tokens: number;
   chatbot_agent_compact_tokens: number;
+  chatbot_router_min_score?: number;
+  chatbot_agent_daily_turns?: number;
 }
 
 const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
@@ -150,6 +152,8 @@ const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
   'chatbot_agent_max_seconds',
   'chatbot_agent_max_input_tokens',
   'chatbot_agent_compact_tokens',
+  'chatbot_router_min_score',
+  'chatbot_agent_daily_turns',
 ];
 
 /** The plan's section 2.4 defaults, used when the settings row predates the columns. */
@@ -183,6 +187,8 @@ const FALLBACKS: ChatbotMediaSettings = {
   chatbot_agent_max_seconds: 45,
   chatbot_agent_max_input_tokens: 150000,
   chatbot_agent_compact_tokens: 40000,
+  chatbot_router_min_score: 0.7,
+  chatbot_agent_daily_turns: 50,
 };
 
 /**
