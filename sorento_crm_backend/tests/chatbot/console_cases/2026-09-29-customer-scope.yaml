@@ -5,7 +5,7 @@
 # options: a contact linked to customers (`respond_contact_customers`) with no ACTIVE office
 # access type is "scoped" and only ever sees its own customers; "my" / "me" / "our" is the
 # parser's `self_reference: true` and means those customers. A word naming anyone else gets
-# the one-line refusal, `Sorry, that isn't under your account. I can only check on <names>.`,
+# the one-line refusal, `That isn't under your account. I can only check on <names>.`,
 # with no picker, no escalate offer and no lookup of the other customer.
 #
 # Every expectation is STRUCTURAL (the refusal sentence, the absence of a picker, the
@@ -49,7 +49,7 @@ cases:
       - text: "outstanding for HANLIM"
         expect:
           branch_kind: business_query
-          reply_contains: ["Sorry, that isn't under your account. I can only check on"]
+          reply_contains: ["That isn't under your account. I can only check on"]
           reply_not_contains: ["Which customer", "HANLIM TRADING", "HANLIM HARDWARE", "escalate", "Outstanding for which document"]
           no_uuid: true
 
@@ -60,7 +60,7 @@ cases:
       - text: "outstanding for 300-H070"
         expect:
           branch_kind: business_query
-          reply_contains: ["Sorry, that isn't under your account. I can only check on"]
+          reply_contains: ["That isn't under your account. I can only check on"]
           reply_not_contains: ["Which customer", "HANLIM", "escalate"]
           no_uuid: true
 
@@ -71,7 +71,7 @@ cases:
       - text: "status of DO REPLACE-WITH-A-FOREIGN-DO"
         expect:
           branch_kind: business_query
-          reply_not_contains: ["Sorry, that isn't under your account", "HANLIM", "escalate"]
+          reply_not_contains: ["That isn't under your account", "HANLIM", "escalate"]
           no_uuid: true
 
   - name: Leak 4 - a bare order ask is about the contact's own account only
@@ -103,7 +103,7 @@ cases:
         expect:
           branch_kind: business_query
           parser: {self_reference: true}
-          reply_not_contains: ["Which customer", "Which product", "Customer: all", "Sorry, that isn't under your account"]
+          reply_not_contains: ["Which customer", "Which product", "Customer: all", "That isn't under your account"]
           no_uuid: true
 
   - name: My 2 - two links, "my outstanding" uses both and shows no picker
@@ -114,7 +114,7 @@ cases:
         expect:
           branch_kind: business_query
           parser: {self_reference: true}
-          reply_not_contains: ["Which customer", "Sorry, that isn't under your account"]
+          reply_not_contains: ["Which customer", "That isn't under your account"]
           no_uuid: true
 
   - name: My 3 - no link, "my" is ignored and today's behaviour holds
@@ -125,7 +125,7 @@ cases:
         expect:
           branch_kind: business_query
           parser: {self_reference: true}
-          reply_not_contains: ["Sorry, that isn't under your account"]
+          reply_not_contains: ["That isn't under your account"]
           no_uuid: true
 
   - name: My 4 - "where is my shipment" stays the ETA rule and is self reference
@@ -135,7 +135,7 @@ cases:
       - text: "where is my shipment"
         expect:
           parser: {self_reference: true}
-          reply_not_contains: ["Sorry, that isn't under your account"]
+          reply_not_contains: ["That isn't under your account"]
 
   - name: My 5 - "we" as the asker's own business
     cold: true
@@ -145,7 +145,7 @@ cases:
         expect:
           branch_kind: business_query
           parser: {self_reference: true}
-          reply_not_contains: ["Which customer", "Sorry, that isn't under your account"]
+          reply_not_contains: ["Which customer", "That isn't under your account"]
           no_uuid: true
 
   - name: My 6 - Malay and Chinese first person
@@ -155,11 +155,11 @@ cases:
       - text: "outstanding saya punya"
         expect:
           parser: {self_reference: true}
-          reply_not_contains: ["Which customer", "Sorry, that isn't under your account"]
+          reply_not_contains: ["Which customer", "That isn't under your account"]
       - text: "我的未交货"
         expect:
           parser: {self_reference: true}
-          reply_not_contains: ["Which customer", "Sorry, that isn't under your account"]
+          reply_not_contains: ["Which customer", "That isn't under your account"]
 
   - name: My 7 - "my" plus someone else's name is refused, not answered
     cold: true
@@ -168,7 +168,7 @@ cases:
       - text: "my outstanding for HANLIM"
         expect:
           branch_kind: business_query
-          reply_contains: ["Sorry, that isn't under your account. I can only check on"]
+          reply_contains: ["That isn't under your account. I can only check on"]
           reply_not_contains: ["Which customer", "HANLIM TRADING", "escalate"]
 
   # ---- the company is not the asker ----
@@ -188,7 +188,7 @@ cases:
         expect:
           branch_kind: business_query
           parser: {self_reference: false}
-          reply_not_contains: ["Sorry, that isn't under your account"]
+          reply_not_contains: ["That isn't under your account"]
 
   - name: Unlinked 1 - a contact nobody linked names a customer as before
     cold: true
@@ -197,4 +197,4 @@ cases:
       - text: "outstanding for HANLIM"
         expect:
           branch_kind: business_query
-          reply_not_contains: ["Sorry, that isn't under your account"]
+          reply_not_contains: ["That isn't under your account"]

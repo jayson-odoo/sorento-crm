@@ -73,14 +73,15 @@ cases:
   # "purchase_orders.cost"}`. Reused canned template, but the SUBJECT is the plain-
   # language FEATURE name ("purchase cost"), never the parser's `suggested_agent`
   # (`lanes/canned.py::field_grant_denied_text`, captain's ruling on review B1: a
-  # field-reveal refusal is not an agent refusal) - exact string "Sorry, you are not
-  # allowed to access purchase cost", verified live 12 Sep 2026 after the B1 fix landed.
+  # field-reveal refusal is not an agent refusal) - exact string "You are not allowed
+  # to access purchase cost" (NO-SORRY-COPY, 31 Oct 2026; the "Sorry, " form was verified
+  # live 12 Sep 2026 after the B1 fix landed).
   - name: AC-32a - default contact asking for M218's last purchase cost is denied  # NEW VOCABULARY
     text: "last purchase cost for M218"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["Sorry, you are not allowed to access purchase cost"]
+      reply_contains: ["You are not allowed to access purchase cost"]
       reply_not_contains: ["Cost / unit", "CNY 110.00", "CNY 44.00"]
       no_uuid: true
 

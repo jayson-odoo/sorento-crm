@@ -322,7 +322,7 @@ cases:
     expect:
       branch_kind: business_query
       reply_contains:
-      - Sorry, I can only share sales figures for your own account.
+      - I can only share sales figures for your own account.
       no_uuid: true
 - name: 'S1 gate: a contact without the Sales report key is refused before any fetch'
   cold: true

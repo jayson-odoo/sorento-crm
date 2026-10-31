@@ -23,7 +23,8 @@ BANNED = re.compile(r"sorry|maaf|抱歉|对不起|busy", re.IGNORECASE)
 
 #: Owned by another lane (see module docstring). Remove once #2038 merges.
 #: By identity, so its expanded registry entries (`ideation_capture_error.ms`...) are skipped
-#: too and an equal string anywhere else would still be caught.
+#: too. An equal string OUTSIDE this module is still caught (Python may share one object for
+#: equal constants inside a module).
 SKIPPED = {id(chatbot_reply_copy.IDEATION_CAPTURE_ERROR)} | {
     id(text) for text in chatbot_reply_copy.IDEATION_CAPTURE_ERROR.values()
 }

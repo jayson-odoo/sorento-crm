@@ -758,7 +758,7 @@ class TestScopedSalesAnalysisRunsTheSalesReport:
 
     def test_a_staff_contact_with_links_gets_the_sales_report_over_its_links(self, session_factory, monkeypatch) -> None:
         """Owner hand test ("Mr Loo", 30 Sep 2026): an office contact that is ALSO linked
-        to an account asked "what's my sales this month" and got "Sorry, I can only share
+        to an account asked "what's my sales this month" and got "I can only share
         sales figures for your own account" - the analysis route refuses any linked
         contact (AC-S1-23) and B2 only re-routed enforced contacts. Links win: the
         customer sales report over them, never that line."""
