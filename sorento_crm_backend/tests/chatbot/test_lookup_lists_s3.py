@@ -195,6 +195,7 @@ def test_warm_returns_at_once_and_embeds_in_the_background(session_factory):
         release.wait(5)
         return [[1.0] + [0.0] * 7 for _ in texts]
 
+    ll._import_sdk()  # the cold SDK import runs on the caller (#1902); it is not the warm-up being timed
     t0 = time.monotonic()
     ll.warm(rows, slow)
     assert time.monotonic() - t0 < 0.5, "warm must not wait for the embedder"

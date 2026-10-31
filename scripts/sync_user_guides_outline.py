@@ -1,5 +1,5 @@
 """
-Two-way sync between docs/user-guides/ markdown and Outline collection.
+Two-way sync between documentation/user-guides/ markdown and Outline collection.
 
 Modes:
   push   repo -> Outline (default)
@@ -11,7 +11,7 @@ Env:
   OUTLINE_API_TOKEN         required
   OUTLINE_COLLECTION_ID     default 18f78b01-bf5a-4032-934c-d5679609d553 (Sorento CRM)
 
-State file: docs/user-guides/.outline-sync.json (path -> doc id mapping)
+State file: documentation/user-guides/.outline-sync.json (path -> doc id mapping)
 
 Mapping:
   README.md                 -> root doc "Overview"
@@ -32,9 +32,11 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +45,7 @@ from dotenv import load_dotenv
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-GUIDES_DIR = REPO_ROOT / "docs" / "user-guides"
+GUIDES_DIR = REPO_ROOT / "documentation" / "user-guides"
 STATE_FILE = GUIDES_DIR / ".outline-sync.json"
 
 DEFAULT_BASE_URL = "https://doc.foundryx.my"
@@ -65,6 +67,11 @@ PARENT_TITLES = {
     "delivery-orders": "9-Delivery Orders",
     "product": "10-Product",
     "sla": "11-SLA",
+    "supply-chain": "12-Supply Chain",
+    "procurement": "13-Procurement",
+    "complaints": "14-Complaints",
+    "system-management": "15-System Management",
+    "user-management": "16-User Management",
 }
 
 # Folders that are intentionally HELD back from Outline publishing. They MUST
@@ -379,6 +386,42 @@ def push(args: argparse.Namespace) -> None:
     print("Done.")
 
 
+def _repo_committed_at(path: Path) -> datetime | None:
+    """Last commit time of `path` in git, or None when git has no history for it."""
+    try:
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%cI", "--", str(path)],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return datetime.fromisoformat(out) if out else None
+
+
+def _outline_updated_at(doc: dict[str, Any]) -> datetime | None:
+    raw = doc.get("updatedAt")
+    if not raw:
+        return None
+    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+
+def repo_is_newer(path: Path, doc: dict[str, Any]) -> bool:
+    """True when the repo copy was committed after Outline's copy was last edited.
+
+    Pull must not overwrite such a file: the repo edit has simply not been
+    pushed yet, so Outline's copy is the older one. Needs full git history
+    (the workflow checks out with fetch-depth 0).
+    """
+    if not path.exists():
+        return False
+    committed = _repo_committed_at(path)
+    updated = _outline_updated_at(doc)
+    return committed is not None and updated is not None and updated <= committed
+
+
 def pull(args: argparse.Namespace) -> None:
     base_url, token, collection_id = load_env()
     o = Outline(base_url=base_url, token=token)
@@ -421,6 +464,9 @@ def pull(args: argparse.Namespace) -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         full_body = f"# {title}\n\n{body_md.strip()}\n"
         if out_path.exists() and out_path.read_text() == full_body:
+            continue
+        if repo_is_newer(out_path, full):
+            print(f"  [keep] {rel_path}  (repo copy is newer than Outline's, push it)")
             continue
         out_path.write_text(full_body)
         state[rel_path] = d["id"]

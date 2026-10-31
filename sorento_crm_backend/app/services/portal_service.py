@@ -178,12 +178,20 @@ class PortalService:
         when it is the only row for that id and the workspace holds none). An id
         that matches no row, or more than one, is refused rather than resolved to
         an arbitrary row.
+
+        An internal id is refused when ``space_id`` is not its contact's workspace
+        (a contact with no workspace yet still resolves).
         """
         from app.models.respond_workspace import RespondWorkspace
 
         key = (contact_id or "").strip()
         space_id = (space_id or "").strip()
         contact = self.db.query(RespondContact).filter(RespondContact.id == key).first()
+        if contact is not None and space_id and not self._in_workspace(contact, space_id):
+            logger.warning(
+                "portal: contact %s is not in space %s; refusing", contact.id, space_id
+            )
+            raise handle_not_found("Contact", contact_id)
         if contact is None and key:
             by_rid = self.db.query(RespondContact).filter(RespondContact.respond_io_id == key)
             if space_id:
@@ -208,6 +216,25 @@ class PortalService:
         if contact is None:
             raise handle_not_found("Contact", contact_id)
         return contact
+
+    def contact_space_id(self, contact: RespondContact) -> Optional[str]:
+        """The Respond space id of the contact's workspace, or None without one."""
+        from app.models.respond_workspace import RespondWorkspace
+
+        if not getattr(contact, "workspace_id", None):
+            return None
+        row = (
+            self.db.query(RespondWorkspace.space_id)
+            .filter(RespondWorkspace.id == contact.workspace_id)
+            .first()
+        )
+        return row[0] if row else None
+
+    def _in_workspace(self, contact: RespondContact, space_id: Optional[str]) -> bool:
+        """False when the contact has a workspace and ``space_id`` is not it."""
+        if not getattr(contact, "workspace_id", None):
+            return True
+        return self.contact_space_id(contact) == (space_id or "").strip()
 
     # ---------- Contact slug (stable bookmarkable URL) ----------
 
@@ -290,20 +317,18 @@ class PortalService:
         contact = self.contact_by_slug(slug)
         if contact is None:
             raise handle_not_found("Portal link", slug)
-        # space_id: prefer what the latest token used; fall back to the
-        # workspace's Respond space identifier (NOT the workspace PK - the
-        # system-wide convention is space_id == respond_workspaces.space_id).
-        latest = (
-            self.db.query(PortalToken)
-            .filter(PortalToken.contact_id == contact.id)
-            .order_by(PortalToken.created_at.desc())
-            .first()
-        )
-        if latest is not None:
-            space_id = latest.space_id
-        else:
-            ws = getattr(contact, "workspace", None)
-            space_id = (getattr(ws, "space_id", None) or "") if ws is not None else ""
+        # space_id: the contact's own workspace (its Respond space identifier,
+        # NOT the workspace PK), which is the only space the OTP request accepts.
+        # A contact with no workspace yet falls back to what its latest token used.
+        space_id = self.contact_space_id(contact)
+        if not space_id:
+            latest = (
+                self.db.query(PortalToken)
+                .filter(PortalToken.contact_id == contact.id)
+                .order_by(PortalToken.created_at.desc())
+                .first()
+            )
+            space_id = latest.space_id if latest is not None else ""
         return {
             "contact_id": contact.id,
             "space_id": space_id,
@@ -416,7 +441,11 @@ class PortalService:
 
         request_payload = {"message": {"type": "text", "text": text}}
         try:
-            response = RespondClient().send_message(respond_io_id, text)
+            # The contact's own workspace, keyed on the contact row: a Respond.io
+            # id is unique per workspace only, so the bare id cannot pick it.
+            response = RespondClient.for_contact_id(self.db, contact.id).send_message(
+                respond_io_id, text
+            )
         except Exception as e:
             log_respond_send(
                 self.db,
@@ -457,6 +486,12 @@ class PortalService:
             raise PortalAuthError("Portal token revoked.")
         if row.expires_at <= _utcnow():
             raise PortalAuthError("Portal token expired. Verify with OTP to continue.")
+        contact = (
+            self.db.query(RespondContact).filter(RespondContact.id == row.contact_id).first()
+        )
+        if contact is not None and not self._in_workspace(contact, row.space_id):
+            # A token minted under a space that is not its contact's workspace.
+            raise PortalAuthError("Invalid portal token.")
         if getattr(row, "verified_at", None) is None:
             # First-visit OTP gate. Admin-issued tokens (Send via Respond.io / QR /
             # copy-link) start unverified; the contact must verify once via OTP
@@ -530,6 +565,7 @@ class PortalService:
         submission_type: str,
         entity_id: Optional[str] = None,
         base_url: Optional[str] = None,
+        space_id: Optional[str] = None,
     ) -> Optional[str]:
         """Deep link to a contact's submission in the portal.
 
@@ -540,12 +576,15 @@ class PortalService:
         ``entity_id`` is omitted it links to the type's portal index
         ``/portal/c/{slug}/{type}``. Returns None when the contact/slug can't be
         resolved - callers fall back to the read-only view link.
+
+        ``space_id`` is the submission row's workspace: a row that stores the
+        Respond.io id (unique per workspace only) resolves inside it.
         """
         try:
             cid = (str(contact_id) if contact_id else "").strip()
             if not cid:
                 return None
-            contact = self._resolve_contact(cid)
+            contact = self._resolve_contact(cid, space_id)
             slug = (self.get_or_create_slug(contact) or "").strip()
             if not slug:
                 return None

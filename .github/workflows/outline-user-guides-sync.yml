@@ -24,6 +24,10 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: pull keeps a repo guide whose last commit is newer
+          # than its Outline copy (repo_is_newer), which needs real commit dates.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -59,4 +63,4 @@ jobs:
             Review the diff before merging — these reflect edits made directly
             in Outline since the last sync.
           add-paths: |
-            docs/user-guides/**
+            documentation/user-guides/**

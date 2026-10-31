@@ -19,6 +19,7 @@ from app.models.access import RespondContact
 from app.models.portal import PortalToken
 from app.models.respond_workspace import RespondWorkspace
 from app.services.portal_service import PortalService, _utcnow
+from app.utils.field_encryption import encrypt_secret
 
 
 @pytest.fixture
@@ -55,7 +56,7 @@ def _workspace(db, cleanup) -> RespondWorkspace:
         id=str(uuid.uuid4()),
         space_id=f"sp_{uuid.uuid4().hex[:8]}",
         name="Test WS",
-        api_key_ciphertext="test-cipher",
+        api_key_ciphertext=encrypt_secret("test-key"),
     )
     db.add(w)
     db.flush()

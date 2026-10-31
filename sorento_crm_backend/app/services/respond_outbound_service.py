@@ -31,11 +31,19 @@ from app.services.respond_identifier import contact_for_identifier
 logger = logging.getLogger(__name__)
 
 
-def assert_outbound_enabled(identifier: Optional[str], db: Optional[Session] = None) -> None:
+def assert_outbound_enabled(
+    identifier: Optional[str],
+    db: Optional[Session] = None,
+    *,
+    contact_id: Optional[str] = None,
+) -> None:
     """Raise when `identifier` addresses a contact whose outbound is switched off.
 
     Resolution is `respond_identifier.contact_for_identifier`, i.e. exactly the
     lookup `_resolve_workspace_credentials` performs for the same identifier.
+    ``contact_id`` (a client from `RespondClient.for_contact_id`) checks that row
+    instead: the send was keyed on it, and a Respond.io id alone cannot tell
+    twins in two workspaces apart.
 
     **Unresolvable identifiers fail OPEN** (the send proceeds, logged at
     WARNING). Failing closed would break first-contact sends, where no
@@ -57,7 +65,10 @@ def assert_outbound_enabled(identifier: Optional[str], db: Optional[Session] = N
 
             db = SessionLocal()
             own_session = True
-        contact = contact_for_identifier(db, identifier)
+        if contact_id:
+            contact = db.query(RespondContact).filter(RespondContact.id == str(contact_id)).first()
+        else:
+            contact = contact_for_identifier(db, identifier)
         # Read what is needed BEFORE the session closes below; a detached
         # instance keeps loaded attributes, but do not rely on that.
         enabled = True if contact is None else bool(contact.outbound_enabled)

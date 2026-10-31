@@ -1073,6 +1073,7 @@ class ComplaintService:
             getattr(complaint, "contact_id", None),
             "complaint",
             complaint_id,
+            space_id=getattr(complaint, "space_id", None),
         )
         if portal:
             return f"\n\n{portal}"
