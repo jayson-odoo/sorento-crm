@@ -42,7 +42,8 @@ def get_target_progress(
     db: Session = Depends(get_db),
     current_user: dict = Depends(_GATE),
 ):
-    from app.services.contact_field_reveal_service import granted_keys, staff_reveal_keys
+    from app.services.contact_field_reveal_service import granted_keys, staff_reveal_keys_for
+    from app.services.user_service import gate_user_ids
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
     from app.services.sales import target_chat_scope
 
@@ -58,7 +59,7 @@ def get_target_progress(
     if date_from and date_to and date_from > date_to:
         raise AppException(status_code=422, message="date_from is after date_to", code="date_range_inverted")
     if staff_read:
-        if GRANT not in staff_reveal_keys(db, str(current_user["id"])):
+        if GRANT not in staff_reveal_keys_for(db, gate_user_ids(current_user)):
             raise AppException(
                 status_code=403, message="Sales target is not enabled for your account.", code="sales_target_not_enabled"
             )

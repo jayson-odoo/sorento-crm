@@ -31,6 +31,7 @@ from app.models.order import Customer
 from app.models.product import Brand, Product, ProductCategory
 from app.models.sales_agent import SalesAgent
 from app.services import contact_asker, contact_field_reveal_service, own_scope
+from app.services.user_service import gate_user_ids
 from app.schemas.report_ask import ReportAskChatResponse, ReportAskResponse
 from app.services.contact_brand_scope import contact_brand_scope, limits_brands
 from app.services.error_handler import AppException, handle_not_found
@@ -306,6 +307,7 @@ def report_ask(
             group_by=group_by, top_n=top_n, sort=sort, subjects=subjects, product_ids=product_ids,
             customer_ids=customer_ids, contact_id=contact_id, space_id=space_id, askers=askers,
             category_ids=category_ids, brand_ids=brand_ids, staff_user_id=str(current_user["id"]) if staff_read else None,
+            gate_ids=gate_user_ids(current_user) if staff_read else None,
         )
     for key in request.query_params.keys():
         if key not in _PARAMS:
@@ -413,7 +415,7 @@ def report_ask(
 
     resolved = None if staff_read else resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
     keys = (
-        contact_field_reveal_service.staff_reveal_keys(db, str(current_user["id"]))
+        contact_field_reveal_service.staff_reveal_keys_for(db, gate_user_ids(current_user))
         if staff_read
         else granted_keys(db, resolved) if resolved else []
     )
@@ -766,6 +768,7 @@ def _chat_report_ask(
     category_ids: Optional[list[str]] = None,
     brand_ids: Optional[list[str]] = None,
     staff_user_id: Optional[str] = None,
+    gate_ids: Optional[list[str]] = None,
 ):
     """`dataset=chat`: the bot's chat analytics (asks, turns, failures, contacts). Same gates
     as the sales report in the same order, with the `chatbot.analytics` reveal in place of the
@@ -835,7 +838,7 @@ def _chat_report_ask(
     contact_id, space_id = (contact_id or "").strip(), (space_id or "").strip()
     resolved = None if staff_user_id else resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
     keys = (
-        contact_field_reveal_service.staff_reveal_keys(db, staff_user_id)
+        contact_field_reveal_service.staff_reveal_keys_for(db, gate_ids or [staff_user_id])
         if staff_user_id
         else granted_keys(db, resolved) if resolved else []
     )

@@ -821,6 +821,7 @@ def agent_conversation_new(
     """Start the agent afresh. A proposal still waiting is expired first (nobody decided it), so a later yes
     cannot confirm a change from the conversation that was just left; a contact the agent may no longer run
     for gets that too. Waits for nothing: a turn running for the contact makes this a 409 agent_busy."""
+    _refuse_a_panel_action(payload.contact_respond_id)
     try:
         with single_flight(payload.contact_respond_id):
             agent_actions.expire_proposed(db, payload.contact_respond_id)

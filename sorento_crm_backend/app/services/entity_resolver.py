@@ -1164,9 +1164,13 @@ def _probe_purchase_request(db: Session, tokens: list[str]) -> dict[str, list[Re
         .filter(_ws_insensitive_lower(PurchaseRequestHeader.request_number).in_(list(norm_to_token.keys())))
         .all()
     )
+    from app.services.chatbot.ref_status import _may_read_request
+
     for row in rows:
         token = norm_to_token.get(_strip_all_ws(str(row.request_number).lower()))
-        if not token:
+        # A staff turn sees a request or sponsorship form by that kind's own slugs (no staff principal:
+        # unchanged), so a row it may not read places nothing and names no customer.
+        if not token or not _may_read_request(db, row):
             continue
         result[token].append(
             ResolvedEntity(

@@ -415,6 +415,7 @@ class SlaTakeoverService:
         try:
             from app.services.notification_service import NotificationService
             from app.services.coverage_subscription_service import fan_out_coverage_copies
+            from app.services.sla_service import _is_no_contact_task
             from app.services.form_sla_service import build_sla_whatsapp_data
 
             initiator = self._user_name(req.initiator_id)
@@ -444,7 +445,7 @@ class SlaTakeoverService:
                 event_type="takeover_pending",
                 send_in_app=True,
                 send_email=True,
-                send_whatsapp=True,
+                send_whatsapp=not _is_no_contact_task(tracking),
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
@@ -463,6 +464,7 @@ class SlaTakeoverService:
                 event_type="takeover_pending",
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
+                send_whatsapp=not _is_no_contact_task(tracking),
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("takeover start-notify failed for %s: %s", req.id, e)
@@ -476,8 +478,11 @@ class SlaTakeoverService:
 
             owner = self._user_name(req.contested_assignee_id)
             body = f"{owner} kept the task - your takeover was rejected."
+            from app.services.sla_service import _is_no_contact_task
+
+            tracking = self._load_tracking(req)
             wa = build_sla_whatsapp_data(
-                self.db, self._load_tracking(req), str(req.initiator_id), body,
+                self.db, tracking, str(req.initiator_id), body,
                 use_case="sla_takeover_cancelled",
             )
             NotificationService(self.db).create_with_channel_preferences(
@@ -491,7 +496,7 @@ class SlaTakeoverService:
                 event_type="takeover_rejected",
                 send_in_app=True,
                 send_email=True,
-                send_whatsapp=True,
+                send_whatsapp=not _is_no_contact_task(tracking),
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
@@ -536,8 +541,11 @@ class SlaTakeoverService:
                 "ineligible": "you are no longer eligible to take it",
             }.get(reason, "the task changed")
             body = f"Your takeover was cancelled because {reason_text}."
+            from app.services.sla_service import _is_no_contact_task
+
+            tracking = self._load_tracking(req)
             wa = build_sla_whatsapp_data(
-                self.db, self._load_tracking(req), str(req.initiator_id), body,
+                self.db, tracking, str(req.initiator_id), body,
                 use_case="sla_takeover_cancelled",
             )
             NotificationService(self.db).create_with_channel_preferences(
@@ -551,7 +559,7 @@ class SlaTakeoverService:
                 event_type="takeover_voided",
                 send_in_app=True,
                 send_email=True,
-                send_whatsapp=True,
+                send_whatsapp=not _is_no_contact_task(tracking),
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import case, desc, func, literal_column
 from sqlalchemy.exc import IntegrityError
@@ -310,20 +310,20 @@ def list_ai_assistant_messages(
 @router.post("/ai-assistant/chat", response_model=AIAssistantConversationResponse)
 def send_ai_assistant_message(
     payload: AIAssistantMessageCreate,
+    request: Request,
     user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
     db: Session = Depends(get_db),
 ):
     chat = AIAssistantChatService(db)
     # AGENTIC-UNIFY AC-1, AC-2: the rollout slug moves this user onto the chatbot's brain. A Confirm or
     # Cancel click answers a card the old path wrote, so the old path finishes it.
-    if payload.confirm_action is None and UserPermissionService(db).check_user_has_permission(
-        str(user["id"]), panel_service.ROLLOUT_SLUG
-    ):
+    if payload.confirm_action is None and panel_service.on_the_brain(db, str(user["id"])):
         chat.ensure_enabled()
         conv = chat.get_or_create_conversation(str(user["id"]), payload.conversation_id, payload.message)
         chat.append_message(conv.id, "user", payload.message)
         result = panel_service.run_panel_turn(
-            db, user=user, conversation=conv, text=payload.message, page_snapshot=payload.page_snapshot
+            db, user=user, conversation=conv, text=payload.message, page_snapshot=payload.page_snapshot,
+            real_user_id=_real_user_id(request, user),
         )
         chat.append_message(conv.id, "assistant", result.reply_text, metadata_json=panel_service.message_metadata(result))
     else:
@@ -350,6 +350,14 @@ def send_ai_assistant_message(
 # and another user's action reads as none.
 
 
+def _real_user_id(request: Request, user: dict) -> str | None:
+    """The administrator behind an impersonated session (`dependencies._maybe_apply_impersonation` puts
+    them on `request.state.real_user`); None when the user acts as themselves."""
+    real = getattr(request.state, "real_user", None)
+    real_id = str(real["id"]) if isinstance(real, dict) and real.get("id") else None
+    return real_id if real_id and real_id != str(user["id"]) else None
+
+
 def _panel_action(decide, *args) -> AgentActionResponse:
     try:
         outcome = decide(*args)
@@ -366,29 +374,32 @@ def _panel_action(decide, *args) -> AgentActionResponse:
 @router.post("/ai-assistant/agent/actions/{action_id}/confirm", response_model=AgentActionResponse)
 def panel_action_confirm(
     action_id: str,
+    request: Request,
     user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
     db: Session = Depends(get_db),
 ):
-    return _panel_action(panel_service.confirm, db, str(user["id"]), action_id)
+    return _panel_action(panel_service.confirm, db, str(user["id"]), action_id, _real_user_id(request, user))
 
 
 @router.post("/ai-assistant/agent/actions/{action_id}/cancel", response_model=AgentActionResponse)
 def panel_action_cancel(
     action_id: str,
+    request: Request,
     user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
     db: Session = Depends(get_db),
 ):
-    return _panel_action(panel_service.cancel, db, str(user["id"]), action_id)
+    return _panel_action(panel_service.cancel, db, str(user["id"]), action_id, _real_user_id(request, user))
 
 
 @router.post("/ai-assistant/agent/actions/{action_id}/steps/{index}/withdraw", response_model=AgentActionResponse)
 def panel_action_withdraw(
     action_id: str,
     index: int,
+    request: Request,
     user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
     db: Session = Depends(get_db),
 ):
-    return _panel_action(panel_service.withdraw, db, str(user["id"]), action_id, index)
+    return _panel_action(panel_service.withdraw, db, str(user["id"]), action_id, index, _real_user_id(request, user))
 
 
 # --- Prompt registry --------------------------------------------------------

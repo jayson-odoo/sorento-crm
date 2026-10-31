@@ -605,10 +605,16 @@ def compute_tracking_timings(tracking, tier) -> dict:
     }
 
 
+#: `source_entity_type` of a staff member's AI panel escalation. It is not a form type, so the row stays a
+#: conversation row (My Pending, the conversation scope); only the marker switches WhatsApp off.
+PANEL_ESCALATION_TYPE = "panel_escalation"
+
+
 def _is_no_contact_task(tracking) -> bool:
-    """A conversation row with no contact: a staff member's panel escalation. Nobody in it has a
-    WhatsApp thread, so its people hear in the app and by email, whatever their WhatsApp toggle says."""
-    return not getattr(tracking, "respond_contact_id", None) and not getattr(tracking, "source_entity_type", None)
+    """A staff member's panel escalation. Nobody in it has a WhatsApp thread, so its people hear in the
+    app and by email, whatever their WhatsApp toggle says. A customer's row whose contact was deleted
+    also has no contact and is NOT this: its people keep their WhatsApp."""
+    return getattr(tracking, "source_entity_type", None) == PANEL_ESCALATION_TYPE
 
 
 def conversation_tracking_scope():
@@ -3382,8 +3388,12 @@ class ConversationSLATrackingService:
                 # The runner (n8n `schedule-sla-policy-checker`) posts each item's contact to
                 # /integration/escalate. A row with no contact (a panel escalation, AGENTIC-UNIFY
                 # AC-14) answers 404 there, which ends the runner's loop and, as it never leaves
-                # this soonest-due list, would starve every customer's escalation behind it.
-                ConversationSLATracking.respond_contact_id.isnot(None),
+                # this soonest-due list, would starve every customer's escalation behind it. Only the
+                # marked row is left out: a customer's row whose contact was deleted is still due.
+                or_(
+                    ConversationSLATracking.source_entity_type.is_(None),
+                    ConversationSLATracking.source_entity_type != PANEL_ESCALATION_TYPE,
+                ),
                 ConversationSLATracking.is_resolved.is_(False),
                 ConversationSLATracking.current_tier.in_([1, 2]),
                 or_(
@@ -4087,6 +4097,7 @@ class ConversationSLATrackingService:
         tracking_dict.pop("contact_phone_number", None)
         tracking_dict["current_tier"] = 1
         tracking_dict["respond_contact_id"] = None
+        tracking_dict["source_entity_type"] = PANEL_ESCALATION_TYPE
         return self._create_stamped_tracking(tracking_dict)
 
     def _create_stamped_tracking(self, tracking_dict: dict):

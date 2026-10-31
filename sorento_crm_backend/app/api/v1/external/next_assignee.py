@@ -376,6 +376,9 @@ def next_assignee_for_staff(db: Session, body: dict, company_id: Optional[str]) 
     """AGENTIC-UNIFY AC-14: the draw for a staff member's panel escalation. The same pool, the same
     cursor and the same answer as `post_next_assignee`, with no contact in it: no phone, no segments,
     nothing already assigned. A named person (`preferred_assignee_id`) moves no cursor, as there."""
+    if not company_id:
+        # A staff turn has no phone to derive a company from: no company means no draw, never the default's.
+        raise HTTPException(status_code=404, detail="No assignee found.")
     routing_company = resolve_routing_company(db, company_id=company_id)
     _scope_request_to_company(db, routing_company)
     sla_policy_tier = _resolve_sla_policy_tier_for_next_assignee(db, body, routing_company.company_id)

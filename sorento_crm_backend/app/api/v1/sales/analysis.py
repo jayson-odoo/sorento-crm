@@ -55,6 +55,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 # The low stock route's own wait and budget, not a second copy: one seam, one cap.
+from app.services.user_service import gate_user_ids
 from app.api.v1.scm.low_stock_report import _await_download, _sync_wait_seconds  # noqa: F401
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
@@ -262,6 +263,7 @@ def _prepare(
     space_id: Optional[str],
     principal_id: str,
     staff_read: bool = False,
+    gate_ids: list[str] | None = None,
 ) -> Union[Dict[str, Any], _Prepared]:
     """Every blocking step, on a worker thread (the low stock route's security B1 shape)."""
     from app.api.v1.reports.reports import _export_filename
@@ -271,7 +273,7 @@ def _prepare(
     from app.models.company import Company
     from app.schemas.report import ReportViewConfig
     from app.services import queue_service, rate_limit
-    from app.services.contact_field_reveal_service import granted_keys, staff_reveal_keys
+    from app.services.contact_field_reveal_service import granted_keys, staff_reveal_keys_for
     from app.services.download_service import DownloadService
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
     from app.services.reports import engine, registry as reg
@@ -299,7 +301,7 @@ def _prepare(
         return {"status": "busy", "message": "Too many sales reports in the last 10 minutes."}
 
     # AGENTIC-UNIFY AC-7: an identity read has no contact, so the user's permissions stand in for its reveal.
-    keys = staff_reveal_keys(db, principal_id) if staff_read else granted_keys(db, resolved) if resolved else []
+    keys = staff_reveal_keys_for(db, gate_ids or [principal_id]) if staff_read else granted_keys(db, resolved) if resolved else []
     if GRANT not in keys:
         raise AppException(
             status_code=403,
@@ -529,7 +531,7 @@ async def sales_analysis(
         rows=rows, cols=cols, channel=channel, basis=basis, company=company,
         date_from=date_from, date_to=date_to, n=n,
         contact_id=contact_id, space_id=space_id, principal_id=str(current_user["id"]),
-        staff_read=staff_read,
+        staff_read=staff_read, gate_ids=gate_user_ids(current_user) if staff_read else None,
     )
     if isinstance(prepared, dict):
         return prepared

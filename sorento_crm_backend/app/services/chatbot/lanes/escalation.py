@@ -1602,6 +1602,14 @@ def _assign(
     clock still starts, because the escalation is just as real.
     """
     body = None
+    principal = staff_principal.current()
+    if principal is not None:
+        from app.services import rate_limit
+
+        if not rate_limit.hit(
+            "panel_escalation", principal.user_id, limit=PANEL_ESCALATIONS_PER_HOUR, window_seconds=3600
+        ).allowed:
+            return [_send_message(PANEL_ESCALATION_CAPPED, False)], _routing_record(context_item, None, None)
     try:
         if assignee is None:
             body = _next_assignee_body(ctx, context_item)
@@ -1629,6 +1637,11 @@ def _assign(
         preview=False,
     )
     return actions, _routing_record(context_item, body, assignee)
+
+
+#: Panel escalations a staff member may raise an hour. Each one pages a colleague.
+PANEL_ESCALATIONS_PER_HOUR = 5
+PANEL_ESCALATION_CAPPED = "I have not passed this on: you have raised several escalations in the last hour. Try again later."
 
 
 def _panel_follow_up(name: Any) -> str:

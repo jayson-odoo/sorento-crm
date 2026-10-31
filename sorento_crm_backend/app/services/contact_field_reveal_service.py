@@ -126,6 +126,13 @@ def staff_reveal_keys(db: Session, user_id: str) -> list[str]:
     return sorted(key for key, slug in needs.items() if slug in held)
 
 
+def staff_reveal_keys_for(db: Session, user_ids: list[str]) -> list[str]:
+    """`staff_reveal_keys` of every user a request must satisfy (`user_service.gate_user_ids`: the caller,
+    and on an identity read the key's act-as user), the keys all of them hold."""
+    held = [set(staff_reveal_keys(db, uid)) for uid in user_ids]
+    return sorted(set.intersection(*held)) if held else []
+
+
 def field_reveal_keys() -> list[dict[str, str]]:
     """Every restricted key that exists, with its label, sorted by key.
 

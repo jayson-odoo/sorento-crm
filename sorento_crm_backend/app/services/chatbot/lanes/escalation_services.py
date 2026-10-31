@@ -83,11 +83,17 @@ def _next_assignee(db: Any):
         working-hours check and the already-assigned check are the behaviour n8n has been
         getting, and a second implementation of them would drift.
         """
+        from fastapi import HTTPException
+
         from app.api.v1.external.next_assignee import next_assignee_for_staff, post_next_assignee
 
         principal = staff_principal.current()
         if principal is not None:
-            return next_assignee_for_staff(db, body, body.get("company_id") or principal.active_company_id)
+            company_id = body.get("company_id") or principal.active_company_id
+            if not company_id:
+                # No company to draw in: no cursor moves, and the lane answers as for no team.
+                raise HTTPException(status_code=404, detail="No assignee found.")
+            return next_assignee_for_staff(db, body, company_id)
         return post_next_assignee(body=body, current_user={"id": None, "email": "chatbot"}, db=db)
 
     return call

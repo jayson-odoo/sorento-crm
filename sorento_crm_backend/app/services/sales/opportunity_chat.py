@@ -141,8 +141,12 @@ def staff_create(
 
     if not may_add:
         raise _refused("opportunity_not_enabled")
+    from app.services.chatbot import principal as staff_principal
+
+    principal = staff_principal.current()
     actor = AuditActor(
-        actor_type="user", user_id=user_id, real_user_id=user_id, auth_method="agent",
+        actor_type="user", user_id=user_id,
+        real_user_id=(principal.real_user_id if principal is not None else None) or user_id, auth_method="agent",
         tool_name="crm_sales_opportunity_log",
     )
     with actor_scope(actor, db=db):

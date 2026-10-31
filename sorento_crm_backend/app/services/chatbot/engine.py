@@ -5388,7 +5388,12 @@ def _run_stages_body(  # noqa: PLR0915
         current_message=latest_user_message,
         reply_to=None,
         media_line=None,
-        page_line=context_mod.page_line(getattr(staff_principal.current(), "page", None)),
+        # Left out while a question is open: a short reply answers that, not the page.
+        page_line=(
+            None
+            if open_question is not None or state_in.pending is not None
+            else context_mod.page_line(getattr(staff_principal.current(), "page", None))
+        ),
         task_lines=parser.open_task_lines(state_in.focus, open_question),
         open_question_line=parser.open_question_line(open_question),
         brands=None if parser_config.lookup_lists else brands,

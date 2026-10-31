@@ -415,7 +415,8 @@ def actions_by_turn(db, turn_ids: list[str], user_id: str) -> dict[str, list[dic
         out.setdefault(str(a.turn_id), []).append(
             {
                 "id": str(a.id),
-                "status": a.status,
+                # A proposal nobody decided in time reads Expired, whatever the row still says.
+                "status": "expired" if a.status == "proposed" and _expires_at(a) < _now() else a.status,
                 "decided_at": a.decided_at,
                 "decided_by_name": names.get(str(a.decided_by_user_id)) if a.decided_by_user_id else None,
                 "steps": [step_out(st, default_status="proposed") for st in a.steps or []],

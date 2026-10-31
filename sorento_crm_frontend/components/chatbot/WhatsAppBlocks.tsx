@@ -22,8 +22,8 @@ export function WhatsAppBlocks({ text }: { text: string }) {
           );
         }
         const items = block.items.map((item, j) => (
-          <li key={j} className="break-words">
-            <WhatsAppText text={item} />
+          <li key={j} value={item.number ?? undefined} className="whitespace-pre-wrap break-words">
+            <WhatsAppText text={item.text} />
           </li>
         ));
         return block.ordered ? (

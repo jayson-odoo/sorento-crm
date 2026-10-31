@@ -131,6 +131,24 @@ def lookup_purchase_orders(db: Session, words: Iterable[str]) -> RefLookup:
     return out
 
 
+def _may_read_request(db: Session, row: PurchaseRequestHeader) -> bool:
+    """A staff member reads a purchase request or sponsorship form by that kind's own slugs: its `view`,
+    else its `view_own` and the row being theirs. A contact's turn (no staff principal) is unchanged."""
+    from app.services import own_scope
+    from app.services.chatbot import principal as staff_principal
+
+    principal = staff_principal.current()
+    if principal is None:
+        return True
+    kind = row.request_type if row.request_type in own_scope.REQUEST_KINDS else "purchase_request"
+    view, view_own = own_scope.REQUEST_KINDS[kind]
+    if principal.may(db, view):
+        return True
+    return principal.may(db, view_own) and own_scope.request_in_scope(
+        db, kind, str(row.id), own_scope.me(db, principal.user_id)
+    )
+
+
 def lookup_purchase_requests(db: Session, words: Iterable[str]) -> RefLookup:
     typed = [w.strip() for w in words if isinstance(w, str) and _fold(w)]
     out = RefLookup()
@@ -152,7 +170,7 @@ def lookup_purchase_requests(db: Session, words: Iterable[str]) -> RefLookup:
         if key in seen:
             continue
         seen.add(key)
-        found = by_key.get(key) or []
+        found = [pr for pr in by_key.get(key) or [] if _may_read_request(db, pr)]
         if not found:
             out.missing.append(word)
         for pr in found:
@@ -180,7 +198,7 @@ def card_page(db: Session, ref: dict[str, Any], offset: int) -> str | None:
         lines = _po_lines(db, row.id)
     else:
         row = db.query(PurchaseRequestHeader).filter(PurchaseRequestHeader.id == ref.get("id")).first()
-        if row is None:
+        if row is None or not _may_read_request(db, row):
             return None
         head = f"*Purchase request {row.request_number}*" + (f" - {row.customer_name}" if row.customer_name else "")
         lines = _pr_lines(db, row.id)

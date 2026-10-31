@@ -46,6 +46,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.user_service import gate_user_ids
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.services.download_service import DownloadService
@@ -406,6 +407,7 @@ def _prepare(
     suppliers: Optional[list[str]] = None,
     split: str = "none",
     staff_read: bool = False,
+    gate_ids: list[str] | None = None,
 ) -> Union[dict, _Prepared]:
     """Every BLOCKING step of a turn, in ONE function run on a worker thread (security B1 /
     reviewer S4): the reveal-key read, the rate-limit hit, the company resolve, `create_run`,
@@ -422,7 +424,7 @@ def _prepare(
     an HTTP status; the lane maps it to its own refusal line.
     """
     from app.services import rate_limit
-    from app.services.contact_field_reveal_service import granted_keys, staff_reveal_keys
+    from app.services.contact_field_reveal_service import granted_keys, staff_reveal_keys_for
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
     from app.services.queue_service import enqueue_job
     from app.tasks.export_tasks import generate_low_stock_report
@@ -449,7 +451,7 @@ def _prepare(
     # --- the second gate (AC-41) ------------------------------------------------------
     # AGENTIC-UNIFY AC-7: an identity read has no contact; the user's permissions stand in for its keys.
     keys = (
-        staff_reveal_keys(db, principal_id)
+        staff_reveal_keys_for(db, gate_ids or [principal_id])
         if staff_read
         else granted_keys(db, resolved_contact_id) if resolved_contact_id else []
     )
@@ -654,7 +656,7 @@ async def low_stock_report(
         contact_id=contact_id, space_id=space_id,
         principal_id=str(current_user["id"]),
         categories=_csv_list(categories), suppliers=_name_list(suppliers), split=split,
-        staff_read=staff_read,
+        staff_read=staff_read, gate_ids=gate_user_ids(current_user) if staff_read else None,
     )
     if isinstance(prepared, dict):
         return prepared

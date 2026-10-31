@@ -183,11 +183,35 @@ def _resolve_entity(db: Session) -> ResolveEntityFn:
         if staff is not None:
             body = {**body, "contact_id": None, "space_id": None}
         principal = {"id": staff.user_id if staff is not None else getattr(settings, "external_api_key_act_as_user_id", None)}
-        return resolve_reference_post(
-            ResolveReferenceRequest(**body), current_user=principal, db=db
-        )
+        result = resolve_reference_post(ResolveReferenceRequest(**body), current_user=principal, db=db)
+        if staff is not None:
+            from app.services.chatbot.agent.tools import denied_entity_types
+
+            result = _without_entity_types(result, denied_entity_types(db, staff.user_id))
+        return result
 
     return call
+
+
+def _without_entity_types(value: Any, denied: set[str]) -> Any:
+    """The resolver's payload without any match (or `by_entity_type` entry) of a denied kind: no row,
+    and so no name, for a staff member without that kind's slug. A resolution left with no match is not
+    resolved."""
+    if not denied:
+        return value
+    if isinstance(value, list):
+        return [
+            _without_entity_types(v, denied)
+            for v in value
+            if not (isinstance(v, dict) and v.get("entity_type") in denied)
+        ]
+    if isinstance(value, dict):
+        out = {k: _without_entity_types(v, denied) for k, v in value.items() if k not in denied or not isinstance(v, (list, dict))}
+        if "matches" in value and isinstance(out.get("matches"), list) and not out["matches"] and value["matches"]:
+            out["resolved"] = False
+            out["ambiguous"] = False
+        return out
+    return value
 
 
 def _probe(db: Session | None = None) -> ProbeFn:

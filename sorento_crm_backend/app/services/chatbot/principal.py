@@ -40,6 +40,9 @@ class StaffPrincipal:
     #: What the user's screen is on: `title`, `path` and, only when the record may be read,
     #: `record_kind` and `record_ref`. No visible text and no facts (they ride the agent's message).
     page: dict[str, Any] | None = None
+    #: The administrator behind an impersonated session, for the audit stamps; None when the user is
+    #: acting as themselves.
+    real_user_id: str | None = None
 
     @property
     def key(self) -> str:

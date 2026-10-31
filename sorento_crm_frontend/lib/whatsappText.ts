@@ -119,21 +119,31 @@ export function stripWhatsAppMarkup(text: string): string {
     .join('');
 }
 
+export interface WhatsAppListItem {
+  /** The item's text, inline markup kept; a line under the marker stays in it, after a `\n`. */
+  text: string;
+  /** The number printed at the marker, so "3" means the row marked 3. Null in an unordered list. */
+  number: number | null;
+}
+
 export type WhatsAppBlock =
   | { kind: 'text'; text: string }
-  | { kind: 'list'; ordered: boolean; start: number; items: string[] };
+  | { kind: 'list'; ordered: boolean; start: number; items: WhatsAppListItem[] };
 
-/** `- `, `* `, `• `, `1. ` or `1) ` at the start of a line. The marker needs its space, so a `*bold*` line is no item. */
-const LIST_ITEM = /^(?:([-*•])|(\d+)[.)])[ \t]+(\S.*)$/;
+/** `- `, `* `, `• `, `1. ` or `1) ` at the start of a line. The marker needs its space, so a `*bold*` line is
+ *  no item, and an ordered marker is 1 to 3 digits, so `2026. x` is text. */
+const LIST_ITEM = /^(?:([-*•])|(\d{1,3})[.)])[ \t]+(\S.*)$/;
 
 /**
  * `text` as text and list blocks in reading order, for a screen that draws real lists. Items keep their
- * inline markup (the inline parse, `parseWhatsAppText`, reads them); lines inside a ``` fence stay text.
+ * inline markup (the inline parse, `parseWhatsAppText`, reads them). A line under a marker stays in that
+ * item until a blank line or the next marker; lines inside a ``` fence stay text.
  */
 export function parseWhatsAppBlocks(text: string): WhatsAppBlock[] {
   const blocks: WhatsAppBlock[] = [];
   let run: string[] = [];
   let inFence = false;
+  let open: WhatsAppListItem | null = null;
   const flush = () => {
     if (run.length > 0) blocks.push({ kind: 'text', text: run.join('\n') });
     run = [];
@@ -141,19 +151,24 @@ export function parseWhatsAppBlocks(text: string): WhatsAppBlock[] {
   for (const line of text ? text.split('\n') : []) {
     const wasInFence = inFence;
     if ((line.split('```').length - 1) % 2 === 1) inFence = !inFence;
-    const item = wasInFence || inFence ? null : LIST_ITEM.exec(line);
-    if (!item) {
-      run.push(line);
+    const fenced = wasInFence || inFence || line.includes('```');
+    const item = fenced ? null : LIST_ITEM.exec(line);
+    if (item) {
+      flush();
+      const ordered = item[2] !== undefined;
+      const entry: WhatsAppListItem = { text: item[3], number: ordered ? Number(item[2]) : null };
+      const last = blocks[blocks.length - 1];
+      if (last && last.kind === 'list' && last.ordered === ordered) last.items.push(entry);
+      else blocks.push({ kind: 'list', ordered, start: ordered ? Number(item[2]) : 1, items: [entry] });
+      open = entry;
       continue;
     }
-    flush();
-    const ordered = item[2] !== undefined;
-    const last = blocks[blocks.length - 1];
-    if (last && last.kind === 'list' && last.ordered === ordered) {
-      last.items.push(item[3]);
-    } else {
-      blocks.push({ kind: 'list', ordered, start: ordered ? Number(item[2]) : 1, items: [item[3]] });
+    if (open && !fenced && line.trim() !== '') {
+      open.text += `\n${line}`;
+      continue;
     }
+    open = null;
+    run.push(line);
   }
   flush();
   return blocks;

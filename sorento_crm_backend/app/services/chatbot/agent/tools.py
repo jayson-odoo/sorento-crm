@@ -365,6 +365,13 @@ def searchable_kinds(db: Any, ctx: Any, requested: list[str]) -> tuple[list[str]
     return allowed, skipped
 
 
+def denied_entity_types(db: Any, user_id: str) -> set[str]:
+    """Resolver entity types of a kind this user has no slug for (`KIND_SLUGS`), for the in-process
+    resolver a staff turn calls. Products stay open: the resolver is the picker every staff member uses."""
+    denied_kinds = {kind for kind, slug in KIND_SLUGS.items() if kind != "product" and not _permitted(db, user_id, slug)}
+    return {entity for entity, kind in _KIND_OF_ENTITY.items() if kind in denied_kinds}
+
+
 def contact_allows(ctx: Any, tool: ToolDef) -> bool:
     """The contact side of a tool: its reveal grant, and the stock switch for stock tools."""
     if tool.contact_grant and tool.contact_grant not in ctx.grants:

@@ -156,6 +156,11 @@ export default function AIAssistantBubble() {
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isDeciding, setIsDeciding] = useState(false);
+  // The thread on screen and a count of what has been drawn into it. A reload that comes back for a
+  // thread no longer open, or older than the newest draw, is thrown away.
+  const openThreadRef = useRef<string | undefined>(undefined);
+  const drawCountRef = useRef(0);
+  const decidingRef = useRef(false);
   const [bubbleSize, setBubbleSize] = useState<BubbleSize>(DEFAULT_SIZE);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyItems, setHistoryItems] = useState<AIAssistantConversationSummary[]>([]);
@@ -180,6 +185,13 @@ export default function AIAssistantBubble() {
   const canSend = input.trim().length > 0 && !isSending;
   const prefersReducedMotion = useReducedMotion();
   const transition = surfaceTransition(prefersReducedMotion);
+
+  const drawThread = useCallback((id: string | undefined, next: AIAssistantMessage[]) => {
+    openThreadRef.current = id;
+    drawCountRef.current += 1;
+    setConversationId(id);
+    setMessages(next);
+  }, []);
 
   const sortedMessages = useMemo(
     () => [...messages].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
@@ -396,13 +408,13 @@ export default function AIAssistantBubble() {
         metadata_json: {},
         created_at: new Date().toISOString(),
       };
+      drawCountRef.current += 1;
       setMessages((prev) => [...prev, optimistic]);
       setIsSending(true);
       try {
         const snapshot = getPageSnapshot();
         const conv = await sendAIAssistantMessage(trimmed, conversationId, snapshot, confirmAction);
-        setConversationId(conv.id);
-        setMessages(conv.messages || []);
+        drawThread(conv.id, conv.messages || []);
       } catch (err) {
         const errorMessage: AIAssistantMessage = {
           id: `temp-error-${Date.now()}`,
@@ -416,32 +428,38 @@ export default function AIAssistantBubble() {
         setIsSending(false);
       }
     },
-    [conversationId, isSending],
+    [conversationId, drawThread, isSending],
   );
 
   // A card's Confirm, Cancel, Undo and a countdown's end: the server decides, then the thread is read
   // again and drawn, so a live view and a reload cannot differ. A refusal says why and reloads too.
   const decide = useCallback(
     async (call?: () => Promise<unknown>) => {
-      if (isDeciding) return;
+      if (decidingRef.current) return;
+      decidingRef.current = true;
       setIsDeciding(true);
+      const thread = openThreadRef.current;
       try {
         await call?.();
       } catch (err) {
         toast.error((err as Error)?.message || 'That change could not be decided.');
       }
       try {
-        if (conversationId) {
-          const conv = await loadConversation(conversationId);
-          setMessages(conv.messages || []);
+        if (thread) {
+          const started = drawCountRef.current;
+          const conv = await loadConversation(thread);
+          if (openThreadRef.current === thread && drawCountRef.current === started) {
+            drawThread(thread, conv.messages || []);
+          }
         }
       } catch {
         // Keep what is drawn; the next read catches up.
       } finally {
+        decidingRef.current = false;
         setIsDeciding(false);
       }
     },
-    [conversationId, isDeciding],
+    [drawThread],
   );
 
   const onSubmit = async (e: FormEvent) => {
@@ -451,8 +469,7 @@ export default function AIAssistantBubble() {
   };
 
   const onNewConversation = () => {
-    setMessages([]);
-    setConversationId(undefined);
+    drawThread(undefined, []);
     setInput('');
     setHistoryOpen(false);
   };
@@ -464,8 +481,7 @@ export default function AIAssistantBubble() {
   const onPickConversation = async (id: string) => {
     try {
       const conv = await loadConversation(id);
-      setConversationId(conv.id);
-      setMessages(conv.messages || []);
+      drawThread(conv.id, conv.messages || []);
       setHistoryOpen(false);
     } catch (err) {
       setHistoryError((err as Error)?.message || 'Failed to load conversation');
@@ -492,8 +508,7 @@ export default function AIAssistantBubble() {
     (async () => {
       try {
         const conv = await loadConversation(deepLinkConvId);
-        setConversationId(conv.id);
-        setMessages(conv.messages || []);
+        drawThread(conv.id, conv.messages || []);
         if (deepLinkMsgId) {
           setHighlightedMessageId(deepLinkMsgId);
           requestAnimationFrame(() => {
@@ -520,6 +535,7 @@ export default function AIAssistantBubble() {
     router,
     searchParams,
     setOpenPersisted,
+    drawThread,
   ]);
 
   const onSuggestionClick = async (s: string) => {
@@ -810,7 +826,7 @@ export default function AIAssistantBubble() {
                           <BrainReplyParts
                             meta={m.metadata_json}
                             canViewTrace={canViewTrace}
-                            busy={isDeciding}
+                            busy={isDeciding || isSending}
                             onConfirm={(id) => decide(() => confirmPanelAction(id))}
                             onCancel={(id) => decide(() => cancelPanelAction(id))}
                             onWithdraw={(id, index) => decide(() => withdrawPanelStep(id, index))}
