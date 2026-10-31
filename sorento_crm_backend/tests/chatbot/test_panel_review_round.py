@@ -330,15 +330,21 @@ def _ready_escalation(session_factory, staff: Staff, world):
 def test_a_user_with_no_company_grants_escalates_nothing_and_the_reply_names_no_one(
     session_factory, monkeypatch, staff, grants, world
 ):
+    """The staff turn draws through `next_assignee_for_staff`, and a user with no company grants must not
+    fall back to the default company's team (a pair and policy are seeded there on purpose)."""
     import app.api.v1.external.next_assignee as next_assignee_mod
+    from app.services.company_routing_service import DEFAULT_COMPANY_ID
 
     draws: list[Any] = []
-    real = next_assignee_mod.post_next_assignee
-    monkeypatch.setattr(next_assignee_mod, "post_next_assignee", lambda *a, **k: draws.append(1) or real(*a, **k))
-    _ready_escalation(session_factory, staff, world)
-    # control first: with a company the same escalation makes a row
+    real = next_assignee_mod.next_assignee_for_staff
+    monkeypatch.setattr(next_assignee_mod, "next_assignee_for_staff", lambda d, b, c: draws.append(c) or real(d, b, c))
+    for company in (DEFAULT_COMPANY_ID, staff.company_a):
+        _seed_pair(session_factory, company_id=company, agent_code=AGENT_CODE, team_code=TEAM)
+        bind_policy(session_factory, company)
+    # control first: a user with a company grant gets a row in that company
     TestPanelEscalation()._escalate(session_factory, monkeypatch, staff, world)
-    assert len(panel_trackings(session_factory)) == 1, "control: the escalation made no row"
+    rows = panel_trackings(session_factory)
+    assert len(rows) == 1 and str(rows[0].company_id) == staff.company_a and draws, "control: the escalation made no row"
     draws.clear()
     db = session_factory()
     db.execute(sql_text("DELETE FROM user_companies WHERE user_id = :u"), {"u": staff.user_id})
@@ -347,10 +353,10 @@ def test_a_user_with_no_company_grants_escalates_nothing_and_the_reply_names_no_
 
     result = TestPanelEscalation()._escalate(session_factory, monkeypatch, new_thread(session_factory, staff), world)
 
-    assert len(panel_trackings(session_factory)) == 1, "a second row was written for a user with no company"
-    assert draws == [], "the cursor moved for a user with no company"
+    assert len(panel_trackings(session_factory)) == 1, "a row was written for a user with no company grants"
+    assert draws == [], f"the cursor moved for a user with no company grants: {draws}"
     lowered = result.reply_text.lower()
-    assert result.reply_text.strip() and "follow up" not in lowered and "zzt customer_service pic" not in lowered
+    assert result.reply_text.strip() and "follow up" not in lowered and "customer_service pic" not in lowered, result.reply_text
 
 
 def test_the_sixth_panel_escalation_in_an_hour_writes_no_row_and_says_so(
@@ -504,7 +510,7 @@ def test_a_customers_row_whose_contact_was_deleted_keeps_its_whatsapp_on_assign_
     from app.services.sla_service import ConversationSLATrackingService
 
     due = {i["tracking_id"] for i in ConversationSLATrackingService(session_factory()).list_due_escalations()}
-    assert str(row.id) not in due, "pin: main's runner skips a deleted-contact row (it would 404 at the runner)"
+    assert str(row.id) in due, "pin: main's runner outer joins the contact, so a deleted-contact customer row IS due"
 
 
 # --------------------------------------------------------------------------- #
@@ -880,3 +886,317 @@ def test_a_chat_lane_opportunity_stamps_the_real_user_in_the_audit_row(
     assert audit and all(str(a.user_id) == staff.user_id for a in audit)
     want = admin.user_id if impersonating else staff.user_id
     assert all(str(a.real_user_id) == want for a in audit), [(a.user_id, a.real_user_id) for a in audit]
+
+
+# =========================================================================== #
+# Round 1, second commit: access reads (findings 1 to 4) and two corrected pins
+# =========================================================================== #
+#
+# `world` stubs `check_access` to `attributes=None`, which hides every reveal-gated read, so these tests
+# use `real_access`: the engine's own `check_access` over the staff member's real reveal keys.
+
+from app.models.order import Customer  # noqa: E402
+from app.models.procurement import PurchaseRequestHeader  # noqa: E402
+from tests.chatbot.test_ref_status import _seed_pr  # noqa: E402,F401
+from tests.chatbot.test_so_number_ask import _seed_so  # noqa: E402,F401
+from tests.chatbot.test_po_ref_ask import _seed_po_so  # noqa: E402,F401
+from tests.test_staff_read_identity import env, mk_user  # noqa: E402,F401
+
+PO_VIEW = "scm.purchase_orders.view"
+PR_VIEW, PR_OWN = "procurement.purchase_requests.view", "procurement.purchase_requests.view_own"
+SF_VIEW, SF_OWN = "procurement.sponsorship_forms.view", "procurement.sponsorship_forms.view_own"
+ORDERS_VIEW = "order_management.orders.view"
+CUSTOMERS_VIEW = "order_management.customers.view"
+SECRET = "ZZT SECRET CUSTOMER"
+
+
+@pytest.fixture()
+def real_access(monkeypatch, session_factory):
+    from app.models.access import AccessAgent
+    from app.services.chatbot.head.access import check_access
+
+    monkeypatch.setattr(engine_mod, "check_access", check_access)
+    db = session_factory()
+    for code in ("general_enquiries", "order_enquiries", "purchasing"):
+        if db.query(AccessAgent).filter(AccessAgent.code == code).first() is None:
+            db.add(AccessAgent(id=str(uuid.uuid4()), code=code, name=f"ZZT {code}", is_active=True))
+    db.commit()
+
+
+def _ref_ask(world, number: str, hint: str, **extra):
+    world.parser_output = _parser_output(
+        intent_hint="check_order", domain_hint="purchase_order", user_goal="status",
+        entities=[{"raw": number, "hint": hint, "canonical_code": number, "current_message": True, "confident": True}],
+        **extra,
+    )
+
+
+def _seed_request(session_factory, number: str, *, kind="purchase_request", contact_id=None, lines=(("ZZTSKU", 5),)):
+    db = session_factory()
+    pr = _seed_pr(db, number, list(lines), customer=SECRET)
+    pr.request_type = kind
+    pr.contact_id = contact_id
+    db.commit()
+    return pr
+
+
+def _pr_number() -> str:
+    return f"ZZT-PR-{unique_code()[:6].upper()}"
+
+
+def _leaks(reply: str) -> list[str]:
+    return [w for w in (SECRET, "ZZTSKU") if w in reply]
+
+
+class TestPurchaseRequestCards:
+    """Finding 1: `purchase_orders.placed` (the PO view) must not open a purchase request card; the PR's own slugs do."""
+
+    def _ask(self, session_factory, monkeypatch, staff, world, number):
+        _ref_ask(world, number, "purchase_request")
+        return run_panel(session_factory, monkeypatch, staff, f"status of {number}").reply_text
+
+    def test_a_po_viewer_without_a_purchase_request_slug_gets_no_card(
+        self, session_factory, monkeypatch, staff, grants, world, real_access
+    ):
+        number = _pr_number()
+        _seed_request(session_factory, number)
+        grants.add(PO_VIEW)
+
+        reply = self._ask(session_factory, monkeypatch, staff, world, number)
+
+        assert _leaks(reply) == [] and "Purchase request" not in reply, reply
+
+    def test_control_without_the_po_view_either_the_reply_is_a_plain_not_found(
+        self, session_factory, monkeypatch, staff, grants, world, real_access
+    ):
+        number = _pr_number()
+        _seed_request(session_factory, number)
+
+        reply = self._ask(session_factory, monkeypatch, staff, world, number)
+
+        assert reply.startswith("Couldn't find:"), reply
+        assert _leaks(reply) == []
+
+    def test_a_purchase_request_viewer_gets_the_card(
+        self, session_factory, monkeypatch, staff, grants, world, real_access
+    ):
+        number = _pr_number()
+        _seed_request(session_factory, number)
+        grants.update({PO_VIEW, PR_VIEW})
+
+        reply = self._ask(session_factory, monkeypatch, staff, world, number)
+
+        assert SECRET in reply and "ZZTSKU x 5" in reply, reply
+
+    def test_a_view_own_holder_sees_their_own_row_and_not_another_users(
+        self, session_factory, monkeypatch, staff, grants, world, real_access
+    ):
+        db = session_factory()
+        mine, other = _real_contact(db), _real_contact(db)
+        db.query(User).filter(User.id == staff.user_id).update({"respond_contact_id": mine})
+        db.commit()
+        own_no, foreign_no = _pr_number(), _pr_number()
+        _seed_request(session_factory, own_no, contact_id=mine)
+        _seed_request(session_factory, foreign_no, contact_id=other)
+        grants.update({PO_VIEW, PR_OWN})
+
+        own_reply = self._ask(session_factory, monkeypatch, staff, world, own_no)
+        foreign_reply = self._ask(session_factory, monkeypatch, new_thread(session_factory, staff), world, foreign_no)
+
+        assert SECRET in own_reply and "ZZTSKU x 5" in own_reply, own_reply
+        assert _leaks(foreign_reply) == [] and "Purchase request" not in foreign_reply, foreign_reply
+
+    def test_a_sponsorship_form_needs_its_own_slugs(
+        self, session_factory, monkeypatch, staff, grants, world, real_access
+    ):
+        db = session_factory()
+        mine = _real_contact(db)
+        db.query(User).filter(User.id == staff.user_id).update({"respond_contact_id": mine})
+        db.commit()
+        number = _pr_number()
+        _seed_request(session_factory, number, kind="sponsorship_form", contact_id=mine)
+        grants.update({PO_VIEW, PR_VIEW})  # the purchase request slugs do not cover a sponsorship form
+
+        denied = self._ask(session_factory, monkeypatch, staff, world, number)
+        grants.add(SF_OWN)
+        own = self._ask(session_factory, monkeypatch, new_thread(session_factory, staff), world, number)
+        grants.discard(SF_OWN)
+        grants.add(SF_VIEW)
+        viewer = self._ask(session_factory, monkeypatch, new_thread(session_factory, staff), world, number)
+
+        assert _leaks(denied) == [], denied
+        assert SECRET in own and SECRET in viewer, (own, viewer)
+
+    def test_a_later_page_of_a_cut_card_is_refused_without_the_purchase_request_slug(
+        self, session_factory, monkeypatch, staff, grants, world
+    ):
+        from tests.chatbot.test_composers_lists_l3 import _run_fetch
+        from tests.chatbot.test_composers_stock_xd import _set_gate
+
+        _set_gate(monkeypatch, True)
+        db = session_factory()
+        pr = _seed_pr(db, _pr_number(), [(f"ZZTSKU{i:03d}", 1) for i in range(14)], customer=SECRET)
+        db.commit()
+        carry = {"ref_cards": [{"kind": "pr", "id": pr.id, "lines": 14}], "card": 0, "shown": 10, "total": 14}
+        principal = principal_mod.StaffPrincipal(user_id=staff.user_id, conversation_id=staff.conv_id, active_company_id=staff.company_a)
+        grants.add(PO_VIEW)  # the PO view opens `purchase_orders.placed`, which is all the lane asks today
+
+        with principal_mod.acting_as(principal):
+            denied = _run_fetch(session_factory(), ref_page=carry)
+        grants.add(PR_VIEW)
+        with principal_mod.acting_as(principal):
+            shown = _run_fetch(session_factory(), ref_page=carry)
+
+        assert denied.get("kind") == "error" and "ZZTSKU" not in json.dumps(denied, default=str), denied
+        assert "ZZTSKU" in shown["fetch"]["response"], "control: a purchase request viewer must get the page"
+
+
+class TestSalesOrderCards:
+    """Finding 2: a sales order or PO ref card needs `order_management.orders.view`."""
+
+    def test_a_sales_order_card_needs_the_orders_view(
+        self, session_factory, monkeypatch, staff, grants, world, real_access
+    ):
+        so_no = f"SO{uuid.uuid4().int % 10**6:06d}"
+        _seed_so(session_factory, so_no, customer_id=None, lines=[(10, 4)], debtor_name=SECRET, company_id=staff.company_a)
+        world.parser_output = _parser_output(
+            domain_hint="order", intent_hint="check_order", order_status=None,
+            entities=[{"raw": so_no, "hint": "sales_order", "canonical_code": so_no, "current_message": True, "confident": True}],
+        )
+
+        denied = run_panel(session_factory, monkeypatch, staff, f"status of {so_no}").reply_text
+        grants.add(ORDERS_VIEW)
+        held = run_panel(session_factory, monkeypatch, new_thread(session_factory, staff), f"status of {so_no}").reply_text
+
+        assert SECRET not in denied and "Open" not in denied.split("Couldn't find")[0], denied
+        assert SECRET in held, held
+
+
+class TestCustomerNames:
+    """Finding 3: names a word could mean are customer data, behind `order_management.customers.view`."""
+
+    def _two_customers(self, session_factory, staff):
+        tok = "ZZTSEC" + unique_code()[:5].upper()
+        db = session_factory()
+        db.add_all([
+            Customer(customer_code=unique_code("CU")[:40], customer_name=f"{tok} ALPHA SDN BHD", company_id=staff.company_a),
+            Customer(customer_code=unique_code("CU")[:40], customer_name=f"{tok} BETA SDN BHD", company_id=staff.company_a),
+        ])
+        db.commit()
+        return tok
+
+    def _ask(self, session_factory, monkeypatch, staff, world, tok):
+        world.parser_output = _parser_output(
+            intent_hint="check_order", domain_hint="order", user_goal="orders",
+            entities=[{"raw": tok, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+        )
+        return run_panel(session_factory, monkeypatch, staff, f"orders of {tok}").reply_text
+
+    def test_a_chat_user_with_no_customer_slug_is_shown_no_customer_names(
+        self, session_factory, monkeypatch, staff, grants, world, real_access
+    ):
+        tok = self._two_customers(session_factory, staff)
+
+        reply = self._ask(session_factory, monkeypatch, staff, world, tok)
+
+        assert "ALPHA" not in reply and "BETA" not in reply, reply
+
+    def test_a_customers_view_holder_does_see_the_names(
+        self, session_factory, monkeypatch, staff, grants, world, real_access
+    ):
+        tok = self._two_customers(session_factory, staff)
+        grants.add(CUSTOMERS_VIEW)
+
+        reply = self._ask(session_factory, monkeypatch, staff, world, tok)
+
+        assert "ALPHA" in reply and "BETA" in reply, reply
+
+    def test_a_product_word_still_resolves_for_a_chat_only_user(
+        self, session_factory, monkeypatch, staff, grants, world, real_access
+    ):
+        from tests._mc_lookup_seed import product as seed_product
+
+        db = session_factory()
+        prod = seed_product(db, company_id=staff.company_a)
+        db.commit()
+        code = prod.product_code if hasattr(prod, "product_code") else prod.code
+        world.parser_output = _parser_output(
+            intent_hint="check_stock", domain_hint="stock", user_goal="stock",
+            entities=[{"raw": code, "hint": "product", "canonical_code": code, "current_message": True, "confident": True}],
+        )
+
+        run_panel(session_factory, monkeypatch, staff, f"stock of {code}")
+
+        assert world.blocks, "the parser never ran"
+        resolved = [c for c in world.mcp if code in json.dumps(c.get("args", {}), default=str)]
+        assert resolved or code in world.blocks[0], "a product word no longer resolves for a chat-only user"
+
+
+# --------------------------------------------------------------------------- #
+# Finding 4: a staff read asks the reveal key of both users
+# --------------------------------------------------------------------------- #
+
+REPORT = "/api/v1/order-management/report-ask"
+RANGE = "date_from=2026-10-01&date_to=2026-10-31"
+TARGET = "/api/v1/sales/target-progress"
+
+
+class TestStaffRevealIsAskedOfBothUsers:
+    BASE = ("order_management.orders.view",)
+
+    @pytest.mark.parametrize(
+        "name, path, staff_slugs, actas_slugs",
+        [
+            ("chat", f"{REPORT}?dataset=chat&{RANGE}", ("sales.reports.view", "chatbot.analytics.view"), ("sales.reports.view",)),
+            ("target", TARGET, ("sales.reports.view", "sales.targets.view"), ("sales.reports.view",)),
+            ("ordered", f"{REPORT}?basis=ordered&{RANGE}", ("sales.reports.view",), ()),
+        ],
+    )
+    def test_the_key_is_refused_when_the_act_as_user_lacks_it_and_open_when_both_hold_it(
+        self, env, name, path, staff_slugs, actas_slugs
+    ):
+        # act-as lacks the key, the staff member holds it
+        env.use_actas(perms=self.BASE + actas_slugs)
+        staff_has = mk_user(env.db, "staff-has", perms=self.BASE + staff_slugs, companies=(env.co_a,), last_active=env.co_a)
+        refused = env.client.get(path, headers=env.ident(staff_has))
+        assert refused.status_code == 403, (name, refused.status_code, refused.text[:300])
+
+        # control: both hold it
+        env.use_actas(perms=self.BASE + staff_slugs)
+        both = mk_user(env.db, "staff-both", perms=self.BASE + staff_slugs, companies=(env.co_a,), last_active=env.co_a)
+        ok = env.client.get(path, headers=env.ident(both))
+        assert ok.status_code not in (403, 422), (name, ok.status_code, ok.text[:300])
+
+        # control: act-as holds it, the staff member lacks it
+        env.use_actas(perms=self.BASE + staff_slugs)
+        staff_lacks = mk_user(env.db, "staff-lacks", perms=self.BASE, companies=(env.co_a,), last_active=env.co_a)
+        also = env.client.get(path, headers=env.ident(staff_lacks))
+        assert also.status_code == 403, (name, also.status_code, also.text[:300])
+
+    @pytest.mark.parametrize(
+        "staff_perms, actas_perms, expect_supplier",
+        [
+            (("procurement.suppliers.view",), (), False),
+            (("procurement.suppliers.view",), ("procurement.suppliers.view",), True),
+            ((), ("procurement.suppliers.view",), False),
+        ],
+        ids=["staff-only", "both", "act-as-only"],
+    )
+    def test_the_low_stock_supplier_column_needs_both_users(self, env, monkeypatch, staff_perms, actas_perms, expect_supplier):
+        from app.services import queue_service
+
+        base = ("scm.reorder.run", "inventory.stock.view")
+        sent: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            queue_service, "enqueue_job",
+            lambda f, *a, **k: sent.append({"fn": getattr(f, "__name__", ""), **k}) or SimpleNamespace(id="zzt"),
+        )
+        env.use_actas(perms=base + actas_perms)
+        who = mk_user(env.db, "low", perms=base + staff_perms, companies=(env.co_a,), last_active=env.co_a)
+
+        resp = env.client.get("/api/v1/scm/low-stock-report", headers=env.ident(who))
+
+        assert resp.status_code in (200, 202), (resp.status_code, resp.text[:300])
+        report = [s for s in sent if s["fn"] == "generate_low_stock_report"]
+        assert report, f"no report job was queued: {sent}"
+        assert report[0]["include_supplier"] is expect_supplier

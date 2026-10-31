@@ -1050,6 +1050,7 @@ def test_list_due_escalations_skips_contactless_rows_and_still_returns_a_custome
         )
         pks.append(pk)
     null_row = _overdue_row(db, company_id=staff.company_a, policy_id=policy_id, contact_id=None)
+    null_row.source_entity_type = "panel_escalation"  # a panel task carries the marker; it is what leaves the list
     deleted_row = _overdue_row(db, company_id=staff.company_a, policy_id=policy_id, contact_id=pks[0])
     customer_row = _overdue_row(db, company_id=staff.company_a, policy_id=policy_id, contact_id=pks[1])
     db.commit()
@@ -1061,7 +1062,8 @@ def test_list_due_escalations_skips_contactless_rows_and_still_returns_a_custome
     due = {item["tracking_id"] for item in ConversationSLATrackingService(session_factory()).list_due_escalations()}
 
     assert str(customer_row.id) in due, "a customer's overdue row was not returned"
-    assert str(null_row.id) not in due and str(deleted_row.id) not in due
+    assert str(null_row.id) not in due
+    assert str(deleted_row.id) in due, "main outer joins the contact: a deleted-contact customer row is still due"
 
 
 # --------------------------------------------------------------------------- #
