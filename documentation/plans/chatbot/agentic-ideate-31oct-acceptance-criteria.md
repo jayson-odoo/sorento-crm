@@ -223,7 +223,7 @@ Q4 is (a), owner 31 Oct: any bot question.
 
 Owner's message, used as the test case in every AC here: "I think we need to have sorento agentic ai".
 
-- **AC-HT-1 to AC-HT-4 moved to lane AI-KEY-PER-PROVIDER (crew ruling, 31 Oct):** key resolution per provider and the honest failed-extraction reply. Until that ships, the bot path can still show the dead end. Their red tests are at `git show 5e3e9b9ae4:sorento_crm_backend/tests/test_ideation_owner_message.py`.
+- **AC-HT-1 to AC-HT-4 moved to lane AI-KEY-PER-PROVIDER (crew ruling, 31 Oct):** key resolution per provider and the honest failed-extraction reply, shipped in #2054. Their first red tests were at `git show 5e3e9b9ae4:sorento_crm_backend/tests/test_ideation_owner_message.py`.
 - **AC-HT-5 [T]** The label of `crm_idea_create` is "record a suggestion or wish for what the system should have or do, an idea or a feature request". The snapshot in AC-R2-14 changes with it, and `agent_tool_labels()` equals `criteria_try_v1.json`, the list evaluated on the gold and held-out rows.
 - **AC-HT-6 [T]** The crew-only gold gains the owner's message, labelled agent. Whether Jev routes it is checked on the copy after the push.
 

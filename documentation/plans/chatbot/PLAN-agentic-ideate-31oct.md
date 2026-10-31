@@ -1,6 +1,6 @@
 # PLAN: ideas through the agent, and routing that follows the agent's tools (AGENTIC-IDEATE)
 
-**Status:** code complete on PR #2038. Owner's first hand test led to a label rewording, the last change here. Reviewer on that delta, crew's hidden gate on the new label
+**Status:** code complete on PR #2038, main merged with #2054 and #2056. Owner's first hand test led to a label rewording, the last change here, and the reviewer passed that delta. Crew's hidden gate on the new label
 and the owner's retest are still to come. Track: size M, lead pattern.
 UAC: `agentic-ideate-31oct-acceptance-criteria.md`. No screen changes, so Phase 1 (frontend mock) does not apply.
 
@@ -286,11 +286,19 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 
 Message: "I think we need to have sorento agentic ai". Two causes, neither from this PR. Router: Jev scored it 0.40 on a contact with the Agent switch on, under the
 floor, because the idea label did not cover a stated need. Bot lane: the extractor has no usable key on the copy (inferred, see the PR note), and an empty extraction
-reads as "no idea". Crew split it (ruling, 31 Oct): this PR rewords the label; lane AI-KEY-PER-PROVIDER owns the key resolution and the honest failed-extraction reply. Until
-that ships, the bot path (Agent switch off, or an under-floor score) can still show the dead end.
+reads as "no idea". Crew split it (ruling, 31 Oct): this PR rewords the label; lane AI-KEY-PER-PROVIDER owns the key resolution and the honest failed-extraction reply. That
+shipped in #2054 (2c31acf496) and is merged into this branch, so the bot path (Agent switch off, or an under-floor score) resolves its key per provider, and a failed read says so instead of dead-ending.
 
 Reworded label, one run each: real first ideas 7/7, paraphrased ideas 13/13, real wrong routes 2 of 5 sent to the agent (one now scores 0.84, it was 0.72), held-out missed-agent
 12/45 and wasted-agent 5/127, so no better than the earlier label and still worse than v2's 10/45 on missed-agent. On the owner's message: 0.88 and 0.90, against 0.44 to 0.50.
+
+### Live recheck of the idea wording (31 Oct, at 9ec4b49cc2, 11 console turns on the test copy)
+
+Nothing was invented in any proposal, and no create succeeded, since copies reach no shared service. Six cases, so this shows the wording helps, not that it always holds.
+
+- A short request, a bare "I have an idea", "I want to submit an idea" plus a short answer, a Chinese idea and a labelled idea all behaved: proposed at once, or asked first where no idea was given.
+- A Malay idea did NOT propose. The agent called `crm_ideas_list` twice, got the copy's error, said the feature does not exist yet and asked whether to register it. The error is the copy. The claim has nothing behind it and is the model's own doing. One case, so its frequency is unknown.
+- The proposal appeared once in these runs against twice in the first pass, on the same message wording. No code changed that, so the repeat may still show.
 
 ### Accepted, not changed
 
