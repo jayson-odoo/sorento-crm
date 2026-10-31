@@ -71,3 +71,27 @@ describe('WhatsAppBlocks', () => {
     expect(container.querySelector('ul,ol')).toBeNull();
   });
 });
+
+// AGENTIC-UNIFY PR 3, review round 1 (red): a reply of "3" must mean the row marked 3.
+describe('WhatsAppBlocks: printed numbers and item lines (review round 1)', () => {
+  it('gives each ordered item its printed number as li value', () => {
+    render(<WhatsAppBlocks text={'1. Alice\n3. Carol'} />);
+    const items = screen.getAllByRole('listitem');
+    expect(items.map((li) => li.getAttribute('value'))).toEqual(['1', '3']);
+  });
+
+  it('draws a card with lines under its marker as two items, keeping the line breaks on screen', () => {
+    render(<WhatsAppBlocks text={'1. *Code:* A\n*Qty:* 5\n*Loc:* X\n2. *Code:* B'} />);
+    const items = screen.getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+    expect(items[0].textContent).toBe('Code: A\nQty: 5\nLoc: X');
+    expect(items[0].className).toMatch(/whitespace-pre-(wrap|line)/);
+    expect(items[0].querySelectorAll('strong')).toHaveLength(3);
+    expect(items[1].textContent).toBe('Code: B');
+  });
+
+  it('control: an unordered item carries no value attribute', () => {
+    render(<WhatsAppBlocks text={'- a\n- b'} />);
+    expect(screen.getAllByRole('listitem').map((li) => li.getAttribute('value'))).toEqual([null, null]);
+  });
+});

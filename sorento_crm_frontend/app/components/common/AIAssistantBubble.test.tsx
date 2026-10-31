@@ -586,3 +586,204 @@ describe('AIAssistantBubble: the old write-confirm card is unchanged (AC-26)', (
     expect(chatApi.confirmPanelAction).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// AGENTIC-UNIFY PR 3, review round 1 (red): races between a decision's reload and the reader moving on,
+// a double click, a countdown's end, and a trace link with nothing to point at.
+// ---------------------------------------------------------------------------
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+const OUTCOME = { action_id: ACTION, status: 'executed', reply_text: 'Done.', steps: [] };
+
+function proposingThread() {
+  return [
+    user(),
+    brain({}, { agent: { ...FULL_AGENT, pending_action: PENDING } }, 'm-prop'),
+  ];
+}
+
+function otherThread() {
+  return [
+    { id: 'u2', role: 'user', content: 'ZZT other question', metadata_json: {}, created_at: '2026-10-30T10:00:00Z' },
+    { id: 'm-other', role: 'assistant', content: 'ZZT other answer', metadata_json: {}, created_at: '2026-10-30T10:00:05Z' },
+  ];
+}
+
+async function pickOtherThread() {
+  vi.mocked(chatApi.listAIAssistantConversations).mockResolvedValueOnce({
+    items: [{ id: 'conv-2', title: 'ZZT other thread', updated_at: '2026-10-30T10:00:05Z' }],
+  } as never);
+  fireEvent.click(screen.getByLabelText('Show conversation history'));
+  const row = await screen.findByText('ZZT other thread');
+  vi.mocked(chatApi.loadConversation).mockResolvedValueOnce({ id: 'conv-2', title: null, created_at: '', updated_at: '', messages: otherThread() } as never);
+  fireEvent.click(row);
+  await waitFor(() => expect(screen.getByText('ZZT other answer')).toBeDefined());
+}
+
+describe('AIAssistantBubble: a reload for a thread no longer open is thrown away (review round 1)', () => {
+  it('drops the first thread\'s reload after another thread was picked, and keeps the new thread\'s id', async () => {
+    grant();
+    await openThread(proposingThread());
+    const confirm = deferred<typeof OUTCOME>();
+    vi.mocked(chatApi.confirmPanelAction).mockReturnValueOnce(confirm.promise as never);
+    fireEvent.click(within(screen.getByTestId('agent-proposal')).getByRole('button', { name: /Confirm/ }));
+    await waitFor(() => expect(chatApi.confirmPanelAction).toHaveBeenCalled());
+
+    await pickOtherThread();
+    // the decision lands now; its reload is for conv-1, which is no longer the thread on screen
+    const reload = deferred<unknown>();
+    vi.mocked(chatApi.loadConversation).mockReturnValueOnce(reload.promise as never);
+    confirm.resolve(OUTCOME);
+    await waitFor(() => expect(vi.mocked(chatApi.loadConversation).mock.calls.at(-1)?.[0]).toBe('conv-1'));
+    reload.resolve({ id: 'conv-1', title: null, created_at: '', updated_at: '', messages: proposingThread() });
+
+    await act(async () => { await Promise.resolve(); });
+    await waitFor(() => expect(screen.queryByTestId('agent-proposal')).toBeNull());
+    expect(screen.getByText('ZZT other answer')).toBeDefined();
+    expect(screen.queryByText('ZZT question')).toBeNull();
+
+    // the thread on screen is still conv-2: a send goes to it
+    vi.mocked(chatApi.sendAIAssistantMessage).mockResolvedValueOnce({ id: 'conv-2', messages: otherThread() } as never);
+    fireEvent.change(screen.getByPlaceholderText('Ask the assistant...'), { target: { value: 'ZZT next' } });
+    fireEvent.click(screen.getByLabelText('Send message'));
+    await waitFor(() => expect(chatApi.sendAIAssistantMessage).toHaveBeenCalled());
+    expect(vi.mocked(chatApi.sendAIAssistantMessage).mock.calls[0][1]).toBe('conv-2');
+  });
+
+  it('control: with the same thread still open, the reload is drawn', async () => {
+    grant();
+    await openThread(proposingThread());
+    const confirm = deferred<typeof OUTCOME>();
+    vi.mocked(chatApi.confirmPanelAction).mockReturnValueOnce(confirm.promise as never);
+    fireEvent.click(within(screen.getByTestId('agent-proposal')).getByRole('button', { name: /Confirm/ }));
+    await waitFor(() => expect(chatApi.confirmPanelAction).toHaveBeenCalled());
+    nextThread([user(), brain({}, { agent: { pending_action: null, actions: [] } }, 'm-prop')]);
+
+    confirm.resolve(OUTCOME);
+
+    await waitFor(() => expect(screen.queryByTestId('agent-proposal')).toBeNull());
+  });
+
+  it('drops the reload after New chat, and the new chat stays empty', async () => {
+    grant();
+    await openThread(proposingThread());
+    const confirm = deferred<typeof OUTCOME>();
+    vi.mocked(chatApi.confirmPanelAction).mockReturnValueOnce(confirm.promise as never);
+    fireEvent.click(within(screen.getByTestId('agent-proposal')).getByRole('button', { name: /Confirm/ }));
+    await waitFor(() => expect(chatApi.confirmPanelAction).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByLabelText('Start new conversation'));
+    await waitFor(() => expect(screen.queryByText('ZZT question')).toBeNull());
+    const reload = deferred<unknown>();
+    vi.mocked(chatApi.loadConversation).mockReturnValueOnce(reload.promise as never);
+    confirm.resolve(OUTCOME);
+    await waitFor(() => expect(vi.mocked(chatApi.loadConversation).mock.calls.length).toBeGreaterThan(1));
+    reload.resolve({ id: 'conv-1', title: null, created_at: '', updated_at: '', messages: proposingThread() });
+
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.queryByText('ZZT question')).toBeNull();
+    expect(screen.queryByTestId('agent-proposal')).toBeNull();
+  });
+
+  it('an older reload does not wipe the reply a send drew', async () => {
+    grant();
+    await openThread(proposingThread());
+    const confirm = deferred<typeof OUTCOME>();
+    vi.mocked(chatApi.confirmPanelAction).mockReturnValueOnce(confirm.promise as never);
+    fireEvent.click(within(screen.getByTestId('agent-proposal')).getByRole('button', { name: /Confirm/ }));
+    await waitFor(() => expect(chatApi.confirmPanelAction).toHaveBeenCalled());
+    const reload = deferred<unknown>();
+    vi.mocked(chatApi.loadConversation).mockReturnValueOnce(reload.promise as never);
+    confirm.resolve(OUTCOME);
+    await waitFor(() => expect(vi.mocked(chatApi.loadConversation).mock.calls.length).toBeGreaterThan(1));
+
+    // while the reload is out, the user sends and the send's answer is drawn
+    const sent = [...proposingThread(), { id: 'u3', role: 'user', content: 'ZZT follow up', metadata_json: {}, created_at: '2026-10-30T09:05:00Z' }, { id: 'm-new', role: 'assistant', content: 'ZZT NEWEST REPLY', metadata_json: {}, created_at: '2026-10-30T09:05:05Z' }];
+    vi.mocked(chatApi.sendAIAssistantMessage).mockResolvedValueOnce({ id: 'conv-1', messages: sent } as never);
+    fireEvent.change(screen.getByPlaceholderText('Ask the assistant...'), { target: { value: 'ZZT follow up' } });
+    fireEvent.click(screen.getByLabelText('Send message'));
+    await waitFor(() => expect(chatApi.sendAIAssistantMessage).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText('ZZT NEWEST REPLY')).toBeDefined());
+    reload.resolve({ id: 'conv-1', title: null, created_at: '', updated_at: '', messages: proposingThread() });
+
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByText('ZZT NEWEST REPLY')).toBeDefined();
+  });
+});
+
+describe('AIAssistantBubble: a decision runs once (review round 1)', () => {
+  it('a double click on Confirm in one tick calls the server once', async () => {
+    grant();
+    await openThread(proposingThread());
+    const confirm = deferred<typeof OUTCOME>();
+    vi.mocked(chatApi.confirmPanelAction).mockReturnValue(confirm.promise as never);
+    const button = within(screen.getByTestId('agent-proposal')).getByRole('button', { name: /Confirm/ });
+
+    act(() => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+
+    expect(chatApi.confirmPanelAction).toHaveBeenCalledTimes(1);
+    confirm.resolve(OUTCOME);
+    await act(async () => { await Promise.resolve(); });
+  });
+
+  it('disables Confirm and Cancel while the decision is in flight', async () => {
+    grant();
+    await openThread(proposingThread());
+    const confirm = deferred<typeof OUTCOME>();
+    vi.mocked(chatApi.confirmPanelAction).mockReturnValueOnce(confirm.promise as never);
+    const card = screen.getByTestId('agent-proposal');
+    // control: enabled before the click
+    expect((within(card).getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(within(card).getByRole('button', { name: /Confirm/ }));
+
+    await waitFor(() => expect((within(screen.getByTestId('agent-proposal')).getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true));
+    expect((within(screen.getByTestId('agent-proposal')).getByRole('button', { name: /Confirm/ }) as HTMLButtonElement).disabled).toBe(true);
+    confirm.resolve(OUTCOME);
+    await act(async () => { await Promise.resolve(); });
+  });
+});
+
+describe('AIAssistantBubble: a countdown\'s end reads the thread again (review round 1)', () => {
+  it('reloads the thread when a waiting step\'s window closes', async () => {
+    grant();
+    const past = new Date(Date.now() - 5_000).toISOString().replace('Z', '');
+    await openThread([
+      user(),
+      brain({}, { agent: { pending_action: null, actions: [{ id: ACTION, status: 'executed', decided_at: null, decided_by_name: 'Pat', steps: [{ summary: 'Rename customer', status: 'done', error: null, changes: [], waiting: { commit_at: past, window_seconds: 60 } }] }] } }),
+    ]);
+
+    await waitFor(() => expect(vi.mocked(chatApi.loadConversation).mock.calls.length).toBe(2));
+    expect(vi.mocked(chatApi.loadConversation).mock.calls[1][0]).toBe('conv-1');
+  });
+});
+
+describe('AIAssistantBubble: the trace link needs a turn to point at (review round 1)', () => {
+  it('has no trace link on a brain reply with no chatbot_turn_id, with the settings slug', async () => {
+    grant(VIEW_SLUG);
+    await openThread([
+      user(),
+      { id: 'm-noturn', role: 'assistant', content: 'ZZT reply', created_at: '2026-10-30T09:00:05Z', metadata_json: { route: 'agent', status: 'done', route_decision: ROUTE_DECISION } },
+    ]);
+
+    expect(screen.queryByTestId('bubble-view-trace')).toBeNull();
+  });
+
+  it('control: the same reply with a turn id has the link', async () => {
+    grant(VIEW_SLUG);
+    await openThread([user(), brain({}, { route_decision: ROUTE_DECISION })]);
+    expect(screen.getByTestId('bubble-view-trace').getAttribute('href')).toBe(`/system-management/chat-history?turn=${TURN}`);
+  });
+});
