@@ -82,7 +82,7 @@ the bot. `lanes/ideate.py` is not edited. Over the cap, an idea is still capture
 
 ## Examples
 
-**No real idea message was available.** Every example is a paraphrase. See "For crew" below.
+These are paraphrases: the repo is public, so real messages stay in the crew-only gold (see Eval).
 
 | Message | Today | After |
 | --- | --- | --- |
@@ -118,14 +118,29 @@ check, not the gate.**
 Replies to the agent's "what is the idea?": 3 of 3 under the floor on both A and B (at most 0.48), which is why R3b
 exists. A "yes new one" reply to a similar-idea question clears it (0.88, 0.94).
 
+**Real rows (crew export, 28 Oct backup, 34 Jev calls, USD 0.0011).** 17 masked rows, all English; 11 of them come
+from one contact that may be a tester, so this is a small and skewed set. Message text stays under `crew/state`.
+
+| Group | Rows | Right, today's prompt | Right, tool list (arm B) |
+| --- | --- | --- | --- |
+| First messages that are ideas | 7 | 3 | 6 |
+| Follow-ups to an idea (synthetic context, see below) | 5 | 5 | 5 |
+| Wrong routes, should stay on chat | 5 | 3 | 4 |
+
+The one idea arm B misses scores 0.68, just under the floor. The one wrong route it still sends to the agent asks for
+new product variants and is the same message as gold row t033, so that miss is not new. The export has no context and
+those follow-ups answered the retired draft flow, so each carries a synthetic exchange: the row it follows plus one
+fixed agent question.
+
 **Gate:**
 - The brief says re-label the idea rows, but there are none: 0 of the 218 rows in `gold.jsonl` + `gold_topup.jsonl`
   carry parser domain ideate. Two rows are idea-shaped (t020, t033), both labelled chat. Decision: t020 goes
   borderline and is reported apart, t033 stays chat (it asks for new product codes, not an idea).
-- New crew-only file `crew/state/eval/agentic-ideate/gold_ideate.jsonl` (never committed): the 13 idea rows, 7
-  decoys, 5 follow-ups, plus any real rows crew exports.
-- Bar: at least 12 of 13 idea rows reach the agent; held-out missed-agent and wasted-agent no worse than the frozen
-  v2 run. Crew runs the hidden gate.
+- Crew-only gold at `crew/state/eval/agentic-ideate/gold.jsonl`, built by `build_gold.py` beside it (never committed):
+  the 17 real rows, plus 25 paraphrases scored apart, which are the only Malay and Chinese coverage.
+- Bar: at least 6 of 7 real first ideas and at least 12 of 13 paraphrased ideas reach the agent; real wrong routes no
+  worse than today's prompt (at most 2 of 5 sent to the agent); held-out missed-agent and wasted-agent no worse than
+  the frozen v2 run. Crew runs the hidden gate.
 
 ## Risks
 
