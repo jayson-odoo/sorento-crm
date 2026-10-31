@@ -7118,16 +7118,8 @@ class StockInquiryService:
             from app.services.error_handler import handle_validation_error
 
             raise handle_validation_error("Rejection reason is required.")
-        view_url = self._build_stock_inquiry_view_url(str(inquiry.id))
-        # Prefer the interactive submission portal link (minted on the fly); fall
-        # back to the read-only view link.
-        from app.services.portal_service import PortalService
-        view_url = PortalService(self.db).submission_link(
-            getattr(inquiry, "contact_id", None),
-            "stock_inquiry",
-            str(inquiry.id),
-            space_id=getattr(inquiry, "space_id", None),
-        ) or view_url
+        # Interactive submission portal link, else the read-only view link.
+        view_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
         # Structured-template vars: LEAN `update` core (status only) + links
         # "Rejected, reason: X" (no preamble, no inline URL). Mirrors complaint.
         ps_reject_extra_vars = {
@@ -7198,16 +7190,8 @@ class StockInquiryService:
             from app.services.error_handler import handle_validation_error
 
             raise handle_validation_error("Rejection reason is required.")
-        view_url = self._build_stock_inquiry_view_url(str(inquiry.id))
-        # Prefer the interactive submission portal link (minted on the fly); fall
-        # back to the read-only view link.
-        from app.services.portal_service import PortalService
-        view_url = PortalService(self.db).submission_link(
-            getattr(inquiry, "contact_id", None),
-            "stock_inquiry",
-            str(inquiry.id),
-            space_id=getattr(inquiry, "space_id", None),
-        ) or view_url
+        # Interactive submission portal link, else the read-only view link.
+        view_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
         # Structured-template vars: LEAN `update` core (status only) + links
         # "Rejected, reason: X" (no preamble, no inline URL). Mirrors complaint.
         pur_reject_extra_vars = {
@@ -7748,16 +7732,8 @@ class PurchaseRequestService:
         request_number = (display_document_number(header) or str(header.id)).strip()
         reason = (getattr(header, "approval_comments", None) or "").strip() or "no reason provided"
         approver = self._resolve_approver_display_name(header)
-        view_url = self._build_request_view_url(str(header.id))
-        # Prefer the interactive submission portal link (minted on the fly) so the
-        # contact can act/resubmit; fall back to the read-only view link.
-        from app.services.portal_service import PortalService
-        view_url = PortalService(self.db).submission_link(
-            getattr(header, "contact_id", None),
-            getattr(header, "request_type", None) or "purchase_request",
-            str(header.id),
-            space_id=getattr(header, "space_id", None),
-        ) or view_url
+        # Interactive submission portal link, else the read-only view link.
+        view_url = self._purchase_request_portal_or_view_url(header, str(header.id))
         rt = getattr(header, "request_type", None) or ""
         if rt == "sponsorship_form":
             message_text = (
@@ -7787,16 +7763,8 @@ class PurchaseRequestService:
         approver = self._resolve_approver_display_name(header)
         note = (getattr(header, "approval_comments", None) or "").strip()
         note_part = f" Note: {note}." if note else ""
-        view_url = self._build_request_view_url(str(header.id))
-        # Prefer the interactive submission portal link (minted on the fly) so the
-        # contact can act/resubmit; fall back to the read-only view link.
-        from app.services.portal_service import PortalService
-        view_url = PortalService(self.db).submission_link(
-            getattr(header, "contact_id", None),
-            getattr(header, "request_type", None) or "purchase_request",
-            str(header.id),
-            space_id=getattr(header, "space_id", None),
-        ) or view_url
+        # Interactive submission portal link, else the read-only view link.
+        view_url = self._purchase_request_portal_or_view_url(header, str(header.id))
         rt = getattr(header, "request_type", None) or ""
         if rt == "sponsorship_form":
             message_text = (
@@ -7899,16 +7867,8 @@ class PurchaseRequestService:
         rt = getattr(header, "request_type", None) or "purchase_request"
         type_word = "sponsorship form" if rt == "sponsorship_form" else "purchase request"
         status_label = self._CS_FINALIZE_STATUS_LABELS.get(new_status, new_status)
-        view_url = self._build_request_view_url(str(header.id))
-        # Prefer the interactive submission portal link (minted on the fly) so the
-        # contact can act/resubmit; fall back to the read-only view link.
-        from app.services.portal_service import PortalService
-        view_url = PortalService(self.db).submission_link(
-            getattr(header, "contact_id", None),
-            getattr(header, "request_type", None) or "purchase_request",
-            str(header.id),
-            space_id=getattr(header, "space_id", None),
-        ) or view_url
+        # Interactive submission portal link, else the read-only view link.
+        view_url = self._purchase_request_portal_or_view_url(header, str(header.id))
         note_clean = (note or "").strip()
         note_part = f" Note: {note_clean}." if note_clean else ""
         message_text = (

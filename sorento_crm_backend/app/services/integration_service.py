@@ -264,6 +264,9 @@ class RespondClient:
         self.base_url = (base_url or settings.respond_base_url or "https://api.respond.io").rstrip("/")
         self.api_key = api_key
         self.space_id = space_id or settings.respond_space_id
+        # Set by `for_contact_id`: the outbound switch then checks THIS contact,
+        # not whichever row the bare identifier happens to match first.
+        self.contact_id: Optional[str] = None
 
     @classmethod
     def for_workspace(cls, workspace) -> "RespondClient":
@@ -286,13 +289,40 @@ class RespondClient:
 
     @classmethod
     def for_contact_id(cls, db, contact_id: Optional[str]) -> "RespondClient":
-        """Client keyed to the workspace that owns ``contact_id`` (falls back to
-        the default workspace)."""
-        creds = _resolve_workspace_credentials(db, contact_id=contact_id)
-        if creds:
-            key, base, space = creds
-            return cls(api_key=key, base_url=base, space_id=space)
-        return cls()
+        """Client keyed to the workspace that owns ``contact_id``.
+
+        A contact with no workspace gets the default workspace. A contact WITH a
+        workspace whose row or key cannot be used fails closed (ValueError): the
+        default workspace may hold a different person under the same Respond.io id.
+        """
+        from app.models.access import RespondContact
+        from app.services.respond_workspace_service import RespondWorkspaceService
+
+        row = None
+        if contact_id:
+            row = (
+                db.query(RespondContact.workspace_id)
+                .filter(RespondContact.id == str(contact_id))
+                .first()
+            )
+        workspace_id = row[0] if row else None
+        if workspace_id:
+            workspace = RespondWorkspaceService(db).get(workspace_id)
+            key = _decrypt_workspace_key(workspace) if workspace is not None else None
+            if not key:
+                raise ValueError(
+                    "Respond.io workspace for this contact has no usable API key; "
+                    "message not sent."
+                )
+            client = cls(
+                api_key=key,
+                base_url=getattr(workspace, "base_url", None) or None,
+                space_id=getattr(workspace, "space_id", None),
+            )
+        else:
+            client = cls()
+        client.contact_id = str(contact_id) if contact_id else None
+        return client
 
     def _headers(self) -> dict:
         """Headers required by Respond.io; Accept and User-Agent help avoid CloudFront/WAF 403."""
@@ -344,7 +374,10 @@ class RespondClient:
         """
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
-        assert_outbound_enabled(identifier)
+        if self.contact_id:
+            assert_outbound_enabled(identifier, contact_id=self.contact_id)
+        else:
+            assert_outbound_enabled(identifier)
         api_id = self._contact_api_identifier(identifier)
         url = f"{self.base_url}/v2/contact/{api_id}/message"
         with self._http(timeout=timeout) as client:
