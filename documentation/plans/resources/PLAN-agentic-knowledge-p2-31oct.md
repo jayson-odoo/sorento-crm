@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-KNOWLEDGE P2 - the agent and knowledge on WhatsApp
 
-Status: CARD v2.1 (crew data folded in; owner re-scope 31 Oct ~23:30: agent + knowledge on WhatsApp, phased). Owner questions W-Q1..W-Q5 open,
+Status: CARD v2.1 ANSWERED 31 Oct, W1 plan in PLAN-agentic-knowledge-w1-01nov.md (crew data folded in; owner re-scope 31 Oct ~23:30: agent + knowledge on WhatsApp, phased). Owner questions W-Q1..W-Q5 open,
 no code yet. Track: L (new principal, external ingest surface, auth review).
 Parent plan: `PLAN-agentic-knowledge-31oct.md` P2. P1 merged in #2036 (994ed00680).
 Owner, 31 Oct ~23:30: "Actually I want to eventually expose the agentic and the knowledge capabilities to whatsapp
