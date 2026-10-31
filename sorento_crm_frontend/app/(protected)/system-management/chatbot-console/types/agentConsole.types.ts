@@ -76,13 +76,24 @@ export interface AgentActionResponse {
   steps: AgentActionStep[];
 }
 
+/** The model's reasoning for one round, as the provider summarised it (console only). */
+export interface AgentReasoning {
+  round: number;
+  text: string;
+  /** The forced final answer's thinking: shown after the round's tool calls. */
+  final?: boolean;
+}
+
 /** What a turn did, from its stored trace; the console shows it under the reply. */
 export interface AgentSteps {
   rounds: number;
   prompt_tokens: number;
   completion_tokens: number;
   cached_tokens: number;
-  tool_calls: { name: string; status: string; ms: number; detail?: string }[];
+  /** `round` is absent on a turn stored before reasoning was kept. */
+  tool_calls: { name: string; status: string; ms: number; detail?: string; round?: number }[];
+  /** Absent or empty when the provider returned no reasoning. */
+  reasoning?: AgentReasoning[];
 }
 
 export interface AgentConversationTurn {
