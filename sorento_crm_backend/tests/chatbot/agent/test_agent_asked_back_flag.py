@@ -60,6 +60,17 @@ def test_AC_R3b_1_a_forced_final_at_a_limit_has_no_key(db, contact):
     assert "asked_back" not in row.response
 
 
+def test_AC_R3b_1_a_flagged_forced_final_at_a_limit_drops_the_flag(db, contact):
+    _set_budgets(db, chatbot_agent_max_rounds=2)
+    provider = ScriptedProvider(
+        [asks(call(cid="c1")), asks(call(cid="c2")), answer_asking("I could only check part. Which one?")]
+    )
+    result = run(db, contact, provider)
+    row = _turn_row(db, result)
+    assert row.response["status"] == "limited"
+    assert "asked_back" not in row.response
+
+
 def test_AC_R3b_2_the_answer_schema_declares_asked_back():
     from app.services.chatbot.agent import tools
 
