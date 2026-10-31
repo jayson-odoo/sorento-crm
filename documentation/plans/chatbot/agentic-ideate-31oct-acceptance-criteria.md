@@ -154,7 +154,8 @@ Built as Q4 (a), any bot question. Pending the owner's final word.
   the linked user does not own is refused at the proposal ("You can only edit your own ideas."), even when that user holds
   `ideation.ideas.manage`. The summary names the fields changing.
 - **AC-R2-11 [BE]** With an operator acting for someone else: an update needs the operator to hold `ideation.ideas.manage`, else
-  it is refused and nothing is sent to ss; with it, the proposal works and the PATCH runs as the linked user. A create needs
+  it is refused, no PATCH reaches ss and no ss session is opened as the operator (the linked user's ownership read comes
+  first, as in `read_before_all`, and is harmless); with it, the proposal works and the PATCH runs as the linked user. A create needs
   `ideation.board.view` on both.
 - **AC-R2-12 [BE]** On confirm of an update, one PATCH reaches ss `/embed/ideas/{id}` carrying only the changed fields in ss's
   names (`desiredOutcome`, `useCases`, `currentWorkaround`). If the idea changed since the proposal, the step is refused and
