@@ -22,6 +22,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import ChatbotConsole from './ChatbotConsole';
 import { routeReasonWords } from './RoutePill';
+import { AgentRefusedError, ActionRefusedError } from '../services/agentConsoleService';
 
 const postConsoleTurn = vi.fn();
 const getConsolePromptVersions = vi.fn();
@@ -800,4 +801,305 @@ describe('AC-7: the toggle with chips, voice and attachments', () => {
     await waitFor(() => expect(screen.queryByTestId('chatbot-console-staged')).not.toBeInTheDocument());
     expect(isOn(agentToggle())).toBe(false);
   });
+});
+
+// ------------------------------------------------------------------ shared helpers for the review round
+
+const AGENT_PENDING = { id: 'act-1', turn_id: 'a1', lines: ['Mark it done'], expires_at: '2099-01-01T00:00:00Z' };
+const countText = (t: string) => screen.queryAllByText(t).length;
+const flush = () => new Promise((r) => setTimeout(r, 40));
+
+/** A thread with one waiting proposal; Cancel resolves, which makes the console read the thread again. */
+async function refreshViaCancel(firstRead: unknown, secondRead: unknown) {
+  getConsoleThread.mockResolvedValueOnce(firstRead).mockResolvedValue(secondRead);
+  cancelAgentAction.mockResolvedValue({ action_id: 'act-1', status: 'cancelled', reply_text: 'Cancelled. Nothing was changed.', steps: [] });
+  renderConsole();
+  fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+  await screen.findByText('Cancelled. Nothing was changed.');
+  await waitFor(() => expect(getConsoleThread.mock.calls.length).toBeGreaterThan(1));
+  await flush();
+}
+
+// ------------------------------------------------------------------ AC-16b: a turn appears once
+
+describe('AC-16b: a turn appears once, whichever of its read and its reply lands first', () => {
+  it('a read that lands after the commit but before the POST answer does not double the turn', async () => {
+    let landRead: (v: unknown) => void = () => {};
+    let answer: (v: unknown) => void = () => {};
+    getConsoleThread.mockReturnValueOnce(new Promise((r) => (landRead = r))).mockReturnValue(new Promise(() => {}));
+    postConsoleTurn.mockReturnValue(new Promise((r) => (answer = r)));
+    renderConsole();
+    send('hello there');
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalled());
+
+    landRead(thread([chatTurn('c-new', 'hello there', 'Reply once.', '2026-10-31T09:00:00Z')]));
+    await flush();
+    answer(turnResponse('Reply once.', { turn_id: 'c-new' }));
+
+    await screen.findByText('Reply once.');
+    await flush();
+    expect(countText('Reply once.')).toBe(1);
+    expect(countText('hello there')).toBe(1);
+  });
+
+  it('a stored turn with an empty reply is added once, however often the thread is read', async () => {
+    const first = thread(
+      [chatTurn('c1', 'still running question', '', '2026-10-31T09:00:00Z'), agentTurn('a1', 'mark it', 'I will mark it.', '2026-10-31T09:01:00Z')],
+      AGENT_PENDING,
+    );
+    await refreshViaCancel(first, thread(first.turns));
+    expect(countText('still running question')).toBe(1);
+  });
+
+  it('a slow media turn, whose status bubble has no turn id, is not doubled by a later read', async () => {
+    let landRead: (v: unknown) => void = () => {};
+    getConsoleThread.mockReturnValueOnce(new Promise((r) => (landRead = r))).mockReturnValue(new Promise(() => {}));
+    postConsoleTurn
+      .mockResolvedValueOnce({
+        turn_id: null, branch_kind: null, reply_text: '', quick_replies: [], send_messages: [], session_vars: null,
+        trace_summary: {}, media_status: 'pending', media_id: 'job-1', media_text: null, media_error: null,
+      })
+      .mockResolvedValueOnce(turnResponse('Media reply.', { turn_id: 'c-media' }));
+    getConsoleMediaStatus.mockResolvedValue({ status: 'done', text: 'the heard words', error: null });
+    renderConsole();
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [new File(['x'], 'note.ogg', { type: 'audio/ogg' })] },
+    });
+    await screen.findByTestId('chatbot-console-staged');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await screen.findByText('Media reply.', undefined, { timeout: 8000 });
+
+    landRead(thread([chatTurn('c-media', 'the heard words', 'Media reply.', '2026-10-31T09:00:00Z')]));
+    await flush();
+
+    expect(countText('Media reply.')).toBe(1);
+    expect(countText('the heard words')).toBeLessThanOrEqual(1);
+  }, 15000);
+
+  it("another tab's turn on a later read does not jump above the older turns", async () => {
+    const first = thread([chatTurn('c1', 'older question', 'Older answer.', '2026-10-31T09:00:00Z'), agentTurn('a1', 'mark it', 'I will mark it.', '2026-10-31T09:01:00Z')], AGENT_PENDING);
+    const later = thread([
+      chatTurn('c1', 'older question', 'Older answer.', '2026-10-31T09:00:00Z'),
+      agentTurn('a1', 'mark it', 'I will mark it.', '2026-10-31T09:01:00Z'),
+      chatTurn('c-tab2', 'asked in another tab', 'Other tab answer.', '2026-10-31T09:02:00Z'),
+    ]);
+    await refreshViaCancel(first, later);
+    const text = screen.getByTestId('chatbot-console-thread').textContent ?? '';
+    const other = text.indexOf('Other tab answer.');
+    expect(other === -1 || other > text.indexOf('Older answer.')).toBe(true);
+    expect(other === -1 || other > text.indexOf('I will mark it.')).toBe(true);
+  });
+});
+
+// ------------------------------------------------------------------ AC-16: the late session reaches A's store
+
+describe('AC-16: a late reply patch belongs to the contact it was sent for', () => {
+  it('A session patch that lands after switching to B is what A sends when we return to A', async () => {
+    const SESSION_A = { focus: { customers: [{ canonical_code: 'ZZTLATEA' }] }, open_question: null, ideation: null, access_levels: [], contains_flyer: false };
+    getConsoleThread.mockResolvedValue(thread([]));
+    getRespondContactsOutbound.mockResolvedValue({
+      data: [
+        { respond_io_id: 'ZZT-contact-1', name: 'Alpha Contact', phone_number: null },
+        { respond_io_id: 'ZZT-contact-2', name: 'Second Contact', phone_number: null },
+      ],
+      pagination: { total: 2, page: 1, limit: 20 }, empty: false,
+    });
+    let finishA: (v: unknown) => void = () => {};
+    postConsoleTurn.mockReturnValueOnce(new Promise((r) => (finishA = r)));
+    renderConsole();
+    send('question for A');
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
+    const trigger = () => document.querySelectorAll('[data-slot="searchable-select-trigger"]')[0];
+
+    fireEvent.click(trigger());
+    fireEvent.click(await screen.findByText('Second Contact'));
+    finishA(turnResponse('A late reply.', { session_vars: SESSION_A }));
+    await flush();
+    fireEvent.click(trigger());
+    fireEvent.click(await screen.findByText('Alpha Contact'));
+    await waitFor(() => expect(getConsoleThread.mock.calls.some((c) => JSON.stringify(c).includes('ZZT-contact-1'))).toBe(true));
+    postConsoleTurn.mockResolvedValueOnce(turnResponse('Back on A.'));
+
+    send('and again for A');
+
+    await screen.findByText('Back on A.');
+    const body = postConsoleTurn.mock.calls[1][0];
+    expect(body.contact_respond_id).toBe('ZZT-contact-1');
+    expect(body.session_vars).toEqual(SESSION_A);
+  });
+});
+
+// ------------------------------------------------------------------ AC-13: the button
+
+describe('AC-13: New conversation is guarded', () => {
+  const newButton = () => screen.getByRole('button', { name: 'New conversation' });
+
+  it('is disabled while a turn is running', async () => {
+    postConsoleTurn.mockReturnValue(new Promise(() => {}));
+    renderConsole();
+    send('slow one');
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalled());
+    expect(newButton()).toBeDisabled();
+  });
+
+  it('is disabled while any step is waiting out its grace window', async () => {
+    getConsoleThread.mockResolvedValue(
+      thread([
+        agentTurn('a1', 'mark it', 'Marked.', '2026-10-31T09:00:00Z', {
+          actions: [{ id: 'act-9', status: 'executed', decided_at: null, decided_by_name: null,
+            steps: [{ summary: 'Mark it', status: 'done', error: null, changes: [], waiting: { commit_at: new Date(Date.now() + 600_000).toISOString().replace('Z', ''), window_seconds: 600 } }] }],
+        }),
+      ]),
+    );
+    renderConsole();
+    await screen.findByTestId('agent-step-waiting');
+    expect(newButton()).toBeDisabled();
+  });
+
+  it('a busy 409 shows its words, keeps the thread, and is not swallowed', async () => {
+    getConsoleThread.mockResolvedValue(thread([chatTurn('c1', 'a question', 'Kept answer.', '2026-10-31T09:00:00Z')]));
+    newAgentConversation.mockRejectedValue(new AgentRefusedError('agent_busy'));
+    renderConsole();
+    await screen.findByText('Kept answer.');
+
+    fireEvent.click(newButton());
+
+    const words = 'The agent is still working on another message for this contact.';
+    await waitFor(() => {
+      const inToast = toastError.mock.calls.some((c) => String(c[0]).includes(words));
+      expect(inToast || screen.queryByText(words) !== null).toBe(true);
+    });
+    expect(screen.getByText('Kept answer.')).toBeInTheDocument();
+  });
+});
+
+// ------------------------------------------------------------------ a live proposal
+
+describe('a live proposal follows the read once the read knows its turn', () => {
+  it('a read that holds the proposing turn and no pending action drops the card', async () => {
+    getConsoleThread.mockResolvedValueOnce(thread([]));
+    postConsoleTurn.mockResolvedValue(
+      agentResponse('I will mark it done.', {
+        turn_id: 'a-live',
+        agent: { turn_id: 'a-live', status: 'answered', pending_action: { ...AGENT_PENDING, turn_id: 'a-live' }, steps: AGENT_STEPS, actions: [] },
+      }),
+    );
+    getConsoleThread.mockResolvedValue(thread([agentTurn('a-live', 'mark it done', 'I will mark it done.', '2026-10-31T09:00:00Z')], null));
+    renderConsole();
+    await waitFor(() => expect(getConsoleThread).toHaveBeenCalledTimes(1));
+    await flush();
+
+    send('mark it done');
+
+    await screen.findByText('I will mark it done.');
+    await waitFor(() => expect(getConsoleThread.mock.calls.length).toBeGreaterThan(1));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Confirm change' })).not.toBeInTheDocument());
+  });
+
+  it('a refused Confirm clears the card, with the reason in words', async () => {
+    getConsoleThread.mockResolvedValueOnce(thread([agentTurn('a1', 'mark it', 'I will mark it.', '2026-10-31T09:00:00Z')], AGENT_PENDING));
+    getConsoleThread.mockReturnValue(new Promise(() => {}));
+    confirmAgentAction.mockRejectedValue(new ActionRefusedError('expired'));
+    renderConsole();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm change' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('This proposal expired. Ask again to get a fresh one.');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Confirm change' })).not.toBeInTheDocument());
+  });
+});
+
+// ------------------------------------------------------------------ AC-7: the toggle under pressure
+
+describe('AC-7: the toggle with a running turn and the mic', () => {
+  it('a chip clicked during a running turn neither sends nor eats the toggle', async () => {
+    postConsoleTurn
+      .mockResolvedValueOnce(turnResponse('Which product?', { quick_replies: ['Pump A'] }))
+      .mockReturnValueOnce(new Promise(() => {}));
+    renderConsole();
+    send('price?');
+    await screen.findByText('Which product?');
+    send('and another thing');
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(2));
+    fireEvent.click(agentToggle());
+    expect(isOn(agentToggle())).toBe(true);
+
+    fireEvent.click(within(bubbleOf('Which product?')).getByRole('button', { name: 'Pump A' }));
+    await flush();
+
+    expect(postConsoleTurn).toHaveBeenCalledTimes(2);
+    expect(isOn(agentToggle())).toBe(true);
+  });
+
+  it('a recorded voice send, by the mic, goes to the bot and turns the toggle off', async () => {
+    class FakeRecorder {
+      static isTypeSupported = () => true;
+      ondataavailable: ((e: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      mimeType = 'audio/mp4';
+      start() {}
+      stop() {
+        this.ondataavailable?.({ data: new Blob(['audio-bytes'], { type: this.mimeType }) });
+        this.onstop?.();
+      }
+    }
+    Object.defineProperty(globalThis, 'MediaRecorder', { configurable: true, writable: true, value: FakeRecorder });
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      configurable: true, writable: true,
+      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: vi.fn() }] }) as unknown as MediaStream) },
+    });
+    postConsoleTurn.mockResolvedValueOnce({ ...turnResponse('Heard it.'), media_status: 'done', media_id: 'm3', media_text: 'hello', media_error: null });
+    renderConsole();
+    fireEvent.click(agentToggle());
+    const mic = screen.getByRole('button', { name: /record voice message/i });
+    fireEvent.pointerDown(mic, { pointerId: 1, button: 0 });
+    fireEvent.pointerUp(mic, { pointerId: 1, button: 0 });
+    await screen.findByTestId('chatbot-console-recording');
+    fireEvent.click(screen.getByRole('button', { name: 'Send voice message' }));
+
+    await screen.findByText('Heard it.');
+    expect(postConsoleTurn.mock.calls[0][0].media).toMatchObject({ kind: 'audio' });
+    expect(postConsoleTurn.mock.calls[0][0].force_agent).toBeFalsy();
+    await waitFor(() => expect(isOn(agentToggle())).toBe(false));
+    Reflect.deleteProperty(globalThis as Record<string, unknown>, 'MediaRecorder');
+  });
+});
+
+// ------------------------------------------------------------------ media follow-up generation guard
+
+describe('a slow media follow-up for A never lands in B', () => {
+  it('drops A follow-up reply after switching contact', async () => {
+    getConsoleThread.mockResolvedValue(thread([]));
+    getRespondContactsOutbound.mockResolvedValue({
+      data: [{ respond_io_id: 'ZZT-contact-2', name: 'Second Contact', phone_number: null }],
+      pagination: { total: 1, page: 1, limit: 20 }, empty: false,
+    });
+    let finishFollowUp: (v: unknown) => void = () => {};
+    postConsoleTurn
+      .mockResolvedValueOnce({
+        turn_id: null, branch_kind: null, reply_text: '', quick_replies: [], send_messages: [], session_vars: null,
+        trace_summary: {}, media_status: 'pending', media_id: 'job-9', media_text: null, media_error: null,
+      })
+      .mockReturnValueOnce(new Promise((r) => (finishFollowUp = r)));
+    getConsoleMediaStatus.mockResolvedValue({ status: 'done', text: 'words for A', error: null });
+    renderConsole();
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+      target: { files: [new File(['x'], 'note.ogg', { type: 'audio/ogg' })] },
+    });
+    await screen.findByTestId('chatbot-console-staged');
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(2), { timeout: 8000 });
+
+    fireEvent.click(document.querySelectorAll('[data-slot="searchable-select-trigger"]')[0]);
+    fireEvent.click(await screen.findByText('Second Contact'));
+    finishFollowUp(turnResponse('Follow-up for A.', { session_vars: { focus: { customers: [{ canonical_code: 'ZZTFOLLOWA' }] } } }));
+    await flush();
+
+    expect(screen.queryByText('Follow-up for A.')).not.toBeInTheDocument();
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i) as string;
+      if (key.includes('ZZT-contact-2')) expect(window.localStorage.getItem(key)).not.toContain('ZZTFOLLOWA');
+    }
+  }, 15000);
 });
