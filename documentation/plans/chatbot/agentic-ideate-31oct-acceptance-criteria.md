@@ -125,7 +125,7 @@ Q4 is (a), owner 31 Oct: any bot question.
 - `crm_idea_create` args: `problem` (required), `title`, `desired_outcome`, `use_cases` (list of text), `current_workaround`.
 - `crm_idea_update` args: `idea_id` (required), and the same five fields, all optional but at least one required.
 - `crm_ideas_list` args: optional `search`.
-- Labels in `TOOL_LABELS`: "submit a new idea or feature request", "change one of your ideas", "your ideas".
+- Labels in `TOOL_LABELS`: "record a suggestion or wish for what the system should have or do, an idea or a feature request", "change one of your ideas", "your ideas".
 
 ### ACs
 
@@ -161,7 +161,7 @@ Q4 is (a), owner 31 Oct: any bot question.
   no PATCH is sent. The change lines read before and after in words.
 - **AC-R2-13 [E2E]** Through `run_agent_turn` with a scripted provider and `tests/_ideation_ss_fake.py`: propose, confirm, list
   (the new test idea is found though ss's list omits it), propose the update, confirm. The fake sees one create and one PATCH.
-- **AC-R2-14 [T]** `agent_tool_labels()` snapshot is the 15 labels: the 6 writes, "submit a new idea or feature request",
+- **AC-R2-14 [T]** `agent_tool_labels()` snapshot is the 15 labels: the 6 writes, "record a suggestion or wish for what the system should have or do, an idea or a feature request",
   "change one of your ideas", the 6 reads, then "your ideas".
 - **AC-R2-15 [BE]** The bot's capture is unchanged: `tests/test_ideation_capture_turn.py` and
   `tests/test_ideation_capture_golden_script.py` stay green, with the payload builder now shared.

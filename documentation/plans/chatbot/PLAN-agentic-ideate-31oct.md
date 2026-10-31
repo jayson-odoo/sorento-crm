@@ -1,7 +1,7 @@
 # PLAN: ideas through the agent, and routing that follows the agent's tools (AGENTIC-IDEATE)
 
-**Status:** code complete on PR #2038. CI green at 9e1b4c42e9; console pass done; two model-wording fixes from it pushed after that. Reviewer on
-that delta, a live recheck, crew's hidden gate and the owner's hand test are still to come. Track: size M, lead pattern.
+**Status:** code complete on PR #2038. Owner's first hand test led to a label rewording, the last change here. Reviewer on that delta, crew's hidden gate on the new label
+and the owner's retest are still to come. Track: size M, lead pattern.
 UAC: `agentic-ideate-31oct-acceptance-criteria.md`. No screen changes, so Phase 1 (frontend mock) does not apply.
 
 Slices: **S1** = R1 routing. **S2** = R3 multi-turn. **S3** = R2 idea tools. They land as commits on this one lane branch.
@@ -282,6 +282,16 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 - An idea from a contact with a different chat history scored 0.14 and went to the bot, against 0.80 and 0.82 for a similar message on another. The
   history is the likely cause, unconfirmed. The eval's idea rows mostly carry no history, so real scores may vary more than the eval shows.
 - The two console-tab Reset controls differ: Reset clears the Bot tab only, and New conversation clears the agent. The hand-test script says so.
+
+### Owner's hand test, first round (31 Oct)
+
+Message: "I think we need to have sorento agentic ai". Two causes, neither from this PR. Router: Jev scored it 0.40 on a contact with the Agent switch on, under the
+floor, because the idea label did not cover a stated need. Bot lane: the extractor has no usable key on the copy (inferred, see the PR note), and an empty extraction
+reads as "no idea". Crew split it (ruling, 31 Oct): this PR rewords the label; lane AI-KEY-PER-PROVIDER owns the key resolution and the honest failed-extraction reply. Until
+that ships, the bot path (Agent switch off, or an under-floor score) can still show the dead end.
+
+Reworded label, one run each: real first ideas 7/7, paraphrased ideas 13/13, real wrong routes 2 of 5 sent to the agent (one now scores 0.84, it was 0.72), held-out missed-agent
+12/45 and wasted-agent 5/127, so no better than the earlier label and still worse than v2's 10/45 on missed-agent. On the owner's message: 0.88 and 0.90, against 0.44 to 0.50.
 
 ### Accepted, not changed
 
