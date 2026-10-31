@@ -35,6 +35,7 @@ from app.services.chatbot.agent.tools import (
     GUARD_PARAMS,
     HANDOFF,
     HANDOFF_SCHEMA,
+    KNOWLEDGE,
     REGISTRY,
     RESOLVE,
     TOOL_LABELS,
@@ -734,6 +735,30 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
 
+def handoff_armed(ledger: dict[str, dict]) -> bool:
+    """Did `crm_knowledge_handoff` run ok this turn and say the offer can be made?"""
+    return any(
+        e.get("name") == HANDOFF and e.get("status") == "ok" and isinstance(e.get("data"), dict) and e["data"].get("armed")
+        for e in ledger.values()
+    )
+
+
+def _contact_reply_backstop(db, ctx, reply: str) -> str:
+    """A barred contact is never offered an escalation: any offer sentence in the reply becomes the
+    salesman line (`escalation_control.strip_text`). Fails closed to the stripped form on a profile error."""
+    from app.services.chatbot import escalation_control, turn_runtime
+
+    try:
+        profile = turn_runtime.load_profile(db, ctx.contact_respond_id, space_id=ctx.space_id)[0]
+        barred = profile.escalation_allowed is False
+    except Exception:  # noqa: BLE001
+        logger.warning("agent: profile load failed for the reply backstop", exc_info=True)
+        profile, barred = None, True
+    if not barred:
+        return reply
+    return escalation_control.strip_text(reply, None, profile)[0]
+
+
 def _unique_call_id(raw: Any, used: set[str]) -> str:
     """A call id no earlier call of this turn has. Gemini names a call `gemini_<index>_<tool>`, so the
     same tool in two rounds repeats the id; the ledger, the citations and the tool replies all key on it."""
@@ -1036,6 +1061,8 @@ def _run(
         schemas = tool_schemas(offered, catalog)
         schemas += [r.schema for r in reads]
         schemas += [w.schema for w in write_tools]
+        if ctx.principal == "contact" and any(t.name == KNOWLEDGE for t in offered):
+            schemas.append(copy.deepcopy(HANDOFF_SCHEMA))
         if waiting is not None and actions.operator_may_decide(db, ctx, waiting):
             schemas += decision_schemas(str(waiting.id))
         schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]
@@ -1297,6 +1324,17 @@ def _run(
         )
         if say and say not in reply:
             reply = f"{reply}\n\n{say}".strip()
+        if ctx.principal == "contact":
+            reply = _contact_reply_backstop(db, ctx, reply)
+        if say and status == "answered" and not is_test and handoff_armed(ledger):
+            # The write lives here, after the answer: never in a test turn and never after a failure.
+            try:
+                from app.services import knowledge_service
+
+                knowledge_service.arm_knowledge_miss_offer(db, ctx.contact_pk)
+            except Exception:  # noqa: BLE001 - the offer is lost, the turn still closes
+                logger.warning("agent: arming the knowledge-miss offer failed", exc_info=True)
+                db.rollback()
     pending = None
     if status != "failed" and steps:
         # After verification: the block is built by code from the stored steps, so its figures are not flagged.

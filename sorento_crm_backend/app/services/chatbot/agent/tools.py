@@ -918,8 +918,9 @@ def _search_in_scope(db: Any, ctx: Any, query: str) -> dict:
 
 
 def _knowledge_handoff(db: Any, ctx: Any, args: Any) -> ToolResult:
-    """`crm_knowledge_handoff`: arm the marketing product team offer for this contact. It only
-    writes the open question; the ticket is made on the contact's own "yes" in a later turn."""
+    """`crm_knowledge_handoff`: say whether the marketing product team offer can be made to this
+    contact, and the sentence to end the reply with. It writes nothing: the loop arms the offer at the
+    end of a live turn that answered, and the ticket is made on the contact's own "yes" later."""
     from app.services import knowledge_service
     from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
 
@@ -931,7 +932,7 @@ def _knowledge_handoff(db: Any, ctx: Any, args: Any) -> ToolResult:
     if unknown:
         return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
     try:
-        armed = bool(knowledge_service.arm_knowledge_miss_offer(db, str(ctx.contact_pk)))
+        armed = bool(knowledge_service.may_offer_knowledge_miss(db, str(ctx.contact_pk)))
     except Exception:  # noqa: BLE001 - a tool failure is a result the model can work around
         logger.warning("agent: %s failed", HANDOFF, exc_info=True)
         return ToolResult("error", message=FIXED_ERROR)

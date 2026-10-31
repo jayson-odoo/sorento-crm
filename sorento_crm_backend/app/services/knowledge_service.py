@@ -580,37 +580,12 @@ def _enqueue_or_fail(db: Session, attachment, check_pending: bool = True) -> boo
 # ---------------------------------------------------------------- asking
 
 
-def search(
-    db: Session,
-    *,
-    user_id: str,
-    query: str,
-    top_k: int = 5,
-    embed: Optional[Callable[[list[str]], list[list[float]]]] = None,
-) -> dict:
-    """Passages the caller may read, best first. Staff see every readable audience in P1.
-
-    `{"status": "ok" | "denied" | "error", "passages": [...], "handoff_teams": [...]}`."""
-    from app.models.access import Team
+def _best_passages(db: Session, vector: list, audience_filter: Any, top_k: int) -> list[dict]:
+    """The best `top_k` current passages for `vector`, under the session's company scope, the readable
+    audience clause `audience_filter` and the similarity floor. Shared by `search` and `search_for_contact`."""
     from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
     from app.models.resources import Attachment, AttachmentType
     from app.services.embedding_service import _embedding_company_filter
-    from app.services.user_service import UserPermissionService
-
-    try:
-        allowed = bool(UserPermissionService(db).check_user_has_permission(user_id, READ_PERMISSION))
-    except Exception:  # noqa: BLE001 - a failed check is a refusal
-        logger.warning("knowledge: permission check failed", exc_info=True)
-        allowed = False
-    if not allowed:
-        return {"status": "denied", "passages": [], "handoff_teams": []}
-
-    top_k = max(1, min(int(top_k or 5), MAX_TOP_K))
-    try:
-        vector = (embed or _default_embed(db, QUERY_EMBED_TIMEOUT_SECONDS))([query])[0]
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("knowledge: query embedding failed: %s", _readable_error(exc))
-        return {"status": "error", "passages": [], "handoff_teams": []}
 
     distance = EmbeddingChunk.embedding.cosine_distance(vector)
     similarity = (1 - distance).label("similarity")
@@ -620,7 +595,7 @@ def search(
         EmbeddingChunk.is_current.is_(True),
         EmbeddingDocument.is_active.is_(True),
         Attachment.is_deleted.is_(False),
-        AttachmentType.ai_audience.in_(READABLE_AUDIENCES),
+        audience_filter,
         (1 - distance) >= KNOWLEDGE_SIMILARITY_FLOOR,
     ]
     company_filter = _embedding_company_filter(db)
@@ -648,6 +623,40 @@ def search(
                 "similarity": round(float(sim), 4),
             }
         )
+    return passages
+
+
+def search(
+    db: Session,
+    *,
+    user_id: str,
+    query: str,
+    top_k: int = 5,
+    embed: Optional[Callable[[list[str]], list[list[float]]]] = None,
+) -> dict:
+    """Passages the caller may read, best first. Staff see every readable audience in P1.
+
+    `{"status": "ok" | "denied" | "error", "passages": [...], "handoff_teams": [...]}`."""
+    from app.models.access import Team
+    from app.models.resources import AttachmentType
+    from app.services.user_service import UserPermissionService
+
+    try:
+        allowed = bool(UserPermissionService(db).check_user_has_permission(user_id, READ_PERMISSION))
+    except Exception:  # noqa: BLE001 - a failed check is a refusal
+        logger.warning("knowledge: permission check failed", exc_info=True)
+        allowed = False
+    if not allowed:
+        return {"status": "denied", "passages": [], "handoff_teams": []}
+
+    top_k = max(1, min(int(top_k or 5), MAX_TOP_K))
+    try:
+        vector = (embed or _default_embed(db, QUERY_EMBED_TIMEOUT_SECONDS))([query])[0]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("knowledge: query embedding failed: %s", _readable_error(exc))
+        return {"status": "error", "passages": [], "handoff_teams": []}
+
+    passages = _best_passages(db, vector, AttachmentType.ai_audience.in_(READABLE_AUDIENCES), top_k)
     with company_scope(db, None):  # types are not company scoped, so neither is their hand-off team
         teams = (
             db.query(Team.name)
@@ -678,9 +687,7 @@ def search_for_contact(
     from sqlalchemy import and_, or_
     from sqlalchemy.dialects.postgresql import ARRAY
 
-    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
     from app.models.resources import Attachment, AttachmentType
-    from app.services.embedding_service import _embedding_company_filter
 
     codes = sorted({str(c) for c in (access_codes or ()) if c})
     if not codes:
@@ -702,42 +709,7 @@ def search_for_contact(
         logger.warning("knowledge: query embedding failed: %s", _readable_error(exc))
         return {"status": "error", "passages": []}
 
-    distance = EmbeddingChunk.embedding.cosine_distance(vector)
-    similarity = (1 - distance).label("similarity")
-    filters = [
-        EmbeddingChunk.source_type == KNOWLEDGE_SOURCE,
-        EmbeddingChunk.model_name == KNOWLEDGE_MODEL,
-        EmbeddingChunk.is_current.is_(True),
-        EmbeddingDocument.is_active.is_(True),
-        Attachment.is_deleted.is_(False),
-        or_(*audience),
-        (1 - distance) >= KNOWLEDGE_SIMILARITY_FLOOR,
-    ]
-    company_filter = _embedding_company_filter(db)
-    if company_filter is not None:
-        filters.append(company_filter)
-    rows = (
-        db.query(EmbeddingChunk, Attachment.original_filename, similarity)
-        .join(EmbeddingDocument, EmbeddingDocument.id == EmbeddingChunk.document_id)
-        .join(Attachment, cast(Attachment.id, String) == EmbeddingChunk.source_id)
-        .join(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
-        .filter(*filters)
-        .order_by(distance)
-        .limit(top_k)
-        .all()
-    )
-    passages = []
-    for chunk, filename, sim in rows:
-        meta = chunk.metadata_json or {}
-        passages.append(
-            {
-                "document": os.path.splitext(filename or "")[0] or (filename or ""),
-                "page": meta.get("page"),
-                "heading": meta.get("heading"),
-                "text": chunk.chunk_text,
-                "similarity": round(float(sim), 4),
-            }
-        )
+    passages = _best_passages(db, vector, or_(*audience), top_k)
     return {"status": "ok", "passages": passages}
 
 
@@ -751,25 +723,40 @@ _MISS_TEAM = "marketing_product"
 _MISS_AGENT = "general_enquiries"
 
 
+def _offerable_contact(db: Session, contact_pk: str):
+    """The contact row when it may be offered the hand-off, else None: not barred (no row sharing the
+    respond.io id is barred, as `load_profile`'s ambiguity rule) and not a staff-tier profile."""
+    from app.models.access import RespondContact
+
+    contact = db.query(RespondContact).filter(RespondContact.id == contact_pk).first()
+    if contact is None:
+        return None
+    flags = db.query(RespondContact.escalation_allowed).filter(
+        RespondContact.respond_io_id == contact.respond_io_id
+    ).all()
+    if contact.escalation_allowed is False or any(f[0] is False for f in flags):
+        return None
+    profile = contact.chatbot_profile if isinstance(contact.chatbot_profile, dict) else {}
+    if profile.get("tier") == "office":
+        return None
+    return contact
+
+
+def may_offer_knowledge_miss(db: Session, contact_pk: str) -> bool:
+    """Would `arm_knowledge_miss_offer` arm the offer now? Reads only."""
+    with company_scope(db, None):
+        return _offerable_contact(db, contact_pk) is not None
+
+
 def arm_knowledge_miss_offer(db: Session, contact_pk: str) -> bool:
     """Arm the bot's single-team offer as the contact's open question, so the contact's own next
     "yes" reaches today's escalation lane (no ticket is made here). False, writing nothing, for a
     barred contact, a staff-tier profile, or a missing contact."""
-    from app.models.access import RespondContact
     from app.services.chatbot.turn import pending as turn_pending
 
     with company_scope(db, None):
-        contact = db.query(RespondContact).filter(RespondContact.id == contact_pk).first()
+        contact = _offerable_contact(db, contact_pk)
         if contact is None:
-            return False
-        # Barred if ANY row sharing the respond.io id is barred (as `load_profile`'s ambiguity rule).
-        flags = db.query(RespondContact.escalation_allowed).filter(
-            RespondContact.respond_io_id == contact.respond_io_id
-        ).all()
-        if contact.escalation_allowed is False or any(f[0] is False for f in flags):
-            return False
-        profile = contact.chatbot_profile if isinstance(contact.chatbot_profile, dict) else {}
-        if profile.get("tier") == "office":
             return False
         option = {
             "position": 1, "label": "Marketing product team", "entity_type": "team",

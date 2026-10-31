@@ -158,6 +158,8 @@ def test_ac_w23_the_handoff_tool_arms_the_offer_for_a_contact_principal(db):
     out = _dispatch(db, _contact_ctx(contact), TOOL, {})
 
     assert out.status == "ok", out.message
+    assert out.data["armed"] is True  # the loop writes the open question at the end of a live turn (FR1 F7)
+    assert _arm(db, contact["pk"]) is True
     q = _session_vars(db, contact["pk"])["open_question"]
     assert q["kind"] == "team_pick" and q["payload"]["source"] == SOURCE
 
@@ -169,8 +171,6 @@ def test_ac_w23_the_handoff_tool_is_denied_and_never_offered_to_a_user_principal
     contact = _contact(db)
     # Positive control: the same call, same contact, as a contact principal works.
     assert _dispatch(db, _contact_ctx(contact), TOOL, {}).status == "ok"
-    db.execute(text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE id = :id"),
-               {"sv": json.dumps(OTHER_KEYS), "id": contact["pk"]})
     slugs = ("resource.attachments.view", "inventory.stock.view", "order_management.orders.view",
              "master_data.products.view", "procurement.packing_lists.view")
     user_id = seed_user(db, contact_pk=contact["pk"], slugs=slugs)
@@ -309,4 +309,130 @@ def test_ac_w27_an_allowed_contact_is_armed_and_the_say_carries_the_marketing_of
     assert out.status == "ok", out.message
     assert out.data["armed"] is True
     assert out.data["say"] == f"{ks.KNOWLEDGE_MISS_LINE} Would you like me to pass this to our marketing product team?"
-    assert _session_vars(db, contact["pk"])["open_question"]["payload"]["source"] == SOURCE
+
+
+# ---------------------------------------------------------------- FIX ROUND 1: the loop owns the write (F7), F11
+
+
+def _asks(*calls):
+    from app.services.llm_provider import ChatResult
+
+    return ChatResult(content="", prompt_tokens=10, completion_tokens=1, total_tokens=11, tool_calls=list(calls))
+
+
+def _says(text):
+    return _asks({"id": "ans", "name": "answer", "arguments": {"text": text, "figures": [], "not_found": [], "not_checked": []}})
+
+
+class _Provider:
+    def __init__(self, *results):
+        self.results, self.calls = list(results), []
+
+    def chat(self, messages, *, tools=None, **kw):
+        self.calls.append({"messages": [dict(m) for m in messages], "tools": [t["function"]["name"] for t in tools or []]})
+        return self.results[min(len(self.calls), len(self.results)) - 1]
+
+
+def _turn(db, contact, *, is_test, answer="I could not find that.", escalation_allowed=True):
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    provider = _Provider(_asks({"id": "h1", "name": TOOL, "arguments": {}}), _says(answer))
+    result = run_agent_turn(
+        db, contact_respond_id=contact["respond_id"], text="does it come with a warranty?", provider=provider,
+        mcp_call=forbidden_call, catalog={}, is_test=is_test,
+    )
+    return result, provider
+
+
+def test_fr1_f7_a_live_turn_ends_with_the_say_text_and_arms_the_offer(db):
+    from app.services import knowledge_service as ks
+
+    contact = _contact(db)
+
+    result, provider = _turn(db, contact, is_test=False)
+
+    assert TOOL in provider.calls[0]["tools"]
+    assert result.status == "answered"
+    assert result.reply_text.endswith(f"{ks.KNOWLEDGE_MISS_LINE} {ks.KNOWLEDGE_MISS_OFFER}")
+    q = _session_vars(db, contact["pk"])["open_question"]
+    assert q["payload"]["source"] == SOURCE
+
+
+def test_fr1_f7_a_test_turn_says_it_but_never_arms_the_real_contact(db):
+    contact = _contact(db)
+
+    result, _ = _turn(db, contact, is_test=True)
+
+    assert result.status == "answered"
+    assert (_session_vars(db, contact["pk"]) or {}).get("open_question") is None
+
+
+def test_fr1_f7_a_failed_turn_arms_nothing(db):
+    from app.services.llm_provider import ChatResult
+
+    class Boom(_Provider):
+        def chat(self, messages, *, tools=None, **kw):
+            self.calls.append({"messages": [], "tools": [t["function"]["name"] for t in tools or []]})
+            if len(self.calls) == 1:
+                return _asks({"id": "h1", "name": TOOL, "arguments": {}})
+            raise RuntimeError("zzt model down")
+
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    contact = _contact(db)
+    result = run_agent_turn(
+        db, contact_respond_id=contact["respond_id"], text="warranty?", provider=Boom(),
+        mcp_call=forbidden_call, catalog={}, is_test=False,
+    )
+
+    assert result.status != "answered"
+    assert (_session_vars(db, contact["pk"]) or {}).get("open_question") is None
+
+
+def test_fr1_f7_a_barred_contacts_reply_refers_to_the_salesman_and_arms_nothing(db):
+    from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
+
+    contact = _contact(db, escalation_allowed=False)
+
+    result, _ = _turn(db, contact, is_test=False)
+
+    assert REFER_TO_SALESMAN in result.reply_text
+    assert "marketing product team" not in result.reply_text
+    assert (_session_vars(db, contact["pk"]) or {}).get("open_question") is None
+
+
+def test_fr1_f7_the_backstop_strips_an_escalation_offer_the_model_wrote_for_a_barred_contact(db):
+    from app.services.chatbot.agent.loop import run_agent_turn
+    from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
+
+    contact = _contact(db, escalation_allowed=False)
+    provider = _Provider(_says("It is not in the documents. Would you like me to escalate this to a manager?"))
+
+    result = run_agent_turn(
+        db, contact_respond_id=contact["respond_id"], text="x", provider=provider,
+        mcp_call=forbidden_call, catalog={}, is_test=False,
+    )
+
+    assert "escalate" not in result.reply_text
+    assert REFER_TO_SALESMAN in result.reply_text
+
+
+def test_fr1_f7_the_handoff_tool_itself_writes_nothing(db):
+    contact = _contact(db)
+    before = _session_vars(db, contact["pk"])
+
+    out = _dispatch(db, _contact_ctx(contact), TOOL, {})
+
+    assert out.status == "ok" and out.data["armed"] is True
+    assert _session_vars(db, contact["pk"]) == before
+
+
+def test_fr1_f11_an_office_tier_contact_is_never_offered(db):
+    contact = _contact(db)
+    db.execute(text("UPDATE respond_contacts SET chatbot_profile = CAST(:p AS jsonb) WHERE id = :i"),
+               {"p": json.dumps({"tier": "office"}), "i": contact["pk"]})
+    db.flush()
+    before = _session_vars(db, contact["pk"])
+
+    assert _arm(db, contact["pk"]) is False
+    assert _session_vars(db, contact["pk"]) == before
