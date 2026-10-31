@@ -408,11 +408,15 @@ USER_READS: dict[str, UserRead] = {
 
 
 def permitted_writes(db, ctx) -> list[WriteDef]:
-    """WRITES the linked user holds the slug for, in registry order."""
+    """WRITES the linked user holds the slug for, in registry order. None for a contact principal."""
+    if getattr(ctx, "principal", "user") == "contact":
+        return []
     return [w for w in WRITES.values() if holds_ctx(db, ctx, w.user_permission)]
 
 
 def permitted_user_reads(db, ctx) -> list[UserRead]:
+    if getattr(ctx, "principal", "user") == "contact":
+        return []
     return [
         r for r in USER_READS.values()
         if holds_ctx(db, ctx, r.user_permission) and not (r.linked_only and len(people(ctx)) > 1)

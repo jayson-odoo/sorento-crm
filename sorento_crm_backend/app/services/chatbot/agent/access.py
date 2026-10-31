@@ -45,6 +45,11 @@ class AgentContext:
     #: The console operator acting for this contact (AGENTIC-P3 R1); None in chat, or when the
     #: operator is the linked user. Set per turn by the caller, never by `build_context`.
     operator_user_id: str | None = None
+    #: "user" (an active CRM user is linked to the contact: it runs as that user) or "contact"
+    #: (no linked user: it runs as the contact itself, gated by `tools.CONTACT_TOOLS`).
+    principal: str = "user"
+    #: The contact's ACTIVE access codes (knowledge audience rules); empty for a user principal.
+    access_codes: frozenset[str] = frozenset()
 
 
 def eligible_contact(db, contact_respond_id: str):
@@ -75,8 +80,7 @@ def eligible_contact(db, contact_respond_id: str):
             .order_by(User.created_at, User.id)
             .first()
         )
-        if user is None:
-            return contact, None, "no_linked_user"
+        # No linked active user is no longer a refusal: the contact runs as itself (W1).
         return contact, user, None
 
 
@@ -98,8 +102,9 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
     if refusal is not None:
         raise AgentRefused(refusal)
     pk = str(contact.id)
-    user_id = str(user.id)
-    user_name = user.name or ""
+    principal = "user" if user is not None else "contact"
+    user_id = str(user.id) if user is not None else ""
+    user_name = (user.name or "") if user is not None else ""
 
     space_id = default_space_id(db)
     try:
@@ -134,13 +139,37 @@ def build_context(db, contact_respond_id: str) -> AgentContext:
         grants=grants,
         stock_allowed=getattr(contact, "chatbot_stock_allowed", True) is not False,
         brand_scope=None if brand_scope is None else frozenset(str(b) for b in brand_scope),
+        principal=principal,
+        access_codes=_active_access_codes(db, pk) if principal == "contact" else frozenset(),
     )
+    if principal == "contact":
+        return dataclasses.replace(ctx, tool_names=tuple(t.name for t in permitted_tools(db, ctx)))
     from app.services.chatbot.agent.tools import ARG_PERMISSIONS, _permitted
 
     held = sorted({slug for slug in ARG_PERMISSIONS.values() if _permitted(db, user_id, slug)})
     return dataclasses.replace(
         ctx, tool_names=tuple(t.name for t in permitted_tools(db, ctx)), arg_permissions=tuple(held)
     )
+
+
+def _active_access_codes(db, contact_pk: str) -> frozenset[str]:
+    """The contact's assigned access codes whose catalogue row is active. Fail closed: none."""
+    from app.models.access import ContactAccessType
+    from app.services.contact_access_type_service import ContactAccessTypeService
+
+    try:
+        codes = ContactAccessTypeService(db).get_contact_access_codes(contact_pk)
+        if not codes:
+            return frozenset()
+        active = (
+            db.query(ContactAccessType.code)
+            .filter(ContactAccessType.code.in_(codes), ContactAccessType.is_active.is_(True))
+            .all()
+        )
+        return frozenset(str(r[0]) for r in active)
+    except Exception:  # noqa: BLE001 - no codes means no restricted document
+        logger.warning("agent: access code lookup failed for %s", contact_pk, exc_info=True)
+        return frozenset()
 
 
 def permitted_tools(db, ctx: AgentContext) -> list[ToolDef]:
