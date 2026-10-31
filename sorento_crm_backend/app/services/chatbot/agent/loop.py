@@ -1322,15 +1322,26 @@ def _run(
             ),
             "",
         )
+        from app.services import knowledge_service
+
+        offer_armed = handoff_armed(ledger)
+        if say and offer_armed and status != "answered":
+            # The offer sentence is in the reply if and only if the offer gets armed: a limited turn arms nothing.
+            say = knowledge_service.KNOWLEDGE_MISS_LINE
         if say and say not in reply:
-            reply = f"{reply}\n\n{say}".strip()
+            if reply.strip() in ("", NO_ANSWER_REPLY):
+                reply = say  # nothing else to say: the hand-off sentence stands alone
+            else:
+                reply = f"{reply}\n\n{say}".strip()
         if ctx.principal == "contact":
             reply = _contact_reply_backstop(db, ctx, reply)
-        if say and status == "answered" and not is_test and handoff_armed(ledger):
-            # The write lives here, after the answer: never in a test turn and never after a failure.
+        if (
+            say and offer_armed and status == "answered" and not is_test
+            and knowledge_service.KNOWLEDGE_MISS_OFFER in reply
+        ):
+            # The write lives here, after the answer and the backstop: never in a test turn, after a
+            # failure, or when the offer sentence did not survive into the reply.
             try:
-                from app.services import knowledge_service
-
                 knowledge_service.arm_knowledge_miss_offer(db, ctx.contact_pk)
             except Exception:  # noqa: BLE001 - the offer is lost, the turn still closes
                 logger.warning("agent: arming the knowledge-miss offer failed", exc_info=True)

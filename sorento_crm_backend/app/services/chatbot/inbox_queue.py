@@ -845,7 +845,9 @@ def _stamp_route(factory: Callable[[], Any], turn_id: str, decision: Any) -> Non
             )
         row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
         if row is not None:
-            row.trace = [*(row.trace or []), router.trace_record(decision)]
+            record = router.trace_record(decision)  # its own "why" names the console: this row is WhatsApp
+            record["why"] = "The WhatsApp inbox asks the router before each text message; a state rule decides first, then Jev."
+            row.trace = [*(row.trace or []), record]
         db.commit()
     except Exception:  # noqa: BLE001
         logger.warning("chatbot inbox: route stamp failed for turn %s", turn_id, exc_info=True)
@@ -903,7 +905,40 @@ def _run_agent_row(
         branch_kind="agent",
         ctx={"contact": block},
     )
-    return _post(factory, run, result_like, "done", "sent")
+    if answered:
+        _set_row(factory, turn_id, claimed_at, branch_kind="agent")  # the row's fact carries the branch
+    outcome = _post(factory, run, result_like, "done", "sent")
+    if outcome != "done" and answered:
+        _clear_knowledge_miss_offer(factory, contact)
+    return outcome
+
+
+def _clear_knowledge_miss_offer(factory: Callable[[], Any], contact: str) -> None:
+    """The reply never reached the customer, so the offer it ended with must not stay armed: cleared
+    only while the open question is still the knowledge-miss offer."""
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.access import RespondContact
+    from app.models.base import company_scope
+    from app.services import knowledge_service
+
+    db = factory()
+    try:
+        with company_scope(db, None):
+            for row in db.query(RespondContact).filter(RespondContact.respond_io_id == contact).all():
+                sv = dict(row.session_vars) if isinstance(row.session_vars, dict) else {}
+                question = sv.get("open_question")
+                payload = question.get("payload") if isinstance(question, dict) else None
+                if isinstance(payload, dict) and payload.get("source") == knowledge_service.KNOWLEDGE_MISS_SOURCE:
+                    sv.pop("open_question")
+                    row.session_vars = sv
+                    flag_modified(row, "session_vars")
+        db.commit()
+    except Exception:  # noqa: BLE001 - the customer is told to ask again either way
+        logger.warning("chatbot inbox: clearing the knowledge-miss offer failed for %s", contact, exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
 
 
 def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], Any]) -> str:

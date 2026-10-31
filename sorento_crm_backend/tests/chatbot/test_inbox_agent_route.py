@@ -432,3 +432,104 @@ def test_fr1_f9_one_whatsapp_agent_answer_is_one_answered_fact_and_an_agent_turn
         db.close()
 
     assert [r[0] for r in rows] == ["answered"]
+
+
+# ---------------------------------------------------------------- FIX ROUND 2
+
+
+def _arming_agent(seams, monkeypatch, *, other_question=None):
+    """A fake agent that, like a live turn, arms the knowledge-miss offer on the contact."""
+    from sqlalchemy import text as sql
+
+    from app.services import knowledge_service
+    from app.services.chatbot import inbox_queue
+    from app.services.chatbot.agent import loop
+
+    def fake(db, **kwargs):
+        seams.agent_calls.append(kwargs)
+        pk = db.execute(
+            sql("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": kwargs["contact_respond_id"]}
+        ).scalar()
+        if other_question is not None:
+            db.execute(
+                sql("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE id = :i"),
+                {"sv": json.dumps({"open_question": other_question}), "i": pk},
+            )
+        else:
+            knowledge_service.arm_knowledge_miss_offer(db, str(pk))
+        db.commit()
+        return loop.AgentTurnResult(
+            turn_id=seams.agent_turn_id, conversation_id=str(uuid.uuid4()), reply_text=AGENT_REPLY,
+            status="answered", limit_hit=None, rounds=1, usage={}, tool_calls=[],
+        )
+
+    monkeypatch.setattr(loop, "run_agent_turn", fake)
+    monkeypatch.setattr(inbox_queue, "run_agent_turn", fake, raising=False)
+
+
+def _open_question(contact):
+    from sqlalchemy import text as sql
+
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        sv = db.execute(sql("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"), {"c": contact}).scalar()
+    finally:
+        db.close()
+    return (sv or {}).get("open_question")
+
+
+def test_fr2_b_a_failed_post_clears_the_offer_the_agent_armed(world, seams, monkeypatch):
+    _arming_agent(seams, monkeypatch)
+    monkeypatch.setattr(direct_ingress, "send_outcome", lambda factory, **kw: seams.sent.append(kw) or direct_ingress.SEND_HTTP_ERROR)
+
+    contact, _ = _drive(world, seams, label="f2b")
+
+    assert _open_question(contact) is None
+
+
+def test_fr2_b_a_sent_post_keeps_the_offer(world, seams, monkeypatch):
+    _arming_agent(seams, monkeypatch)
+
+    contact, _ = _drive(world, seams, label="f2bok")
+
+    assert (_open_question(contact) or {}).get("payload", {}).get("source") == "knowledge_miss"
+
+
+def test_fr2_b_a_failed_post_leaves_a_different_open_question_alone(world, seams, monkeypatch):
+    other = {"kind": "pick", "expects": "pick", "options": [], "payload": {"source": "something_else"}}
+    _arming_agent(seams, monkeypatch, other_question=other)
+    monkeypatch.setattr(direct_ingress, "send_outcome", lambda factory, **kw: seams.sent.append(kw) or direct_ingress.SEND_HTTP_ERROR)
+
+    contact, _ = _drive(world, seams, label="f2bother")
+
+    assert (_open_question(contact) or {}).get("payload", {}).get("source") == "something_else"
+
+
+def test_fr2_e_the_route_record_on_a_whatsapp_row_does_not_name_the_console(world, seams):
+    contact, mid = _drive(world, seams, label="f2e")
+
+    route = [r for r in world.row_for(contact, mid)["trace"] if isinstance(r, dict) and r.get("stage") == "route"]
+
+    assert route and route[0]["facts"]["reason"] == "classified"
+    assert "console" not in route[0]["why"].lower()
+    assert "whatsapp" in route[0]["why"].lower()
+
+
+def test_fr2_f_an_agent_answered_row_has_branch_kind_agent_and_its_fact_says_so(world, seams):
+    from app.database import SessionLocal
+    from app.models.chat_facts import ChatAskFact
+    from app.models.chatbot_turn import ChatbotTurn
+
+    contact, mid = _drive(world, seams, label="f2f")
+    row = world.row_for(contact, mid)
+    db = SessionLocal()
+    try:
+        branch = db.query(ChatbotTurn.branch_kind).filter(ChatbotTurn.id == row["id"]).scalar()
+        fact = db.query(ChatAskFact.branch_kind, ChatAskFact.outcome).filter(ChatAskFact.contact_respond_id == contact).all()
+    finally:
+        db.close()
+
+    assert branch == "agent"
+    assert fact == [("agent", "answered")]

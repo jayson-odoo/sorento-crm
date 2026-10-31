@@ -436,3 +436,76 @@ def test_fr1_f11_an_office_tier_contact_is_never_offered(db):
 
     assert _arm(db, contact["pk"]) is False
     assert _session_vars(db, contact["pk"]) == before
+
+
+# ---------------------------------------------------------------- FIX ROUND 2
+
+
+def test_fr2_b_an_offer_the_backstop_removed_arms_nothing(db, monkeypatch):
+    from app.services import knowledge_service as ks
+    from app.services.chatbot.agent import loop
+
+    contact = _contact(db)
+    result, _ = _turn(db, contact, is_test=False)  # control: armed when the offer stays in the reply
+    assert ks.KNOWLEDGE_MISS_OFFER in result.reply_text
+    assert _session_vars(db, contact["pk"]).get("open_question")
+    db.execute(text("UPDATE respond_contacts SET session_vars = '{}'::jsonb WHERE id = :i"), {"i": contact["pk"]})
+    db.flush()
+    monkeypatch.setattr(loop, "_contact_reply_backstop", lambda db_, ctx, reply: reply.replace(ks.KNOWLEDGE_MISS_OFFER, "").strip())
+
+    result, _ = _turn(db, contact, is_test=False)
+
+    assert ks.KNOWLEDGE_MISS_OFFER not in result.reply_text
+    assert (_session_vars(db, contact["pk"]) or {}).get("open_question") is None
+
+
+def _limited_turn(db, contact, monkeypatch):
+    """A turn that hits its round budget right after the hand-off tool ran: status "limited"."""
+    from app.services.chatbot.agent import loop
+
+    monkeypatch.setattr(loop, "budgets_from_settings", lambda db_: loop.Budgets(max_rounds=1))
+    provider = _Provider(_asks({"id": "h1", "name": TOOL, "arguments": {}}), _says("Partly checked."))
+    return loop.run_agent_turn(
+        db, contact_respond_id=contact["respond_id"], text="warranty?", provider=provider,
+        mcp_call=forbidden_call, catalog={}, is_test=False,
+    )
+
+
+def test_fr2_c_a_limited_turn_has_the_miss_line_but_no_offer_sentence_and_arms_nothing(db, monkeypatch):
+    from app.services import knowledge_service as ks
+
+    contact = _contact(db)
+
+    result = _limited_turn(db, contact, monkeypatch)
+
+    assert result.status == "limited"
+    assert ks.KNOWLEDGE_MISS_LINE in result.reply_text
+    assert ks.KNOWLEDGE_MISS_OFFER not in result.reply_text
+    assert (_session_vars(db, contact["pk"]) or {}).get("open_question") is None
+
+
+def test_fr2_c_a_limited_turn_for_a_barred_contact_keeps_the_salesman_line(db, monkeypatch):
+    from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
+
+    contact = _contact(db, escalation_allowed=False)
+
+    result = _limited_turn(db, contact, monkeypatch)
+
+    assert result.status == "limited"
+    assert REFER_TO_SALESMAN in result.reply_text
+
+
+def test_fr2_d_an_empty_answer_plus_the_say_text_is_the_say_text_alone(db):
+    from app.services import knowledge_service as ks
+    from app.services.chatbot.agent.loop import NO_ANSWER_REPLY, run_agent_turn
+
+    contact = _contact(db)
+    provider = _Provider(_asks({"id": "h1", "name": TOOL, "arguments": {}}), _says(""))
+
+    result = run_agent_turn(
+        db, contact_respond_id=contact["respond_id"], text="warranty?", provider=provider,
+        mcp_call=forbidden_call, catalog={}, is_test=False,
+    )
+
+    assert NO_ANSWER_REPLY not in result.reply_text
+    assert result.reply_text == f"{ks.KNOWLEDGE_MISS_LINE} {ks.KNOWLEDGE_MISS_OFFER}"
