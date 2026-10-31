@@ -31,6 +31,7 @@ from app.services.chatbot.agent.tools import (
     PLAN_SCHEMA,
     redact_ids,
     GUARD_PARAMS,
+    REGISTRY,
     RESOLVE,
     TOOL_LABELS,
     ToolResult,
@@ -599,7 +600,7 @@ class AgentBusy(Exception):
 
 def enforce_agent_rate_limit(operator_user_id: str) -> None:
     """Each agent turn can spend a dozen model calls, so they are limited per operator (fail-open
-    without Redis). The one check for POST /agent/turn and for console turns the router sends here."""
+    without Redis). The one check for console turns that go to the agent."""
     from app.services import rate_limit
     from app.services.error_handler import AppException
 
@@ -706,6 +707,16 @@ def _system_prompt(db, user_name: str, tool_names: Any = ()) -> str:
     # The knowledge paragraph only where the tool is offered this turn.
     if knowledge_service.KNOWLEDGE_TOOL in tool_names:
         text = knowledge_service.with_knowledge_protocol(text)
+    # What this user's permissions leave out, by the constant labels (never outside text in the system role).
+    names = set(tool_names)
+    left_out = list(dict.fromkeys(
+        TOOL_LABELS[n] for n in [*REGISTRY, *writes.USER_READS, *writes.WRITES] if n not in names and n in TOOL_LABELS
+    ))
+    if left_out:
+        text = (
+            f"{text}\n\nOutside this user's or this contact's access: {'; '.join(left_out)}. When asked about these, say they "
+            "are outside this user's or this contact's access; never say the CRM lacks them."
+        )
     today = datetime.now(timezone.utc).date().isoformat()
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
@@ -752,8 +763,12 @@ def tool_detail(name: str, args: Any, out: ToolResult, names: dict[str, str]) ->
         if key in GUARD_PARAMS:
             continue
         values = value if isinstance(value, list) else [value]
-        if key.endswith(("_id", "_ids")):
-            words = [names[str(v).lower()] for v in values if str(v).lower() in names]
+        guide_id = name == "user_guides_read" and key == "query" and any(
+            isinstance(v, str) and _UUID_TEXT.fullmatch(v.strip()) for v in values
+        )
+        if key.endswith(("_id", "_ids")) or guide_id:
+            # A guide is read by its id: show the title a result gave, nothing when it is not known.
+            words = [names[str(v).strip().lower()] for v in values if str(v).strip().lower() in names]
         else:
             words = [str(v) for v in values if isinstance(v, (str, int, float)) and not isinstance(v, bool)]
         if words:
@@ -808,17 +823,25 @@ def run_agent_turn(
     catalog=None,
     clock: Callable[[], float] = time.monotonic,
     operator_user_id: str | None = None,
+    context_before: str = "",
+    context_after: str = "",
 ) -> AgentTurnResult:
+    """`context_before` and `context_after` are quoted data for the model (the console passes the thread's bot
+    replies from before and after the last agent turn). Each goes in a message of its own, never the system
+    role, and neither goes in at all while a change waits for a yes: only the model reads that yes."""
     ctx = build_context(db, contact_respond_id)  # AgentRefused propagates
     with single_flight(contact_respond_id):  # AgentBusy propagates
         return _run(
             db, ctx, contact_respond_id=contact_respond_id, text=text, provider=provider,
             mcp_call=mcp_call, mcp_builder=mcp_builder, catalog=catalog, clock=clock,
-            operator_user_id=operator_user_id,
+            operator_user_id=operator_user_id, context_before=context_before, context_after=context_after,
         )
 
 
-def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id):
+def _run(
+    db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
+    context_before="", context_after="",
+):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
     from app.services.chatbot.usage import record_turn_llm_usage
@@ -970,17 +993,24 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
             ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
         waiting = actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
         offered = permitted_tools(db, ctx)
-        system = _system_prompt(db, ctx.user_name, {t.name for t in offered})
+        reads, write_tools = writes.permitted_user_reads(db, ctx), writes.permitted_writes(db, ctx)
+        system = _system_prompt(
+            db, ctx.user_name, {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools)}
+        )
         if waiting is not None:
             system = f"{system}\n\n{waiting_line(waiting)}"
         messages: list[dict] = [{"role": "system", "content": system}]
+        if context_before and waiting is None:
+            messages.append({"role": "user", "content": context_before})
         messages.extend(memory.history_messages(db, conv))
         if waiting is not None:
             messages.append({"role": "assistant", "content": waiting_reference(waiting)})
+        if context_after and waiting is None:
+            messages.append({"role": "user", "content": context_after})
         messages.append({"role": "user", "content": text})
         schemas = tool_schemas(offered, catalog)
-        schemas += [r.schema for r in writes.permitted_user_reads(db, ctx)]
-        schemas += [w.schema for w in writes.permitted_writes(db, ctx)]
+        schemas += [r.schema for r in reads]
+        schemas += [w.schema for w in write_tools]
         if waiting is not None and actions.operator_may_decide(db, ctx, waiting):
             schemas += decision_schemas(str(waiting.id))
         schemas += [PLAN_SCHEMA, ANSWER_SCHEMA]

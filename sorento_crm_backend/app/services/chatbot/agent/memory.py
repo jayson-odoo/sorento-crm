@@ -66,17 +66,16 @@ def new_conversation(
     return conv
 
 
-def conversation_turns(db, conv: AgentConversation) -> list[ChatbotTurn]:
-    return (
-        db.query(ChatbotTurn)
-        .filter(
-            ChatbotTurn.contact_respond_id == conv.contact_respond_id,
-            ChatbotTurn.ingress == "agent",
-            ChatbotTurn.envelope["agent_conversation_id"].astext == str(conv.id),
-        )
-        .order_by(ChatbotTurn.created_at, ChatbotTurn.id)
-        .all()
+def conversation_turns(db, conv: AgentConversation, *, limit: int | None = None) -> list[ChatbotTurn]:
+    """The conversation's turns, oldest first. With `limit`, the newest that many."""
+    query = db.query(ChatbotTurn).filter(
+        ChatbotTurn.contact_respond_id == conv.contact_respond_id,
+        ChatbotTurn.ingress == "agent",
+        ChatbotTurn.envelope["agent_conversation_id"].astext == str(conv.id),
     )
+    if limit is None:
+        return query.order_by(ChatbotTurn.created_at, ChatbotTurn.id).all()
+    return list(reversed(query.order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.id.desc()).limit(limit).all()))
 
 
 def _verbatim_turns(db, conv: AgentConversation) -> list[ChatbotTurn]:

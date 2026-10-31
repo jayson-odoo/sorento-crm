@@ -19,6 +19,7 @@ vi.mock('../services/chatbotConsoleService', () => ({
   postConsoleTurn: (...args: unknown[]) => postConsoleTurn(...args),
   getConsolePromptVersions: (...args: unknown[]) => getConsolePromptVersions(...args),
   getConsoleMediaStatus: vi.fn(),
+  getConsoleThread: vi.fn().mockResolvedValue({ turns: [], pending_action: null }),
 }));
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

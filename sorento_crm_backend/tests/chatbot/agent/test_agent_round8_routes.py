@@ -1,4 +1,4 @@
-"""AGENTIC-P1 round 8: the steps on both console routes. Kept apart: the console harness brings an
+"""AGENTIC-P1 round 8: the steps on both console routes (`POST /console/turn` and `GET /console/thread`). Kept apart: the console harness brings an
 autouse permission patch."""
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from tests.chatbot.test_console_turn_endpoint import (  # noqa: F401 - fixtures 
     client,
 )
 
-TURN = "/api/v1/system/chatbot/agent/turn"
-CONVERSATION = "/api/v1/system/chatbot/agent/conversation"
+TURN = "/api/v1/system/chatbot/console/turn"
+THREAD = "/api/v1/system/chatbot/console/thread"
 
 EXPECTED = {
     "rounds": 2,
@@ -27,6 +27,12 @@ EXPECTED = {
     ],
     "reasoning": [],
 }
+
+
+def _read(client, contact):
+    resp = client.get(THREAD, params={"contact_respond_id": contact["respond_id"], "run_id": "ZZT-run-1"})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
 
 
 def _world(session_factory):
@@ -43,9 +49,9 @@ def _world(session_factory):
     return contact, conv, row
 
 
-def test_get_conversation_turns_carry_steps(client, session_factory):
+def test_the_thread_turns_carry_steps(client, session_factory):
     contact, conv, row = _world(session_factory)
-    turn = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]}).json()["turns"][0]
+    turn = _read(client, contact)["turns"][0]
     assert turn["steps"] == EXPECTED
 
 
@@ -56,12 +62,12 @@ def test_a_turn_without_a_trace_has_empty_steps(client, session_factory):
 
     db.query(ChatbotTurn).filter(ChatbotTurn.id == row.id).update({ChatbotTurn.trace: None})
     db.commit()
-    turn = client.get(CONVERSATION, params={"contact_respond_id": contact["respond_id"]}).json()["turns"][0]
+    turn = _read(client, contact)["turns"][0]
     assert turn["steps"]["rounds"] == 0 and turn["steps"]["tool_calls"] == []
 
 
 def test_the_turn_response_carries_the_steps_of_the_stored_row(client, session_factory, monkeypatch):
-    import app.api.v1.system.chatbot as route_mod
+    from app.services.chatbot import console_service
     from app.services.chatbot.agent.loop import AgentTurnResult
 
     contact, conv, row = _world(session_factory)
@@ -73,6 +79,8 @@ def test_the_turn_response_carries_the_steps_of_the_stored_row(client, session_f
             tool_calls=[{"name": "crm_report_ask", "status": "ok", "ms": 120}],
         )
 
-    monkeypatch.setattr(route_mod, "run_agent_turn", fake)
-    body = client.post(TURN, json={"contact_respond_id": contact["respond_id"], "text": "q"}).json()
-    assert body["steps"] == EXPECTED
+    monkeypatch.setattr(console_service, "run_agent_turn", fake)
+    body = client.post(
+        TURN, json={"contact_respond_id": contact["respond_id"], "text": "q", "run_id": "ZZT-run-1", "force_agent": True}
+    ).json()
+    assert body["agent"]["steps"] == EXPECTED
