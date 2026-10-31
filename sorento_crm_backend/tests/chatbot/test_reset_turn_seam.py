@@ -432,9 +432,13 @@ B173_LANE = {
     "show_all_stock": "business_query",
     "any_promotions": "check_promotion", "top_10_sellers": "business_query", "sort_by_price": "business_query",
     "for_all_customers": "business_query", "any_brand": "business_query",
-    "never_mind_any_promotions": "check_promotion", "cancel_talk_to_a_person": None, "an_idea": "ideate",
+    "never_mind_any_promotions": "check_promotion", "cancel_talk_to_a_person": "out_of_scope", "an_idea": "ideate",
     "a_cold_all_of_them": "clarify_menu",
 }
+# cancel_talk_to_a_person: at b173c6e8c4 the lane was None because the turn FAILED ("Sorry, I ran
+# into a problem understanding that", re-measured on 2368d18e^). CHATBOT-FAIL-TRIAGE (#2018) AC-1
+# retired that reply and AC-7c answers a hand-over with no topic (the cancel closed the held one)
+# with one topic question on the `out_of_scope` arm. Still no reset: the seam's ACK is not sent.
 
 GUARD_CASES = [
     (name, gate)
