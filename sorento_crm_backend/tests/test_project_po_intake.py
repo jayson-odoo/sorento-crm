@@ -904,12 +904,52 @@ def test_editing_a_line_recomputes_its_arithmetic_and_the_totals(seeded):
 # arrived as a scan got none of the checking a hand-recorded PO gets.
 
 
-def _quotation(db, project, owner, scope: str, priced):
-    """One quotation scope, version 1, priced OFF-CATALOG.
+def _catalogue_product(db, company_id: str, code: str):
+    """The company's catalogue product printed as `code`, created on first use.
 
-    Off-catalog on purpose: a scanned PO gives us the code the customer printed, and the
-    cross-check matches that against the code the quotation printed. Going through a
-    catalogue product would test a path the scan cannot reach.
+    Reused rather than created twice because some tests quote the same code in two scopes,
+    and product codes are unique per company."""
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+    existing = (
+        db.query(Product)
+        .filter(Product.company_id == company_id, Product.product_code == code)
+        .first()
+    )
+    if existing is not None:
+        return existing
+    uom = UnitOfMeasure(
+        id=_uid(), company_id=company_id, uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece"
+    )
+    category = ProductCategory(
+        id=_uid(),
+        company_id=company_id,
+        category_code=f"ZZT-{_uid()[:8]}",
+        category_name=f"{MARKER} Sanitary",
+    )
+    db.add_all([uom, category])
+    db.flush()
+    product = Product(
+        id=_uid(),
+        company_id=company_id,
+        product_code=code,
+        product_name=f"{MARKER} {code}",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=Decimal("1.00"),
+    )
+    db.add(product)
+    db.flush()
+    return product
+
+
+def _quotation(db, project, owner, scope: str, priced):
+    """One quotation scope, version 1, every line a catalogue product.
+
+    QUOTE-NO-FREE-TEXT (#2020) makes every line name a catalogue product, so each code here
+    is a real product of the project's company. A scanned PO line printing that code resolves
+    to the same product when it is read, and the cross-check then matches the PO line to the
+    quoted line through that product.
     """
     from app.services import project_quotation_service as quotes
 
@@ -923,7 +963,7 @@ def _quotation(db, project, owner, scope: str, priced):
             version=version,
             actor_user_id=owner,
             payload={
-                "product_code_snapshot": code,
+                "product_id": _catalogue_product(db, project.company_id, code).id,
                 "description_snapshot": f"{code} as quoted",
                 "unit_price": price,
                 "quantity": 1,
