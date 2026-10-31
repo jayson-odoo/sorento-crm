@@ -201,6 +201,10 @@ def test_knowledge_search_is_denied_when_the_slug_is_lost_after_exposure(db, sea
 
     db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == reader).delete()
     db.flush()
+    # The permission check is cached for 30 s; a real revocation invalidates it.
+    from app.services.user_service import invalidate_rbac_cache
+
+    invalidate_rbac_cache(reader)
 
     out = _dispatch(db, reader, SEARCH, {"query": "annual leave"}, forbidden_call, catalog={})
 

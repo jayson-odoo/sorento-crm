@@ -220,7 +220,7 @@ describe('AttachmentTypeFormDialog - AI can read', () => {
     renderDialog({ attachmentTypeId: 'type-1' });
     await waitFor(() => expect(selectOf('Escalate to').textContent).toMatch(/HR/));
 
-    fireEvent.click(within(itemOf('Escalate to')).getByRole('button', { name: /Clear selection/i }));
+    fireEvent.pointerDown(within(itemOf('Escalate to')).getByRole('button', { name: /Clear selection/i }));
     fireEvent.click(screen.getByRole('button', { name: /^Update$/ }));
 
     await waitFor(() => expect(hooks.updateAsync).toHaveBeenCalledTimes(1));
