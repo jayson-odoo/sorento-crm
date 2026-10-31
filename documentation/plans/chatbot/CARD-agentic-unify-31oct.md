@@ -1,6 +1,7 @@
 # CARD: One conversation in the console, and the same routing in the AI side panel
 
-Status: v1 filed 31 Oct 2026, waiting on the owner's answers to Q1-Q5. No product code yet.
+Status: owner answered 31 Oct ~14:55. Q1 NOT (a): "I need the thinking and brain process to be same as chatbot, simple as
+that". Q2 (a), Q3 (a), Q4 (a), Q5 (a). Sections (b) and (d) are replaced by `CARD-agentic-unify-v2-31oct.md`; section (a) stands.
 Track: full pipeline, size L (auth surface, one additive column, two screens).
 Plan: `PLAN-agentic-unify-31oct.md`.
 
