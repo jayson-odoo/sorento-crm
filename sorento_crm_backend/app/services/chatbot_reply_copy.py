@@ -369,9 +369,9 @@ IDEATION_CAPTURE_COMPLETE_NO_LINK = {
     "zh": "创意 {{idea_number}} 已收到：{{title}}",
 }
 IDEATION_CAPTURE_ERROR = {
-    "en": "I couldn't save that idea just now. Please send it again.",
-    "ms": "Saya tidak dapat menyimpan idea itu sekarang. Sila hantar sekali lagi.",
-    "zh": "我刚才无法保存这个创意，请再发送一次。",
+    "en": "Sorry, I couldn't save that idea just now. Please try again in a moment.",
+    "ms": "Maaf, saya tidak dapat menyimpan idea itu sekarang. Sila cuba lagi sebentar nanti.",
+    "zh": "抱歉，我暂时无法保存这个创意，请稍后再试。",
 }
 
 IDEATION_CAPTURE_CONFIG_ERROR = {

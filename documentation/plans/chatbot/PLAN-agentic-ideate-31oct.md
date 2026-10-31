@@ -1,6 +1,6 @@
 # PLAN: ideas through the agent, and routing that follows the agent's tools (AGENTIC-IDEATE)
 
-**Status:** PR #2038, main merged with #2054 and #2056. Owner's first hand test led to a label rewording, and the reviewer passed that delta. The failed-save line round is in progress (see "The bot's failed-save line"). Crew's hidden gate on the new label
+**Status:** PR #2038, main merged with #2054 and #2056. Owner's first hand test led to a label rewording, and the reviewer passed that delta. Review of the merge with #2051 added one fix: New conversation ends the asked-back hold (AC-R3b-11). Crew's hidden gate on the new label
 and the owner's retest are still to come. Track: size M, lead pattern.
 UAC: `agentic-ideate-31oct-acceptance-criteria.md`. No screen changes, so Phase 1 (frontend mock) does not apply.
 
@@ -302,15 +302,11 @@ Nothing was invented in any proposal, and no create succeeded, since copies reac
 - A Malay idea did NOT propose. The agent called `crm_ideas_list` twice, got the copy's error, said the feature does not exist yet and asked whether to register it. The error is the copy. The claim has nothing behind it and is the model's own doing. One case, so its frequency is unknown.
 - The proposal appeared once in these runs against twice in the first pass, on the same message wording. No code changed that, so the repeat may still show.
 
-### The bot's failed-save line (crew ruling, 31 Oct)
+### A failed-save wording round, built and dropped (1 Nov)
 
-Owner rule: no sorry or busy bot replies. The live check showed `IDEATION_CAPTURE_ERROR` (`chatbot_reply_copy.py:371`, from 08403a29a9) saying "Sorry", on the path a below-floor idea takes. It predates this lane, and crew placed the fix here so the owner's retest does not hit it.
+The live check's bot reply opens with "Sorry", and a round rewrote it with a publish migration. The owner then clarified there is no rule against the word; the concern is the bot failing through bugs, loading or resource problems. So the wording, the migration and their tests were reverted, and this PR carries no migration. On a copy, that reply is what a below-floor idea gets, because copies reach no shared service.
 
-- **This PR's one migration.** The reply resolves through `get_prompt`, which prefers the stored `production` row, and `seed_prompt_registry` never updates a live row. So editing the text in code would change nothing on a seeded install. The migration copies `idea_capture_fields_0001`: publish the new text as the next version and move the label, only where the row is still the old stock text. An owner's edit stays.
-- **It does not call the seed, unlike that precedent.** The seed was there so the keys exist and a fresh database has a row to compare, and neither applies: an earlier migration seeded these keys, and with no label the runtime serves the new fallback anyway. Review also reproduced the seed moving an owner's newer `agent_system` back to v2 (`ai_prompt_seed.py:170`), so calling it here could undo an owner's edit to an unrelated prompt. That behaviour predates this lane and is reported to crew.
-- **Known limit of the wording, same as the old line:** "couldn't save" can be false if the create landed and only the answer was lost, and a resend can then log a second idea unless the person picks the first from the similar list. On a rate limit, an immediate resend probably repeats the line.
-- **Only this key.** The other "Sorry" lines in that file (`:29`, `:53`, `:57`, `:97`, `:125`) are not idea lines and are listed for crew to place.
-- **Routing still needs no migration or publish** (R1). This one concerns a reply's wording.
+One thing that round found still stands, in the list below: the seed re-pins `agent_system`.
 
 ### Accepted, not changed
 
@@ -330,6 +326,7 @@ Owner rule: no sorry or busy bot replies. The live check showed `IDEATION_CAPTUR
   confirm a waiting proposal on any later message.
 - A pending proposal is checked before the daily cap (`router.py:74`, `:83`), so a chain of proposals stays on the agent over the
   cap. A forced console turn (`force_agent`, #2051) skips the router, so it is not blocked by the cap, though it counts toward it.
+- `seed_prompt_registry` re-pins `agent_system` production to v2 whenever `ai_assistant_configs.system_prompt` is set (`ai_prompt_seed.py:170`). Review reproduced an owner's v3 moving back to v2 on a migration's `upgrade()`, and about 52 migrations call the seed. Prod's state is not checked. Reported to crew.
 - With #2055 a typed yes is only honoured in the turn's first model round. If the model calls another tool first, such as `crm_ideas_list`, it can no longer confirm, and nothing in code stops it writing "Done". Review scripted this: the user read "Done, your idea is logged", the action stayed `proposed`, and no create happened. The buttons stay and a second yes works. Every write has this, not only ideas. How often a real model does it is unmeasured. Reported to crew.
 - `crm_opportunity_create`'s proposal shows only title, target and close date (`writes.py:601`), so an `expected_amount` or another agent's
   `sales_agent_id` is stored without appearing on the proposal or the Done line. The model's own text is the only cover.
