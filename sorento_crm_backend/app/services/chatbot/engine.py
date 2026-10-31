@@ -8064,17 +8064,6 @@ def _run_stages_body(  # noqa: PLR0915
                             answer = dataclasses_replace(
                                 answer, text="\n".join(narrowed_misses) + "\n\n" + answer.text
                             )
-                # AC-6: a size or named spec no variant of the typed code's family holds is said ONCE, on
-                # a miss and on a hit alike, above the reply (the route's `spec_none`, this turn's own).
-                if answer is not None and answer.text:
-                    from app.services.chatbot.lanes.business.answer import no_variant_clause
-
-                    none_with = no_variant_clause(
-                        resolver_payload.get("resolved") if isinstance(resolver_payload, dict) else None,
-                        verdict.get("entities"),
-                    )
-                    if none_with:
-                        answer = dataclasses_replace(answer, text=none_with + "\n\n" + answer.text)
             except Exception as fetch_error:  # noqa: BLE001 - a lane failure, not a crash
                 logger.exception("chatbot turn %s: fetch or compose failed", turn_id)
                 lane_error_text = f"{type(fetch_error).__name__}: {fetch_error}"
@@ -8278,6 +8267,17 @@ def _run_stages_body(  # noqa: PLR0915
                     envelopes=envelopes,
                     order_status=parsed_output.get("order_status"),
                 )
+                # AC-6: a size or named spec no variant of the typed code's family holds is said ONCE, on
+                # a miss and on a hit alike, above the reply (the route's `spec_none`, this turn's own).
+                if answer is not None and answer.text:
+                    from app.services.chatbot.lanes.business.answer import no_variant_clause
+
+                    none_with = no_variant_clause(
+                        resolver_payload.get("resolved") if isinstance(resolver_payload, dict) else None,
+                        verdict.get("entities"),
+                    )
+                    if none_with:
+                        answer = dataclasses_replace(answer, text=none_with + "\n\n" + answer.text)
                 # Chatbot stock ask v2 S3, AC-SA314: an `incoming` entry answered
                 # with its own packing list attaches it to THIS reply. `answer.files`
                 # is the same seam every other domain's attachment already flows

@@ -91,7 +91,7 @@ def _family_rows(
         return (
             db.query(Product, ProductSpecifications.values)
             .outerjoin(ProductSpecifications, ProductSpecifications.product_id == Product.id)
-            .filter(Product.is_active.is_(True), chat_searchable_products())
+            .filter(Product.is_active.is_(True), *([chat_searchable_products()] if loose else []))
             .filter(folded_code.op("~")(pattern))
             .order_by(Product.product_code)
             .limit(_FAMILY_CAP)
@@ -149,6 +149,12 @@ def _holds(values: dict[str, Any], key: str, wanted: Any) -> bool:
             if candidate == wanted:
                 return True
     return False
+
+
+def _has_value(values: dict[str, Any], key: str) -> bool:
+    stored = values.get(key) if isinstance(values, dict) else None
+    actual = stored.get("value") if isinstance(stored, dict) else stored
+    return actual not in (None, "", [])
 
 
 def narrow_code_tokens_by_specs(
@@ -212,7 +218,11 @@ def narrow_code_tokens_by_specs(
             # A spec no variant of the family holds. A family cut at the cap may hold it beyond the cut,
             # so it is not reported for one.
             for key, value, any_keys in wanted:
-                if not any(_holds(values, k, value) for _code, values, _text in family for k in (any_keys or [key])):
+                keys = any_keys or [key]
+                held = any(_holds(values, k, value) for _code, values, _text in family for k in keys)
+                # No value under those keys anywhere in the family means we do not know: no miss.
+                known = any(_has_value(values, k) for _code, values, _text in family for k in keys)
+                if known and not held:
                     misses.append({"key": key, "value": value})
         if not picked or len(picked) == len(family):
             continue
