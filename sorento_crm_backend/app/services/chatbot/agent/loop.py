@@ -598,6 +598,10 @@ class _ProviderFailed(Exception):
     """A model call failed. The detail is logged, never shown."""
 
 
+#: The reply of a turn that ended with nothing to say (a customer never gets it: the inbox swaps it).
+NO_ANSWER_REPLY = "The agent has no answer for this."
+
+
 class AgentBusy(Exception):
     """Another turn for the same contact is still running."""
 
@@ -844,7 +848,7 @@ def run_agent_turn(
     role, and neither goes in at all while a change waits for a yes: only the model reads that yes."""
     ctx = build_context(db, contact_respond_id)  # AgentRefused propagates
     if not is_test and not operator_user_id:
-        enforce_agent_rate_limit(contact_respond_id)
+        enforce_agent_rate_limit(f"contact:{contact_respond_id}")
     with single_flight(contact_respond_id):  # AgentBusy propagates
         return _run(
             db, ctx, contact_respond_id=contact_respond_id, text=text, provider=provider,
@@ -1279,7 +1283,7 @@ def _run(
     if status == "failed":
         reply = f"The agent could not answer: {error}."
     if not reply:
-        reply = "The agent has no answer for this."
+        reply = NO_ANSWER_REPLY
     if status != "failed":
         reply = to_whatsapp(reply)
         # Code-added after the model's answer: the knowledge-miss line and the offer, once.

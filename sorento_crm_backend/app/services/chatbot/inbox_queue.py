@@ -805,9 +805,9 @@ def _close_skipped(factory: Callable[[], Any], turn_id: str, reason: str, claime
 AGENT_FAILED_LINE = "I couldn't finish this one just now. Please send your question again in a minute."
 
 
-def _routed_to_agent(contact: str, stored: dict, factory: Callable[[], Any]) -> bool:
-    """Does the router send this row to the agent? Any doubt (no text, a router exception) is
-    today's bot (AGENTIC-KNOWLEDGE W1 S3)."""
+def _routed_to_agent(contact: str, stored: dict, factory: Callable[[], Any]) -> Any:
+    """The router's decision when it sends this row to the agent, else None. Any doubt (no text, a
+    router exception, any other side) is today's bot (AGENTIC-KNOWLEDGE W1 S3)."""
     from app.services.chatbot import router, turn_runtime
 
     inner: Any = stored
@@ -816,23 +816,47 @@ def _routed_to_agent(contact: str, stored: dict, factory: Callable[[], Any]) -> 
     has_media = isinstance(inner, dict) and isinstance(inner.get("attachment"), dict)
     text_value = turn_runtime._envelope_text(stored)
     if not text_value and not has_media:
-        return False
+        return None
     db = factory()
     try:
         decision = router.decide_route(
             db, contact_respond_id=contact, text=text_value or "", session_vars=None, has_media=has_media
         )
-        return getattr(decision, "side", None) == "agent"
+        return decision if getattr(decision, "side", None) == "agent" else None
     except Exception:  # noqa: BLE001 - a router failure is the bot, never a lost message
         logger.warning("chatbot inbox: router failed for %s; the bot answers", contact, exc_info=True)
         db.rollback()
-        return False
+        return None
+    finally:
+        db.close()
+
+
+def _stamp_route(factory: Callable[[], Any], turn_id: str, decision: Any) -> None:
+    """The decision on the inbox row: a `route` stage on its trace, and the router's usage row
+    pointed at the turn. Telemetry: never fails the row."""
+    from app.models.ai_assistant import AIAssistantUsageLog
+    from app.services.chatbot import router
+
+    db = factory()
+    try:
+        if getattr(decision, "usage_id", None):
+            db.query(AIAssistantUsageLog).filter(AIAssistantUsageLog.id == decision.usage_id).update(
+                {"chatbot_turn_id": str(turn_id)}
+            )
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+        if row is not None:
+            row.trace = [*(row.trace or []), router.trace_record(decision)]
+        db.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("chatbot inbox: route stamp failed for turn %s", turn_id, exc_info=True)
+        db.rollback()
     finally:
         db.close()
 
 
 def _run_agent_row(
-    turn_id: str, claimed_at: Any, contact: str, stored: dict, block: dict, factory: Callable[[], Any]
+    turn_id: str, claimed_at: Any, contact: str, stored: dict, block: dict, factory: Callable[[], Any],
+    decision: Any = None,
 ) -> str:
     """Answer a routed row with the agent and post its reply through `_post`. A failure posts the
     fixed line; the bot is never run for the row."""
@@ -841,6 +865,7 @@ def _run_agent_row(
 
     run = _RowRun(turn_id, contact, (0, 0.0), claimed_at, factory)
     reply = AGENT_FAILED_LINE
+    answered = False
     facts: dict[str, Any] = {"agent": True}
     db = factory()
     try:
@@ -849,16 +874,27 @@ def _run_agent_row(
         )
         facts["agent_turn_id"] = str(result.turn_id)
         facts["agent_status"] = str(result.status)
-        if isinstance(result.reply_text, str) and result.reply_text.strip():
+        # A failed turn, or one with nothing to say, carries internal wording: the customer gets the fixed line.
+        if (
+            result.status != "failed"
+            and isinstance(result.reply_text, str)
+            and result.reply_text.strip()
+            and result.reply_text.strip() != loop.NO_ANSWER_REPLY
+        ):
             reply = result.reply_text
+            answered = True
     except Exception as exc:  # noqa: BLE001 - AgentBusy, AgentRefused, anything: one honest line
         logger.warning("chatbot inbox: agent failed for turn %s", turn_id, exc_info=True)
         facts["agent_error"] = type(exc).__name__
         db.rollback()
     finally:
         db.close()
+    if decision is not None:
+        _stamp_route(factory, turn_id, decision)
     _append_record(
-        factory, turn_id, status="answered", summary="Answered by the agent.",
+        factory, turn_id,
+        status="answered" if answered else "failed",
+        summary="Answered by the agent." if answered else "The agent could not answer; the customer was told to ask again.",
         why="The router sent this message to the agent.", facts=facts,
     )
     result_like = SimpleNamespace(
@@ -921,8 +957,9 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
         _close_skipped(factory, turn_id, "human_intervened", claimed_at)
         return "skipped"
 
-    if _routed_to_agent(contact, stored, factory):
-        return _run_agent_row(turn_id, claimed_at, contact, stored, block, factory)
+    decision = _routed_to_agent(contact, stored, factory)
+    if decision is not None:
+        return _run_agent_row(turn_id, claimed_at, contact, stored, block, factory, decision)
 
     run = _RowRun(turn_id, contact, order_key, claimed_at, factory)
     _local.run = run

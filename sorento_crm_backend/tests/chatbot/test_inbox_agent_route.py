@@ -331,3 +331,104 @@ def test_ac_w22_the_whatsapp_drain_asks_for_a_live_turn(world, seams):
     _drive(world, seams, label="live1")
 
     assert seams.agent_calls[0]["is_test"] is False
+
+
+# ---------------------------------------------------------------- FIX ROUND 1
+
+
+def _returning(seams, monkeypatch, *, status, reply):
+    from app.services.chatbot.agent import loop
+    from app.services.chatbot import inbox_queue
+
+    def fake(db, **kwargs):
+        seams.agent_calls.append(kwargs)
+        return loop.AgentTurnResult(
+            turn_id=seams.agent_turn_id, conversation_id=str(uuid.uuid4()), reply_text=reply,
+            status=status, limit_hit=None, rounds=1, usage={}, tool_calls=[],
+        )
+
+    monkeypatch.setattr(loop, "run_agent_turn", fake)
+    monkeypatch.setattr(inbox_queue, "run_agent_turn", fake, raising=False)
+
+
+@pytest.mark.parametrize(
+    "status,reply",
+    [
+        ("failed", "The agent could not answer: no API key is set."),
+        ("answered", "The agent has no answer for this."),
+    ],
+    ids=["failed", "no_answer"],
+)
+def test_fr1_f5_a_failed_agent_result_posts_the_fixed_line_not_its_text(world, seams, monkeypatch, status, reply):
+    from app.services.chatbot import inbox_queue
+
+    _returning(seams, monkeypatch, status=status, reply=reply)
+
+    contact, mid = _drive(world, seams, label="f5")
+
+    text = seams.sent[0]["actions"][0]["text"]
+    assert text == inbox_queue.AGENT_FAILED_LINE
+    assert seams.bot_calls == []
+    trace = json.dumps(world.row_for(contact, mid)["trace"], default=str)
+    assert "Answered by the agent." not in trace
+
+
+def test_fr1_f5_positive_control_an_answered_result_posts_its_reply_and_says_answered(world, seams):
+    contact, mid = _drive(world, seams, label="f5ok")
+
+    assert seams.sent[0]["actions"][0]["text"] == AGENT_REPLY
+    assert "Answered by the agent." in json.dumps(world.row_for(contact, mid)["trace"], default=str)
+
+
+def test_fr1_f10_the_route_decision_is_on_the_row_trace_and_its_usage_row_points_at_the_turn(world, seams):
+    from sqlalchemy import text as sql
+
+    from app.database import SessionLocal
+    from app.services.chatbot import router
+
+    usage_id = str(uuid.uuid4())
+    db = SessionLocal()
+    try:
+        db.execute(sql("INSERT INTO ai_assistant_usage_logs (id, feature) VALUES (CAST(:i AS uuid), 'chatbot_router')"), {"i": usage_id})
+        db.commit()
+    finally:
+        db.close()
+    seams.decision = router.RouteDecision("agent", "classified", score=0.9, usage_id=usage_id)
+
+    contact, mid = _drive(world, seams, label="f10")
+
+    row = world.row_for(contact, mid)
+    route = [r for r in row["trace"] if isinstance(r, dict) and r.get("stage") == "route"]
+    assert route and route[0]["facts"]["reason"] == "classified"
+    db = SessionLocal()
+    try:
+        linked = db.execute(
+            sql("SELECT chatbot_turn_id FROM ai_assistant_usage_logs WHERE id = CAST(:i AS uuid)"), {"i": usage_id}
+        ).scalar()
+    finally:
+        db.close()
+    assert linked == row["id"]
+
+
+def test_fr1_f9_one_whatsapp_agent_answer_is_one_answered_fact_and_an_agent_turn_is_not_a_fact(world, seams):
+    from app.database import SessionLocal
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.services.chatbot.analytics import facts
+
+    contact, mid = _drive(world, seams, label="f9")
+    agent_turn = ChatbotTurn(
+        id=str(uuid.uuid4()), contact_respond_id=contact, ingress="agent", is_test=False, status="done",
+        envelope={"text": "x"}, response={"reply_text": AGENT_REPLY}, trace=[],
+    )
+    db = SessionLocal()
+    try:
+        db.add(agent_turn)
+        db.commit()
+        assert facts.record_turn(db, str(agent_turn.id)) is False
+        from app.models.chat_facts import ChatAskFact
+
+        rows = db.query(ChatAskFact.outcome).filter(ChatAskFact.contact_respond_id == contact).all()
+    finally:
+        db.close()
+
+    assert [r[0] for r in rows] == ["answered"]
