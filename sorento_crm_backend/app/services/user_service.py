@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, func
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import IntegrityError
-from typing import Optional
+from typing import Any, Mapping, Optional
 from datetime import datetime
 from app.models.user import (
     User,
@@ -3538,3 +3538,18 @@ class TeamService:
             raise handle_not_found("Team member", f"{team_id}/{user_id}")
         self.db.delete(m)
         self.db.commit()
+
+
+def gate_user_ids(current_user: Mapping[str, Any]) -> list[str]:
+    """Who must hold a slug for this request: the caller, plus on an identity read (AGENTIC-UNIFY,
+    ``dependencies._apply_staff_identity``) the key's act-as user, so naming a stronger user gains
+    nothing the key lacks."""
+    uid = str(current_user.get("id") or "")
+    key_user_id = current_user.get("key_user_id")
+    return [uid, str(key_user_id)] if key_user_id else [uid]
+
+
+def holds_permission(db: Session, current_user: Mapping[str, Any], permission_slug: str) -> bool:
+    """``check_user_has_permission`` for a request's ``current_user``, both users on an identity read."""
+    service = UserPermissionService(db)
+    return all(service.check_user_has_permission(uid, permission_slug) for uid in gate_user_ids(current_user))

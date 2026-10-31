@@ -8,6 +8,7 @@ from app.dependencies import (
     get_current_user_or_api_key,
     require_permission,
     require_permission_with_api_key,
+    require_staff_read_permission,
 )
 from app.services import brochure_image_service, product_link_audit
 from app.services.product_service import ProductAttachmentService
@@ -145,7 +146,11 @@ def clear_brochure_image(
     return BrochureImageChoice(productId=product_id, chosenAttachmentId=None)
 
 
-@router.get("/", response_model=ListResponse[ProductAttachmentResponse])
+@router.get(
+    "/",
+    response_model=ListResponse[ProductAttachmentResponse],
+    dependencies=[Depends(require_staff_read_permission("master_data.product_attachments.view"))],
+)
 def get_product_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),

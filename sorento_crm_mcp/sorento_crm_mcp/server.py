@@ -23,7 +23,7 @@ from sorento_crm_mcp.module_loader import merged_catalog
 from sorento_crm_mcp.presenters import PRESENTER_TOOLS, present_response
 from sorento_crm_mcp.ideation import register_ideation_tools
 from sorento_crm_mcp.record_actions import register_record_action_tools
-from sorento_crm_mcp.scope import check_scope
+from sorento_crm_mcp.scope import check_scope, serving_tool
 from sorento_crm_mcp.settings import Settings
 from sorento_crm_mcp.user_guides import register_user_guide_tools
 
@@ -1819,7 +1819,8 @@ def _compile_tool(spec: ToolSpec):
         f"    _refusal = _check_scope(_spec, q, body, ctx)\n"
         f"    if _refusal is not None:\n"
         f"        return _refusal\n"
-        f"    _resp = await _execute_tool_request_with_body(_spec, client, _pp, q, body)\n"
+        f"    with _serving_tool(_spec):\n"
+        f"        _resp = await _execute_tool_request_with_body(_spec, client, _pp, q, body)\n"
         f"    _resp = await _attach_suggested_escalation(_spec.name, _resp, api_url=_settings.crm_base_url, api_key=_settings.external_api_key)\n"
         f"    if _view == 'render':\n"
         f"        _resp = _present_response(_spec.name, _resp)\n"
@@ -1834,6 +1835,7 @@ def _compile_tool(spec: ToolSpec):
         "_execute_tool_request_with_body": _execute_tool_request_with_body,
         "_attach_suggested_escalation": attach_suggested_escalation,
         "_check_scope": check_scope,
+        "_serving_tool": serving_tool,
         "_present_response": present_response,
         "json": json,
         "_spec": spec,

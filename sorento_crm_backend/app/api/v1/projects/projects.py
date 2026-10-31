@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
 from app.dependencies import require_any_permission, require_any_permission_with_api_key, require_permission
+from app.services.user_service import gate_user_ids
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.projects import (
     ClashPreviewRequest,
@@ -262,6 +263,11 @@ def _visible_to(db: Session, current_user: dict):
     return None
 
 
+def _reader_permissions(db: Session, current_user: dict) -> set:
+    """The slugs the serializer's field gates read: on an identity read, what both users hold."""
+    return set.intersection(*(permission_slugs(db, uid) for uid in gate_user_ids(current_user)))
+
+
 @router.get("/", response_model=ListResponse[ProjectResponse])
 def list_projects(
     query: Optional[str] = Query(None, description="Matches title or project code"),
@@ -365,7 +371,7 @@ def list_projects(
             db,
             rows,
             actor_user_id=current_user["id"],
-            permissions=permission_slugs(db, current_user["id"]),
+            permissions=_reader_permissions(db, current_user),
         )
         return {
             "data": data,
@@ -472,7 +478,7 @@ def get_project(
             db,
             project,
             actor_user_id=current_user["id"],
-            permissions=permission_slugs(db, current_user["id"]),
+            permissions=_reader_permissions(db, current_user),
         )
         # A pending registration names the approved projects it may repeat (D8); the list
         # never pays that embedding call.
