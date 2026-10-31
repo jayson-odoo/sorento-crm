@@ -1986,7 +1986,7 @@ def list_order_inquiry_headers(
         for value in (multi_text(raw) or []):
             if len(value) > 200:
                 raise handle_unprocessable(f"{label}: value is too long")
-    for value in multi_values(inquiry_no) or []:
+    for value in multi_values(inquiry_no, capped=False) or []:
         if len(value) > 200:
             raise handle_unprocessable("inquiry_no: value is too long")
     try:

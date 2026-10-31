@@ -361,7 +361,7 @@ class OrderInquiryHeaderService:
             )
 
         # RESERVE-EMAIL-FULL-TABLE: exact OI nos (never a prefix), the reserve emails' button.
-        numbers = multi_values(inquiry_no)
+        numbers = multi_values(inquiry_no, capped=False)
         if numbers:
             base = base.filter(OrderInquiry.inquiry_no.in_(numbers))
         # FILTER-MULTISELECT PR6: Raised by, Agent and Project take several values, OR-ed.
