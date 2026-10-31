@@ -70,7 +70,8 @@ only non-zero counts in this order: `1 partial`, `1 rejected`. "line" is singula
 - **AC-RF-20** Batch: label `View these {k} order inquiries`, URL
   `{base}/project-sales/order-inquiries?inquiry_no=OI-1,OI-2` listing exactly this email's OIs, sorted.
 - **AC-RF-21** One OI: label `View this order inquiry`, URL goes straight to that OI's page (today's
-  link, `?reserve=` included when the email covers one request; no `inquiry_no=`).
+  link, with `?reserve=` when the email covers one request and without it when it covers several; no
+  `inquiry_no=`).
 - **AC-RF-22** `GET /api/v1/project-sales/order-inquiry-headers?inquiry_no=OI-1,OI-2` returns exactly those
   OIs. Matching is exact: `OI-2610-002` does not match `OI-2610-0025`. An unknown number adds nothing. An
   empty value is ignored. Company scope still applies. Comma-separated and repeated params both work.
@@ -92,6 +93,8 @@ only non-zero counts in this order: `1 partial`, `1 rejected`. "line" is singula
 - **AC-RF-35** The preview returns the same emails as the send, and `emails_sent`, `items_sent`,
   `inquiry_total` agree with them.
 - **AC-RF-36** Different To persons still get separate emails.
+- **AC-RF-37** Different requesters still get separate emails, even with the same To person, so one requester
+  is never on the Cc of another requester's email (`test_fix_N1` in `test_oi_staged_notify.py` pins this).
 
 ## F. One OI, several requests
 
@@ -116,5 +119,7 @@ only non-zero counts in this order: `1 partial`, `1 rejected`. "line" is singula
 
 ## H. Size and the export
 
-- **AC-RF-60** A 110-line reserved email with a REASON column renders at or below 102 KB (the Gmail clip size).
+- **AC-RF-60** A 105-line reserved email with a REASON column renders at or below 102 KiB (the Gmail clip size).
+  Measured on the build: about 881 B per row, so the clip falls at about 108 lines. The pin catches markup that
+  bloats rows. The UAC first said 110 lines, from the mockup's shorter item codes; the lead moved it on 1 Nov.
 - **AC-RF-70** `EXPORT_HEADINGS` and the Excel and PDF download are unchanged.
