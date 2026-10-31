@@ -95,6 +95,9 @@ def _automations(world, *, strict: bool = False) -> None:
         _run(scripts["oisn_0001_staged_notify"], db)
     else:
         assert not strict, "migration oisn_0001_staged_notify does not exist yet"
+    # RESERVE-EMAIL-FULL-TABLE: the flat full-table templates, once that migration exists.
+    if "oisn_0002_full_table" in scripts:
+        _run(scripts["oisn_0002_full_table"], db)
     db.commit()
 
 
@@ -273,7 +276,8 @@ def test_AC_SN_04_preview_dev_config_two_emails(sn, monkeypatch):
         assert _names(mail["cc"]) == [_name(world, world.requester)], "Cc is the requester only"
 
 
-def test_AC_SN_04_preview_fixed_cs_user_one_email(sn, monkeypatch):
+def test_AC_SN_04_preview_fixed_cs_user_one_email_per_raising_cs(sn, monkeypatch):
+    # AC-RF-30 reverses "one email for every raiser": one email per raising CS, same To.
     client, world = sn
     _automations(world)
     _register()
@@ -287,13 +291,14 @@ def test_AC_SN_04_preview_fixed_cs_user_one_email(sn, monkeypatch):
     _parked_request(client, world, niki)
 
     body = _ok(client.post(REQ_PREVIEW))
-    assert len(body["emails"]) == 1, body
-    mail = body["emails"][0]
-    assert mail["to"]["name"] == f"{MARKER} CSFixed"
-    cc = _names(mail["cc"])
-    assert len(cc) == len(set(cc)) == 3, f"Eling once, deduped: {cc}"
-    assert {f"{MARKER} Eling", f"{MARKER} Niki", _name(world, world.requester)} == set(cc)
-    assert mail["inquiry_count"] == 3
+    assert len(body["emails"]) == 2, body
+    by_count = {m["inquiry_count"]: m for m in body["emails"]}
+    assert set(by_count) == {1, 2}
+    for mail, raiser in ((by_count[2], f"{MARKER} Eling"), (by_count[1], f"{MARKER} Niki")):
+        assert mail["to"]["name"] == f"{MARKER} CSFixed"
+        cc = _names(mail["cc"])
+        assert len(cc) == len(set(cc)) == 2, f"own CS once, plus the requester: {cc}"
+        assert set(cc) == {raiser, _name(world, world.requester)}
 
 
 def test_AC_SN_04_preview_requires_acknowledge(sn):
@@ -453,7 +458,9 @@ def test_AC_SN_11_one_oi_email_keeps_todays_subject(sn, monkeypatch):
     inquiry, _row_, _rid = _parked_request(client, world, eling)
 
     mail = _ok(client.post(REQ_PREVIEW))["emails"][0]
-    assert mail["subject"].startswith(f"Reserve request: {inquiry.inquiry_no} #1"), mail["subject"]
+    # AC-RF-08 / AC-RF-18 reverse the "#1" subject: no request number, "raised by" instead.
+    assert mail["subject"].startswith(f"Reserve request: {inquiry.inquiry_no} - "), mail["subject"]
+    assert f"raised by {MARKER} Eling" in mail["subject"] and "#1" not in mail["subject"]
     assert "Reserve requests:" not in mail["subject"]
     assert "order inquiries need your reserve" not in mail["body_html"]
 
@@ -466,7 +473,9 @@ def _bulk_inquiries(client, world, raiser_id, n):
     return sorted(made, key=lambda i: i.inquiry_no)
 
 
-def test_AC_SN_11_multi_oi_email_is_short_with_five_listed(sn, monkeypatch):
+def test_AC_SN_11_multi_oi_email_lists_every_oi_in_the_full_table(sn, monkeypatch):
+    # AC-RF-05 / AC-RF-18 / AC-RF-20 reverse the five-OI cap, "and M more" and the old
+    # subject and button: every OI prints, the new batch words, a filtered-list button.
     client, world = sn
     _automations(world, strict=True)
     _register()
@@ -480,16 +489,15 @@ def test_AC_SN_11_multi_oi_email_is_short_with_five_listed(sn, monkeypatch):
     joey_name = world.db.execute(
         sa.text("SELECT name FROM users WHERE id = :i"), {"i": world.requester}
     ).scalar()
-    assert mail["subject"] == f"Reserve requests: 7 order inquiries ({joey_name})", mail["subject"]
+    batch = f"7 order inquiries raised by {MARKER} Eling"
+    assert mail["subject"] == f"Reserve requests: {batch} ({joey_name})", mail["subject"]
     html = mail["body_html"]
-    assert "7 order inquiries need your reserve" in html
-    for inquiry in ordered[:5]:
-        assert inquiry.inquiry_no in html, f"first five by OI no: {inquiry.inquiry_no}"
-    for inquiry in ordered[5:]:
-        assert inquiry.inquiry_no not in html, f"never more than 5 listed: {inquiry.inquiry_no}"
-    assert "and 2 more order inquiries." in html
-    assert "View order inquiries that need your reserve" in html
-    assert "/project-sales/order-inquiries?reserve=needs_reserve" in html
+    assert f"{batch} need your reserve" in html
+    for inquiry in ordered:
+        assert inquiry.inquiry_no in html, f"every OI prints: {inquiry.inquiry_no}"
+    assert "more order inquir" not in html
+    assert "View these 7 order inquiries" in html
+    assert "inquiry_no=" + ",".join(i.inquiry_no for i in ordered) in html
     assert len(re.findall(r'class="em-btn-link"', html)) == 1, "ONE button"
 
 
@@ -674,7 +682,8 @@ def test_AC_SN_25_double_send_unresolved_and_colleague(sn, monkeypatch):
     assert len(_reserved_calls(calls)) == 1
 
 
-def test_AC_SN_26_multi_oi_notice_email_is_short(sn, monkeypatch):
+def test_AC_SN_26_multi_oi_notice_email_lists_every_oi(sn, monkeypatch):
+    # AC-RF-05 / AC-RF-18 / AC-RF-20 reverse the five-OI cap, "and M more" and the old words.
     client, world = sn
     _automations(world, strict=True)
     _register()
@@ -694,19 +703,17 @@ def test_AC_SN_26_multi_oi_notice_email_is_short(sn, monkeypatch):
     cs_name = world.db.execute(
         sa.text("SELECT name FROM users WHERE id = :i"), {"i": world.reserver}
     ).scalar()
-    assert mail["subject"] == f"Reserved: 7 order inquiries ({cs_name})", mail["subject"]
+    assert mail["subject"] == f"Reserved: 7 order inquiries raised by {MARKER} Eling ({cs_name})", mail["subject"]
     html = mail["body_html"]
-    assert "CS answered your reserve requests on 7 order inquiries" in html
-    for inquiry in ordered[:5]:
+    for inquiry in ordered:
         assert inquiry.inquiry_no in html
-    for inquiry in ordered[5:]:
-        assert inquiry.inquiry_no not in html
-    assert "and 2 more order inquiries." in html
-    assert "View reserved order inquiries" in html
-    assert "reserve=reserved" in html
+    assert "more order inquir" not in html
+    assert "View these 7 order inquiries" in html
+    assert "inquiry_no=" in html
 
 
-def test_AC_SN_26_one_oi_notice_keeps_todays_subject(sn, monkeypatch):
+def test_AC_SN_26_one_oi_notice_has_no_request_number(sn, monkeypatch):
+    # AC-RF-08 / AC-RF-18 reverse the "#1" subject.
     client, world = sn
     _automations(world, strict=True)
     _register()
@@ -716,7 +723,8 @@ def test_AC_SN_26_one_oi_notice_keeps_todays_subject(sn, monkeypatch):
     _commit(world, inquiry, reserves=[_reserve(world, row, "50")], park_notice=True)
     with _as(world.db, world.reserver, RESERVER_PERMISSIONS) as cs:
         mail = _ok(cs.post(NOTE_PREVIEW))["emails"][0]
-    assert mail["subject"].startswith(f"Reserved: {inquiry.inquiry_no} #1"), mail["subject"]
+    assert mail["subject"].startswith(f"Reserved: {inquiry.inquiry_no} - "), mail["subject"]
+    assert "#1" not in mail["subject"] and f"raised by {MARKER} Eling" in mail["subject"]
 
 
 def test_AC_SN_27_notice_recipients(sn, monkeypatch):
@@ -851,7 +859,8 @@ def _two_requests_one_oi(client, world, raiser_id):
     return inquiry, row_a, row_b
 
 
-def test_fix_B1a_two_parked_requests_one_oi_keep_one_oi_shape(sn, monkeypatch):
+def test_fix_B1a_two_parked_requests_one_oi_are_one_email(sn, monkeypatch):
+    # AC-RF-40 reverses the one-OI split: two open requests on one OI are ONE email.
     client, world = sn
     _automations(world, strict=True)
     _register()
@@ -860,17 +869,16 @@ def test_fix_B1a_two_parked_requests_one_oi_keep_one_oi_shape(sn, monkeypatch):
     inquiry, _a, _b = _two_requests_one_oi(client, world, eling)
 
     emails = _ok(client.post(REQ_PREVIEW))["emails"]
-    assert len(emails) == 2, [e["subject"] for e in emails]
-    subjects = sorted(e["subject"] for e in emails)
-    assert subjects[0].startswith(f"Reserve request: {inquiry.inquiry_no} #1"), subjects
-    assert subjects[1].startswith(f"Reserve request: {inquiry.inquiry_no} #2"), subjects
-    assert not any("Reserve requests:" in s for s in subjects), subjects
+    assert len(emails) == 1, [e["subject"] for e in emails]
+    assert emails[0]["subject"].startswith(f"Reserve request: {inquiry.inquiry_no} - "), emails[0]["subject"]
+    assert emails[0]["line_count"] == 2
     sent = _ok(client.post(REQ_SEND))
-    assert sent["emails_sent"] == 2 and sent["items_sent"] == 1, sent
-    assert len(_requested_calls(calls)) == 2
+    assert sent["emails_sent"] == 1 and sent["items_sent"] == 1, sent
+    assert len(_requested_calls(calls)) == 1
 
 
-def test_fix_B1b_one_commit_two_requests_one_oi_keeps_one_oi_notice(sn, monkeypatch):
+def test_fix_B1b_one_commit_two_requests_one_oi_is_one_notice(sn, monkeypatch):
+    # AC-RF-40 reverses the one-OI split on the notice side too.
     client, world = sn
     _automations(world, strict=True)
     _register()
@@ -889,17 +897,16 @@ def test_fix_B1b_one_commit_two_requests_one_oi_keeps_one_oi_notice(sn, monkeypa
     with _as(world.db, world.reserver, RESERVER_PERMISSIONS) as cs:
         emails = _ok(cs.post(NOTE_PREVIEW))["emails"]
         subjects = sorted(e["subject"] for e in emails)
-        assert len(emails) == 2, subjects
-        assert subjects[0].startswith(f"Reserved: {inquiry.inquiry_no} #1"), subjects
-        assert subjects[1].startswith(f"Reserved: {inquiry.inquiry_no} #2"), subjects
-        assert not any("order inquiries" in s for s in subjects), subjects
+        assert len(emails) == 1, subjects
+        assert subjects[0].startswith(f"Reserved: {inquiry.inquiry_no} - "), subjects
         sent = _ok(cs.post(NOTE_SEND))
     world.db.commit()
-    assert sent["emails_sent"] == 2
-    assert len(_reserved_calls(calls)) == 2
+    assert sent["emails_sent"] == 1
+    assert len(_reserved_calls(calls)) == 1
 
 
-def test_fix_B1c_two_oi_group_with_three_requests_is_bulk_by_oi_count(sn, monkeypatch):
+def test_fix_B1c_two_oi_group_with_three_requests_is_one_batch(sn, monkeypatch):
+    # AC-RF-18 / AC-RF-40: still one email for 2 OIs; the batch words replace the old ones.
     client, world = sn
     _automations(world, strict=True)
     _register()
@@ -911,10 +918,10 @@ def test_fix_B1c_two_oi_group_with_three_requests_is_bulk_by_oi_count(sn, monkey
     emails = _ok(client.post(REQ_PREVIEW))["emails"]
     assert len(emails) == 1, [e["subject"] for e in emails]
     assert emails[0]["subject"] == (
-        f"Reserve requests: 2 order inquiries ({_name(world, world.requester)})"
+        f"Reserve requests: 2 order inquiries raised by {MARKER} Eling ({_name(world, world.requester)})"
     )
     assert emails[0]["inquiry_count"] == 2
-    assert "2 order inquiries need your reserve" in emails[0]["body_html"]
+    assert f"2 order inquiries raised by {MARKER} Eling need your reserve" in emails[0]["body_html"]
 
 
 def test_fix_S2_recipients_resolve_staged_rows_on_a_reserved_request(sn, monkeypatch):
@@ -948,8 +955,8 @@ def test_fix_S2_recipients_resolve_staged_rows_on_a_reserved_request(sn, monkeyp
 
 
 def test_fix_S1_preview_inquiry_total_is_distinct_ois(sn, monkeypatch):
-    """Two parked requests on ONE OI split into two emails (each inquiry_count 1); the
-    preview's `inquiry_total` counts DISTINCT OIs across all emails, not the sum."""
+    """Two parked requests on ONE OI are one email (AC-RF-40); the preview's
+    `inquiry_total` counts DISTINCT OIs across all emails."""
     client, world = sn
     _automations(world, strict=True)
     _register()
@@ -961,7 +968,8 @@ def test_fix_S1_preview_inquiry_total_is_distinct_ois(sn, monkeypatch):
     _parked_request(client, world, niki)
 
     body = _ok(client.post(REQ_PREVIEW))
-    assert len(body["emails"]) == 3, [e["subject"] for e in body["emails"]]
+    # AC-RF-40: Eling's two requests on one OI are ONE email now, so two emails in all.
+    assert len(body["emails"]) == 2, [e["subject"] for e in body["emails"]]
     assert body.get("inquiry_total") == 2, body.get("inquiry_total")
 
     # Notices: one commit answers two requests on one OI, plus a second OI.
