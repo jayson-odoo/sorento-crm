@@ -223,6 +223,7 @@ def _state(db, contact_respond_id: str, text: str) -> dict[str, Any]:
             "latest_message": text,
             "recent_exchanges": panel,
             "last_answered_by": panel[-1]["answered_by"] if panel else None,
+            **({"current_page": principal.page} if principal.page else {}),
         }
     rows = (
         db.query(ChatbotTurn.ingress, ChatbotTurn.envelope, ChatbotTurn.response)

@@ -37,6 +37,9 @@ class StaffPrincipal:
     user_id: str
     conversation_id: str
     active_company_id: str | None = None
+    #: What the user's screen is on: `title`, `path` and, only when the record may be read,
+    #: `record_kind` and `record_ref`. No visible text and no facts (they ride the agent's message).
+    page: dict[str, Any] | None = None
 
     @property
     def key(self) -> str:
