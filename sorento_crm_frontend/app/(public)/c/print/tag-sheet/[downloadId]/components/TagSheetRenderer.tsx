@@ -90,6 +90,15 @@ export interface ResolvedLineData {
   /** `products.barcode` (D14/S7). Null/absent for a set line or a product with
    * none - the barcode layer renders nothing on print for either. */
   barcode?: string | null;
+  /** The parts THIS tag prints and prices (r10 S6); `ownPartsOf` falls back
+   *  to `parts` when absent. The PDF payload never carried it before
+   *  PRICETAG-PDF-FIELDS, so a combo tag summed every candidate. */
+  own_parts?: TagPartData[];
+  /** The tag's own currency (AC-A11). Absent prints as MYR. */
+  currency?: string;
+  /** Staff-authored tag copy (r10 S4), what `{{product.price_tag_description}}`
+   *  draws. Null for a set line. */
+  price_tag_description?: string | null;
 }
 
 /**

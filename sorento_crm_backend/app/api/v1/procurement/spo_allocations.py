@@ -9,7 +9,12 @@ from app.utils.heavy_work import heavy
 logger = logging.getLogger(__name__)
 from app.utils.multi_value import multi_uuids
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
+from app.dependencies import (
+    get_current_user,
+    get_current_user_or_api_key,
+    require_permission,
+    require_staff_read_permission,
+)
 from app.services.procurement_service import SPOAllocationService
 from app.schemas.procurement import (
     SPOAllocationCreate,
@@ -33,7 +38,10 @@ router = APIRouter()
 #: A6 (chatbot-growth-r1, AC-908): registered BEFORE `/{allocation_id}` below for the
 #: same reason `/documents` is - Starlette matches routes in registration order and
 #: `/{allocation_id}` accepts any single path segment, "last-receipt" included.
-@router.get("/last-receipt")
+@router.get(
+    "/last-receipt",
+    dependencies=[Depends(require_staff_read_permission("procurement.spo_allocations.view"))],
+)
 def get_spo_last_receipt(
     product_ids: Optional[list[str]] = Query(
         None, description="Filter by canonical product UUIDs (csv / JSON / repeated)."

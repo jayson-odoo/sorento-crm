@@ -73,6 +73,7 @@ import { linkAttachmentToPackingList, deleteAttachmentLink, unlinkPackingListFro
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
+import AttachmentAiReadRow, { isAiReadInFlight } from './AttachmentAiReadRow';
 
 const ENTITY_ROUTES = {
   product: { label: 'Product', path: '/master-data-management/products' },
@@ -853,6 +854,9 @@ export default function AttachmentDetailModal({
     queryFn: () => getAttachmentMetadata(attachmentId!),
     enabled: !!attachmentId && open,
     retry: 1,
+    // Poll every 5 s while the AI read is moving; stops once the status settles.
+    refetchInterval: (query: { state: { data?: { ai_read_status?: string | null } } }) =>
+      isAiReadInFlight(query.state.data?.ai_read_status) ? 5000 : false,
   });
 
   useEffect(() => {
@@ -1116,6 +1120,7 @@ export default function AttachmentDetailModal({
                           {attachment.is_deleted ? 'Deleted' : 'Active'}
                         </Badge>
                       </div>
+                      <AttachmentAiReadRow attachment={attachment} />
                     </div>
                     <div className="space-y-2">
                       <Label className="text-sm text-muted-foreground">Description</Label>

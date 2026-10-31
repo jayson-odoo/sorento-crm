@@ -4,9 +4,8 @@ JWT-only. The dependency is ``get_current_user`` (not the ``_or_api_key``
 variant), so an ``EXTERNAL_API_KEY`` / ``X-API-Key`` principal is denied - this
 keeps the assembler out of n8n/WhatsApp reach (UAC §3.6 / Q7).
 
-RBAC is resolved per entity_type via ``record_context_view_permission``: the
-complaint type requires ``complaint_management.complaints.view``; the other
-form types are auth-only (no extra permission).
+RBAC is resolved per record via ``can_read_record_context``: every form type needs its
+``view``, or its ``view_own`` for the user's own record.
 """
 from __future__ import annotations
 
@@ -20,7 +19,7 @@ from app.dependencies import get_current_user
 from app.services.error_handler import AppException
 from app.services.record_context_service import (
     RecordContextService,
-    record_context_view_permission,
+    can_read_record_context,
 )
 from app.services.user_service import UserPermissionService
 
@@ -36,18 +35,15 @@ def get_record_context(
 ) -> dict[str, Any]:
     """Assemble the deterministic record-context bundle for a viewed record.
 
-    Resolves the per-entity view permission: when one is required and the user
-    lacks it, raises 403. Raises 400 for unsupported entity types and 404 when
-    the record is missing (both via ``AppException`` from the service layer).
+    Raises 403 when the user may not read this record. Raises 400 for unsupported entity types
+    and 404 when the record is missing (both via ``AppException`` from the service layer).
     """
-    required_slug = record_context_view_permission(entity_type)
-    if required_slug is not None:
-        if not UserPermissionService(db).check_user_has_permission(
-            current_user["id"], required_slug
-        ):
-            raise AppException(
-                status_code=403,
-                message="You do not have permission to view this record.",
-                code="FORBIDDEN",
-            )
+    if not can_read_record_context(
+        db, UserPermissionService(db), current_user["id"], entity_type, id
+    ):
+        raise AppException(
+            status_code=403,
+            message="You do not have permission to view this record.",
+            code="FORBIDDEN",
+        )
     return RecordContextService(db).assemble(entity_type, id)

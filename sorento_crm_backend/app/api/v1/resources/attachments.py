@@ -208,6 +208,17 @@ def _next_copy_name(
     return candidate
 
 
+def _queue_ai_read(db, attachment) -> None:
+    """Queue the AI read when the file's type allows it; an upload never fails because of it."""
+    from app.services import knowledge_service
+
+    try:
+        knowledge_service.queue_read(db, attachment)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not queue the AI read for %s", getattr(attachment, "id", None))
+        db.rollback()  # a failed commit leaves the session unusable until rolled back
+
+
 def _enrich_uploaded_by_user(db, attachment) -> Optional[dict]:
     """Resolve uploaded_by UUID to user name/email for display. Returns UploadedByUser dict or None."""
     from app.schemas.resources import UploadedByUser
@@ -659,7 +670,9 @@ def _attachment_response_with_linked_entities(
         data.get("file_path"),
         provider=getattr(attachment, "storage_provider", None),
     )
-    actor_id = (current_user or {}).get("id")
+    # The widening below follows one user's grants, and a named user does not lend theirs: an
+    # identity read stays in the active company (AGENTIC-UNIFY AC-27).
+    actor_id = None if (current_user or {}).get("key_user_id") else (current_user or {}).get("id")
     linked = service.get_linked_entities(
         attachment_id, actor_id=actor_id, company_id=getattr(attachment, "company_id", None)
     )
@@ -1158,6 +1171,7 @@ async def create_attachment(
                         e,
                         exc_info=True,
                     )
+            _queue_ai_read(db, attachment)
             # Stamp the owning company by hand: returning the bare ORM row would
             # serialize company_name as None while company_id is populated, so the
             # write echo would disagree with the very next list read.
@@ -1212,6 +1226,7 @@ async def create_attachment(
                     e,
                     exc_info=True,
                 )
+        _queue_ai_read(db, attachment)
         # Same reason as the replace-in-place branch above: the ORM row alone
         # carries company_id but no company_name.
         data = AttachmentResponse.model_validate(attachment).model_dump()
@@ -1871,6 +1886,35 @@ def apply_bulk_access_levels(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.post("/{attachment_id}/ai-read", status_code=status.HTTP_202_ACCEPTED)
+def read_attachment_again(
+    attachment_id: str,
+    current_user: dict = Depends(require_permission("resource.attachments.upload")),
+    db: Session = Depends(get_db),
+):
+    """Queue the AI's reading of this file again (AGENTIC-KNOWLEDGE)."""
+    from app.services import knowledge_service
+
+    from app.services import rate_limit
+
+    validate_uuid_path(attachment_id, resource="Attachment")
+    attachment = AttachmentService(db).get_attachment(attachment_id)
+    reason = knowledge_service.read_block_reason(db, attachment)
+    if reason:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=reason)
+    limit = rate_limit.hit("knowledge_ai_read", str(current_user["id"]), limit=20, window_seconds=60)
+    if not limit.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many read requests. Try again shortly.",
+            headers={"Retry-After": str(limit.retry_after_seconds)},
+        )
+    # read_block_reason has just asked whether a job is live, so queue_read need not ask again.
+    knowledge_service.queue_read(db, attachment, check_pending=False)
+    db.refresh(attachment)
+    return {"ai_read_status": attachment.ai_read_status}
 
 
 @router.post("/{attachment_id}/resubmit", status_code=status.HTTP_200_OK)

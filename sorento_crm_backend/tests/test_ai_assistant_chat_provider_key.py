@@ -90,6 +90,7 @@ def test_the_agent_loop_uses_the_configured_providers_own_key(gemini_config):
         standalone_query="what stock do we hold?",
         selected_tools=[],
         sources=[],
+        user_id="95709c37-0fb4-5c00-8686-536c019e6fb7",
         turn_cache=_TurnToolCache(
             user_id="95709c37-0fb4-5c00-8686-536c019e6fb7",
             conversation_id="conv-1",
@@ -109,6 +110,7 @@ def test_the_record_answer_uses_the_configured_providers_own_key(gemini_config):
         history=[],
         user_message="what is the status?",
         record_ctx={"entity_type": "complaint", "status": "submitted"},
+        user_id="95709c37-0fb4-5c00-8686-536c019e6fb7",
     )
 
     assert recorder.calls, "the record answer never built a provider"

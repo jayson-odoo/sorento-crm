@@ -7,7 +7,12 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
+from app.dependencies import (
+    get_current_user,
+    get_current_user_or_api_key,
+    require_permission,
+    require_staff_read_permission,
+)
 from app.services.procurement_service import PickingHeaderService
 from app.services.job_service import JobService
 from app.services.queue_service import enqueue_job
@@ -214,7 +219,7 @@ def import_grn_lines(
 
 
 #: MULTI-ASK-PLAN S3: registered ahead of `/{grn_id}`, which accepts any one segment.
-@router.get("/summary")
+@router.get("/summary", dependencies=[Depends(require_staff_read_permission("procurement.grn.view"))])
 def get_grn_summary(
     product_ids: Optional[list[str]] = Query(
         None, description="Canonical product UUIDs (csv / JSON / repeated). Required."

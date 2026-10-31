@@ -33,6 +33,10 @@ export const AttachmentTypeSchema = z.object({
   // Folder an upload of this type files into by default (R4). Null = no default,
   // same as today; the upload dialogs still let the user pick another one.
   default_directory_id: z.string().nullable().optional(),
+  // AGENTIC-KNOWLEDGE: who the AI may answer from this type's files for, and the team a
+  // question the documents do not cover is referred to.
+  ai_audience: z.enum(['off', 'staff', 'dealer', 'public']),
+  ai_escalate_team_id: z.string().nullable().optional(),
 });
 
 export type AttachmentTypeSchemaType = z.infer<typeof AttachmentTypeSchema>;

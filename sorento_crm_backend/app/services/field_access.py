@@ -625,11 +625,9 @@ def _staff_entitled(
     if not user_id or not permission:
         return False
     try:
-        from app.services.user_service import UserPermissionService
+        from app.services.user_service import holds_permission
 
-        return bool(
-            UserPermissionService(db).check_user_has_permission(str(user_id), permission)
-        )
+        return holds_permission(db, current_user, permission)
     except Exception:  # noqa: BLE001 - fail closed
         logger.warning("Permission lookup failed for %s; denying", user_id, exc_info=True)
         return False

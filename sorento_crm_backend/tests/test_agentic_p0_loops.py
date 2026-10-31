@@ -83,6 +83,7 @@ def _run_agent_loop(service, cfg):
     return service._run_agent_loop(
         config=cfg, history=[], user_message="give me the test data", standalone_query="give me the test data",
         selected_tools=[{"tool_name": "crm_test_tool"}], sources=[], turn_cache=None,
+        user_id="95709c37-0fb4-5c00-8686-536c019e6fb7",
     )
 
 
@@ -90,6 +91,7 @@ def _run_record_answer(service, cfg):
     return service._render_record_answer(
         config=cfg, history=[], user_message="what next?",
         record_ctx={"entity_type": "complaint", "current_state": {"status": "open"}},
+        user_id="95709c37-0fb4-5c00-8686-536c019e6fb7",
     )
 
 
