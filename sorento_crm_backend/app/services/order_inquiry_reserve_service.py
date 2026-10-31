@@ -305,20 +305,38 @@ def _open_request_row_ids(db: Session, row_ids: Sequence[str]) -> set:
     return {row_id for (row_id,) in rows}
 
 
+def _status_of(rr: OrderInquiryReserveRequestRow) -> tuple:
+    """RESERVE-EMAIL-FULL-TABLE: the reserved email's STATUS words and kind for one answered
+    request row, compared as Decimals (never the printed text). `(None, None)` while open.
+    Display only: the stored answer stays a quantity."""
+    if rr.qty_reserved is None:
+        return None, None
+    got, asked = _dec(rr.qty_reserved), _dec(rr.qty_requested)
+    if got <= _ZERO:
+        return "Rejected", "rejected"
+    if got >= asked:
+        return f"Reserved {_qty_str(got)}", "reserved"
+    return f"Partial {_qty_str(got)} of {_qty_str(asked)}", "partial"
+
+
 def _row_context(db: Session, row: OrderInquiryRow, rr: OrderInquiryReserveRequestRow) -> Dict[str, Any]:
     """One `reserve.rows[]` entry, read fresh off the row/request-row at dispatch time -
     the same field set both the request and the reserved template read (3.6): `remaining`
     doubles as the request mail's REMAINING and the reserved mail's BALANCE, since the two
     templates print it at different MOMENTS (before the request changes nothing, after the
     reserve link has already landed) rather than under two different keys."""
+    status, status_kind = _status_of(rr)
     return {
         "item_code": row.item_code,
         "delivery_date": _fmt_date(row.delivery_date),
+        "delivery_iso": row.delivery_date.isoformat() if row.delivery_date else None,
         "qty": _qty_str(row.qty),
         "remaining": _qty_str(_remaining(db, row)),
         "qty_requested": _qty_str(rr.qty_requested),
         "location": _warehouse_code(db, rr.warehouse_id),
         "qty_reserved": _qty_str(rr.qty_reserved) if rr.qty_reserved is not None else None,
+        "status": status,
+        "status_kind": status_kind,
         "reason": rr.reason,
     }
 
@@ -336,7 +354,10 @@ def _build_context(
     email's `include_requester` keeps naming the ORIGINAL asker even though `actor` has
     moved on to Eling."""
     from app.services.automation_triggers import build_order_inquiry_link
-    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+    from app.services.project_order_inquiry_service import (
+        ProjectOrderInquiryService,
+        project_customer_label,
+    )
 
     inquiry = (
         db.query(OrderInquiry).filter(OrderInquiry.id == request.order_inquiry_id).first()
@@ -354,6 +375,9 @@ def _build_context(
         "so_number": facts.get("so_number"),
         "customer": facts.get("customer"),
         "project": facts.get("project"),
+        "project_customer": project_customer_label(facts.get("customer"), facts.get("project")),
+        "so_date": _fmt_date(facts.get("so_date")),
+        "oi_link": build_order_inquiry_link(request.order_inquiry_id),
         "requested_by": _person(db, request.requested_by),
         "requested_at": _fmt_date(request.requested_at),
         "note": request.note,
@@ -398,7 +422,10 @@ def _build_commit_context(
     ALSO carried, same value, so the one seeded reserved-mail template's existing
     `row.remaining` (its BALANCE column) keeps rendering unchanged."""
     from app.services.automation_triggers import build_order_inquiry_link
-    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+    from app.services.project_order_inquiry_service import (
+        ProjectOrderInquiryService,
+        project_customer_label,
+    )
 
     inquiry = (
         db.query(OrderInquiry).filter(OrderInquiry.id == request.order_inquiry_id).first()
@@ -430,14 +457,18 @@ def _build_commit_context(
         rr = item["rr"]
         row = item["row"]
         balance = _qty_str(_remaining(db, row))
+        status, status_kind = _status_of(rr)
         rows_ctx.append(
             {
                 "item_code": row.item_code,
                 "delivery_date": _fmt_date(row.delivery_date),
+                "delivery_iso": row.delivery_date.isoformat() if row.delivery_date else None,
                 "qty": _qty_str(row.qty),
                 "qty_requested": _qty_str(rr.qty_requested),
                 "location": _warehouse_code(db, rr.warehouse_id),
                 "qty_reserved": _qty_str(rr.qty_reserved) if rr.qty_reserved is not None else None,
+                "status": status,
+                "status_kind": status_kind,
                 "balance": balance,
                 "remaining": balance,
                 "reason": _context_reason(rr.reason, released_by_rr.get(str(rr.id))),
@@ -451,6 +482,9 @@ def _build_commit_context(
         "so_number": facts.get("so_number"),
         "customer": facts.get("customer"),
         "project": facts.get("project"),
+        "project_customer": project_customer_label(facts.get("customer"), facts.get("project")),
+        "so_date": _fmt_date(facts.get("so_date")),
+        "oi_link": build_order_inquiry_link(request.order_inquiry_id),
         "requested_by": _person(db, request.requested_by),
         "requested_at": _fmt_date(request.requested_at),
         "note": request.note,
@@ -467,6 +501,133 @@ def _build_commit_context(
         "requester": _person(db, request.requested_by),
         "today": today_malaysia().strftime("%d/%m/%Y"),
     }
+
+
+def _plural(count: int, word: str) -> str:
+    return f"{count} {word}" if count == 1 else f"{count} {word}s"
+
+
+def merged_context(contexts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """RESERVE-EMAIL-FULL-TABLE: the ONE context every reserve email is rendered from, built
+    from one or more request contexts (`_build_context` / `_build_commit_context`). The
+    flat table is `reserve.lines` (one entry per request row, OI NO on each, sorted by item
+    code, then real delivery date, then OI no); the small sentences that are awkward in
+    Jinja are precomputed here (`what`, `short`, `tag`, `lines_text`, `verdict`). The keys an
+    admin-edited template reads stay (`rows`, `ordinal`, `inquiry_no`, `so_number`, `link`,
+    `oi_count`, `line_count`, `more_count`), and `requests` exists only for 2 or more OIs."""
+    from app.services import park_send
+    from app.services.automation_triggers import build_order_inquiry_link
+
+    base = contexts[0]
+    lines: List[Dict[str, Any]] = []
+    rows: List[Dict[str, Any]] = []
+    notes: List[Dict[str, str]] = []
+    per_inquiry: Dict[str, Dict[str, Any]] = {}
+    open_row_count = 0
+    for context in contexts:
+        reserve = context["reserve"]
+        inquiry_no = reserve.get("inquiry_no") or ""
+        entry = per_inquiry.setdefault(
+            inquiry_no,
+            {
+                "inquiry_no": inquiry_no,
+                "so_number": reserve.get("so_number"),
+                "customer": reserve.get("customer"),
+                "line_count": 0,
+                "link": reserve.get("oi_link") or reserve.get("link"),
+            },
+        )
+        open_row_count += reserve.get("open_row_count") or 0
+        if reserve.get("note"):
+            notes.append({"inquiry_no": inquiry_no, "text": reserve["note"]})
+        for row in reserve["rows"]:
+            rows.append(row)
+            entry["line_count"] += 1
+            kind = row.get("status_kind")
+            reason = row.get("reason")
+            if kind in ("partial", "rejected") and not reason:
+                reason = "No reason given"
+            lines.append(
+                {
+                    "oi_no": inquiry_no,
+                    "so_date": reserve.get("so_date") or "",
+                    "so_number": reserve.get("so_number") or "",
+                    "item_code": row.get("item_code") or "",
+                    "qty": row.get("qty") or "",
+                    "qty_requested": row.get("qty_requested") or "",
+                    "status": row.get("status") or "",
+                    "status_kind": kind or "",
+                    "delivery_date": row.get("delivery_date") or "",
+                    "delivery_iso": row.get("delivery_iso") or "",
+                    "project_customer": reserve.get("project_customer") or "",
+                    "reason": reason or "",
+                }
+            )
+    # A line with no delivery date sorts last within its item code.
+    lines.sort(
+        key=lambda line: (line["item_code"], line["delivery_iso"] or "9999-12-31", line["oi_no"])
+    )
+    ordered = sorted(per_inquiry.values(), key=lambda entry: entry["inquiry_no"])
+    inquiry_count = len(ordered)
+
+    full = sum(1 for line in lines if line["status_kind"] == "reserved")
+    partial = sum(1 for line in lines if line["status_kind"] == "partial")
+    rejected = sum(1 for line in lines if line["status_kind"] == "rejected")
+    tag = ", ".join(
+        part
+        for part in (f"{partial} partial" if partial else "", f"{rejected} rejected" if rejected else "")
+        if part
+    )
+    if lines and rejected == len(lines):
+        verdict = "rejected"
+    elif tag:
+        verdict = "mixed"
+    else:
+        verdict = "reserved"
+
+    raiser = (base.get("raiser") or {}).get("name")
+    by = f" raised by {raiser}" if raiser else ""
+    if inquiry_count == 1:
+        so_number = ordered[0]["so_number"]
+        what = f"{ordered[0]['inquiry_no']}{' - ' + so_number if so_number else ''}{',' if raiser else ''}{by}"
+        short = f"{ordered[0]['inquiry_no']}{by}"
+    else:
+        what = short = f"{inquiry_count} order inquiries{by}"
+
+    if inquiry_count >= 2:
+        link = f"{build_order_inquiry_link(None)}?inquiry_no={','.join(e['inquiry_no'] for e in ordered)}"
+    elif len(contexts) == 1:
+        link = base["reserve"]["link"]
+    else:
+        link = base["reserve"].get("oi_link") or base["reserve"]["link"]
+
+    reserve = {
+        **base["reserve"],
+        "rows": rows,
+        "row_count": sum(context["reserve"].get("row_count") or 0 for context in contexts),
+        "lines": lines,
+        "show_reason": any(line["reason"] for line in lines),
+        "what": what,
+        "short": short,
+        "tag": tag,
+        "verdict": verdict,
+        "lines_text": _plural(len(lines), "line"),
+        "full_count": full,
+        "partial_count": partial,
+        "rejected_count": rejected,
+        "batch": inquiry_count >= 2,
+        "oi_count": inquiry_count,
+        "line_count": len(lines),
+        "more_count": 0,
+        "notes": notes,
+        "open_row_count": open_row_count,
+        "link": link,
+    }
+    if inquiry_count >= 2:
+        reserve["requests"] = ordered
+    else:
+        reserve.pop("requests", None)
+    return {**base, **park_send.merge_people(list(contexts)), "reserve": reserve}
 
 
 class OrderInquiryReserveService:
@@ -615,7 +776,9 @@ class OrderInquiryReserveService:
 
         if park:
             return request
-        context = _build_context(self.db, request, pairs, actor_user_id=actor_user_id)
+        context = merged_context(
+            [_build_context(self.db, request, pairs, actor_user_id=actor_user_id)]
+        )
         self.db.info.setdefault(_REQUESTED_PENDING_KEY, []).append(
             {"context": context, "source_id": str(request.id)}
         )
@@ -1010,6 +1173,7 @@ class OrderInquiryReserveService:
             (requests_by_id[request_id] for request_id in touched_by_request),
             key=lambda request: request.ordinal,
         )
+        immediate: Dict[Optional[str], List[tuple]] = {}
         for request in touched_requests:
             still_open = (
                 self.db.query(OrderInquiryReserveRequestRow)
@@ -1043,8 +1207,14 @@ class OrderInquiryReserveService:
                 row_count=total_row_count,
                 actor_user_id=actor_user_id,
             )
+            immediate.setdefault(request.requested_by, []).append((request, context))
+        # One email per (this OI, requester): several requests of one requester are one table.
+        for pairs in immediate.values():
             self.db.info.setdefault(_RESERVED_PENDING_KEY, []).append(
-                {"context": context, "source_id": str(request.id)}
+                {
+                    "context": merged_context([context for _request, context in pairs]),
+                    "source_id": str(pairs[0][0].id),
+                }
             )
         # Empty when every entry was a no-op: the page reads that as "Nothing to change".
         return touched_requests
@@ -1184,69 +1354,34 @@ class OrderInquiryReserveService:
             "link": build_order_inquiry_link(request.order_inquiry_id),
         }
 
-    @staticmethod
-    def _group_context(group: Dict[str, Any], *, status: str) -> Dict[str, Any]:
-        """One item -> today's context exactly. Several -> the bulk context the templates'
-        `{% if reserve.requests %}` branch reads: counts, the first five order inquiries by OI
-        no, and every raiser / requester so `include_raiser` / `include_requester` reach them."""
-        from app.services import park_send
-        from app.services.automation_triggers import build_order_inquiry_link
-
-        items = group["items"]
-        if len(items) == 1:
-            return items[0]["context"]
-        contexts = [item["context"] for item in items]
-        by_inquiry: Dict[str, Dict[str, Any]] = {}
-        for item in items:
-            entry = by_inquiry.setdefault(
-                item["inquiry_id"],
-                {
-                    "inquiry_no": item["inquiry_no"],
-                    "so_number": item["so_number"],
-                    "customer": item["customer"],
-                    "line_count": 0,
-                    "link": item["link"],
-                },
-            )
-            entry["line_count"] += item["line_count"]
-        ordered = sorted(by_inquiry.values(), key=lambda entry: entry["inquiry_no"] or "")
-        base = contexts[0]
-        reserve = {
-            **base["reserve"],
-            "requests": ordered[:5],
-            "oi_count": len(ordered),
-            "line_count": sum(entry["line_count"] for entry in ordered),
-            "more_count": max(len(ordered) - 5, 0),
-            "link": f"{build_order_inquiry_link(None)}?reserve={status}",
-        }
-        return {**base, **park_send.merge_people(contexts), "reserve": reserve}
-
-    def _groups(self, trigger_type: str, items, *, status: str):
+    def _groups(self, trigger_type: str, items):
+        """One group per (To person, raiser): `group_by_recipient` picks the To, then each
+        group splits by the OI's raiser so no other CS reaches its Cc, and the recipients
+        are resolved again from that subgroup's own people. A NULL raiser is its own group."""
         from app.services import park_send
 
         groups, unresolved = park_send.group_by_recipient(self.db, trigger_type, items)
-        # The one-OI shape follows DISTINCT order inquiries: a To person whose items all
-        # belong to one OI gets each request as its own email, never "1 order inquiries".
-        split = []
         automation = park_send.first_automation(self.db, trigger_type)
+        split = []
         for group in groups:
-            if len(group["items"]) > 1 and len({i["inquiry_id"] for i in group["items"]}) == 1:
-                # Each split item resolves its own recipients from its own context.
-                split.extend(
-                    {
-                        "items": [item],
-                        "recipients": park_send.resolve_ordered(self.db, automation, item["context"]),
-                    }
-                    for item in group["items"]
-                )
-            else:
+            by_raiser: Dict[str, List[Dict[str, Any]]] = {}
+            for item in group["items"]:
+                raiser = item["context"].get("raiser") or {}
+                by_raiser.setdefault((raiser.get("email") or "").strip().lower(), []).append(item)
+            if len(by_raiser) == 1:
                 split.append(group)
-        groups = split
-        for group in groups:
-            group["context"] = self._group_context(group, status=status)
+                continue
+            for sub in by_raiser.values():
+                contexts = [item["context"] for item in sub]
+                merged = {**contexts[0], **park_send.merge_people(contexts)}
+                split.append(
+                    {"items": sub, "recipients": park_send.resolve_ordered(self.db, automation, merged)}
+                )
+        for group in split:
+            group["context"] = merged_context([item["context"] for item in group["items"]])
             group["inquiry_count"] = len({item["inquiry_id"] for item in group["items"]})
             group["line_count"] = sum(item["line_count"] for item in group["items"])
-        return groups, unresolved
+        return split, unresolved
 
     @staticmethod
     def _unresolved_out(unresolved) -> List[Dict[str, int]]:
@@ -1259,10 +1394,10 @@ class OrderInquiryReserveService:
             }
         ]
 
-    def _preview(self, trigger_type: str, items, *, status: str) -> Dict[str, Any]:
+    def _preview(self, trigger_type: str, items) -> Dict[str, Any]:
         from app.services import park_send
 
-        groups, unresolved = self._groups(trigger_type, items, status=status)
+        groups, unresolved = self._groups(trigger_type, items)
         emails = []
         for group in groups:
             email = park_send.render_preview(
@@ -1279,20 +1414,18 @@ class OrderInquiryReserveService:
 
     def parked_requests_preview(self, *, actor_user_id: str) -> Dict[str, Any]:
         items, _empty = self._request_items(actor_user_id)
-        return self._preview("order_inquiry_reserve_requested", items, status="needs_reserve")
+        return self._preview("order_inquiry_reserve_requested", items)
 
     def parked_notices_preview(self, *, actor_user_id: str) -> Dict[str, Any]:
         items, _stale = self._notice_items(actor_user_id)
-        return self._preview("order_inquiry_reserved", items, status="reserved")
+        return self._preview("order_inquiry_reserved", items)
 
     def send_parked_requests(self, *, actor_user_id: str) -> Dict[str, Any]:
         """`items_sent` counts distinct order inquiries sent. Stamps and queues under a row lock: a second press blocks here, then finds
         nothing parked. The queued dispatches fire only when the caller's transaction
         commits (the existing after_commit drain) and are dropped if it rolls back."""
         items, empty = self._request_items(actor_user_id, lock=True)
-        groups, unresolved = self._groups(
-            "order_inquiry_reserve_requested", items, status="needs_reserve"
-        )
+        groups, unresolved = self._groups("order_inquiry_reserve_requested", items)
         for request in empty:
             request.parked_at = None
         sent_inquiries: set = set()
@@ -1315,7 +1448,7 @@ class OrderInquiryReserveService:
 
     def send_parked_notices(self, *, actor_user_id: str) -> Dict[str, Any]:
         items, stale = self._notice_items(actor_user_id, lock=True)
-        groups, unresolved = self._groups("order_inquiry_reserved", items, status="reserved")
+        groups, unresolved = self._groups("order_inquiry_reserved", items)
         for rr in stale:
             rr.notice_parked_at = None
             rr.notice_parked_by = None
