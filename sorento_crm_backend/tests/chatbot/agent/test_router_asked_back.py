@@ -301,3 +301,19 @@ def test_AC_R3b_12_a_forced_turn_that_asked_back_holds_the_next_reply(
     jev.answer = jev_answer("chat", confidence)
     decision = route(db, eligible["respond_id"], "stock list too long on my phone")
     assert (decision.side, decision.reason) == (side, reason)
+
+
+def test_AC_R3b_11_another_contacts_newer_turn_does_not_hide_the_hold(db, jev):
+    from app.services.chatbot.agent import memory
+
+    contact = flagged_in_a_conversation(db)
+    other = seed_agent_contact(db)
+    other_conv = memory.new_conversation(db, other["respond_id"])
+    db.commit()
+    seed_flagged_in(db, other["respond_id"], other_conv.id, minutes_ago=1).response = {
+        "reply_text": "Done.", "status": "answered",
+    }
+    db.commit()
+    jev.answer = jev_answer("chat", 0.4)
+    decision = route(db, contact["respond_id"], "stock list too long on my phone")
+    assert (decision.side, decision.reason) == ("agent", "agent_asked")
