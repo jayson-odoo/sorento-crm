@@ -475,6 +475,10 @@ def test_source_type_readers_cover_every_form_sla_type():
         "workflow_submission": ["workflow_forms.submissions.view"],
         "price_tag_request": ["dealer_kit.price_tag_requests.view"],
         "sample_request": [SAMPLE_REQUESTS],
+        # no record page reads a drawing or photo tracker (the product page has no SLA tab):
+        # the SLA module alone, as a conversation ticket
+        "product_drawing": [],
+        "product_photo": [],
     }
 
 
@@ -525,6 +529,8 @@ UNGATED_GET_ALLOWLIST = {
     f"{TRACKING}/{{tracking_id}}/conversation/page": "fetch_conversation_thread_page viewer scope",
     f"{TRACKING}/{{tracking_id}}/conversation/search": "viewer scope, as the page",
     f"{TRACKING}/{{tracking_id}}/media": "require_ticket_in_scope, else 404",
+    # the drawing/photo task's side panel: the assignee reads it with no slug (#1983 AC-6)
+    "/api/v1/sla-management/form-sla-tracking/{tracking_id}/media-request": "can_user_act_on_tracking, else 404",
     "/api/v1/sla-management/conversation-events/stream": "entitled_contacts only",
     # gated inline, not by a dependency, because the slug set follows the record's type
     # (`tracker_reader_slugs`); each is tested above

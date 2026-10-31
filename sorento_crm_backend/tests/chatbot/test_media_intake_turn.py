@@ -1009,8 +1009,11 @@ class TestConsoleBuildsTheSameEnvelope:
 
         captured: list[Any] = []
 
-        def _fake_run_turn(envelope, *, session_factory):
+        overrides: list[Any] = []
+
+        def _fake_run_turn(envelope, *, session_factory, switch_overrides=None):
             captured.append(envelope)
+            overrides.append(switch_overrides)
             raise NotImplementedError("stop here - only the call shape is under test")
 
         monkeypatch.setattr(console_service, "run_turn", _fake_run_turn, raising=False)
@@ -1037,6 +1040,11 @@ class TestConsoleBuildsTheSameEnvelope:
             "console_service.run_turn was never called - _run_console_media_turn has "
             "not been collapsed to build-envelope-and-call-run_turn yet"
         )
+        # CONSOLE-SWITCH-OVERRIDE: every lane on for this turn only, never via system_settings.
+        assert overrides[0] and overrides[0].get("chatbot_business_lane_enabled") is True
+        from app.services.chatbot.contracts import BRANCH_KINDS
+
+        assert set(overrides[0]["chatbot_completed_lanes"]) == set(BRANCH_KINDS)
         envelope = captured[0]
         inner = envelope.message["message"]["message"] if hasattr(envelope, "message") else envelope["message"]["message"]["message"]
         assert inner.get("attachment", {}).get("type") == "image"

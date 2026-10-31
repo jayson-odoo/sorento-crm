@@ -664,7 +664,9 @@ class TestStructuralCoverage:
         # CONTACT-BRAND-SCOPE, under contacts.view). 46 with the runtime settings read
         # (`/settings/runtime`, SETTINGS-IN-DB-SORENTO, under user_management.settings.secrets).
         # 50 with the four contact-tags reads (#1736), all under user_management.contacts.view.
-        assert len(gated_paths) == 50
+        # 51 with the MCP token state read (`/settings/mcp-token`, MCP-TOKEN-UI #2026, under
+        # user_management.settings.secrets).
+        assert len(gated_paths) == 51
         assert gated_paths == {
             "/api/v1/user-management/teams/",
             "/api/v1/user-management/teams/{team_id}",
@@ -725,6 +727,8 @@ class TestStructuralCoverage:
             # SETTINGS-IN-DB-SORENTO: the env-fallback runtime settings (masked secrets),
             # under its own admin-only slug user_management.settings.secrets.
             "/api/v1/user-management/settings/runtime",
+            # MCP-TOKEN-UI (#2026): the MCP bearer token's masked state, same admin-only slug.
+            "/api/v1/user-management/settings/mcp-token",
             # --- Q3's two reference catalogs left this set on 1 Oct 2026: the owner
             # opened them to every signed-in user (see the allowlist).
             # --- Found by widening this sweep to the whole package:

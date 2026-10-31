@@ -55,7 +55,7 @@ Customer service finishes it. Either:
 Both actions cannot be undone and notify the customer. This is also the stage to record the outcome - see [Set root cause and resolution](set-root-cause-and-resolution.md).
 
 **Rejected**
-The complaint is back open. Review the rejection reason, do the extra work needed, then re-respond (**Edit technical team response** → **[Update & Reply](#guide_target=complaint-management.complaints.tech-team.update-reply)**) to put it back to **Responded** for another decision. A portal customer may also resubmit.
+The complaint is back open. Review the rejection reason, do the extra work needed, then re-respond (**Edit technical team response** → **[Update & Reply](#guide_target=complaint-management.complaints.tech-team.update-reply)**) to put it back to **Responded** for another decision. A portal customer may also send it back; the complaint then reads **Appealed**.
 
 **Processed by CS / Closed**
 End states - no further action. Editing a response here still messages the customer but does **not** change the status. You can still **Download PDF** for records.

@@ -769,12 +769,23 @@ def test_f7_a_set_that_qualifies_nothing_says_so_in_plain_words(chat, world):
 
 def test_f7_the_lane_reasons_never_read_as_internal_phrases():
     """The one internal reason a zero set records is never a reply; the reply comes from
-    the miss lane. Pinned so a later change that prints `error` cannot print this."""
+    the miss lane. Pinned so a later change that prints `error` cannot print this.
+
+    CHATBOT-FAIL-TRIAGE AC-2 (#2018) made compose MATCH that reason (`_REASON_EMPTY_SET`) to
+    word the failed-fetch section, so the phrase now lives in compose once, as that marker;
+    every block compose builds from that reason still leaves the phrase out."""
     import inspect
 
     from app.services.chatbot.turn import compose
 
-    assert "qualifies nothing" not in inspect.getsource(compose)
+    source = inspect.getsource(compose)
+    assert source.count("qualifies nothing") == 1
+    assert compose._REASON_EMPTY_SET in source
+    error = f"{compose._REASON_EMPTY_SET} (not_found)"
+    for codes in ("BT-150", ""):
+        block = compose._failed_fetch_block(error, "Certificates:", "certificates", codes)
+        assert block.strip(), block
+        assert "qualifies nothing" not in block, block
 
 
 # --------------------------------------------------------------------------- #

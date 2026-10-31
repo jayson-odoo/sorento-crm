@@ -164,7 +164,7 @@ def test_ac_m_11_no_choice_is_unchanged(session_factory):
     _global(db, gemini=GEMINI_KEY)
     for kwargs in ({}, {"llm_choice": None}, {"llm_choice": _choice("tag_conflict", None, None, ["a", "b"])}):
         cfg = casual_mod.resolve_clarifier_config(db, **kwargs)
-        assert (cfg.provider, cfg.model, cfg.api_key) == ("openai", casual_mod.DEFAULT_MODEL, GLOBAL_KEY), kwargs
+        assert (cfg.provider, cfg.model, cfg.api_key) == ("openai", "gpt-global", GLOBAL_KEY), kwargs
 
 
 @pytest.mark.real_casual_llm
