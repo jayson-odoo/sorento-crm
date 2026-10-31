@@ -8,7 +8,7 @@ Contract the migration module (revision ``idea_error_copy_0001``) must expose:
 - ``STOCK_TEXTS``: dict, registry key -> tuple of old stock texts.
 - ``publish(bind)``: for each of the three ``chatbot_reply_ideation_capture_error*`` keys,
   publishes the new text as the next version only where production equals a stock text
-  (strip-normalised). ``upgrade()`` calls ``seed_prompt_registry`` then ``publish``.
+  (strip-normalised). ``upgrade()`` calls ``publish`` only and never the seed (AC-NS-7).
 """
 from __future__ import annotations
 
@@ -155,7 +155,7 @@ def test_ns6_revision_id_fits_and_parent_is_a_real_revision():
         n.func.id for n in ast.walk(upgrade)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
     }
-    assert "seed_prompt_registry" in called
+    assert "seed_prompt_registry" not in called
     assert "publish" in called
 
 

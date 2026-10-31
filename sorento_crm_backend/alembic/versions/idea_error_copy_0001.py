@@ -6,8 +6,9 @@ what to do. `get_prompt` serves a fallback only when the `production` label has 
 migration publishes each new text as the next immutable version and moves the label, but ONLY
 where production still equals the old stock text of that key (compared strip-normalised). A
 template the owner edited is left alone with a warning, and a re-run is a no-op because
-production then equals the fallback. Each key is judged on its own. The seed runs first so the
-keys exist; it also gives a fresh database a row to compare against.
+production then equals the fallback. Each key is judged on its own. The seed is not called: it can re-pin
+an unrelated prompt (`agent_system`), and a key with no `production` label is skipped here
+because the runtime then serves the new fallback.
 
 Revision ID: idea_error_copy_0001
 Revises: akn_0001_knowledge
@@ -23,7 +24,6 @@ from app.services.ai_prompt_seed import (
     _ensure_version,
     _max_version,
     _set_label,
-    seed_prompt_registry,
 )
 
 revision = "idea_error_copy_0001"
@@ -91,7 +91,6 @@ def publish(bind) -> None:
 
 
 def upgrade() -> None:
-    seed_prompt_registry(op.get_bind())
     publish(op.get_bind())
 
 
