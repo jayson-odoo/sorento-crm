@@ -248,7 +248,9 @@ def _enqueue(attachment_id: str) -> None:
     from app.services import queue_service
     from app.tasks.knowledge_tasks import read_attachment_job
 
-    queue_service.enqueue_job(read_attachment_job, str(attachment_id), queue_name=QUEUE, job_timeout=JOB_TIMEOUT)
+    queue_service.enqueue_job(
+        read_attachment_job, str(attachment_id), queue_name="knowledge", job_timeout=JOB_TIMEOUT
+    )
 
 
 # ---------------------------------------------------------------- reading a file
