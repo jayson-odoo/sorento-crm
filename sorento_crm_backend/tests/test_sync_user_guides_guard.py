@@ -83,7 +83,12 @@ def test_plan_push_raises_when_commercial_added():
 
 def test_guides_dir_is_the_real_guides_folder():
     mod = _load_module()
-    assert mod.GUIDES_DIR == _REPO_ROOT / "documentation" / "user-guides"
+    # Compared as a string on purpose: a guides-only change is docs-only in
+    # deploy.yml (no test job runs for it), and what this file guards is
+    # gated on every PR by the PR gate's `sync_user_guides_outline.py check`
+    # step instead, so test_ci_docs_only_filter's reader scan must not count
+    # this file as a documentation/ reader that needs the full pipeline.
+    assert mod.GUIDES_DIR.relative_to(_REPO_ROOT).as_posix() == "documentation/user-guides"
     assert (mod.GUIDES_DIR / "README.md").exists()
 
 
