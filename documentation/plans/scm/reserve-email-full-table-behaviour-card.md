@@ -1,12 +1,14 @@
 # Behaviour card: reserve request / reserved emails, full table (RESERVE-EMAIL-FULL-TABLE)
 
-Status: card v2 (31 Oct 2026). Owner has answered Q1-Q4. Mockup v2: `mockups/reserve-email-full-table-mock-v2.html` (asked on PR #2046, with open point L below).
-No code until the owner OKs the mockup.
+Status: card v3 (31 Oct 2026). Owner has answered Q1-Q4 and annotated mockup v2. Mockup v3 sits at the same path, `mockups/reserve-email-full-table-mock-v2.html`, so the review session carries on.
+No code until the owner OKs mockup v3.
 
 **This reverses owner note 3 on OI-STAGED-NOTIFY mock v1** (the 5-OI cap with "and N more order
 inquiries", `oi-staged-notify-behaviour-card.md` :94-97). **It also reverses owner rule 6 of
 `PLAN-oi-staged-notify-14oct.md:46`** (one email per To person with every raiser merged on Cc).
-After this lane, there is one email per To person per raising CS.
+After this lane, there is one email per To person per raising CS. **Owner note 1 on mockup v2 also
+overrides the stakeholder's "RESERVED filled in" ask:** there is no RESERVED column, and the STATUS
+column carries the reserved figure instead.
 
 ## What the stakeholder asked (30 Oct, purchasing/stock, via owner 31 Oct)
 
@@ -22,6 +24,15 @@ After this lane, there is one email per To person per raising CS.
 | Q2 button | (a) The button opens exactly this email's OIs. |
 | Q3 per CS | **Split.** One email per CS, by who raised the OI (`order_inquiries.raised_by`). Each email holds only the OIs that CS raised, and its Cc is only that CS. |
 | Q4 TOTAL QTY | **Dropped.** LOCATION is dropped too (not asked to keep it). |
+
+## Owner notes on mockup v2 (31 Oct)
+
+| Note | Meaning | In mockup v3 |
+| --- | --- | --- |
+| "Remive reserved snd balance column" | Drop RESERVED and BALANCE | Gone from both emails. The reserved email gains STATUS where RESERVED was. |
+| "Remove #123" | Drop the `#n` request number | Gone from subject, heading, intro and the grey OI line. |
+| "If rejecred need to say rejected instead of reserved 0" | A Reserve 0 line says Rejected | STATUS reads Rejected, reason underneath. An all-rejected email also says Rejected in subject and heading. |
+| "Yes" on L1 | Legacy imports need no special case | See L below, now closed. |
 
 ## Today (main, checked 31 Oct)
 
@@ -42,31 +53,64 @@ holds the seeded text, and leave an admin-edited template alone. No schema chang
 
 ### (1) Full per-line table in both emails, no cap
 
-One table for one OI and for a batch, in the export's column order without TOTAL QTY:
+One table for one OI and for a batch, in the export's column order without TOTAL QTY, RESERVED and
+BALANCE:
 
-`SO DATE | SO NO | ITEM CODE | QTY | REQUESTED RESERVE | RESERVED | BALANCE | DELIVERY DATE | PROJECT/CUSTOMER`
+- **Request email (7 columns):** `SO DATE | SO NO | ITEM CODE | QTY | REQUESTED RESERVE | DELIVERY DATE | PROJECT/CUSTOMER`
+- **Reserved email (8 columns):** `SO DATE | SO NO | ITEM CODE | QTY | REQUESTED RESERVE | STATUS | DELIVERY DATE | PROJECT/CUSTOMER`
 
-- A grey line above each OI's rows names the OI and its request numbers (for example "OI-2610-0057
-  #1, #2, #3").
+| CS's answer on the line | STATUS shows | Under the line |
+| --- | --- | --- |
+| `qty_reserved >= qty_requested` (an amend can raise it past the ask, `order_inquiry_reserve_service.py:889,996`) | Reserved 80 | Nothing, unless documents were released ("Released ... (received).", `:379`) |
+| `0 < qty_reserved < qty_requested` | Partial 150 of 212 | CS's reason, required on a short answer (`:262-267`) |
+| `qty_reserved = 0` ("Reserve 0", `:942`) | Rejected | CS's reason, same rule |
+
+This is display only: no new status, no schema change. A line amended back to 0 also reads Rejected.
+
+**Subject and heading follow the answers on the email's lines:**
+
+| Lines | Subject |
+| --- | --- |
+| All reserved | Reserved: 2 order inquiries raised by User-A (User-G) |
+| Some partial or rejected | Reserved: 2 order inquiries raised by User-A, 1 partial, 1 rejected (User-G) |
+| All rejected | Rejected: OI-2609-0676 - SO409325, raised by Owner-acct (User-G) |
+
+A one-OI email names the OI and SO instead of a count, as today, without the `#n`.
+
+**With BALANCE gone:** today's "Check the balance still to buy" line goes too. On OI-2609-0165, QTY is
+170 and STATUS is Reserved 70, so the reader works out the 100 still to buy.
+
+- A grey line above each OI's rows names the OI, with no request numbers. A request's note, when it
+  has one, prints on that line (today's bulk email drops it; the single email prints it, `:456`).
 - OIs are sorted by SO NO, and lines by item code, then delivery date.
-- **Request email:** RESERVED shows what is already reserved on the line (blank when 0, as the
-  export does, `order_inquiry_worklist_service.py:258-262`). BALANCE = QTY minus that.
-- **Reserved email:** RESERVED = what CS reserved. BALANCE = still to buy after it
-  (`balance`, `order_inquiry_reserve_service.py:432,441`). The reason / "Released ... (received)"
-  text, when a row has one, prints as a small line under that row.
-- The card uses the layout's "wide" width (900 px; `email_layout.py:404`). Today's reserve emails
-  use the standard 600 px.
+- "N lines still to reserve" still prints when a request has open lines (`:459`).
+- **One OI, several open requests:** one email and one table. Today each request gets its own email
+  (`_groups`, `:1228-1244`, parked; `commit_request`, `:1013-1048`, answered together). Without `#n`
+  those emails would read as duplicates, and removing the split is less code.
+- The card uses the layout's "wide" width (900 px; `email_layout.py:404`), as the handover email does
+  (`oihr_0004_wide_line_table.py`). Today's reserve emails use the standard 600 px.
 
-**Size, measured** with the app's own renderer (`email_layout.render_document`, default theme,
-masked real rows, 9 columns): 100 lines = 86 KB, 110 = 94 KB, **about 120 lines = 102 KB, the
-size at which Gmail starts clipping**, and 200 = 163 KB. Most of each row's ~800 bytes is the per-cell default
-style `inline_defaults` adds (`email_layout.py:439-489`). Above the clip size, Gmail shows "[Message
+**Size, measured on the v3 columns** with the app's own renderer (`email_layout.render_document`,
+default theme, masked real rows, no reason lines):
+
+| Lines | Request (7 columns) | Reserved (8 columns) |
+| --- | --- | --- |
+| 100 | 66 KB | 74 KB |
+| 110 | 71 KB | 81 KB |
+| 200 | 122 KB | 139 KB |
+
+**Gmail starts clipping at about 102 KB: about 165 lines on the request email and about 145 on the
+reserved email.** Most of each row's size is the per-cell default style `inline_defaults` adds
+(`email_layout.py:439-489`). Above the clip size, Gmail shows "[Message
 clipped] View entire message", which opens every row, so nothing is lost. Real volume on the 28 Oct
 dev copy was 71 request lines across 28 OIs in 30 days, from one requester. After the per-CS split
 below, each email is smaller still. A test pins the rendered size of a 110-line email so a markup
 change that bloats rows is caught.
 
-On a phone (375 px), the table is wider than the screen and the mail app scrolls it sideways.
+On a phone (375 px), measured in a browser, the email is about 640 px wide (request) to 710 px
+(reserved), so the reader scrolls sideways, heading included. A wrapper scrolling only the table did
+not help: the card's table layout grows to fit it anyway. No wrapper is added. UNVERIFIED in real mail
+apps, which may shrink the email instead; the hand test covers a phone.
 
 ### (2) The button opens exactly this email's OIs
 
@@ -102,7 +146,9 @@ The change sits in `OrderInquiryReserveService._groups` (`order_inquiry_reserve_
 **Subject names the CS:** "Reserved: 2 order inquiries raised by User-A (User-G)" / "Reserve
 requests: 2 order inquiries raised by User-A (User-F)".
 
-### L. Open point: OIs from the 20 Sep legacy import (raised by the owner's account)
+### L. Closed, L1: OIs from the 20 Sep legacy import (raised by the owner's account)
+
+**Owner chose L1 on mockup v2.** The options as they were offered:
 
 There is no marker on an OI that says "imported": the importer writes the same `raised` history row
 as a hand raise (`:2760-2762`), so the owner's account is just the raiser.
@@ -118,15 +164,21 @@ as a hand raise (`:2760-2762`), so the owner's account is just the raiser.
 ### (4) Real case
 
 The mockup (filed as its own ask) renders 5 real OIs, 22 lines, from the 28 Oct dev copy, masked.
-That data pull did not include `raised_by` for these 5 OIs, so the mockup's split across CS is
-illustrative and says so.
+Two things are illustrative, and the mockup says so: who raised these 5 OIs (not in that data pull),
+and the partial and rejected answers with their reasons. On that copy, none of the 65 reserved request
+rows with RESERVED above 0 has RESERVED below REQUESTED RESERVE, and rows at 0 were not counted. A
+crew-data-request on PR #2046 asks for both.
 
 ## Build after the mockup OK (small fix track, plus one template-data migration)
 
-1. Red tests first: full table rows and columns in both emails for 1 and N OIs; no "more" line;
-   button URL lists exactly the email's OI numbers; split by raiser (two CS lead to two emails, each Cc
-   only its CS, each table only its OIs); a single-raiser batch stays one email; reserved RESERVED and
-   BALANCE values; a size test for 110 lines; the migration updates a seeded template and leaves an
-   edited one alone; the headers list `inquiry_no` filter (BE + FE URL round trip).
-2. Build: `_groups` split, flat `reserve.groups` context, template migration, `inquiry_no` filter.
+1. Red tests first: full table rows and columns in both emails for 1 and N OIs; no "more" line; no
+   RESERVED, BALANCE or `#n` anywhere, plain text included; STATUS for full, partial and rejected, and
+   an amend above the ask and back to 0; reason line under the row; subject and heading for all
+   reserved, mixed and all rejected; button URL lists exactly the email's OI numbers; split by raiser
+   (two CS lead to two emails, each Cc only its CS, each table only its OIs); a single-raiser batch
+   stays one email; one OI with several requests is one email, parked and answered together; a size
+   test for 110 lines; the migration updates a seeded template and leaves an edited one alone; the
+   headers list `inquiry_no` filter (BE + FE URL round trip).
+2. Build: `_groups` split by raiser and no more per-request split, flat `reserve.groups` context with
+   each line's STATUS, template migration, `inquiry_no` filter.
 3. Kill tests, reviewer, guide update, hand-test script.
