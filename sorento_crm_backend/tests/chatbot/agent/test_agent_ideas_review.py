@@ -98,42 +98,88 @@ def test_AC_RV_2_a_chat_confirm_of_a_write_with_no_note_adds_no_line(db):
 
 # ------------------------------------------------------------------ AC-RV-3 the proposal shows full values
 
-LONG = "word " * 240  # 1200 characters
-TITLE_200 = ("title " * 33).strip()  # the title limit is 200 characters, so a long title is as long as allowed
+# The shared cleaners (`normalise_field_value`, `normalise_title`) capitalise and cut a title to 8 words, and the
+# card must show what will be sent, so the fixtures start with a capital and the title has at most 8 words.
+LONG = "Word " + "word " * 239  # 1200 characters, first letter a capital
+LONG = LONG.strip()
+TITLE_8 = "Shorter stock list on phones please now"  # 7 words
+
+
+def long_args(*, with_id=False):
+    args = {
+        "problem": LONG + " P",
+        "title": TITLE_8,
+        "desired_outcome": LONG + " O",
+        "current_workaround": LONG + " W",
+        "use_cases": [LONG + " U1", "Short one"],
+    }
+    if with_id:
+        args["idea_id"] = IDEA
+    return args
 
 
 def test_AC_RV_3_a_create_shows_every_given_value_whole(db, ss):
     w = make_world(db)
-    args = {
-        "problem": LONG.strip() + " P",
-        "title": TITLE_200,
-        "desired_outcome": LONG.strip() + " O",
-        "current_workaround": LONG.strip() + " W",
-        "use_cases": [LONG.strip() + " U1", "short one"],
-    }
+    args = long_args()
     res, step = propose(db, w, CREATE, args)
     assert res.status == "proposed", res.message
     for key in ("title", "problem", "desired_outcome", "current_workaround"):
         assert args[key] in step["summary"], key
-    assert args["use_cases"][0] in step["summary"] and "short one" in step["summary"]
+    assert args["use_cases"][0] in step["summary"] and "Short one" in step["summary"]
 
 
 def test_AC_RV_3_an_update_shows_every_new_value_whole(db, ss):
     w = make_world(db)
     Idea(ss)
-    args = {
-        "idea_id": IDEA,
-        "title": TITLE_200,
-        "problem": LONG.strip() + " P",
-        "desired_outcome": LONG.strip() + " O",
-        "current_workaround": LONG.strip() + " W",
-        "use_cases": [LONG.strip() + " U1"],
-    }
+    args = long_args(with_id=True)
     res, step = propose(db, w, UPDATE, args, seen=[IDEA])
     assert res.status == "proposed", res.message
     for key in ("title", "problem", "desired_outcome", "current_workaround"):
         assert args[key] in step["summary"], key
     assert args["use_cases"][0] in step["summary"]
+
+
+def received_values(body):
+    values = []
+    for value in body.values():
+        values += [v for v in value if isinstance(v, str)] if isinstance(value, list) else [value]
+    return [v for v in values if isinstance(v, str) and len(v) > 3]
+
+
+def test_AC_RV_3_every_value_the_fake_receives_on_a_create_is_in_the_proposal(db, ss):
+    w = make_world(db)
+    steps, row = store(db, w, [(CREATE, long_args())])
+    confirm(db, w, row)
+    (call,) = posts(ss, CREATE_PATH)
+    sent = [v for k, v in call["json"].items() if k in ("problem", "title", "desired_outcome", "current_workaround")]
+    sent += list(call["json"]["use_cases"])
+    assert len(sent) == 6
+    for value in sent:
+        assert value in steps[0]["summary"], value[:40]
+
+
+def test_AC_RV_3_every_value_the_fake_receives_on_an_update_is_in_the_proposal(db, ss):
+    w = make_world(db)
+    Idea(ss)
+    steps, row = store(db, w, [(UPDATE, long_args(with_id=True))], seen=[IDEA])
+    confirm(db, w, row)
+    (call,) = patches(ss)
+    sent = received_values(call["json"])
+    assert len(sent) >= 5, call["json"]
+    for value in sent:
+        assert value in steps[0]["summary"], value[:40]
+
+
+def test_AC_RV_3_a_twenty_word_title_shows_the_same_first_words_that_are_sent(db, ss):
+    w = make_world(db)
+    title = " ".join(["W01"] + [f"w{n:02d}" for n in range(2, 21)])
+    steps, row = store(db, w, [(CREATE, {"problem": PROBLEM, "title": title})])
+    confirm(db, w, row)
+    (call,) = posts(ss, CREATE_PATH)
+    sent_title = call["json"]["title"]
+    assert sent_title == " ".join(title.split()[:8])
+    assert sent_title in steps[0]["summary"]
+    assert "w09" not in steps[0]["summary"]
 
 
 # ------------------------------------------------------------------ AC-RV-4 the list is live
