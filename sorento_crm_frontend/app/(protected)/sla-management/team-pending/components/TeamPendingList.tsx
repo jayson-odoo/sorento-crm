@@ -82,7 +82,7 @@ export default function TeamPendingList() {
     null;
 
   const taskLabel = (r: TeamPendingItem) =>
-    `${r.reference ?? (r.source_entity_type ?? 'Task')}`;
+    `${r.reference ?? (r.source_entity_type === 'panel_escalation' ? 'Task' : (r.source_entity_type ?? 'Task'))}`;
 
   const handleSubscribe = (r: TeamPendingItem) => {
     subscribeMutation.mutate(

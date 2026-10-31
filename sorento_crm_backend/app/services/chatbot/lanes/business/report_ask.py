@@ -22,6 +22,7 @@ from datetime import date
 from typing import Any
 
 from app.services.chatbot import contracts, jsc
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot import required_fields as rf
 from app.services.reports import ask as reports_ask
 from app.services.sales_report_service import TOP_SELLING_N_CEILING
@@ -1190,6 +1191,8 @@ def _bound_by_id(db: Any, hint: str, word: str) -> tuple[list[str], list[str]] |
 
     if db is None or not is_uuid(word):
         return None
+    if hint == "sales_agent" and staff_principal.lacks(db, staff_principal.SALES_AGENTS_VIEW):
+        return [], []
     from app.models.product import Brand, ProductCategory
     from app.models.sales_agent import SalesAgent
 

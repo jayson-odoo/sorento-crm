@@ -16,6 +16,8 @@ from typing import Any, Callable
 
 from app.services.ai_assistant_service import mcp_schema_to_openai_tool
 
+from app.services.chatbot import principal as staff_principal
+
 logger = logging.getLogger(__name__)
 
 #: Server-injected, never model-chosen.
@@ -117,6 +119,7 @@ KIND_SLUGS: dict[str, str] = {
     "category": "master_data.product_categories.view",
     "sales_agent": "master_data.sales_agents.view",
 }
+ORDER_VIEW = "order_management.orders.view"
 KIND_CONTACT_GRANTS: dict[str, str] = {"supplier": "purchase_orders.supplier"}
 #: Resolver entity types that stand for one of our kinds.
 _KIND_OF_ENTITY: dict[str, str] = {**{k: k for k in KIND_SLUGS}, "product_set": "product"}
@@ -363,6 +366,17 @@ def searchable_kinds(db: Any, ctx: Any, requested: list[str]) -> tuple[list[str]
     return allowed, skipped
 
 
+def denied_entity_types(db: Any, user_id: str) -> set[str]:
+    """Resolver entity types of a kind this user has no slug for (`KIND_SLUGS`), for the in-process
+    resolver a staff turn calls. Products stay open: the resolver is the picker every staff member uses."""
+    denied_kinds = {kind for kind, slug in KIND_SLUGS.items() if kind != "product" and not _permitted(db, user_id, slug)}
+    denied = {entity for entity, kind in _KIND_OF_ENTITY.items() if kind in denied_kinds}
+    # A delivery order number prints the debtor's name: the orders screen's slug.
+    if not _permitted(db, user_id, ORDER_VIEW):
+        denied.add("customer_order")
+    return denied
+
+
 def contact_allows(ctx: Any, tool: ToolDef) -> bool:
     """The contact side of a tool: its reveal grant, and the stock switch for stock tools."""
     if tool.contact_grant and tool.contact_grant not in ctx.grants:
@@ -583,6 +597,8 @@ def _sees_salespeople(db: Any, ctx: Any) -> bool:
     (the rule today's lookup block uses)."""
     from app.services import contact_asker
 
+    if staff_principal.current() is not None:
+        return staff_principal.current().may(db, staff_principal.SALES_AGENTS_VIEW)
     try:
         granted = "sales_orders.sales_report" in ctx.grants
         return contact_asker.may_ask_sales_ranking(db, str(ctx.contact_pk), granted=granted)[0] != "not_granted"

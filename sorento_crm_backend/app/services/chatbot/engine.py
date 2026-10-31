@@ -53,11 +53,13 @@ from app.services.chatbot_reply_copy import (
 )
 from app.services.reports.ask import SALES_CHANNELS
 from app.services.chatbot import direct_ingress, dispatch, inbox_queue, jsc, llm_call, media_intake, send_order, trace as trace_mod
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot import user_turn as user_turn_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     CRM_COMPLETED_BRANCH_KINDS,
     DIRECT_INGRESS,
+    PANEL_INGRESS,
     ORDER_OR_SALES_DOMAINS,
     SELF_CLOSING_BRANCH_KINDS,
     TURN_FAILURE_STAGES,
@@ -1080,9 +1082,14 @@ def _contact_company_scope(factory: SessionFactory, contact_respond_id: str) -> 
     Fail-closed on every unhappy path: an unknown contact, a contact with no company
     row, no default workspace, or a lookup that raised all give an EMPTY frozenset
     (0 owned rows), never `None` (which would mean every company).
+
+    A staff principal's scope is the user's active company, as on their own screens.
     """
     from app.services.company_scope_resolver import resolve_contact_company_scope
 
+    principal = staff_principal.current()
+    if principal is not None:
+        return frozenset({principal.active_company_id}) if principal.active_company_id else frozenset()
     db = factory()
     try:
         return resolve_contact_company_scope(db, contact_respond_id, default_space_id(db))
@@ -1102,9 +1109,12 @@ def _contact_brand_scope(factory: SessionFactory, contact_respond_id: str) -> fr
     session of its own, the way `_contact_company_scope` resolves its companies.
 
     None = unscoped (every brand). Fail-closed: a lookup that raised returns a scope no
-    brand matches, so the turn sees no product rather than every product."""
+    brand matches, so the turn sees no product rather than every product. A staff principal
+    reads every brand, as staff screens do."""
     from app.services.contact_brand_scope import NO_BRAND_ID, contact_brand_scope
 
+    if staff_principal.current() is not None:
+        return None
     db = factory()
     try:
         return contact_brand_scope(db, contact_respond_id, default_space_id(db))
@@ -1243,9 +1253,17 @@ def _lookup_visibility(
     db: Session, contact_respond_id: str, space_id: Any
 ) -> tuple[bool, bool, frozenset[str] | None]:
     """(include_salespeople, include_customers, customer_ids) for the contact: the contact is resolved once and each
-    check runs in its own savepoint, so a database error in one drops only that block."""
+    check runs in its own savepoint, so a database error in one drops only that block. A staff
+    principal's two blocks follow the user's slugs, and never narrow to customer links."""
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
+    principal = staff_principal.current()
+    if principal is not None:
+        return (
+            principal.may(db, staff_principal.SALES_AGENTS_VIEW),
+            principal.may(db, staff_principal.CUSTOMERS_VIEW),
+            None,
+        )
     resolved = _guarded(
         db,
         lambda: resolve_contact_with_null_workspace_fallback(
@@ -1905,13 +1923,21 @@ def _inject_harness_session(
 
 
 def _read_session_vars(db: Session, *, respond_io_id: str, reply_to_id: str | None) -> dict:
-    """`get-session-vars`: the same body `GET /external/conversation-variables/{id}` returns."""
+    """`get-session-vars`: the same body `GET /external/conversation-variables/{id}` returns. A
+    staff principal's state is its thread's own, and a panel message quotes nothing."""
     from app.services.conversation_variables_service import (
         get_for_contact,
+        get_for_panel_thread,
         get_referenced_result_set,
         get_referenced_state,
     )
 
+    principal = staff_principal.current()
+    if principal is not None:
+        return {
+            "respond_io_id": respond_io_id,
+            "session_vars": get_for_panel_thread(db, conversation_id=principal.conversation_id),
+        }
     try:
         state = get_for_contact(db, respond_io_id=respond_io_id)
     except HTTPException as missing:
@@ -2974,18 +3000,22 @@ def run_turn(
     real stored switches. A keyword argument and never an envelope field on purpose: only
     in-process code can set it, no inbound request can. An overridden turn runs in this
     process (no worker offload), because the override does not travel through the queue.
-    An unknown key raises `ValueError` rather than being silently ignored."""
-    if queued_turn_id is not None:
+    An unknown key raises `ValueError` rather than being silently ignored.
+
+    AGENTIC-UNIFY PR 3: a panel envelope's staff principal is held for the turn, so every seam that
+    holds only an id can ask `staff_principal.current()`. None for every contact's turn."""
+    with staff_principal.acting_as(staff_principal.of_envelope(envelope)):
+        if queued_turn_id is not None:
+            return _run_turn(
+                envelope,
+                session_factory=session_factory,
+                offload=False,
+                queued_turn_id=queued_turn_id,
+                switch_overrides=switch_overrides,
+            )
         return _run_turn(
-            envelope,
-            session_factory=session_factory,
-            offload=False,
-            queued_turn_id=queued_turn_id,
-            switch_overrides=switch_overrides,
+            envelope, session_factory=session_factory, offload=offload, switch_overrides=switch_overrides
         )
-    return _run_turn(
-        envelope, session_factory=session_factory, offload=offload, switch_overrides=switch_overrides
-    )
 
 
 def _localize_result(result: TurnResult, session_factory: SessionFactory, dry_run: bool) -> None:
@@ -3053,9 +3083,13 @@ def _ai_allowed(session_factory: SessionFactory, contact_respond_id: str) -> boo
 
     One session, one SELECT. A database error is NOT caught: "we could not tell" must not
     read as allowed, the same rule `respond_outbound_service.assert_outbound_enabled` keeps.
+
+    A staff principal passed the rollout permission before this turn started (AC-5).
     """
     from app.services import chatbot_allowed_service
 
+    if staff_principal.current() is not None:
+        return True
     with _session(session_factory) as db:
         return chatbot_allowed_service.is_allowed(db, contact_respond_id)
 
@@ -3168,6 +3202,11 @@ def _phone_gate_applies(
     from app.models.access import RespondContact
     from app.services import wa_phone_link
     from app.services.chat_history_ingest_service import normalise_channel
+
+    # AGENTIC-UNIFY audit, first row: the flow calls Respond on an unknown contact's first
+    # message, so a staff principal, who has no contact, leaves before anything is read.
+    if staff_principal.current() is not None:
+        return None
 
     # WU20: Share Contact Info is a WhatsApp feature; any other channel is not this flow.
     channel = envelope.message.get("channel")
@@ -5349,6 +5388,13 @@ def _run_stages_body(  # noqa: PLR0915
         current_message=latest_user_message,
         reply_to=None,
         media_line=None,
+        # Left out while a question is open (`open_question` is built from a pending pick or offer, a
+        # required ask or a stock task): a short reply answers that, not the page.
+        page_line=(
+            None
+            if open_question is not None
+            else context_mod.page_line(getattr(staff_principal.current(), "page", None))
+        ),
         task_lines=parser.open_task_lines(state_in.focus, open_question),
         open_question_line=parser.open_question_line(open_question),
         brands=None if parser_config.lookup_lists else brands,
@@ -8673,7 +8719,7 @@ def _run_stages_body(  # noqa: PLR0915
             )
         elif (
             delegate is not None
-            and (s7_mode or envelope.ingress == DIRECT_INGRESS or inbox_queue.draining())
+            and (s7_mode or envelope.ingress in (DIRECT_INGRESS, PANEL_INGRESS) or inbox_queue.draining())
             and not dry_run
         ):
             # CHAT-INBOX-QUEUE (IQ-44): a queued turn has no n8n spine waiting on it either.
@@ -8682,7 +8728,10 @@ def _run_stages_body(  # noqa: PLR0915
             # S7 mode retires the n8n tail: a turn that still delegates has NOBODY to
             # finish it, so it is closed here rather than left as a ghost.
             orphan_error = (
-                f"S7 mode is on (system_settings.chatbot_ordering_enabled), so the CRM "
+                f"This turn came from the AI panel, which has no n8n spine to finish the "
+                f"{delegate!r} lane, and the CRM does not complete {branch_kind!r}."
+                if envelope.ingress == PANEL_INGRESS
+                else f"S7 mode is on (system_settings.chatbot_ordering_enabled), so the CRM "
                 f"owns the tail and /complete is gone, but the {delegate!r} lane is not "
                 f"completed in the CRM. Add {branch_kind!r} to "
                 f"system_settings.chatbot_completed_lanes on a build that can complete "
@@ -9472,6 +9521,7 @@ def _run_opportunity_arm(
         space_id=space_id,
         dry_run=dry_run,
         turn_no=state.turn_no,
+        db=db,
     )
     turn_trace.add("opportunity", {"called": list(lane.called), "asking": (lane.slot or {}).get("asking"),
                                    "read_back": lane.pending is not None, "dry_run": dry_run})
@@ -11484,10 +11534,12 @@ def _after_stock_ask_turn(
 ) -> None:
     """Hand the answered stock ask to `stock_ask_service` once the turn is closed. Never
     raises: the turn is answered and recorded, and a failure here must not turn it into
-    an error reply."""
+    an error reply. A staff principal's ask is no customer's: no row, no salesman job (Q2)."""
     from app.services import stock_ask_service
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
+    if staff_principal.current() is not None:
+        return
     profile = getattr(state, "profile", None)
     try:
         with _session(session_factory) as db:
@@ -12617,8 +12669,10 @@ def _log_session_write(db: Session, *, turn_id: str, contact_respond_id: str) ->
 
     Best-effort by the layering rule - a post-commit side effect never raises, because
     the write it describes has already happened and failing here would report a turn that
-    did not answer when it did.
+    did not answer when it did. A panel thread's write has no n8n PUT to stand in for.
     """
+    if staff_principal.current() is not None:
+        return
     try:
         from app.schemas.integration import IntegrationLogCreate
         from app.services.integration_service import IntegrationLogService

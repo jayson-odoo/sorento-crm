@@ -178,6 +178,19 @@ class ConversationSLATrackingCreate(BaseModel):
         return v_str
 
 
+class ConversationSLANoContactCreate(ConversationSLATrackingCreate):
+    """An SLA task with no contact: a staff member's AI panel escalation (AGENTIC-UNIFY AC-14). The
+    asker is a user, so there is no phone to find a contact by and the company must be stated."""
+
+    contact_phone_number: Optional[str] = None
+    company_id: str
+
+    @field_validator('contact_phone_number')
+    @classmethod
+    def validate_contact_phone_number(cls, v):
+        return None
+
+
 class ConversationSLATrackingUpdate(BaseModel):
     current_tier: Optional[int] = None
     current_tier_started_at: Optional[datetime] = None

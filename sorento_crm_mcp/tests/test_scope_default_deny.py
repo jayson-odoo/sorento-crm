@@ -392,3 +392,98 @@ def test_a_blank_list_through_the_tool_makes_no_backend_request():
 
 def test_an_integer_contact_still_counts():
     assert scope_refusal(_spec("crm_order_management_orders_list"), {"contact_id": 900000008, "space_id": 364817}, None, staff=False) is None
+
+
+# --- staff read with a blank contact pair reaches the CRM past the required-hint check -----------
+# TOOL_REQUIRED_QUERY_HINTS makes the compiled tool raise "Missing required query parameter(s)"
+# before `_check_scope` runs, so the staff opt-out never gets its say. Every hinted tool is a GET.
+
+STAFF_HEADERS = {"X-MCP-Scope": "staff", "X-MCP-Staff-User": STAFF_ID}
+BLANK_PAIR = {"contact_id": "", "space_id": ""}
+HINTED = {
+    "crm_low_stock_report": ("/api/v1/scm/low-stock-report", {}),
+    "crm_sales_analysis": ("/api/v1/sales/analysis", {}),
+    "crm_report_ask": (
+        "/api/v1/order-management/report-ask",
+        {"basis": "invoiced", "top_n": 5, "date_from": "2026-10-01", "date_to": "2026-10-31",
+         "measure": "amount", "group_by": "customer"},
+    ),
+    "crm_sales_opportunity_customer_options": ("/api/v1/external/sales-opportunities/customer-options", {}),
+}
+
+
+def test_the_hinted_tools_are_the_four_get_tools():
+    assert set(server.TOOL_REQUIRED_QUERY_HINTS) == set(HINTED)
+    assert all(_spec(n).method == "GET" for n in HINTED)
+    # No hint outside the contact pair exists, so there is no non-pair hint to pin.
+    assert all(set(v) <= {"contact_id", "space_id"} for v in server.TOOL_REQUIRED_QUERY_HINTS.values())
+
+
+@pytest.mark.parametrize("name", list(HINTED))
+def test_staff_read_with_a_blank_pair_reaches_the_crm(name):
+    path, extra = HINTED[name]
+    client = _Client()
+    out = _run(name, client, headers=STAFF_HEADERS, **BLANK_PAIR, **extra)
+    assert len(client.calls) == 1, "the staff read must reach the CRM exactly once"
+    assert client.calls[0]["method"] == "GET" and client.calls[0]["path"] == path
+    assert not (isinstance(out, dict) and out.get("error") == "scope_required")
+
+
+def test_staff_report_ask_render_is_an_envelope():
+    class _Ask(_Client):
+        async def request(self, method, path, path_params=None, query=None, body=None, tool_name=None):
+            self.calls.append({"method": method, "path": path, "query": dict(query or {}), "body": body})
+            return json.dumps({
+                "status": "ok", "group_by": "customer", "basis": "invoiced", "measure": "amount",
+                "rows": [{"name": "ACME", "keys": ["k1"], "value": 120.0}],
+            })
+
+    client = _Ask()
+    out = _run("crm_report_ask", client, headers=STAFF_HEADERS, **BLANK_PAIR, view="render",
+               **HINTED["crm_report_ask"][1])
+    assert len(client.calls) == 1
+    assert "response" in out and "has_result" in out, out
+    assert out["has_result"] is True
+
+
+@pytest.mark.parametrize("name", list(HINTED))
+def test_no_staff_header_with_a_blank_pair_stays_refused(name):
+    """The hint check is deliberately kept for a non-staff caller: it still never reaches the CRM."""
+    path, extra = HINTED[name]
+    client = _Client()
+    with pytest.raises(ValueError, match="Missing required query parameter"):
+        _run(name, client, headers={}, **BLANK_PAIR, **extra)
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("name", list(HINTED))
+def test_staff_scope_without_a_staff_user_and_a_blank_pair_stays_refused(name):
+    path, extra = HINTED[name]
+    client = _Client()
+    try:
+        out = _run(name, client, headers={"X-MCP-Scope": "staff"}, **BLANK_PAIR, **extra)
+    except ValueError as exc:
+        assert "Missing required query parameter" in str(exc)
+    else:
+        assert out["error"] == "scope_required"
+    assert client.calls == []
+
+
+def test_staff_write_with_a_blank_pair_stays_refused_through_the_compiled_tool():
+    spec = _spec("crm_sales_opportunity_log")
+    assert spec.method != "GET" and not spec.read_only
+    client = _Client()
+    out = _run("crm_sales_opportunity_log", client, headers=STAFF_HEADERS, title="x", expected_amount=1, expected_close_date="2026-11-30", **BLANK_PAIR)
+    assert out["error"] == "scope_required"
+    assert client.calls == []
+
+
+@pytest.mark.parametrize("name", list(HINTED))
+def test_a_contact_caller_with_both_ids_reaches_the_crm_with_them(name):
+    path, extra = HINTED[name]
+    client = _Client()
+    _run(name, client, headers={}, contact_id=CONTACT, space_id=SPACE, **extra)
+    assert len(client.calls) == 1
+    assert client.calls[0]["path"] == path
+    assert client.calls[0]["query"]["contact_id"] == CONTACT
+    assert client.calls[0]["query"]["space_id"] == SPACE

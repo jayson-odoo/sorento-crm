@@ -32,11 +32,18 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.services.chatbot import principal as staff_principal
+
 logger = logging.getLogger(__name__)
 
 FEATURE = "chatbot_parser"
 # CHAT-TURN-COST: the casual lane's clarifier, the turn's second LLM call on small talk.
 CLARIFIER_FEATURE = "chatbot_clarifier"
+
+
+def feature_name(feature: str) -> str:
+    """The name a call's usage is logged under: a staff principal's spend is the panel's (AC-17)."""
+    return f"panel_{feature.removeprefix('chatbot_')}" if staff_principal.current() is not None else feature
 
 
 def record_parser_usage(
@@ -76,7 +83,11 @@ def record_turn_llm_usage(
     row_id: str | None = None,
 ) -> None:
     """One `ai_assistant_usage_logs` row for one LLM call a chatbot turn made. `row_id` lets a
-    caller that learns the turn id later (the console router) point the row at it afterwards."""
+    caller that learns the turn id later (the console router) point the row at it afterwards.
+
+    A staff principal's call is the panel's spend, not the chatbot's (AC-17): it carries the user
+    and a `panel_` feature, and the analytics that count `chatbot%` never see it."""
+    staff = staff_principal.current()
     try:
         from app.models.access import RespondContact
         from app.models.ai_assistant import AIAssistantUsageLog
@@ -99,9 +110,10 @@ def record_turn_llm_usage(
         db.add(
             AIAssistantUsageLog(
                 **({"id": row_id} if row_id else {}),
-                user_id=None,
+                user_id=staff.user_id if staff is not None else None,
+                conversation_id=staff.conversation_id if staff is not None else None,
                 contact_id=internal_id,
-                feature=feature,
+                feature=feature_name(feature),
                 provider=usage.get("provider"),
                 model=usage.get("model"),
                 prompt_tokens=int(usage.get("prompt_tokens") or 0),

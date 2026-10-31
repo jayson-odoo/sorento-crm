@@ -47,6 +47,7 @@ from sqlalchemy.exc import IntegrityError
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import direct_ingress, media_intake, send_order
 from app.services.chatbot import trace as trace_mod
+from app.services.chatbot.contracts import PANEL_INGRESS
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +224,7 @@ def accepts(db: Any, envelope: Any) -> bool:
     sender speaks for that one only). Test and console turns never do."""
     from app.services.chatbot import engine
 
-    if envelope.dry_run or envelope.ingress == "console":
+    if envelope.dry_run or envelope.ingress in ("console", PANEL_INGRESS):
         return False
     contact = engine._contact_respond_id(envelope)
     if not contact or engine._message_id(envelope) is None:

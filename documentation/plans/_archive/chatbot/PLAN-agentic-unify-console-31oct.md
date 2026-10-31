@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY console, one thread
 
-Status: UAC written 31 Oct 2026, red tests next. Full pipeline, size M. PR 2 of 4 (crew ruling): #2048 leak fix, this, staff principal + panel, ported tools.
+Status: merged as #2051 (6fa5ef4ef0), 1 Nov 2026. Full pipeline, size M. PR 2 of 4 (crew ruling): #2048 leak fix, this, staff principal + panel, ported tools.
 Lane: AGENTIC-UNIFY, branch `crew/agentic-unify-console`, off origin/main, independent of #2048. UAC: `agentic-unify-console-acceptance-criteria.md`.
 
 ## Architecture

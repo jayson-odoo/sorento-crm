@@ -50,6 +50,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from app.services.chatbot import jsc
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.contracts import PREVIEW
 
 logger = logging.getLogger(__name__)
@@ -1601,6 +1602,14 @@ def _assign(
     clock still starts, because the escalation is just as real.
     """
     body = None
+    principal = staff_principal.current()
+    if principal is not None:
+        from app.services import rate_limit
+
+        if not rate_limit.hit(
+            "panel_escalation", principal.user_id, limit=PANEL_ESCALATIONS_PER_HOUR, window_seconds=3600
+        ).allowed:
+            return [_send_message(PANEL_ESCALATION_CAPPED, False)], _routing_record(context_item, None, None)
     try:
         if assignee is None:
             body = _next_assignee_body(ctx, context_item)
@@ -1611,6 +1620,11 @@ def _assign(
         # was for, which is the offered one, not whatever the parser suggested.
         exc.escalation_team = team  # type: ignore[attr-defined]
         raise
+    if staff_principal.current() is not None:
+        # AC-15: a panel thread has no return path, so nobody replies into it: the reply names the
+        # person, and no assign or comment action exists to carry out.
+        name = jsc.get(sla, "assignee_name") or jsc.get(assignee, "assignee_name")
+        return [_send_message(_panel_follow_up(name), False)], _routing_record(context_item, body, assignee)
     actions = _assignment_actions(
         ctx,
         team,
@@ -1623,6 +1637,17 @@ def _assign(
         preview=False,
     )
     return actions, _routing_record(context_item, body, assignee)
+
+
+#: Panel escalations a staff member may raise an hour. Each one pages a colleague.
+PANEL_ESCALATIONS_PER_HOUR = 5
+PANEL_ESCALATION_CAPPED = "I have not passed this on: you have raised several escalations in the last hour. Try again later."
+
+
+def _panel_follow_up(name: Any) -> str:
+    """AC-15: who has it, and how they get back to a staff member."""
+    who = jsc.nullish_str(name).strip() or "a colleague"
+    return f"I have passed this to {who}, who will follow up with you directly."
 
 
 def _assignment_actions(

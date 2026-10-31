@@ -84,6 +84,7 @@ from app.services.error_handler import AppException
 from app.utils.multi_value import multi_values
 from app.services.integration_service import IntegrationLogService
 from app.services.outbound_url_guard import OutboundUrlRejected
+from app.services.respond_identifier import PANEL_KEY_PREFIX, is_panel_key
 from app.services.chatbot.dispatch import (
     ReinjectFailed,
     RetryUnavailable,
@@ -308,7 +309,9 @@ def list_turns(
             detail=f"Unknown status {turn_status!r}. Expected one of: {', '.join(TURN_STATUSES)}.",
         )
 
-    query = db.query(ChatbotTurn)
+    # AGENTIC-UNIFY AC-17: a panel turn is a staff member's own question, not a customer's to watch.
+    # By key, so a panel thread's agent turns stay out when `include_test` asks for test rows too.
+    query = db.query(ChatbotTurn).filter(ChatbotTurn.contact_respond_id.notlike(f"{PANEL_KEY_PREFIX}%"))
     if contact_respond_id:
         query = query.filter(ChatbotTurn.contact_respond_id == contact_respond_id)
     if from_ is not None:
@@ -386,7 +389,7 @@ def failed_contacts(
     if from_ is None and to is None:
         from_ = datetime.now(timezone.utc) - timedelta(days=FAILED_CONTACTS_DEFAULT_DAYS)
 
-    window = [ChatbotTurn.status == "failed"]
+    window = [ChatbotTurn.status == "failed", ChatbotTurn.contact_respond_id.notlike(f"{PANEL_KEY_PREFIX}%")]
     if not include_test:
         # H57: a contact whose only failed turn is a DRY RUN has nothing wrong with it. The
         # list this feeds is the operator's "who needs attention" filter, and a test turn
@@ -500,6 +503,17 @@ def retry_turn(
                     "ingress, so it would answer a real contact; run the test again from "
                     "where it was started instead."
                 ),
+            },
+        )
+
+    if row.ingress == "panel":
+        # AGENTIC-UNIFY AC-9: Retry posts at the live n8n ingress, which has no way back to a panel
+        # thread and would key a live turn to nobody. The staff member simply asks again.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "panel_turn_not_retryable",
+                "message": "This turn came from the AI panel. Retry re-posts at the live ingress, so ask it again in the panel instead.",
             },
         )
 
@@ -730,6 +744,13 @@ def _action_refused(exc: agent_actions.ActionRefused) -> HTTPException:
     )
 
 
+def _refuse_a_panel_action(contact_respond_id: str) -> None:
+    """A panel proposal is its own user's to decide (AGENTIC-UNIFY AC-22): 404, as for any other
+    action this operator may not see."""
+    if is_panel_key(contact_respond_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found.")
+
+
 @router.post("/agent/actions/{action_id}/confirm", response_model=AgentActionResponse)
 def agent_action_confirm(
     action_id: str,
@@ -738,6 +759,7 @@ def agent_action_confirm(
     db: Session = Depends(get_db),
 ):
     """Carry out the changes the agent proposed, from the console's Confirm button."""
+    _refuse_a_panel_action(payload.contact_respond_id)
     try:
         return _action_response(
             agent_actions.confirm(
@@ -755,6 +777,7 @@ def agent_action_cancel(
     user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
+    _refuse_a_panel_action(payload.contact_respond_id)
     try:
         return _action_response(
             agent_actions.cancel(db, payload.contact_respond_id, action_id, operator_user_id=str(user["id"]))
@@ -773,6 +796,7 @@ def agent_action_withdraw(
 ):
     """The console's Withdraw on a step still waiting out its grace window: the form-action cancel, as the
     linked user who started it. Nothing was applied, so nothing is reversed and nobody is told."""
+    _refuse_a_panel_action(payload.contact_respond_id)
     try:
         return _action_response(
             agent_actions.withdraw(db, payload.contact_respond_id, action_id, index, operator_user_id=str(user["id"]))
@@ -797,6 +821,7 @@ def agent_conversation_new(
     """Start the agent afresh. A proposal still waiting is expired first (nobody decided it), so a later yes
     cannot confirm a change from the conversation that was just left; a contact the agent may no longer run
     for gets that too. Waits for nothing: a turn running for the contact makes this a 409 agent_busy."""
+    _refuse_a_panel_action(payload.contact_respond_id)
     try:
         with single_flight(payload.contact_respond_id):
             agent_actions.expire_proposed(db, payload.contact_respond_id)

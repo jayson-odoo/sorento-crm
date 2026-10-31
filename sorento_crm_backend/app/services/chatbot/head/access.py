@@ -16,6 +16,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.services.chatbot import principal as staff_principal
 from app.services.mcp_access_service import evaluate_agent
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,11 @@ def _hidden_spec_keys(db: Session, *, contact_id: str, space_id: str | None) -> 
     The registry read is the FULL one (B1, security review), not active-only:
     the hidden set is a READ, and a merely deactivated key must stay hidden or
     stay shown, whichever the stored policy already says.
+
+    A staff principal has no contact's policy: their product screens hide no spec key.
     """
+    if staff_principal.current() is not None:
+        return []
     from app.services.spec_visibility import (
         DEFAULT_HIDDEN_KEYS,
         default_policy,
@@ -138,7 +143,13 @@ def check_access(
     An unknown agent fails CLOSED (`deny_unknown_agent`) - `deriveRouting`'s `ideate` case
     is the single source of truth for that agent name, and the denial message is rendered
     from the same field, so a stale agent cannot make the refusal say the wrong thing.
+
+    A staff principal holds no contact's agent grants or reveals: an active agent is allowed, and
+    `attributes` comes from the user's permissions (AC-5). Its spec policy is the default one.
     """
+    principal = staff_principal.current()
+    if principal is not None:
+        return _staff_access(db, principal, agent_code=agent_code, space_id=space_id)
     decision = evaluate_agent(
         db,
         agent_code=agent_code,
@@ -153,6 +164,21 @@ def check_access(
         "all_attributes_allowed": False,
         "hidden_spec_keys": _hidden_spec_keys(db, contact_id=contact_id, space_id=space_id),
         "skip_period_questions": _skip_period_questions(db, contact_id, space_id),
+    }
+
+
+def _staff_access(db: Session, principal: Any, *, agent_code: Any, space_id: str | None) -> dict[str, Any]:
+    from app.models.access import AccessAgent
+
+    name = db.query(AccessAgent.name).filter(AccessAgent.code == agent_code, AccessAgent.is_active.is_(True)).scalar()
+    return {
+        "allowed": name is not None,
+        "decision": "allow" if name is not None else "deny_unknown_agent",
+        "agent_name": name,
+        "attributes": principal.reveal_keys(db),
+        "all_attributes_allowed": False,
+        "hidden_spec_keys": _hidden_spec_keys(db, contact_id=principal.key, space_id=space_id),
+        "skip_period_questions": False,
     }
 
 

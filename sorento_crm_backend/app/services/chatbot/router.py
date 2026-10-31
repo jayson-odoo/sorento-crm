@@ -16,16 +16,20 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.models.ai_assistant import AIAssistantConfig
+from sqlalchemy import String, cast, literal, or_, select
+
+from app.models.ai_assistant import AIAssistantConfig, AIAssistantConversation, AIAssistantMessage
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.chatbot import jev_client, session_state
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent.access import eligible_contact
 from app.services.chatbot.jev_client import JevError
 from app.services.chatbot.usage import record_turn_llm_usage
 from app.services.llm_provider import resolve_typesafe_key
+from app.services.respond_identifier import PANEL_KEY_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +163,23 @@ def _daily_cap(contact, settings) -> int:
 
 def _agent_turns_today(db, contact_respond_id: str) -> int:
     midnight = datetime.now(BUSINESS_TZ).replace(hour=0, minute=0, second=0, microsecond=0)
+    principal = staff_principal.current()
+    if principal is not None:
+        # The cap is the user's, whichever thread they ask in (AC-8). A panel agent turn names its user
+        # on its own envelope, so deleting a thread hands nothing back; a usage row would miss a turn
+        # whose first model call failed. The thread keys count a row that names no user.
+        keys = select(literal(PANEL_KEY_PREFIX) + cast(AIAssistantConversation.id, String)).where(
+            AIAssistantConversation.user_id == principal.user_id
+        )
+        return (
+            db.query(ChatbotTurn.id)
+            .filter(
+                or_(ChatbotTurn.envelope["user_id"].astext == principal.user_id, ChatbotTurn.contact_respond_id.in_(keys)),
+                ChatbotTurn.ingress == "agent",
+                ChatbotTurn.created_at >= midnight,
+            )
+            .count()
+        )
     return (
         db.query(ChatbotTurn.id)
         .filter(
@@ -195,6 +216,15 @@ def _router_prompt(db) -> tuple[str, dict[str, Any], str] | None:
 
 def _state(db, contact_respond_id: str, text: str) -> dict[str, Any]:
     """What Jev reads: the message, the last exchanges (oldest first) and who answered last."""
+    principal = staff_principal.current()
+    if principal is not None:
+        panel = _panel_exchanges(db, principal.conversation_id)
+        return {
+            "latest_message": text,
+            "recent_exchanges": panel,
+            "last_answered_by": panel[-1]["answered_by"] if panel else None,
+            **({"current_page": principal.page} if principal.page else {}),
+        }
     rows = (
         db.query(ChatbotTurn.ingress, ChatbotTurn.envelope, ChatbotTurn.response)
         .filter(ChatbotTurn.contact_respond_id == contact_respond_id, ChatbotTurn.status == "done")
@@ -223,6 +253,34 @@ def _state(db, contact_respond_id: str, text: str) -> dict[str, Any]:
         "recent_exchanges": exchanges,
         "last_answered_by": exchanges[-1]["answered_by"] if exchanges else None,
     }
+
+
+def _panel_exchanges(db, conversation_id: str) -> list[dict[str, Any]]:
+    """The thread's last exchanges, oldest first, from its panel messages: a thread can hold answers
+    from before the user moved onto this path, and those were never turns."""
+    rows = (
+        db.query(AIAssistantMessage)
+        .filter(AIAssistantMessage.conversation_id == conversation_id, AIAssistantMessage.role.in_(("user", "assistant")))
+        # An answer and its question can share a timestamp; the answer is the newer of the two.
+        .order_by(AIAssistantMessage.created_at.desc(), (AIAssistantMessage.role == "assistant").desc(), AIAssistantMessage.id.desc())
+        .limit(RECENT_EXCHANGES * 2 + 1)
+        .all()
+    )
+    exchanges: list[dict[str, Any]] = []
+    reply: Any = None
+    for row in rows:
+        if row.role == "assistant":
+            reply = row
+        elif reply is not None:
+            exchanges.append(
+                {
+                    "user": row.content or "",
+                    "reply": (reply.content or "")[:REPLY_CHARS],
+                    "answered_by": "agent" if (reply.metadata_json or {}).get("route") == "agent" else "bot",
+                }
+            )
+            reply = None
+    return list(reversed(exchanges[:RECENT_EXCHANGES]))
 
 
 def _user_text(envelope: Any) -> str:

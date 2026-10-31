@@ -201,6 +201,30 @@ def _cut_bytes(value: str, limit: int) -> str:
     return encoded[:limit].decode("utf-8", errors="ignore")
 
 
+PAGE_LINE_PREFIX = "Current page: "
+_PAGE_LINE_JSON_BYTES = 400
+
+
+def page_line(page: dict[str, Any] | None) -> str | None:
+    """`Current page: {json}` for the parser, or None with no page. Values are folded to one line and
+    the JSON is bounded to 400 bytes by shortening the title, then the path (then the record ref),
+    never by cutting the JSON text, so a title holding `Current user message:` stays a quoted value."""
+    if not page:
+        return None
+    values = {k: _collapse_whitespace(str(v)) for k, v in page.items() if v is not None}
+
+    def encoded() -> str:
+        return json.dumps(values, ensure_ascii=False)
+
+    for key in ("title", "path", "record_ref"):
+        if key not in values:
+            continue
+        excess = len(encoded().encode("utf-8")) - _PAGE_LINE_JSON_BYTES
+        if excess > 0:
+            values[key] = _cut_bytes(values[key], len(values[key].encode("utf-8")) - excess)
+    return PAGE_LINE_PREFIX + encoded()
+
+
 def _previous_response_normalized(value: str) -> str:
     """The historic "Previous turn (kind)" -> "Previous turn" collapse
     (`head/parser.py::build_user_block`'s own regex substitution), replicated
@@ -237,6 +261,9 @@ class ContextLayers:
     current_message: str
     reply_to: str | None
     media_line: str | None
+    #: AGENTIC-UNIFY panel: the WHOLE `Current page: {json}` line (`page_line`), printed directly above
+    #: `Current user message:` at every level. None leaves the assembled text untouched.
+    page_line: str | None = None
     #: PR #1247 (stock ask v2 S3 / rounds 8 and 9), carried through the merge with
     #: main: the `Open task: ...` lines (`parser.open_task_lines`), the one question on
     #: the table as its `Open question: {...}` line, and the last exchanges as
@@ -475,7 +502,9 @@ def _render_l2(
     return text, dropped
 
 
-def _render_l1(current_message: str, reply_to: str | None, media_line: str | None) -> tuple[str, bool]:
+def _render_l1(
+    current_message: str, reply_to: str | None, media_line: str | None, page_line: str | None = None
+) -> tuple[str, bool]:
     raw_message = str(current_message or "")
     message = _cut_bytes(raw_message, _CURRENT_MESSAGE_CUT_BYTES)
     dropped = len(raw_message.encode("utf-8")) > _CURRENT_MESSAGE_CUT_BYTES
@@ -493,6 +522,8 @@ def _render_l1(current_message: str, reply_to: str | None, media_line: str | Non
             dropped = True
     if media_line:
         lines.append(str(media_line))
+    if page_line:
+        lines.append(page_line)
     lines.append(f"Current user message: {message}")
     return "\n".join(lines), dropped
 
@@ -504,6 +535,7 @@ def _assemble_off(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
     previous = _previous_response_normalized(str(layers.previous_response or ""))
     lines = [
         f"Previous response: {previous}",
+        *([layers.page_line] if layers.page_line else []),
         f"Current user message: {layers.current_message}",
         *(layers.candidate_lines or []),
         *(layers.lookup_lines or []),
@@ -573,7 +605,7 @@ def assemble(layers: ContextLayers) -> tuple[str, dict[str, Any]]:
         _brands_and_kinds(layers),
         layers.state_block,
     )
-    l1_text, l1_dropped = _render_l1(layers.current_message, layers.reply_to, layers.media_line)
+    l1_text, l1_dropped = _render_l1(layers.current_message, layers.reply_to, layers.media_line, layers.page_line)
     if layers.candidate_lines:
         l1_text = "\n".join([l1_text, *layers.candidate_lines])
     if layers.lookup_lines:

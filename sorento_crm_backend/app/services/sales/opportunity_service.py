@@ -204,7 +204,7 @@ def resolve_company(db: Session, *, customer_id: Optional[str], agent: SalesAgen
         if customer is not None and customer.company_id:
             return customer.company_id
 
-    if agent.company_id and (scope is None or (isinstance(scope, frozenset) and agent.company_id in scope)):
+    if agent is not None and agent.company_id and (scope is None or (isinstance(scope, frozenset) and agent.company_id in scope)):
         return agent.company_id
 
     if isinstance(scope, frozenset) and len(scope) == 1:

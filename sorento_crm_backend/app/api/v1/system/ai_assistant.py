@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import case, desc, func, literal_column
 from sqlalchemy.exc import IntegrityError
@@ -39,7 +39,9 @@ from app.schemas.ai_prompt import (
     SetAgentModelResponse,
     SetLabelResponse,
 )
+from app.schemas.chatbot_turn import AgentActionResponse
 from app.api.v1.external.chat import (
+    panel_service,
     CHATBOT_PROMPT_KEYS,
     DryRunTurnRefused,
     run_prompt_dry_run_turn,
@@ -136,8 +138,8 @@ def _resolve_window(from_: Optional[str], to: Optional[str]) -> tuple[datetime, 
     return f, t
 
 
-def _message_to_response(row: AIAssistantMessage) -> AIAssistantMessageResponse:
-    meta = row.metadata_json or {}
+def _message_to_response(row: AIAssistantMessage, read_meta: dict[str, Any] | None = None) -> AIAssistantMessageResponse:
+    meta = read_meta if read_meta is not None else row.metadata_json or {}
     suggestions = meta.get("suggestions") if isinstance(meta, dict) else []
     if not isinstance(suggestions, list):
         suggestions = []
@@ -301,31 +303,103 @@ def list_ai_assistant_messages(
 ):
     chat = AIAssistantChatService(db)
     rows = chat.list_messages(conversation_id, str(user["id"]))
-    return [_message_to_response(r) for r in rows]
+    metas = panel_service.read_metadata(db, rows, str(user["id"]))
+    return [_message_to_response(r, m) for r, m in zip(rows, metas)]
 
 
 @router.post("/ai-assistant/chat", response_model=AIAssistantConversationResponse)
 def send_ai_assistant_message(
     payload: AIAssistantMessageCreate,
+    request: Request,
     user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
     db: Session = Depends(get_db),
 ):
     chat = AIAssistantChatService(db)
-    conv, _ = chat.respond(
-        user_id=str(user["id"]),
-        conversation_id=payload.conversation_id,
-        message=payload.message,
-        page_snapshot=payload.page_snapshot,
-        confirm_action=payload.confirm_action,
-    )
+    # AGENTIC-UNIFY AC-1, AC-2: the rollout slug moves this user onto the chatbot's brain. A Confirm or
+    # Cancel click answers a card the old path wrote, so the old path finishes it.
+    if payload.confirm_action is None and panel_service.on_the_brain(db, str(user["id"])):
+        chat.ensure_enabled()
+        conv = chat.get_or_create_conversation(str(user["id"]), payload.conversation_id, payload.message)
+        chat.append_message(conv.id, "user", payload.message)
+        result = panel_service.run_panel_turn(
+            db, user=user, conversation=conv, text=payload.message, page_snapshot=payload.page_snapshot,
+            real_user_id=_real_user_id(request, user),
+        )
+        chat.append_message(conv.id, "assistant", result.reply_text, metadata_json=panel_service.message_metadata(result))
+    else:
+        conv, _ = chat.respond(
+            user_id=str(user["id"]),
+            conversation_id=payload.conversation_id,
+            message=payload.message,
+            page_snapshot=payload.page_snapshot,
+            confirm_action=payload.confirm_action,
+        )
     rows = chat.list_messages(str(conv.id), str(user["id"]))
     return AIAssistantConversationResponse(
         id=str(conv.id),
         title=conv.title,
         created_at=conv.created_at,
         updated_at=conv.updated_at,
-        messages=[_message_to_response(r) for r in rows],
+        messages=[_message_to_response(r, m) for r, m in zip(rows, panel_service.read_metadata(db, rows, str(user["id"])))],
     )
+
+
+# --- The agent's proposals on the panel (AGENTIC-UNIFY AC-22) ------------------
+#
+# The panel's own routes: its gate, and the user from the session. A client-sent contact is not read,
+# and another user's action reads as none.
+
+
+def _real_user_id(request: Request, user: dict) -> str | None:
+    """The administrator behind an impersonated session (`dependencies._maybe_apply_impersonation` puts
+    them on `request.state.real_user`); None when the user acts as themselves."""
+    real = getattr(request.state, "real_user", None)
+    real_id = str(real["id"]) if isinstance(real, dict) and real.get("id") else None
+    return real_id if real_id and real_id != str(user["id"]) else None
+
+
+def _panel_action(decide, *args) -> AgentActionResponse:
+    try:
+        outcome = decide(*args)
+    except panel_service.agent_actions.ActionRefused as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND if exc.reason == "not_found" else status.HTTP_409_CONFLICT,
+            detail={"code": "action_refused", "reason": exc.reason},
+        )
+    return AgentActionResponse(
+        action_id=outcome.action_id, status=outcome.status, reply_text=outcome.reply_text, steps=outcome.steps
+    )
+
+
+@router.post("/ai-assistant/agent/actions/{action_id}/confirm", response_model=AgentActionResponse)
+def panel_action_confirm(
+    action_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
+    db: Session = Depends(get_db),
+):
+    return _panel_action(panel_service.confirm, db, str(user["id"]), action_id, _real_user_id(request, user))
+
+
+@router.post("/ai-assistant/agent/actions/{action_id}/cancel", response_model=AgentActionResponse)
+def panel_action_cancel(
+    action_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
+    db: Session = Depends(get_db),
+):
+    return _panel_action(panel_service.cancel, db, str(user["id"]), action_id, _real_user_id(request, user))
+
+
+@router.post("/ai-assistant/agent/actions/{action_id}/steps/{index}/withdraw", response_model=AgentActionResponse)
+def panel_action_withdraw(
+    action_id: str,
+    index: int,
+    request: Request,
+    user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
+    db: Session = Depends(get_db),
+):
+    return _panel_action(panel_service.withdraw, db, str(user["id"]), action_id, index, _real_user_id(request, user))
 
 
 # --- Prompt registry --------------------------------------------------------
