@@ -89,6 +89,7 @@ GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/x
 GET /projects/{project_id}/quotations
 GET /projects/{project_id}/sales-orders
 GET /projects/{project_id}/sample-requests
+GET /projects/{project_id}/sample-requests/quotation-prefill
 GET /projects/{project_id}/samples
 GET /projects/{project_id}/sponsorships
 GET /projects/{project_id}/sponsorships/rollup
