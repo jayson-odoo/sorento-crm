@@ -862,6 +862,21 @@ def tags_by_contact_with_settings(db: Session, contact_ids: list[str]) -> dict[s
     return out
 
 
+def contact_is_dealer(db: Session, contact_id: str) -> bool:
+    """True when every ACTIVE tag of the contact that sets `chatbot.tier` sets "dealer", and at
+    least one does. A conflict (dealer beside another tier) is not a dealer, as
+    `contact_llm_choice` treats a conflict. Reads the tags' settings only: never the profile's
+    tier and never the access levels."""
+    from app.models.access import ContactTag
+
+    tags = tags_by_contact_with_settings(db, [str(contact_id)]).get(str(contact_id), [])
+    if not tags:
+        return False
+    active = {str(t) for (t,) in db.execute(select(ContactTag.id).where(ContactTag.id.in_([t.id for t in tags]), ContactTag.is_active.is_(True)))}
+    tiers = {v for t in tags if t.id in active for section, key, v in leaves(t) if (section, key) == ("chatbot", "tier")}
+    return tiers == {"dealer"}
+
+
 def evaluate(
     db: Session,
     contacts: list,

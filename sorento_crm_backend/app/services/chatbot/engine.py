@@ -5883,6 +5883,12 @@ def _run_stages_body(  # noqa: PLR0915
             raw=access,
         )
 
+        # AC-5 (CHATBOT-FAIL-TRIAGE-B2, owner ruling 31 Oct 2026, decided in code): a dealer without the
+        # purchase cost grant who asks for cost is answered by the promotion lookup, so the turn is a
+        # promotion turn from here on (tier gate, fetch, compose, held state). The parser's own verdict
+        # stays on the trace as `parser_verdict`; this event names the swap.
+        verdict = _dealer_cost_as_promotion(db, verdict, access, remembered_before.get("_contact_pk"), turn_trace)
+
         stage[0] = "routed"
         settings_row = switches
         stock_denial_enabled = _stock_denial_enabled(db, settings_row)
@@ -9754,6 +9760,24 @@ def _media_source_modality(media_box: dict[str, Any]) -> str | None:
         # A caption fallback answers the caption as typed text, not "that photo".
         return None if outcome.caption_fallback else outcome.modality
     return media_box.get("patched_modality")
+
+
+def _dealer_cost_as_promotion(
+    db: Session, verdict: dict[str, Any], access: dict[str, Any], contact_pk: Any, turn_trace: Any
+) -> dict[str, Any]:
+    """The verdict with a `purchase_cost` ask read as the `promotion` ask when the contact is a dealer
+    (an active `chatbot.tier` "dealer" tag, no other tier) and holds no `purchase_orders.cost` grant;
+    the verdict itself otherwise. Acts on the parser's domain only, for no other domain or contact."""
+    if verdict.get("domain_hint") != "purchase_cost" or access.get("allowed") is not True or not contact_pk:
+        return verdict
+    if "purchase_orders.cost" in set(access.get("attributes") or []):
+        return verdict
+    from app.services.contact_tag_settings import contact_is_dealer
+
+    if not contact_is_dealer(db, str(contact_pk)):
+        return verdict
+    turn_trace.add("dealer_cost_as_promotion", {"from": [verdict.get("domain_hint"), verdict.get("intent_hint")], "to": ["promotion", "check_promotion"]})
+    return {**verdict, "domain_hint": "promotion", "intent_hint": "check_promotion"}
 
 
 def _attributes_summary(attributes: list[Any]) -> str | None:

@@ -158,6 +158,7 @@ def narrow_code_tokens_by_specs(
     allowed_types: list[str] | None,
     specs: list[dict[str, Any]] | None,
     exact_out: list[str] | None = None,
+    none_out: list[dict[str, Any]] | None = None,
 ) -> list[str] | None:
     """`tokens` with each CODE token replaced by the variants of its family that carry
     every grounded spec in `specs`, or None when nothing changes.
@@ -204,6 +205,11 @@ def narrow_code_tokens_by_specs(
             for code, values, _text in family
             if all(any(_holds(values, k, value) for k in (any_keys or [key])) for key, value, any_keys in wanted)
         ]
+        if not picked and none_out is not None:
+            # A spec no variant of the family holds: told to the caller so the reply can say so.
+            for key, value, any_keys in wanted:
+                if not any(_holds(values, k, value) for _code, values, _text in family for k in (any_keys or [key])):
+                    none_out.append({"key": key, "value": value})
         if not picked or len(picked) == len(family):
             continue
         if any(_fold(code) == code_word for code in picked):

@@ -3333,7 +3333,10 @@ def _typed_text_after_narrowing(
 
 
 def _narrowed_payload(
-    db: Session, payload: "ResolveReferenceRequest", exact_kept: list[str] | None = None
+    db: Session,
+    payload: "ResolveReferenceRequest",
+    exact_kept: list[str] | None = None,
+    spec_none: list[dict[str, Any]] | None = None,
 ) -> "ResolveReferenceRequest":
     """The typed codes narrowed to the variants the message picks, two ways: by the words on
     the code's line (`narrow_code_tokens`, PR #833) and by grounded spec values
@@ -3377,6 +3380,7 @@ def _narrowed_payload(
             allowed_types=payload.allowed_entity_types,
             specs=payload.extracted_specs,
             exact_out=exact_codes,
+            none_out=spec_none,
         )
         if exact_codes and exact_kept is not None:
             # An exact code that holds the size is the answer: the route keeps its exact
@@ -3489,7 +3493,8 @@ def resolve_reference_post(
     """POST variant for external callers that send JSON body (e.g. n8n HTTP node)."""
     typed_tokens = list(payload.tokens or [])
     exact_kept: list[str] = []
-    payload = _narrowed_payload(db, payload, exact_kept)
+    spec_none: list[dict[str, Any]] = []
+    payload = _narrowed_payload(db, payload, exact_kept, spec_none)
     picked_variants = (
         _picked_variants(typed_tokens, payload.tokens)
         if (payload.match_mode or "").strip().lower() == "or"
@@ -3564,6 +3569,9 @@ def resolve_reference_post(
 
     if picked_variants:
         _keep_exact_variants(result, picked_variants)
+    if spec_none and isinstance(result, dict):
+        # A size or named spec no variant of the typed code's family holds; the reply says so.
+        result["spec_none"] = spec_none
     if payload.exact_match:
         _drop_word_neighbours(result)
     if payload.require or payload.spec_fallback:

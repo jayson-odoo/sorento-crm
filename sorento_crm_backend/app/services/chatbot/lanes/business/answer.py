@@ -2856,6 +2856,23 @@ def breakdown_lines(breakdown: Any, set_noun: str) -> list[str]:
     return out
 
 
+def no_variant_clause(result: Any, entities: Any) -> str:
+    """"None with size 300 mm." when the route says no variant of the typed code's family holds a
+    spec the customer named (`spec_none`, from `narrow_code_tokens_by_specs`); "" otherwise. The label
+    and value are the grounded entity's own, the wording the dimension fallback's clause uses."""
+    parts = []
+    for miss in jsc.array(jsc.get(result, "spec_none")):
+        for e in jsc.array(entities):
+            if jsc.get(e, "spec_key") != jsc.get(miss, "key") or jsc.get(e, "spec_value") != jsc.get(miss, "value"):
+                continue
+            label = jsc.js_string(jsc.get(e, "spec_label") or jsc.get(e, "spec_key")).strip().lower()
+            unit = jsc.js_string(jsc.get(e, "spec_unit") or "").strip()
+            value = f"{jsc.js_string(jsc.get(e, 'spec_value'))} {unit}".strip()
+            parts.append(f"None with {label} {value}.")
+            break
+    return " ".join(dict.fromkeys(parts))
+
+
 def what_you_want_reply(
     asked: str,
     lines: list[str],
@@ -4043,6 +4060,9 @@ def not_found_error_message(
                 head.append(f"Dates: {dates}")
                 parts.append("\n".join(head))
             if found_lines:
+                none_with = no_variant_clause(r, all_ents)
+                if none_with:
+                    parts.append(none_with)
                 parts.append("Here's what you want:\n" + "\n".join(found_lines))
             if nf:
                 from app.services.chatbot import composers
