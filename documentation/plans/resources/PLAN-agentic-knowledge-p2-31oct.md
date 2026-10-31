@@ -118,7 +118,7 @@ replies when Jev picks chat; every router failure.
   escalation on -> "Couldn't find" + the open offer to `marketing_product` (general-enquiry route, ticket on the
   contact's own "yes"); off -> "Couldn't find" + "Please refer to your salesman."; the type's "Escalate to" stays
   staff side. (b) A knowledge miss always offers `marketing_product`, whatever the switch. Recommendation: (a),
-  because the switch is your dealer ruling of 30 Sep, and (b) would reopen escalation for 200+ dealers through one
+  because the switch is your dealer ruling of 30 Sep, and (b) would reopen escalation for almost every dealer through one
   door.
 - **W-Q3 W1 read tools.** (a) the table above, each under the bot's own reveal key (never more than the bot gives);
   (b) knowledge search only in W1. Recommendation: (a), because the gates already exist per contact and the pilot is
