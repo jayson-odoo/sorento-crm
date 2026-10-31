@@ -40,22 +40,42 @@ The script also reads `sorento_crm_backend/.env` automatically (via `python-dote
 ```
 documentation/user-guides/
   README.md                        -> Outline root doc "Overview"
-  _shared/
-    upload-flow.md                 -> parent "Shared" / Upload flow
-  purchasing/*.md                  -> parent "Purchasing" / *
-  warehouse/*.md                   -> parent "Warehouse" / *
-  marketing/*.md                   -> parent "Marketing" / *
-  project-sales-admin/*.md         -> parent "Project Sales Admin" / *
-  project-sales-manager/*.md       -> parent "Project Sales Manager" / *
-  project-sales-rep/*.md           -> parent "Project Sales Rep" / *
-  supply-chain/*.md                -> parent "Supply Chain" / *
+  _shared/*.md                     -> parent "Shared" / *
+  purchasing/*.md                  -> parent "1-Purchasing" / *
+  warehouse/*.md                   -> parent "2-Warehouse" / *
+  marketing/*.md                   -> parent "3-Marketing" / *
+  project-sales-admin/*.md         -> parent "4-Project Sales Admin" / *
+  project-sales-manager/*.md       -> parent "5-Project Sales Manager" / *
+  project-sales-rep/*.md           -> parent "6-Project Sales Rep" / *
+  technical-team/*.md              -> parent "7-Technical Team" / *
+  inventory/*.md                   -> parent "8-Inventory" / *
+  delivery-orders/*.md             -> parent "9-Delivery Orders" / *
+  product/*.md                     -> parent "10-Product" / *
+  sla/*.md                         -> parent "11-SLA" / *
+  supply-chain/*.md                -> parent "12-Supply Chain" / *
+  procurement/*.md                 -> parent "13-Procurement" / *
+  complaints/*.md                  -> parent "14-Complaints" / *
+  system-management/*.md           -> parent "15-System Management" / *
+  user-management/*.md             -> parent "16-User Management" / *
+  commercial/*.md                  -> HELD, never published (HELD_FOLDERS)
 ```
+
+The folder -> parent map is `PARENT_TITLES` in the script. A new folder must be added there (or
+to `HELD_FOLDERS`); `sorento_crm_backend/tests/test_sync_user_guides_guard.py` fails while a guide
+folder is in neither, because its pages would silently never reach Outline (and so never reach
+the AI assistant, which reads Outline only).
 
 Each markdown file's first H1 (`# Title`) becomes the Outline doc title. The leading H1 is stripped from the body Outline stores (Outline keeps title separately).
 
 ## Scheduled sync (Outline → repo)
 
 `.github/workflows/outline-user-guides-sync.yml` runs every 6 hours, pulls the current Outline state, and opens a PR (`bot/outline-user-guides-sync`) if anything changed. Workflow can also be triggered manually with the `pull` / `push` / `status` choice.
+
+Pull never overwrites a repo page whose last git commit is newer than its Outline copy's
+`updatedAt` (`repo_is_newer` in the script); it prints `[keep] <path> (repo copy is newer than
+Outline's, push it)` instead. That covers the window between merging a guide change and running
+the push. It needs real commit dates, so the workflow checks out with `fetch-depth: 0`. A page
+edited on both sides keeps the repo copy; re-apply the Outline edit by hand.
 
 ### One-time setup
 
