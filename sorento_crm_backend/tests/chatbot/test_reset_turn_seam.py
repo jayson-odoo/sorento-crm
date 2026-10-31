@@ -462,6 +462,13 @@ def test_round8_guard_no_reset_keeps_todays_path(turn, name, gate):
     assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn that is no reset"
     assert t.plans, "apply never ran: the turn did not take today's path"
     assert result.branch_kind == B173_LANE[name], (result.branch_kind, (result.reply or {}).get("text"))
+    if name == "cancel_talk_to_a_person":
+        # AC-7c: the hand-over asks the topic question, never a default team's hand-over line
+        # (a default route that succeeded would also be `out_of_scope`).
+        from app.services.chatbot.lanes import escalation
+
+        asked = escalation._topic_clarify(escalation.topic_pairs(), None)["text"]
+        assert (result.reply or {}).get("text") == asked, (result.reply or {}).get("text")
 
 
 # --- round 8: a reset closes the memory episode, as the routed reset did --------------------------------
