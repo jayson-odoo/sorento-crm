@@ -685,13 +685,20 @@ def test_AC_R2_10_an_idea_that_is_not_theirs_is_refused_even_with_manage(db, ss,
     assert patches(ss) == []
 
 
-def test_AC_R2_11_an_operator_without_manage_is_refused_and_nothing_goes_to_ss(db, ss):
+def test_AC_R2_11_an_operator_without_manage_is_refused_with_no_patch_and_no_operator_session(db, ss):
     w = make_world(db)
     op = operator_with(db, BOARD_VIEW)
     Idea(ss)
     res, step = propose(db, w, UPDATE, {"idea_id": IDEA, "title": "New title"}, seen=[IDEA], operator=op)
     assert res.status in ("denied", "invalid") and step is None
-    assert ss.calls == [] and ss.session_calls == []
+    assert patches(ss) == []
+    # a read as the linked user is allowed; no embed session may ever be minted for the operator
+    subjects = [
+        jwt.decode(c["assertion"], SIGNING_SECRET, algorithms=["HS256"], audience="ideation-embed")["sub"]
+        for c in ss.session_calls
+    ]
+    assert op not in subjects
+    assert all(sub == w.user_id for sub in subjects)
 
 
 def test_AC_R2_11_an_operator_with_manage_proposes_and_the_patch_runs_as_the_linked_user(db, ss):
