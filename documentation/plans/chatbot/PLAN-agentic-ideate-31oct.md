@@ -295,6 +295,8 @@ Reworded label, one run each: real first ideas 7/7, paraphrased ideas 13/13, rea
 
 ### Accepted, not changed
 
+- With the longer label, a limit sentence naming the idea create plus another tool reads like three items (`loop.py:477`, `:1075` join labels with commas). Rare, and the meaning survives.
+
 - The agent's own text repeats the proposal, and the card shows it again. Cosmetic. The fix was tried and reverted: see AC-RC-12.
 
 - The proposal's similar line can show a view-only operator the linked user's similar titles: test lane only for now.
