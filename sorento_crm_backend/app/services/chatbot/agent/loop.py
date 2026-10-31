@@ -799,22 +799,24 @@ def run_agent_turn(
     catalog=None,
     clock: Callable[[], float] = time.monotonic,
     operator_user_id: str | None = None,
-    context_note: str = "",
+    context_before: str = "",
+    context_after: str = "",
 ) -> AgentTurnResult:
-    """`context_note` is quoted data for the model (the console passes the thread's recent bot replies). It
-    goes in a message of its own, never the system role, like `waiting_reference`."""
+    """`context_before` and `context_after` are quoted data for the model (the console passes the thread's bot
+    replies from before and after the last agent turn). Each goes in a message of its own, never the system
+    role, and neither goes in at all while a change waits for a yes: only the model reads that yes."""
     ctx = build_context(db, contact_respond_id)  # AgentRefused propagates
     with single_flight(contact_respond_id):  # AgentBusy propagates
         return _run(
             db, ctx, contact_respond_id=contact_respond_id, text=text, provider=provider,
             mcp_call=mcp_call, mcp_builder=mcp_builder, catalog=catalog, clock=clock,
-            operator_user_id=operator_user_id, context_note=context_note,
+            operator_user_id=operator_user_id, context_before=context_before, context_after=context_after,
         )
 
 
 def _run(
     db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, catalog, clock, operator_user_id,
-    context_note="",
+    context_before="", context_after="",
 ):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
@@ -970,11 +972,13 @@ def _run(
         if waiting is not None:
             system = f"{system}\n\n{waiting_line(waiting)}"
         messages: list[dict] = [{"role": "system", "content": system}]
-        if context_note:
-            messages.append({"role": "user", "content": context_note})
+        if context_before and waiting is None:
+            messages.append({"role": "user", "content": context_before})
         messages.extend(memory.history_messages(db, conv))
         if waiting is not None:
             messages.append({"role": "assistant", "content": waiting_reference(waiting)})
+        if context_after and waiting is None:
+            messages.append({"role": "user", "content": context_after})
         messages.append({"role": "user", "content": text})
         schemas = tool_schemas(permitted_tools(db, ctx), catalog)
         schemas += [r.schema for r in writes.permitted_user_reads(db, ctx)]

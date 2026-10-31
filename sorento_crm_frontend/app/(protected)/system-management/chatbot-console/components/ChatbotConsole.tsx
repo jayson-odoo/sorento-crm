@@ -266,6 +266,9 @@ export default function ChatbotConsole() {
     refreshThread,
   } = useChatbotConsole();
 
+  // A change still waiting out its grace window belongs to the conversation New would leave.
+  const stepWaiting = messages.some((m) => m.agentActions?.some((a) => a.steps.some((st) => st.waiting)));
+
   const cards: AgentCards = {
     pendingAction,
     outcomeByTurn,
@@ -344,6 +347,7 @@ export default function ChatbotConsole() {
 
   /** A quick-reply chip is a message like any other: it honours the Agent toggle and then switches it off. */
   const sendChip = (text: string) => {
+    if (sending) return;
     const forced = forceNext && !staged;
     setForceNext(false);
     void sendText(text, null, { forceAgent: forced });
@@ -591,7 +595,7 @@ export default function ChatbotConsole() {
           type="button"
           variant="outline"
           size="sm"
-          disabled={startingNew || sending}
+          disabled={startingNew || sending || stepWaiting}
           onClick={() => void startNew()}
           className="gap-1.5"
         >

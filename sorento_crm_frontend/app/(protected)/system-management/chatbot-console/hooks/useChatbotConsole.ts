@@ -204,7 +204,7 @@ function turnBubbles(result: BubbleSource, fallbackId: string, stored = false): 
 
 /** A stored thread turn as the bubbles it was shown as: the question, then the answer. */
 function threadMessages(turns: ConsoleThreadTurn[]): ChatbotConsoleMessage[] {
-  return turns.flatMap((t) => [
+  const messages = turns.flatMap((t) => [
     {
       id: `user-${t.turn_id}`,
       role: 'user' as const,
@@ -236,23 +236,40 @@ function threadMessages(turns: ConsoleThreadTurn[]): ChatbotConsoleMessage[] {
       true,
     ),
   ]);
+  return messages.map((m) => ({ ...m, fromRead: true }));
 }
 
 const isGreeting = (m: ChatbotConsoleMessage) => m.id.startsWith('greeting-');
 
-/** Merge a read of the thread into what is shown. Turns the screen does not know come first, as older
- * history (and replace the greeting); the agent turns it does know get their steps and write cards brought
- * up to date, so the bubbles of this visit keep their chips and files. */
-function applyThread(prev: ChatbotConsoleMessage[], turns: ConsoleThreadTurn[]): ChatbotConsoleMessage[] {
-  const known = new Set(prev.flatMap((m) => (m.turnId ? [m.turnId] : [])));
-  const history = threadMessages(turns.filter((t) => !known.has(t.turn_id)));
+/** Merge a read of the thread into what is shown. The FIRST read of a thread adds the turns the screen does
+ * not know, before what was sent meanwhile (and replaces the greeting). Later reads only bring the agent
+ * turns' steps and write cards up to date, so a turn from elsewhere never jumps into the middle and the
+ * bubbles of this visit keep their chips and files. */
+function applyThread(
+  prev: ChatbotConsoleMessage[],
+  turns: ConsoleThreadTurn[],
+  firstRead: boolean,
+): ChatbotConsoleMessage[] {
   const agentTurns = new Map(turns.filter((t) => t.side === 'agent').map((t) => [t.turn_id, t]));
   const patched = prev.map((m) => {
     const t = m.role === 'bot' && m.turnId ? agentTurns.get(m.turnId) : undefined;
     return t ? { ...m, agentSteps: t.steps, agentActions: t.actions } : m;
   });
+  if (!firstRead) return patched;
+  const known = new Set(prev.flatMap((m) => (m.turnId ? [m.turnId] : [])));
+  const history = threadMessages(turns.filter((t) => !known.has(t.turn_id)));
   if (history.length === 0) return patched;
   return [...history, ...patched.filter((m) => !isGreeting(m))];
+}
+
+/** Add a turn's bubbles once: a read that landed first may already hold the same turn. */
+function withTurn(
+  prev: ChatbotConsoleMessage[],
+  turnId: string | null,
+  bubbles: ChatbotConsoleMessage[],
+): ChatbotConsoleMessage[] {
+  const rest = turnId ? prev.filter((m) => !m.fromRead || (m.turnId !== turnId && m.id !== `user-${turnId}`)) : prev;
+  return [...rest, ...bubbles];
 }
 
 function mediaReadLine(kind: 'image' | 'audio', text: string): string {
@@ -288,6 +305,8 @@ export function useChatbotConsole() {
   // bubbles into a thread that has moved on - bumped by `clearThread`,
   // and every poll tick checks it is still the generation that scheduled it.
   const generationRef = useRef(0);
+  // The thread whose first read has been applied: only that read may add turns.
+  const readKeyRef = useRef<string | null>(null);
 
   const promptVersionsQuery = useQuery({
     queryKey: ['chatbot-console', 'prompt-versions'],
@@ -394,7 +413,11 @@ export function useChatbotConsole() {
     setPendingAction((prev) =>
       thread.pending_action ?? (prev && !thread.turns.some((t) => t.turn_id === prev.turn_id) ? prev : null),
     );
-    setMessages((prev) => applyThread(prev, thread.turns));
+    const key = `${contactId}|${runId}`;
+    const firstRead = readKeyRef.current !== key;
+    readKeyRef.current = key;
+    setMessages((prev) => applyThread(prev, thread.turns, firstRead));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a new read is the only trigger
   }, [thread]);
 
   /** A waiting change's window closed, or a card was decided: read the thread again so the cards stay true. */
@@ -412,7 +435,8 @@ export function useChatbotConsole() {
           await newAgentConversation(contactId);
         } catch (err) {
           // A contact the agent cannot run for has no agent side to start afresh: the bot side still does.
-          if (!(err instanceof AgentRefusedError)) {
+          // A busy agent is not that: nothing changed, so say so and keep the thread.
+          if (!(err instanceof AgentRefusedError) || err.reason === 'agent_busy') {
             toast.error(err instanceof Error ? err.message : 'Failed to start a new conversation');
             return;
           }
@@ -434,10 +458,15 @@ export function useChatbotConsole() {
       setOutcomeByTurn((prev) => ({ ...prev, [turnId]: result }));
       setPendingAction(null);
     },
-    onError: (err) =>
-      err instanceof ActionRefusedError
-        ? setNotice(err.message)
-        : toast.error(err instanceof Error ? err.message : 'Failed to decide the changes'),
+    onError: (err) => {
+      if (err instanceof ActionRefusedError) {
+        // It can no longer be decided: the card goes, with the reason in words.
+        setNotice(err.message);
+        setPendingAction(null);
+      } else {
+        toast.error(err instanceof Error ? err.message : 'Failed to decide the changes');
+      }
+    },
     onSettled: refreshThread,
   });
 
@@ -480,11 +509,18 @@ export function useChatbotConsole() {
           ...(quote ? { reply_to: { id: quote.id, text: quote.text, source: quote.source } } : {}),
           ...(options?.forceAgent ? { force_agent: true } : {}),
         });
-        if (generationRef.current !== generation) return; // the thread moved on: this reply is not for it
-        setMessages((prev) => [
-          ...prev.map((m) => (m.id === userMessage.id ? { ...m, messageId: result.message_id ?? null } : m)),
-          ...turnBubbles(result, uniqueId('local')),
-        ]);
+        if (generationRef.current !== generation) {
+          // The thread moved on: the reply is not for it, but the session it patched is this contact's.
+          if (result.session_vars !== null) writeSession(contactId, runId, result.session_vars);
+          return;
+        }
+        setMessages((prev) =>
+          withTurn(
+            prev.map((m) => (m.id === userMessage.id ? { ...m, messageId: result.message_id ?? null } : m)),
+            result.turn_id,
+            turnBubbles(result, uniqueId('local')),
+          ),
+        );
         if (result.agent) {
           if (result.agent.pending_action) setPendingAction(result.agent.pending_action);
           refreshThread();
@@ -528,8 +564,11 @@ export function useChatbotConsole() {
           run_id: runId,
           ...(quote ? { reply_to: quote } : {}),
         });
-        if (generationRef.current !== generation) return;
-        setMessages((prev) => [...prev, ...turnBubbles(result, uniqueId('local'))]);
+        if (generationRef.current !== generation) {
+          if (result.session_vars !== null) writeSession(contactId, runId, result.session_vars);
+          return;
+        }
+        setMessages((prev) => withTurn(prev, result.turn_id, turnBubbles(result, uniqueId('local'))));
         if (result.session_vars !== null) setSessionVars(result.session_vars);
         if (result.agent) {
           if (result.agent.pending_action) setPendingAction(result.agent.pending_action);
@@ -640,7 +679,7 @@ export function useChatbotConsole() {
           ]);
           // A caption fallback may still have produced a real turn (turn_id present).
           if (result.turn_id) {
-            setMessages((prev) => [...prev, ...turnBubbles(result, uniqueId('local'))]);
+            setMessages((prev) => withTurn(prev, result.turn_id, turnBubbles(result, uniqueId('local'))));
             if (result.session_vars !== null) setSessionVars(result.session_vars);
           }
           return;
@@ -659,7 +698,7 @@ export function useChatbotConsole() {
             },
           ]);
         }
-        setMessages((prev) => [...prev, ...turnBubbles(result, uniqueId('local'))]);
+        setMessages((prev) => withTurn(prev, result.turn_id, turnBubbles(result, uniqueId('local'))));
         if (result.session_vars !== null) setSessionVars(result.session_vars);
         writeStoredContact({ id: contactId, label: contactLabelState });
       } catch (err) {

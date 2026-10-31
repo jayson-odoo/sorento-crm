@@ -152,6 +152,8 @@ export interface ChatbotConsoleMessage {
   id: string;
   role: 'user' | 'bot';
   text: string;
+  /** Added from a read of the thread, not from a reply of this visit. */
+  fromRead?: boolean;
   /** User bubble only: the respond message id the backend ran this message as, so a later
    * message can quote it as the customer's own. */
   messageId?: string | null;

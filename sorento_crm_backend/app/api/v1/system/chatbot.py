@@ -74,6 +74,7 @@ from app.schemas.chatbot_turn import (
 )
 from app.services.chatbot.agent import actions as agent_actions
 from app.services.chatbot.agent import memory as agent_memory
+from app.services.chatbot.agent.loop import AgentBusy, single_flight
 from app.services.chatbot.agent.access import AgentRefused, build_context, grants_hash
 from app.services.chatbot import console_service
 from app.services.chatbot.analytics import topic_audit
@@ -790,28 +791,26 @@ def _agent_refused(exc: AgentRefused) -> HTTPException:
 @router.post("/agent/conversation/new", response_model=AgentConversationNewResponse)
 def agent_conversation_new(
     payload: AgentConversationNewRequest,
-    user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
-    """Start the agent afresh. A proposal still waiting is cancelled first, so a later yes cannot confirm
-    a change from the conversation that was just left."""
+    """Start the agent afresh. A proposal still waiting is expired first (nobody decided it), so a later yes
+    cannot confirm a change from the conversation that was just left; a contact the agent may no longer run
+    for gets that too. Waits for nothing: a turn running for the contact makes this a 409 agent_busy."""
     try:
-        ctx = build_context(db, payload.contact_respond_id)
-    except AgentRefused as exc:
-        raise _agent_refused(exc)
-    waiting = agent_actions.pending_action(db, payload.contact_respond_id, user_id=ctx.user_id)
-    if waiting is not None:
-        try:
-            agent_actions.cancel(db, payload.contact_respond_id, str(waiting.id), operator_user_id=str(user["id"]))
-        except agent_actions.ActionRefused:
-            try:  # an operator who may not decide for the user still leaves the conversation
-                agent_actions.cancel(db, payload.contact_respond_id, str(waiting.id))
-            except agent_actions.ActionRefused:
-                pass  # decided meanwhile
-    conv = agent_memory.new_conversation(
-        db, payload.contact_respond_id, user_id=ctx.user_id, grants_hash=grants_hash(ctx)
-    )
-    db.commit()
+        with single_flight(payload.contact_respond_id):
+            agent_actions.expire_proposed(db, payload.contact_respond_id)
+            db.commit()
+            try:
+                ctx = build_context(db, payload.contact_respond_id)
+            except AgentRefused as exc:
+                raise _agent_refused(exc)
+            conv = agent_memory.new_conversation(
+                db, payload.contact_respond_id, user_id=ctx.user_id, grants_hash=grants_hash(ctx)
+            )
+            db.commit()
+    except AgentBusy:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={"code": "agent_busy"})
     return AgentConversationNewResponse(conversation_id=str(conv.id))
 
 

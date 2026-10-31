@@ -149,7 +149,7 @@ class AgentTurnEngine:
     """AGENTIC-P1: one case turn = one forced console agent turn (`POST /system/chatbot/console/turn` with `force_agent`).
 
     The route is a staff console route, so it takes a staff session token (`EVAL_AGENT_TOKEN`), not the
-    integration key. The agent only reads, so every outcome is a dry run. `reset_contact` starts a new
+    integration key. Console turns are dry runs (nothing reaches WhatsApp), but the agent can propose writes; a case never confirms one. `reset_contact` starts a new
     agent conversation, which is how the agent clears its context."""
 
     TOOL_FAILURES = ("denied", "invalid", "error", "timeout")

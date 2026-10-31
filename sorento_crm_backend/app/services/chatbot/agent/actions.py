@@ -55,14 +55,19 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def expire_proposed(db, contact_respond_id: str) -> None:
+    """Every `proposed` action of the contact becomes `expired` (nobody decided it). Does not commit."""
+    db.query(AgentAction).filter(
+        AgentAction.contact_respond_id == contact_respond_id, AgentAction.status == "proposed"
+    ).update({AgentAction.status: "expired"}, synchronize_session=False)
+
+
 def store_proposal(
     db, ctx, *, conversation_id: str, turn_id: str, steps: list[dict], action_id: str | None = None
 ) -> AgentAction:
     """The turn's steps as a `proposed` action. Older `proposed` actions of the contact expire."""
     now = _now()
-    db.query(AgentAction).filter(
-        AgentAction.contact_respond_id == ctx.contact_respond_id, AgentAction.status == "proposed"
-    ).update({AgentAction.status: "expired"}, synchronize_session=False)
+    expire_proposed(db, ctx.contact_respond_id)
     row = AgentAction(
         id=action_id or str(uuid.uuid4()),
         conversation_id=conversation_id,
