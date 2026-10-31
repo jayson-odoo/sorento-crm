@@ -369,6 +369,7 @@ export function useChatbotConsole() {
   const clearThread = useCallback((nextRun: string, session: Record<string, unknown> = {}) => {
     generationRef.current += 1;
     setSending(false); // a reply still in flight belongs to the thread that was left
+    readKeyRef.current = null; // the thread read again from here counts as a first read
     setRunId(nextRun);
     setSessionVars(session);
     setMessages(greetingMessages());

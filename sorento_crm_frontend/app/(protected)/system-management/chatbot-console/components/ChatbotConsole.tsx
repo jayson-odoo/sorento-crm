@@ -72,6 +72,15 @@ function MediaPreview({ message }: { message: ChatbotConsoleMessage }) {
   );
 }
 
+/** A step parked in its grace window whose commit time has not passed yet (commit_at is naive UTC). */
+function isStillWaiting(step: { waiting?: { commit_at: string | null } | null }): boolean {
+  if (!step.waiting) return false;
+  const at = step.waiting.commit_at;
+  if (!at) return true;
+  const due = Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(at) ? at : `${at}Z`);
+  return Number.isNaN(due) || due > Date.now();
+}
+
 /** What an agent turn's write cards need from the hook. */
 interface AgentCards {
   pendingAction: AgentPendingAction | null;
@@ -267,7 +276,10 @@ export default function ChatbotConsole() {
   } = useChatbotConsole();
 
   // A change still waiting out its grace window belongs to the conversation New would leave.
-  const stepWaiting = messages.some((m) => m.agentActions?.some((a) => a.steps.some((st) => st.waiting)));
+  const stepWaiting =
+    deciding ||
+    messages.some((m) => m.agentActions?.some((a) => a.steps.some(isStillWaiting))) ||
+    Object.values(outcomeByTurn).some((o) => o.steps.some(isStillWaiting));
 
   const cards: AgentCards = {
     pendingAction,
