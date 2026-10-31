@@ -560,7 +560,12 @@ def test_R10_the_request_carries_message_recent_exchanges_and_the_prompt(db, jev
     assert call["api_key"] == JEV_KEY
     assert call["model"] == JEV_MODEL
     assert call["instructions"] == INSTRUCTIONS
-    assert call["criteria"] == CRITERIA
+    from app.services.chatbot import router
+
+    assert call["criteria"] == {
+        "chat": CRITERIA["chat"],
+        "agent": {"what": CRITERIA["agent"], "tools": router.agent_tool_labels()},
+    }
     state = call["state"]
     assert state["latest_message"] == "compare Johor and Penang"
     recent = state["recent_exchanges"]
