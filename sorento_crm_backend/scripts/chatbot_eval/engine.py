@@ -146,10 +146,10 @@ class HttpTurnEngine:
 
 
 class AgentTurnEngine:
-    """AGENTIC-P1: one case turn = one console agent turn (`POST /system/chatbot/agent/turn`).
+    """AGENTIC-P1: one case turn = one forced console agent turn (`POST /system/chatbot/console/turn` with `force_agent`).
 
     The route is a staff console route, so it takes a staff session token (`EVAL_AGENT_TOKEN`), not the
-    integration key. The agent only reads, so every outcome is a dry run. `reset_contact` starts a new
+    integration key. Console turns are dry runs (nothing reaches WhatsApp), but the agent can propose writes; a case never confirms one. `reset_contact` starts a new
     agent conversation, which is how the agent clears its context."""
 
     TOOL_FAILURES = ("denied", "invalid", "error", "timeout")
@@ -173,11 +173,14 @@ class AgentTurnEngine:
             client.post(f"{self.base_url}/api/v1/system/chatbot/agent/conversation/new", json=body)
 
     def turn(self, case: Any, text: str, state: dict | None, run_id: str) -> Outcome:
-        body = {"contact_respond_id": str(case.contact.get("respond_id", "")), "text": text}
+        body = {
+            "contact_respond_id": str(case.contact.get("respond_id", "")), "text": text,
+            "run_id": run_id, "force_agent": True,
+        }
         started = time.monotonic()
         try:
             with self._client() as client:
-                resp = client.post(f"{self.base_url}/api/v1/system/chatbot/agent/turn", json=body)
+                resp = client.post(f"{self.base_url}/api/v1/system/chatbot/console/turn", json=body)
         except httpx.TransportError as exc:
             latency = int((time.monotonic() - started) * 1000)
             return Outcome(reply_text="", tool_errors=[f"transport: {type(exc).__name__}"], latency_ms=latency)
@@ -190,7 +193,13 @@ class AgentTurnEngine:
             reason = detail.get("reason") if isinstance(detail, dict) else None
             label = f"http {resp.status_code}" + (f" {reason}" if reason else "")
             return Outcome(reply_text="", tool_errors=[label], latency_ms=latency_ms)
-        data = resp.json()
+        top = resp.json()
+        data = top.get("agent")
+        if not isinstance(data, dict):
+            # Refused, busy or failed: the console answers with reply text and no agent block.
+            return Outcome(
+                reply_text=top.get("reply_text") or "", tool_errors=["no agent turn"], latency_ms=latency_ms, raw=top
+            )
         usage = data.get("usage") or {}
         calls = [c for c in data.get("tool_calls") or [] if isinstance(c, dict)]
         notes = [f"rounds={data.get('rounds', 0)}"]

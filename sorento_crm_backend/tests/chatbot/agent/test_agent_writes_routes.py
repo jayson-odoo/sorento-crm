@@ -1,7 +1,7 @@
 """AGENTIC-P3 slice 1, test 17: the console's confirm and cancel endpoints.
 
 Same auth harness as `test_agent_routes.py` (the console turn tests' `_permissions` and `client`):
-both routes sit on the same `system.chat_history.view` slug as `/agent/turn`. `actions.confirm` and
+both routes sit on the same `system.chat_history.view` slug as `/console/turn`. `actions.confirm` and
 `actions.cancel` are replaced where the route may have bound them, so these tests pin the route
 shapes (200 body keys, 409 detail code and reason, 403, 422), not the action logic (that is
 `test_agent_writes.py`). One test drives the real `actions.confirm` for an unknown action id.
@@ -168,7 +168,7 @@ def test_an_unknown_action_for_a_real_agent_contact_is_a_409_not_found(client, s
 # ------------------------------------------------------------------ GET conversation carries the pending action
 
 
-def test_the_conversation_read_returns_the_pending_action_for_a_reloaded_console(client, session_factory):
+def test_the_thread_read_returns_the_pending_action_for_a_reloaded_console(client, session_factory):
     from app.models.chatbot_agent import AgentAction
     from tests.chatbot.agent._seed import seed_agent_contact
 
@@ -183,7 +183,8 @@ def test_the_conversation_read_returns_the_pending_action_for_a_reloaded_console
     db.commit()
 
     resp = client.get(
-        "/api/v1/system/chatbot/agent/conversation", params={"contact_respond_id": contact["respond_id"]}
+        "/api/v1/system/chatbot/console/thread",
+        params={"contact_respond_id": contact["respond_id"], "run_id": "ZZT-run-1"},
     )
 
     assert resp.status_code == 200, resp.text
@@ -193,7 +194,7 @@ def test_the_conversation_read_returns_the_pending_action_for_a_reloaded_console
     assert pending["lines"] == ["Mark SRT-1 for Acme done"]
 
 
-def test_the_conversation_read_has_no_pending_action_when_nothing_is_proposed(client, session_factory):
+def test_the_thread_read_has_no_pending_action_when_nothing_is_proposed(client, session_factory):
     from tests.chatbot.agent._seed import seed_agent_contact
 
     db = session_factory()
@@ -201,7 +202,8 @@ def test_the_conversation_read_has_no_pending_action_when_nothing_is_proposed(cl
     db.commit()
 
     resp = client.get(
-        "/api/v1/system/chatbot/agent/conversation", params={"contact_respond_id": contact["respond_id"]}
+        "/api/v1/system/chatbot/console/thread",
+        params={"contact_respond_id": contact["respond_id"], "run_id": "ZZT-run-1"},
     )
 
     assert resp.status_code == 200, resp.text

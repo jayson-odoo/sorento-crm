@@ -1,9 +1,7 @@
 /**
- * The console's Agent tab backend (`app/api/v1/system/chatbot.py`, AGENTIC-P1).
+ * The agent's own routes behind the console thread (`app/api/v1/system/chatbot.py`).
  *
- * POST /api/v1/system/chatbot/agent/turn               { contact_respond_id, text } -> AgentTurnResponse
- *   409 { detail: { code: "agent_refused", reason } } when the contact may not use the agent.
- * GET  /api/v1/system/chatbot/agent/conversation?contact_respond_id=  -> AgentConversationResponse
+ * The console thread and every turn go through `chatbotConsoleService`.
  * POST /api/v1/system/chatbot/agent/conversation/new   { contact_respond_id } -> { conversation_id }
  * POST /api/v1/system/chatbot/agent/actions/{id}/confirm { contact_respond_id } -> AgentActionResponse
  * POST /api/v1/system/chatbot/agent/actions/{id}/cancel  { contact_respond_id } -> AgentActionResponse
@@ -18,8 +16,6 @@ import {
   ACTION_REFUSAL_MESSAGES,
   AGENT_REFUSAL_MESSAGES,
   type AgentActionResponse,
-  type AgentConversationResponse,
-  type AgentTurnResponse,
 } from '../types/agentConsole.types';
 
 const BASE = '/api/v1/system/chatbot/agent';
@@ -127,35 +123,6 @@ async function refusalReason(response: Response): Promise<string | null> {
     // Not JSON: fall through to the generic error.
   }
   return null;
-}
-
-export async function postAgentTurn(contactRespondId: string, text: string): Promise<AgentTurnResponse> {
-  const response = await apiFetch(`${BASE}/turn`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contact_respond_id: contactRespondId, text }),
-  });
-  if (!response.ok) {
-    if (response.status === 409) {
-      const reason = await refusalReason(response);
-      if (reason) throw new AgentRefusedError(reason);
-    }
-    throw new Error(await extractApiError(response, 'The agent could not run this turn'));
-  }
-  return response.json();
-}
-
-export async function getAgentConversation(contactRespondId: string): Promise<AgentConversationResponse> {
-  const params = new URLSearchParams({ contact_respond_id: contactRespondId });
-  const response = await apiFetch(`${BASE}/conversation?${params.toString()}`);
-  if (!response.ok) {
-    if (response.status === 409) {
-      const reason = await refusalReason(response);
-      if (reason) throw new AgentRefusedError(reason);
-    }
-    throw new Error(await extractApiError(response, 'Failed to load the conversation'));
-  }
-  return response.json();
 }
 
 export async function newAgentConversation(contactRespondId: string): Promise<{ conversation_id: string }> {

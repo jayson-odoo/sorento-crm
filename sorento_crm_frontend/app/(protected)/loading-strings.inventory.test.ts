@@ -71,6 +71,8 @@ const ARIA_LABEL_LOADING = /['"]?aria-label['"]?\s*[:=]\s*(["'])Loading\1/g;
 const ALLOWLIST: Record<string, string> = {
   'app/(protected)/procurement-management/packing-lists/components/PackingListsList.tsx':
     "column header for the `loading_date` field (a container's physical loading date) - not an async loading state",
+  'components/common/SectionSkeleton.tsx':
+    'default screen-reader name for the status role, not visible text',
 };
 
 /** Every `.tsx`/`.ts` under the scanned roots, tests and excluded dirs skipped. */
