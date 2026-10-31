@@ -800,3 +800,15 @@ def test_the_bulk_import_queues_a_file_of_a_readable_type_and_skips_an_off_type(
     assert enqueued == [str(readable.id)]
     assert _fresh(db, readable).ai_read_status == "queued"
     assert _fresh(db, off).ai_read_status is None
+
+
+def test_the_read_job_the_queue_names_exists_and_runs_read_attachment(monkeypatch):
+    """`_enqueue` imports `read_attachment_job` lazily, so an empty task module only shows up when a
+    real upload is queued (fix round 1 emptied it by accident). Import it the same way and run it."""
+    from app.services import knowledge_service
+    from app.tasks import knowledge_tasks
+
+    seen = []
+    monkeypatch.setattr(knowledge_service, "read_attachment", lambda db, attachment_id: seen.append(attachment_id))
+    assert knowledge_tasks.read_attachment_job("att-x") == {"attachment_id": "att-x"}
+    assert seen == ["att-x"]
