@@ -812,3 +812,74 @@ def test_the_read_job_the_queue_names_exists_and_runs_read_attachment(monkeypatc
     monkeypatch.setattr(knowledge_service, "read_attachment", lambda db, attachment_id: seen.append(attachment_id))
     assert knowledge_tasks.read_attachment_job("att-x") == {"attachment_id": "att-x"}
     assert seen == ["att-x"]
+
+
+# ================================================================ FIX ROUND 2
+
+
+def test_the_real_enqueue_names_the_job_the_queue_and_a_deterministic_job_id(monkeypatch):
+    """Only `queue_service.enqueue_job` is stubbed; `knowledge_service._enqueue` itself runs."""
+    from app.services import knowledge_service as ks
+    from app.services import queue_service
+    from app.tasks.knowledge_tasks import read_attachment_job
+
+    seen: list[tuple[tuple, dict]] = []
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: seen.append((a, k)))
+
+    ks._enqueue("att-123")
+
+    assert len(seen) == 1
+    args, kwargs = seen[0]
+    assert args[0] is read_attachment_job
+    assert "att-123" in args[1:] or kwargs.get("attachment_id") == "att-123"
+    assert kwargs["queue_name"] == "knowledge"
+    assert kwargs["job_id"] == "knowledge-read-att-123"
+
+
+def test_the_batch_queues_drain_knowledge_after_flyer_read():
+    import worker
+
+    batch = worker.queues_for_role("batch")
+
+    assert "knowledge" in batch and "flyer_read" in batch
+    assert batch.index("knowledge") > batch.index("flyer_read")
+
+
+def test_a_document_over_the_chunk_cap_fails_with_a_readable_error_and_writes_nothing(db, monkeypatch):
+    from app.services import knowledge_service as ks
+
+    assert ks.MAX_CHUNKS > 0
+    monkeypatch.setattr(ks, "MAX_CHUNKS", 1)
+    att = seed_attachment(db, seed_type(db))
+
+    ks.read_attachment(db, str(att.id), fetch=lambda a: pdf_bytes([TEXT_A, TEXT_B]), ocr=never_ocr, embed=fake_embed)
+
+    row = _fresh(db, att)
+    assert row.ai_read_status == "failed"
+    assert row.ai_read_error and row.ai_read_error.strip()
+    low = row.ai_read_error.lower()
+    for fragment in ("insert into", "select ", "traceback"):
+        assert fragment not in low
+    assert _knowledge_chunks(db, att) == [] and _knowledge_docs(db, att) == []
+
+
+def test_a_file_deleted_during_the_read_writes_nothing_and_does_not_raise(db):
+    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+    from app.services import knowledge_service as ks
+
+    att = seed_attachment(db, seed_type(db))
+    att_id = str(att.id)
+
+    def embed(texts):
+        db.delete(att)  # the user hard-deletes the file after extraction, before the write
+        db.flush()
+        return fake_embed(texts)
+
+    ks.read_attachment(db, att_id, fetch=lambda a: pdf_bytes([TEXT_A]), ocr=never_ocr, embed=embed)
+
+    assert db.query(EmbeddingDocument).filter(
+        EmbeddingDocument.source_type == "knowledge", EmbeddingDocument.source_id == att_id
+    ).count() == 0
+    assert db.query(EmbeddingChunk).filter(
+        EmbeddingChunk.source_type == "knowledge", EmbeddingChunk.source_id == att_id
+    ).count() == 0

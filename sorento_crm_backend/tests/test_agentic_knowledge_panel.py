@@ -163,8 +163,8 @@ def test_other_tools_still_go_through_the_mcp(db, monkeypatch):
 
 
 class _GuideMcp:
-    def __init__(self, *_a, **_k):
-        pass
+    def __init__(self, *_a, staff_user_id=None, **_k):
+        self.staff_user_id = staff_user_id
 
     def list_tools_with_schema(self):
         return {"user_guides_read": {"description": "g", "inputSchema": {"type": "object", "properties": {}}}}
@@ -219,3 +219,99 @@ def test_the_panel_does_not_bind_the_knowledge_tool_or_its_protocol_without_the_
     assert TOOL not in provider.tools
     assert "user_guides_read" in provider.tools
     assert "KNOWLEDGE PROTOCOL" not in provider.system, "the protocol is added only where the tool is bound"
+
+
+# ================================================================ FIX ROUND 2: B-new-2, the panel's stored trace
+
+PASSAGE_TEXT = "ZZT SECRET PASSAGE: annual leave is 14 days after three years of service."
+HIT_WITH_TEXT = {
+    "status": "ok",
+    "passages": [{"document": "Employee Handbook 2026", "page": 14, "heading": "Leave", "text": PASSAGE_TEXT, "similarity": 0.91}],
+    "handoff_teams": ["HR"],
+}
+
+
+class _KnowledgeTurnProvider:
+    """Round 1 asks for the knowledge search, round 2 answers."""
+
+    def __init__(self):
+        self.n = 0
+
+    def chat(self, messages, tools=None, **_k):  # noqa: ANN001
+        from app.services.llm_provider import ChatResult
+
+        self.n += 1
+        if self.n == 1:
+            return ChatResult(
+                content="", prompt_tokens=1, completion_tokens=1, total_tokens=2,
+                tool_calls=[{"id": "k1", "name": TOOL, "arguments": {"query": "annual leave"}}],
+            )
+        return ChatResult(content="Fourteen days (Employee Handbook 2026, p.14).", prompt_tokens=1, completion_tokens=1, total_tokens=2, tool_calls=[])
+
+
+def _run_knowledge_turn(db, monkeypatch):
+    import copy
+
+    import app.services.ai_assistant_service as svc_module
+    from app.services import knowledge_service
+    from app.services.ai_trace import TurnTrace
+
+    monkeypatch.setattr(svc_module, "MCPRuntimeClient", _GuideMcp)
+    monkeypatch.setattr(svc_module, "get_provider", lambda *_a, **_k: _KnowledgeTurnProvider())
+    monkeypatch.setattr(knowledge_service, "search", lambda db_, **kw: copy.deepcopy(HIT_WITH_TEXT))
+    user_id = seed_reader(db)
+    service = _service(db)
+    cfg = service.cfg.get()
+    cfg.api_key_ciphertext = "fake-key"
+    cfg.provider, cfg.model, cfg.is_enabled = "openai", "gpt-4o-mini", True
+    db.commit()
+    service._turn_trace = TurnTrace(user_id=user_id, conversation_id=None, session_id=None)
+    service._run_agent_loop(
+        config=cfg, history=[], user_message="annual leave?", standalone_query="annual leave",
+        selected_tools=[], sources=[], user_id=user_id, turn_cache=None,
+    )
+    return service._turn_trace
+
+
+def test_the_panel_trace_span_for_a_knowledge_search_keeps_document_and_page_but_not_the_text(db, monkeypatch):
+    """Seam: the buffered `TurnTrace._spans` tool span (what `_finalize_trace` flushes to AIAssistantSpan)."""
+    trace = _run_knowledge_turn(db, monkeypatch)
+
+    spans = [s for s in trace._spans if s.tool_name == TOOL]
+    assert len(spans) == 1
+    for field in (spans[0].tool_result, spans[0].output_json, spans[0].input_json, spans[0].tool_args):
+        assert PASSAGE_TEXT not in json.dumps(field, default=str)
+    stored = json.dumps([spans[0].tool_result, spans[0].output_json], default=str)
+    assert "Employee Handbook 2026" in stored
+    assert "14" in stored
+
+
+def test_the_flushed_span_rows_carry_no_passage_text(db, monkeypatch):
+    from app.models.ai_assistant import AIAssistantSpan
+
+    trace = _run_knowledge_turn(db, monkeypatch)
+    trace_id = trace.flush(db, message_id=None)
+
+    if trace_id is None:
+        pytest.skip("the trace cannot be flushed without an assistant message; the in-memory test covers it")
+    rows = db.query(AIAssistantSpan).filter(AIAssistantSpan.trace_id == trace_id, AIAssistantSpan.tool_name == TOOL).all()
+    assert rows
+    for row in rows:
+        assert PASSAGE_TEXT not in json.dumps([row.tool_result, row.output_json, row.input_json], default=str)
+
+
+def test_the_panel_strips_through_tools_trace_safe(db, monkeypatch):
+    from app.services.chatbot.agent import tools
+
+    calls: list[str] = []
+    real = tools.trace_safe
+
+    def recorder(name, data):
+        calls.append(name)
+        return real(name, data)
+
+    monkeypatch.setattr(tools, "trace_safe", recorder)
+
+    _run_knowledge_turn(db, monkeypatch)
+
+    assert TOOL in calls

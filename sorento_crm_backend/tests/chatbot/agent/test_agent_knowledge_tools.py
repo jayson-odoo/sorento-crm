@@ -428,3 +428,83 @@ def test_the_agent_prompt_has_no_knowledge_protocol_when_the_tool_is_not_offered
     prompt = _first_system_prompt(db, ("inventory.stock.view",), monkeypatch)
 
     assert "KNOWLEDGE PROTOCOL" not in prompt
+
+
+# ================================================================ FIX ROUND 2: company scope (NB1)
+#
+# The user's own scope is `company_scope_resolver._scope_for_user(db, user_id, None)`, the helper
+# `writes.run_as_user` uses: the user's `last_active_company_id` when granted, else the only grant,
+# else the lowest granted id. The contact's mapping (set on the session by `build_context`) is the
+# OUTER bound; the linked user's scope and the console operator's scope each narrow it further.
+
+
+def _scoped_world(db, monkeypatch, *, linked_grants, operator_grants, linked_active=None, operator_active=None):
+    from app.models.company import UserCompany
+    from app.models.base import set_company_scope
+    from app.models.user import User
+    from app.services import knowledge_service
+    from tests._knowledge_seed import (
+        SORENTO_COMPANY_ID, query_embed, seed_attachment, seed_chunk, seed_company, seed_type, vec_with_similarity,
+    )
+
+    company_b = seed_company(db, "B")
+    ids = {"A": SORENTO_COMPANY_ID, "B": company_b}
+    linked = seed_user(db, contact_pk=None, slugs=(VIEW,))
+    operator = seed_user(db, contact_pk=None, slugs=(VIEW,))
+    for user, grants, active in ((linked, linked_grants, linked_active), (operator, operator_grants, operator_active)):
+        for g in grants:
+            db.add(UserCompany(user_id=user, company_id=ids[g]))
+        if active:
+            db.query(User).filter(User.id == user).update({"last_active_company_id": ids[active]})
+    db.flush()
+    att = seed_attachment(db, seed_type(db, audience="staff"), "B only.pdf", company_id=company_b)
+    seed_chunk(db, att, vec_with_similarity(1.0), text="company B passage")
+    monkeypatch.setattr(knowledge_service, "_default_embed", lambda db_, timeout=None: query_embed)
+    set_company_scope(db, frozenset({ids["A"], ids["B"]}))  # the contact is mapped to both companies
+    return linked, operator
+
+
+def _passages(db, linked, operator=None):
+    import dataclasses
+
+    from app.services.chatbot.agent import tools
+
+    ctx = _ctx(linked)
+    if operator:
+        ctx = dataclasses.replace(ctx, operator_user_id=operator)
+    out = tools.dispatch(db, ctx, SEARCH, {"query": "annual leave"}, call=forbidden_call, catalog={}, timeout=5.0)
+    assert out.status in ("ok", "empty"), out.message
+    return [p["text"] for p in (out.data or {}).get("passages", [])]
+
+
+def test_a_linked_user_whose_own_scope_is_company_a_gets_no_company_b_passage(db, monkeypatch):
+    linked, _ = _scoped_world(db, monkeypatch, linked_grants=["A"], operator_grants=["A", "B"])
+
+    assert _passages(db, linked) == []
+
+
+def test_an_operator_whose_scope_is_company_a_gets_no_company_b_passage(db, monkeypatch):
+    linked, operator = _scoped_world(
+        db, monkeypatch, linked_grants=["A", "B"], operator_grants=["A"], linked_active="B"
+    )
+
+    assert _passages(db, linked, operator) == []
+
+
+def test_when_the_user_and_the_operator_both_have_company_b_the_passage_is_returned(db, monkeypatch):
+    linked, operator = _scoped_world(
+        db, monkeypatch, linked_grants=["A", "B"], operator_grants=["A", "B"], linked_active="B", operator_active="B"
+    )
+
+    assert _passages(db, linked, operator) == ["company B passage"]
+
+
+def test_the_session_scope_is_restored_after_the_search(db, monkeypatch):
+    from app.models.base import get_company_scope
+
+    linked, _ = _scoped_world(db, monkeypatch, linked_grants=["A", "B"], operator_grants=["A", "B"], linked_active="B")
+    before = get_company_scope(db)
+
+    _passages(db, linked)
+
+    assert get_company_scope(db) == before

@@ -56,7 +56,7 @@ def api(monkeypatch):
                 "resource.attachments.view",
                 "resource.attachments.upload",
                 "resource.attachment_types.view",
-                "resource.attachment_types.create",
+                "resource.attachment_types.add",
                 "resource.attachment_types.edit",
                 "resource.attachment_types.delete",
             ),
@@ -487,7 +487,10 @@ def _stamped(api, status, *, age_seconds, audience="staff"):
 
 
 @pytest.mark.parametrize("status", ["queued", "processing"])
-def test_read_again_while_a_recent_read_is_in_flight_is_409(api, status):
+def test_read_again_while_a_recent_read_is_in_flight_is_409(api, status, monkeypatch):
+    from app.services import knowledge_service
+
+    monkeypatch.setattr(knowledge_service, "_job_pending", lambda attachment_id: True, raising=False)
     att = _stamped(api, status, age_seconds=5)
 
     res = api.c.post(f"{FILES}/{att.id}/ai-read")
@@ -497,8 +500,11 @@ def test_read_again_while_a_recent_read_is_in_flight_is_409(api, status):
 
 
 @pytest.mark.parametrize("status", ["queued", "processing"])
-def test_read_again_recovers_a_read_stuck_past_the_stale_window(api, status):
+def test_read_again_recovers_a_read_stuck_past_the_stale_window(api, status, monkeypatch):
+    from app.services import knowledge_service
     from app.services.knowledge_service import STALE_AFTER_SECONDS
+
+    monkeypatch.setattr(knowledge_service, "_job_pending", lambda attachment_id: False, raising=False)
 
     att = _stamped(api, status, age_seconds=STALE_AFTER_SECONDS + 60)
 
@@ -635,3 +641,162 @@ def test_bulk_deleting_attachments_removes_their_knowledge_rows(api, monkeypatch
 
     assert _knowledge_rows(api.db, a) == (0, 0)
     assert _knowledge_rows(api.db, b) == (0, 0)
+
+
+# ================================================================ FIX ROUND 2
+
+# ---------------------------------------------------------------- 5: a queued row follows its RQ job
+
+
+def test_a_queued_row_with_a_live_job_is_409_even_past_the_stale_window(api, monkeypatch):
+    """Seam: `knowledge_service._job_pending(attachment_id) -> bool`, the RQ job `knowledge-read-<id>`."""
+    from app.services import knowledge_service
+    from app.services.knowledge_service import STALE_AFTER_SECONDS
+
+    monkeypatch.setattr(knowledge_service, "_job_pending", lambda attachment_id: True, raising=False)
+    att = _stamped(api, "queued", age_seconds=STALE_AFTER_SECONDS + 600)
+
+    res = api.c.post(f"{FILES}/{att.id}/ai-read")
+
+    assert res.status_code == 409, res.text
+    assert api.enqueued == []
+
+
+def test_a_queued_row_whose_job_is_gone_is_202_even_when_recent(api, monkeypatch):
+    from app.services import knowledge_service
+
+    asked: list[str] = []
+    monkeypatch.setattr(
+        knowledge_service, "_job_pending", lambda attachment_id: asked.append(str(attachment_id)) or False, raising=False
+    )
+    att = _stamped(api, "queued", age_seconds=5)
+
+    res = api.c.post(f"{FILES}/{att.id}/ai-read")
+
+    assert asked == [str(att.id)], "the route asks whether the job still exists"
+    assert res.status_code == 202, res.text
+    assert api.enqueued == [str(att.id)]
+
+
+def test_the_processing_window_is_unchanged_by_the_job_lookup(api, monkeypatch):
+    from app.services import knowledge_service
+    from app.services.knowledge_service import STALE_AFTER_SECONDS
+
+    monkeypatch.setattr(knowledge_service, "_job_pending", lambda attachment_id: False, raising=False)
+    recent = _stamped(api, "processing", age_seconds=5)
+    stale = _stamped(api, "processing", age_seconds=STALE_AFTER_SECONDS + 60)
+
+    assert api.c.post(f"{FILES}/{recent.id}/ai-read").status_code == 409
+    assert api.c.post(f"{FILES}/{stale.id}/ai-read").status_code == 202
+
+
+# ---------------------------------------------------------------- 6: done and unchanged
+
+
+def _done_row(api, file_hash):
+    att = seed_attachment(api.db, seed_type(api.db, audience="staff"))
+    att.file_hash = file_hash
+    att.ai_read_status = "done"
+    att.ai_read_at = datetime.utcnow() - timedelta(hours=1)
+    api.db.flush()
+    seed_chunk(api.db, att, EXACT_VEC)
+    from app.models.embeddings import EmbeddingDocument
+
+    doc = api.db.query(EmbeddingDocument).filter(
+        EmbeddingDocument.source_type == "knowledge", EmbeddingDocument.source_id == str(att.id)
+    ).one()
+    doc.source_hash = file_hash  # the hash recorded at read time
+    api.db.flush()
+    return att
+
+
+def test_read_again_on_a_done_file_that_has_not_changed_is_409_already_read(api):
+    att = _done_row(api, "hash-A")
+
+    res = api.c.post(f"{FILES}/{att.id}/ai-read")
+
+    assert res.status_code == 409, res.text
+    assert "already" in res.json()["detail"].lower()
+    assert api.enqueued == []
+
+
+def test_read_again_on_a_done_file_whose_content_changed_is_202(api):
+    att = _done_row(api, "hash-A")
+    att.file_hash = "hash-B"
+    api.db.flush()
+
+    res = api.c.post(f"{FILES}/{att.id}/ai-read")
+
+    assert res.status_code == 202, res.text
+    assert api.enqueued == [str(att.id)]
+
+
+def test_read_again_on_a_failed_file_is_202(api):
+    att = _stamped(api, "failed", age_seconds=5)
+
+    res = api.c.post(f"{FILES}/{att.id}/ai-read")
+
+    assert res.status_code == 202, res.text
+
+
+# ---------------------------------------------------------------- 7: a retype queues only what changed
+
+
+def test_a_bulk_retype_to_the_type_the_rows_already_have_queues_nothing(api):
+    att_type = seed_type(api.db, audience="staff")
+    a = seed_attachment(api.db, att_type, "a.pdf")
+    b = seed_attachment(api.db, att_type, "b.pdf")
+
+    res = api.c.post(
+        f"{FILES}/bulk-attachment-type",
+        json={"attachment_ids": [str(a.id), str(b.id)], "attachment_type_id": str(att_type.id)},
+    )
+
+    assert res.status_code == 200, res.text
+    assert api.enqueued == []
+
+
+def test_a_single_update_that_sends_the_unchanged_type_queues_nothing(api):
+    att_type = seed_type(api.db, audience="staff")
+    att = seed_attachment(api.db, att_type)
+
+    res = api.c.put(f"{FILES}/{att.id}", json={"attachment_type_id": str(att_type.id), "description": "edited"})
+
+    assert res.status_code == 200, res.text
+    assert api.enqueued == []
+
+
+def test_a_bulk_retype_queues_at_most_the_per_save_cap(api, monkeypatch):
+    from app.services import knowledge_service
+
+    monkeypatch.setattr(knowledge_service, "MAX_REQUEUE_PER_SAVE", 2)
+    old = seed_type(api.db, audience="off")
+    target = seed_type(api.db, audience="staff")
+    rows = [seed_attachment(api.db, old, f"f{i}.pdf") for i in range(4)]
+
+    res = api.c.post(
+        f"{FILES}/bulk-attachment-type",
+        json={"attachment_ids": [str(r.id) for r in rows], "attachment_type_id": str(target.id)},
+    )
+
+    assert res.status_code == 200, res.text
+    assert len(api.enqueued) <= 2
+
+
+# ---------------------------------------------------------------- 9: create needs .add, not a made-up .create
+
+
+def test_create_with_only_a_made_up_create_slug_is_403(api):
+    api.who["id"] = seed_reader(api.db, slugs=("resource.attachment_types.create",))
+
+    res = api.c.post(f"{TYPES}/", json=_type_body())
+
+    assert res.status_code == 403, res.text
+
+
+def test_create_with_the_add_slug_is_201(api):
+    api.who["id"] = seed_reader(api.db, slugs=("resource.attachment_types.add",))
+
+    res = api.c.post(f"{TYPES}/", json=_type_body())
+
+    assert res.status_code == 201, res.text
