@@ -39,6 +39,7 @@ import logging
 import threading
 import time
 import uuid
+from types import SimpleNamespace
 from typing import Any, Callable
 
 from sqlalchemy import false, func, or_, text, update
@@ -799,6 +800,76 @@ def _close_skipped(factory: Callable[[], Any], turn_id: str, reason: str, claime
     )
 
 
+#: Posted when the agent could not answer a routed row. Fixed text: no exception detail, no
+#: apology word and no "busy"; the bot never re-runs a row the router gave to the agent.
+AGENT_FAILED_LINE = "I couldn't finish this one just now. Please send your question again in a minute."
+
+
+def _routed_to_agent(contact: str, stored: dict, factory: Callable[[], Any]) -> bool:
+    """Does the router send this row to the agent? Any doubt (no text, a router exception) is
+    today's bot (AGENTIC-KNOWLEDGE W1 S3)."""
+    from app.services.chatbot import router, turn_runtime
+
+    inner: Any = stored
+    for key in ("message", "message", "message"):
+        inner = inner.get(key) if isinstance(inner, dict) else None
+    has_media = isinstance(inner, dict) and isinstance(inner.get("attachment"), dict)
+    text_value = turn_runtime._envelope_text(stored)
+    if not text_value and not has_media:
+        return False
+    db = factory()
+    try:
+        decision = router.decide_route(
+            db, contact_respond_id=contact, text=text_value or "", session_vars=None, has_media=has_media
+        )
+        return getattr(decision, "side", None) == "agent"
+    except Exception:  # noqa: BLE001 - a router failure is the bot, never a lost message
+        logger.warning("chatbot inbox: router failed for %s; the bot answers", contact, exc_info=True)
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+
+def _run_agent_row(
+    turn_id: str, claimed_at: Any, contact: str, stored: dict, block: dict, factory: Callable[[], Any]
+) -> str:
+    """Answer a routed row with the agent and post its reply through `_post`. A failure posts the
+    fixed line; the bot is never run for the row."""
+    from app.services.chatbot import turn_runtime
+    from app.services.chatbot.agent import loop
+
+    run = _RowRun(turn_id, contact, (0, 0.0), claimed_at, factory)
+    reply = AGENT_FAILED_LINE
+    facts: dict[str, Any] = {"agent": True}
+    db = factory()
+    try:
+        result = loop.run_agent_turn(
+            db, contact_respond_id=contact, text=turn_runtime._envelope_text(stored) or "", is_test=False
+        )
+        facts["agent_turn_id"] = str(result.turn_id)
+        facts["agent_status"] = str(result.status)
+        if isinstance(result.reply_text, str) and result.reply_text.strip():
+            reply = result.reply_text
+    except Exception as exc:  # noqa: BLE001 - AgentBusy, AgentRefused, anything: one honest line
+        logger.warning("chatbot inbox: agent failed for turn %s", turn_id, exc_info=True)
+        facts["agent_error"] = type(exc).__name__
+        db.rollback()
+    finally:
+        db.close()
+    _append_record(
+        factory, turn_id, status="answered", summary="Answered by the agent.",
+        why="The router sent this message to the agent.", facts=facts,
+    )
+    result_like = SimpleNamespace(
+        actions=[{"kind": "send_message", "text": reply}],
+        reply=reply,
+        branch_kind="agent",
+        ctx={"contact": block},
+    )
+    return _post(factory, run, result_like, "done", "sent")
+
+
 def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], Any]) -> str:
     """Run one claimed row: takeover check, turn, POST, done mark. Returns what happened."""
     from app.services.chatbot import engine
@@ -849,6 +920,9 @@ def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], 
     if direct_ingress._human_intervened(block) is True:
         _close_skipped(factory, turn_id, "human_intervened", claimed_at)
         return "skipped"
+
+    if _routed_to_agent(contact, stored, factory):
+        return _run_agent_row(turn_id, claimed_at, contact, stored, block, factory)
 
     run = _RowRun(turn_id, contact, order_key, claimed_at, factory)
     _local.run = run
