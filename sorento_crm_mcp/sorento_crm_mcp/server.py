@@ -23,7 +23,7 @@ from sorento_crm_mcp.module_loader import merged_catalog
 from sorento_crm_mcp.presenters import PRESENTER_TOOLS, present_response
 from sorento_crm_mcp.ideation import register_ideation_tools
 from sorento_crm_mcp.record_actions import register_record_action_tools
-from sorento_crm_mcp.scope import check_scope, serving_tool
+from sorento_crm_mcp.scope import check_scope, required_missing, serving_tool
 from sorento_crm_mcp.settings import Settings
 from sorento_crm_mcp.user_guides import register_user_guide_tools
 
@@ -1812,7 +1812,7 @@ def _compile_tool(spec: ToolSpec):
         f"            body = _payload\n"
         f"        else:\n"
         f"            body = _decoded\n"
-        f"    _missing = [k for k in _required if q.get(k) in (None, '')]\n"
+        f"    _missing = _required_missing(_spec, _required, q, ctx)\n"
         f"    if _missing:\n"
         f"        raise ValueError('Missing required query parameter(s): ' + ', '.join(_missing))\n"
         f"    _view = q.pop('view', None)\n"
@@ -1835,6 +1835,7 @@ def _compile_tool(spec: ToolSpec):
         "_execute_tool_request_with_body": _execute_tool_request_with_body,
         "_attach_suggested_escalation": attach_suggested_escalation,
         "_check_scope": check_scope,
+        "_required_missing": required_missing,
         "_serving_tool": serving_tool,
         "_present_response": present_response,
         "json": json,

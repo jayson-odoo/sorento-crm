@@ -416,7 +416,10 @@ export default function AIAssistantBubble() {
       try {
         const snapshot = getPageSnapshot();
         const conv = await sendAIAssistantMessage(trimmed, startedOn, snapshot, confirmAction);
-        if (openThreadRef.current === startedOn) drawThread(conv.id, conv.messages || []);
+        // Drawn when the thread on screen is the one this send started on, or the one the reply belongs to.
+        if (openThreadRef.current === startedOn || openThreadRef.current === conv.id) {
+          drawThread(conv.id, conv.messages || []);
+        }
       } catch (err) {
         drawCountRef.current += 1;
         if (openThreadRef.current !== startedOn) return;
