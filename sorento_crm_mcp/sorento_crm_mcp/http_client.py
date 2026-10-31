@@ -45,6 +45,20 @@ def http_error_body(text: str, *, status_code: int, path: str, method: str) -> s
     return json.dumps(body)
 
 
+class CrossOriginRedirectRefused(httpx.RequestError):
+    """A redirect pointed off the CRM's origin; the request carrying X-API-Key is not sent.
+
+    httpx strips `Authorization` on a cross-origin redirect but keeps custom headers, so
+    following one would hand the shared X-API-Key to whatever host the Location named.
+    Same-origin redirects (FastAPI's trailing-slash 307) still follow.
+    """
+
+
+def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
+    port = url.port or {"http": 80, "https": 443}.get(url.scheme)
+    return (url.scheme, url.host, port)
+
+
 class CRMClient:
     """Thin async client with X-API-Key and response size guard."""
 
@@ -59,7 +73,18 @@ class CRMClient:
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=0),
             follow_redirects=True,
             transport=transport,
+            event_hooks={"request": [self._refuse_foreign_origin]},
         )
+        self._origin = _origin(self._client.base_url)
+
+    async def _refuse_foreign_origin(self, request: httpx.Request) -> None:
+        # Runs before every request httpx sends, redirect hops included.
+        if _origin(request.url) != self._origin:
+            raise CrossOriginRedirectRefused(
+                f"refused to send credentials to {request.url.scheme}://{request.url.netloc.decode('ascii')}"
+                " (redirect off the CRM origin)",
+                request=request,
+            )
 
     async def aclose(self) -> None:
         await self._client.aclose()
