@@ -309,32 +309,6 @@ def _probe_client(db) -> TestClient:
     def picker(user=Depends(require_session_or_api_key_permission("zzt.pick.view"))):
         return {"ok": True}
 
-    @r.get("/zzt/ext-off/{entity}")
-    def ext_off(
-        entity: str,
-        user=Depends(require_external_permission_for_path({"thing": "zzt.thing.view"}, param="entity")),
-    ):
-        return {"ok": True}
-
-    @r.get("/zzt/permmod")
-    def permmod(user=Depends(require_permission_with_api_key("order_management.orders.view"))):
-        return {"ok": True}
-
-    @r.get("/zzt/modguard", dependencies=[Depends(require_module_enabled_with_api_key("order"))])
-    def modguard(user=Depends(get_current_user_or_api_key)):
-        return {"ok": True}
-
-    @r.get("/zzt/ext-path/{entity}")
-    def ext_path(
-        entity: str,
-        user=Depends(
-            require_external_permission_for_path(
-                {"thing": "zzt.thing.view", "int": "integration.zzt_thing"}, param="entity"
-            )
-        ),
-    ):
-        return {"ok": True}
-
     probe = FastAPI()
     probe.include_router(
         r,
@@ -1341,6 +1315,11 @@ def test_ac27_invoiced_and_unpaid_report_routes_are_unreachable_on_an_identity_r
         params={"contact_id": rid, "space_id": space}, headers=env.ident(staff),
     )
     assert ask.status_code == 403 and INVALID_CODE in ask.text, f"report-ask with a pair got {ask.status_code}"
+    blank = env.client.get(
+        "/api/v1/order-management/report-ask",
+        params={"contact_id": "", "space_id": ""}, headers=env.ident(staff),
+    )
+    assert blank.status_code == 422, f"report-ask with a blank pair got {blank.status_code}"
 
 
 # =========================================================================== #
@@ -1366,3 +1345,22 @@ def test_session_or_key_picker_gate_asks_both_users_on_an_identity_read(env, pro
         "staff holds the slug but act-as lacks it: the header can only narrow"
     )
     assert _perm_status(env, probe, path, [], ["zzt.pick.view"], actas_roles=()) == 403
+
+
+def test_ac6_lookup_resolve_body_pair_is_403_and_a_blank_body_pair_passes(env):
+    from app.models.lookup import LookupOption, LookupSet
+
+    lookup_set = LookupSet(set_key="zzt_region2", name="ZZT Region 2", is_active=True)
+    env.db.add(lookup_set)
+    env.db.flush()
+    env.db.add(LookupOption(set_id=lookup_set.id, value="north", label="North", is_active=True))
+    env.db.flush()
+    staff = mk_user(env.db, "staff", companies=[SORENTO], last_active=SORENTO)
+    rid, space = mk_contact_in(env.db, [SORENTO])
+    base = {"set_key": "zzt_region2", "raw": "North"}
+    path = "/api/v1/lookup/resolve"
+    blank = env.client.post(path, json={**base, "contact_id": "", "space_id": ""}, headers=env.ident(staff))
+    assert blank.status_code == 200, f"a blank body pair is what the panel sends, got {blank.status_code}"
+    paired = env.client.post(path, json={**base, "contact_id": rid, "space_id": space}, headers=env.ident(staff))
+    assert paired.status_code == 403, f"AC-6: body pair with the header got {paired.status_code}"
+    assert INVALID_CODE in paired.text
