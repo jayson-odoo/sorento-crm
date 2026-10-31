@@ -464,6 +464,20 @@ def test_AC_R2_6_the_reply_names_the_number_the_link_the_gaps_and_that_it_is_a_t
     assert "test" in reply.lower()
 
 
+def test_AC_R2_6_a_create_with_no_idea_number_never_says_none(db, ss):
+    w = make_world(db)
+    idea_id = str(uuid.uuid4())
+    ss.route(
+        "POST", CREATE_PATH,
+        json_body={"idea_id": idea_id, "idea_number": None, "status": "captured", "title": "t"},
+    )
+    _, row = store(db, w, [(CREATE, {"problem": PROBLEM})])
+    outcome = confirm(db, w, row)
+    assert outcome.steps[0]["status"] == "done"
+    assert "None" not in outcome.reply_text, outcome.reply_text
+    assert f"{CRM}/ideas/{idea_id}" in outcome.reply_text
+
+
 # ------------------------------------------------------------------ AC-R2-7 failure at confirm
 
 
@@ -599,6 +613,26 @@ def test_AC_R2_9_failed_cancelled_and_other_contacts_creates_are_not_listed(db, 
     for absent in ("Failed idea zzt", "Cancelled idea zzt", "Foreign idea zzt", cancelled_id, foreign_id):
         assert absent not in body, absent
     assert foreign_id.lower() not in seen and cancelled_id.lower() not in seen
+
+
+def test_AC_R2_9_another_users_steps_on_this_contact_are_not_listed(db, ss):
+    w = make_world(db)
+    old_user = seed_user(db, contact_pk=None)  # the contact's linked user before it changed
+    mine = create_through(db, w, ss, title="Current user idea zzt", number="IDEA-0301", idea_id=str(uuid.uuid4()))
+    theirs = create_through(db, w, ss, title="Former user idea zzt", number="IDEA-0302", idea_id=str(uuid.uuid4()))
+    db.execute(
+        text("UPDATE agent_actions SET user_id = :u WHERE steps::text LIKE :like"),
+        {"u": old_user, "like": f"%{theirs}%"},
+    )
+    db.commit()
+    ss.route("GET", "/embed/ideas", json_body=[])
+
+    out, seen = list_ideas(db, w)
+
+    body = json.dumps(out.data, default=str)
+    assert "Current user idea zzt" in body and mine in body
+    assert "Former user idea zzt" not in body and theirs not in body
+    assert theirs.lower() not in seen
 
 
 def test_AC_R2_9_an_ss_failure_is_a_typed_error_with_no_url_or_key(db, ss):
