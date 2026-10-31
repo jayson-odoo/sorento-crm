@@ -206,6 +206,43 @@ def _missing_list(sent: dict[str, Any]) -> list[str]:
     return [*missing, _PHOTOS]
 
 
+def build_create_payload(
+    config: Any,
+    *,
+    user_id: Any,
+    contact: Any,
+    name: str | None,
+    fields: dict[str, str],
+    title: str,
+    use_cases: list[str],
+    source_text: str,
+    intake_ref: str,
+    is_test: bool,
+) -> dict[str, Any]:
+    """The ss create payload: the one builder the WhatsApp capture and the agent's idea tool share."""
+    payload: dict[str, Any] = {
+        "product_id": config.product_id,
+        "problem": fields.get("problem", ""),
+        "submitter_crm_user_id": user_id,
+        "submitter_phone": contact.phone_number,
+        "raw_transcript": source_text,
+        "is_test": bool(is_test),
+        "intake_ref": intake_ref,
+    }
+    for key in ("desired_outcome", "current_workaround"):
+        if fields.get(key):
+            payload[key] = fields[key]
+    if use_cases:
+        payload["use_cases"] = use_cases
+    if name:
+        payload["submitter_name"] = name
+    if title:
+        payload["title"] = title
+    if contact.submitter_tier:
+        payload["submitter_tier"] = contact.submitter_tier
+    return payload
+
+
 def handle_capture_turn(
     db: Session,
     *,
@@ -386,27 +423,18 @@ def handle_capture_turn(
                 pointer["language"] = extraction.language
             return finish("similar_offered", "similar_offered", facts, language, pointer=pointer)
 
-    payload: dict[str, Any] = {
-        "product_id": config.product_id,
-        "problem": fields.get("problem", ""),
-        "submitter_crm_user_id": user.id,
-        "submitter_phone": contact.phone_number,
-        "raw_transcript": source_text,
-        "is_test": bool(is_test),
-        "intake_ref": intake_ref,
-    }
-    for key in ("desired_outcome", "current_workaround"):
-        if fields.get(key):
-            payload[key] = fields[key]
-    if use_cases:
-        payload["use_cases"] = use_cases
-    name = contact.display_name or _derive_display_name(submitter_name, None, None)
-    if name:
-        payload["submitter_name"] = name
-    if title:
-        payload["title"] = title
-    if contact.submitter_tier:
-        payload["submitter_tier"] = contact.submitter_tier
+    payload = build_create_payload(
+        config,
+        user_id=user.id,
+        contact=contact,
+        name=contact.display_name or _derive_display_name(submitter_name, None, None),
+        fields=fields,
+        title=title,
+        use_cases=use_cases,
+        source_text=source_text,
+        intake_ref=intake_ref,
+        is_test=is_test,
+    )
 
     try:
         result = call_create_idea(config.base_url, config.api_key, payload)

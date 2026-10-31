@@ -144,6 +144,9 @@ TOOL_LABELS: dict[str, str] = {
     "crm_purchase_request_decide": "approve or reject a purchase request",
     "crm_purchase_request_action_undo": "take back a purchase request action",
     "crm_agent_actions_recent": "recent changes",
+    "crm_idea_create": "submit a new idea or feature request",
+    "crm_idea_update": "change one of your ideas",
+    "crm_ideas_list": "your ideas",
     "confirm_action": "confirm the waiting change",
     "cancel_action": "cancel the waiting change",
 }
