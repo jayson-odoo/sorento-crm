@@ -2260,8 +2260,9 @@ jobs:
               curl -fsS -o /dev/null http://127.0.0.1/
             fi
             # MCP via host nginx (n8n entrypoint, port stays 8765 forever)
-            # SEC-MCP-AUTH: send a deliberately WRONG bearer. A gated MCP answers 401 in both
-            # MCP_AUTH_MODE=enforce and permit; 406 (FastMCP's own answer to a plain GET) means
+            # SEC-MCP-AUTH: send a deliberately WRONG bearer. A gated MCP answers 401 whether
+            # Enforce (Settings > Integrations, MCP-TOKEN-UI) is on or off and whether a token is
+            # set at all; 406 (FastMCP's own answer to a plain GET) means
             # the request reached an MCP with no token check, i.e. an image from before the gate.
             code=$(curl -s -o /dev/null -w "%{http_code}" -H 'Authorization: Bearer deploy-check-not-the-token' http://127.0.0.1:8765/mcp || true)
             case "$code" in
@@ -2269,9 +2270,9 @@ jobs:
               *) echo "ERROR: MCP via nginx returned $code (expected 401 from the bearer gate)"; exit 1;;
             esac
             # SEC-MCP-AUTH: the CRM's own MCP call, from inside the live backend, at the URL and
-            # with the token the chatbot uses. Catches a backend holding a different
-            # MCP_AUTH_TOKEN than MCP (401 in both modes), which the wrong-token probe above
-            # cannot see. Prints only the last error line (an httpx status line, never a header).
+            # with the token the chatbot uses (none before one is generated: the call then
+            # passes with no header while Enforce is off). Catches a backend whose token MCP
+            # does not accept, which the wrong-token probe above cannot see. Prints only the last error line (an httpx status line, never a header).
             cd /opt/sorento-crm2
             be=$(docker compose ps --status running --services | grep -E '^backend_(blue|green)$' | head -1)
             if out=$(docker compose exec -T "$be" python -c "from app.config import settings; from app.services.ai_assistant_service import MCPRuntimeClient; MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=15).list_tools()" 2>&1); then

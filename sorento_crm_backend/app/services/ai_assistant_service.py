@@ -367,7 +367,11 @@ class MCPRuntimeClient:
             "Accept": "application/json, text/event-stream",
             "Content-Type": "application/json",
         }
-        token = (settings.mcp_auth_token or "").strip()
+        # Set on Settings > Integrations (MCP-TOKEN-UI); none yet means no header, which the MCP
+        # server lets through until Enforce is switched on.
+        from app.services.mcp_auth_token import current_token
+
+        token = current_token()
         if token:
             headers["Authorization"] = f"Bearer {token}"
         if self.staff:
