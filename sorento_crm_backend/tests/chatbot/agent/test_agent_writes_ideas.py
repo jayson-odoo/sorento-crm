@@ -454,7 +454,8 @@ def test_AC_R2_6_the_reply_names_the_number_the_link_the_gaps_and_that_it_is_a_t
     _, row = store(db, w, [(CREATE, {"problem": PROBLEM})])  # only the required field given
     outcome = confirm(db, w, row)
     assert outcome.steps[0]["status"] == "done"
-    assert outcome.steps[0]["result_id"] == idea_id
+    assert action_row(db, row.id).steps[0]["result_id"] == idea_id
+    assert "result_id" not in outcome.steps[0]  # an id never reaches the API shape
     reply = outcome.reply_text
     assert "IDEA-0184" in reply
     assert f"{CRM}/ideas/{idea_id}" in reply
@@ -831,7 +832,9 @@ def test_AC_R2_13_propose_confirm_list_propose_update_confirm_through_a_turn(db,
     assert posts(ss, CREATE_PATH) == []
     pending = actions.pending_action(db, w.respond_id)
     outcome = confirm(db, w, pending)
-    assert outcome.steps[0]["status"] == "done" and outcome.steps[0]["result_id"] == made_id
+    assert outcome.steps[0]["status"] == "done"
+    assert action_row(db, pending.id).steps[0]["result_id"] == made_id
+    assert "result_id" not in outcome.steps[0]
     assert len(posts(ss, CREATE_PATH)) == 1
 
     # turn 2: list finds the test idea although ss's list omits it, then propose the edit
