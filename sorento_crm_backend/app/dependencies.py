@@ -140,6 +140,14 @@ def _stamp_integration_actor(request: Request, db: Session, user: dict) -> None:
     )
 
 
+def staff_identity_refused() -> HTTPException:
+    """The one refusal of an identity claim (AGENTIC-UNIFY AC-6): never a fall back to act-as."""
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"code": "staff_identity_invalid", "message": "Staff identity is not valid"},
+    )
+
+
 def _apply_staff_identity(request: Request, db: Session, api_key: str, key_user: dict) -> dict:
     """The principal of an API-key call: the act-as user, or on an identity read the staff member.
 
@@ -165,10 +173,7 @@ def _apply_staff_identity(request: Request, db: Session, api_key: str, key_user:
     staff_id = resolve_staff_identity(db, request) if _api_key_valid(api_key) else None
     staff = _load_user_dict_from_db(db, staff_id) if staff_id else None
     if not staff:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "staff_identity_invalid", "message": "Staff identity is not valid"},
-        )
+        raise staff_identity_refused()
     logging.getLogger(__name__).info(
         "auth.staff_identity_read staff_user=%s route=%s",
         staff_id,
@@ -553,8 +558,10 @@ def require_session_or_api_key_permission(permission_slug: str):
         db: Session = Depends(get_db),
     ) -> dict:
         if current_user.get("auth_method") in {"api_key", "integration_api_key"}:
-            if not UserPermissionService(db).check_user_has_permission(
-                current_user["id"], permission_slug
+            service = UserPermissionService(db)
+            if not all(
+                service.check_user_has_permission(uid, permission_slug)
+                for uid in gate_user_ids(current_user)
             ):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,

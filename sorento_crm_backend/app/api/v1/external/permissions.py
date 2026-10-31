@@ -98,7 +98,7 @@ def require_external_permission_for_path(
                 detail={"code": "unknown_entity", "message": f"Unknown entity '{entity}'"},
             )
         service = UserPermissionService(db)
-        if not _holds_external_permission(service, current_user, slug):
+        if not service.check_user_has_permission(current_user["id"], slug):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={

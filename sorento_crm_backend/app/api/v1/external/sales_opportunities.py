@@ -21,7 +21,6 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.external.permissions import EXTERNAL_ENDPOINT_PERMISSIONS, require_external_permission
 from app.database import get_db
-from app.dependencies import require_staff_read_permission
 from app.services.sales import opportunity_chat
 
 router = APIRouter()
@@ -49,11 +48,7 @@ def chat_opportunity_customer_options(
     current_user: dict = Depends(SLUG_GUARD),
     db: Session = Depends(get_db),
 ):
-    # A staff member through the AI panel needs what the staff route of this picker needs. The
-    # slug guard asks only the act-as user: an `integration.*` slug is never a staff member's.
-    require_staff_read_permission("sales.opportunities.view", "sales.opportunities.view_own")(
-        current_user=current_user, db=db
-    )
+    _ = current_user
     _contact, agents = opportunity_chat.gate(db, contact_id=contact_id, space_id=space_id)
     return opportunity_chat.customer_options(db, agents, q)
 

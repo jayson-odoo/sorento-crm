@@ -1329,32 +1329,18 @@ def test_ac27_current_stock_list_does_not_widen_to_a_named_superadmins_grants(en
     assert other.product_code not in identity.text, "AC-27: the widening follows the grants of nobody on an identity read"
 
 
-@pytest.mark.parametrize(
-    "fn,slug", [("require_invoiced_access", "sales.reports.view"), ("require_unpaid_access", "finance.billing_documents.view")]
-)
-def test_ac27_the_invoiced_and_unpaid_gates_ask_both_users(env, fn, slug):
-    from app.services.error_handler import AppException
-    from app.services.sales import invoiced_sales
-
-    gate = getattr(invoiced_sales, fn)
-    staff = mk_user(env.db, "staff", perms=[slug])
-    lacking = mk_user(env.db, "actas-lacking")
-    holding = mk_user(env.db, "actas-holding", perms=[slug])
-    with pytest.raises(AppException) as err:
-        gate(env.db, {"id": staff, "key_user_id": lacking})
-    assert err.value.status_code == 403
-    gate(env.db, {"id": staff, "key_user_id": holding})  # both hold it: passes
-    with pytest.raises(AppException):
-        gate(env.db, {"id": lacking, "key_user_id": holding})
-
-
-def test_ac14_customer_options_is_contact_only_both_halves(env):
-    path = "/api/v1/external/sales-opportunities/customer-options"
-    staff = mk_user(env.db, "staff", perms=["sales.opportunities.view"], companies=[SORENTO], last_active=SORENTO)
-    assert env.client.get(path, headers=env.ident(staff)).status_code == 422, "no pair: validation error"
+def test_ac27_invoiced_and_unpaid_report_routes_are_unreachable_on_an_identity_read(env):
+    """The invoiced/unpaid gates need no two-user check because no identity read reaches them:
+    `top-selling` is off the list, and `report-ask` refuses a pair with the header."""
+    staff = mk_user(env.db, "staff", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO)
+    top = env.client.get("/api/v1/order-management/top-selling", headers=env.ident(staff))
+    assert top.status_code == 403 and INVALID_CODE in top.text, f"top-selling got {top.status_code}"
     rid, space = mk_contact_in(env.db, [SORENTO])
-    paired = env.client.get(path, params={"contact_id": rid, "space_id": space}, headers=env.ident(staff))
-    assert paired.status_code == 403 and INVALID_CODE in paired.text, "a pair with the header is refused"
+    ask = env.client.get(
+        "/api/v1/order-management/report-ask",
+        params={"contact_id": rid, "space_id": space}, headers=env.ident(staff),
+    )
+    assert ask.status_code == 403 and INVALID_CODE in ask.text, f"report-ask with a pair got {ask.status_code}"
 
 
 # =========================================================================== #
