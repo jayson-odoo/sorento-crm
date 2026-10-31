@@ -15,7 +15,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.types import ASGIApp
 
-from sorento_crm_mcp.auth import MIN_TOKEN_LENGTH, MODES, BearerAuthMiddleware
+from sorento_crm_mcp.auth import BearerAuthMiddleware, TokenFetcher, TokenSource, backend_fetcher
 from sorento_crm_mcp.catalog import CATALOG, ToolSpec
 from sorento_crm_mcp.escalation_hint import attach_suggested_escalation
 from sorento_crm_mcp.http_client import CRMClient
@@ -1840,18 +1840,13 @@ def _compile_tool(spec: ToolSpec):
     return ns[fname]
 
 
-def create_http_app(settings: Settings) -> ASGIApp:
-    """The ASGI app `__main__` serves: FastMCP's streamable HTTP app behind the bearer gate."""
-    token = (settings.mcp_auth_token or "").strip()
-    if len(token) < MIN_TOKEN_LENGTH:
-        raise RuntimeError(
-            f"MCP_AUTH_TOKEN must be set to a random value of at least {MIN_TOKEN_LENGTH} characters "
-            "(e.g. `openssl rand -hex 32`); the MCP server will not serve without it."
-        )
-    mode = (settings.mcp_auth_mode or "").strip().lower()
-    if mode not in MODES:
-        raise RuntimeError(f"MCP_AUTH_MODE must be one of {', '.join(MODES)}.")
-    return BearerAuthMiddleware(create_mcp_app(settings).streamable_http_app(), token, mode=mode)
+def create_http_app(settings: Settings, *, token_fetcher: TokenFetcher | None = None) -> ASGIApp:
+    """The ASGI app `__main__` serves: FastMCP's streamable HTTP app behind the bearer gate.
+
+    The valid tokens come from the backend (MCP-TOKEN-UI, `auth.py`); `token_fetcher` replaces
+    that call in tests. There is no env token, so nothing here can refuse to start."""
+    source = TokenSource(token_fetcher or backend_fetcher(settings))
+    return BearerAuthMiddleware(create_mcp_app(settings).streamable_http_app(), source)
 
 
 def create_mcp_app(settings: Settings) -> FastMCP:

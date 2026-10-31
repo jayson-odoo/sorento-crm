@@ -21,6 +21,8 @@ from sorento_crm_mcp.scope import scope_refusal
 from sorento_crm_mcp.server import _compile_tool, _execute_tool_request_with_body, create_http_app
 from sorento_crm_mcp.settings import Settings
 
+from _token_source import FakeBackend
+
 CONTACT = "900000008"
 SPACE = "364817"
 TOKEN = "x" * 40
@@ -247,8 +249,8 @@ def http_app(monkeypatch):
         return json.dumps(BACKEND_ROWS)
 
     monkeypatch.setattr(server.CRMClient, "request", fake_request)
-    settings = Settings(CRM_BASE_URL="http://crm.local", EXTERNAL_API_KEY="k", MCP_AUTH_TOKEN=TOKEN)
-    with TestClient(create_http_app(settings)) as c:
+    settings = Settings(CRM_BASE_URL="http://crm.local", EXTERNAL_API_KEY="k")
+    with TestClient(create_http_app(settings, token_fetcher=FakeBackend([TOKEN]))) as c:
         yield c, calls
 
 
@@ -285,10 +287,9 @@ def _http_app_in(monkeypatch, mode):
         return json.dumps(BACKEND_ROWS)
 
     monkeypatch.setattr(server.CRMClient, "request", fake_request)
-    settings = Settings(
-        CRM_BASE_URL="http://crm.local", EXTERNAL_API_KEY="k", MCP_AUTH_TOKEN=TOKEN, MCP_AUTH_MODE=mode
-    )
-    return create_http_app(settings), calls
+    # "enforce" / "permit" = the settings screen's Enforce switch on / off (MCP-TOKEN-UI).
+    settings = Settings(CRM_BASE_URL="http://crm.local", EXTERNAL_API_KEY="k")
+    return create_http_app(settings, token_fetcher=FakeBackend([TOKEN], enforce=mode == "enforce")), calls
 
 
 def _tools_call(name, arguments):

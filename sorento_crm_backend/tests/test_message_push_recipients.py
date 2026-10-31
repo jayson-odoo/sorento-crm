@@ -628,3 +628,42 @@ def test_an_outgoing_message_builds_no_push_at_all(db):
     _user(db, "all_contacts", "manager")
 
     assert build_message_push(db, _message(db, contact, type_="outgoing")) is None
+
+
+# --------------------------------------------------------------------------- #
+# QUOTE-MEDIA-CHAT R3 - a drawing or photo request on the contact is heard      #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("source_entity_type", ["product_drawing", "product_photo"])
+def test_a_media_request_on_the_contact_pushes_its_assignee(db, source_entity_type):
+    policy_id = _policy(db)
+    contact = _contact(db)
+    pic = _user(db, "assigned_only", "pic")
+    _tracking(
+        db,
+        policy_id=policy_id,
+        contact=contact,
+        assigned_to_id=pic,
+        source_entity_type=source_entity_type,
+    )
+
+    recipients = _by_user(_resolve(db, _message(db, contact)))
+
+    assert recipients == {pic: f"{CONVERSATIONS_LINK}?contact={contact.respond_io_id}"}
+
+
+def test_a_resolved_media_request_pushes_nobody(db):
+    policy_id = _policy(db)
+    contact = _contact(db)
+    pic = _user(db, "assigned_only", "pic")
+    _tracking(
+        db,
+        policy_id=policy_id,
+        contact=contact,
+        assigned_to_id=pic,
+        source_entity_type="product_drawing",
+        is_resolved=True,
+    )
+
+    assert _by_user(_resolve(db, _message(db, contact))) == {}

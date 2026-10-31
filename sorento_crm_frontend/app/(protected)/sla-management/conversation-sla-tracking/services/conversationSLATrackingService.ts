@@ -209,6 +209,8 @@ export interface MediaRequestDetail {
   product_href: string;
   resources_href: string;
   assignee_name: string | null;
+  /** The salesperson who raised it (one requester per ticket). */
+  requester_name: string | null;
   assignee_team_id: string | null;
   is_assignee: boolean;
   can_resolve: boolean;
@@ -222,7 +224,8 @@ export interface MediaRequestDetail {
   escalated_at: string | null;
   extension_count: number;
   quotations: { quotation_id: string; project_id: string; label: string; href: string }[];
-  followers: string[];
+  /** The task rides on the requester's WhatsApp contact: the panel shows the conversation. */
+  has_conversation: boolean;
 }
 
 export async function getMediaRequest(id: string): Promise<MediaRequestDetail> {

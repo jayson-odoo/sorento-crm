@@ -49,6 +49,22 @@ FORM_SLA_TYPES = (
     "product_photo",
 )
 
+#: The quotation line media requests among FORM_SLA_TYPES.
+MEDIA_REQUEST_TYPES = ("product_drawing", "product_photo")
+
+
+def is_media_conversation(tracking) -> bool:
+    """A drawing or photo request that rides on its requester's WhatsApp contact.
+
+    The one exception to "the chat ticket endpoints refuse form-SLA rows": the PIC replies to
+    the salesperson in the ticket conversation panel (PLAN-quote-media-chat-30oct B4). A media
+    request without a contact stays a plain form row everywhere. Contact-keyed conversation
+    logic (``conversation_tracking_scope`` and its users) still excludes these rows.
+    """
+    return getattr(tracking, "source_entity_type", None) in MEDIA_REQUEST_TYPES and bool(
+        getattr(tracking, "respond_contact_id", None)
+    )
+
 
 def form_sla_agent_codes(db: Session) -> set[str]:
     """Agent codes that own a form-SLA pipeline (any row in form_sla_configs).

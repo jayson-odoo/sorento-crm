@@ -372,9 +372,8 @@ def test_the_version_total_is_the_sum_of_its_lines():
 # -------------------------------------------------------------------- alerts
 
 
-def test_an_off_catalog_line_always_raises_the_non_standard_alert():
-    """AC-E5. There is no category to check, and "we quoted something not in our
-    catalogue" is exactly what the alert exists to surface."""
+def test_a_line_with_no_product_and_no_set_is_refused_even_with_a_description():
+    """QUOTE-NO-FREE-TEXT AC-1: "we quoted something not in our catalogue" is no longer a line."""
     from app.services import project_quotation_service as quotes
 
     with blank_session() as db:
@@ -387,19 +386,18 @@ def test_an_off_catalog_line_always_raises_the_non_standard_alert():
             db, project=project, actor_user_id=owner, payload={"scope_label": "House Units"}
         )
         version = quotes.current_version(db, quotation.id)
-        line = quotes.upsert_line(
-            db,
-            version=version,
-            actor_user_id=owner,
-            payload={
-                "description_snapshot": "Bespoke stone counter",
-                "unit_price": "4000.00",
-                "quantity": 1,
-            },
-        )
-
-        assert line.product_id is None
-        assert line.is_non_standard is True
+        with pytest.raises(AppException) as refused:
+            quotes.upsert_line(
+                db,
+                version=version,
+                actor_user_id=owner,
+                payload={
+                    "description_snapshot": "Bespoke stone counter",
+                    "unit_price": "4000.00",
+                    "quantity": 1,
+                },
+            )
+        assert refused.value.detail["code"] == "quotation_line_product_required"
 
 
 def test_a_product_outside_the_nominated_series_raises_the_non_standard_alert():

@@ -1625,9 +1625,10 @@ def run(
     #    it - so the gate gets its own copy and `resolved` keeps the pre-gate snapshot,
     #    which is what `$('resolve-entity')` returns downstream.
     gate_input = _snapshot(resolved)
-    if parser.get("code_lookup") is True and services.visible_sets is not None:
+    if services.visible_sets is not None:
         # CHAT-CODE-LOOKUP R2: which product sets the contact may be told about, read on the
         # scoped session; the gate expands only those (an unseen one stays today's miss).
+        # CHATBOT-SET-STOCK: read whatever the parser version (no CODE LOOKUP prompt needed).
         gate_input["visible_set_ids"] = sorted(
             services.visible_sets(sorted(_product_set_ids(gate_input)))
         )

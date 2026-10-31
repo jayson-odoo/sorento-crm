@@ -93,12 +93,12 @@ export function isUntouched(draft: LineDraft): boolean {
 
 /**
  * The one rule a quotation line has to satisfy before it can be stored, keyed by the field at
- * fault: a non-standard item (no product, no set) carries the description the customer reads. Used to mark the
- * cell and to stop a Save that would only come back as the server's 422.
+ * fault: it names a catalogue product or a product set, whatever its description says. Used to
+ * mark the Product cell and to stop a Save that would only come back as the server's 422.
  */
 export function lineErrors(draft: LineDraft): Record<string, string> {
-  return !draft.product_id && !draft.product_set_id && !(draft.description ?? '').trim()
-    ? { description: 'A non-standard item needs a description' }
+  return !draft.product_id && !draft.product_set_id
+    ? { product: 'Pick a catalogue product or set' }
     : {};
 }
 

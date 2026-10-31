@@ -30,6 +30,8 @@ def _send_and_log(
     sla_entity_type: str,
     extra_context_vars: Optional[dict] = None,
     emit_outbound_webhook: bool = True,
+    mirror_locally: Optional[bool] = None,
+    render_template_in_window: bool = True,
 ) -> dict:
     """Shared worker body: window-aware send, outbound webhook, integration log.
 
@@ -39,6 +41,10 @@ def _send_and_log(
     portal OTP code, which has no business-entity row to derive). Set
     ``emit_outbound_webhook=False`` for system messages (OTP) that should be
     logged in the Respond outbox but NOT mirrored into the CRM chat thread.
+    ``mirror_locally`` overrides that for the thread mirror alone (default: follow
+    ``emit_outbound_webhook``), for a CRM message the thread must show but n8n must
+    not read as a human answer. ``render_template_in_window=False`` sends the text
+    verbatim inside the window instead of the use case's default template body.
 
     OTP sends (sign-in and portal) keep the real code in the outbox row:
     owner ruling 29 Sep 2026 overruled security round B1 (#1280), because
@@ -69,17 +75,21 @@ def _send_and_log(
             )
             if extra_context_vars:
                 context_vars.update(extra_context_vars)
+            # Only passed when it differs from the default, so callers (and test
+            # doubles) of the plain signature are untouched.
+            verbatim = {} if render_template_in_window else {"render_template_in_window": False}
             result = send_text_or_template(
                 db,
                 identifier=identifier,
                 text=message_text,
                 use_case=use_case,
                 context_vars=context_vars,
+                **verbatim,
             )
             request_payload = result["request_payload"]
             response = result["response"]
 
-            if emit_outbound_webhook:
+            if emit_outbound_webhook if mirror_locally is None else mirror_locally:
                 # The thread reads from chat_histories: write the row now
                 # (optimistic send) instead of waiting for the n8n echo. The
                 # same gate as the webhook - a system message that must stay
@@ -101,6 +111,7 @@ def _send_and_log(
                     logger.warning(
                         "local mirror failed for %s %s", business_table, business_id, exc_info=True
                     )
+            if emit_outbound_webhook:
                 enqueue_crm_chat_outbound_webhook(
                     db,
                     business_table=business_table,
@@ -571,6 +582,55 @@ def send_ticket_resolved_message(tracking_id: str) -> dict:
             "message": excerpt or "your enquiry",
             "entity_number": contact_name,
         },
+    )
+
+
+def send_media_request_ack(contact_id: str, text: str, tracking_id: Optional[str] = None) -> dict:
+    """Worker-side: acknowledge a salesperson's new drawing or photo request on their WhatsApp
+    (PLAN-quote-media-chat-30oct B3). One message per new ticket, never on a join.
+
+    In-window it sends ``text`` verbatim (AC-2 fixes the wording). Out of window it falls back
+    to the staff notification use case's approved template (``sla_assignment``), the text as
+    ``message``. The outbox row hangs off ``tracking_id``, the ticket it acknowledges. The
+    message is mirrored into the thread so the PIC sees it at once, but n8n is not told: it is
+    the CRM speaking, not a human answer, and must not take the bot off the conversation.
+    """
+    from app.database import SessionLocal
+    from app.models.access import RespondContact
+
+    if not tracking_id:
+        return {"business_id": str(contact_id), "status": "skipped", "reason": "no_tracking"}
+    db = SessionLocal()
+    try:
+        contact = db.query(RespondContact).filter(RespondContact.id == str(contact_id)).first()
+        identifier = str(getattr(contact, "respond_io_id", "") or "").strip()
+        if not identifier:
+            return {"business_id": str(tracking_id), "status": "skipped", "reason": "no_respond_contact"}
+        contact_name = (
+            getattr(contact, "name", None)
+            or " ".join(
+                filter(None, [getattr(contact, "first_name", None), getattr(contact, "last_name", None)])
+            )
+            or getattr(contact, "phone_number", None)
+            or "there"
+        )
+    finally:
+        db.close()
+
+    return _send_and_log(
+        use_case="sla_assignment",
+        business_table="conversation_sla_tracking",
+        business_id=str(tracking_id),
+        identifier=identifier,
+        message_text=text,
+        respond_user_id="",
+        crm_sender_user_id=None,
+        space_id=None,
+        sla_entity_type="",
+        extra_context_vars={"contact_name": contact_name, "message": text},
+        emit_outbound_webhook=False,
+        mirror_locally=True,
+        render_template_in_window=False,
     )
 
 

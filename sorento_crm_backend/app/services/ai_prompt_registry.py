@@ -1027,7 +1027,11 @@ def _chatbot_semantic_parser_fallback() -> str:
 
 
 def _chatbot_agent_fallback() -> str:
-    """The read-only CRM agent (AGENTIC-P1). No dashes in the copy: the model mirrors it."""
+    """The read-only CRM agent (AGENTIC-P1). No dashes in the copy: the model mirrors it.
+
+    Once a production label exists (saving Runs on in Prompts creates one from this text), an edit here
+    reaches the agent only with a `bump_prompt_to_fallback` migration or a new published version.
+    """
     return (
         "ROLE\n"
         "You are a read-only CRM analyst working for the staff user named in the context. "

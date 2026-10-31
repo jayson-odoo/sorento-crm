@@ -304,8 +304,8 @@ def judge_draft_line(
     half-typed price that does not parse is judged as "no price yet", not an error - the
     person is mid-keystroke, and a 422 would toast at them for typing.
 
-    An off-catalog draft (no product) is non-standard whenever a series is nominated, and
-    has no floor - the same rule the save applies (AC-E5).
+    A draft with no product or set is not a saveable line: it is non-standard only through a
+    series check, and has no floor.
     """
     from decimal import Decimal, InvalidOperation
 
@@ -393,7 +393,7 @@ def judge_draft_line(
 @router.get("/quotation-line-images", response_model=QuotationLineImagesResponse)
 def quotation_line_images(
     product_id: str = Query(..., pattern=UUID_PATTERN),
-    _user: dict = Depends(require_any_permission(READ)),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The photo and drawing cells a line with this product would show, before it is saved.
@@ -410,7 +410,7 @@ def quotation_line_images(
             raise AppException(
                 status_code=404, message="Product not found.", code="product_not_found"
             )
-        return line_images.product_cells(db, product_id)
+        return line_images.product_cells(db, product_id, viewer_id=current_user["id"])
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -490,12 +490,14 @@ def revise_quotation(
 )
 def list_lines(
     version_id: str,
-    _user: dict = Depends(require_any_permission(READ)),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
         validate_uuid_path(version_id, resource="Quotation version")
-        return _envelope(svc.serialize_lines(db, svc.list_lines(db, version_id)))
+        return _envelope(
+            svc.serialize_lines(db, svc.list_lines(db, version_id), viewer_id=current_user["id"])
+        )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -525,7 +527,7 @@ def create_line(
         _notify_breaches(db, line, current_user["id"])
         db.commit()
         db.refresh(line)
-        return svc.serialize_lines(db, [line])[0]
+        return svc.serialize_lines(db, [line], viewer_id=current_user["id"])[0]
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -571,7 +573,9 @@ def replace_lines(
         for line in lines:
             _notify_breaches(db, line, current_user["id"])
         db.commit()
-        return _envelope(svc.serialize_lines(db, svc.list_lines(db, version_id)))
+        return _envelope(
+            svc.serialize_lines(db, svc.list_lines(db, version_id), viewer_id=current_user["id"])
+        )
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -606,7 +610,7 @@ def update_line(
         _notify_breaches(db, line, current_user["id"])
         db.commit()
         db.refresh(line)
-        return svc.serialize_lines(db, [line])[0]
+        return svc.serialize_lines(db, [line], viewer_id=current_user["id"])[0]
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 from typing import NamedTuple, Optional
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact
@@ -107,17 +108,29 @@ def _display_name(contact: Optional[RespondContact], row) -> str:
 def _open_conversation_trackings(
     db: Session, contact: RespondContact
 ) -> list[ConversationSLATracking]:
-    """Every OPEN conversation-scope ticket for the contact, newest first.
+    """Every OPEN conversation-scope ticket for the contact, newest first, plus every open
+    drawing or photo request on it: the salesperson's WhatsApp reply belongs to that
+    request's PIC (PLAN-quote-media-chat-30oct). A request with a contact is a media
+    conversation by construction, since it matched on the contact. Other form rows stay out
+    (AC-M13).
 
     Newest first is what makes the de-duplication below land on the right ticket:
     a user assigned two of this contact's tickets gets the one they touched last.
     """
+    from app.services.form_sla_service import MEDIA_REQUEST_TYPES
+
     return (
         db.query(ConversationSLATracking)
         .filter(
             ConversationSLATracking.respond_contact_id == contact.id,
             ConversationSLATracking.is_resolved.is_(False),
-            conversation_tracking_scope(),
+            or_(
+                conversation_tracking_scope(),
+                and_(
+                    ConversationSLATracking.source_entity_type.in_(MEDIA_REQUEST_TYPES),
+                    ConversationSLATracking.voided_at.is_(None),
+                ),
+            ),
         )
         .order_by(ConversationSLATracking.updated_at.desc())
         .all()

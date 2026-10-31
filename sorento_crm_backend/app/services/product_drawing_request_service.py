@@ -1,14 +1,20 @@
 """A quotation line's missing technical drawing or photo, escalated to the marketing product team.
 
-Two kinds, `drawing` and `photo`, one task per (kind, PRODUCT): the first Escalate opens a task on
-the tracker table, later ones join it as requesters (an event-log row each). The task rides the
+Two kinds, `drawing` and `photo`, one task per (kind, PRODUCT, REQUESTER): a salesperson's first
+Escalate opens their own task on the tracker table, their later ones (any quotation) join it (an
+event-log row per quotation version). A second salesperson opens a task of their own, as chat
+escalations are one ticket per person (PLAN-quote-media-chat-30oct B1). The task rides the
 WhatsApp bot's general-enquiries route and nothing is configured for it: the agent coded
 `general_enquiries`, the team set named by the chatbot domain `product_attachment`, the tier-1
 team of that set in the PRODUCT'S company, an assignee drawn round-robin narrowed by the product's
 brand, the policy bound to that team set. No team, agent or policy code is written here.
 
 The team works the task the normal SLA way (Respond, Resolve). Adding a file does not close it: it
-notifies the assignee. Resolving notifies every requester.
+notifies the assignee. Resolving notifies the requester.
+
+When the requester's user row is linked to a WhatsApp contact, the task carries that contact: the
+requester gets one acknowledgement on WhatsApp, the PIC replies in the ticket conversation panel
+(a reply is the Respond), and resolving closes it the way a chat ticket closes (B2 to B6).
 
 Hand-offs (plan rule 10) go through `NotificationService.create_with_channel_preferences`, the
 call every form-SLA assignment uses: in-app always, email and WhatsApp each gated by the
@@ -21,12 +27,12 @@ from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy import and_, func, or_, text
+from sqlalchemy import and_, exists as db_exists, func, or_, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from app.models.access import AccessAgent
+from app.models.access import AccessAgent, RespondContact
 from app.models.chatbot_policy import ChatbotDomain
 from app.models.product import Product, ProductAttachment
 from app.models.projects import ProjectQuotation, ProjectQuotationLine, ProjectQuotationVersion
@@ -122,7 +128,36 @@ def _utc(value: Optional[datetime]) -> Optional[datetime]:
     return value.replace(tzinfo=timezone.utc) if value is not None and value.tzinfo is None else value
 
 
-def _open_tracker(db: Session, product_id: str, source: str) -> Optional[ConversationSLATracking]:
+def _raised_by(requester_id: str):
+    """The tracker has a requester row naming this user: the task is theirs (one requester per
+    task, B1)."""
+    return (
+        db_exists(ConversationSLAEventLog.id)
+        .where(
+            ConversationSLAEventLog.sla_tracking_id == ConversationSLATracking.id,
+            ConversationSLAEventLog.event_type == REQUESTER_EVENT,
+            ConversationSLAEventLog.triggered_by_id == str(requester_id),
+        )
+        .correlate(ConversationSLATracking)
+    )
+
+
+def _open_tracker(
+    db: Session, product_id: str, source: str, requester_id: Optional[str] = None
+) -> Optional[ConversationSLATracking]:
+    """The product's open task of this kind; with ``requester_id``, that requester's own."""
+    query = db.query(ConversationSLATracking).filter(
+        ConversationSLATracking.source_entity_type == source,
+        ConversationSLATracking.source_entity_id == str(product_id),
+        *open_tracker_scope(),
+    )
+    if requester_id:
+        query = query.filter(_raised_by(requester_id))
+    return query.order_by(ConversationSLATracking.initiated_at.desc()).first()
+
+
+def _open_trackers(db: Session, product_id: str, source: str) -> List[ConversationSLATracking]:
+    """Every open task of this kind for the product (one per requester)."""
     return (
         db.query(ConversationSLATracking)
         .filter(
@@ -130,19 +165,20 @@ def _open_tracker(db: Session, product_id: str, source: str) -> Optional[Convers
             ConversationSLATracking.source_entity_id == str(product_id),
             *open_tracker_scope(),
         )
-        .order_by(ConversationSLATracking.initiated_at.desc())
-        .first()
+        .order_by(ConversationSLATracking.initiated_at.asc())
+        .all()
     )
 
 
 def escalation_states_by_kind(
-    db: Session, product_ids: Iterable[Optional[str]]
+    db: Session, product_ids: Iterable[Optional[str]], requester_id: Optional[str] = None
 ) -> Dict[str, Dict[str, Optional[Dict[str, Any]]]]:
     """``{kind: {product id: the cell's escalation state}}`` for both kinds, in a fixed number of
     queries (ONE for the trackers and their requester counts).
 
     An open task reads its ids and clocks; with none open, a resolved one leaves only
-    ``last_resolved_at``; a product never escalated reads None.
+    ``last_resolved_at``; a product never escalated reads None. With ``requester_id`` only that
+    requester's own tasks count (B8: a colleague's open request does not hide Escalate).
     """
     ids = list(dict.fromkeys(str(pid) for pid in product_ids if pid))
     out: Dict[str, Dict[str, Optional[Dict[str, Any]]]] = {kind: {} for kind in SOURCE_TYPES}
@@ -164,22 +200,20 @@ def escalation_states_by_kind(
     open_rows: Dict[tuple, ConversationSLATracking] = {}
     counts: Dict[str, int] = {}
     resolved: Dict[tuple, datetime] = {}
-    for tracker, requesters in (
-        db.query(ConversationSLATracking, requester_count)
-        .filter(
-            ConversationSLATracking.source_entity_type.in_(list(kind_of)),
-            ConversationSLATracking.source_entity_id.in_(ids),
-            or_(
-                and_(*open_tracker_scope()),
-                and_(
-                    ConversationSLATracking.is_resolved.is_(True),
-                    ConversationSLATracking.resolved_at.isnot(None),
-                ),
+    query = db.query(ConversationSLATracking, requester_count).filter(
+        ConversationSLATracking.source_entity_type.in_(list(kind_of)),
+        ConversationSLATracking.source_entity_id.in_(ids),
+        or_(
+            and_(*open_tracker_scope()),
+            and_(
+                ConversationSLATracking.is_resolved.is_(True),
+                ConversationSLATracking.resolved_at.isnot(None),
             ),
-        )
-        .order_by(ConversationSLATracking.initiated_at.desc())
-        .all()
-    ):
+        ),
+    )
+    if requester_id:
+        query = query.filter(_raised_by(requester_id))
+    for tracker, requesters in query.order_by(ConversationSLATracking.initiated_at.desc()).all():
         key = (kind_of[tracker.source_entity_type], str(tracker.source_entity_id))
         if tracker.is_resolved:
             if key not in resolved or tracker.resolved_at > resolved[key]:
@@ -216,10 +250,13 @@ def escalation_states_by_kind(
 
 
 def escalation_states(
-    db: Session, product_ids: Iterable[Optional[str]], kind: str = "drawing"
+    db: Session,
+    product_ids: Iterable[Optional[str]],
+    kind: str = "drawing",
+    requester_id: Optional[str] = None,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
     """The cell's escalation state per product for one kind."""
-    return escalation_states_by_kind(db, product_ids)[kind]
+    return escalation_states_by_kind(db, product_ids, requester_id=requester_id)[kind]
 
 
 # --------------------------------------------------------------------------------- escalate
@@ -238,8 +275,9 @@ def _line_in_version(db: Session, version_id: str, line_id: str) -> ProjectQuota
 
 
 @contextmanager
-def _product_lock(db: Session, source: str, product_id: str):
-    """A session-level Postgres advisory lock keyed on the kind and product, held across commits.
+def _product_lock(db: Session, source: str, product_id: str, user_id: Optional[str] = None):
+    """A session-level Postgres advisory lock keyed on the kind, product and requester, held
+    across commits (one task per requester, so two people never wait on each other).
 
     A row lock would not do: assigning the task commits (the round-robin cursor), which would
     release it before the tracker exists. The lock lives on ONE connection and is released on
@@ -250,7 +288,7 @@ def _product_lock(db: Session, source: str, product_id: str):
     commit, so the lock gets a connection of its own; a session bound to a single connection
     (a test's) uses that connection, which never changes.
     """
-    key = {"k": f"{source}:{product_id}"}
+    key = {"k": ":".join(str(part) for part in (source, product_id, user_id) if part)}
     bind = db.get_bind()
     owned = None if isinstance(bind, Connection) else bind.connect()
     conn = bind if owned is None else owned
@@ -290,7 +328,8 @@ def _product_lock(db: Session, source: str, product_id: str):
 
 
 def escalate(db: Session, *, version_id: str, line_id: str, user: dict, kind: str) -> Dict[str, Any]:
-    """Open the product's task of this kind, or join the open one. Returns ``{joined, escalation}``."""
+    """Open the caller's task of this kind for the product, or join their open one. Returns
+    ``{joined, escalation}``."""
     from app.services.project_quotation_image_service import line_product_id
 
     source = SOURCE_TYPES.get(kind)
@@ -320,16 +359,40 @@ def escalate(db: Session, *, version_id: str, line_id: str, user: dict, kind: st
             status_code=409, message="This product already has a photo.", code="product_has_photo"
         )
 
-    # Two clicks in the same second must open one task. "Is there an open task" is read then
-    # write, so the product is locked from the check until the requester is recorded.
-    with _product_lock(db, source, product_id):
-        tracker = _open_tracker(db, product_id, source)
+    # Two clicks in the same second must open one task. "Is there an open task of mine" is read
+    # then write, so the (product, requester) is locked from the check until the requester is
+    # recorded.
+    user_id = str(user["id"])
+    ack: Optional[tuple] = None
+    with _product_lock(db, source, product_id, user_id):
+        tracker = _open_tracker(db, product_id, source, requester_id=user_id)
         joined = tracker is not None
         if tracker is None:
-            tracker = _open_task(db, source, product_id, str(product.company_id) if product.company_id else None)
-        _record_requester(db, tracker, version_id=str(version_id), user_id=str(user["id"]))
+            tracker = _open_task(
+                db,
+                source,
+                product_id,
+                str(product.company_id) if product.company_id else None,
+                requester_id=user_id,
+                version_id=str(version_id),
+                kind=kind,
+            )
+            if tracker.respond_contact_id:
+                ack = (
+                    str(tracker.respond_contact_id),
+                    _ack_text(db, kind, product_id, str(version_id)),
+                    str(tracker.id),
+                )
+        _record_requester(db, tracker, version_id=str(version_id), user_id=user_id)
         db.commit()
-    return {"joined": joined, "escalation": escalation_states(db, [product_id], kind)[str(product_id)]}
+    if ack is not None:
+        # After the commit, so a queued message never names a task that rolled back (B3).
+        contact_id, ack_text, tracking_id = ack
+        enqueue_request_ack(contact_id, ack_text, tracking_id=tracking_id)
+    return {
+        "joined": joined,
+        "escalation": escalation_states(db, [product_id], kind, requester_id=user_id)[str(product_id)],
+    }
 
 
 def _not_set_up() -> AppException:
@@ -342,7 +405,86 @@ def _not_set_up() -> AppException:
     )
 
 
-def _open_task(db: Session, source: str, product_id: str, company_id: Optional[str]) -> ConversationSLATracking:
+def _quotation_no(db: Session, version_id: str) -> str:
+    """The number the quotation page prints for this version: its document's number."""
+    from app.models.projects import ProjectQuotationDocument
+
+    number = (
+        db.query(ProjectQuotationDocument.document_no)
+        .join(ProjectQuotation, ProjectQuotation.document_id == ProjectQuotationDocument.id)
+        .join(ProjectQuotationVersion, ProjectQuotationVersion.quotation_id == ProjectQuotation.id)
+        .filter(ProjectQuotationVersion.id == str(version_id))
+        .scalar()
+    )
+    return number or "a quotation"
+
+
+#: kind -> how the ticket names the file asked for (source text and acknowledgement).
+_ASK_NOUN = {"drawing": "technical drawing", "photo": "product photo"}
+
+
+def _source_text(db: Session, kind: str, product_id: str, version_id: str) -> str:
+    """The ticket's enquiry line: what the chat drawer quotes and the resolved message excerpts."""
+    noun = _ASK_NOUN[kind]
+    return f"{noun[0].upper()}{noun[1:]} for {_product_code(db, product_id)} ({_quotation_no(db, version_id)})"
+
+
+def _ack_text(db: Session, kind: str, product_id: str, version_id: str) -> str:
+    return (
+        f"Your project request: {_ASK_NOUN[kind]} for {_product_code(db, product_id)} "
+        f"({_quotation_no(db, version_id)}). Routed to your PIC, they will reply shortly."
+    )
+
+
+def _requester_contact_id(db: Session, user_id: str) -> Optional[str]:
+    """The requester's linked WhatsApp contact, only when that contact row exists and carries a
+    Respond.io id (B2): without one the panel could not send, so the task stays a form row."""
+    from app.models.user import User
+
+    contact_id = db.query(User.respond_contact_id).filter(User.id == str(user_id)).scalar()
+    if not contact_id:
+        return None
+    found = (
+        db.query(RespondContact.id)
+        .filter(
+            RespondContact.id == str(contact_id),
+            func.coalesce(func.trim(RespondContact.respond_io_id), "") != "",
+        )
+        .first()
+    )
+    return str(found[0]) if found is not None else None
+
+
+def enqueue_request_ack(contact_id: str, text: str, tracking_id: Optional[str] = None) -> None:
+    """Queue the requester's one WhatsApp acknowledgement of a new task (B3) on the `respond_io`
+    queue; ``tracking_id`` is the task its outbox row hangs off. Best-effort: the task has
+    already committed, so a queue that is away is logged."""
+    try:
+        from app.services.queue_service import enqueue_job
+        from app.tasks.respond_io_tasks import send_media_request_ack
+
+        enqueue_job(
+            send_media_request_ack,
+            str(contact_id),
+            text,
+            str(tracking_id) if tracking_id else None,
+            queue_name="respond_io",
+            job_timeout=120,
+        )
+    except Exception as exc:  # noqa: BLE001 - enqueue is best-effort
+        logger.warning("media request acknowledgement enqueue failed for contact %s: %s", contact_id, exc)
+
+
+def _open_task(
+    db: Session,
+    source: str,
+    product_id: str,
+    company_id: Optional[str],
+    *,
+    requester_id: str,
+    version_id: str,
+    kind: str,
+) -> ConversationSLATracking:
     """Create the task on the general-enquiries route and tell its assignee (H1).
 
     The route is the one the bot's product-attachment asks take: the agent, the team set the
@@ -350,7 +492,6 @@ def _open_task(db: Session, source: str, product_id: str, company_id: Optional[s
     draw narrowed by the product's brand, the team set's own policy. Any missing piece is the
     same plain 409; the detail goes to the log, because it names agents and team sets.
     """
-    from app.services.chatbot.lanes.escalation_services import focus_product_origin
     from app.services.coverage_subscription_service import (
         coverage_note,
         resolve_assignee_with_coverage,
@@ -361,6 +502,7 @@ def _open_task(db: Session, source: str, product_id: str, company_id: Optional[s
         _working_clock_start_naive,
         _working_due_naive,
     )
+    from app.services.product_origin_service import product_origin
     from app.services.user_service import AccessAgentService
 
     def refuse(why: str) -> AppException:
@@ -401,9 +543,9 @@ def _open_task(db: Session, source: str, product_id: str, company_id: Optional[s
     if tier_row is None:
         raise refuse(f"SLA policy {policy_id} has no tier {tier}")
 
-    # What the bot's escalation reads: the brand is the product's, lower-cased. A bare id string
-    # is ignored by this helper, so the focus entry is the dict shape.
-    brand = focus_product_origin(db, [{"uuid": str(product_id), "hint": "product"}])["brand"]
+    # What the bot's escalation reads (`product_origin` is its core half): the brand is the
+    # product's, lower-cased.
+    brand = product_origin(db, [str(product_id)])["brand"]
     assignee = agents.get_next_assignee(str(agent.id), team_id, brand_code=brand or None)
     if not assignee:
         raise refuse(f"no member in the tier {tier} team of {team_set}")
@@ -430,6 +572,9 @@ def _open_task(db: Session, source: str, product_id: str, company_id: Optional[s
         agent_id=str(agent.id),
         team_set_code=team_set,
         brand_code=brand or None,
+        # B2: the ticket sits on the requester's WhatsApp contact (none: a plain form row).
+        respond_contact_id=_requester_contact_id(db, requester_id),
+        source_message_text=_source_text(db, kind, product_id, version_id),
     )
     db.add(tracker)
     db.commit()
@@ -452,13 +597,15 @@ def _open_task(db: Session, source: str, product_id: str, company_id: Optional[s
 
 
 def _record_requester(db: Session, tracker: ConversationSLATracking, *, version_id: str, user_id: str) -> None:
-    """One event-log row per user per task, naming the quotation version they escalated from."""
+    """One event-log row per quotation version the requester escalated from (the task's
+    "Waiting on this" list); a second click from the same version adds nothing."""
     already = (
         db.query(ConversationSLAEventLog.id)
         .filter(
             ConversationSLAEventLog.sla_tracking_id == str(tracker.id),
             ConversationSLAEventLog.event_type == REQUESTER_EVENT,
             ConversationSLAEventLog.triggered_by_id == user_id,
+            ConversationSLAEventLog.reason == f"{_VERSION_REASON_PREFIX}{version_id}",
         )
         .first()
     )
@@ -538,7 +685,7 @@ def media_request_detail(db: Session, tracking_id: str, user: dict, *, has_resol
             company_id=_tracking_company_id(tracking),
         )
 
-    # Requesters in join order; each escalated from one quotation version (the reason).
+    # The requester's escalations in order; each names one quotation version (the reason).
     rows = (
         db.query(ConversationSLAEventLog.triggered_by_id, ConversationSLAEventLog.reason)
         .filter(
@@ -549,12 +696,11 @@ def media_request_detail(db: Session, tracking_id: str, user: dict, *, has_resol
         .order_by(ConversationSLAEventLog.event_at.asc(), ConversationSLAEventLog.id.asc())
         .all()
     )
-    user_ids = list(dict.fromkeys(str(uid) for uid, _ in rows))
-    names = {
-        str(uid): (name or email)
-        for uid, name, email in db.query(User.id, User.name, User.email).filter(User.id.in_(user_ids)).all()
-    } if user_ids else {}
-    followers = [names[uid] for uid in user_ids if names.get(uid)]
+    # One requester per task (B1): the first requester row names them.
+    requester_name = None
+    if rows:
+        requester = db.query(User.name, User.email).filter(User.id == str(rows[0][0])).first()
+        requester_name = (requester[0] or requester[1]) if requester else None
 
     version_ids = list(
         dict.fromkeys(
@@ -607,6 +753,7 @@ def media_request_detail(db: Session, tracking_id: str, user: dict, *, has_resol
         "product_href": f"/master-data-management/products/{product_id}",
         "resources_href": "/resource-management/attachment-directories",
         "assignee_name": assignee_name,
+        "requester_name": requester_name,
         "assignee_team_id": str(team_id) if team_id else None,
         "is_assignee": is_assignee,
         "can_resolve": bool(
@@ -622,7 +769,8 @@ def media_request_detail(db: Session, tracking_id: str, user: dict, *, has_resol
         "escalated_at": _utc(tracking.escalated_at),
         "extension_count": int(tracking.extension_count or 0),
         "quotations": quotations,
-        "followers": followers,
+        # B5: the panel mounts the ticket conversation instead of the Respond button.
+        "has_conversation": bool(tracking.respond_contact_id),
     }
 
 
@@ -650,7 +798,16 @@ def respond(db: Session, tracking_id: str, user: dict) -> ConversationSLATrackin
 
 def resolve(db: Session, tracking_id: str, user: dict) -> ConversationSLATracking:
     tracking = _tracker_for_actor(db, tracking_id, user)
-    if tracking.is_resolved:
+    # Read under a row lock held until the resolve commits: of two resolves in the same second
+    # only one gets past here, so the requester's notice and the chat closing message go once.
+    already = (
+        db.query(ConversationSLATracking.is_resolved)
+        .filter(ConversationSLATracking.id == str(tracking.id))
+        .with_for_update()
+        .scalar()
+    )
+    if already or tracking.is_resolved:
+        _safe_rollback(db)
         raise AppException(status_code=409, message="This request is already resolved.", code="already_resolved")
     fields: Dict[str, Any] = {"is_resolved": True, "resolved_by": str(user["id"])}
     if not tracking.is_responded:
@@ -658,7 +815,27 @@ def resolve(db: Session, tracking_id: str, user: dict) -> ConversationSLATrackin
     _update(db, tracking.id, **fields)
     db.refresh(tracking)
     _notify_requesters_resolved(db, tracking)
+    if tracking.respond_contact_id:
+        _close_like_a_chat_ticket(db, tracking)
     return tracking
+
+
+def _close_like_a_chat_ticket(db: Session, tracking: ConversationSLATracking) -> None:
+    """B6: what a chat resolve does after its commit, through the chat resolve's own helpers.
+    The resolved message always; the Respond close (and n8n's close hook) only when no other
+    open row shares the contact, by the chat resolve's own rule. Each helper is best-effort and
+    never raises."""
+    from app.services.sla_service import ConversationSLATrackingService
+
+    try:
+        service = ConversationSLATrackingService(db)
+        service._enqueue_ticket_resolved_message_best_effort(tracking)
+        if not service._contact_has_other_open_tickets(tracking):
+            service._close_respond_conversation_best_effort(tracking)
+            service._notify_close_convo_webhook_best_effort(tracking)
+    except Exception as exc:  # noqa: BLE001 - the resolve already committed
+        _safe_rollback(db)
+        logger.warning("chat close for media request %s failed: %s", tracking.id, exc)
 
 
 # ------------------------------------------------------------------------------ hand-off notices
@@ -694,9 +871,11 @@ def _send(
     code: str,
     event_type: str,
     dedup_key: Optional[str] = None,
+    whatsapp: bool = True,
 ) -> None:
     """One notice on every channel the recipient allows. Best-effort, as `_notify_assignee` is:
-    the work it announces has already committed."""
+    the work it announces has already committed. ``whatsapp=False`` keeps it to in-app and email
+    (the requester's notices: their WhatsApp is the ticket conversation, Q5)."""
     from app.models.user import User
     from app.services.notification_service import NotificationService
 
@@ -738,7 +917,7 @@ def _send(
             send_in_app=True,
             send_email=True,
             send_web_push=False,
-            send_whatsapp=True,
+            send_whatsapp=whatsapp,
             whatsapp_pref_attr="notify_whatsapp_on_assignment",
             email_pref_attr="notify_email_on_assignment",
         )
@@ -748,27 +927,32 @@ def _send(
 
 
 def _notify_file_linked(db: Session, product_id: str, kind: str) -> None:
-    """H3: a file of this kind was linked while its request is open. Tells the assignee; closes nothing."""
+    """H3: a file of this kind was linked while requests for it are open. Tells the assignee of
+    every open task of that kind for the product, once each; closes nothing."""
     noun = KIND_NOUN[kind]
     try:
         # Only for a product this session can see: a file linked by another company's user must
         # not prompt this company's assignee.
         if db.query(Product.id).filter(Product.id == str(product_id)).first() is None:
             return
-        tracker = _open_tracker(db, str(product_id), SOURCE_TYPES[kind])
-        if tracker is None or not tracker.assigned_to_id:
-            return
-        code = _product_code(db, str(product_id))
-        _send(
-            db,
-            user_id=str(tracker.assigned_to_id),
-            tracker=tracker,
-            title=f"{noun.capitalize()} added for {code}",
-            body=f"A {noun} was added for {code}. Resolve the request when done.",
-            path=f"/master-data-management/products/{product_id}",
-            code=code,
-            event_type=f"{noun}_added",
-        )
+        told: set = set()
+        code = None
+        for tracker in _open_trackers(db, str(product_id), SOURCE_TYPES[kind]):
+            assignee = str(tracker.assigned_to_id) if tracker.assigned_to_id else None
+            if assignee is None or assignee in told:
+                continue
+            told.add(assignee)
+            code = code or _product_code(db, str(product_id))
+            _send(
+                db,
+                user_id=assignee,
+                tracker=tracker,
+                title=f"{noun.capitalize()} added for {code}",
+                body=f"A {noun} was added for {code}. Resolve the request when done.",
+                path=f"/master-data-management/products/{product_id}",
+                code=code,
+                event_type=f"{noun}_added",
+            )
     except Exception as exc:
         _safe_rollback(db)
         logger.warning("%s linked notice for product %s failed: %s", noun, product_id, exc)
@@ -821,7 +1005,8 @@ def _requester_paths(db: Session, tracker: ConversationSLATracking) -> Dict[str,
 
 
 def _notify_requesters_resolved(db: Session, tracker: ConversationSLATracking) -> None:
-    """H4: every requester hears the request is resolved, once."""
+    """H4: the requester hears the request is resolved, once, in-app and by email (never on
+    WhatsApp: with a contact, the chat resolve message already tells them there, Q5)."""
     try:
         code = _product_code(db, str(tracker.source_entity_id))
         noun = "photo" if tracker.source_entity_type == SOURCE_TYPES["photo"] else "drawing"
@@ -836,6 +1021,7 @@ def _notify_requesters_resolved(db: Session, tracker: ConversationSLATracking) -
                 code=code,
                 event_type="resolved",
                 dedup_key=f"media_resolved:{tracker.id}",
+                whatsapp=False,
             )
     except Exception as exc:
         _safe_rollback(db)

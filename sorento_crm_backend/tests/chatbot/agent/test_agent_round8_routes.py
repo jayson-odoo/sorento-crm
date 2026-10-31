@@ -22,9 +22,10 @@ EXPECTED = {
     "cached_tokens": 100,
     "tool_calls": [
         # Slice 6 V3: an old turn's call has no plain-words detail; the response model sends "".
-        {"name": "crm_report_ask", "status": "ok", "ms": 120, "detail": ""},
-        {"name": "crm_resolve", "status": "empty", "ms": 3, "detail": ""},
+        {"name": "crm_report_ask", "status": "ok", "ms": 120, "detail": "", "round": 1},
+        {"name": "crm_resolve", "status": "empty", "ms": 3, "detail": "", "round": 1},
     ],
+    "reasoning": [],
 }
 
 

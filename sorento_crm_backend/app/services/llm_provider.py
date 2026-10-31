@@ -51,6 +51,9 @@ class ChatResult:
     # (a Gemini thought signature, Claude thinking blocks); None otherwise. A tool loop echoes it on
     # the assistant message as `continuation`, and the same provider replays it as is (AGENTIC-P0-PROVIDER).
     continuation: Optional[dict] = None
+    # The model's own reasoning as readable text (Gemini thought summaries, Claude thinking text); "" when the
+    # provider returned none. Never part of `content`: it is for the console's steps only (AGENTIC-REASONING-VIS).
+    reasoning_text: str = ""
 
 
 class ResponseTruncated(RuntimeError):
@@ -232,6 +235,7 @@ class LLMProvider(Protocol):
         timeout: Optional[float] = None,
         prompt_cache_key: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
+        include_thoughts: bool = False,
     ) -> ChatResult: ...
 
     def embed(self, text: str) -> list[float]: ...
@@ -478,6 +482,7 @@ class OpenAIProvider:
         timeout: Optional[float] = None,
         prompt_cache_key: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
+        include_thoughts: bool = False,
     ) -> ChatResult:
         from app.services import llm_cassette
 
@@ -877,6 +882,7 @@ class AnthropicProvider:
         timeout: Optional[float] = None,
         prompt_cache_key: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
+        include_thoughts: bool = False,
     ) -> ChatResult:
         from app.services import llm_cassette
 
@@ -966,6 +972,9 @@ class AnthropicProvider:
             kwargs["tools"] = _convert_tools_to_anthropic(tools)
         if reasoning_effort:
             thinking_fields = _anthropic_thinking(kwargs["model"], reasoning_effort, kwargs["max_tokens"])
+            if include_thoughts and thinking_fields.get("thinking", {}).get("type") == "adaptive":
+                # From Claude 4.7 adaptive thinking comes back with empty text unless a summary is asked for.
+                thinking_fields["thinking"] = {**thinking_fields["thinking"], "display": "summarized"}
             kwargs.update(thinking_fields)
             if "thinking" in thinking_fields:
                 # Anthropic refuses a set temperature alongside thinking.
@@ -1019,6 +1028,7 @@ class AnthropicProvider:
             cached_tokens=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
             model=str(getattr(resp, "model", "") or ""),
             continuation={"provider": "anthropic", "content": native} if thought else None,
+            reasoning_text="\n\n".join(b["thinking"].strip() for b in native if b["type"] == "thinking" and b["thinking"].strip()),
         )
 
     def embed(self, text: str) -> list[float]:
@@ -1710,6 +1720,7 @@ class GeminiProvider:
         timeout: Optional[float] = None,
         prompt_cache_key: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
+        include_thoughts: bool = False,
     ) -> ChatResult:
         """`prompt_cache_key` turns on the explicit context cache (`_generate`); its value is not sent."""
         from app.services import llm_cassette
@@ -1754,6 +1765,8 @@ class GeminiProvider:
         # `max_tokens` unchanged, because the field itself is a 400 there.
         thinking_config, thinking_room = _gemini_thinking(model_name, reasoning_effort)
         if thinking_config is not None:
+            if include_thoughts:
+                thinking_config = {**thinking_config, "includeThoughts": True}
             generation["thinkingConfig"] = thinking_config
         if max_tokens is not None:
             generation["maxOutputTokens"] = max_tokens + thinking_room
@@ -1782,12 +1795,14 @@ class GeminiProvider:
         parts = (candidate.get("content") or {}).get("parts") or []
 
         text_chunks: list[str] = []
+        thought_chunks: list[str] = []
         normalized_calls: list[dict] = []
         for part in parts:
             if not isinstance(part, dict):
                 continue
             if isinstance(part.get("text"), str):
-                text_chunks.append(part["text"])
+                # A thought summary is a text part marked `thought`: never the answer.
+                (thought_chunks if part.get("thought") is True else text_chunks).append(part["text"])
                 continue
             call = part.get("functionCall")
             if isinstance(call, dict) and call.get("name"):
@@ -1834,6 +1849,7 @@ class GeminiProvider:
                 if any(isinstance(part, dict) and part.get("thoughtSignature") for part in parts)
                 else None
             ),
+            reasoning_text="\n\n".join(c.strip() for c in thought_chunks if c.strip()),
         )
 
         finish = candidate.get("finishReason")

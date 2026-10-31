@@ -195,6 +195,13 @@ WRITE_ROUTES = {
     ("POST", "/submissions/{kind}/{submission_id}/submit"): None,
 }
 
+#: The reads that need an extra write slug besides view_own. The quotation pre-fill (#1985) reads
+#: a quotation of the caller's own project for a NEW request, so it needs the create slug, as the
+#: staff route does (its own-project scope: tests/test_sample_request_quotation_prefill_scope.py).
+READ_ROUTES_WITH_WRITE_SLUG = {
+    ("GET", "/sample-request/quotation-prefill"): "projects.sample_requests.create",
+}
+
 
 def test_sec_every_my_requests_write_route_is_classified():
     from fastapi.routing import APIRoute
@@ -211,7 +218,15 @@ def test_sec_every_my_requests_write_route_is_classified():
     }
     assert mounted - set(WRITE_ROUTES) == set(), f"unclassified write routes: {sorted(mounted - set(WRITE_ROUTES))}"
     assert set(WRITE_ROUTES) - mounted == set(), f"classified but gone: {sorted(set(WRITE_ROUTES) - mounted)}"
+    reads = {
+        (m, r.path_format[len(base):])
+        for r in app.routes
+        if isinstance(r, APIRoute) and r.path_format.startswith(base)
+        for m in r.methods & {"GET"}
+    }
+    assert set(READ_ROUTES_WITH_WRITE_SLUG) <= reads, sorted(set(READ_ROUTES_WITH_WRITE_SLUG) - reads)
     # the extra write slugs the guard module enforces agree with the table
     required = {k: v for k, v in WRITE_ROUTES.items() if v and not v.startswith("<")}
     assert required == {k: v for k, v in my_requests._WRITE_SLUGS.items() if k in required}
-    assert set(my_requests._WRITE_SLUGS) <= set(WRITE_ROUTES)
+    assert {k: v for k, v in my_requests._WRITE_SLUGS.items() if k[0] == "GET"} == READ_ROUTES_WITH_WRITE_SLUG
+    assert set(my_requests._WRITE_SLUGS) <= set(WRITE_ROUTES) | set(READ_ROUTES_WITH_WRITE_SLUG)

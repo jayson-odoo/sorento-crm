@@ -1,4 +1,8 @@
-"""SEC-MCP-AUTH (UAC AUTH-1..6): every MCP request carries `Authorization: Bearer <MCP_AUTH_TOKEN>`.
+"""SEC-MCP-AUTH (UAC AUTH-1..6): every MCP request carries `Authorization: Bearer <token>`.
+
+MCP-TOKEN-UI: the token is no longer an env value. The backend holds it (set from Settings >
+Integrations) and the MCP server learns which tokens are valid from it; `FakeBackend` stands in
+for that answer here. "enforce" is the screen's Enforce switch on, "permit" is it off.
 
 The server used to accept anyone who could reach :8765 and acted with the shared CRM key, write
 tools included. `create_http_app` is the one ASGI app `__main__` serves; these tests drive it
@@ -16,6 +20,8 @@ from starlette.testclient import TestClient
 from sorento_crm_mcp.server import create_http_app
 from sorento_crm_mcp.settings import Settings
 
+from _token_source import FakeBackend
+
 TOKEN = "x" * 40  # fake fixture, built at runtime so it never looks like a real key
 LIST_TOOLS = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
 MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
@@ -23,9 +29,13 @@ AUTH = {**MCP_HEADERS, "Authorization": f"Bearer {TOKEN}"}
 
 
 def _settings(**overrides) -> Settings:
-    values = {"CRM_BASE_URL": "http://crm.local", "EXTERNAL_API_KEY": "k", "MCP_AUTH_TOKEN": TOKEN}
+    values = {"CRM_BASE_URL": "http://crm.local", "EXTERNAL_API_KEY": "k"}
     values.update(overrides)
     return Settings(**values)
+
+
+def _app(tokens=(TOKEN,), *, enforce=True):
+    return create_http_app(_settings(), token_fetcher=FakeBackend(list(tokens), enforce=enforce))
 
 
 def _tool_names(resp) -> list[str]:
@@ -38,13 +48,13 @@ def _tool_names(resp) -> list[str]:
 
 @pytest.fixture
 def client():
-    with TestClient(create_http_app(_settings())) as c:
+    with TestClient(_app()) as c:
         yield c
 
 
 @pytest.fixture
 def permit_client():
-    with TestClient(create_http_app(_settings(MCP_AUTH_MODE="permit"))) as c:
+    with TestClient(_app(enforce=False)) as c:
         yield c
 
 
@@ -94,28 +104,10 @@ def test_healthz_needs_no_token(client):
     assert resp.text == "ok"
 
 
-@pytest.mark.parametrize("token", [None, "", "   ", "short", "a" * 31, " " + "a" * 31 + " "])
-@pytest.mark.parametrize("mode", ["enforce", "permit"])
-def test_server_refuses_to_start_without_a_real_token(token, mode):
-    if token is None:
-        settings = Settings(CRM_BASE_URL="http://crm.local", EXTERNAL_API_KEY="k", MCP_AUTH_MODE=mode)
-    else:
-        settings = _settings(MCP_AUTH_TOKEN=token, MCP_AUTH_MODE=mode)
-    with pytest.raises(RuntimeError, match="MCP_AUTH_TOKEN") as err:
-        create_http_app(settings)
-    if token and token.strip():
-        assert token.strip() not in str(err.value), "the error text must not echo the token"
-
-
-def test_an_unknown_mode_refuses_to_start():
-    with pytest.raises(RuntimeError, match="MCP_AUTH_MODE"):
-        create_http_app(_settings(MCP_AUTH_MODE="off"))
-
-
-def test_a_32_char_token_is_enough():
-    with TestClient(create_http_app(_settings(MCP_AUTH_TOKEN="b" * 32))) as c:
-        resp = c.post("/mcp", json=LIST_TOOLS, headers={**MCP_HEADERS, "Authorization": "Bearer " + "b" * 32})
-    assert resp.status_code == 200
+def test_starts_with_no_token_env_at_all():
+    """The release-safety rule: a deploy with no token anywhere must not exit (it used to)."""
+    with TestClient(_app(tokens=(), enforce=False)) as c:
+        assert c.get("/healthz").status_code == 200
 
 
 def test_websocket_is_refused(client):
@@ -141,7 +133,7 @@ def test_permit_lets_a_call_with_no_header_through_and_warns(permit_client, capl
     with caplog.at_level(logging.WARNING, logger="sorento_crm_mcp.auth"):
         resp = permit_client.post("/mcp", json=LIST_TOOLS, headers=MCP_HEADERS)
     assert resp.status_code == 200, resp.text
-    assert any("permit mode" in r.getMessage() for r in caplog.records)
+    assert any("Enforce is off" in r.getMessage() for r in caplog.records)
 
 
 def test_permit_still_refuses_a_wrong_token(permit_client):
@@ -153,7 +145,7 @@ def test_permit_right_token_passes_without_a_warning(permit_client, caplog):
     with caplog.at_level(logging.WARNING, logger="sorento_crm_mcp.auth"):
         resp = permit_client.post("/mcp", json=LIST_TOOLS, headers=AUTH)
     assert resp.status_code == 200
-    assert not [r for r in caplog.records if "permit mode" in r.getMessage()]
+    assert not [r for r in caplog.records if "Enforce is off" in r.getMessage()]
 
 
 def test_no_log_line_carries_the_token(client, permit_client, caplog):

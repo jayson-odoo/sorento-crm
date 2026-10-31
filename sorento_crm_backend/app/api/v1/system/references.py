@@ -1815,7 +1815,8 @@ def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
         )
 
     def kept(match: Any, tokens: list[str]) -> bool:
-        if not isinstance(match, dict) or match.get("entity_type") != "product":
+        # A product set's code is a product code too (CHATBOT-SET-STOCK): "wc" is no set hit.
+        if not isinstance(match, dict) or match.get("entity_type") not in ("product", "product_set"):
             return True
         tier = match.get("match_tier")
         if tier not in _CODE_FRAGMENT_TIERS and tier != "prefix":
