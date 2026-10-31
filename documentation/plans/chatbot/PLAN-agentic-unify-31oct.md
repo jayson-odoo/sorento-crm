@@ -19,8 +19,15 @@ Behaviour, facts and questions live in the two cards; nothing is stated twice he
 
 **PR 1: leak fix only**
 
-1. Staff identity on API-key reads, ungated: `require_permission_with_api_key` (`dependencies.py:524`), `_resolve_api_key_scope`,
-   MCP pass-through, `staff_user_id` from every panel call site. Can only narrow. Security-reviewer scope.
+1. Staff identity on API-key reads, ungated. UAC: `agentic-unify-pr1-acceptance-criteria.md`. Can only narrow. Security-reviewer scope.
+   - **MCP:** one place, `CRMClient.request` (`sorento_crm_mcp/http_client.py:121-126`), reads the live MCP request's headers through the MCP
+     library's request context, so hand-written tools with no `ctx` are covered (`server.py:504-1665`, `record_actions.py:89`, `ideation.py:109`).
+   - **Identity:** one helper used by `get_current_user_or_api_key` (`dependencies.py:679-692`), `get_external_api_user` (`:622-649`). It returns
+     the staff member's dict, so every `current_user["id"]` reader (own scope, field gates, module guards) applies at once, with `key_user_id` kept.
+   - **Gates:** AND of both users in `require_permission_with_api_key` (`:547`), `require_any_permission_with_api_key` (`:584-617`), the handler check
+     at `sla/sla_tracking.py:87`. A no-op dependency for the slug table in AC-13, except on an identity read.
+   - **Company:** `company_scope_resolver.py:358-362`, validating the header itself because it runs before auth.
+   - **Record context:** `record_context_service.py:43-48`, plus the own-scope check.
 
 The console switch flip belongs to lane CONSOLE-SWITCH-OVERRIDE; later PRs build on its override API once merged.
 
