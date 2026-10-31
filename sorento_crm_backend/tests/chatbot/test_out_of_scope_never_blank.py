@@ -107,33 +107,39 @@ def _run(session_factory, message_id: str):
     )
 
 
-def _assert_handover_reply(session_factory, result) -> None:
+#: CHATBOT-FAIL-TRIAGE AC-7c (#2018, owner 30 Oct 2026): a hand-over with no topic is never routed to a
+#: default team; it asks one question over the topics the company can reach.
+TOPIC_QUESTION_PREFIX = "Which topic is this about - "
+
+
+def _assert_topic_question(session_factory, result) -> None:
     assert result.branch_kind == "out_of_scope"
     assert result.status == "done", result
     sends = [a for a in result.actions if a.get("kind") == "send_message"]
-    assert [a["text"] for a in sends] == [ROUTED_TO_PIC_REPLY], result.actions
+    assert len(sends) == 1 and sends[0]["text"].startswith(TOPIC_QUESTION_PREFIX), result.actions
+    asked = sends[0]["text"]
 
     # The turn's own reply is the message the customer is sent, never blank.
-    assert result.reply["text"] == ROUTED_TO_PIC_REPLY, result.reply
+    assert result.reply["text"] == asked, result.reply
 
     # The persisted row agrees: the console, the eval and the next turn's
     # `Previous response:` all read `response.reply.text` off it.
     row = _turn_row(session_factory, result.turn_id)
-    assert row.response["reply"]["text"] == ROUTED_TO_PIC_REPLY, row.response.get("reply")
+    assert row.response["reply"]["text"] == asked, row.response.get("reply")
 
 
-def test_no_entity_request_for_help_gets_the_handover_reply(
+def test_no_entity_request_for_help_gets_the_topic_question(
     session_factory, seeded, stub_access, no_parser_call
 ) -> None:
     stub_access()
-    _assert_handover_reply(session_factory, _run(session_factory, "plain"))
+    _assert_topic_question(session_factory, _run(session_factory, "plain"))
 
 
-def test_no_team_found_on_the_preview_still_gets_the_handover_reply(
+def test_no_team_found_on_the_preview_still_gets_the_topic_question(
     session_factory, seeded, stub_access, no_parser_call, no_team_found
 ) -> None:
     stub_access()
-    _assert_handover_reply(session_factory, _run(session_factory, "no-team"))
+    _assert_topic_question(session_factory, _run(session_factory, "no-team"))
 
 
 def test_a_voice_turn_handover_sends_and_persists_the_same_prefixed_line() -> None:

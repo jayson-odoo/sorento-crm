@@ -432,9 +432,11 @@ B173_LANE = {
     "show_all_stock": "business_query",
     "any_promotions": "check_promotion", "top_10_sellers": "business_query", "sort_by_price": "business_query",
     "for_all_customers": "business_query", "any_brand": "business_query",
-    "never_mind_any_promotions": "check_promotion", "cancel_talk_to_a_person": None, "an_idea": "ideate",
+    "never_mind_any_promotions": "check_promotion", "cancel_talk_to_a_person": "out_of_scope", "an_idea": "ideate",
     "a_cold_all_of_them": "clarify_menu",
 }
+# `cancel_talk_to_a_person` was None at b173c6e8c4; since CHATBOT-FAIL-TRIAGE AC-7c (#2018) a hand-over
+# with no topic asks which topic, on the `out_of_scope` lane. Still no reset seam (asserted below).
 
 GUARD_CASES = [
     (name, gate)
