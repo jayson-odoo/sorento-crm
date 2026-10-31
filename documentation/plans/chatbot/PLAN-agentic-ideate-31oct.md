@@ -135,6 +135,51 @@ new product variants and is the same message as gold row t033, so that miss is n
 those follow-ups answered the retired draft flow, so each carries a synthetic exchange: the row it follows plus one
 fixed agent question.
 
+**Final labels (the exact 15 from AC-R2-14, 42 Jev calls, USD 0.0015).** Measures the wording before the code exists, so
+the gate step checks `agent_tool_labels()` still equals this list (`criteria_final_15.json`).
+
+| Group | Right | Bar |
+| --- | --- | --- |
+| Paraphrased ideas (en 7/7, ms 3/3, zh 3/3) | 13/13 | at least 12 of 13: met |
+| Real first ideas | 6/7 | at least 6 of 7: met |
+| Real wrong routes | 3/5 (2 sent to the agent) | at most 2 of 5 sent: met, exactly at the bar |
+| Paraphrased decoys | 6/7 | reported |
+| Real follow-ups (synthetic context) | 5/5 | reported |
+| Paraphrased follow-ups, Jev alone | 2/5 | reported |
+| Paraphrased follow-ups, with the R3b rule | 5/5 | AC-R3b-10: met |
+
+The two wrong routes also go to the agent on today's prompt, so this adds none. One sits close to the floor (0.72), so a
+rerun could land it either side. The real idea it misses scores 0.66 and is captured by the bot lane. I did not reword a
+label to chase that one row.
+
+**Held-out, final labels against frozen v2 (172 rows, USD 0.0063, cap raised by crew for this one run):**
+
+| | Frozen v2 | Final labels |
+| --- | --- | --- |
+| Agreement | 90% | 91% |
+| Missed-agent | 10/45 | 11/45 (**one worse, so the bar below is missed by one row**) |
+| Wasted-agent | 7/127 | 5/127 |
+| Without borderline rows and t020: missed, wasted | 9/41, 4/123 | 10/41, 4/123 |
+
+Three rows changed side. t020 and t046 moved to the right side. t043 (Chinese, dealer) moved to the wrong side, from 0.72
+to 0.68 across the 0.70 floor, so it falls to the bot.
+
+**Rerun, crew ruling on ask a29856494 (same labels, 172 more calls):** t043 came back at 0.74, so that one miss was noise,
+and crew's condition for the bar is met. The total did not improve, though, and the result should be read with that:
+
+| | Frozen v2 (one run) | Final labels, run 1 | Final labels, run 2 |
+| --- | --- | --- | --- |
+| Missed-agent | 10/45 | 11/45 | 12/45 |
+| Wasted-agent | 7/127 | 5/127 | 5/127 |
+| Agreement | 90% | 91% | 90% |
+
+- Jev moves between identical runs: 55 of 172 rows changed score, and 3 crossed the floor (t023, t031, t043).
+- t023 and t031 sit under v2 on both runs (0.78 to 0.70 to 0.66, and 0.80 to 0.70 to 0.62). Across the 45 agent rows the
+  mean lean to the agent falls about 0.02 (20 rows lower, 5 higher, 20 equal). So the tool list probably does lower
+  agent-row confidence a little, on top of the noise. That reading rests on a single v2 run.
+- These rows fall to the bot, which is today's path, so the cost is a weaker answer rather than a wrong action. Idea rows
+  are not among them. Accepted per crew; no label was reworded on this set.
+
 **Gate:**
 - The brief says re-label the idea rows, but there are none: 0 of the 218 rows in `gold.jsonl` + `gold_topup.jsonl`
   carry parser domain ideate. Two rows are idea-shaped (t020, t033), both labelled chat. Decision: t020 goes
@@ -162,8 +207,12 @@ fixed agent question.
 - **Q2, undo after create: (a) confirm only.** A wrong idea is fixed with `crm_idea_update`. No delete and no undo.
 - **Q3, real or test idea from the console: (b) test.** Ideas the agent creates stay flagged test until the agent reaches
   WhatsApp. The trigger to flip `writes.IDEA_IS_TEST` is the lane that puts the agent on WhatsApp.
-- **Q4, how wide is R3a: pending.** The owner asked what it means and crew is explaining. Built as (a) for now: any bot
-  question keeps the next reply on the bot. Narrowing to (b) later is one condition.
+- **Q4, how wide is R3a: (a).** Any bot question keeps the next reply on the bot, and an agent question keeps it on the
+  agent (R3b). The owner confirmed the goal: new idea conversations start on the agent, and (a) only protects a bot
+  conversation already mid-question.
+
+**Where that goal reaches today:** console turns, for contacts whose Agent switch is on (`access.py:352` defaults it off;
+`router.py:66-67` sends the rest to the bot). WhatsApp ideas stay on the bot lane until the agent reaches WhatsApp.
 
 ### What Q3 changes
 
