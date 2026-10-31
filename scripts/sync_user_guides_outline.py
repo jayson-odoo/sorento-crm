@@ -182,10 +182,10 @@ class Outline:
             {"id": doc_id, "title": title, "text": text, "append": False},
         )["data"]
 
-    def current_user_id(self) -> str | None:
-        """The API token's own user id, or None when Outline will not say."""
+    def current_user(self) -> dict[str, Any] | None:
+        """The API token's own user (``auth.info``), or None when Outline will not say."""
         try:
-            return self._post("auth.info", {})["data"]["user"]["id"]
+            return self._post("auth.info", {})["data"]["user"]
         except Exception as exc:
             print(f"  [warn] auth.info failed ({exc}); the sync's own edits cannot be told apart")
             return None
@@ -401,7 +401,7 @@ def push(args: argparse.Namespace) -> None:
     failures: list[str] = []
 
     force = os.environ.get("OUTLINE_SYNC_FORCE", "").lower() in ("1", "true", "yes")
-    self_id = o.current_user_id()
+    self_id = sync_user_id(o)
     kept: list[str] = []
 
     def update_if_changed(doc: dict[str, Any], title: str, body_md: str, state_key: str, verb: str) -> str:
@@ -596,6 +596,37 @@ def learn_state_by_title(state: dict[str, str], docs: list[dict[str, Any]]) -> l
     return learnt
 
 
+# A dedicated sync account is recognised by its Outline display name, so that
+# swapping OUTLINE_API_TOKEN for that account's key is the only step needed.
+DEDICATED_ACCOUNT_RE = re.compile(r"\b(bot|sync)\b", re.IGNORECASE)
+
+
+def sync_user_id(o: "Outline") -> str | None:
+    """The user id whose edits count as the sync's own, or None.
+
+    Resolves the token's user via ``auth.info`` and logs it. Only a DEDICATED
+    account (display name containing "bot" or "sync", e.g. "Sorento Sync Bot")
+    gets the exemption: with a person's token, that person's own Outline edits
+    would read as the sync's and push would overwrite them. For a person's
+    token this warns loudly and returns None, so every Outline edit after a
+    repo commit is kept (at the cost of some `[keep]` noise).
+    """
+    user = o.current_user()
+    if not user:
+        return None
+    name = str(user.get("name") or "")
+    if DEDICATED_ACCOUNT_RE.search(name):
+        print(f"  sync user: {name!r} ({user.get('id')}), dedicated account: its edits are the sync's own")
+        return user.get("id")
+    print(
+        f"::warning title=Outline sync runs as a person's account::OUTLINE_API_TOKEN belongs to "
+        f"{name!r}, not a dedicated sync account (name with 'bot' or 'sync'). Their Outline edits "
+        "are protected but cannot be told apart from the sync's own; swap the secret for a "
+        "dedicated account's key (documentation/user-guides/SYNC.md)."
+    )
+    return None
+
+
 def outline_is_newer(path: Path, doc: dict[str, Any], self_id: str | None = None) -> bool:
     """True when a person edited Outline's copy after the repo page's last commit.
 
@@ -636,7 +667,7 @@ def pull(args: argparse.Namespace) -> None:
     state = load_state()
 
     docs = o.list_documents(collection_id)
-    self_id = o.current_user_id()
+    self_id = sync_user_id(o)
     learn_state_by_title(state, docs)
     rev = {v: k for k, v in state.items()}
     parent_id_to_folder = {}

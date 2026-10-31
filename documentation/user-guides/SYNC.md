@@ -22,7 +22,8 @@ pull never runs while a push is writing. A running sync is never cancelled, but 
 ONE queued run per group: a newer queued run (push or pull) replaces the older one. A push replaced
 by a push loses nothing (every run checks out `main`'s current head). A push replaced by the
 6-hourly pull is lost until the next guide merge pushes again, or dispatch `mode=push` by hand. The
-pull can not undo it meanwhile: it never pulls a page last written by the sync's own push.
+pull can not undo it meanwhile: it never pulls a page last written by the sync's own push (with a
+dedicated sync account; see the token note below).
 
 So the loop is: merge a guide PR -> it is on Outline a minute later. Edit on Outline -> within 6h a
 `docs-sync` PR brings it back -> merge it (its push finds those pages already the same).
@@ -34,9 +35,14 @@ Neither side overwrites the other's newer edit:
 - **push** keeps an Outline page a person edited after the repo page's last commit
   (`outline_is_newer`, prints `[keep] ... (Outline copy edited after the repo commit, pull it)`).
   Edits made by the sync's own API user (an earlier push) do not count, and pull likewise never
-  pulls a page that user last wrote. **So the token must belong to a dedicated Outline account
-  nobody edits guides as**: with a person's token, that person's Outline edits would read as the
-  sync's own and the next push would overwrite them. To overwrite anyway,
+  pulls a page that user last wrote. **The token should belong to a dedicated Outline account
+  nobody edits guides as.** Each run resolves the token's user (`auth.info`) and logs it. Only an
+  account whose display name contains `bot` or `sync` (e.g. "Sorento Sync Bot") counts as the
+  sync's own. Any other account gets a `::warning::` annotation and NO exemption, so a person's
+  Outline edits are never overwritten. The cost while running on a person's token: push `[keep]`s
+  pages its own earlier push wrote, and pull may open `docs-sync` PRs that only carry Outline's
+  markdown reformatting. Switching to a dedicated account is one step: replace the
+  `OUTLINE_API_TOKEN` secret with its key. To overwrite anyway,
   dispatch the workflow with `mode=push` and `force` ticked (`OUTLINE_SYNC_FORCE=1` locally).
 - push skips a page whose title and text already match (`[same]`).
 

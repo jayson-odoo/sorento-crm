@@ -225,8 +225,8 @@ class _FakeOutline:
     def get_document(self, doc_id):
         return next(d for d in self.docs if d["id"] == doc_id)
 
-    def current_user_id(self):
-        return "bot"
+    def current_user(self):
+        return {"id": "bot", "name": "Sorento Sync Bot"}
 
 
 def test_push_continues_past_a_bad_page_and_fails_at_the_end(monkeypatch, tmp_path, capsys):
@@ -313,7 +313,6 @@ def test_push_keeps_an_outline_edit_not_yet_pulled(monkeypatch, tmp_path, capsys
         return real_update(doc_id, title, text)
 
     fake.update_document = spy
-    fake.current_user_id = lambda: "bot"
     monkeypatch.setattr(mod, "load_env", lambda: ("http://x", "t", "cid"))
     monkeypatch.setattr(mod, "Outline", lambda **_k: fake)
     monkeypatch.delenv("OUTLINE_SYNC_FORCE", raising=False)
@@ -378,3 +377,47 @@ def test_check_ignores_a_folder_without_markdown(monkeypatch, tmp_path):
     (root / "images").mkdir()
     (root / "images" / "x.png").write_bytes(b"png")
     assert mod.validate_guides() == []
+
+
+def test_sync_user_exemption_only_for_a_dedicated_account(capsys):
+    mod = _load_module()
+
+    class _O:
+        def __init__(self, user):
+            self.user = user
+
+        def current_user(self):
+            return self.user
+
+    assert mod.sync_user_id(_O({"id": "b1", "name": "Sorento Sync Bot"})) == "b1"
+    assert mod.sync_user_id(_O({"id": "b2", "name": "docs-sync"})) == "b2"
+    # A person's token (crew, 31 Oct: the secret is the owner's own account):
+    # no exemption, and a loud workflow warning.
+    assert mod.sync_user_id(_O({"id": "p1", "name": "Teh Jayson"})) is None
+    assert "::warning title=Outline sync runs as a person's account::" in capsys.readouterr().out
+    assert mod.sync_user_id(_O(None)) is None
+
+
+def test_push_with_a_person_token_keeps_that_persons_outline_edit(monkeypatch, tmp_path):
+    from datetime import datetime, timezone
+
+    mod = _load_module()
+    _fake_guides(mod, monkeypatch, tmp_path, {"warehouse/a.md": "# A\n\nrepo\n"})
+    monkeypatch.setattr(mod, "_repo_committed_at", lambda _p: datetime(2026, 10, 31, 5, 0, tzinfo=timezone.utc))
+    parent = mod.PARENT_TITLES["warehouse"]
+    fake = _FakeOutline(
+        existing=[
+            {"id": "p1", "title": parent, "parentDocumentId": None, "text": "Department guides for **%s**.\n" % parent},
+            {"id": "a1", "title": "A", "parentDocumentId": "p1", "text": "owner edit",
+             "updatedAt": "2026-10-31T06:00:00.000Z", "updatedBy": {"id": "owner"}},
+        ]
+    )
+    fake.current_user = lambda: {"id": "owner", "name": "Teh Jayson"}
+    fake.updated = []
+    real_update = fake.update_document
+    fake.update_document = lambda i, t, x: (fake.updated.append(i), real_update(i, t, x))[1]
+    monkeypatch.setattr(mod, "load_env", lambda: ("http://x", "t", "cid"))
+    monkeypatch.setattr(mod, "Outline", lambda **_k: fake)
+    monkeypatch.delenv("OUTLINE_SYNC_FORCE", raising=False)
+    mod.push(None)
+    assert fake.updated == []
