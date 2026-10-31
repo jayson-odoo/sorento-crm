@@ -1105,9 +1105,11 @@ def _run(db, ctx, *, contact_respond_id, text, provider, mcp_call, mcp_builder, 
                     # contains, so each extra call gets one; the digest and trace carry one note.
                     skipped += 1
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
-                    replies[idx] = ToolResult(
-                        "denied", message="Too many calls this round; ask again next round."
-                    ).to_json(call_id)
+                    retry = (
+                        "ask the user to confirm in their next message."
+                        if name == CONFIRM_ACTION else "ask again next round."
+                    )
+                    replies[idx] = ToolResult("denied", message=f"Too many calls this round; {retry}").to_json(call_id)
                     continue
                 tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.

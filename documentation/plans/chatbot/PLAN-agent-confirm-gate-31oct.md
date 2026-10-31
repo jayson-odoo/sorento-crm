@@ -1,6 +1,6 @@
 # PLAN: agent confirmations only from the user's own turn
 
-Status: in progress (small fix track: one coder writing tests + fix, one reviewer, plus a security
+Status: in review, PR open; reviewer READY, security review ready (small fix track: one coder writing tests + fix, one reviewer, plus a security
 review because the change gates an agent write; no migration, no RBAC change, no UI change).
 
 UAC: `agent-confirm-gate-acceptance-criteria.md` (alongside).
