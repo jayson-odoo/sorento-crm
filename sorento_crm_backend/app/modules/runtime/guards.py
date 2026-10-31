@@ -16,7 +16,7 @@ from app.modules.runtime.installer import (
 )
 
 PUBLIC_VIEW_LINKS_MODULE_KEY = "public_view_links"
-from app.services.user_service import UserPermissionService
+from app.services.user_service import UserPermissionService, gate_user_ids
 
 
 def _tenant_id_for_request() -> str:
@@ -100,18 +100,20 @@ def require_module_enabled_with_api_key(module_key: str) -> Callable:
 def module_allowed_with_api_key(db: Session, current_user: dict, module_key: str) -> bool:
     """The decision `require_module_enabled_with_api_key` refuses on, for a route that reads a
     second module's data inside its own answer and must leave that part out rather than refuse
-    the whole call (CHAT-FIND: `/products/find` prints stock only when `inventory` is on)."""
+    the whole call (CHAT-FIND: `/products/find` prints stock only when `inventory` is on).
+
+    Asked per user: on an identity read a superadmin staff member does not lift a disabled module
+    for an act-as user who would be stopped by it."""
     if not getattr(settings, "module_guard_strict", False):
         return True
-    uid = str(current_user.get("id") or "")
-    if uid == "system":
-        return True
-    if _roles_bypass_module(db, uid):
-        return True
-    tenant_id = _tenant_id_for_request()
-    if _all_modules_effectively_enabled(db, tenant_id):
-        return True
-    return is_module_enabled(db, tenant_id, module_key)
+
+    def allowed(uid: str) -> bool:
+        if uid == "system" or _roles_bypass_module(db, uid):
+            return True
+        tenant_id = _tenant_id_for_request()
+        return _all_modules_effectively_enabled(db, tenant_id) or is_module_enabled(db, tenant_id, module_key)
+
+    return all(allowed(uid) for uid in gate_user_ids(current_user))
 
 
 def ensure_public_view_links_allowed(

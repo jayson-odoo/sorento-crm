@@ -365,7 +365,11 @@ class MCPRuntimeClient:
         """`staff=True` only for the in-app AI assistant: it has no Respond contact, so it sends
         `X-MCP-Scope: staff` to keep reading company-scoped tools without one (SEC-MCP-AUTH,
         `sorento_crm_mcp/sorento_crm_mcp/scope.py`). The chatbot lanes never set it, so their
-        calls without a contact are refused. `staff_user_id` is only logged by the MCP server."""
+        calls without a contact are refused. `staff_user_id` is required with it: the MCP server
+        forwards it on every read tool's CRM request, so the read runs as that staff member, in
+        their active company and with their permissions (AGENTIC-UNIFY PR 1). Writes stay act-as."""
+        if staff and not str(staff_user_id or "").strip():
+            raise ValueError("A staff MCP client needs the staff_user_id")
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.staff = staff
@@ -393,8 +397,13 @@ class MCPRuntimeClient:
     def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         rid = str(uuid.uuid4())
         payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}}
+        headers = self._headers()
+        # With no bearer and Enforce off the MCP server strips the staff markers
+        # (`sorento_crm_mcp/auth.py`), so the call would run as the act-as user (AGENTIC-UNIFY AC-26).
+        if self.staff and "Authorization" not in headers:
+            raise MCPToolCallError("The AI assistant has no MCP token: set it on Settings > Integrations.")
         with httpx.Client(timeout=self.timeout_seconds) as client:
-            resp = client.post(self.base_url, json=payload, headers=self._headers())
+            resp = client.post(self.base_url, json=payload, headers=headers)
             resp.raise_for_status()
             body = self._decode_streamable_body(resp)
         if isinstance(body, dict) and "error" in body:
@@ -832,12 +841,13 @@ class AIAssistantChatService:
             .all()
         )
 
-    def list_mcp_tools(self) -> list[str]:
+    def list_mcp_tools(self, user_id: str) -> list[str]:
         """Fetch current tool names from MCP runtime for settings UI sync."""
         mcp = MCPRuntimeClient(
             settings.ai_assistant_mcp_url,
             timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
             staff=True,
+            staff_user_id=user_id,
         )
         tool_names = sorted(mcp.list_tools())
         logger.info("AI assistant MCP tool catalog fetched count=%s", len(tool_names))
@@ -1110,19 +1120,19 @@ class AIAssistantChatService:
         if page_snapshot is not None and page_snapshot.entity is not None:
             from app.services.record_context_service import (
                 RecordContextService,
-                record_context_view_permission,
+                can_read_record_context,
             )
 
             try:
-                # Per-entity RBAC parity with the HTTP route: when the entity
-                # type requires a view permission, enforce it; None => any
-                # authenticated bubble user may read the record context.
-                required_slug = record_context_view_permission(
-                    page_snapshot.entity.entity_type
+                # Same rule as the HTTP route. The record id comes from the page snapshot, so
+                # it is checked here too: refused means no facts, and the turn still answers.
+                permitted = can_read_record_context(
+                    self.db,
+                    UserPermissionService(self.db),
+                    user_id,
+                    page_snapshot.entity.entity_type,
+                    page_snapshot.entity.id,
                 )
-                permitted = required_slug is None or UserPermissionService(
-                    self.db
-                ).check_user_has_permission(user_id, required_slug)
                 if permitted:
                     record_ctx = RecordContextService(self.db).assemble(
                         page_snapshot.entity.entity_type,
@@ -1220,6 +1230,7 @@ class AIAssistantChatService:
                 record_ctx=record_ctx,
                 page_snapshot=page_snapshot,
                 turn_cache=turn_cache,
+                user_id=user_id,
             )
         else:
             response_text, tool_calls, token_usage = self._run_agent_loop(
@@ -2349,7 +2360,7 @@ class AIAssistantChatService:
         sources: list[dict[str, Any]],
         resolution: ResolutionResult | None = None,
         page_snapshot: PageSnapshotPayload | None = None,
-        user_id: str | None = None,
+        user_id: str,
         conversation_id: str | None = None,
         user_message_id: str | None = None,
         record_ctx: dict[str, Any] | None = None,
@@ -2949,6 +2960,7 @@ class AIAssistantChatService:
         record_ctx: dict[str, Any],
         page_snapshot: PageSnapshotPayload | None = None,
         turn_cache: _TurnToolCache | None = None,
+        user_id: str,
     ) -> tuple[str, list[MCPToolCallResult], dict[str, int]]:
         """Render a grounded answer from the deterministic record-context facts.
 
@@ -3036,6 +3048,7 @@ class AIAssistantChatService:
             settings.ai_assistant_mcp_url,
             timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
             staff=True,
+            staff_user_id=user_id,
         )
         openai_tools: list[dict[str, Any]] = []
         guide_tool_name = "user_guides_read"

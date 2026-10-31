@@ -26,6 +26,7 @@ from _token_source import FakeBackend
 CONTACT = "900000008"
 SPACE = "364817"
 TOKEN = "x" * 40
+STAFF_ID = "11111111-1111-4111-8111-111111111111"  # AGENTIC-UNIFY AC-4: a staff call names its user
 MCP_HEADERS = {
     "Accept": "application/json, text/event-stream",
     "Content-Type": "application/json",
@@ -189,7 +190,7 @@ def test_global_tool_call_is_unchanged():
 
 def test_staff_header_lets_the_assistant_through():
     client = _Client()
-    _run("crm_master_products_list", client, headers={"X-MCP-Scope": "staff"})
+    _run("crm_master_products_list", client, headers={"X-MCP-Scope": "staff", "X-MCP-Staff-User": STAFF_ID})
     assert len(client.calls) == 1
     assert "contact_id" not in client.calls[0]["query"]
 
@@ -269,7 +270,7 @@ def test_http_scoped_call_reaches_the_backend(http_app):
 
 def test_http_staff_header_reaches_the_tool(http_app):
     client, calls = http_app
-    _call(client, "crm_master_brands_list", {}, {"X-MCP-Scope": "staff"})
+    _call(client, "crm_master_brands_list", {}, {"X-MCP-Scope": "staff", "X-MCP-Staff-User": STAFF_ID})
     assert len(calls) == 1
 
 

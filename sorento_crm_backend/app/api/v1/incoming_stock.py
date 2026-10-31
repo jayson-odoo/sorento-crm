@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user_or_api_key
+from app.dependencies import get_current_user_or_api_key, require_staff_read_permission
 from app.services.eta_policy import (
     apply_to_incoming,
     dealer_view,
@@ -227,7 +227,11 @@ _CONTACT_ID_DOC = (
 _SPACE_ID_DOC = "Respond.io workspace id, to disambiguate a Respond.io `contact_id`."
 
 
-@router.get("/by-product")
+#: AGENTIC-UNIFY AC-13: on an identity read the staff member needs the packing list view.
+_STAFF_READ = require_staff_read_permission("procurement.packing_lists.view")
+
+
+@router.get("/by-product", dependencies=[Depends(_STAFF_READ)])
 def get_incoming_for_product(
     entities: Optional[list[str]] = Query(
         None,
@@ -332,7 +336,7 @@ def get_incoming_for_product(
         raise handle_internal_error(str(e))
 
 
-@router.get("/shipments")
+@router.get("/shipments", dependencies=[Depends(_STAFF_READ)])
 def get_incoming_shipments(
     entities: Optional[list[str]] = Query(
         None,
@@ -423,7 +427,7 @@ def get_incoming_shipments(
         raise handle_internal_error(str(e))
 
 
-@router.get("/list")
+@router.get("/list", dependencies=[Depends(_STAFF_READ)])
 def get_incoming_list(
     product_ids: Optional[list[str]] = Query(
         None,

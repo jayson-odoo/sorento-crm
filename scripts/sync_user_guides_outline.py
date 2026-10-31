@@ -5,6 +5,8 @@ Modes:
   push   repo -> Outline (default)
   pull   Outline -> repo
   status diff repo vs Outline
+  dry-run print the push plan (no network call)
+  check  validate the repo layout + titles (no network, stdlib only; PR gate)
 
 Env:
   OUTLINE_BASE_URL          default https://doc.foundryx.my
@@ -40,8 +42,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import requests
-from dotenv import load_dotenv
+# `requests` and `python-dotenv` are imported where they are used, so `check`
+# and `dry-run` run on a bare python3 (the PR gate installs nothing for them).
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -82,6 +84,10 @@ HELD_FOLDERS = frozenset({"commercial"})
 
 ROOT_DOC_TITLE = "Overview"
 
+# Outline refuses a longer title with a 400 ("Document title must be 100
+# characters or less"); run 41178406314 died part-way through a push on one.
+MAX_TITLE_LEN = 100
+
 
 def _assert_no_held_folders() -> None:
     """Hard safeguard: refuse to publish if a held folder leaked into the allowlist.
@@ -100,6 +106,8 @@ def _assert_no_held_folders() -> None:
 
 
 def load_env() -> tuple[str, str, str]:
+    from dotenv import load_dotenv
+
     load_dotenv(REPO_ROOT / "sorento_crm_backend" / ".env")
     base_url = os.environ.get("OUTLINE_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
     token = os.environ.get("OUTLINE_API_TOKEN")
@@ -115,6 +123,8 @@ class Outline:
     token: str
 
     def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        import requests
+
         url = f"{self.base_url}/api/{path}"
         for attempt in range(3):
             r = requests.post(
@@ -172,6 +182,14 @@ class Outline:
             {"id": doc_id, "title": title, "text": text, "append": False},
         )["data"]
 
+    def current_user(self) -> dict[str, Any] | None:
+        """The API token's own user (``auth.info``), or None when Outline will not say."""
+        try:
+            return self._post("auth.info", {})["data"]["user"]
+        except Exception as exc:
+            print(f"  [warn] auth.info failed ({exc}); the sync's own edits cannot be told apart")
+            return None
+
     def get_document(self, doc_id: str) -> dict[str, Any]:
         return self._post("documents.info", {"id": doc_id})["data"]
 
@@ -227,6 +245,69 @@ def discover_files() -> list[Path]:
 
 def relpath(p: Path) -> str:
     return str(p.relative_to(GUIDES_DIR))
+
+
+def validate_guides() -> list[str]:
+    """Every reason a push would skip or fail a page, found with NO network call.
+
+    - a guide folder in neither PARENT_TITLES nor HELD_FOLDERS (its pages
+      would be skipped as "unknown folder" and never reach Outline);
+    - a markdown file outside the ``<folder>/<page>.md`` layout;
+    - a page, parent or root title longer than Outline's MAX_TITLE_LEN;
+    - a held folder present in PARENT_TITLES.
+
+    Returns the problems, one line each; empty means the push can publish all.
+    """
+    problems: list[str] = []
+    leaked = sorted(HELD_FOLDERS & set(PARENT_TITLES))
+    if leaked:
+        problems.append(f"held folder(s) {leaked} are in PARENT_TITLES (the publish allowlist)")
+
+    # A folder holding no markdown (images only, say) is not a guide folder.
+    folders = sorted(
+        p.name for p in GUIDES_DIR.iterdir() if p.is_dir() and any(p.rglob("*.md"))
+    )
+    for folder in folders:
+        if folder not in PARENT_TITLES and folder not in HELD_FOLDERS:
+            problems.append(
+                f"{folder}/: guide folder is not mapped - add it to PARENT_TITLES "
+                "(or HELD_FOLDERS) in scripts/sync_user_guides_outline.py"
+            )
+
+    def check_title(where: str, title: str) -> None:
+        if len(title) > MAX_TITLE_LEN:
+            problems.append(
+                f"{where}: title is {len(title)} characters, Outline allows "
+                f"{MAX_TITLE_LEN}: \"{title}\""
+            )
+
+    check_title("README.md", ROOT_DOC_TITLE)
+    for folder, title in PARENT_TITLES.items():
+        check_title(f"PARENT_TITLES[{folder!r}]", title)
+
+    for md in discover_files():
+        rel = relpath(md)
+        if rel == "README.md":
+            continue
+        parts = rel.split("/")
+        if len(parts) != 2:
+            problems.append(f"{rel}: unexpected layout, a guide must be <folder>/<page>.md")
+            continue
+        if parts[0] in HELD_FOLDERS:
+            continue
+        check_title(rel, first_h1_or_filename(md))
+    return problems
+
+
+def check(args: argparse.Namespace) -> None:
+    """PR gate: fail when a push would skip or reject any guide page."""
+    problems = validate_guides()
+    if problems:
+        print("User guides would not all publish to Outline:")
+        for line in problems:
+            print(f"  - {line}")
+        raise SystemExit(1)
+    print(f"OK: every guide under {GUIDES_DIR.relative_to(REPO_ROOT)} maps to Outline and fits its limits.")
 
 
 def plan_push() -> tuple[list[str], list[str]]:
@@ -286,7 +367,6 @@ def dry_run(args: argparse.Namespace) -> None:
         print("\nSKIPPED (folder not in publish allowlist - will NOT publish):")
         for s in skipped:
             print(f" - {s}")
-    held_present = sorted(HELD_FOLDERS & {p.split('/')[0] for p in skipped})
     print(
         "\nHeld-folder check: "
         + (
@@ -295,7 +375,13 @@ def dry_run(args: argparse.Namespace) -> None:
             else "FAILED"
         )
     )
-    _ = held_present
+    problems = validate_guides()
+    if problems:
+        print("\nValidation FAILED (push would skip or reject these):")
+        for line in problems:
+            print(f"  - {line}")
+        raise SystemExit(1)
+    print("Validation: OK")
     print("Done (dry run).")
 
 
@@ -312,15 +398,33 @@ def push(args: argparse.Namespace) -> None:
     by_title_no_parent = {d["title"]: d for d in existing if not d.get("parentDocumentId")}
 
     parent_ids: dict[str, str] = {}
+    failures: list[str] = []
+
+    force = os.environ.get("OUTLINE_SYNC_FORCE", "").lower() in ("1", "true", "yes")
+    self_id = sync_user_id(o)
+    kept: list[str] = []
+
+    def update_if_changed(doc: dict[str, Any], title: str, body_md: str, state_key: str, verb: str) -> str:
+        if doc["title"] == title and _same_text(_outline_text(o, doc), body_md):
+            print(f"  [same] {state_key}")
+            return doc["id"]
+        page = GUIDES_DIR / state_key
+        if not force and not state_key.endswith("/__parent__") and outline_is_newer(page, doc, self_id):
+            # Pull has not brought this Outline edit back yet: overwriting it
+            # would lose it. The next scheduled pull opens the PR for it.
+            kept.append(state_key)
+            print(f"  [keep] {state_key}  (Outline copy edited after the repo commit, pull it)")
+            return doc["id"]
+        updated = o.update_document(doc["id"], title, body_md)
+        print(f"  [{verb}] {state_key}  -> {updated['id']}")
+        return updated["id"]
 
     def ensure_doc(
         title: str, body_md: str, parent_key: str | None, state_key: str
     ) -> str:
         cached = state.get(state_key)
         if cached and cached in by_id:
-            doc = o.update_document(cached, title, body_md)
-            print(f"  [update] {state_key}  -> {doc['id']}")
-            return doc["id"]
+            return update_if_changed(by_id[cached], title, body_md, state_key, "update")
         match = next(
             (
                 d
@@ -334,9 +438,7 @@ def push(args: argparse.Namespace) -> None:
             None,
         )
         if match:
-            doc = o.update_document(match["id"], title, body_md)
-            print(f"  [adopt+update] {state_key}  -> {doc['id']}")
-            return doc["id"]
+            return update_if_changed(match, title, body_md, state_key, "adopt+update")
         doc = o.create_document(
             title=title,
             text=body_md,
@@ -350,7 +452,11 @@ def push(args: argparse.Namespace) -> None:
     readme = GUIDES_DIR / "README.md"
     if readme.exists():
         body = strip_h1(readme.read_text())
-        state["README.md"] = ensure_doc(ROOT_DOC_TITLE, body, None, "README.md")
+        try:
+            state["README.md"] = ensure_doc(ROOT_DOC_TITLE, body, None, "README.md")
+        except Exception as exc:  # keep going: one bad page must not stop the rest
+            failures.append(f"README.md: {exc}")
+            print(f"  [FAIL] README.md  {exc}")
 
     for folder, title in PARENT_TITLES.items():
         folder_path = GUIDES_DIR / folder
@@ -358,7 +464,12 @@ def push(args: argparse.Namespace) -> None:
             continue
         body = f"Department guides for **{title}**.\n"
         key = f"{folder}/__parent__"
-        parent_ids[folder] = ensure_doc(title, body, None, key)
+        try:
+            parent_ids[folder] = ensure_doc(title, body, None, key)
+        except Exception as exc:
+            failures.append(f"{key}: {exc}")
+            print(f"  [FAIL] {key}  {exc}")
+            continue
         state[key] = parent_ids[folder]
 
     print("[2/3] Sync child docs")
@@ -376,13 +487,30 @@ def push(args: argparse.Namespace) -> None:
         if folder not in PARENT_TITLES:
             print(f"  [skip] unknown folder: {rel}")
             continue
+        if folder not in parent_ids:
+            failures.append(f"{rel}: not pushed, its parent {folder}/__parent__ failed")
+            print(f"  [FAIL] {rel}  parent failed")
+            continue
         title = first_h1_or_filename(md)
         body = strip_h1(md.read_text())
-        state[rel] = ensure_doc(title, body, folder, rel)
+        try:
+            state[rel] = ensure_doc(title, body, folder, rel)
+        except Exception as exc:
+            failures.append(f"{rel}: {exc}")
+            print(f"  [FAIL] {rel}  {exc}")
 
     print("[3/3] Save state")
     save_state(state)
     print(f"  state -> {STATE_FILE}")
+    if kept:
+        print(f"\n{len(kept)} page(s) kept (Outline is newer; set OUTLINE_SYNC_FORCE=1 to overwrite):")
+        for key in kept:
+            print(f"  - {key}")
+    if failures:
+        print(f"\n{len(failures)} page(s) FAILED to push:")
+        for line in failures:
+            print(f"  - {line}")
+        raise SystemExit(1)
     print("Done.")
 
 
@@ -422,14 +550,126 @@ def repo_is_newer(path: Path, doc: dict[str, Any]) -> bool:
     return committed is not None and updated is not None and updated <= committed
 
 
+def learn_state_by_title(state: dict[str, str], docs: list[dict[str, Any]]) -> list[str]:
+    """Fill state entries the repo lacks by matching Outline titles to repo pages.
+
+    The push saves new doc ids only in the runner; if that state never reached
+    main, pull would otherwise see the pushed docs as unmapped and write them
+    back under a slug filename, duplicating the page. Matches root docs to
+    PARENT_TITLES (and ROOT_DOC_TITLE), then children of a known parent to the
+    repo page in that folder with the same H1. Never overrides a saved id.
+    Returns the keys it learnt.
+    """
+    learnt: list[str] = []
+    known_ids = set(state.values())
+    roots = {d["title"]: d["id"] for d in docs if not d.get("parentDocumentId")}
+    for folder, title in PARENT_TITLES.items():
+        key = f"{folder}/__parent__"
+        if not state.get(key) and title in roots and roots[title] not in known_ids:
+            state[key] = roots[title]
+            known_ids.add(roots[title])
+            learnt.append(key)
+    if not state.get("README.md") and ROOT_DOC_TITLE in roots and roots[ROOT_DOC_TITLE] not in known_ids:
+        state["README.md"] = roots[ROOT_DOC_TITLE]
+        known_ids.add(roots[ROOT_DOC_TITLE])
+        learnt.append("README.md")
+
+    folder_by_parent = {
+        state[f"{f}/__parent__"]: f for f in PARENT_TITLES if state.get(f"{f}/__parent__")
+    }
+    page_by_title: dict[tuple[str, str], str] = {}
+    for md in discover_files():
+        parts = relpath(md).split("/")
+        if len(parts) == 2:
+            page_by_title.setdefault((parts[0], first_h1_or_filename(md)), relpath(md))
+    for d in docs:
+        folder = folder_by_parent.get(d.get("parentDocumentId") or "")
+        if folder is None or d["id"] in known_ids:
+            continue
+        rel = page_by_title.get((folder, d["title"]))
+        if rel and not state.get(rel):
+            state[rel] = d["id"]
+            known_ids.add(d["id"])
+            learnt.append(rel)
+    for key in learnt:
+        print(f"  [learn] {key}  -> {state[key]}  (matched by title)")
+    return learnt
+
+
+# A dedicated sync account is recognised by its Outline display name, so that
+# swapping OUTLINE_API_TOKEN for that account's key is the only step needed.
+DEDICATED_ACCOUNT_RE = re.compile(r"\b(bot|sync)\b", re.IGNORECASE)
+
+
+def sync_user_id(o: "Outline") -> str | None:
+    """The user id whose edits count as the sync's own, or None.
+
+    Resolves the token's user via ``auth.info`` and logs it. Only a DEDICATED
+    account (display name containing "bot" or "sync", e.g. "Sorento Sync Bot")
+    gets the exemption: with a person's token, that person's own Outline edits
+    would read as the sync's and push would overwrite them. For a person's
+    token this warns loudly and returns None, so every Outline edit after a
+    repo commit is kept (at the cost of some `[keep]` noise).
+    """
+    user = o.current_user()
+    if not user:
+        return None
+    name = str(user.get("name") or "")
+    if DEDICATED_ACCOUNT_RE.search(name):
+        print(f"  sync user: {name!r} ({user.get('id')}), dedicated account: its edits are the sync's own")
+        return user.get("id")
+    print(
+        f"::warning title=Outline sync runs as a person's account::OUTLINE_API_TOKEN belongs to "
+        f"{name!r}, not a dedicated sync account (name with 'bot' or 'sync'). Their Outline edits "
+        "are protected but cannot be told apart from the sync's own; swap the secret for a "
+        "dedicated account's key (documentation/user-guides/SYNC.md)."
+    )
+    return None
+
+
+def outline_is_newer(path: Path, doc: dict[str, Any], self_id: str | None = None) -> bool:
+    """True when a person edited Outline's copy after the repo page's last commit.
+
+    An edit by ``self_id`` (the sync's own API user, i.e. an earlier push) is
+    not a person's edit: Outline re-normalises the markdown it stores, so the
+    text never matches byte for byte and every page would otherwise read as
+    edited.
+
+    Push must not overwrite such a page: it holds an Outline edit the pull has
+    not brought back yet. The mirror of ``repo_is_newer``; unknown timestamps
+    fall back to pushing.
+    """
+    if not path.exists():
+        return False
+    editor = (doc.get("updatedBy") or {}).get("id")
+    if self_id is not None and editor == self_id:
+        return False
+    committed = _repo_committed_at(path)
+    updated = _outline_updated_at(doc)
+    return committed is not None and updated is not None and updated > committed
+
+
+def _same_text(a: str, b: str) -> bool:
+    return a.strip() == b.strip()
+
+
+def _outline_text(o: "Outline", doc: dict[str, Any]) -> str:
+    text = doc.get("text")
+    if text is None:
+        text = o.get_document(doc["id"]).get("text", "")
+    return text
+
+
 def pull(args: argparse.Namespace) -> None:
     base_url, token, collection_id = load_env()
     o = Outline(base_url=base_url, token=token)
 
     state = load_state()
-    rev = {v: k for k, v in state.items()}
 
     docs = o.list_documents(collection_id)
+    self_id = sync_user_id(o)
+    learn_state_by_title(state, docs)
+    rev = {v: k for k, v in state.items()}
     parent_id_to_folder = {}
     for folder, _title in PARENT_TITLES.items():
         pid = state.get(f"{folder}/__parent__")
@@ -464,6 +704,14 @@ def pull(args: argparse.Namespace) -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         full_body = f"# {title}\n\n{body_md.strip()}\n"
         if out_path.exists() and out_path.read_text() == full_body:
+            continue
+        editor = (full.get("updatedBy") or {}).get("id")
+        if self_id is not None and editor == self_id and out_path.exists():
+            # Last written by the sync itself (a push): the repo is its source,
+            # and Outline's copy differs only by its markdown normalisation or
+            # by an OLDER push that ran late. Pulling it would revert a newer
+            # repo edit (reviewer, DOCS-SYNC-AUTO).
+            print(f"  [keep] {rel_path}  (last written by the sync's own push)")
             continue
         if repo_is_newer(out_path, full):
             print(f"  [keep] {rel_path}  (repo copy is newer than Outline's, push it)")
@@ -508,8 +756,12 @@ def main() -> int:
         "dry-run",
         help="print exactly which docs would be created/updated on push (no network call)",
     )
+    sub.add_parser(
+        "check",
+        help="fail when a guide folder is unmapped or a title is too long (no network)",
+    )
     args = parser.parse_args()
-    {"push": push, "pull": pull, "status": status, "dry-run": dry_run}[args.cmd](args)
+    {"push": push, "pull": pull, "status": status, "dry-run": dry_run, "check": check}[args.cmd](args)
     return 0
 
 

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user_or_api_key
+from app.dependencies import get_current_user_or_api_key, staff_identity_refused
 from app.models.base import set_company_scope
 from app.schemas.lookup import LookupResolveRequest, LookupResolveResponse
 from app.services.contact_access_type_service import ContactAccessTypeService
@@ -102,6 +102,9 @@ def resolve(
     is_api_key = (current_user or {}).get("auth_method") == "api_key"
     contact_id = (body.contact_id or "").strip()
     space_id = (body.space_id or "").strip()
+    # A staff identity never names a contact: the panel always blanks the pair (AGENTIC-UNIFY AC-6).
+    if (current_user or {}).get("key_user_id") and (contact_id or space_id):
+        raise staff_identity_refused()
     if is_api_key and contact_id and space_id:
         company_ids = ContactAccessTypeService(db).resolve_contact_company_ids(
             contact_id, space_id

@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AGENTIC-UNIFY mock v1</title>
+<style>
+:root{
+  --bg:#fff;--fg:#071437;--muted:#f4f4f7;--mfg:#78829d;--border:#e1e3ea;
+  --primary:#1b84ff;--primary-soft:#eff6ff;--primary-ink:#1d4ed8;
+  --sec:#f1f1f4;--sec-ink:#4b5675;--ok-soft:#eafff1;--ok-ink:#15803d;--warn-soft:#fff8dd;--warn-ink:#a16207;
+  --bad:#f8285a;--em:#10b981;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:var(--font);color:var(--fg);background:#eceef3;font-size:14px;line-height:1.5}
+button{font:inherit;color:inherit;cursor:pointer}
+h1{font-size:22px;margin:0 0 6px}
+h2{font-size:16px;margin:0 0 8px}
+.page{padding:16px;max-width:1280px;margin:0 auto;min-width:0}
+.page>p.lead{max-width:860px;margin:0 0 16px;color:#4b5675}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--border);margin-bottom:16px}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:8px 14px;font-size:14px;color:var(--mfg)}
+.tabs button[aria-selected=true]{color:var(--fg);border-bottom-color:var(--primary);font-weight:600}
+section.tab{display:none}section.tab.on{display:block}
+.row{display:flex;gap:24px;align-items:flex-start;padding-bottom:12px;min-width:0}
+.row.stack{flex-direction:column;align-items:stretch}
+.row.stack>.frame,.row.stack>.notes{width:100%}
+.row.stack>.notes{flex:none}
+.notes{flex:0 0 320px;font-size:13px;color:#4b5675;background:#fff;border:1px dashed #b5bccd;border-radius:10px;padding:12px 14px}
+.notes h3{margin:0 0 6px;font-size:13px;color:var(--fg)}
+.notes ul{margin:0 0 8px;padding-left:18px}
+.tag{display:inline-block;font-size:11px;font-weight:600;border-radius:999px;padding:0 8px;margin-right:4px}
+.tag.real{background:var(--ok-soft);color:var(--ok-ink)}.tag.ill{background:var(--warn-soft);color:var(--warn-ink)}.tag.new{background:#fde8ee;color:#b4143c}
+.frame{background:var(--bg);border:1px solid var(--border);border-radius:12px;overflow:hidden;flex:0 0 auto;position:relative}
+.frame.w1280{width:100%;max-width:1280px;min-width:0}.frame.w375{width:375px}
+.chrome{height:36px;background:var(--muted);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-size:12px;color:var(--mfg)}
+/* controls */
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:#fff;border-radius:6px;padding:0 12px;height:34px;font-size:13px;font-weight:500}
+.btn.sm{height:30px;font-size:12px;padding:0 10px}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.icon{width:36px;padding:0;justify-content:center;height:36px}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.ico{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.ico.s{width:14px;height:14px}
+label.l{display:block;font-size:12px;color:var(--mfg);margin-bottom:4px}
+.sel{display:flex;align-items:center;justify-content:space-between;gap:8px;height:30px;border:1px solid var(--border);border-radius:6px;padding:0 10px;font-size:13px;background:#fff;min-width:0;width:240px;max-width:100%}
+.sel span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sel .car{color:var(--mfg);font-size:10px}
+.badge{display:inline-flex;align-items:center;border-radius:999px;font-size:11px;font-weight:500;padding:1px 8px;line-height:1.5;border:0}
+.badge.pri{background:var(--primary-soft);color:var(--primary-ink)}
+.badge.sec{background:var(--sec);color:var(--sec-ink)}
+.badge.ok{background:var(--ok-soft);color:var(--ok-ink)}
+.badge.warn{background:var(--warn-soft);color:var(--warn-ink)}
+.badge.bad{background:#fde8ee;color:#b4143c}
+.chip{border:1px solid var(--border);background:var(--sec);border-radius:999px;padding:4px 12px;font-size:12px}
+.chip.toggle{display:inline-flex;align-items:center;gap:6px;height:36px;background:#fff}
+.chip.toggle.on{background:var(--primary-soft);border-color:var(--primary);color:var(--primary-ink);font-weight:600}
+.chip.toggle[disabled]{opacity:.5;cursor:not-allowed}
+.chip.toggle.new{outline:2px dashed #e0457b;outline-offset:2px}
+/* console */
+.console{display:flex;flex-direction:column;gap:12px;padding:16px}
+.console .head{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;border-bottom:1px solid var(--border);padding-bottom:12px}
+.thread{display:flex;flex-direction:column;gap:12px;min-width:0}
+.console,.t,.b{min-width:0}
+.t{display:flex;flex-direction:column;gap:12px}
+.b{display:flex}.b.u{justify-content:flex-end}
+.bub{max-width:85%;border-radius:16px;padding:10px 12px;font-size:14px;line-height:1.6;box-shadow:0 1px 2px rgba(0,0,0,.06);word-break:break-word;min-width:0}
+.bub.u{background:rgba(27,132,255,.15)}.bub.a{background:var(--muted)}
+.bub p{margin:0;white-space:pre-wrap}
+.bub .pillrow{margin-top:6px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px}
+.bub .pillrow a{color:var(--mfg);text-decoration:underline;text-underline-offset:2px}
+.bub .copy{color:var(--mfg);display:inline-flex;align-items:center;gap:4px;background:none;border:0;padding:0;font-size:12px}
+.vpill{border:1px solid rgba(225,227,234,.9);border-radius:999px;padding:0 6px;font-size:10px;color:var(--mfg)}
+.pillwrap{display:block;width:100%;min-width:0}
+.pillbtn{border:0;background:none;padding:0;border-radius:999px}
+.pop{margin:8px 0 0!important;width:288px;max-width:100%;background:#fff;border:1px solid var(--border);border-radius:8px;padding:16px;box-shadow:0 2px 8px rgba(7,20,55,.1);font-size:14px;display:none}
+.pop.open{display:block}
+.pop div{display:flex;justify-content:space-between;gap:16px;margin-bottom:8px}.pop div:last-child{margin-bottom:0}
+.pop dt{color:var(--mfg)}.pop dd{margin:0}
+.steps{margin-top:4px;font-size:12px;color:var(--mfg)}
+.steps button{background:none;border:0;padding:0;text-decoration:underline;text-underline-offset:2px;color:var(--mfg)}
+.steps ul{list-style:none;margin:4px 0 0;padding:0;display:flex;flex-direction:column;gap:2px}
+.steps .rs{margin:2px 0 0;white-space:pre-wrap;border-left:2px solid var(--border);padding-left:8px}
+.meta{margin-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;color:var(--mfg)}
+.propose{margin-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;border-top:1px solid var(--border);padding-top:8px}
+.acts{margin-top:8px;border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:6px;font-size:12px}
+.acts .chg{color:var(--mfg);margin:0}
+.wait{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.wait .bar{height:6px;border-radius:999px;background:var(--muted);overflow:hidden;flex:1;min-width:40px}
+.wait .bar i{display:block;height:100%;width:70%;background:var(--primary);border-radius:999px}
+.wait .w{display:flex;align-items:center;gap:8px}.wait .w span{font-size:12px;font-variant-numeric:tabular-nums;color:var(--mfg)}
+.lines{margin:6px 0 0;padding:0;list-style:none;font-size:13px;border-left:3px solid var(--border);padding-left:10px}
+.composer{border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:8px}
+.composer .r{display:flex;align-items:flex-end;gap:8px}
+.ta{flex:1 1 0;min-width:0;border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:14px;min-height:56px;color:var(--mfg);background:#fff}
+.tglrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--mfg)}
+.staged{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12px}
+.sublabel{font-size:11px;font-weight:600;color:var(--mfg);text-transform:uppercase;letter-spacing:.04em;margin:0 0 6px}
+.state{border:1px dashed var(--border);border-radius:10px;padding:10px;margin-top:8px;min-width:0}
+.states{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.states .st{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;padding:4px 8px;background:#fff;font-size:12px}
+.states .st small{color:var(--mfg)}
+.state>.sublabel{margin-bottom:8px}
+/* record page + panel */
+.record{padding:20px;background:#fafafa;min-height:520px}
+.record .card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px}
+.record .top{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.record h1{font-size:20px;margin:0}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px 16px;margin-top:12px;font-size:13px}
+.kv span{display:block;color:var(--mfg);font-size:12px}
+.sla{margin-top:12px;border-radius:8px;background:#fde8ee;color:#b4143c;padding:8px 12px;font-size:13px}
+.split{display:flex;align-items:stretch}
+.split .main{flex:1;min-width:0}
+.split .panel{flex:none}
+.panel{display:flex;flex-direction:column;width:420px;height:auto;border-left:1px solid rgba(225,227,234,.6);background:linear-gradient(to bottom,#fff,rgba(244,244,247,.7));flex:none}
+.panel.m{width:100%;border-left:0}
+.panel .ph{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);background:rgba(255,255,255,.85);padding:12px 16px}
+.panel .ph h3{margin:0;font-size:16px}
+.panel .ph .ib{display:flex;gap:4px}
+.ibtn{width:32px;height:32px;border-radius:999px;border:0;background:none;display:inline-flex;align-items:center;justify-content:center}
+.ibtn:hover{background:var(--muted)}
+.panel .search{display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:12px;background:#fff;height:34px;padding:0 10px;margin:10px 12px 0;color:var(--mfg);font-size:13px}
+.panel .pt{flex:1;min-width:0;padding:16px}
+.panel .pt .t{gap:12px}
+.panel .bub.a{background:rgba(255,255,255,.85)}
+.panel .pf{border-top:1px solid var(--border);background:rgba(255,255,255,.85);padding:12px;display:flex;gap:8px;align-items:center}
+.panel .pf .inp{flex:1;border:1px solid var(--border);border-radius:12px;height:36px;padding:0 12px;font-size:14px;color:var(--mfg);display:flex;align-items:center;background:#fff}
+.panel .btn.pri.sq{border-radius:12px;width:36px;height:36px;padding:0;justify-content:center}
+.pbtn{border-radius:6px;padding:6px 12px;font-size:12px;font-weight:500;border:1px solid var(--border);background:#fff}
+.pbtn.p{background:var(--primary);color:#fff;border-color:var(--primary)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.viewtrace{margin-top:6px;border-top:1px solid rgba(225,227,234,.5);padding-top:6px;font-size:11px;color:var(--mfg);text-decoration:underline;display:inline-flex;align-items:center;gap:4px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:10px;background:#fff}
+.seg button{border:0;background:none;padding:6px 12px;font-size:13px}
+.seg button[aria-pressed=true]{background:var(--primary-soft);color:var(--primary-ink);font-weight:600}
+.panel:not(.trace) .trace{display:none!important}
+.wa ol,.wa ul{margin:4px 0;padding-left:22px}.wa li{margin:2px 0}
+.bub p.wa{white-space:normal}
+.sep{font-size:11px;font-weight:600;color:var(--mfg);text-align:center;text-transform:uppercase;letter-spacing:.05em}
+/* markdown table (today) */
+.md table{border-collapse:collapse;width:100%;margin:8px 0;font-size:12px}
+.md th,.md td{border:1px solid var(--border);padding:4px 6px;text-align:left}
+.md strong{font-weight:600}
+.wa strong{font-weight:600}.wa ol{margin:6px 0;padding-left:20px}
+.wa a,.md a{color:inherit;text-decoration:underline;text-underline-offset:2px;word-break:break-all}
+.md a{color:var(--primary)}
+.side{display:flex;gap:16px;flex-wrap:wrap}.side .panel{border:1px solid var(--border);border-radius:12px}
+table.map{border-collapse:collapse;width:100%;background:#fff;font-size:13px}
+table.map th,table.map td{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top}
+table.map th{background:var(--muted)}
+code{font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.sec-d{margin-top:32px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M21 12.5l-8.5 8.5a5 5 0 0 1-7-7L14 5.5a3.5 3.5 0 0 1 5 5L10.5 19a2 2 0 0 1-3-3L15 8.5"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M3 11l18-8-8 18-2-8-8-2z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/></symbol>
+  <symbol id="i-hist" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="M6 6l6 6-6 6M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="8" r="2"/><path d="M6 8v8M18 10c0 5-12 2-12 6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></symbol>
+</svg>
+
+<div class="page">
+<h1>AGENTIC-UNIFY mock v1</h1>
+<p class="lead">Real: the staff panel exchange on the stock inquiry (wording from today's stored answers, masked), and every component shown, which is copied from the repo's current look. Illustrative: the console turns, the sales report, the chat-lane action reply, the write card with countdown, the clarify chips and the formatting sample; dev has no real case for them. The Agent toggle and the "Forced" reason word are the only new controls.</p>
+
+<div class="tabs" role="tablist" id="tabs">
+  <button role="tab" data-t="c1280" aria-selected="true">Console (1280)</button>
+  <button role="tab" data-t="c375" aria-selected="false">Console (375)</button>
+  <button role="tab" data-t="p1280" aria-selected="false">Panel (1280 beside a record page)</button>
+  <button role="tab" data-t="p375" aria-selected="false">Panel (375)</button>
+  <button role="tab" data-t="fmt" aria-selected="false">Formatting in the panel</button>
+</div>
+
+<!-- ============ TEMPLATES ============ -->
+<template id="tpl-console-thread">
+<div class="t">
+  <div class="sublabel">Turn 1 (ILLUSTRATIVE)</div>
+  <div class="b u"><div class="bub u"><p>stock for SRT93-SS?</p></div></div>
+  <div class="b"><div class="bub a">
+    <p class="wa">*Stock: SRT93-SS*
+Stainless Steel Hand Bidet In Chrome Finish
+On hand: 1,000
+Reserved: 200
+Available: 800</p>
+    <div class="pillrow">
+      <button class="copy" type="button" aria-label="Copy"><svg class="ico s"><use href="#i-copy"/></svg>Copy</button>
+      <span class="vpill">v108</span>
+      <a href="#" onclick="return false">trace</a>
+    </div>
+    <div class="pillrow">
+      <span class="pillwrap"><button class="pillbtn" type="button" data-pop><span class="badge sec">Chat</span></button>
+        <dl class="pop open" style="margin:0"><div><dt>Reason</dt><dd>Classified</dd></div><div><dt>Score</dt><dd>0.91</dd></div><div><dt>Model</dt><dd>jev-1.14.0</dd></div><div><dt>Time</dt><dd>380 ms</dd></div></dl>
+      </span>
+    </div>
+      </div></div>
+
+  <div class="sublabel">Turn 2 (ILLUSTRATIVE)</div>
+  <div class="b u"><div class="bub u"><p>compare this year's sales of this product by month and flag the drop</p></div></div>
+  <div class="b"><div class="bub a">
+    <p class="wa">*SRT93-SS sales, 2026 vs 2025*
+1. Jan: RM 41,200 (+4%)
+2. Feb: RM 39,800 (+2%)
+3. Mar: RM 44,100 (+6%)
+4. Apr: RM 27,300 (-31%)
+*Drop flagged in April.* Orders fell from 38 to 24.</p>
+    <div class="pillrow">
+      <button class="copy" type="button"><svg class="ico s"><use href="#i-copy"/></svg>Copy</button>
+      <a href="#" onclick="return false">trace</a>
+    </div>
+    <div class="pillrow">
+      <span class="pillwrap"><button class="pillbtn" type="button" data-pop><span class="badge pri">Agent</span></button>
+        <dl class="pop"><div><dt>Reason</dt><dd>Classified</dd></div><div><dt>Score</dt><dd>0.88</dd></div><div><dt>Model</dt><dd>gemini-3.5-flash</dd></div><div><dt>Time</dt><dd>6200 ms</dd></div></dl>
+      </span>
+    </div>
+    <div class="meta"><span>2 rounds</span><span class="badge sec">Resolve: ok</span><span class="badge sec">Report ask: ok</span></div>
+    <div class="steps"><button type="button" aria-expanded="true">Steps</button>
+      <ul>
+        <li>2 rounds</li>
+        <li>Tokens: 6,420 in, 910 out</li>
+        <li><button type="button">Thinking (round 1)</button><p class="rs">Need the product first, then the monthly report for it.</p></li>
+        <li>crm_resolve: ok (120 ms)</li>
+        <li><button type="button">Thinking (round 2)</button></li>
+        <li>crm_report_ask: ok (900 ms)</li>
+        <li><button type="button">Thinking (final answer)</button></li>
+      </ul>
+    </div>
+  </div></div>
+
+  <div class="sublabel">Turn 3: a write (ILLUSTRATIVE)</div>
+  <div class="b u"><div class="bub u"><p>approve PR26-0000</p></div></div>
+  <div class="b"><div class="bub a">
+    <p class="wa">I will approve this purchase request. Please confirm.</p>
+    <ul class="lines"><li>Purchase request PR26-0000</li><li>Decision: pending -> approved</li></ul>
+    <div class="pillrow"><span class="pillwrap"><button class="pillbtn" type="button" data-pop><span class="badge pri">Agent</span></button>
+      <dl class="pop"><div><dt>Reason</dt><dd>Pending action</dd></div><div><dt>Score</dt><dd>-</dd></div><div><dt>Model</dt><dd>gemini-3.5-flash</dd></div><div><dt>Time</dt><dd>2100 ms</dd></div></dl></span></div>
+    <div class="propose"><button class="btn sm pri" type="button"><svg class="ico s"><use href="#i-check"/></svg>Confirm change</button><button class="btn sm" type="button"><svg class="ico s"><use href="#i-x"/></svg>Cancel</button></div>
+  </div></div>
+  <div class="state"><div class="sublabel">Same card, state 2: after Confirm, grace window</div>
+    <div class="b"><div class="bub a" style="max-width:100%">
+      <p class="wa">I will approve this purchase request. Please confirm.</p>
+      <div class="acts">
+        <div><span class="badge ok">Done</span></div>
+        <div>Approve purchase request PR26-0000</div>
+        <p class="chg">decision: pending -> approved</p>
+        <div class="wait"><div class="w"><div class="bar"><i></i></div><span>0:07</span></div><button class="btn sm" type="button" style="width:fit-content"><svg class="ico s"><use href="#i-undo"/></svg>Undo</button></div>
+      </div>
+    </div></div>
+  </div>
+  <div class="state"><div class="sublabel">State 3: outcome after the window lapses</div>
+    <div class="b"><div class="bub a"><span class="badge ok">Done</span><p style="margin-top:6px">Purchase request PR26-0000 is approved.</p></div></div>
+  </div>
+
+  <div class="sublabel">Turn 4: forced (ILLUSTRATIVE)</div>
+  <div class="b u"><div class="bub u"><p>which customers bought this last month</p></div></div>
+  <div class="b"><div class="bub a">
+    <p class="wa">*Buyers last month*
+1. CUSTOMER A: 6 orders
+2. CUSTOMER B: 3 orders</p>
+    <div class="pillrow"><span class="pillwrap"><button class="pillbtn" type="button" data-pop><span class="badge pri">Agent</span></button>
+      <dl class="pop open"><div><dt>Reason</dt><dd>Forced</dd></div><div><dt>Score</dt><dd>-</dd></div><div><dt>Model</dt><dd>gemini-3.5-flash</dd></div><div><dt>Time</dt><dd>4800 ms</dd></div></dl></span></div>
+      </div></div>
+</div>
+</template>
+
+<template id="tpl-composer">
+<div class="composer">
+  <div class="r">
+    <button class="btn icon" type="button" aria-label="Attach image or audio" data-attach><svg class="ico"><use href="#i-clip"/></svg></button>
+    <div class="ta">Ask, or attach voice/image</div>
+    <button class="btn icon" type="button" aria-label="Record voice message"><svg class="ico"><use href="#i-mic"/></svg></button>
+    <button class="btn icon pri" type="button" aria-label="Send message"><svg class="ico"><use href="#i-send"/></svg></button>
+  </div>
+  <div class="tglrow">
+    <button class="chip toggle new" type="button" aria-pressed="false" data-agent-toggle><svg class="ico s"><use href="#i-spark"/></svg>Agent</button>
+    <span data-staged-slot></span>
+  </div>
+</div>
+</template>
+
+<!-- ============ A. CONSOLE 1280 ============ -->
+<section class="tab on" id="c1280">
+<div class="row stack">
+ <div class="frame w1280">
+  <div class="chrome">Chatbot console</div>
+  <div class="console" data-console>
+    <div class="head">
+      <div><label class="l">Contact</label><div class="sel"><span>Contact A</span><span class="car">&#9660;</span></div></div>
+      <div><label class="l">Prompt version</label><div class="sel"><span>v108 &middot; full &middot; production</span><span class="car">&#9660;</span></div></div>
+      <button class="btn sm" type="button"><svg class="ico s"><use href="#i-plus"/></svg>New conversation</button>
+    </div>
+    <div class="thread" data-thread></div>
+    <div data-composer></div>
+  </div>
+ </div>
+ <div class="notes">
+  <h3>Annotations</h3>
+  <p><span class="tag ill">ILLUSTRATIVE</span>All four turns: dev has no real console case for them. Wording is invented.</p>
+  <ul>
+   <li>One thread, no Bot/Agent tabs. One "New conversation" resets both sides.</li>
+   <li>Turn 1: pill popover open once. RoutePill.tsx words the reason code <code>classified</code> as "Classified", so that is shown; "Decided by Jev" is not an existing word.</li>
+   <li>Turn 2: steps open inside the same bubble, below the reply: rounds, tokens, reasoning items (collapsed), tool lines.</li>
+   <li>Turn 3: three states of one write: proposal, grace window with Undo, outcome.</li>
+   <li>Turn 4: <span class="tag new">NEW</span> reason word "Forced" in the same popover.</li>
+   <li>Composer: <span class="tag new">NEW</span> Agent toggle (dashed outline). With it off, the next message goes through the router; on, it is forced to the agent and then switches off, so it applies to the next message only. It is disabled while an attachment is present, because media always goes to the bot.</li>
+   <li>Turn 3 is the purchase request decision (<code>crm_purchase_request_decide</code>, grace window and Undo, <code>writes.py:1482-1494</code>). The real pill during the window is Done (<code>AgentConsole.tsx:271-272, 342</code>) with the countdown from <code>TakeoverCountdown</code> and Undo from <code>WaitingStep</code> (<code>AgentConsole.tsx:278-318</code>); copied as is, flagged to the lead.</li>
+  </ul>
+  <p>
+   <button class="btn sm" type="button" data-set-toggle="on">Toggle: on</button>
+   <button class="btn sm" type="button" data-set-toggle="off">Toggle: off</button>
+   <button class="btn sm" type="button" data-set-toggle="att">Attachment present</button>
+  </p>
+  <p class="sublabel">Toggle states (static)</p>
+  <div class="states">
+   <span class="st"><span class="chip toggle new" style="height:28px"><svg class="ico s"><use href="#i-spark"/></svg>Agent</span><small>off</small></span>
+   <span class="st"><span class="chip toggle new on" style="height:28px"><svg class="ico s"><use href="#i-spark"/></svg>Agent</span><small>on</small></span>
+   <span class="st"><span class="chip toggle new" style="height:28px;opacity:.5"><svg class="ico s"><use href="#i-spark"/></svg>Agent</span><small>disabled, attachment present</small></span>
+  </div>
+ </div>
+</div>
+</section>
+
+<!-- ============ A. CONSOLE 375 ============ -->
+<section class="tab" id="c375">
+<div class="row">
+ <div class="frame w375">
+  <div class="chrome">Chatbot console</div>
+  <div class="console" data-console>
+    <div class="head">
+      <div style="flex:1 1 100%"><label class="l">Contact</label><div class="sel" style="min-width:0;width:100%"><span>Contact A</span><span class="car">&#9660;</span></div></div>
+      <div style="flex:1 1 100%"><label class="l">Prompt version</label><div class="sel" style="min-width:0;width:100%"><span>v108 &middot; full &middot; production</span><span class="car">&#9660;</span></div></div>
+      <button class="btn sm" type="button"><svg class="ico s"><use href="#i-plus"/></svg>New conversation</button>
+    </div>
+    <div class="thread" data-thread></div>
+    <div data-composer></div>
+  </div>
+ </div>
+ <div class="notes">
+  <h3>Annotations</h3>
+  <p><span class="tag ill">ILLUSTRATIVE</span>Same thread as the 1280 frame at 375 px. Bubbles stay at 85% width, the popover is 288 px wide and the proposal buttons wrap. Headers stack.</p>
+  <p>The Agent toggle sits on its own row under the composer so the attach, text, mic and send controls keep their width. Off, on and disabled states are in the 1280 tab's annotation column.</p>
+ </div>
+</div>
+</section>
+
+<!-- ============ B. PANEL 1280 ============ -->
+<section class="tab" id="p1280">
+<div class="seg" data-view-toggle>
+  <button type="button" aria-pressed="true" data-view="staff">Staff member</button>
+  <button type="button" aria-pressed="false" data-view="trace">Trace viewer (system.ai_assistant_settings.view)</button>
+</div>
+<div class="row stack">
+ <div class="frame w1280">
+  <div class="chrome">Stock inquiries / SI26-0092</div>
+  <div class="split">
+   <div class="main record">
+    <div class="card">
+      <div class="top"><h1>Stock Inquiry - SI26-0092</h1><span class="badge warn">Pending purchasing</span></div>
+      <div class="sla">SLA escalated: tier 3, assigned to Person B, response/resolution overdue</div>
+      <div class="kv">
+        <div><span>Product code</span>SRT93-SS</div>
+        <div><span>Qty</span>976</div>
+        <div><span>Product</span>Stainless Steel Hand Bidet In Chrome Finish</div>
+        <div><span>Project customer</span>CUSTOMER A</div>
+        <div><span>Project name</span>PROJECT A</div>
+      </div>
+    </div>
+    <div class="card" style="min-height:240px"><strong style="font-size:13px">Lines</strong><p style="color:var(--mfg);font-size:13px;margin:6px 0 0">Record sections continue here.</p></div>
+   </div>
+   <div class="panel" data-panel></div>
+  </div>
+ </div>
+ <div class="notes">
+  <h3>Annotations</h3>
+  <p><span class="tag real">REAL</span>The first three turns: the real staff exchange on this inquiry, masked. Wording is from today's stored answers; the new path will word them its own way.</p>
+  <p><span class="tag ill">ILLUSTRATIVE</span>Below the divider: the sales report ask with steps, and the write ask (a purchase request decision) with proposal, countdown and Undo. Dev has no real case.</p>
+  <ul>
+   <li>Staff member view: answers and write cards only. No pill, no steps, no View trace link.</li>
+   <li>Trace viewer view: adds View trace, the pill and Steps for people with <code>system.ai_assistant_settings.view</code> (<code>canViewTrace</code>, <code>AIAssistantBubble.tsx:84</code>).</li>
+   <li>Replies render WhatsApp style (bold, italic, line breaks, links), no raw markers.</li>
+   <li><span class="tag ill">ILLUSTRATIVE</span> chat-lane action reply (opportunity logged): the chat lanes may change data as on WhatsApp, no Confirm card. The agent write card keeps Confirm. No escalation is mocked: its delivery target is not decided.</li>
+   <li>Header, thread search and history, New chat and the composer without attachments are today's panel. One row of clarify chips is shown as quick replies (illustrative).</li>
+  </ul>
+ </div>
+</div>
+</section>
+
+<!-- ============ B. PANEL 375 ============ -->
+<section class="tab" id="p375">
+<div class="seg" data-view-toggle>
+  <button type="button" aria-pressed="true" data-view="staff">Staff member</button>
+  <button type="button" aria-pressed="false" data-view="trace">Trace viewer (system.ai_assistant_settings.view)</button>
+</div>
+<div class="row">
+ <div class="frame w375">
+  <div class="chrome">AI assistant (full width on mobile)</div>
+  <div class="panel m" data-panel></div>
+ </div>
+ <div class="notes">
+  <h3>Annotations</h3>
+  <p><span class="tag real">REAL</span> first three turns, <span class="tag ill">ILLUSTRATIVE</span> report and write cards, as in the 1280 tab, at 375 px.</p>
+  <p>Chips and cards wrap inside the 85% bubble; nothing scrolls sideways.</p>
+ </div>
+</div>
+</section>
+
+<template id="tpl-panel">
+  <div class="ph"><h3>AI assistant</h3><div class="ib">
+    <button class="ibtn" type="button" aria-label="New chat"><svg class="ico"><use href="#i-plus"/></svg></button>
+    <button class="ibtn" type="button" aria-label="History"><svg class="ico"><use href="#i-hist"/></svg></button>
+    <button class="ibtn" type="button" aria-label="Collapse"><svg class="ico"><use href="#i-right"/></svg></button>
+  </div></div>
+  <div class="search"><svg class="ico s"><use href="#i-search"/></svg>Search conversations</div>
+  <div class="pt"><div class="t">
+    <div class="b u"><div class="bub u"><p>what happened to this stock inquiry</p></div></div>
+    <div class="b"><div class="bub a"><p class="wa">The current status of the stock inquiry SI26-0092 is pending_purchasing. It was set to this status by Person A on June 4, 2026. The inquiry is currently overdue, as the SLA due date was June 23, 2026, and it has breached the target lead time of 24 hours, with 646.2 hours elapsed.</p>
+      <div class="viewtrace trace"><svg class="ico s"><use href="#i-branch"/></svg>View trace</div></div></div>
+    <div class="b u"><div class="bub u"><p>who is supposed to handle this first</p></div></div>
+    <div class="b"><div class="bub a"><p class="wa">The stock inquiry SI26-0092 is assigned to Person B, who is the designated person responsible for handling it at the current SLA tier (Tier 3 - Director).</p>
+      <div class="viewtrace trace"><svg class="ico s"><use href="#i-branch"/></svg>View trace</div></div></div>
+    <div class="b u"><div class="bub u"><p>who is tier 1 and tier 2 for this?</p></div></div>
+    <div class="b"><div class="bub a"><p class="wa">The specific individuals assigned to Tier 1 and Tier 2 for the SLA of stock inquiries are not set in the current record. The only information available is that the inquiry is currently at Tier 3, assigned to Person B.</p>
+      <div class="viewtrace trace"><svg class="ico s"><use href="#i-branch"/></svg>View trace</div></div></div>
+
+    <div class="sep">Illustrative from here</div>
+    <div class="b u"><div class="bub u"><p>top 5 products by sales last quarter</p></div></div>
+    <div class="b"><div class="bub a">
+      <p class="wa">*Top 5 products, Q3*
+1. PRODUCT-A: RM 182,400
+2. PRODUCT-B: RM 149,900
+3. PRODUCT-C: RM 121,300
+4. PRODUCT-D: RM 96,050
+5. PRODUCT-E: RM 88,700
+Full report: https://example.com/reports/q3</p>
+      <div class="trace pillrow" style="margin-top:6px;display:flex;gap:8px;align-items:center;font-size:12px">
+        <span class="pillwrap"><button class="pillbtn" type="button" data-pop><span class="badge pri">Agent</span></button>
+        <dl class="pop"><div><dt>Reason</dt><dd>Classified</dd></div><div><dt>Score</dt><dd>0.86</dd></div><div><dt>Model</dt><dd>gemini-3.5-flash</dd></div><div><dt>Time</dt><dd>5200 ms</dd></div></dl></span>
+      </div>
+      <div class="trace meta"><span>2 rounds</span><span class="badge sec">Report ask: ok</span></div>
+      <div class="trace steps"><button type="button" aria-expanded="true">Steps</button>
+        <ul><li>2 rounds</li><li>Tokens: 5,100 in, 640 out</li>
+        <li><button type="button">Thinking (round 1)</button></li><li>crm_report_ask: ok (900 ms)</li>
+        <li><button type="button">Thinking (final answer)</button></li></ul></div>
+    </div></div>
+
+    <div class="b u"><div class="bub u"><p>log an opportunity for CUSTOMER A on PROJECT A, 976 of SRT93-SS</p></div></div>
+    <div class="b"><div class="bub a"><p class="wa">Done. I logged an opportunity for *CUSTOMER A*, project _PROJECT A_:
+- SRT93-SS, qty 976
+- Stage: New
+Open it: https://example.com/opportunities/demo</p>
+      <div class="trace pillrow" style="margin-top:6px"><span class="badge sec">Chat</span></div></div></div>
+
+    <div class="b u"><div class="bub u"><p>approve PR26-0000</p></div></div>
+    <div class="b"><div class="bub a">
+      <p class="wa">I will approve this purchase request. Please confirm.</p>
+      <ul class="lines"><li>Purchase request PR26-0000</li><li>Decision: pending -> approved</li></ul>
+      <div class="trace pillrow" style="margin-top:6px"><span class="badge pri">Agent</span></div>
+      <div class="propose"><button class="pbtn p" type="button">Confirm change</button><button class="pbtn" type="button">Cancel</button></div>
+    </div></div>
+    <div class="state"><div class="sublabel">After Confirm: grace window</div>
+      <div class="b"><div class="bub a" style="max-width:100%">
+        <div class="acts" style="margin-top:0;border-top:0;padding-top:0">
+          <div><span class="badge ok">Done</span></div>
+          <div>Approve purchase request PR26-0000</div>
+          <p class="chg">decision: pending -> approved</p>
+          <div class="wait"><div class="w"><div class="bar"><i></i></div><span>0:07</span></div><button class="btn sm" type="button" style="width:fit-content"><svg class="ico s"><use href="#i-undo"/></svg>Undo</button></div>
+        </div>
+      </div></div>
+    </div>
+    <div class="state"><div class="sublabel">Then: outcome</div>
+      <div class="b"><div class="bub a"><span class="badge ok">Done</span><p style="margin-top:6px">Purchase request PR26-0000 is approved.</p></div></div>
+    </div>
+    <div class="chips"><button class="chip" type="button">Show me last month</button><button class="chip" type="button">By customer</button><button class="chip" type="button">Export</button></div>
+  </div></div>
+  <div class="pf"><div class="inp">Ask the assistant...</div><button class="btn pri sq" type="button" aria-label="Send message"><svg class="ico"><use href="#i-send"/></svg></button></div>
+</template>
+
+<!-- ============ C. FORMATTING ============ -->
+<section class="tab" id="fmt">
+<div class="row">
+ <div class="panel" style="width:420px;height:auto;border:1px solid var(--border);border-radius:12px">
+   <div class="ph"><h3>AI assistant</h3></div>
+   <div class="pt"><div class="t">
+    <div class="b u"><div class="bub u"><p>top 5 products by sales last quarter</p></div></div>
+    <div class="b"><div class="bub a"><p class="wa">*Top 5 products, Q3*
+Best seller was _PRODUCT-A_ by a wide margin.
+1. *PRODUCT-A*: RM 182,400
+2. *PRODUCT-B*: RM 149,900
+3. *PRODUCT-C*: RM 121,300
+- Watch: PRODUCT-D fell _12%_ on Q2
+- Watch: PRODUCT-E is flat
+Full report: https://example.com/reports/q3</p></div></div>
+   </div></div>
+ </div>
+ <div class="notes">
+  <h3>Annotations</h3>
+  <p><span class="tag ill">ILLUSTRATIVE</span>One panel reply, rendered. Bold, italic, a numbered list, a bullet list, a link and line breaks; no raw marker characters on screen in the panel.</p>
+  <p>The same source text as raw characters, for the mapping:</p>
+  <pre style="white-space:pre-wrap;background:var(--muted);border-radius:8px;padding:8px;font-size:12px;margin:0 0 8px">*Top 5 products, Q3*
+Best seller was _PRODUCT-A_ by a wide margin.
+1. *PRODUCT-A*: RM 182,400
+2. *PRODUCT-B*: RM 149,900
+3. *PRODUCT-C*: RM 121,300
+- Watch: PRODUCT-D fell _12%_ on Q2
+- Watch: PRODUCT-E is flat
+Full report: https://example.com/reports/q3</pre>
+  <ul>
+   <li>Asterisk pair: bold. Underscore pair: italic. Bare https link: clickable.</li>
+   <li>Line breaks are kept as typed.</li>
+   <li>Numbered and bullet lines render as real lists with a hanging indent (new: WhatsAppText does not do this today).</li>
+  </ul>
+ </div>
+</div>
+</section>
+
+<!-- ============ D. MAP ============ -->
+<div class="sec-d">
+<h2>Element map</h2>
+<table class="map">
+<thead><tr><th>Element</th><th>Reuses</th><th>Repo path</th><th>New?</th></tr></thead>
+<tbody>
+<tr><td>Route pill and popover (Reason, Score, Model, Time)</td><td>RoutePill</td><td><code>sorento_crm_frontend/app/(protected)/system-management/chatbot-console/components/RoutePill.tsx</code></td><td>No (new reason word "Forced", see below)</td></tr>
+<tr><td>Reason word "Forced"</td><td>REASON_WORDS in RoutePill</td><td><code>.../chatbot-console/components/RoutePill.tsx</code></td><td>NEW word</td></tr>
+<tr><td>Steps disclosure</td><td>StepsDisclosure (local, not exported)</td><td><code>.../chatbot-console/components/AgentConsole.tsx</code></td><td>No (must be moved out to share)</td></tr>
+<tr><td>Reasoning item</td><td>ReasoningItem (local)</td><td><code>.../chatbot-console/components/AgentConsole.tsx</code></td><td>No (move out)</td></tr>
+<tr><td>Rounds and tool chips</td><td>ReplyMeta (local)</td><td><code>.../chatbot-console/components/AgentConsole.tsx</code></td><td>No (move out)</td></tr>
+<tr><td>Confirm / Cancel card</td><td>ProposalActions (local)</td><td><code>.../chatbot-console/components/AgentConsole.tsx</code></td><td>No (move out)</td></tr>
+<tr><td>Before/after block and status</td><td>ActionsBlock (local)</td><td><code>.../chatbot-console/components/AgentConsole.tsx</code></td><td>No (move out)</td></tr>
+<tr><td>Countdown with Undo</td><td>WaitingStep (local)</td><td><code>.../chatbot-console/components/AgentConsole.tsx</code></td><td>No (move out)</td></tr>
+<tr><td>Outcome bubble</td><td>ActionOutcome (local)</td><td><code>.../chatbot-console/components/AgentConsole.tsx</code></td><td>No (move out)</td></tr>
+<tr><td>Countdown bar</td><td>TakeoverCountdown</td><td><code>sorento_crm_frontend/app/(protected)/sla-management/conversation-sla-tracking/components/TakeoverCountdown.tsx</code></td><td>No</td></tr>
+<tr><td>WhatsApp-style reply text</td><td>WhatsAppText</td><td><code>sorento_crm_frontend/components/chatbot/WhatsAppText.tsx</code></td><td>No in console; in the panel it replaces the markdown block (new use). Gaps below.</td></tr>
+<tr><td>Real lists (hanging indent) for numbered and bullet lines</td><td>none: WhatsAppText leaves them as typed lines today</td><td><code>sorento_crm_frontend/components/chatbot/WhatsAppText.tsx</code></td><td>NEW</td></tr>
+<tr><td>Markdown links <code>[text](url)</code> and <code>**double bold**</code></td><td>none: not parsed, only bare http(s)/www URLs and single-marker bold, italic, strike, code fence</td><td><code>sorento_crm_frontend/lib/whatsappText.ts</code></td><td>NEW only if the brain can emit them (it should not)</td></tr>
+<tr><td>Chat-lane action reply (opportunity logged)</td><td>panel message bubble with WhatsAppText</td><td><code>AIAssistantBubble.tsx</code></td><td>No (illustrative)</td></tr>
+<tr><td>Attachment list on a reply</td><td>TurnAttachments</td><td><code>sorento_crm_frontend/components/chatbot/TurnAttachments.tsx</code></td><td>No</td></tr>
+<tr><td>Console bubble, copy, trace link, prompt pill</td><td>MessageBubble (local), MessageBubbleActions</td><td><code>.../chatbot-console/components/ChatbotConsole.tsx</code>, <code>sorento_crm_frontend/components/common/conversation/MessageBubbleActions.tsx</code></td><td>No</td></tr>
+<tr><td>Contact picker and prompt version select</td><td>SearchableSelect</td><td><code>sorento_crm_frontend/components/common/SearchableSelect.tsx</code></td><td>No</td></tr>
+<tr><td>Composer (attach, mic, text, send)</td><td>ChatbotConsole composer</td><td><code>.../chatbot-console/components/ChatbotConsole.tsx</code></td><td>No</td></tr>
+<tr><td>Agent toggle chip</td><td>none (styled like the quick-reply chip)</td><td><code>.../chatbot-console/components/ChatbotConsole.tsx</code> (to add)</td><td>NEW</td></tr>
+<tr><td>New conversation button</td><td>Button, one instead of two</td><td><code>.../chatbot-console/components/ChatbotConsole.tsx</code></td><td>No</td></tr>
+<tr><td>Pill badges, status badges</td><td>Badge</td><td><code>sorento_crm_frontend/components/ui/badge.tsx</code></td><td>No</td></tr>
+<tr><td>Panel shell, header, history, search, New chat, composer, chips, Confirm/Cancel, View trace</td><td>AIAssistantBubble</td><td><code>sorento_crm_frontend/app/components/common/AIAssistantBubble.tsx</code></td><td>No</td></tr>
+<tr><td>Pill, steps, countdown and Undo inside the panel</td><td>the console components above</td><td><code>AIAssistantBubble.tsx</code> importing the moved components</td><td>Reuse, new placement; shown only to people with the view permission (pill and steps)</td></tr>
+<tr><td>Trace-viewer toggle on this page</td><td>none</td><td>mock only</td><td>Mock aid, not in the app</td></tr>
+<tr><td>Record page header and prev/next navigation</td><td>RecordNavigation (not drawn)</td><td><code>sorento_crm_frontend/components/common/RecordNavigation.tsx</code></td><td>No</td></tr>
+</tbody></table>
+</div>
+</div>
+
+<script>
+(function(){
+
+  // mimic lib/whatsappText.ts: same inline pattern, bare-URL links; lines kept as typed
+  var PAT=/(^|[\s([{<"'])([*_~])(?=\S)([\s\S]*?\S)\2(?=$|[\s)\]}>"'.,!?:;])/;
+  function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+  function link(t){return esc(t).replace(/\b(?:https?:\/\/|www\.)[^\s<>]*[^\s<>.,;:!?)\]}'"]/gi,function(u){return '<a href="#" onclick="return false">'+u+'</a>'})}
+  function inl(t){
+    if(!t)return '';var m=PAT.exec(t);if(!m)return link(t);
+    var st=m.index+m[1].length,en=m.index+m[0].length,tag={'*':'strong','_':'em','~':'s'}[m[2]];
+    return inl(t.slice(0,st))+'<'+tag+'>'+inl(m[3])+'</'+tag+'>'+inl(t.slice(en));
+  }
+  function block(text){
+    var out='',lines=text.split('\n'),i=0;
+    while(i<lines.length){
+      var l=lines[i],m;
+      if((m=/^\d+\.\s+(.*)$/.exec(l))){var it=[];while(i<lines.length&&(m=/^\d+\.\s+(.*)$/.exec(lines[i]))){it.push('<li>'+inl(m[1])+'</li>');i++}out+='<ol>'+it.join('')+'</ol>'}
+      else if((m=/^[-\u2022]\s+(.*)$/.exec(l))){var ib=[];while(i<lines.length&&(m=/^[-\u2022]\s+(.*)$/.exec(lines[i]))){ib.push('<li>'+inl(m[1])+'</li>');i++}out+='<ul>'+ib.join('')+'</ul>'}
+      else{var tx=[];while(i<lines.length&&!/^(\d+\.|[-\u2022])\s+/.test(lines[i])){tx.push(inl(lines[i]));i++}out+=tx.join('<br>')}
+    }
+    return out;
+  }
+  function renderWa(root){root.querySelectorAll('.wa').forEach(function(e){if(e.dataset.done)return;e.dataset.done=1;e.innerHTML=block(e.textContent)})}
+  // tabs
+  var tabs=document.querySelectorAll('#tabs button');
+  tabs.forEach(function(b){b.addEventListener('click',function(){
+    tabs.forEach(function(x){x.setAttribute('aria-selected',x===b?'true':'false')});
+    document.querySelectorAll('section.tab').forEach(function(s){s.classList.toggle('on',s.id===b.dataset.t)});
+  })});
+  // console fill
+  document.querySelectorAll('[data-console]').forEach(function(c){
+    c.querySelector('[data-thread]').appendChild(document.getElementById('tpl-console-thread').content.cloneNode(true));
+    c.querySelector('[data-composer]').appendChild(document.getElementById('tpl-composer').content.cloneNode(true));
+  });
+  // panels
+  document.querySelectorAll('[data-panel]').forEach(function(p){
+    p.appendChild(document.getElementById('tpl-panel').content.cloneNode(true));
+  });
+  renderWa(document);
+  // view toggle (both panel tabs stay in sync)
+  document.querySelectorAll('[data-view-toggle] button').forEach(function(b){b.addEventListener('click',function(){
+    var on=b.dataset.view==='trace';
+    document.querySelectorAll('[data-view-toggle] button').forEach(function(x){x.setAttribute('aria-pressed',x.dataset.view===b.dataset.view?'true':'false')});
+    document.querySelectorAll('[data-panel]').forEach(function(p){p.classList.toggle('trace',on)});
+  })});
+  // pill popovers
+  document.addEventListener('click',function(e){
+    var t=e.target.closest('[data-pop]');if(!t)return;
+    var pop=t.parentNode.querySelector('.pop');pop.classList.toggle('open');
+  });
+  // agent toggle
+  function setToggle(mode){
+    document.querySelectorAll('[data-console]').forEach(function(c){
+      var t=c.querySelector('[data-agent-toggle]'),slot=c.querySelector('[data-staged-slot]');
+      t.classList.toggle('on',mode==='on');t.disabled=mode==='att';t.setAttribute('aria-pressed',mode==='on'?'true':'false');
+      slot.innerHTML=mode==='att'?'<span class="staged"><svg class="ico s"><use href="#i-clip"/></svg>photo.jpg</span>':'';
+    });
+  }
+  document.addEventListener('click',function(e){
+    var s=e.target.closest('[data-set-toggle]');if(s){setToggle(s.dataset.setToggle);return}
+    var t=e.target.closest('[data-agent-toggle]');if(t&&!t.disabled){setToggle(t.classList.contains('on')?'off':'on')}
+  });
+})();
+</script>
+</body>
+</html>

@@ -569,7 +569,7 @@ jobs:
           # comment fails when a test reads a documentation/ path this pair
           # would still classify as docs, so extend NOT_DOCS_RE when it does.
           DOCS_RE='^(documentation/|\.claude/|\.cursor/|[^/]+\.md$|\.github/PULL_REQUEST_TEMPLATE\.md$)'
-          NOT_DOCS_RE='^documentation/(reference/|user-guides/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$)'
+          NOT_DOCS_RE='^documentation/(reference/|plans/(_archive/)?[^/]+/(fixtures|samples|seed-assets)/|plans/autocount/PLAN-autocount-cross-repo-contract\.md$|plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4\.md$)'
           non_docs=$({
             printf '%s\n' "$files" | grep -Ev "$DOCS_RE" || true
             printf '%s\n' "$files" | grep -E "$NOT_DOCS_RE" || true
@@ -1592,6 +1592,17 @@ jobs:
       - name: No personal data in tracked files
         if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
         run: python3 scripts/pii_guard.py
+
+      # DOCS-SYNC-AUTO: every guide must publish to Outline on merge (the
+      # automatic push in outline-user-guides-sync.yml). Fails on a guide
+      # folder in neither PARENT_TITLES nor HELD_FOLDERS (its pages would be
+      # skipped as "unknown folder") or a title over Outline's 100-character
+      # limit (run 41178406314 died part-way on one). Stdlib only, no network.
+      # Runs on a docs-only PR too: a guides change is docs-only by design, so
+      # this step, not tests/test_sync_user_guides_guard.py, gates it.
+      - name: User guides publish to Outline
+        if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
+        run: python3 scripts/sync_user_guides_outline.py check
 
       # Not skipped on a validated tree: the marker is keyed on the merge
       # TREE, the scan reads commit HISTORY (a commit adding a secret and one

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_external_api_user
+from app.dependencies import get_external_api_user, staff_identity_refused
 from app.services.portal_service import PortalService
 
 router = APIRouter()
@@ -45,6 +45,10 @@ def mint_portal_token(
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
+    # This route takes its contact in the body, where the scope resolver's pair check cannot see it,
+    # and a staff identity never names a contact: the panel always blanks the pair (AGENTIC-UNIFY AC-6).
+    if current_user.get("key_user_id") and (payload.contact_id.strip() or payload.space_id.strip()):
+        raise staff_identity_refused()
     service = PortalService(db)
     try:
         token = service.mint_token(payload.contact_id, payload.space_id)
