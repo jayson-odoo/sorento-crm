@@ -520,17 +520,19 @@ def test_the_stored_error_carries_no_key_fragment(db):
     from app.services import knowledge_service as ks
 
     att = seed_attachment(db, seed_type(db))
-    secret = "AIzaSyZZTSECRET0123456789abcdefghij"
+    # Made-up, key-shaped (the AIza prefix redact_key_fragments looks for); built in parts so a
+    # secret scanner does not read the test fixture as a credential.
+    fake_provider_key = "AIza" + "Sy" + "ZZT" + "-not-a-real-key-" + "0" * 12
 
     def embed(texts):
-        raise RuntimeError(f"400 Bad Request for url https://example.test/embed?key={secret}")
+        raise RuntimeError(f"400 Bad Request for url https://example.test/embed?key={fake_provider_key}")
 
     ks.read_attachment(db, str(att.id), fetch=lambda a: pdf_bytes([TEXT_A]), ocr=never_ocr, embed=embed)
 
     row = _fresh(db, att)
     assert row.ai_read_status == "failed"
     assert row.ai_read_error
-    assert secret not in row.ai_read_error
+    assert fake_provider_key not in row.ai_read_error
     assert "AIzaSy" not in row.ai_read_error
 
 

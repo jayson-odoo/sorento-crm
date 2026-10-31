@@ -34,3 +34,7 @@ dbcc51b9b06fb995636e2f843c86ef2c85490ed3:sorento_crm_backend/tests/test_inbox_qu
 # 23-char test fixtures (fake/test/dummy words, never a real or dev key, never read from any env or DB).
 31fce57a5143cd45ea15050fd1a0eae3efa3626d:sorento_crm_backend/tests/chatbot/agent/test_router.py:generic-api-key:26
 31fce57a5143cd45ea15050fd1a0eae3efa3626d:sorento_crm_backend/tests/chatbot/agent/test_router_settings_key.py:generic-api-key:26
+# AGENTIC-KNOWLEDGE (#2036): b93b9704 test_agentic_knowledge_extract.py:519 was a made-up key-shaped fixture
+# ("AIzaSyZZT..." plus an alphabet run) that proves provider errors are redacted; never a real or dev key.
+# Rewritten as a value built in parts in the fix commit that adds this line.
+b93b9704fd2d24e9cf84fc60c82e84ac83a2140a:sorento_crm_backend/tests/test_agentic_knowledge_extract.py:generic-api-key:519
