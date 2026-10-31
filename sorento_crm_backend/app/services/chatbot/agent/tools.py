@@ -49,7 +49,7 @@ def _defs(*rows: tuple[str, str, str | None]) -> dict[str, ToolDef]:
 
 #: `crm_resolve` is local (the bot's resolver, in process); the GRN summary is a plain route.
 NON_RENDER_TOOLS = frozenset(
-    {"crm_resolve", "crm_products_find", "crm_procurement_grn_summary", "crm_knowledge_search", "user_guides_read"}
+    {"crm_resolve", "crm_products_find", "crm_procurement_grn_summary", "crm_knowledge_search", "user_guides_read", "crm_knowledge_handoff"}
 )
 RESOLVE = "crm_resolve"
 FIND = "crm_products_find"
@@ -57,6 +57,9 @@ FIND = "crm_products_find"
 KNOWLEDGE = "crm_knowledge_search"
 #: The Outline guide reader. Open to every linked user; its call carries only `query`.
 GUIDES = "user_guides_read"
+#: AGENTIC-KNOWLEDGE W1 S4: local, contact principal only. Not in REGISTRY or CONTACT_TOOLS (those
+#: are the plan's table): the loop adds its schema for a contact and `_dispatch_inner` answers it.
+HANDOFF = "crm_knowledge_handoff"
 PLAN = "plan"
 ANSWER = "answer"
 
@@ -162,6 +165,7 @@ TOOL_LABELS: dict[str, str] = {
     "crm_resolve": "finding names and codes",
     "crm_products_find": "finding products",
     "crm_knowledge_search": "searching company documents",
+    "crm_knowledge_handoff": "passing a question to the marketing product team",
     "user_guides_read": "reading the CRM user guides",
     "crm_customer_asks_list": "your customer asks",
     "crm_customer_ask_update": "change a customer ask",
@@ -279,6 +283,18 @@ KNOWLEDGE_SCHEMA: dict[str, Any] = {
             "properties": {"query": {"type": "string", "description": "The question, in the user's words."}},
             "required": ["query"],
         },
+    },
+}
+
+HANDOFF_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": HANDOFF,
+        "description": (
+            "Call this when the product documents do not answer the customer's question. It offers a "
+            "hand-off to the marketing product team and returns the sentence to end your reply with."
+        ),
+        "parameters": {"type": "object", "properties": {}},
     },
 }
 
@@ -898,6 +914,28 @@ def _search_in_scope(db: Any, ctx: Any, query: str) -> dict:
         set_company_scope(db, previous)
 
 
+def _knowledge_handoff(db: Any, ctx: Any, args: Any) -> ToolResult:
+    """`crm_knowledge_handoff`: arm the marketing product team offer for this contact. It only
+    writes the open question; the ticket is made on the contact's own "yes" in a later turn."""
+    from app.services import knowledge_service
+    from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
+
+    if not is_contact_principal(ctx):
+        return ToolResult("denied", message=f"{HANDOFF} is not a tool you may use.")
+    if not isinstance(args, dict):
+        return ToolResult("invalid", message="Arguments must be an object of named values.")
+    unknown = sorted(k for k in args if k not in GUARD_PARAMS and k != VIEW_PARAM)
+    if unknown:
+        return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
+    try:
+        armed = bool(knowledge_service.arm_knowledge_miss_offer(db, str(ctx.contact_pk)))
+    except Exception:  # noqa: BLE001 - a tool failure is a result the model can work around
+        logger.warning("agent: %s failed", HANDOFF, exc_info=True)
+        return ToolResult("error", message=FIXED_ERROR)
+    offer = knowledge_service.KNOWLEDGE_MISS_OFFER if armed else REFER_TO_SALESMAN
+    return ToolResult("ok", data={"armed": armed, "say": f"{knowledge_service.KNOWLEDGE_MISS_LINE} {offer}"})
+
+
 def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
     """`crm_knowledge_search`: passages of uploaded documents for the turn's linked user, in process."""
     from app.services import knowledge_service
@@ -996,6 +1034,8 @@ def _dispatch_inner(
     from app.services.llm_provider import is_timeout
 
     seen = seen_ids if seen_ids is not None else set()
+    if name == HANDOFF:
+        return _knowledge_handoff(db, ctx, args)
     tool = REGISTRY.get(name) if isinstance(name, str) else None
     if tool is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")

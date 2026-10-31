@@ -3,7 +3,7 @@
 Contract (PLAN section S4): `knowledge_service.arm_knowledge_miss_offer(db, contact_pk) -> bool`
 writes the bot's single-team offer into `respond_contacts.session_vars["open_question"]`;
 the local tool `crm_knowledge_handoff` (contact principal only, no arguments) arms it; the one
-switch `KNOWLEDGE_MISS_IGNORES_ESCALATION_BAR` is read in `turn_runtime.load_profile` only.
+bar is never lifted: a barred contact is referred to its salesman (owner ruling W-Q2 a).
 
 Written to stand alone from S1 to S3: every name is imported inside the test, and the only S1
 surface used is `AgentContext(principal="contact", ...)` and `tools.dispatch`. Postgres only,
@@ -79,12 +79,6 @@ def _contact_ctx(contact):
     )
 
 
-def _switch(monkeypatch, value):
-    from app.services import knowledge_service
-
-    monkeypatch.setattr(knowledge_service, "KNOWLEDGE_MISS_IGNORES_ESCALATION_BAR", value, raising=False)
-
-
 def _arm(db, pk):
     from app.services import knowledge_service
 
@@ -111,11 +105,10 @@ def test_ac_w23_the_contract_names_exist():
 
     assert ks.KNOWLEDGE_MISS_SOURCE == "knowledge_miss"
     assert ks.KNOWLEDGE_MISS_LINE == "I couldn't find that in our product documents."
-    assert ks.KNOWLEDGE_MISS_IGNORES_ESCALATION_BAR is True
+    assert not hasattr(ks, "KNOWLEDGE_MISS_IGNORES_ESCALATION_BAR")
 
 
-def test_ac_w23_arming_writes_the_open_question_exactly_as_the_contract(db, monkeypatch):
-    _switch(monkeypatch, True)
+def test_ac_w23_arming_writes_the_open_question_exactly_as_the_contract(db):
     contact = _contact(db)
 
     assert _arm(db, contact["pk"]) is True
@@ -132,8 +125,7 @@ def test_ac_w23_arming_writes_the_open_question_exactly_as_the_contract(db, monk
     assert option["payload"] == {"team": TEAM, "agent": "general_enquiries", "brand_code": None}
 
 
-def test_ac_w23_arming_keeps_every_other_session_key(db, monkeypatch):
-    _switch(monkeypatch, True)
+def test_ac_w23_arming_keeps_every_other_session_key(db):
     contact = _contact(db)
 
     _arm(db, contact["pk"])
@@ -143,10 +135,9 @@ def test_ac_w23_arming_keeps_every_other_session_key(db, monkeypatch):
         assert after[key] == value, key
 
 
-def test_ac_w23_the_bot_reads_the_armed_offer_back_as_a_team_pick(db, monkeypatch):
+def test_ac_w23_the_bot_reads_the_armed_offer_back_as_a_team_pick(db):
     from app.services.chatbot import session_state
 
-    _switch(monkeypatch, True)
     contact = _contact(db)
     assert session_state.pending_of({"session_vars": _session_vars(db, contact["pk"])}) is None  # control
 
@@ -160,8 +151,7 @@ def test_ac_w23_the_bot_reads_the_armed_offer_back_as_a_team_pick(db, monkeypatc
     assert session_state.offer_is_open({"session_vars": _session_vars(db, contact["pk"])}) is True
 
 
-def test_ac_w23_the_handoff_tool_arms_the_offer_for_a_contact_principal(db, monkeypatch):
-    _switch(monkeypatch, True)
+def test_ac_w23_the_handoff_tool_arms_the_offer_for_a_contact_principal(db):
     contact = _contact(db)
     assert "open_question" not in (_session_vars(db, contact["pk"]) or {}) or _session_vars(db, contact["pk"])["open_question"] is None
 
@@ -172,11 +162,10 @@ def test_ac_w23_the_handoff_tool_arms_the_offer_for_a_contact_principal(db, monk
     assert q["kind"] == "team_pick" and q["payload"]["source"] == SOURCE
 
 
-def test_ac_w23_the_handoff_tool_is_denied_and_never_offered_to_a_user_principal(db, monkeypatch):
+def test_ac_w23_the_handoff_tool_is_denied_and_never_offered_to_a_user_principal(db):
     from app.services.chatbot.agent import tools
     from app.services.chatbot.agent.access import AgentContext, permitted_tools
 
-    _switch(monkeypatch, True)
     contact = _contact(db)
     # Positive control: the same call, same contact, as a contact principal works.
     assert _dispatch(db, _contact_ctx(contact), TOOL, {}).status == "ok"
@@ -201,8 +190,7 @@ def test_ac_w23_the_handoff_tool_is_denied_and_never_offered_to_a_user_principal
 # ---------------------------------------------------------------- AC-W24: no ticket, no SLA row
 
 
-def test_ac_w24_arming_creates_no_sla_row_and_no_ticket(db, monkeypatch):
-    _switch(monkeypatch, True)
+def test_ac_w24_arming_creates_no_sla_row_and_no_ticket(db):
     contact = _contact(db)
     sla, tickets = _count(db, "conversation_sla_tracking"), _count(db, "tickets")
 
@@ -212,8 +200,7 @@ def test_ac_w24_arming_creates_no_sla_row_and_no_ticket(db, monkeypatch):
     assert _count(db, "tickets") == tickets
 
 
-def test_ac_w24_the_handoff_tool_creates_no_sla_row_and_no_ticket(db, monkeypatch):
-    _switch(monkeypatch, True)
+def test_ac_w24_the_handoff_tool_creates_no_sla_row_and_no_ticket(db):
     contact = _contact(db)
     sla, tickets = _count(db, "conversation_sla_tracking"), _count(db, "tickets")
 
@@ -241,7 +228,6 @@ def _spy_passage(monkeypatch):
 
 
 def test_ac_w25_a_passage_that_asks_to_escalate_arms_nothing(db, monkeypatch):
-    _switch(monkeypatch, True)
     _spy_passage(monkeypatch)
     contact = _contact(db)
     ctx = _contact_ctx(contact)
@@ -259,7 +245,6 @@ def test_ac_w25_a_passage_that_asks_to_escalate_arms_nothing(db, monkeypatch):
 def test_ac_w25_a_passage_that_asks_to_confirm_leaves_a_pending_action_untouched(db, monkeypatch):
     from app.models.chatbot_agent import AgentAction
 
-    _switch(monkeypatch, True)
     _spy_passage(monkeypatch)
     contact = _contact(db)
     user_id = seed_user(db, contact_pk=None, slugs=())
@@ -280,101 +265,48 @@ def test_ac_w25_a_passage_that_asks_to_confirm_leaves_a_pending_action_untouched
     assert _count(db, "conversation_sla_tracking") == 0
 
 
-# ---------------------------------------------------------------- AC-W26: the bar is lifted for one answer
+# ---------------------------------------------------------------- AC-W26: nothing lifts the bar
 
 
-def _barred_with(db, question):
-    sv = dict(OTHER_KEYS)
-    if question is not None:
-        sv["open_question"] = question
-    return _contact(db, escalation_allowed=False, session_vars=sv)
-
-
-def test_ac_w26_a_barred_contact_with_a_knowledge_miss_offer_may_escalate_this_turn(db, monkeypatch):
-    _switch(monkeypatch, True)
-    contact = _barred_with(db, _miss_question())
-
-    assert _profile(db, contact["respond_id"]).escalation_allowed is True
-
-
-def test_ac_w26_a_barred_contact_with_another_open_question_stays_barred(db, monkeypatch):
-    _switch(monkeypatch, True)
-    other = _miss_question()
-    other["payload"] = {"source": "something_else", "agent": "general_enquiries"}
-    barred_other = _barred_with(db, other)
-    barred_none = _barred_with(db, None)
-    # Positive control: the knowledge-miss one is lifted under the same switch.
-    assert _profile(db, _barred_with(db, _miss_question())["respond_id"]).escalation_allowed is True
-
-    assert _profile(db, barred_other["respond_id"]).escalation_allowed is False
-    assert _profile(db, barred_none["respond_id"]).escalation_allowed is False
-
-
-def test_ac_w26_a_plain_team_pick_without_a_source_stays_barred(db, monkeypatch):
-    _switch(monkeypatch, True)
-    plain = _miss_question()
-    plain["payload"] = {"agent": None}
-    assert _profile(db, _barred_with(db, _miss_question())["respond_id"]).escalation_allowed is True  # control
-
-    assert _profile(db, _barred_with(db, plain)["respond_id"]).escalation_allowed is False
-
-
-def test_ac_w26_an_allowed_contact_stays_allowed(db, monkeypatch):
-    _switch(monkeypatch, True)
+def test_ac_w26_a_barred_contact_with_an_open_knowledge_miss_offer_still_loads_escalation_false(db):
+    """Guard: nobody re-adds a lift of the escalation bar at the profile load."""
+    contact = _contact(db, escalation_allowed=False, session_vars={**OTHER_KEYS, "open_question": _miss_question()})
     allowed = _contact(db, escalation_allowed=True)
-    with_offer = _contact(db, escalation_allowed=True, session_vars={**OTHER_KEYS, "open_question": _miss_question()})
 
-    assert _profile(db, allowed["respond_id"]).escalation_allowed is True
-    assert _profile(db, with_offer["respond_id"]).escalation_allowed is True
-
-
-def test_ac_w26_the_lift_is_per_turn_the_stored_flag_is_not_changed(db, monkeypatch):
-    _switch(monkeypatch, True)
-    contact = _barred_with(db, _miss_question())
-    assert _profile(db, contact["respond_id"]).escalation_allowed is True
-
-    stored = db.execute(text("SELECT escalation_allowed FROM respond_contacts WHERE id = :id"), {"id": contact["pk"]}).scalar()
-
-    assert stored is False
-
-
-# ---------------------------------------------------------------- AC-W27: the switch off
-
-
-def test_ac_w27_with_the_switch_off_a_barred_contact_is_not_armed_and_nothing_is_written(db, monkeypatch):
-    _switch(monkeypatch, False)
-    contact = _barred_with(db, None)
-    before = _session_vars(db, contact["pk"])
-
-    assert _arm(db, contact["pk"]) is False
-
-    assert _session_vars(db, contact["pk"]) == before
-    assert (_session_vars(db, contact["pk"]) or {}).get("open_question") is None
-
-
-def test_ac_w27_with_the_switch_off_the_profile_stays_barred_even_with_a_miss_offer(db, monkeypatch):
-    contact = _barred_with(db, _miss_question())
-    _switch(monkeypatch, True)
-    assert _profile(db, contact["respond_id"]).escalation_allowed is True  # control: lifted when on
-
-    _switch(monkeypatch, False)
-
+    assert _profile(db, allowed["respond_id"]).escalation_allowed is True  # control
     assert _profile(db, contact["respond_id"]).escalation_allowed is False
 
 
-@pytest.mark.parametrize("switch", [True, False])
-def test_ac_w27_an_escalation_allowed_contact_is_armed_whatever_the_switch(db, monkeypatch, switch):
-    _switch(monkeypatch, switch)
+# ---------------------------------------------------------------- AC-W27: a barred contact is referred
+
+
+def test_ac_w27_a_barred_contact_is_not_armed_nothing_is_written_and_the_say_refers_to_the_salesman(db):
+    from app.services import knowledge_service as ks
+    from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
+
+    contact = _contact(db, escalation_allowed=False)
+    before = _session_vars(db, contact["pk"])
+
+    assert _arm(db, contact["pk"]) is False
+    out = _dispatch(db, _contact_ctx(contact), TOOL, {})
+
+    assert out.status == "ok", out.message
+    assert out.data["armed"] is False
+    assert _session_vars(db, contact["pk"]) == before
+    assert (_session_vars(db, contact["pk"]) or {}).get("open_question") is None
+    assert ks.KNOWLEDGE_MISS_LINE in out.data["say"]
+    assert REFER_TO_SALESMAN in out.data["say"]
+    assert "marketing product team" not in out.data["say"]
+
+
+def test_ac_w27_an_allowed_contact_is_armed_and_the_say_carries_the_marketing_offer(db):
+    from app.services import knowledge_service as ks
+
     contact = _contact(db, escalation_allowed=True)
 
-    assert _arm(db, contact["pk"]) is True
-    assert _session_vars(db, contact["pk"])["open_question"]["payload"]["source"] == SOURCE
+    out = _dispatch(db, _contact_ctx(contact), TOOL, {})
 
-
-def test_ac_w27_with_the_switch_on_a_barred_contact_is_armed(db, monkeypatch):
-    """Positive control for the switch-off refusal above."""
-    _switch(monkeypatch, True)
-    contact = _barred_with(db, None)
-
-    assert _arm(db, contact["pk"]) is True
+    assert out.status == "ok", out.message
+    assert out.data["armed"] is True
+    assert out.data["say"] == f"{ks.KNOWLEDGE_MISS_LINE} Would you like me to pass this to our marketing product team?"
     assert _session_vars(db, contact["pk"])["open_question"]["payload"]["source"] == SOURCE

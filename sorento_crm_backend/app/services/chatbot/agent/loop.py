@@ -8,6 +8,7 @@ turn's tool results.
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
 import json
 import logging
@@ -31,6 +32,8 @@ from app.services.chatbot.agent.tools import (
     PLAN_SCHEMA,
     redact_ids,
     GUARD_PARAMS,
+    HANDOFF,
+    HANDOFF_SCHEMA,
     REGISTRY,
     RESOLVE,
     TOOL_LABELS,
@@ -719,6 +722,8 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
         )
     today = datetime.now(timezone.utc).date().isoformat()
     if principal == "contact":
+        if knowledge_service.KNOWLEDGE_TOOL in tool_names:
+            text = f"{text.rstrip()}\n\n{knowledge_service.KNOWLEDGE_CONTACT_PROTOCOL}"
         return f"{text}\n\nToday's date is {today}. You are answering a Sorento customer on WhatsApp."
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
@@ -1268,6 +1273,17 @@ def _run(
         reply = "The agent has no answer for this."
     if status != "failed":
         reply = to_whatsapp(reply)
+        # Code-added after the model's answer: the knowledge-miss line and the offer, once.
+        say = next(
+            (
+                str((e.get("data") or {}).get("say") or "")
+                for e in ledger.values()
+                if e.get("name") == HANDOFF and e.get("status") == "ok" and isinstance(e.get("data"), dict)
+            ),
+            "",
+        )
+        if say and say not in reply:
+            reply = f"{reply}\n\n{say}".strip()
     pending = None
     if status != "failed" and steps:
         # After verification: the block is built by code from the stored steps, so its figures are not flagged.
