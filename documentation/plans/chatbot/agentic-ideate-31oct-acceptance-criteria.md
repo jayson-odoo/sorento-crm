@@ -233,8 +233,9 @@ Owner rule: no sorry or busy bot replies; honest, plain wording. The live check 
 
 - **AC-NS-1 [BE]** The shipped text of `ideation_capture_error` is en "I couldn't save that idea just now. Please send it again.", ms "Saya tidak dapat menyimpan idea itu sekarang. Sila hantar sekali lagi.", zh "我刚才无法保存这个创意，请再发送一次。". None holds "sorry", "maaf" or "抱歉", in any case.
 - **AC-NS-2 [BE]** A transient shared-service failure, on the similar lookup and on the create, answers exactly that line, in the language the turn resolved. A permanent 4xx still answers `config_error`, unchanged.
-- **AC-NS-3 [BE]** The migration, on a key whose `production` label still points at the old stock text (compared strip-normalised), adds the next immutable version with the new text and moves the label, for each of the three keys (`chatbot_reply_ideation_capture_error`, `.ms`, `.zh`). `get_prompt` then returns the new text.
+- **AC-NS-3 [BE]** The migration, on a key whose `production` label still points at the old stock text (compared strip-normalised), adds the next immutable version with the new text and moves the label, for each of the three keys (`chatbot_reply_ideation_capture_error`, `.ms`, `.zh`). `get_prompt` then returns the new text. "Next" means above every version of the key, so an unpublished draft above the stock version is neither reused nor moved onto.
 - **AC-NS-4 [BE]** A text the owner edited is left alone with a warning: no new version, label unmoved. Each key is judged on its own, so an edited `.ms` does not stop `en` and `.zh`.
 - **AC-NS-5 [BE]** A re-run is a no-op: no further version. A key with no `production` label is skipped without error.
 - **AC-NS-6 [T]** `alembic heads` is single, and the new revision id is at most 32 characters.
+- **AC-NS-7 [BE]** `upgrade()` moves no other prompt's label: with `ai_assistant_configs.system_prompt` set and an owner's newer `agent_system` version on `production`, the label stays on that version after `upgrade()`. The seed is not called, because it re-pins that key (`ai_prompt_seed.py:170`).
 
