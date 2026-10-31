@@ -10,6 +10,7 @@ Postgres only, no network."""
 from __future__ import annotations
 
 import threading
+import types
 import uuid
 
 import pytest
@@ -40,6 +41,23 @@ def env(monkeypatch, db):
     monkeypatch.setattr(ll, "_sleep", lambda s: None, raising=False)
     monkeypatch.setattr(ll, "_jitter", lambda: 0.0, raising=False)
     monkeypatch.setattr(database, "SessionLocal", lambda: _Session(db))
+    monkeypatch.setattr(ll, "threading", _recording_threading())
+
+
+# Warm threads as `ll.warm` starts them. A scan of `threading.enumerate()` after `warm()` returned missed a thread
+# that had already finished (a provider failing on its first call), so the wait helper read "no warm started".
+_started: list[threading.Thread] = []
+
+
+def _recording_threading():
+    class Thread(threading.Thread):
+        def start(self):
+            _started.append(self)
+            super().start()
+
+    proxy = types.SimpleNamespace(**{k: getattr(threading, k) for k in dir(threading) if not k.startswith("__")})
+    proxy.Thread = Thread
+    return proxy
 
 
 # ---- 1. spec-key texts are stored
@@ -97,13 +115,14 @@ def _rows(ts):
 
 
 def _warm_and_wait(rows, emb):
-    before = {t for t in threading.enumerate() if t.name == "lookup-lists-warm"}
+    """True when `warm` started a warm thread (joined before returning), False when it started none."""
+    before = len(_started)
     ll.warm(rows, emb)
-    for t in threading.enumerate():
-        if t.name == "lookup-lists-warm" and t not in before:
-            t.join(10)
-            return True
-    return False
+    new = [t for t in _started[before:] if t.name == "lookup-lists-warm"]
+    for t in new:
+        t.join(10)
+        assert not t.is_alive(), "warm thread still running after 10 s"
+    return bool(new)
 
 
 def test_a_failed_warm_is_not_retried_by_the_next_turn(db, monkeypatch):

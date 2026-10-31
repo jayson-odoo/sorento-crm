@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 import hashlib
+import copy
 import json
 import logging
 import re
@@ -261,6 +262,15 @@ def _coerce_arg_to_list(raw: Any) -> list[str]:
     if "," in s:
         return [p.strip() for p in s.split(",") if p.strip()]
     return [s]
+
+
+def knowledge_tool_output(db: Any, user_id: str, args: dict[str, Any]) -> str:
+    """JSON of the knowledge search for `user_id`: the panel answers `crm_knowledge_search` in
+    process, because the MCP cannot see which staff member asks."""
+    from app.services import knowledge_service
+
+    query = str((args or {}).get("query") or "").strip()
+    return json.dumps(knowledge_service.search(db, user_id=user_id, query=query), default=str)
 
 
 class _TurnToolCache:
@@ -742,6 +752,9 @@ class AIAssistantChatService:
         pay for itself. Own trace span when it runs."""
         # Never compress guide markdown - inline links are load-bearing.
         if "user_guides_read" in (tool_name or ""):
+            return raw_output
+        # Passages carry the document, page and exact wording the answer cites.
+        if "crm_knowledge_search" in (tool_name or ""):
             return raw_output
         # Only worth compressing sizeable data payloads.
         if len(raw_output or "") < 400:
@@ -2190,6 +2203,18 @@ class AIAssistantChatService:
             lines.append(closing)
         return "\n".join(lines).strip()
 
+    def _may_read_documents(self, user_id: str) -> bool:
+        from app.services import knowledge_service
+        from app.services.user_service import UserPermissionService
+
+        try:
+            return bool(
+                UserPermissionService(self.db).check_user_has_permission(user_id, knowledge_service.READ_PERMISSION)
+            )
+        except Exception:  # noqa: BLE001 - a failed check is a refusal
+            logger.warning("knowledge: permission check failed", exc_info=True)
+            return False
+
     def _cached_tool_call(
         self,
         turn_cache: _TurnToolCache | None,
@@ -2204,12 +2229,19 @@ class AIAssistantChatService:
         ``client.call_tool()``. The cache stores the RAW tool output so any
         downstream transform (e.g. Outline-URL redaction) runs identically on a
         cached or freshly-fetched result.
+
+        ``crm_knowledge_search`` never goes to the MCP: it runs in process with the
+        panel's staff user (the MCP cannot tell which staff member asks).
         """
+        if tool_name == "crm_knowledge_search":
+            def load() -> str:
+                return knowledge_tool_output(self.db, client.staff_user_id, args)
+        else:
+            def load() -> str:
+                return client.call_tool(tool_name, args=args)
         if turn_cache is None:
-            return client.call_tool(tool_name, args=args)
-        return turn_cache.get_or_call(
-            tool_name, args, lambda: client.call_tool(tool_name, args=args)
-        )
+            return load()
+        return turn_cache.get_or_call(tool_name, args, load)
 
     def _build_uuid_lookup(
         self, resolution: "ResolutionResult | None"
@@ -2381,6 +2413,14 @@ class AIAssistantChatService:
                 self._mcp_schema_to_openai_tool("user_guides_read", tool_catalog["user_guides_read"])
             )
             bound_tool_names.append("user_guides_read")
+        # AGENTIC-KNOWLEDGE: the document search is local (no MCP tool) and bound only for a staff
+        # user who may open the files in Resources.
+        if user_id and self._may_read_documents(user_id):
+            from app.services.chatbot.agent.tools import KNOWLEDGE_SCHEMA
+
+            openai_tools.append(copy.deepcopy(KNOWLEDGE_SCHEMA))
+            bound_tool_names.append("crm_knowledge_search")
+            available.add("crm_knowledge_search")
         logger.info(
             "AI assistant agent tools bound count=%s names=%s",
             len(bound_tool_names),
@@ -2407,6 +2447,10 @@ class AIAssistantChatService:
         system = self._resolve_prompt("agent_system")
         if "USER GUIDE PROTOCOL" not in system:
             system = system.rstrip() + "\n\n" + self._resolve_prompt("synthesizer")
+        if "crm_knowledge_search" in bound_tool_names:  # the paragraph only where the tool is bound
+            from app.services.knowledge_service import with_knowledge_protocol
+
+            system = with_knowledge_protocol(system)
         source_context = "\n".join(
             [f"- {s.get('title')}: {str(s.get('why_selected') or '')[:200]}" for s in sources]
         )
@@ -3190,10 +3234,19 @@ class AIAssistantChatService:
                 "I could not produce an answer this turn. Please rephrase or provide more specific "
                 "identifiers (product code, order number, etc.)."
             )
+        from app.services.chatbot.agent import tools as agent_tools
+
         lines = ["Here is what I found from MCP tools:"]
         for r in tool_calls:
             prefix = "OK" if r.ok else "FAILED"
-            lines.append(f"- [{prefix}] {r.tool_name}: {r.output[:260]}")
+            output = r.output
+            if r.tool_name == agent_tools.KNOWLEDGE:
+                # This reply is stored and replayed into later turns' spans: document and page only.
+                try:
+                    output = json.dumps(agent_tools.trace_safe(r.tool_name, json.loads(output)), default=str)
+                except (TypeError, ValueError):
+                    output = "(document passages not shown)"
+            lines.append(f"- [{prefix}] {r.tool_name}: {output[:260]}")
         return "\n".join(lines)
 
     def _tool_output_is_error(self, output: str) -> tuple[bool, str]:

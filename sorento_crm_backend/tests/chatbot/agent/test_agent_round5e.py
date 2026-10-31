@@ -88,7 +88,7 @@ def _codes(out):
 def test_the_registry_holds_the_find_tool_with_its_slug_and_no_contact_grant():
     from app.services.chatbot.agent.tools import REGISTRY, TOOL_LABELS
 
-    assert len(REGISTRY) == 11
+    assert len(REGISTRY) == 13
     assert REGISTRY[FIND].user_permission == SLUG
     assert REGISTRY[FIND].contact_grant is None
     assert REGISTRY[FIND].render is False
