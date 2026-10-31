@@ -22,6 +22,8 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.chatbot import jev_client, session_state
 from app.services.chatbot.agent import actions as agent_actions
+from app.services.chatbot.agent import tools as agent_tools
+from app.services.chatbot.agent import writes as agent_writes
 from app.services.chatbot.agent.access import eligible_contact
 from app.services.chatbot.jev_client import JevError
 from app.services.chatbot.usage import record_turn_llm_usage
@@ -91,6 +93,7 @@ def decide_route(
     if prompt is None:
         return RouteDecision("chat", "router_failed:no_prompt")
     instructions, criteria, model = prompt
+    criteria = _with_agent_tools(criteria)
 
     state = _state(db, contact_respond_id, text)
     started = time.perf_counter()
@@ -191,6 +194,28 @@ def _router_prompt(db) -> tuple[str, dict[str, Any], str] | None:
     if not isinstance(criteria, dict) or not criteria:
         return None
     return instructions, criteria, row[1] or jev_client.DEFAULT_MODEL
+
+
+def agent_tool_labels() -> list[str]:
+    """Plain labels of what the agent can do: every write, then every per-user read. `tools.REGISTRY`
+    (stock, ETA, cost) is left out on purpose: the bot answers those lookups too and the static
+    criteria text already covers them. A tool without a label is skipped (a guard test catches it)."""
+    labels: list[str] = []
+    for name in [*agent_writes.WRITES, *agent_writes.USER_READS]:
+        label = agent_tools.TOOL_LABELS.get(name)
+        if label and label not in labels:
+            labels.append(label)
+    return labels
+
+
+def _with_agent_tools(criteria: dict[str, Any]) -> dict[str, Any]:
+    """A copy of the criteria whose agent entry lists the tools; the stored prompt is never changed."""
+    if "agent" not in criteria:
+        return criteria
+    agent = criteria["agent"]
+    agent = dict(agent) if isinstance(agent, dict) else {"what": str(agent)}
+    agent["tools"] = agent_tool_labels()
+    return {**criteria, "agent": agent}
 
 
 def _state(db, contact_respond_id: str, text: str) -> dict[str, Any]:
