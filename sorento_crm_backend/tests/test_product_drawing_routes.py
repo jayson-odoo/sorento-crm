@@ -733,24 +733,20 @@ def test_the_detail_is_a_404_for_the_requester_and_for_any_slug_off_the_task(sce
 
 
 def test_the_detail_is_session_only():
-    # `get_current_user`, never `get_current_user_or_api_key`: an integration key opens nothing.
-    from app.dependencies import get_current_user, get_current_user_or_api_key
+    # The endpoint's own principal is `get_current_user`, never `get_current_user_or_api_key`: an
+    # integration key opens nothing. (The router-level module guard uses the key variant for
+    # its own check; that is not the endpoint's principal, as in test_cost_price_permissions.)
+    import inspect
+
+    from app.dependencies import get_current_user
     from app.main import app
 
     (route,) = [
         r for r in app.routes
         if isinstance(r, APIRoute) and r.path == f"{SLA_BASE}/{{tracking_id}}/{DETAIL}" and "GET" in r.methods
     ]
-    calls = set()
-
-    def walk(dependant):
-        for dep in dependant.dependencies:
-            calls.add(dep.call)
-            walk(dep)
-
-    walk(route.dependant)
-    assert get_current_user in calls
-    assert get_current_user_or_api_key not in calls
+    principal = inspect.signature(route.endpoint).parameters["current_user"].default
+    assert principal.dependency is get_current_user
 
 
 def test_the_detail_of_a_non_media_task_is_a_409(scene):
