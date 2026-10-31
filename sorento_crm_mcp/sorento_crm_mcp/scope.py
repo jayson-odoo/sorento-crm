@@ -23,8 +23,6 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Iterator
 
-from mcp.server.lowlevel.server import request_ctx
-
 logger = logging.getLogger(__name__)
 
 SCOPE_PARAMS = ("contact_id", "space_id")
@@ -81,6 +79,10 @@ def forwarded_staff_id() -> str | None:
     stripped the two `x-mcp-*` headers from a caller that did not prove it holds the token."""
     if not _serving_read_tool.get():
         return None
+    # Imported here, not at module top: the backend's tests import `http_client` (which imports
+    # this module) in an env without the `mcp` package, and only a read tool reaches this line.
+    from mcp.server.lowlevel.server import request_ctx
+
     headers = getattr(getattr(request_ctx.get(None), "request", None), "headers", None)
     if headers is None or str(headers.get(STAFF_HEADER) or "").strip().lower() != STAFF_VALUE:
         return None
