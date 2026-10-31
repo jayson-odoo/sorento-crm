@@ -207,6 +207,10 @@ def test_send_link_resolves_contact_in_named_workspace(db, twins, monkeypatch):
     sent = {}
 
     class _FakeClient:
+        @classmethod
+        def for_contact_id(cls, db, contact_id):
+            return cls()
+
         def send_message(self, identifier, text):
             sent["identifier"] = identifier
             return {}
