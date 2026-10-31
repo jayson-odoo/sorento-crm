@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY panel, the staff principal on the chatbot brain
 
-Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slice 1 (staff principal, live chat turn) in Phase 2. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
+Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slices 1 (staff principal, live chat turn) and 2 (agent side, write routes, report path, opportunity, escalation) in Phase 2. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
 
 Behaviour: `CARD-agentic-unify-v2-31oct.md` and its owner table (on branch `crew/agentic-unify`, #2048). Its section 2 (test path) was overruled by the owner: a panel turn is live, with no WhatsApp send. This plan replaces that section.
 
@@ -63,6 +63,7 @@ AC-6: every read a lane makes inside the process rather than through MCP, for a 
 | Sales agent list for the parser | `CHAT/head/lookup_lists.py:589`, gated at `CHAT/engine.py:1252` | `master_data.sales_agents.view` | The sales agents screen's slug (`api/v1/master_data/sales_agents.py:51`) |
 | Sales agents a word names | `S.py:822`, `CHAT/lanes/business/report_ask.py:1194` | `master_data.sales_agents.view` | Same |
 | Supplier names in the low stock ask | `CHAT/lanes/business/low_stock_ask.py:162` | `procurement.suppliers.view` | The suppliers screen's slug |
+| A salesperson's own customers, to log an opportunity | `S/sales/opportunity_chat.py` `staff_customer_options` | Their own agents' customers, else `sales.opportunities.add` | The save asks for the slug again; a user with neither gets nothing |
 | Resolver | `S.py:155` (`resolve_reference_post`) | Open, called as the staff user with a blank contact pair | #2048 AC-14 keeps `lookup/resolve` open as a picker (owner ruling L10) |
 | Products, sets, families, spec values | `S.py:406, 588`, `CHAT/head/candidates.py`, `grounding.py`, `held_family.py`, `closed_lists_index.py`, `bare_size.py`, `lookup_lists.py:488, 754` | Open | #2048 AC-14 |
 | Categories and classes | `S.py:766, 981`, `CHAT/head/lookup_lists.py:628` | Open | #2048 AC-14 |

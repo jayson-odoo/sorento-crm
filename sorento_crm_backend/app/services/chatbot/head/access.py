@@ -75,7 +75,11 @@ def _hidden_spec_keys(db: Session, *, contact_id: str, space_id: str | None) -> 
     The registry read is the FULL one (B1, security review), not active-only:
     the hidden set is a READ, and a merely deactivated key must stay hidden or
     stay shown, whichever the stored policy already says.
+
+    A staff principal has no contact's policy: their product screens hide no spec key.
     """
+    if staff_principal.current() is not None:
+        return []
     from app.services.spec_visibility import (
         DEFAULT_HIDDEN_KEYS,
         default_policy,

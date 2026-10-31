@@ -50,6 +50,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from app.services.chatbot import jsc
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.contracts import PREVIEW
 
 logger = logging.getLogger(__name__)
@@ -1611,6 +1612,11 @@ def _assign(
         # was for, which is the offered one, not whatever the parser suggested.
         exc.escalation_team = team  # type: ignore[attr-defined]
         raise
+    if staff_principal.current() is not None:
+        # AC-15: a panel thread has no return path, so nobody replies into it: the reply names the
+        # person, and no assign or comment action exists to carry out.
+        name = jsc.get(sla, "assignee_name") or jsc.get(assignee, "assignee_name")
+        return [_send_message(_panel_follow_up(name), False)], _routing_record(context_item, body, assignee)
     actions = _assignment_actions(
         ctx,
         team,
@@ -1623,6 +1629,12 @@ def _assign(
         preview=False,
     )
     return actions, _routing_record(context_item, body, assignee)
+
+
+def _panel_follow_up(name: Any) -> str:
+    """AC-15: who has it, and how they get back to a staff member."""
+    who = jsc.nullish_str(name).strip() or "a colleague"
+    return f"I have passed this to {who}, who will follow up with you directly."
 
 
 def _assignment_actions(

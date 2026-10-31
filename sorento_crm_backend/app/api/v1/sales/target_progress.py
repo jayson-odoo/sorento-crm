@@ -8,6 +8,9 @@ reveal key (403 `sales_target_not_enabled`).
 
 API key only, for the reason `analysis.py` gives: the figures are the CONTACT's, which says
 nothing about a Bearer caller's own grant.
+
+An identity read (AGENTIC-UNIFY AC-7) has no contact: the staff member's permissions stand in for
+the reveal key, the targets are their own agents' in their active company.
 """
 from __future__ import annotations
 
@@ -39,7 +42,7 @@ def get_target_progress(
     db: Session = Depends(get_db),
     current_user: dict = Depends(_GATE),
 ):
-    from app.services.contact_field_reveal_service import granted_keys
+    from app.services.contact_field_reveal_service import granted_keys, staff_reveal_keys
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
     from app.services.sales import target_chat_scope
 
@@ -47,12 +50,25 @@ def get_target_progress(
         raise AppException(status_code=403, message="This route is for the chatbot only", code="api_key_required")
     contact_id = (contact_id or "").strip()
     space_id = (space_id or "").strip()
-    if not contact_id or not space_id:
+    staff_read = bool(current_user.get("key_user_id"))
+    if (not contact_id or not space_id) and not staff_read:
         raise AppException(
             status_code=422, message="contact_id and space_id are required", code="contact_identity_required"
         )
     if date_from and date_to and date_from > date_to:
         raise AppException(status_code=422, message="date_from is after date_to", code="date_range_inverted")
+    if staff_read:
+        if GRANT not in staff_reveal_keys(db, str(current_user["id"])):
+            raise AppException(
+                status_code=403, message="Sales target is not enabled for your account.", code="sales_target_not_enabled"
+            )
+        return target_chat_scope.staff_target_progress(
+            db,
+            user_id=str(current_user["id"]),
+            date_from=date_from,
+            date_to=date_to,
+            customer_ids=[c for raw in customer_ids or [] for c in raw.split(",") if c],
+        )
     resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
     if not resolved or GRANT not in granted_keys(db, resolved):
         raise AppException(

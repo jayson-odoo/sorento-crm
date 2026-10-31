@@ -60,6 +60,11 @@ Contract: `CARD-agentic-unify-v2-31oct.md`, `PLAN-agentic-unify-panel-31oct.md` 
 
 A labelled set of real panel questions run through both paths; "nothing lost" per the card. PR 4's ported tools (complaints, SLA, projects, order analytics, guides, complaint close, order cancel, IT ticket) come first. Until then a question those tools would answer gets an honest "can't yet".
 
+## Known limits
+
+- A panel escalation has the SLA clock and My Pending, but never climbs a tier and refuses a manual escalate: tier climbing goes through the conversation (`/integration/escalate`), which a panel task does not have. Contactless rows leave the runner's list so they cannot starve customers' escalations.
+- The chat lane logs an opportunity only when the published parser label carries `OPPORTUNITY_LINE` (UNVERIFIED at prod; `engine.py:6023` says v63 lacks it). Until then staff log one through the agent, with Confirm.
+
 ## Hand test
 
 Owner grants the permission to their own role, asks stock, a sales report and a record question on SI26-0092, logs an opportunity, approves a request and undoes it, escalates one question and sees it in the assignee's My Pending.

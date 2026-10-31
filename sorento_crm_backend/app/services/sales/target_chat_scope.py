@@ -95,13 +95,39 @@ def contact_company_ids(db: Session, contact_id: str) -> Set[str]:
         }
 
 
-def target_progress(
+def staff_target_progress(
     db: Session,
     *,
-    contact_id: str,
+    user_id: str,
     date_from: Optional[date],
     date_to: Optional[date],
     customer_ids: Sequence[str],
+) -> dict:
+    """`target_progress` for a staff member on an identity read (AGENTIC-UNIFY AC-7): a salesperson's
+    view of their own agents (through their linked contact), in their active company. No agent is an
+    answer with nothing in it, not a refusal."""
+    from app.models.base import get_company_scope
+    from app.services import own_scope
+
+    scope = get_company_scope(db)
+    return target_progress(
+        db,
+        contact_id=own_scope.me(db, user_id).contact_id,
+        date_from=date_from,
+        date_to=date_to,
+        customer_ids=customer_ids,
+        staff_companies={str(c) for c in scope} if isinstance(scope, frozenset) else set(),
+    )
+
+
+def target_progress(
+    db: Session,
+    *,
+    contact_id: Optional[str],
+    date_from: Optional[date],
+    date_to: Optional[date],
+    customer_ids: Sequence[str],
+    staff_companies: Optional[Set[str]] = None,
 ) -> dict:
     from app.services.contact_asker import classify
     from app.services.contact_customer_scope import contact_customer_scope
@@ -110,13 +136,16 @@ def target_progress(
     today = team_service._today()
     date_from = date_from or date_to or today
     date_to = date_to or date_from
-    asker = classify(db, contact_id)
-    if _user_revoked(db, contact_id):
-        asker = "revoked"
+    if staff_companies is not None:
+        asker = "salesperson"
+    else:
+        asker = classify(db, contact_id)
+        if _user_revoked(db, contact_id):
+            asker = "revoked"
     if asker not in ("dealer", "salesperson"):
         raise _forbidden("Sales targets are not available for this contact.", "sales_target_not_available")
 
-    company_ids = contact_company_ids(db, contact_id)
+    company_ids = staff_companies if staff_companies is not None else contact_company_ids(db, contact_id)
     named = {str(c) for c in customer_ids}
     own: List[SalesTarget] = []
     team: List[SalesTarget] = []
@@ -124,7 +153,7 @@ def target_progress(
         allowed = {str(c) for c in contact_customer_scope(db, contact_id).customer_ids}
         dealers = _dealer_targets(db, company_ids, date_from, date_to, allowed) if company_ids else []
     else:
-        agents = agents_for_contact(db, contact_id)
+        agents = agents_for_contact(db, contact_id) if contact_id else []
         agent_ids = {a.id for a in agents}
         owned: Set[str] = set()
         if agent_ids:

@@ -36,6 +36,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterator
 
+from app.services.chatbot import principal as staff_principal
+
 logger = logging.getLogger(__name__)
 
 
@@ -81,8 +83,11 @@ def _next_assignee(db: Any):
         working-hours check and the already-assigned check are the behaviour n8n has been
         getting, and a second implementation of them would drift.
         """
-        from app.api.v1.external.next_assignee import post_next_assignee
+        from app.api.v1.external.next_assignee import next_assignee_for_staff, post_next_assignee
 
+        principal = staff_principal.current()
+        if principal is not None:
+            return next_assignee_for_staff(db, body, body.get("company_id") or principal.active_company_id)
         return post_next_assignee(body=body, current_user={"id": None, "email": "chatbot"}, db=db)
 
     return call
@@ -122,9 +127,10 @@ def _reachable_pairs(db: Any):
         from app.models.base import company_scope
         from app.services.company_routing_service import resolve_routing_company
 
+        principal = staff_principal.current()
         company = resolve_routing_company(
             db,
-            company_id=body.get("company_id"),
+            company_id=body.get("company_id") or (principal.active_company_id if principal is not None else None),
             phone=body.get("contact_phone_number"),
         )
         company_id = str(company.company_id)
@@ -142,12 +148,18 @@ def _reachable_pairs(db: Any):
 
 def _sla_create(db: Any):
     def call(body: dict[str, Any]) -> dict[str, Any]:
-        from app.schemas.sla import ConversationSLATrackingCreate
+        from app.schemas.sla import ConversationSLANoContactCreate, ConversationSLATrackingCreate
         from app.services.sla_service import ConversationSLATrackingService
 
-        created = ConversationSLATrackingService(db).create_tracking(
-            ConversationSLATrackingCreate(**body)
-        )
+        principal = staff_principal.current()
+        if principal is not None:
+            created = ConversationSLATrackingService(db).create_no_contact_task(
+                ConversationSLANoContactCreate(**_panel_sla_body(db, body, principal))
+            )
+        else:
+            created = ConversationSLATrackingService(db).create_tracking(
+                ConversationSLATrackingCreate(**body)
+            )
 
         # The lane reads three fields off this for the comment; hand back a plain dict so
         # the seam's contract is a dict either way, stubbed or real.
@@ -156,9 +168,29 @@ def _sla_create(db: Any):
             "initiated_at": _iso(getattr(created, "initiated_at", None)),
             "due_at": _iso(getattr(created, "due_at", None)),
             "due_at_resolution": _iso(getattr(created, "due_at_resolution", None)),
+            # Who holds it now, after any cover: a panel reply names this person.
+            "assignee_name": _assignee_name(db, created) if principal is not None else None,
         }
 
     return call
+
+
+def _assignee_name(db: Any, created: Any) -> str | None:
+    from app.models.user import User
+
+    return db.query(User.name).filter(User.id == getattr(created, "assigned_to_id", None)).scalar()
+
+
+def _panel_sla_body(db: Any, body: dict[str, Any], principal: Any) -> dict[str, Any]:
+    """A panel escalation's SLA body: no contact to show the assignee who asked, so the enquiry says."""
+    from app.models.user import User
+
+    asker = db.query(User.name).filter(User.id == principal.user_id).scalar() or "A staff member"
+    return {
+        **{k: v for k, v in body.items() if k != "contact_phone_number"},
+        "company_id": body.get("company_id") or principal.active_company_id,
+        "source_message_text": f"{asker} (AI panel): {body.get('source_message_text') or ''}",
+    }
 
 
 def _staff_lookup(db: Any):

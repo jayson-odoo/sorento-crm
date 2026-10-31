@@ -27,25 +27,9 @@ ENVELOPE_KEY = "staff_principal"
 CUSTOMERS_VIEW = "order_management.customers.view"
 SALES_AGENTS_VIEW = "master_data.sales_agents.view"
 SUPPLIERS_VIEW = "procurement.suppliers.view"
+OPPORTUNITIES_ADD = "sales.opportunities.add"
 #: `PROMOTION_LIST_READERS` of `api/v1/marketing/promotions.py`, the promotions read's own gate.
 PROMOTION_READERS = ("marketing.promotions.view", "dealer_kit.page.view")
-
-#: What a field-reveal key asks of a staff member: the slug of the screen that shows that data. A
-#: contact holds these as grants (`contact_field_reveals`); a staff member's permissions answer them
-#: instead (AC-5). A key not listed is not held, so a key added later stays hidden until it is listed.
-_REVEAL_SLUGS: dict[str, str] = {
-    "inventory.sellable": "inventory.stock.view",
-    "purchase_orders.placed": "scm.purchase_orders.view",
-    "purchase_orders.supplier": "procurement.suppliers.view",
-    "purchase_orders.cost": "scm.purchase_orders.view",
-    "sales_orders.outstanding": "order_management.orders.view",
-    "sales_orders.sales_report": "sales.reports.view",
-    "scm.low_stock_report": "scm.reorder.run",
-    "chatbot.analytics": "chatbot.analytics.view",
-    "sales.sales_target": "sales.targets.view",
-}
-#: Every `delivery_orders.*` key is one screen's fields.
-_DELIVERY_ORDER_SLUG = "order_management.orders.view"
 
 
 @dataclass(frozen=True)
@@ -67,14 +51,9 @@ class StaffPrincipal:
 
     def reveal_keys(self, db: Any) -> list[str]:
         """The field-reveal keys this user's permissions answer, in `ctx.access.attributes` form."""
-        from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
+        from app.services.contact_field_reveal_service import staff_reveal_keys
 
-        needs = {
-            key: _DELIVERY_ORDER_SLUG if key.startswith("delivery_orders.") else _REVEAL_SLUGS.get(key)
-            for key, _label in FIELD_REVEAL_KEYS
-        }
-        held = {slug for slug in set(needs.values()) if slug and self.may(db, slug)}
-        return sorted(key for key, slug in needs.items() if slug in held)
+        return staff_reveal_keys(db, self.user_id)
 
 
 _CURRENT: ContextVar[StaffPrincipal | None] = ContextVar("chatbot_staff_principal", default=None)

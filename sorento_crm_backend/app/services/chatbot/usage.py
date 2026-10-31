@@ -41,6 +41,11 @@ FEATURE = "chatbot_parser"
 CLARIFIER_FEATURE = "chatbot_clarifier"
 
 
+def feature_name(feature: str) -> str:
+    """The name a call's usage is logged under: a staff principal's spend is the panel's (AC-17)."""
+    return f"panel_{feature.removeprefix('chatbot_')}" if staff_principal.current() is not None else feature
+
+
 def record_parser_usage(
     db: Session,
     *,
@@ -108,7 +113,7 @@ def record_turn_llm_usage(
                 user_id=staff.user_id if staff is not None else None,
                 conversation_id=staff.conversation_id if staff is not None else None,
                 contact_id=internal_id,
-                feature=f"panel_{feature.removeprefix('chatbot_')}" if staff is not None else feature,
+                feature=feature_name(feature),
                 provider=usage.get("provider"),
                 model=usage.get("model"),
                 prompt_tokens=int(usage.get("prompt_tokens") or 0),

@@ -9514,6 +9514,7 @@ def _run_opportunity_arm(
         space_id=space_id,
         dry_run=dry_run,
         turn_no=state.turn_no,
+        db=db,
     )
     turn_trace.add("opportunity", {"called": list(lane.called), "asking": (lane.slot or {}).get("asking"),
                                    "read_back": lane.pending is not None, "dry_run": dry_run})

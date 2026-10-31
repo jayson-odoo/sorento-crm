@@ -829,7 +829,7 @@ def _run(
 ):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
-    from app.services.chatbot.usage import record_turn_llm_usage
+    from app.services.chatbot.usage import feature_name, record_turn_llm_usage
 
     t0 = clock()
     budgets = budgets_from_settings(db)
@@ -1260,7 +1260,7 @@ def _run(
         from app.models.ai_assistant import AIAssistantUsageLog
 
         db.query(AIAssistantUsageLog).filter(
-            AIAssistantUsageLog.chatbot_turn_id == turn_id, AIAssistantUsageLog.feature == FEATURE
+            AIAssistantUsageLog.chatbot_turn_id == turn_id, AIAssistantUsageLog.feature == feature_name(FEATURE)
         ).update({AIAssistantUsageLog.was_answered: False}, synchronize_session=False)
     db.commit()
 

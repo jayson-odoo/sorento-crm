@@ -16,6 +16,8 @@ from typing import Any, Callable
 
 from app.services.ai_assistant_service import mcp_schema_to_openai_tool
 
+from app.services.chatbot import principal as staff_principal
+
 logger = logging.getLogger(__name__)
 
 #: Server-injected, never model-chosen.
@@ -583,6 +585,8 @@ def _sees_salespeople(db: Any, ctx: Any) -> bool:
     (the rule today's lookup block uses)."""
     from app.services import contact_asker
 
+    if staff_principal.current() is not None:
+        return staff_principal.current().may(db, staff_principal.SALES_AGENTS_VIEW)
     try:
         granted = "sales_orders.sales_report" in ctx.grants
         return contact_asker.may_ask_sales_ranking(db, str(ctx.contact_pk), granted=granted)[0] != "not_granted"

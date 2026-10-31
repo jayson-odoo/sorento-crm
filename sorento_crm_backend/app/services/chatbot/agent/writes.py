@@ -18,6 +18,7 @@ from typing import Any, Callable
 from fastapi import HTTPException
 from sqlalchemy import or_
 
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent.tools import ToolResult, _check_ids, _collect_uuids, _permitted, cap_result, clean_detail
 
 logger = logging.getLogger(__name__)
@@ -150,7 +151,8 @@ def run_as_user(
         user_id=str(ctx.user_id),
         real_user_id=str(getattr(ctx, "operator_user_id", None) or ctx.user_id),
         auth_method="agent",
-        contact_id=str(ctx.contact_pk),
+        # A panel turn's key names no contact row.
+        contact_id=None if staff_principal.current() is not None else str(ctx.contact_pk),
         tool_name=tool_name,
     )
     set_company_scope(db, company_scope_resolver._scope_for_user(db, who, None))

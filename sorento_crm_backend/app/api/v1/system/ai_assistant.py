@@ -39,6 +39,7 @@ from app.schemas.ai_prompt import (
     SetAgentModelResponse,
     SetLabelResponse,
 )
+from app.schemas.chatbot_turn import AgentActionResponse
 from app.api.v1.external.chat import (
     panel_service,
     CHATBOT_PROMPT_KEYS,
@@ -340,6 +341,53 @@ def send_ai_assistant_message(
         updated_at=conv.updated_at,
         messages=[_message_to_response(r) for r in rows],
     )
+
+
+# --- The agent's proposals on the panel (AGENTIC-UNIFY AC-22) ------------------
+#
+# The panel's own routes: its gate, and the user from the session. A client-sent contact is not read,
+# and another user's action reads as none.
+
+
+def _panel_action(decide, *args) -> AgentActionResponse:
+    try:
+        outcome = decide(*args)
+    except panel_service.agent_actions.ActionRefused as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND if exc.reason == "not_found" else status.HTTP_409_CONFLICT,
+            detail={"code": "action_refused", "reason": exc.reason},
+        )
+    return AgentActionResponse(
+        action_id=outcome.action_id, status=outcome.status, reply_text=outcome.reply_text, steps=outcome.steps
+    )
+
+
+@router.post("/ai-assistant/agent/actions/{action_id}/confirm", response_model=AgentActionResponse)
+def panel_action_confirm(
+    action_id: str,
+    user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
+    db: Session = Depends(get_db),
+):
+    return _panel_action(panel_service.confirm, db, str(user["id"]), action_id)
+
+
+@router.post("/ai-assistant/agent/actions/{action_id}/cancel", response_model=AgentActionResponse)
+def panel_action_cancel(
+    action_id: str,
+    user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
+    db: Session = Depends(get_db),
+):
+    return _panel_action(panel_service.cancel, db, str(user["id"]), action_id)
+
+
+@router.post("/ai-assistant/agent/actions/{action_id}/steps/{index}/withdraw", response_model=AgentActionResponse)
+def panel_action_withdraw(
+    action_id: str,
+    index: int,
+    user: dict = Depends(require_permission("system.ai_assistant_chat.use")),
+    db: Session = Depends(get_db),
+):
+    return _panel_action(panel_service.withdraw, db, str(user["id"]), action_id, index)
 
 
 # --- Prompt registry --------------------------------------------------------

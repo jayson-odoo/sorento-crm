@@ -98,6 +98,68 @@ def _scope_to_contact(db: Session, contact_id: str, agents: List[SalesAgent]) ->
     set_company_scope(db, scope)
 
 
+def staff_agents(db: Session, user_id: str) -> List[SalesAgent]:
+    """The user's own active agents, through their linked contact (`own_scope.me`)."""
+    from app.services import own_scope
+    from app.services.sales.portal_agent import agents_for_contact
+
+    contact_id = own_scope.me(db, user_id).contact_id
+    return agents_for_contact(db, contact_id) if contact_id else []
+
+
+def staff_customer_options(db: Session, *, user_id: str, may_add: bool, q: Optional[str]) -> dict:
+    """AGENTIC-UNIFY AC-12: the customers a holder of `sales.opportunities.add` may log for. A
+    salesperson's are their own agents' (the chat rule). Anyone else picks as the CRM's own form does,
+    from every customer of the active company (`customer_options`' CRM arm)."""
+    if not may_add:
+        raise _refused("opportunity_not_enabled")
+    agents = staff_agents(db, user_id)
+    if agents:
+        return customer_options(db, agents, q)
+    found = svc.customer_options(db, q=q, sales_agent_id=None)
+    ids = [row["customer_id"] for row in found["items"]]
+    rows = {c.id: c for c in db.query(Customer).filter(Customer.id.in_(ids)).all()} if ids else {}
+    items = [{"customer_id": rows[i].id, **(_customer_out(rows[i]) or {})} for i in ids if i in rows]
+    return {"items": items, "prospect": bool(found["prospect"]), "blocked": bool(found["blocked"])}
+
+
+def staff_create(
+    db: Session,
+    *,
+    user_id: str,
+    may_add: bool,
+    customer_id: Optional[str],
+    prospect_name: Optional[str],
+    title: Optional[str],
+    expected_amount: Optional[Decimal],
+    expected_close_date: Optional[date],
+    dry_run: bool,
+) -> dict:
+    """AGENTIC-UNIFY AC-12: `create` as the staff member, in process: their own
+    `sales.opportunities.add`, their own company, and an audit row naming them, not the integration."""
+    from app.audit_context import AuditActor, actor_scope
+
+    if not may_add:
+        raise _refused("opportunity_not_enabled")
+    actor = AuditActor(
+        actor_type="user", user_id=user_id, real_user_id=user_id, auth_method="agent",
+        tool_name="crm_sales_opportunity_log",
+    )
+    with actor_scope(actor, db=db):
+        return create(
+            db,
+            contact_id=None,
+            agents=staff_agents(db, user_id),
+            customer_id=customer_id,
+            prospect_name=prospect_name,
+            title=title,
+            expected_amount=expected_amount,
+            expected_close_date=expected_close_date,
+            dry_run=dry_run,
+            created_by_user_id=user_id,
+        )
+
+
 def _customer_out(customer: Optional[Customer]) -> Optional[dict]:
     from app.services.sales.target_service import account_label
 
@@ -175,7 +237,7 @@ def _pipeline(db: Session, agent_id: str) -> Optional[dict]:
 def create(
     db: Session,
     *,
-    contact_id: str,
+    contact_id: Optional[str],
     agents: List[SalesAgent],
     customer_id: Optional[str],
     prospect_name: Optional[str],
@@ -183,10 +245,14 @@ def create(
     expected_amount: Optional[Decimal],
     expected_close_date: Optional[date],
     dry_run: bool,
+    created_by_user_id: Optional[str] = None,
 ) -> dict:
     """Save one opportunity in stage New under the agent owning the customer (a prospect: the
     first agent by code), the portal's own sequence. `dry_run` runs every check inside a
-    savepoint that is rolled back: nothing is inserted and no number is consumed."""
+    savepoint that is rolled back: nothing is inserted and no number is consumed.
+
+    `created_by_user_id` is a staff member logging from the AI panel (`staff_create`), who may have no
+    agent at all: the agent then comes from the customer, as on the CRM's own form."""
     if expected_amount is None or Decimal(expected_amount) <= 0:
         raise _unprocessable("The expected amount must be more than zero.", "amount_required")
     if Decimal(expected_amount) > svc._MAX_AMOUNT:
@@ -208,7 +274,7 @@ def create(
         "expected_amount": Decimal(expected_amount),
         "expected_close_date": expected_close_date,
     }
-    agent = svc.agent_owning_customer(db, agents, customer_id) or svc.default_portal_agent(db, agents)
+    agent = svc.agent_owning_customer(db, agents, customer_id) or (svc.default_portal_agent(db, agents) if agents else None)
     company_id = svc.resolve_company(db, customer_id=customer_id, agent=agent)
 
     def _save():
@@ -217,10 +283,12 @@ def create(
                 db,
                 company_id=company_id,
                 payload=body,
-                sales_agent_id=agent.id,
+                sales_agent_id=agent.id if agent is not None else None,
                 source=SOURCE,
                 created_by_contact_id=contact_id,
-                restrict_customer_to_agent_id=[a.id for a in agents],
+                restrict_customer_to_agent_id=[a.id for a in agents] if agents else None,
+                created_by_user_id=created_by_user_id,
+                stamp_agent_from_customer=agent is None,
             )
 
     if dry_run:
@@ -252,6 +320,6 @@ def create(
         "title": title,
         "expected_amount": _money(expected_amount),
         "expected_close_date": expected_close_date.isoformat(),
-        "pipeline": _pipeline(db, agent.id),
+        "pipeline": _pipeline(db, agent.id) if agent is not None else None,
         "dry_run": bool(dry_run),
     }
