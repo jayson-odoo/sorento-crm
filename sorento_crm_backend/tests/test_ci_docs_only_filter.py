@@ -238,6 +238,9 @@ DOCS_ONLY = [
     "documentation/plans/ci/PLAN-ci-docs-skip-29sep.md",
     "documentation/plans/_archive/scm/evidence/AC-19b-filters-panel.png",
     "documentation/plans/scm/mockups/so-change-management-grill-v4.html",
+    # A guide-only change stays docs-only: the PR gate's
+    # `sync_user_guides_outline.py check` step gates the guide tree, and no
+    # test reads it (DOCS-SYNC-AUTO).
     "documentation/user-guides/README.md",
     "documentation/adr/0001-example.md",
     "CLAUDE.md",

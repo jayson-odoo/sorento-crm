@@ -234,6 +234,7 @@ def test_agent_loop_dedups_identical_tool_calls_via_cache(db_session: Session, m
         standalone_query="give me the test data please",
         selected_tools=[{"tool_name": "crm_test_tool"}],
         sources=[],
+        user_id="95709c37-0fb4-5c00-8686-536c019e6fb7",
         turn_cache=turn_cache,
     )
 

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 import hashlib
+import copy
 import json
 import logging
 import re
@@ -263,6 +264,15 @@ def _coerce_arg_to_list(raw: Any) -> list[str]:
     return [s]
 
 
+def knowledge_tool_output(db: Any, user_id: str, args: dict[str, Any]) -> str:
+    """JSON of the knowledge search for `user_id`: the panel answers `crm_knowledge_search` in
+    process, because the MCP cannot see which staff member asks."""
+    from app.services import knowledge_service
+
+    query = str((args or {}).get("query") or "").strip()
+    return json.dumps(knowledge_service.search(db, user_id=user_id, query=query), default=str)
+
+
 class _TurnToolCache:
     """Turn-scoped, strictly-keyed memo for live tool / guide-content calls.
 
@@ -355,7 +365,11 @@ class MCPRuntimeClient:
         """`staff=True` only for the in-app AI assistant: it has no Respond contact, so it sends
         `X-MCP-Scope: staff` to keep reading company-scoped tools without one (SEC-MCP-AUTH,
         `sorento_crm_mcp/sorento_crm_mcp/scope.py`). The chatbot lanes never set it, so their
-        calls without a contact are refused. `staff_user_id` is only logged by the MCP server."""
+        calls without a contact are refused. `staff_user_id` is required with it: the MCP server
+        forwards it on every read tool's CRM request, so the read runs as that staff member, in
+        their active company and with their permissions (AGENTIC-UNIFY PR 1). Writes stay act-as."""
+        if staff and not str(staff_user_id or "").strip():
+            raise ValueError("A staff MCP client needs the staff_user_id")
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.staff = staff
@@ -383,8 +397,13 @@ class MCPRuntimeClient:
     def _rpc(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         rid = str(uuid.uuid4())
         payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params or {}}
+        headers = self._headers()
+        # With no bearer and Enforce off the MCP server strips the staff markers
+        # (`sorento_crm_mcp/auth.py`), so the call would run as the act-as user (AGENTIC-UNIFY AC-26).
+        if self.staff and "Authorization" not in headers:
+            raise MCPToolCallError("The AI assistant has no MCP token: set it on Settings > Integrations.")
         with httpx.Client(timeout=self.timeout_seconds) as client:
-            resp = client.post(self.base_url, json=payload, headers=self._headers())
+            resp = client.post(self.base_url, json=payload, headers=headers)
             resp.raise_for_status()
             body = self._decode_streamable_body(resp)
         if isinstance(body, dict) and "error" in body:
@@ -734,6 +753,9 @@ class AIAssistantChatService:
         # Never compress guide markdown - inline links are load-bearing.
         if "user_guides_read" in (tool_name or ""):
             return raw_output
+        # Passages carry the document, page and exact wording the answer cites.
+        if "crm_knowledge_search" in (tool_name or ""):
+            return raw_output
         # Only worth compressing sizeable data payloads.
         if len(raw_output or "") < 400:
             return raw_output
@@ -819,12 +841,13 @@ class AIAssistantChatService:
             .all()
         )
 
-    def list_mcp_tools(self) -> list[str]:
+    def list_mcp_tools(self, user_id: str) -> list[str]:
         """Fetch current tool names from MCP runtime for settings UI sync."""
         mcp = MCPRuntimeClient(
             settings.ai_assistant_mcp_url,
             timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
             staff=True,
+            staff_user_id=user_id,
         )
         tool_names = sorted(mcp.list_tools())
         logger.info("AI assistant MCP tool catalog fetched count=%s", len(tool_names))
@@ -1097,19 +1120,19 @@ class AIAssistantChatService:
         if page_snapshot is not None and page_snapshot.entity is not None:
             from app.services.record_context_service import (
                 RecordContextService,
-                record_context_view_permission,
+                can_read_record_context,
             )
 
             try:
-                # Per-entity RBAC parity with the HTTP route: when the entity
-                # type requires a view permission, enforce it; None => any
-                # authenticated bubble user may read the record context.
-                required_slug = record_context_view_permission(
-                    page_snapshot.entity.entity_type
+                # Same rule as the HTTP route. The record id comes from the page snapshot, so
+                # it is checked here too: refused means no facts, and the turn still answers.
+                permitted = can_read_record_context(
+                    self.db,
+                    UserPermissionService(self.db),
+                    user_id,
+                    page_snapshot.entity.entity_type,
+                    page_snapshot.entity.id,
                 )
-                permitted = required_slug is None or UserPermissionService(
-                    self.db
-                ).check_user_has_permission(user_id, required_slug)
                 if permitted:
                     record_ctx = RecordContextService(self.db).assemble(
                         page_snapshot.entity.entity_type,
@@ -1207,6 +1230,7 @@ class AIAssistantChatService:
                 record_ctx=record_ctx,
                 page_snapshot=page_snapshot,
                 turn_cache=turn_cache,
+                user_id=user_id,
             )
         else:
             response_text, tool_calls, token_usage = self._run_agent_loop(
@@ -2179,6 +2203,18 @@ class AIAssistantChatService:
             lines.append(closing)
         return "\n".join(lines).strip()
 
+    def _may_read_documents(self, user_id: str) -> bool:
+        from app.services import knowledge_service
+        from app.services.user_service import UserPermissionService
+
+        try:
+            return bool(
+                UserPermissionService(self.db).check_user_has_permission(user_id, knowledge_service.READ_PERMISSION)
+            )
+        except Exception:  # noqa: BLE001 - a failed check is a refusal
+            logger.warning("knowledge: permission check failed", exc_info=True)
+            return False
+
     def _cached_tool_call(
         self,
         turn_cache: _TurnToolCache | None,
@@ -2193,12 +2229,19 @@ class AIAssistantChatService:
         ``client.call_tool()``. The cache stores the RAW tool output so any
         downstream transform (e.g. Outline-URL redaction) runs identically on a
         cached or freshly-fetched result.
+
+        ``crm_knowledge_search`` never goes to the MCP: it runs in process with the
+        panel's staff user (the MCP cannot tell which staff member asks).
         """
+        if tool_name == "crm_knowledge_search":
+            def load() -> str:
+                return knowledge_tool_output(self.db, client.staff_user_id, args)
+        else:
+            def load() -> str:
+                return client.call_tool(tool_name, args=args)
         if turn_cache is None:
-            return client.call_tool(tool_name, args=args)
-        return turn_cache.get_or_call(
-            tool_name, args, lambda: client.call_tool(tool_name, args=args)
-        )
+            return load()
+        return turn_cache.get_or_call(tool_name, args, load)
 
     def _build_uuid_lookup(
         self, resolution: "ResolutionResult | None"
@@ -2317,7 +2360,7 @@ class AIAssistantChatService:
         sources: list[dict[str, Any]],
         resolution: ResolutionResult | None = None,
         page_snapshot: PageSnapshotPayload | None = None,
-        user_id: str | None = None,
+        user_id: str,
         conversation_id: str | None = None,
         user_message_id: str | None = None,
         record_ctx: dict[str, Any] | None = None,
@@ -2370,6 +2413,14 @@ class AIAssistantChatService:
                 self._mcp_schema_to_openai_tool("user_guides_read", tool_catalog["user_guides_read"])
             )
             bound_tool_names.append("user_guides_read")
+        # AGENTIC-KNOWLEDGE: the document search is local (no MCP tool) and bound only for a staff
+        # user who may open the files in Resources.
+        if user_id and self._may_read_documents(user_id):
+            from app.services.chatbot.agent.tools import KNOWLEDGE_SCHEMA
+
+            openai_tools.append(copy.deepcopy(KNOWLEDGE_SCHEMA))
+            bound_tool_names.append("crm_knowledge_search")
+            available.add("crm_knowledge_search")
         logger.info(
             "AI assistant agent tools bound count=%s names=%s",
             len(bound_tool_names),
@@ -2396,6 +2447,10 @@ class AIAssistantChatService:
         system = self._resolve_prompt("agent_system")
         if "USER GUIDE PROTOCOL" not in system:
             system = system.rstrip() + "\n\n" + self._resolve_prompt("synthesizer")
+        if "crm_knowledge_search" in bound_tool_names:  # the paragraph only where the tool is bound
+            from app.services.knowledge_service import with_knowledge_protocol
+
+            system = with_knowledge_protocol(system)
         source_context = "\n".join(
             [f"- {s.get('title')}: {str(s.get('why_selected') or '')[:200]}" for s in sources]
         )
@@ -2905,6 +2960,7 @@ class AIAssistantChatService:
         record_ctx: dict[str, Any],
         page_snapshot: PageSnapshotPayload | None = None,
         turn_cache: _TurnToolCache | None = None,
+        user_id: str,
     ) -> tuple[str, list[MCPToolCallResult], dict[str, int]]:
         """Render a grounded answer from the deterministic record-context facts.
 
@@ -2992,6 +3048,7 @@ class AIAssistantChatService:
             settings.ai_assistant_mcp_url,
             timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
             staff=True,
+            staff_user_id=user_id,
         )
         openai_tools: list[dict[str, Any]] = []
         guide_tool_name = "user_guides_read"
@@ -3177,10 +3234,19 @@ class AIAssistantChatService:
                 "I could not produce an answer this turn. Please rephrase or provide more specific "
                 "identifiers (product code, order number, etc.)."
             )
+        from app.services.chatbot.agent import tools as agent_tools
+
         lines = ["Here is what I found from MCP tools:"]
         for r in tool_calls:
             prefix = "OK" if r.ok else "FAILED"
-            lines.append(f"- [{prefix}] {r.tool_name}: {r.output[:260]}")
+            output = r.output
+            if r.tool_name == agent_tools.KNOWLEDGE:
+                # This reply is stored and replayed into later turns' spans: document and page only.
+                try:
+                    output = json.dumps(agent_tools.trace_safe(r.tool_name, json.loads(output)), default=str)
+                except (TypeError, ValueError):
+                    output = "(document passages not shown)"
+            lines.append(f"- [{prefix}] {r.tool_name}: {output[:260]}")
         return "\n".join(lines)
 
     def _tool_output_is_error(self, output: str) -> tuple[bool, str]:

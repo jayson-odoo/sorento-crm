@@ -173,7 +173,7 @@ def test_notifications_is_drained_by_default():
 @pytest.mark.parametrize(
     "queue",
     ["imports", "respond_io", "catalogue_render", "media", "project_docs", "flyer_read",
-     "notifications", "chat"],
+     "notifications", "chat", "knowledge"],
 )
 def test_every_known_queue_is_drained_by_default(queue):
     """Each queue the codebase enqueues to, named individually so a drop is legible.
@@ -258,11 +258,13 @@ def test_queues_for_role_fast(monkeypatch):
 
 
 def test_queues_for_role_batch(monkeypatch):
+    # `knowledge` (AGENTIC-KNOWLEDGE): the document read job, minutes of OCR nobody waits on.
     assert worker.queues_for_role("batch") == [
         "imports",
         "catalogue_render",
         "project_docs",
         "flyer_read",
+        "knowledge",
         "analytics",
     ]
 

@@ -6,6 +6,7 @@ from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import (
     get_current_user,
+    require_permission,
     require_permission_with_api_key,
     require_session_or_api_key_permission,
 )
@@ -64,7 +65,7 @@ def get_attachment_type(
 @router.post("/", response_model=AttachmentTypeResponse, status_code=status.HTTP_201_CREATED)
 def create_attachment_type(
     type_data: AttachmentTypeCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachment_types.add")),
     db: Session = Depends(get_db)
 ):
     """Create a new attachment type."""
@@ -82,7 +83,7 @@ def create_attachment_type(
 def update_attachment_type(
     type_id: str,
     type_data: AttachmentTypeUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachment_types.edit")),
     db: Session = Depends(get_db)
 ):
     """Update an attachment type."""
@@ -100,7 +101,7 @@ def update_attachment_type(
 @router.delete("/{type_id}", status_code=status.HTTP_200_OK)
 def delete_attachment_type(
     type_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("resource.attachment_types.delete")),
     db: Session = Depends(get_db)
 ):
     """Delete an attachment type."""

@@ -65,6 +65,7 @@ def test_cu3_agent_loop_sums_cached_tokens_over_every_provider_call(svc_and_cfg,
     _text, _calls, usage = svc._run_agent_loop(
         config=cfg, history=[], user_message="give me the test data", standalone_query="give me the test data",
         selected_tools=[{"tool_name": "crm_test_tool"}], sources=[], turn_cache=None,
+        user_id="95709c37-0fb4-5c00-8686-536c019e6fb7",
     )
     assert usage["cached_tokens"] == 350
 
@@ -75,6 +76,7 @@ def test_cu3_record_answer_sums_cached_tokens_over_the_guide_round_trip(svc_and_
     _text, _calls, usage = svc._render_record_answer(
         config=cfg, history=[], user_message="what next?",
         record_ctx={"entity_type": "complaint", "current_state": {"status": "open"}},
+        user_id="95709c37-0fb4-5c00-8686-536c019e6fb7",
     )
     assert usage["cached_tokens"] == 350
 

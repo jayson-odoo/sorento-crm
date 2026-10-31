@@ -7,7 +7,7 @@ from jose import JWTError, jwt
 from typing import Optional, List
 from app.database import get_db
 from app.config import settings
-from app.services.user_service import UserPermissionService
+from app.services.user_service import UserPermissionService, gate_user_ids
 from app.middleware.impersonation_ended_middleware import IMPERSONATION_ENDED_STATE
 from app.services.user_session_service import (
     resolve_session,
@@ -138,6 +138,55 @@ def _stamp_integration_actor(request: Request, db: Session, user: dict) -> None:
         db=db,
         request=request,
     )
+
+
+def staff_identity_refused() -> HTTPException:
+    """The one refusal of an identity claim (AGENTIC-UNIFY AC-6): never a fall back to act-as."""
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={"code": "staff_identity_invalid", "message": "Staff identity is not valid"},
+    )
+
+
+def _apply_staff_identity(request: Request, db: Session, api_key: str, key_user: dict) -> dict:
+    """The principal of an API-key call: the act-as user, or on an identity read the staff member.
+
+    AGENTIC-UNIFY PR 1: the MCP server names the staff member the AI panel is answering in
+    `X-Staff-User`, on the catalog's read routes, so own scope applies to them. ``key_user_id``
+    keeps the act-as user: every slug or role check on those routes asks both
+    (``user_service.gate_user_ids``), so naming a stronger user gains nothing the key lacks.
+
+    Only the shared key may claim an identity, and a claim that does not resolve to a usable user
+    is refused, never downgraded to act-as. A write ignores the header. The audit actor stays the
+    integration and act-as: it is stamped before this runs.
+    """
+    import logging
+
+    from app.services.company_scope_resolver import (
+        _api_key_valid,
+        resolve_staff_identity,
+        staff_identity_claimed,
+    )
+
+    if not staff_identity_claimed(request):
+        return key_user
+    staff_id = resolve_staff_identity(db, request) if _api_key_valid(api_key) else None
+    staff = _load_user_dict_from_db(db, staff_id) if staff_id else None
+    if not staff:
+        raise staff_identity_refused()
+    logging.getLogger(__name__).info(
+        "auth.staff_identity_read staff_user=%s route=%s",
+        staff_id,
+        getattr(request.scope.get("route"), "path_format", "-"),
+    )
+    return {
+        **staff,
+        "integration_id": key_user.get("integration_id"),
+        "integration_name": key_user.get("integration_name"),
+        "integration_type": key_user.get("integration_type"),
+        "auth_method": key_user.get("auth_method"),
+        "key_user_id": key_user["id"],
+    }
 
 
 def _resolve_session_to_user(token: str, request: Request, db: Session) -> dict:
@@ -509,8 +558,10 @@ def require_session_or_api_key_permission(permission_slug: str):
         db: Session = Depends(get_db),
     ) -> dict:
         if current_user.get("auth_method") in {"api_key", "integration_api_key"}:
-            if not UserPermissionService(db).check_user_has_permission(
-                current_user["id"], permission_slug
+            service = UserPermissionService(db)
+            if not all(
+                service.check_user_has_permission(uid, permission_slug)
+                for uid in gate_user_ids(current_user)
             ):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -524,7 +575,8 @@ def require_session_or_api_key_permission(permission_slug: str):
 def require_permission_with_api_key(permission_slug: str):
     """
     Same as require_permission but allows X-API-Key (with act-as user) for automation.
-    The permission is still enforced against the resolved (act-as) user.
+    The permission is still enforced against the resolved (act-as) user, and on an identity read
+    against the staff member as well (``_apply_staff_identity``).
 
     Primarily for read endpoints. It is also used on a small set of AI-assistant
     write actions (complaint close, PR approve/reject) where execution runs as the
@@ -544,7 +596,8 @@ def require_permission_with_api_key(permission_slug: str):
         db: Session = Depends(get_db),
     ) -> dict:
         service = UserPermissionService(db)
-        if not service.check_user_has_permission(current_user["id"], permission_slug):
+        uids = gate_user_ids(current_user)
+        if not all(service.check_user_has_permission(uid, permission_slug) for uid in uids):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission required: {permission_slug}",
@@ -557,63 +610,92 @@ def require_permission_with_api_key(permission_slug: str):
             )
             from app.modules.runtime.permission_module_map import module_for_permission
 
-            uid = current_user["id"]
-            if not (
-                service.get_user_role_slugs(uid)
-                & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}
-            ):
-                mod = module_for_permission(permission_slug)
-                if mod and tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
-                    if not is_module_enabled(db, DEFAULT_TENANT_ID, mod):
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail=f"Module not enabled: {mod}",
-                        )
+            for uid in uids:
+                if not (
+                    service.get_user_role_slugs(uid)
+                    & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}
+                ):
+                    mod = module_for_permission(permission_slug)
+                    if mod and tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
+                        if not is_module_enabled(db, DEFAULT_TENANT_ID, mod):
+                            raise HTTPException(
+                                status_code=status.HTTP_403_FORBIDDEN,
+                                detail=f"Module not enabled: {mod}",
+                            )
         return current_user
 
     return _require
 
 
 def require_any_permission_with_api_key(permission_slugs: List[str]):
-    """Like require_any_permission but uses get_current_user_or_api_key (read/automation only)."""
+    """Like require_any_permission but uses get_current_user_or_api_key (read/automation only).
+
+    On an identity read the staff member and the act-as user are each asked separately: both must
+    hold one of the slugs, not necessarily the same one. The superadmin/admin shortcut and the
+    module check are per user, so one user never lifts the other.
+    """
 
     def _require(
         current_user: dict = Depends(get_current_user_or_api_key),
         db: Session = Depends(get_db),
     ) -> dict:
         service = UserPermissionService(db)
-        uid = current_user["id"]
-        if service.get_user_role_slugs(uid) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
-            return current_user
-        user_slugs = service.get_user_permission_slugs(uid)
-        if getattr(settings, "module_guard_strict", False):
-            from app.modules.runtime.installer import (
-                DEFAULT_TENANT_ID,
-                is_module_enabled,
-                tenant_has_any_module_row,
-            )
-            from app.modules.runtime.permission_module_map import module_for_permission
 
-            if tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
-                allowed = False
-                for slug in permission_slugs:
-                    if slug not in user_slugs:
-                        continue
-                    mod = module_for_permission(slug)
-                    if not mod or is_module_enabled(db, DEFAULT_TENANT_ID, mod):
-                        allowed = True
-                        break
-                if not allowed:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"One of these permissions required (module may be disabled): {', '.join(permission_slugs)}",
-                    )
-                return current_user
-        if not any(s in user_slugs for s in permission_slugs):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"One of these permissions required: {', '.join(permission_slugs)}",
-            )
+        def _check(uid: str) -> None:
+            if service.get_user_role_slugs(uid) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
+                return
+            user_slugs = service.get_user_permission_slugs(uid)
+            if getattr(settings, "module_guard_strict", False):
+                from app.modules.runtime.installer import (
+                    DEFAULT_TENANT_ID,
+                    is_module_enabled,
+                    tenant_has_any_module_row,
+                )
+                from app.modules.runtime.permission_module_map import module_for_permission
+
+                if tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
+                    allowed = False
+                    for slug in permission_slugs:
+                        if slug not in user_slugs:
+                            continue
+                        mod = module_for_permission(slug)
+                        if not mod or is_module_enabled(db, DEFAULT_TENANT_ID, mod):
+                            allowed = True
+                            break
+                    if not allowed:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"One of these permissions required (module may be disabled): {', '.join(permission_slugs)}",
+                        )
+                    return
+            if not any(s in user_slugs for s in permission_slugs):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"One of these permissions required: {', '.join(permission_slugs)}",
+                )
+
+        for uid in gate_user_ids(current_user):
+            _check(uid)
+        return current_user
+
+    return _require
+
+
+def require_staff_read_permission(*permission_slugs: str):
+    """For a route with no slug of its own: on an identity read the staff member needs one of
+    these. A session and a plain key pass through as they always did (AGENTIC-UNIFY AC-13)."""
+
+    def _require(
+        current_user: dict = Depends(get_current_user_or_api_key),
+        db: Session = Depends(get_db),
+    ) -> dict:
+        if current_user.get("key_user_id"):
+            service = UserPermissionService(db)
+            if not any(service.check_user_has_permission(current_user["id"], s) for s in permission_slugs):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"One of these permissions required: {', '.join(permission_slugs)}",
+                )
         return current_user
 
     return _require
@@ -646,7 +728,7 @@ async def get_external_api_user(
 
     user = resolve_integration_principal(db, api_key)
     _stamp_integration_actor(request, db, user)
-    return user
+    return _apply_staff_identity(request, db, api_key, user)
 
 
 async def get_current_user_or_api_key(
@@ -686,6 +768,7 @@ async def get_current_user_or_api_key(
 
         user = resolve_integration_principal(db, api_key)
         _stamp_integration_actor(request, db, user)
+        user = _apply_staff_identity(request, db, api_key, user)
 
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)

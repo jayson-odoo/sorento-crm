@@ -94,9 +94,17 @@ def _looks_like_id(s: str) -> bool:
     return bool(_URL_ID_RE.match(s))
 
 
+class _ForeignCollection(Exception):
+    """The document belongs to an Outline collection other than the configured guide collection."""
+
+
 async def _fetch_doc_body(settings: Settings, identifier: str) -> dict[str, Any]:
     data = await _outline_post(settings, "documents.info", {"id": identifier.strip()})
     doc = data.get("data") or {}
+    # Only the guide collection is served: a bare id or a search hit from any other collection
+    # (HR, finance) is refused, whoever asks. A missing collectionId fails closed.
+    if not settings.outline_collection_id or doc.get("collectionId") != settings.outline_collection_id:
+        raise _ForeignCollection(identifier)
     return {
         "id": doc.get("id"),
         "title": doc.get("title"),
@@ -124,6 +132,8 @@ async def read_user_guide_impl(settings: Settings, query: str) -> str:
         try:
             body = await _fetch_doc_body(settings, q)
             return json.dumps(body)
+        except _ForeignCollection:
+            return json.dumps({"error": "No matching user guide.", "code": "NO_MATCH", "query": q})
         except Exception as e:
             logger.warning("user_guides_read direct fetch failed for %r: %s", q, e)
             # Fall through to search - caller may have passed a slug-shaped
@@ -168,6 +178,8 @@ async def read_user_guide_impl(settings: Settings, query: str) -> str:
             body = await _fetch_doc_body(settings, candidate_id)
             matched_hit_index = idx
             break
+        except _ForeignCollection:
+            continue
         except Exception as e:
             last_err = e
             logger.warning(
@@ -176,6 +188,8 @@ async def read_user_guide_impl(settings: Settings, query: str) -> str:
                 candidate_id,
                 e,
             )
+    if body is None and last_err is None:
+        return json.dumps({"error": "No matching user guide.", "code": "NO_MATCH", "query": q})
     if body is None:
         return json.dumps(
             {

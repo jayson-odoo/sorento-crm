@@ -34,6 +34,7 @@ import {
   useUpdateAttachment,
   attachmentsPagerQuery,
 } from '../hooks/useAttachments';
+import AttachmentAiReadRow, { isAiReadInFlight } from './AttachmentAiReadRow';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
 import { getAttachmentMetadata } from '../services/attachmentService';
 import { attachmentCompanyLabel, type Attachment, type LinkedEntityRef } from '../types/attachment.types';
@@ -273,6 +274,9 @@ export default function AttachmentDetail({
     queryFn: () => getAttachmentMetadata(attachmentId),
     enabled: !!attachmentId,
     retry: 1,
+    // Poll every 5 s while the AI read is moving; stops once the status settles.
+    refetchInterval: (query: { state: { data?: { ai_read_status?: string | null } } }) =>
+      isAiReadInFlight(query.state.data?.ai_read_status) ? 5000 : false,
   });
 
   // The set the browser's row menu renders too (D15); Rename and Delete bring
@@ -423,6 +427,7 @@ export default function AttachmentDetail({
                 {attachment.is_deleted ? 'Deleted' : 'Active'}
               </Badge>
             </div>
+            <AttachmentAiReadRow attachment={attachment} />
           </div>
           <div className="space-y-2">
             <Label className="text-sm text-muted-foreground">Description</Label>

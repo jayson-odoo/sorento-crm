@@ -248,6 +248,7 @@ def test_ai_assistant_tool_loop_still_sees_the_error_text_after_a_raise(db_sessi
         standalone_query="what is outstanding for Cheng Huat Sentul",
         selected_tools=[{"tool_name": "crm_outstanding_report"}],
         sources=[],
+        user_id="95709c37-0fb4-5c00-8686-536c019e6fb7",
         turn_cache=None,
     )
 

@@ -1,8 +1,23 @@
 name: Outline user-guides sync
 
+# Both directions run on their own (DOCS-SYNC-AUTO, owner 31 Oct 2026,
+# documentation/user-guides/SYNC.md):
+#   push  repo -> Outline, on every push to main that changes a guide.
+#   pull  Outline -> repo, every 6 hours; opens or refreshes ONE bot PR
+#         (bot/outline-user-guides-sync, label `docs-sync`).
+# The PR gate (deploy.yml `lean-gate`) runs `sync_user_guides_outline.py check`
+# so an unmapped folder or an over-long title fails the PR, not this push.
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'documentation/user-guides/**'
+      # The state file alone (a merged pull PR that only learnt doc ids)
+      # changes no page, so it does not need a push.
+      - '!documentation/user-guides/.outline-sync.json'
+      - 'scripts/sync_user_guides_outline.py'
   schedule:
-    # Every 6 hours. Adjust as needed.
     - cron: '0 */6 * * *'
   workflow_dispatch:
     inputs:
@@ -15,52 +30,89 @@ on:
           - pull
           - push
           - status
+          - dry-run
+      force:
+        description: 'push only: overwrite Outline pages a person edited after the repo commit'
+        required: false
+        default: false
+        type: boolean
+
+# One sync at a time, push and pull alike: a pull reading Outline while a push
+# is writing it would PR a half-pushed state. Never cancel the running one; a
+# newer queued run replaces an older queued one, which is safe because every
+# push checks out main's CURRENT head, not the commit that queued it.
+concurrency:
+  group: outline-user-guides-sync
+  cancel-in-progress: false
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: write
+      issues: write
+    env:
+      MODE: ${{ github.event_name == 'push' && 'push' || inputs.mode || 'pull' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history: pull keeps a repo guide whose last commit is newer
-          # than its Outline copy (repo_is_newer), which needs real commit dates.
+          # main's head, not the triggering SHA: a queued push that runs after
+          # a later merge must not publish the older tree.
+          ref: main
+          # Full history: pull keeps a repo page committed after its Outline
+          # copy (repo_is_newer) and push keeps an Outline edit made after the
+          # repo commit (outline_is_newer); both need real commit dates.
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
+      # No network, no token: print exactly what a push would publish, and
+      # fail here (before any Outline write) on an unmapped folder or a title
+      # Outline would refuse.
+      - name: Dry run (validate + plan)
+        if: env.MODE == 'push' || env.MODE == 'dry-run'
+        run: python3 scripts/sync_user_guides_outline.py dry-run
+
       - name: Install deps
+        if: env.MODE != 'dry-run'
         run: |
           python -m pip install --upgrade pip
           pip install requests python-dotenv
 
       - name: Run Outline sync
+        id: sync
+        if: env.MODE != 'dry-run'
         env:
           OUTLINE_API_TOKEN: ${{ secrets.OUTLINE_API_TOKEN }}
           OUTLINE_BASE_URL: ${{ secrets.OUTLINE_BASE_URL || 'https://doc.foundryx.my' }}
           OUTLINE_COLLECTION_ID: ${{ secrets.OUTLINE_COLLECTION_ID || '18f78b01-bf5a-4032-934c-d5679609d553' }}
-        run: |
-          MODE="${{ github.event.inputs.mode || 'pull' }}"
-          python scripts/sync_user_guides_outline.py "$MODE"
+          OUTLINE_SYNC_FORCE: ${{ inputs.force && '1' || '' }}
+        run: python scripts/sync_user_guides_outline.py "$MODE"
 
+      # Pull only. A push writes Outline and changes no repo page; the doc
+      # ids it created are learnt back by title on the next pull, so the push
+      # never needs its own PR.
       - name: Open PR if pull produced diffs
-        if: ${{ github.event.inputs.mode != 'push' && github.event.inputs.mode != 'status' }}
+        if: env.MODE == 'pull'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           branch: bot/outline-user-guides-sync
           base: main
+          labels: docs-sync
           title: 'docs(user-guides): sync from Outline'
           commit-message: 'docs(user-guides): sync from Outline'
           body: |
             Automated pull of Sorento CRM user guides from Outline
             (`https://doc.foundryx.my/collection/sorento-crm-BOoUtlxxTH`).
 
-            Review the diff before merging — these reflect edits made directly
-            in Outline since the last sync.
+            These are edits made directly in Outline since the last sync, plus
+            any Outline doc ids learnt by title (`.outline-sync.json`). A repo
+            page committed after its Outline copy was edited is never
+            overwritten (`[keep]` in the run log). Review the diff, then merge.
           add-paths: |
             documentation/user-guides/**

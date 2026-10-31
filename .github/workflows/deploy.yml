@@ -1593,6 +1593,17 @@ jobs:
         if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
         run: python3 scripts/pii_guard.py
 
+      # DOCS-SYNC-AUTO: every guide must publish to Outline on merge (the
+      # automatic push in outline-user-guides-sync.yml). Fails on a guide
+      # folder in neither PARENT_TITLES nor HELD_FOLDERS (its pages would be
+      # skipped as "unknown folder") or a title over Outline's 100-character
+      # limit (run 41178406314 died part-way on one). Stdlib only, no network.
+      # Runs on a docs-only PR too: a guides change is docs-only by design, so
+      # this step, not tests/test_sync_user_guides_guard.py, gates it.
+      - name: User guides publish to Outline
+        if: github.event_name == 'pull_request' && needs.changes.outputs.validated != 'true'
+        run: python3 scripts/sync_user_guides_outline.py check
+
       # Not skipped on a validated tree: the marker is keyed on the merge
       # TREE, the scan reads commit HISTORY (a commit adding a secret and one
       # reverting it leave a tree that already passed; a merge commit lands
