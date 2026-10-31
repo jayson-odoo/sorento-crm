@@ -128,7 +128,11 @@ class TestLaneSlot:
 
     @pytest.mark.parametrize(
         "status",
-        ["complete", "similar_offered", "no_access", "ask_idea_gave_up", "error", "config_error"],
+        [
+            "complete", "similar_offered", "no_access", "ask_idea_gave_up", "error", "config_error",
+            # AI-KEY-PER-PROVIDER: a failed read leaves no pending ask (lane brief, 31 Oct).
+            "read_failed",
+        ],
     )
     def test_any_other_status_carries_no_slot(self, monkeypatch, status) -> None:
         from app.services.chatbot.lanes import ideate

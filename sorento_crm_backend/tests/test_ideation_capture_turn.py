@@ -1712,6 +1712,15 @@ def test_ak_failed_extraction_keeps_a_held_list(env):
     _no_ss(env)
 
 
+def test_ak_failed_read_follows_the_held_lists_language(env):
+    env.ready()
+    pointer = env.pointer(env.sim(2), language="ms")
+    env.extractions["something else"] = IdeateExtraction(failed=True)
+    out = env.turn("something else", session_vars_in=pointer)
+    assert out["status"] == "read_failed"
+    assert out["language"] == "ms"
+
+
 @pytest.mark.parametrize(
     "lang, text",
     [

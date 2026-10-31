@@ -288,9 +288,10 @@ def handle_capture_turn(
         except Exception:  # noqa: BLE001 - a failed read is answered, never a 500
             logger.warning("ideation extractor raised for respond_io_id=%s", respond_io_id, exc_info=True)
             extraction = IdeateExtraction(failed=True)
-        language = _language(extraction.language)
-        # A failed read keeps whatever list was held: nothing about the message is known.
+        # A failed read keeps whatever list was held: nothing about the message is known, so
+        # its reply follows the held list's language.
         kept_pointer = held
+        language = _language(extraction.language or (held or {}).get("language"))
         held = None
     else:
         language = _language(held.get("language"))
