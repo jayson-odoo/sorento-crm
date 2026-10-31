@@ -238,7 +238,8 @@ def test_S3_a_busy_agent_says_so_and_the_bot_does_not_run(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["route"]["side"] == "agent"
-    assert "busy" in body["reply_text"].lower()
+    assert body["reply_text"] == console_service.AGENT_BUSY_REPLY
+    assert "busy" not in body["reply_text"].lower()  # NO-SORRY-COPY owner rule
     assert engine_calls == []
 
 
