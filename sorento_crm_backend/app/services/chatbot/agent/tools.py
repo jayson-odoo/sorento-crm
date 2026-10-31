@@ -48,9 +48,15 @@ def _defs(*rows: tuple[str, str, str | None]) -> dict[str, ToolDef]:
 
 
 #: `crm_resolve` is local (the bot's resolver, in process); the GRN summary is a plain route.
-NON_RENDER_TOOLS = frozenset({"crm_resolve", "crm_products_find", "crm_procurement_grn_summary"})
+NON_RENDER_TOOLS = frozenset(
+    {"crm_resolve", "crm_products_find", "crm_procurement_grn_summary", "crm_knowledge_search", "user_guides_read"}
+)
 RESOLVE = "crm_resolve"
 FIND = "crm_products_find"
+#: AGENTIC-KNOWLEDGE: local, in process with the turn's user (the MCP cannot see the user).
+KNOWLEDGE = "crm_knowledge_search"
+#: The Outline guide reader. Open to every linked user; its call carries only `query`.
+GUIDES = "user_guides_read"
 PLAN = "plan"
 ANSWER = "answer"
 
@@ -72,6 +78,10 @@ REGISTRY: dict[str, ToolDef] = _defs(
     ("crm_resolve", "", None),
     # Local: the product list behind a brand / category, under the contact's scopes.
     ("crm_products_find", "master_data.products.view", None),
+    # Local: passages of uploaded documents the user may open in Resources.
+    ("crm_knowledge_search", "resource.attachments.view", None),
+    # No slug: guides are for any signed-in staff user (every agent caller is an active CRM user).
+    ("user_guides_read", "", None),
 )
 
 #: Tools that read stock: today's bot refuses them for a contact with `chatbot_stock_allowed` off.
@@ -132,6 +142,8 @@ TOOL_LABELS: dict[str, str] = {
     "crm_order_management_orders_by_product_list": "orders by product",
     "crm_resolve": "finding names and codes",
     "crm_products_find": "finding products",
+    "crm_knowledge_search": "searching company documents",
+    "user_guides_read": "reading the CRM user guides",
     "crm_customer_asks_list": "your customer asks",
     "crm_customer_ask_update": "change a customer ask",
     "crm_opportunities_list": "your sales opportunities",
@@ -174,11 +186,18 @@ def tool_schemas(tools: list[ToolDef], catalog: dict[str, dict]) -> list[dict]:
         if tool.name == FIND:
             out.append(copy.deepcopy(FIND_SCHEMA))
             continue
+        if tool.name == KNOWLEDGE:
+            out.append(copy.deepcopy(KNOWLEDGE_SCHEMA))
+            continue
         meta = catalog.get(tool.name)
         if not isinstance(meta, dict):
             continue
         schema = mcp_schema_to_openai_tool(tool.name, meta)
         params = schema["function"]["parameters"]
+        if tool.name == GUIDES:
+            # Only the question: the contact and space are never part of a guide search.
+            params["properties"] = {k: v for k, v in params["properties"].items() if k == "query"}
+            params["required"] = ["query"]
         # The model never chooses the view: dispatch always sends render.
         params["properties"] = {k: v for k, v in params["properties"].items() if k != VIEW_PARAM}
         params["required"] = [r for r in params.get("required") or [] if r != VIEW_PARAM]
@@ -223,6 +242,23 @@ FIND_SCHEMA: dict[str, Any] = {
                 "query": {"type": "string"},
                 "active_only": {"type": "boolean"},
             },
+        },
+    },
+}
+
+KNOWLEDGE_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": KNOWLEDGE,
+        "description": (
+            "Search the company's uploaded documents (policies, handbooks, product documents) for "
+            "passages that answer a question. Returns passages with their document, page and text, and "
+            "the team to refer the user to when nothing matches."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "The question, in the user's words."}},
+            "required": ["query"],
         },
     },
 }
@@ -286,6 +322,8 @@ def user_may_use(db: Any, ctx: Any, tool: ToolDef) -> bool:
     """Does the linked user hold what the tool needs (for `crm_resolve`: any searchable kind)."""
     if tool.name == RESOLVE:
         return bool(searchable_kinds(db, ctx, list(KIND_SLUGS))[0])
+    if tool.name == GUIDES:
+        return True
     return _permitted(db, ctx.user_id, tool.user_permission)
 
 
@@ -762,6 +800,30 @@ def _find_products(db: Any, args: dict, seen: set[str]) -> ToolResult:
     return ToolResult("ok", data={"products": products, "more": total - len(products)}, more=total - len(products))
 
 
+def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
+    """`crm_knowledge_search`: passages of uploaded documents for the turn's linked user, in process."""
+    from app.services import knowledge_service
+
+    unknown = sorted(k for k in args if k != "query" and k not in GUARD_PARAMS and k != VIEW_PARAM)
+    if unknown:
+        return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return ToolResult("invalid", message="query must be the question, as text.")
+    try:
+        found = knowledge_service.search(db, user_id=ctx.user_id, query=query.strip())
+    except Exception:  # noqa: BLE001 - a tool failure is a result the model can work around
+        logger.warning("agent: %s failed", KNOWLEDGE, exc_info=True)
+        return ToolResult("error", message=FIXED_ERROR)
+    status = found.get("status")
+    if status == "denied":
+        return ToolResult("denied", message=f"{KNOWLEDGE} is outside this user's access.")
+    if status != "ok":
+        return ToolResult("error", message=FIXED_ERROR)
+    data = {"passages": found.get("passages", []), "handoff_teams": found.get("handoff_teams", [])}
+    return ToolResult("ok", data=data)
+
+
 DENIED_TAIL = "Do not get this information another way."
 SALES_BASIS_MESSAGE = (
     "Say which sales basis: ask the user (invoiced is the usual one) or call once per basis "
@@ -835,7 +897,7 @@ def _dispatch_inner(
     tool = REGISTRY.get(name) if isinstance(name, str) else None
     if tool is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
-    if tool.name != RESOLVE and not _permitted(db, ctx.user_id, tool.user_permission):
+    if tool.name not in (RESOLVE, GUIDES) and not _permitted(db, ctx.user_id, tool.user_permission):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not contact_allows(ctx, tool):
         return ToolResult("denied", message=f"{name} is outside this contact's access.")
@@ -845,11 +907,17 @@ def _dispatch_inner(
         return _resolve(db, ctx, args, seen)
     if tool.name == FIND:
         return _find_products(db, args, seen)
+    if tool.name == KNOWLEDGE:
+        return _knowledge_search(db, ctx, args)
     meta = catalog.get(name)
     if not isinstance(meta, dict):
         return ToolResult("error", message=f"{name} is not available right now.")
     schema = meta.get("inputSchema") if isinstance(meta.get("inputSchema"), dict) else {}
     allowed = set((schema.get("properties") or {}).keys()) | set(GUARD_PARAMS) | {VIEW_PARAM}
+    if tool.name == GUIDES:
+        # A model-supplied contact or space is dropped, never forwarded.
+        args = {k: v for k, v in args.items() if k not in GUARD_PARAMS and k != VIEW_PARAM}
+        allowed = {"query"}
     unknown = sorted(k for k in args if k not in allowed)
     if unknown:
         return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
@@ -878,9 +946,10 @@ def _dispatch_inner(
     if SELLABLE_GRANT not in ctx.grants:
         clean.pop(SELLABLE_PARAM, None)
     filters = dict(clean)
-    clean["contact_id"] = ctx.contact_respond_id
-    if ctx.space_id is not None:
-        clean["space_id"] = ctx.space_id
+    if tool.name != GUIDES:
+        clean["contact_id"] = ctx.contact_respond_id
+        if ctx.space_id is not None:
+            clean["space_id"] = ctx.space_id
     # Only the render view carries `restricted_fields`, which the field drop below relies on.
     if tool.render:
         clean[VIEW_PARAM] = "render"

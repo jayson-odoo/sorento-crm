@@ -28,6 +28,9 @@ EXPECTED = {
     # Round 5: the local resolver; each kind it searches has its own slug (tools.KIND_SLUGS).
     "crm_resolve": "",
     "crm_products_find": "master_data.products.view",
+    # AGENTIC-KNOWLEDGE P1: the document search (local) and the guide reader (open to every linked user).
+    "crm_knowledge_search": "resource.attachments.view",
+    "user_guides_read": "",
 }
 
 STOCK = "crm_inventory_stock_balance_list"

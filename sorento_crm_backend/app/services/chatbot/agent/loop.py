@@ -697,6 +697,13 @@ def _system_prompt(db, user_name: str) -> str:
     from app.services import ai_prompt_registry
 
     text = ai_prompt_registry.get_prompt(db, PROMPT_KEY).text
+    # AGENTIC-KNOWLEDGE: how-to-use-the-CRM questions go to the guides, document questions to the
+    # knowledge search. Both appended at runtime, idempotent on their headers.
+    from app.services import knowledge_service
+
+    if "USER GUIDE PROTOCOL" not in text:
+        text = text.rstrip() + "\n\n" + ai_prompt_registry._synthesizer_fallback()
+    text = knowledge_service.with_knowledge_protocol(text)
     today = datetime.now(timezone.utc).date().isoformat()
     return f"{text}\n\nToday's date is {today}. You are working for {user_name}."
 
