@@ -1,7 +1,8 @@
 # PLAN: AGENTIC-KNOWLEDGE - ask the agent about documents uploaded in Resources (HR handbook, product knowledge)
 
-Status: CARD v1.1 filed for the owner (31 Oct 2026; v1.1 adds the owner's side-panel add-on, K2 answered). No code. Track: L (migration, new access rule, new agent tool).
-UAC (`agentic-knowledge-acceptance-criteria.md`) is written after the owner answers K1, K3-K5.
+Status: CARD v1.2 filed for the owner (31 Oct 2026; v1.1 adds the side-panel add-on, K2 answered; v1.2 adds
+"how the system works" via `user_guides_read` in the agent, K6). No code. Track: L (migration, new access rule, new agent tool).
+UAC (`agentic-knowledge-acceptance-criteria.md`) is written after the owner answers K1, K3-K6.
 
 Owner, 31 Oct ~13:10: "what's next for our agentic? I want to upload some Sorento HR policy for users to ask, or
 some product knowledge... we don't have RAG on documents, right?"
@@ -72,6 +73,48 @@ So P1 does not wait on AGENTIC-UNIFY in either order:
   "this isn't in the documents, ask HR (<escalate-to name>)" as text, with no ticket. AGENTIC-UNIFY then brings the
   real hand-off. Crew note to AGENTIC-UNIFY: keep `crm_knowledge_search` in the panel's tool set when it swaps paths.
 
+## How the system works: `user_guides_read` joins the agent (owner add-on #2, 31 Oct ~13:25)
+
+"Users should also be able to ask HOW THE SYSTEM WORKS." Half of this exists:
+
+| Piece | Where | State |
+| --- | --- | --- |
+| MCP tool `user_guides_read(query)` | `sorento_crm_mcp/catalog.py:1350-1368`, `user_guides.py:8-11`, `:110`, `:204` | Live Outline search (`documents.search` on doc.foundryx.my) + full body of the top hit. `read_only=True`, no backend route (synthetic path `:1359`). |
+| Side panel | `ai_assistant_service.py:2363-2372` | Bound unconditionally for every staff turn. |
+| Answer rule | `ai_prompt_registry.py:538` "USER GUIDE PROTOCOL" | Call once with the question verbatim, quote steps and deep links, `NO_MATCH` -> ask to rephrase, never invent steps. |
+| Console agent | `chatbot/agent/tools.py:61-74` | Not in `REGISTRY`, so the agent cannot read guides. |
+
+P1 adds it to `REGISTRY`, staff only. Three small details the dispatcher needs (`tools.py:816-890`), all measured:
+- Permission: every entry is checked with `_permitted(slug)` (`:839`, `:336-344`) and there is no user-guide slug;
+  an empty slug fails the check. Guides are for any signed-in staff user (the panel binds them for everyone), so the
+  entry passes for any staff user, the same way `crm_resolve` is special-cased (`:838`).
+- Contact side: refused for a WhatsApp contact (staff only) through `contact_allows` (`:304`).
+- Arguments: the dispatcher injects `contact_id` / `space_id` into every MCP call (`:875-878`), but
+  `user_guides_read` takes only `query` (`user_guides.py:204`), so they are not injected for this tool.
+- The USER GUIDE PROTOCOL paragraph is added to the agent prompt, so steps and deep links are quoted the same way.
+AGENTIC-UNIFY then inherits it with the rest of `REGISTRY`, so panel users keep it after the switch.
+Guide content is being refreshed by lane DOCS-REFRESH; nothing here depends on it, since the tool reads live.
+
+### K6 evidence: one tool or two?
+
+Recommendation: **two tools**, `user_guides_read` for "how do I do X in the CRM", `crm_knowledge_search` for
+"what does our policy / product document say". Evidence:
+1. Different store, different freshness. Guides are read live from Outline at question time (`user_guides.py:8-11`):
+   a DOCS-REFRESH edit is answerable the second it is saved. Folding them into `crm_knowledge_search` means an
+   Outline -> vector sync job with change detection, a moving part with no problem behind it today.
+2. Different answer shape. A guide answer is the whole guide's steps quoted verbatim with clickable deep links
+   (`catalog.py:1352-1357`, protocol `ai_prompt_registry.py:538`); a knowledge answer is a few cited passages with
+   page numbers. One tool would need a mode switch in its output and in the prompt.
+3. Different failure. Guide `NO_MATCH` -> "rephrase" (`ai_prompt_registry.py` protocol step 2); knowledge miss ->
+   hand off to HR / marketing. Merged, the model can no longer tell which to do.
+4. It already works in the panel. Merging rewrites a working path; keeping it costs one `REGISTRY` row.
+5. Audience. Guides are staff only today; knowledge spans staff, dealers and end users with per-type rules.
+Risk of two tools: the model picks the wrong one. Covered by the tool descriptions ("CRM screens and steps" vs
+"company policy and product documents") and by mixed routing questions in the eval set (below).
+Trigger to merge later, named not built: guides must reach dealers on WhatsApp, or the eval shows Outline's
+keyword search missing questions the vector search would find. Then Outline becomes one more `knowledge` audience
+type fed by a sync, and `user_guides_read` retires.
+
 Owner direction "empower the model with more tools instead of hard coding": this is one more tool in the same
 registry, not a new lane or router branch. The model decides when to call it; the tool decides what the caller may see.
 
@@ -120,7 +163,7 @@ during a live switch it is also written with the current search model, exactly l
 - **P1 - staff-only HR handbook in the Console agent.** `ai_audience` column + type form checkbox/select (Resources
   type settings, no new screen), extraction job (PDF text + vision OCR fallback + DOCX), page chunks, `knowledge`
   source with audience filter in `search_current`, `crm_knowledge_search` tool for staff, answer-only-from-source
-  rule + HR hand-off, the same tool in the side panel (MCP path, see above), per-document status ("Read by AI: 42 pages, 3 OCR'd" / "failed: page 7") on the attachment
+  rule + HR hand-off, `user_guides_read` added to the agent `REGISTRY` (staff, see above), the same tool in the side panel (MCP path, see above), per-document status ("Read by AI: 42 pages, 3 OCR'd" / "failed: page 7") on the attachment
   detail and the existing Embeddings admin. Gold eval set for the handbook.
 - **P2 - product knowledge for dealers on WhatsApp.** Same tool exposed to the chatbot agent for contacts, with the
   contact grant + `access_levels` check; hand-off goes to the salesperson / marketing; `public` audience for the
@@ -147,6 +190,8 @@ during a live switch it is also written with the current search model, exactly l
   correct, refusal on out-of-document questions, zero leakage (a dealer-context run over the HR gold set must return
   nothing, a hard fail).
 - Bar to ship P1: retrieval hit >= 90%, correct-or-refused >= 95%, 0 hallucinated policy answers, 0 leaks.
+- Routing set (K6): ~20 mixed staff questions ("how do I upload a packing list" -> `user_guides_read`, "how many
+  leave days do I get" -> `crm_knowledge_search`, a few that need both); bar: right tool first >= 90%.
 - Gold files live outside the public repo (crew eval state), like the EEM gold set; only the scorer is committed.
 
 ## Questions for the owner (K1-K5)
@@ -165,6 +210,11 @@ during a live switch it is also written with the current search model, exactly l
   source is simpler and the extra OpenAI cost is cents; moot if prod already searches gemini.
 - **K5 - Scanned PDFs:** (a) OCR them with the vision reader (cost per page, shown on the file), (b) refuse and ask
   for a text PDF. Recommendation: (a), because HR handbooks are often scanned signed copies, and the reader exists.
+
+- **K6 - System guides: one tool or two?** (a) keep `user_guides_read` (live Outline) next to
+  `crm_knowledge_search`, both in the agent `REGISTRY`, (b) sync Outline into the knowledge store and use one tool.
+  Recommendation: (a), because guides are read live (DOCS-REFRESH edits show at once), answer as quoted steps with
+  deep links rather than page citations, and already work in the panel; (b) adds a sync job for no measured problem.
 
 No new screen is needed: the type setting lives on the existing Resources attachment-type form, document status on
 the attachment detail and the existing Embeddings admin. So no mock in this card.
