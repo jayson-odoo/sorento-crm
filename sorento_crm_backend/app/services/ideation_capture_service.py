@@ -279,11 +279,18 @@ def handle_capture_turn(
             choice = "new"
 
     extraction: IdeateExtraction | None = None
+    kept_pointer: dict[str, Any] | None = None
     if choice is None:
         # Fresh message (a held list is dropped). The extractor also reads the language, so it
         # runs before the gates and the gate replies can follow it.
-        extraction = extract_ideate_turn(db, message_text=text_in)
+        try:
+            extraction = extract_ideate_turn(db, message_text=text_in)
+        except Exception:  # noqa: BLE001 - a failed read is answered, never a 500
+            logger.warning("ideation extractor raised for respond_io_id=%s", respond_io_id, exc_info=True)
+            extraction = IdeateExtraction(failed=True)
         language = _language(extraction.language)
+        # A failed read keeps whatever list was held: nothing about the message is known.
+        kept_pointer = held
         held = None
     else:
         language = _language(held.get("language"))
@@ -314,6 +321,15 @@ def handle_capture_turn(
         intake_ref = _valid_uuid(held.get("intake_ref")) or str(uuid.uuid4())
     else:
         assert extraction is not None
+        if extraction.failed:
+            # AI-KEY-PER-PROVIDER: an extraction that could not run (provider or key error,
+            # timeout) says nothing about the message. It is not "no idea": no ask-back, no
+            # give-up, the session state is left as it was, and the reply says what happened.
+            logger.warning(
+                "ideation capture: extraction failed, replying read_failed respond_io_id=%s",
+                respond_io_id,
+            )
+            return finish("read_failed", "read_failed", {}, language, pointer=kept_pointer, persist=False)
         source_text = text_in
         fields = {
             key: cleaned

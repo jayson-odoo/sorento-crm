@@ -72,7 +72,7 @@ class Env:
         self.renders: list[tuple[str, dict, str]] = []
         self.languages: list[str | None] = []
         # message_text -> IdeateExtraction; unknown text -> no idea content
-        self.extractions: dict[str, IdeateExtraction] = {}
+        self.extractions: dict[str, IdeateExtraction | Exception] = {}
         self.similar_result: dict | Exception = {"matches": []}
         self.create_result: dict | Exception = {}
 
@@ -253,7 +253,10 @@ def env(monkeypatch):
         def _extract(_db, **kw):  # noqa: ANN001
             text = kw["message_text"]
             e.extractor_calls.append(text)
-            return e.extractions.get(text, IdeateExtraction())
+            got = e.extractions.get(text, IdeateExtraction())
+            if isinstance(got, Exception):
+                raise got
+            return got
 
         def _similar(base_url, api_key, payload):  # noqa: ANN001
             e.similar_calls.append(payload)
@@ -1645,3 +1648,75 @@ def test_t_endpoint_carries_config_error_status(monkeypatch):
         app.dependency_overrides.clear()
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "config_error"
+
+
+# --------------------------------------------------------------------------- #
+# AI-KEY-PER-PROVIDER: a failed read is not "no idea"                          #
+# (PLAN-ai-key-per-provider-31oct.md)                                          #
+# --------------------------------------------------------------------------- #
+READ_FAILED_EN = "I couldn't read that just now. Please send it again."
+
+
+def _assert_read_failed(env, out: dict) -> None:
+    assert out["status"] == "read_failed"
+    _only_render(env, "read_failed")
+    assert out["reply_text"] == READ_FAILED_EN
+    assert "couldn't find an idea" not in out["reply_text"]
+    assert "?" not in out["reply_text"]
+    _no_ss(env)
+    assert "ideation" not in out["session_vars"]
+
+
+def test_ak_extractor_raising_replies_read_failed_not_ask_idea(env, caplog):
+    env.ready()
+    env.extractions[MSG] = RuntimeError("gemini 400")
+    with caplog.at_level("WARNING"):
+        out = env.turn(MSG)
+    _assert_read_failed(env, out)
+    assert any("ideation capture: extraction failed" in r.getMessage() for r in caplog.records)
+
+
+def test_ak_extractor_raising_on_the_ask_answer_does_not_give_up(env):
+    env.ready()
+    env.extractions[MSG] = RuntimeError("timeout")
+    out = env.turn_ask(MSG)
+    _assert_read_failed(env, out)
+
+
+def test_ak_failed_extraction_replies_read_failed_not_ask_idea(env, caplog):
+    env.ready()
+    env.extractions[MSG] = IdeateExtraction(failed=True)
+    with caplog.at_level("WARNING"):
+        out = env.turn(MSG)
+    _assert_read_failed(env, out)
+    assert any("ideation capture: extraction failed" in r.getMessage() for r in caplog.records)
+
+
+def test_ak_failed_extraction_on_the_ask_answer_does_not_give_up(env):
+    env.ready()
+    env.extractions["hmm"] = IdeateExtraction(failed=True)
+    out = env.turn_ask("hmm")
+    _assert_read_failed(env, out)
+
+
+def test_ak_failed_extraction_keeps_a_held_list(env):
+    """A failed read of a fresh message does not drop a held similar-list pointer."""
+    env.ready()
+    pointer = env.pointer(env.sim(2))
+    env.extractions["something else"] = IdeateExtraction(failed=True)
+    out = env.turn("something else", session_vars_in=pointer)
+    assert out["status"] == "read_failed"
+    assert env.persisted().get("ideation", {}).get("status") == "similar_offered"
+
+
+@pytest.mark.parametrize(
+    "lang, text",
+    [
+        ("ms", "Saya tidak dapat membaca mesej itu sekarang. Sila hantar sekali lagi."),
+        ("zh", "我刚才无法读取这条消息，请再发送一次。"),
+    ],
+)
+def test_ak_read_failed_copy_ms_zh(lang, text):
+    from app.services.ideation_capture_replies import render_reply
+
+    assert render_reply("read_failed", {}, user_message="x", language=lang) == text
