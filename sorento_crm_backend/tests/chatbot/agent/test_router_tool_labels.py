@@ -43,7 +43,7 @@ EXPECTED_LABELS = [
     "change a dealer contact",
     "approve or reject a purchase request",
     "take back a purchase request action",
-    "submit a new idea or feature request",
+    "record a suggestion or wish for what the system should have or do, an idea or a feature request",
     "change one of your ideas",
     "your customer asks",
     "recent changes",
