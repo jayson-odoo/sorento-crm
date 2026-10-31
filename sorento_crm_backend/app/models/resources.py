@@ -1,5 +1,5 @@
 """Resource management models."""
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, event
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, event
 from sqlalchemy.dialects.postgresql import ARRAY, UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -82,6 +82,11 @@ class AttachmentType(Base):
     # this later touches no existing row (R1); it only changes what the NEXT
     # upload of this type does.
     is_shared = Column(Boolean, default=False, nullable=False, server_default="false")
+    # AGENTIC-KNOWLEDGE (K1): who may ask the AI about files of this type - off / staff / dealer /
+    # public. Read live at search time, so switching a type to off hides its files at once.
+    ai_audience = Column(String(16), nullable=False, default="off", server_default="off")
+    # The team a question these files do not answer is referred to (K3).
+    ai_escalate_team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
     # The folder an upload of this type files into by default (R4, purchasing
     # consolidation batch 6 Sep 2026). NULL = no default, same as today; the type form
     # and the generic Create Attachment dialog both let the user pick another one anyway.
@@ -95,6 +100,9 @@ class AttachmentType(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     default_directory = relationship("AttachmentDirectory", foreign_keys=[default_directory_id])
+    __table_args__ = (
+        CheckConstraint("ai_audience IN ('off', 'staff', 'dealer', 'public')", name="ck_attachment_types_ai_audience"),
+    )
 
     # Two FK paths now link these tables: attachments.attachment_type_id (a file
     # OF this type) and attachment_types.certification_logo_attachment_id (this
@@ -182,6 +190,13 @@ class Attachment(Base, CompanyScopedMixin):
     full_directory_path = Column(Text, nullable=True)  # e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
     description = Column(Text, nullable=True)  # User-editable description for search / n8n AI agent
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')  # dealer / end_user visibility
+    # AGENTIC-KNOWLEDGE: what the read job did with this file (null = its type is not AI-readable).
+    ai_read_status = Column(String(16), nullable=True)  # queued / processing / done / failed / unsupported
+    ai_read_pages = Column(Integer, nullable=True)
+    ai_read_ocr_pages = Column(Integer, nullable=True)
+    ai_read_cost_usd = Column(Numeric(10, 4), nullable=True)  # estimate: OCR pages x knowledge_service.OCR_COST_PER_PAGE_USD
+    ai_read_error = Column(Text, nullable=True)
+    ai_read_at = Column(DateTime(timezone=False), nullable=True)
     sort_order = Column(Integer, nullable=True)
     # 's3' (legacy AWS S3 + CloudFront) or 'r2' (Cloudflare R2 + CDN). Drives URL signing dispatch.
     storage_provider = Column(String(16), nullable=False, server_default="s3")
