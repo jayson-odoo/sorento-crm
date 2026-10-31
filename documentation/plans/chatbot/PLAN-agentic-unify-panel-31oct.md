@@ -64,7 +64,9 @@ AC-6: every read a lane makes inside the process rather than through MCP, for a 
 | Sales agents a word names | `S.py:822`, `CHAT/lanes/business/report_ask.py:1194` | `master_data.sales_agents.view` | Same |
 | Supplier names in the low stock ask | `CHAT/lanes/business/low_stock_ask.py:162` | `procurement.suppliers.view` | The suppliers screen's slug |
 | A salesperson's own customers, to log an opportunity | `S/sales/opportunity_chat.py` `staff_customer_options` | Their own agents' customers, else `sales.opportunities.add` | The save asks for the slug again; a user with neither gets nothing |
-| Resolver | `S.py:155` (`resolve_reference_post`) | Open, called as the staff user with a blank contact pair | #2048 AC-14 keeps `lookup/resolve` open as a picker (owner ruling L10) |
+| Resolver | `S.py:155` (`resolve_reference_post`), `CHAT/turn_runtime.py:2501` | Each kind by its slug, `KIND_SLUGS` of `CHAT/agent/tools.py` | Corrected by review: #2048 AC-14 keeps `lookup/resolve` open as a picker, but this in-process call returned customer names to a user with no customer slug. The agent's `crm_resolve` already refuses that kind |
+| Purchase request and sponsorship cards, later pages too | `CHAT/lanes/business/__init__.py:1672-1696` (`ref_status`) | The kind's `.view`, else `.view_own` with `own_scope.request_in_scope` | Added by review: they were gated on `purchase_orders.placed` alone |
+| Sales order cards and PO ref cards | `CHAT/lanes/business/__init__.py:1587, 1638` (`so_status`) | `order_management.orders.view` | Added by review |
 | Products, sets, families, spec values | `S.py:406, 588`, `CHAT/head/candidates.py`, `grounding.py`, `held_family.py`, `closed_lists_index.py`, `bare_size.py`, `lookup_lists.py:488, 754` | Open | #2048 AC-14 |
 | Categories and classes | `S.py:766, 981`, `CHAT/head/lookup_lists.py:628` | Open | #2048 AC-14 |
 | Brands | `CHAT/turn_runtime.py:554`, `S.py:535, 885`, `CHAT/head/lookup_lists.py:546` | Open | #2048 AC-14 |
@@ -114,6 +116,23 @@ Caps on the client's text: title 255, path 500, search 500, visible text 6000 ch
 - `AIAssistantBubble.tsx`: `WhatsAppBlocks` and `TurnAttachments` on a brain reply; `ProposalActions` and `ActionsBlock` for everyone on a reply that has them; `RoutePill`, `StepsDisclosure`, `ReplyMeta` only with `canViewTrace`. The trace link on a brain reply goes to `/system-management/chat-history?turn=<chatbot_turn_id>`, today's link stays on an old reply. Chips already read `suggestions`.
 - Confirm, Cancel, Undo and a countdown's end all reload the thread and draw what comes back, no local outcome state. So a reload and a live view cannot differ. A refused decision shows its plain reason as a toast and reloads too.
 - `lib/aiAssistantChatApi.ts` gains the three action calls, using `extractApiError`.
+
+## Review round 1 rulings
+
+Reviewer and security-reviewer at c50bd32793, both failed. All fixed red first, except where stated.
+
+- **Rollout gate (AC-1):** `check_user_has_permission` passes every admin and superadmin, so they would move at deploy and lose answers until PR 4. This one slug reads the role's own grant. Superadmin needs the grant too.
+- **A panel escalation is marked:** `source_entity_type = "panel_escalation"`, not "no contact". A customer's row whose contact was deleted also has no contact, and its people keep their WhatsApp (AC-25). The marker switches WhatsApp off everywhere, takeover paths included (`S/sla_takeover_service.py:447, 453, 494, 554`), and takes the row out of the tier runner.
+- **Limits:** 20 panel messages a minute per user, the old path's figure, and 5 panel escalations an hour per user. Both one line on `rate_limit.hit`, both a plain reply. **Refused:** a row cap that does not need Redis. Every limiter here fails open, and nothing shows this one needs to be the exception. Trigger: a staff member actually flooding a colleague.
+- **Company of an escalation:** only the principal's `active_company_id`. None means no draw, no row, an honest reply. A stored body's `company_id` is not read on a staff turn.
+- **Reveal keys on the staff read path (AC-7):** asked of both users through `gate_user_ids`, as the invoiced gates are. Exposure stops at act-as.
+- **Impersonation:** the principal carries the real user, so both audit stamps (`CHAT/agent/writes.py:152`, `S/sales/opportunity_chat.py:145`) name them.
+- **The page:** the note is one JSON object after its header, so screen text cannot fake a section. "Authoritative" belongs to the record facts alone. The parser's page line is left out while a question is open, as the agent drops its context while a proposal waits.
+- **Screen:** a reload for a thread no longer open is thrown away, and an older reload never overwrites a newer draw. Ordered items keep their printed number (`li value`), because a reply of 3 must mean the row marked 3. A line under an item stays in that item until a blank line or the next marker: the stock cards' shape. An ordered marker is 1 to 3 digits, so `2026. x` is text. A proposal past its time reads Expired, for the console too: it is the same read, and "Waiting" with no button helps nobody.
+- **Smaller:** the turn id leaves `pending_action` for a reader without the slug. `POST /agent/conversation/new` refuses a panel key. A failed agent turn rolls back (AC-24). A sales agentless holder of `sales.opportunities.add` can log a prospect (AC-12).
+- **Not fixed:** `TurnAttachments` has no URL scheme allowlist. React blocks `javascript:` and the linkifier allows only http(s), so it is not exploitable.
+
+Accepted for hand test: `*Co B:*` under `3. Carol` sits inside that item, since it has no blank line before it (`tail/member_offer.py:255-262`). It needs more than one routing company, and the principal has one.
 
 ## Still to count or prove
 
