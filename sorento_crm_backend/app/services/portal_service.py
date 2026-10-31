@@ -214,7 +214,7 @@ class PortalService:
             raise handle_not_found("Contact", contact_id)
         return contact
 
-    def _contact_space_id(self, contact: RespondContact) -> Optional[str]:
+    def contact_space_id(self, contact: RespondContact) -> Optional[str]:
         """The Respond space id of the contact's workspace, or None without one."""
         from app.models.respond_workspace import RespondWorkspace
 
@@ -231,7 +231,7 @@ class PortalService:
         """False when the contact has a workspace and ``space_id`` is not it."""
         if not getattr(contact, "workspace_id", None):
             return True
-        return self._contact_space_id(contact) == (space_id or "").strip()
+        return self.contact_space_id(contact) == (space_id or "").strip()
 
     # ---------- Contact slug (stable bookmarkable URL) ----------
 
@@ -317,7 +317,7 @@ class PortalService:
         # space_id: the contact's own workspace (its Respond space identifier,
         # NOT the workspace PK), which is the only space the OTP request accepts.
         # A contact with no workspace yet falls back to what its latest token used.
-        space_id = self._contact_space_id(contact)
+        space_id = self.contact_space_id(contact)
         if not space_id:
             latest = (
                 self.db.query(PortalToken)
