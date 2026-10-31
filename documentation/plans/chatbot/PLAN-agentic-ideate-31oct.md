@@ -1,7 +1,10 @@
 # PLAN: ideas through the agent, and routing that follows the agent's tools (AGENTIC-IDEATE)
 
-**Status:** behaviour card filed 31 Oct 2026, waiting for answers. No code yet. Track: size M, lead pattern.
-UAC, tickets and the slice list get written here once the answers are in.
+**Status:** behaviour card filed 31 Oct 2026. Crew answered C1 and C2; Q1 to Q4 are with the owner. Slice R1 in build
+(no answer blocks it); R2 and R3 wait for the answers. Track: size M, lead pattern.
+UAC: `agentic-ideate-31oct-acceptance-criteria.md`. No screen changes, so Phase 1 (frontend mock) does not apply.
+
+Slices: **S1** = R1 routing. **S2** = R3 multi-turn. **S3** = R2 idea tools. They land as commits on this one lane branch.
 
 ## The owner's question, answered
 
@@ -157,13 +160,10 @@ exists. A "yes new one" reply to a similar-idea question clears it (0.88, 0.94).
 
 ## For crew (not the owner)
 
-- **Real rows:** my read-only query of `chatbot.turns` (branch_kind = ideate) on the lane's dev DB was denied by the
-  auto-mode classifier and I did not retry it. Please export real idea messages, masked, with their count, or say
-  paraphrases are enough for the gate.
-- **Hand test:** `crew.toml:155` has no shared-service host in `no_proxy`, so creating an idea on a copy fails at
-  transport. The copy's configured ss URL is UNVERIFIED. Options: (a) point the copy at a local ss, (b) hand-test
-  the proposal and refusal only, and prove the create with `tests/_ideation_ss_fake.py`. Recommendation: (a), since
-  the end state is the whole point.
+- **C1, real rows (answered):** crew exports masked real idea messages from the 28 Oct backup to
+  `crew/state/eval/agentic-ideate/ideas-real-31oct.jsonl`. The gold is built from those, with paraphrases scored apart.
+- **C2, hand test (answered, option b):** the hand test covers the proposal, the confirm card and the refusal. The
+  create is proved end to end with `tests/_ideation_ss_fake.py`. Copies must not reach any real shared service.
 
 ## Architecture
 
