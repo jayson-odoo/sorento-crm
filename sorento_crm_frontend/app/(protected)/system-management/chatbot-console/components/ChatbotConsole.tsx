@@ -11,6 +11,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
+import { COARSE_HIT_TARGET_CLASS, PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { formatElapsed, useVoiceRecorder } from '@/components/common/conversation/useVoiceRecorder';
 import { toast } from '@/lib/toast';
@@ -247,9 +249,9 @@ export default function ChatbotConsole() {
     messages,
     sending,
     sendText,
-    sendQuickReply,
     sendMedia,
     retryMedia,
+    threadLoading,
     startNew,
     startingNew,
     runId,
@@ -340,6 +342,13 @@ export default function ChatbotConsole() {
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   };
 
+  /** A quick-reply chip is a message like any other: it honours the Agent toggle and then switches it off. */
+  const sendChip = (text: string) => {
+    const forced = forceNext && !staged;
+    setForceNext(false);
+    void sendText(text, null, { forceAgent: forced });
+  };
+
   const sendStaged = (file: File) => {
     if (!contactId) {
       toast.error('Pick a contact before sending a message.');
@@ -350,6 +359,7 @@ export default function ChatbotConsole() {
     setStaged(null);
     setPreviewOpen(false);
     setReplyToId('');
+    setForceNext(false); // media always goes to the bot
     void sendMedia(file.type.startsWith('audio/') ? 'audio' : 'image', file, caption, quote);
   };
 
@@ -393,6 +403,7 @@ export default function ChatbotConsole() {
       const caption = draft;
       setDraft('');
       setReplyToId('');
+      setForceNext(false); // media always goes to the bot
       void sendMedia('audio', file, caption, quote);
     },
   });
@@ -601,7 +612,7 @@ export default function ChatbotConsole() {
               <MessageBubble
                 message={message}
                 cards={cards}
-                onQuickReply={sendQuickReply}
+                onQuickReply={sendChip}
                 onRetryMedia={retryMedia}
                 onReply={isQuotable(message) ? () => startReply(message.id) : undefined}
               />
@@ -611,6 +622,7 @@ export default function ChatbotConsole() {
             </div>
           );
         })}
+        {threadLoading ? <SectionSkeleton label="Loading the conversation" /> : null}
         {sending ? <TypingIndicator /> : null}
         {notice ? (
           <p role="alert" className="text-sm text-destructive">
@@ -816,7 +828,9 @@ export default function ChatbotConsole() {
             disabled={Boolean(staged)}
             onClick={() => setForceNext((on) => !on)}
             className={cn(
-              'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs hover:bg-secondary/80 disabled:cursor-not-allowed disabled:opacity-50',
+              'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+              PRESSED_CLASS,
+              COARSE_HIT_TARGET_CLASS,
               forceNext && !staged ? 'border-primary bg-primary/10 font-semibold text-primary' : 'bg-secondary',
             )}
           >

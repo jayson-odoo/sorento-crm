@@ -296,11 +296,6 @@ class AgentTurnResponse(BaseModel):
     actions: list["AgentConversationAction"] = Field(default_factory=list)
 
 
-class AgentConversationToolCall(BaseModel):
-    name: str
-    status: str
-
-
 class AgentChange(BaseModel):
     """One field of one record, before and after, in words."""
 
@@ -335,26 +330,6 @@ class AgentConversationAction(BaseModel):
     steps: list[AgentActionStep] = Field(default_factory=list)
 
 
-class AgentConversationTurn(BaseModel):
-    turn_id: str
-    text: str
-    reply_text: str
-    status: str
-    created_at: datetime
-    rounds: int | None = None
-    limit_hit: str | None = None
-    tool_calls: list[AgentConversationToolCall] = Field(default_factory=list)
-    steps: AgentSteps = Field(default_factory=AgentSteps)
-    actions: list[AgentConversationAction] = Field(default_factory=list)
-
-
-class AgentConversationResponse(BaseModel):
-    conversation_id: str | None = None
-    turns: list[AgentConversationTurn] = Field(default_factory=list)
-    #: The contact's current proposal waiting for a yes, so a reloaded console can still show it.
-    pending_action: AgentPendingAction | None = None
-
-
 class AgentConversationNewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -378,6 +353,18 @@ class AgentActionResponse(BaseModel):
     steps: list[AgentActionStep] = Field(default_factory=list)
 
 
+class ConsoleThreadAttachment(BaseModel):
+    """A file a stored bot turn would send."""
+
+    model_config = ConfigDict(extra="allow")
+
+    url: str
+    filename: str
+    mimeType: str | None = None
+    attachmentType: str | None = None
+    caption: str | None = None
+
+
 class ConsoleThreadTurn(BaseModel):
     """One turn of the console thread, bot or agent, as a reload shows it."""
 
@@ -386,6 +373,7 @@ class ConsoleThreadTurn(BaseModel):
     user_text: str = ""
     reply_text: str = ""
     send_messages: list[str] = Field(default_factory=list)
+    attachments: list[ConsoleThreadAttachment] = Field(default_factory=list)
     # Bot turns only: what the bubble wears (branch badge, parser version) and the id a later message quotes.
     branch_kind: str | None = None
     prompt_version: int | None = None

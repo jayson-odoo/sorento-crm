@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { extractTurnAttachments } from '@/components/chatbot/TurnAttachments';
+import { extractTurnAttachments, type TurnAttachment } from '@/components/chatbot/TurnAttachments';
 import { toast } from '@/lib/toast';
 import { getChatbotTurns } from '../../chat-history/services/chatbotTurnService';
 import { getRespondContactsOutbound } from '../../respond-contacts/services/respondContactOutboundService';
@@ -148,7 +148,10 @@ function contactLabel(row: { name: string | null; phone_number: string | null; r
 
 /** What a bubble needs of a turn: a `POST /console/turn` answer, or a `GET /console/thread` turn made to look like one. */
 type BubbleSource = Pick<ConsoleTurnResponse, 'turn_id' | 'branch_kind' | 'reply_text' | 'prompt_version'> &
-  Partial<Pick<ConsoleTurnResponse, 'send_messages' | 'quick_replies' | 'trace_summary' | 'actions' | 'route' | 'agent'>>;
+  Partial<Pick<ConsoleTurnResponse, 'send_messages' | 'quick_replies' | 'trace_summary' | 'actions' | 'route' | 'agent'>> & {
+    /** The files a stored turn sent (a live turn carries them inside `actions`). */
+    attachments?: TurnAttachment[];
+  };
 
 /** The agent bubble's chips: rounds, each tool and why it stopped. Null when there is nothing to show. */
 function agentMetaOf(
@@ -167,11 +170,13 @@ function agentMetaOf(
  * The turn's own `send_attachments` files (if any) ride the LAST bubble, the same
  * place `quickReplies` already rides. An agent turn is one bubble that also carries its
  * steps and the changes it proposed. */
-function turnBubbles(result: BubbleSource, fallbackId: string): ChatbotConsoleMessage[] {
+function turnBubbles(result: BubbleSource, fallbackId: string, stored = false): ChatbotConsoleMessage[] {
   const sends = result.send_messages ?? [];
   const bodies = [...(result.reply_text ? [result.reply_text] : []), ...sends];
+  // A stored turn without a reply is not "no reply": it is a turn with nothing to show.
+  if (bodies.length === 0 && stored) return [];
   if (bodies.length === 0) bodies.push('(no reply)');
-  const attachments = extractTurnAttachments(result.actions);
+  const attachments = result.attachments ?? extractTurnAttachments(result.actions);
   const agent = result.agent ?? null;
   return bodies.map((body, index) => {
     const last = index === bodies.length - 1;
@@ -212,6 +217,7 @@ function threadMessages(turns: ConsoleThreadTurn[]): ChatbotConsoleMessage[] {
         branch_kind: t.branch_kind ?? null,
         reply_text: t.reply_text,
         send_messages: t.send_messages ?? [],
+        attachments: t.attachments ?? [],
         prompt_version: t.prompt_version ?? null,
         route: t.route,
         agent:
@@ -227,21 +233,26 @@ function threadMessages(turns: ConsoleThreadTurn[]): ChatbotConsoleMessage[] {
             : null,
       },
       t.turn_id,
+      true,
     ),
   ]);
 }
 
 const isGreeting = (m: ChatbotConsoleMessage) => m.id.startsWith('greeting-');
 
-/** The first read of a thread replaces the greeting; a later read only brings the agent turns' steps and
- * write cards up to date, so the bubbles of this visit keep their chips and files. */
+/** Merge a read of the thread into what is shown. Turns the screen does not know come first, as older
+ * history (and replace the greeting); the agent turns it does know get their steps and write cards brought
+ * up to date, so the bubbles of this visit keep their chips and files. */
 function applyThread(prev: ChatbotConsoleMessage[], turns: ConsoleThreadTurn[]): ChatbotConsoleMessage[] {
-  if (prev.every(isGreeting)) return turns.length > 0 ? threadMessages(turns) : prev;
+  const known = new Set(prev.flatMap((m) => (m.turnId ? [m.turnId] : [])));
+  const history = threadMessages(turns.filter((t) => !known.has(t.turn_id)));
   const agentTurns = new Map(turns.filter((t) => t.side === 'agent').map((t) => [t.turn_id, t]));
-  return prev.map((m) => {
+  const patched = prev.map((m) => {
     const t = m.role === 'bot' && m.turnId ? agentTurns.get(m.turnId) : undefined;
     return t ? { ...m, agentSteps: t.steps, agentActions: t.actions } : m;
   });
+  if (history.length === 0) return patched;
+  return [...history, ...patched.filter((m) => !isGreeting(m))];
 }
 
 function mediaReadLine(kind: 'image' | 'audio', text: string): string {
@@ -338,6 +349,7 @@ export function useChatbotConsole() {
   /** Empty the thread for `nextRun`: no bubble, session, waiting proposal or decision carries over. */
   const clearThread = useCallback((nextRun: string, session: Record<string, unknown> = {}) => {
     generationRef.current += 1;
+    setSending(false); // a reply still in flight belongs to the thread that was left
     setRunId(nextRun);
     setSessionVars(session);
     setMessages(greetingMessages());
@@ -378,7 +390,10 @@ export function useChatbotConsole() {
   const refetchThread = threadQuery.refetch;
   useEffect(() => {
     if (!thread) return;
-    setPendingAction(thread.pending_action);
+    // A read from before the turn that made the waiting proposal does not know it: keep that one.
+    setPendingAction((prev) =>
+      thread.pending_action ?? (prev && !thread.turns.some((t) => t.turn_id === prev.turn_id) ? prev : null),
+    );
     setMessages((prev) => applyThread(prev, thread.turns));
   }, [thread]);
 
@@ -454,6 +469,7 @@ export function useChatbotConsole() {
       };
       setMessages((prev) => [...prev, userMessage]);
       setSending(true);
+      const generation = generationRef.current;
       try {
         const result = await postConsoleTurn({
           contact_respond_id: contactId,
@@ -464,6 +480,7 @@ export function useChatbotConsole() {
           ...(quote ? { reply_to: { id: quote.id, text: quote.text, source: quote.source } } : {}),
           ...(options?.forceAgent ? { force_agent: true } : {}),
         });
+        if (generationRef.current !== generation) return; // the thread moved on: this reply is not for it
         setMessages((prev) => [
           ...prev.map((m) => (m.id === userMessage.id ? { ...m, messageId: result.message_id ?? null } : m)),
           ...turnBubbles(result, uniqueId('local')),
@@ -480,15 +497,15 @@ export function useChatbotConsole() {
         }
         writeStoredContact({ id: contactId, label: contactLabelState });
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed to run the turn');
+        if (generationRef.current === generation) {
+          toast.error(err instanceof Error ? err.message : 'Failed to run the turn');
+        }
       } finally {
-        setSending(false);
+        if (generationRef.current === generation) setSending(false);
       }
     },
     [contactId, contactLabelState, promptVersionId, refreshThread, runId, sending, sessionVars],
   );
-
-  const sendQuickReply = useCallback((text: string) => sendText(text), [sendText]);
 
   // -------------------------------------------------------------------------------- //
   // Media (commit 2): image and voice through the real extractor.
@@ -501,6 +518,7 @@ export function useChatbotConsole() {
     async (extractedText: string, caption: string, quote: ConsoleQuote | null) => {
       const text = (extractedText || caption).trim();
       if (!text || !contactId) return;
+      const generation = generationRef.current;
       try {
         const result = await postConsoleTurn({
           contact_respond_id: contactId,
@@ -510,13 +528,18 @@ export function useChatbotConsole() {
           run_id: runId,
           ...(quote ? { reply_to: quote } : {}),
         });
+        if (generationRef.current !== generation) return;
         setMessages((prev) => [...prev, ...turnBubbles(result, uniqueId('local'))]);
         if (result.session_vars !== null) setSessionVars(result.session_vars);
+        if (result.agent) {
+          if (result.agent.pending_action) setPendingAction(result.agent.pending_action);
+          refreshThread();
+        }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to run the turn');
       }
     },
-    [contactId, promptVersionId, runId, sessionVars],
+    [contactId, promptVersionId, refreshThread, runId, sessionVars],
   );
 
   const pollMediaStatus = useCallback(
@@ -714,9 +737,9 @@ export function useChatbotConsole() {
     messages,
     sending,
     sendText,
-    sendQuickReply,
     sendMedia,
     retryMedia,
+    threadLoading: Boolean(contactId) && threadQuery.isLoading,
     startNew,
     startingNew,
     runId,

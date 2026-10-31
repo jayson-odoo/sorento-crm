@@ -109,6 +109,7 @@ export interface ConsoleThreadTurn {
   user_text: string;
   reply_text: string;
   send_messages?: string[];
+  attachments?: TurnAttachment[];
   branch_kind?: string | null;
   prompt_version?: number | null;
   message_id?: string | null;

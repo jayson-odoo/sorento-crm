@@ -61,9 +61,6 @@ from app.schemas.chatbot_turn import (
     AgentActionResponse,
     AgentConversationNewRequest,
     AgentConversationNewResponse,
-    AgentConversationResponse,
-    AgentConversationToolCall,
-    AgentConversationTurn,
     ChatbotTurnDetailResponse,
     ChatbotTurnListResponse,
     ChatbotTurnResponse,
@@ -790,59 +787,27 @@ def _agent_refused(exc: AgentRefused) -> HTTPException:
     )
 
 
-@router.get("/agent/conversation", response_model=AgentConversationResponse)
-def agent_conversation(
-    contact_respond_id: str = Query(..., min_length=1, max_length=64),
-    _user: dict = Depends(require_permission(VIEW)),
-    db: Session = Depends(get_db),
-):
-    """The contact's current conversation. Read only: the row is made by the first turn."""
-    try:
-        ctx = build_context(db, contact_respond_id)
-    except AgentRefused as exc:
-        raise _agent_refused(exc)
-    waiting = agent_actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
-    pending = agent_actions.pending_dict(waiting) if waiting is not None else None
-    conv = agent_memory.latest_conversation(db, contact_respond_id)
-    if conv is None or not agent_memory.belongs_to(conv, ctx.user_id, grants_hash(ctx)):
-        return AgentConversationResponse(conversation_id=None, turns=[], pending_action=pending)
-    rows = agent_memory.conversation_turns(db, conv)
-    by_turn = agent_actions.actions_by_turn(db, [str(r.id) for r in rows], ctx.user_id)
-    turns = []
-    for row in rows:
-        envelope = row.envelope if isinstance(row.envelope, dict) else {}
-        response = row.response if isinstance(row.response, dict) else {}
-        digest = [d for d in (response.get("tool_digest") or []) if isinstance(d, dict)]
-        turns.append(
-            AgentConversationTurn(
-                turn_id=str(row.id),
-                text=str(envelope.get("text") or ""),
-                reply_text=str(response.get("reply_text") or ""),
-                status=row.status,
-                created_at=row.created_at,
-                rounds=response.get("rounds"),
-                limit_hit=response.get("limit_hit"),
-                tool_calls=[
-                    AgentConversationToolCall(name=str(d.get("name") or ""), status=str(d.get("status") or ""))
-                    for d in digest
-                ],
-                steps=agent_memory.steps_from_trace(row.trace),
-                actions=by_turn.get(str(row.id), []),
-            )
-        )
-    return AgentConversationResponse(conversation_id=str(conv.id), turns=turns, pending_action=pending)
-
-
 @router.post("/agent/conversation/new", response_model=AgentConversationNewResponse)
 def agent_conversation_new(
     payload: AgentConversationNewRequest,
-    _user: dict = Depends(require_permission(VIEW)),
+    user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
+    """Start the agent afresh. A proposal still waiting is cancelled first, so a later yes cannot confirm
+    a change from the conversation that was just left."""
     try:
         ctx = build_context(db, payload.contact_respond_id)
     except AgentRefused as exc:
         raise _agent_refused(exc)
+    waiting = agent_actions.pending_action(db, payload.contact_respond_id, user_id=ctx.user_id)
+    if waiting is not None:
+        try:
+            agent_actions.cancel(db, payload.contact_respond_id, str(waiting.id), operator_user_id=str(user["id"]))
+        except agent_actions.ActionRefused:
+            try:  # an operator who may not decide for the user still leaves the conversation
+                agent_actions.cancel(db, payload.contact_respond_id, str(waiting.id))
+            except agent_actions.ActionRefused:
+                pass  # decided meanwhile
     conv = agent_memory.new_conversation(
         db, payload.contact_respond_id, user_id=ctx.user_id, grants_hash=grants_hash(ctx)
     )

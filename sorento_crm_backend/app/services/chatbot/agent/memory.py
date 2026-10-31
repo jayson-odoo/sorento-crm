@@ -66,17 +66,16 @@ def new_conversation(
     return conv
 
 
-def conversation_turns(db, conv: AgentConversation) -> list[ChatbotTurn]:
-    return (
-        db.query(ChatbotTurn)
-        .filter(
-            ChatbotTurn.contact_respond_id == conv.contact_respond_id,
-            ChatbotTurn.ingress == "agent",
-            ChatbotTurn.envelope["agent_conversation_id"].astext == str(conv.id),
-        )
-        .order_by(ChatbotTurn.created_at, ChatbotTurn.id)
-        .all()
+def conversation_turns(db, conv: AgentConversation, *, limit: int | None = None) -> list[ChatbotTurn]:
+    """The conversation's turns, oldest first. With `limit`, the newest that many."""
+    query = db.query(ChatbotTurn).filter(
+        ChatbotTurn.contact_respond_id == conv.contact_respond_id,
+        ChatbotTurn.ingress == "agent",
+        ChatbotTurn.envelope["agent_conversation_id"].astext == str(conv.id),
     )
+    if limit is None:
+        return query.order_by(ChatbotTurn.created_at, ChatbotTurn.id).all()
+    return list(reversed(query.order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.id.desc()).limit(limit).all()))
 
 
 def _verbatim_turns(db, conv: AgentConversation) -> list[ChatbotTurn]:
@@ -123,13 +122,12 @@ def maybe_compact(
     summarize: Callable[[str | None, list[ChatbotTurn]], str],
     threshold_tokens: int,
     keep_last: int = 6,
-    extra_tokens: int = 0,
 ) -> bool:
     """Fold the older verbatim turns into the running summary when the verbatim part is above
-    the threshold (characters / 4, plus `extra_tokens` of context shown beside the history). A failing summarizer changes nothing."""
+    the threshold (characters / 4). A failing summarizer changes nothing."""
     turns = _verbatim_turns(db, conv)
     chars = sum(len(m["content"]) for t in turns for m in _turn_messages(t))
-    if chars // 4 + extra_tokens <= threshold_tokens or len(turns) <= keep_last:
+    if chars // 4 <= threshold_tokens or len(turns) <= keep_last:
         return False
     folded = turns[: len(turns) - keep_last]
     try:
