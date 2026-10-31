@@ -285,3 +285,77 @@ def test_procurement_portal_links_pass_row_space_id(db, twins, monkeypatch, cls_
     row = SimpleNamespace(contact_id=twins.rid, space_id=twins.ws_b.space_id, request_type=None)
     getattr(svc, method)(row, "e1")
     assert seen["space_id"] == twins.ws_b.space_id
+
+
+def test_window_cache_is_split_by_workspace(db, cleanup, twins, respond_calls):
+    """Twins in two workspaces must not share a cached window reading."""
+    from app.services.integration_service import RespondClient
+    from app.services.respond_messaging_service import send_text_or_template
+
+    client_a = RespondClient.for_contact_id(db, twins.a.id)
+    client_b = RespondClient.for_contact_id(db, twins.b.id)
+    send_text_or_template(db, identifier=twins.rid, text="hi", use_case="portal_otp", client=client_a)
+    respond_calls["window_open"] = False
+    with pytest.raises(Exception):
+        # Closed window and no template configured: the template branch is taken.
+        send_text_or_template(
+            db, identifier=twins.rid, text="hi", use_case="portal_otp", client=client_b
+        )
+    assert respond_calls["list"] == [twins.key_a, twins.key_b]
+    assert respond_calls["send"] == [twins.key_a]
+
+
+def test_outbound_switch_checks_the_contact_being_sent_to(db, cleanup, twins, monkeypatch):
+    """A muted contact stays muted even when its enabled twin is the row the bare
+    identifier lookup returns first (``b`` was created first)."""
+    from app.services.error_handler import AppException
+    from app.services.integration_service import RespondClient
+
+    twins.a.outbound_enabled = False
+    db.commit()
+    monkeypatch.setattr(
+        RespondClient, "_http", staticmethod(lambda timeout=15: pytest.fail("network"))
+    )
+    client = RespondClient.for_contact_id(db, twins.a.id)
+    with pytest.raises(AppException) as exc:
+        client.send_message(twins.rid, "hi")
+    assert exc.value.status_code == 403
+
+
+def test_contact_workspace_without_usable_key_fails_closed(db, cleanup, twins):
+    """A contact whose own workspace key cannot be used is NOT sent through the
+    default workspace (where the same Respond.io id may be someone else)."""
+    from app.services.integration_service import RespondClient
+
+    twins.ws_a.api_key_ciphertext = "not-a-fernet-token"
+    db.commit()
+    with pytest.raises(ValueError):
+        RespondClient.for_contact_id(db, twins.a.id)
+
+
+def test_contact_without_workspace_keeps_default_client(db, cleanup):
+    from app.services.integration_service import RespondClient
+
+    c = _contact(db, cleanup, respond_io_id=f"9{uuid.uuid4().int % 10**9:09d}", workspace_id=None)
+    db.commit()
+    assert isinstance(RespondClient.for_contact_id(db, c.id), RespondClient)
+
+
+@pytest.mark.parametrize(
+    "cls_name,helper",
+    [
+        ("StockInquiryService", "_stock_inquiry_portal_or_view_url"),
+        ("PurchaseRequestService", "_purchase_request_portal_or_view_url"),
+    ],
+)
+def test_inline_status_links_go_through_the_helper(cls_name, helper):
+    """Every status-message portal link is built by the one helper that passes the
+    row's space_id, not an inline copy that can drop it."""
+    import inspect
+
+    from app.services import procurement_service
+
+    cls = getattr(procurement_service, cls_name)
+    src = inspect.getsource(cls)
+    assert "submission_link(" in inspect.getsource(getattr(cls, helper))
+    assert src.count("submission_link(") == 1, f"{cls_name} builds a portal link inline"
