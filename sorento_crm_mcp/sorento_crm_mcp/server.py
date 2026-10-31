@@ -605,7 +605,9 @@ async def _ensure_promotion_active(client: Any, promotion_id: str | None) -> str
     if not promotion_id:
         return None
     try:
-        raw = await client.get(f"/api/v1/marketing/promotions/{promotion_id}", path_params={}, query={})
+        raw = await client.get(
+            "/api/v1/marketing/promotions/{promotion_id}", path_params={"promotion_id": promotion_id}, query={}
+        )
     except Exception:
         return None
     data = _json_loads_safe(raw)

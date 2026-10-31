@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from typing import Any, Mapping, MutableMapping
+from urllib.parse import quote
 
 import httpx
 
@@ -105,12 +106,33 @@ class CRMClient:
             text = (text or "").replace("\n", " ")
             return text if len(text) <= limit else (text[:limit] + "...<truncated>")
 
+        method_upper = method.upper()
         rendered = path
         if path_params:
             for k, v in path_params.items():
-                rendered = rendered.replace("{" + k + "}", str(v))
+                text = str(v)
+                # One value fills exactly one segment. quote(safe='') keeps ? # % inside
+                # it; "/" and dot segments are refused because encoding cannot hold them
+                # (the backend's ASGI server decodes %2F before routing, and "." / ".."
+                # are unreserved so normalisation still treats them as dot segments).
+                if (
+                    not text.strip()
+                    or "/" in text
+                    or text in (".", "..")
+                    or any(ord(c) < 0x20 or ord(c) == 0x7F for c in text)
+                ):
+                    return json.dumps(
+                        {
+                            "error": "invalid_path_param",
+                            "param": k,
+                            "detail": f"{k} must be a single non-empty identifier.",
+                            "status_code": 400,
+                            "path": path,
+                            "method": method_upper,
+                        }
+                    )
+                rendered = rendered.replace("{" + k + "}", quote(text, safe=""))
         params = {k: v for k, v in (query or {}).items() if v is not None}
-        method_upper = method.upper()
 
         # Attribution for the CRM's api_call_log. Without these the backend
         # cannot tell MCP from n8n at all - both authenticate with the same
