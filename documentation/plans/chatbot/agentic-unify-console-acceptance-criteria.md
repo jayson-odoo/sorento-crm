@@ -53,6 +53,8 @@ Contract: section (a) of `CARD-agentic-unify-31oct.md` and the Console tabs of `
 - A message sent as a reply to a bubble and routed to the agent does not carry the quote to the agent, as today.
 - Agent turns have no message id, so their user bubbles cannot be quoted, as today.
 - A follow-up that Jev sends to the bot after an agent reply does not give the bot that reply (AC-18).
+- A turn still running when a thread's first read lands stays hidden until the next reload, because later reads add no turns (AC-16b): switching contact and back mid-turn, or reloading mid-turn.
+- A slow media turn can still double if the first read is slower than the sync wait, because its status bubble has no turn id.
 
 ## Hand test
 
