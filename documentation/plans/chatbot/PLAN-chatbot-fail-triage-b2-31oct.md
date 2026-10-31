@@ -3,7 +3,7 @@
 **Status:** Build. Feature track M, lead pattern (tester red -> coder -> reviewer + security-reviewer). Parser candidate
 E, md5 e90461ef, PASSED crew's hidden gate 31 Oct and is pinned: `PROMPT-fail-triage-b2-e90461ef.patch` rebuilds it from
 production md5 57d7d412; no further prompt edit without a new gate. Owner answered Q1-Q4 on 31 Oct; publishing waits for the
-owner's review of the text and #2018. AC-5 and the no-variant reply in build. Batch 1 is PR #2018 (lane CHATBOT-FAIL-TRIAGE). Parent plan and
+owner's review of the text and #2018. Code complete on 31 Oct: AC-5 through the promotion path, AC-6 with the no-variant clause, reviewer READY after 3 rounds at 7382f05078, security READY; console pass and owner hand test pending. Batch 1 is PR #2018 (lane CHATBOT-FAIL-TRIAGE). Parent plan and
 UAC: `PLAN-chatbot-fail-triage-30oct.md`, `chatbot-fail-triage-acceptance-criteria.md` (Batch 2 + AC-7f + R1), copied
 unchanged so they merge cleanly with #2018.
 
@@ -123,7 +123,7 @@ Lead decision, filed with crew: a dealer is a contact with an active tag whose `
 way `contact_llm_choice.py:36` reads the model. No word match on tag names, no migration. The owner or crew sets the tier on
 the 3 tags once; until then every dealer gets today's denial, so it fails safe. Do not press Apply on those tags.
 
-Size no variant holds: the existing "None with size 300mm" clause (`lanes/business/answer.py:3098`), then today's variants.
+Size no variant holds: the existing "None with size 300mm" clause (`lanes/business/answer.py:3119`), then today's variants.
 
 ## Prompt edits (one version, base = production text, F1)
 
