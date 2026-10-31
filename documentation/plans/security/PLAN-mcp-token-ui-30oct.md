@@ -1,7 +1,8 @@
 # PLAN: MCP auth token set from the settings screen (no .env)
 
-Status: in review, reviewer READY after one fix round (B1, S1-S3, N1-N2, nit 3; security should-fixes applied), awaiting owner answers on the
-design card and hand test (full track, size M: auth + additive migration + settings UI).
+Status: in review, reviewer READY after one fix round (B1, S1-S3, N1-N2, nit 3; security should-fixes applied); owner
+answered the design card 31 Oct (Q1-Q4 (a); Q5 being explained, kept as built); awaiting the owner's hand test (full
+track, size M: auth + additive migration + settings UI).
 UAC: `mcp-token-ui-acceptance-criteria.md`
 Lane: MCP-TOKEN-UI (owner, 31 Oct 00:35). Releases are on hold until this ships.
 
@@ -16,6 +17,13 @@ and the deployment will have 0 downtime or breakage of the chatbot working".
   headerless call through.
 - The backend sent `settings.mcp_auth_token` (env) from `MCPRuntimeClient._headers`
   (`app/services/ai_assistant_service.py:370`), the one client every in-repo caller uses.
+
+## Owner answers (31 Oct, ~08:40)
+
+- Q1 separate Enforce switch: (a) yes. Q2 24 h grace after Rotate: (a) yes. Q3 show once, then
+  masked: (a) yes. Q4 no env for the token: (a) yes.
+- Q5 (backend unreachable when the MCP server starts): owner asked why the backend would be down;
+  crew is explaining. Kept as built, (a) 503 until the first answer, unless the owner says otherwise.
 
 ## Design (decisions = card answers (a) on all five)
 
