@@ -1394,7 +1394,7 @@ def commit_order_inquiry_reserve(
     inquiry rows only; the service resolves each to its open (`reserves`) or latest
     answered (`amendments`) request row inside THIS inquiry, so a line of a finished
     request can be amended while another request is open. One transaction, one
-    `order_inquiry_reserved` dispatch per request touched. Returns the touched
+    `order_inquiry_reserved` dispatch per requester of the requests touched. Returns the touched
     requests. `projects.order_inquiries.reserve` alone (R1)."""
     try:
         validate_uuid_path(inquiry_id, resource="Order inquiry")

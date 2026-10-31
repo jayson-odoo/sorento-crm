@@ -534,7 +534,7 @@ def merged_context(contexts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
                 "so_number": reserve.get("so_number"),
                 "customer": reserve.get("customer"),
                 "line_count": 0,
-                "link": reserve.get("oi_link") or reserve.get("link"),
+                "link": reserve["oi_link"],
             },
         )
         open_row_count += reserve.get("open_row_count") or 0
@@ -599,7 +599,7 @@ def merged_context(contexts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     elif len(contexts) == 1:
         link = base["reserve"]["link"]
     else:
-        link = base["reserve"].get("oi_link") or base["reserve"]["link"]
+        link = base["reserve"]["oi_link"]
 
     reserve = {
         **base["reserve"],
@@ -625,8 +625,6 @@ def merged_context(contexts: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     }
     if inquiry_count >= 2:
         reserve["requests"] = ordered
-    else:
-        reserve.pop("requests", None)
     return {**base, **park_send.merge_people(list(contexts)), "reserve": reserve}
 
 
@@ -857,8 +855,8 @@ class OrderInquiryReserveService:
         a `reserves` row to its OPEN request row, an `amendments` row to its LATEST
         answered request row (which may sit on a finished or cancelled request, 6e.4
         cancel semantics). Everything is validated before anything is written; one
-        `order_inquiry_reserved` dispatch is queued per request touched, naming only
-        that request's own touched rows. Returns the touched requests, ordinal order."""
+        `order_inquiry_reserved` dispatch is queued per requester of the requests touched
+        (several requests of one requester share one email). Returns the touched requests, ordinal order."""
         from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
         reserves = list(reserves or [])
@@ -1339,8 +1337,6 @@ class OrderInquiryReserveService:
 
     def _item(self, request, line_count: int, context: Dict[str, Any], rows) -> Dict[str, Any]:
         reserve = context["reserve"]
-        from app.services.automation_triggers import build_order_inquiry_link
-
         return {
             "context": context,
             "request": request,
@@ -1349,9 +1345,6 @@ class OrderInquiryReserveService:
             "inquiry_id": str(request.order_inquiry_id),
             "inquiry_no": reserve.get("inquiry_no"),
             "ordinal": request.ordinal,
-            "so_number": reserve.get("so_number"),
-            "customer": reserve.get("customer"),
-            "link": build_order_inquiry_link(request.order_inquiry_id),
         }
 
     def _groups(self, trigger_type: str, items):
@@ -1372,9 +1365,6 @@ class OrderInquiryReserveService:
                     for who in ("raiser", "requester")
                 )
                 by_raiser.setdefault(key, []).append(item)
-            if len(by_raiser) == 1:
-                split.append(group)
-                continue
             for sub in by_raiser.values():
                 contexts = [item["context"] for item in sub]
                 merged = {**contexts[0], **park_send.merge_people(contexts)}

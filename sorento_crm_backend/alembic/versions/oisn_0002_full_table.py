@@ -192,7 +192,7 @@ def _layout(code: str) -> dict:
     if request:
         heading = "{{ reserve.short }} {{ 'need' if reserve.batch else 'needs' }} your reserve"
         intro = _REQUEST_INTRO
-        html = _table(False) + _NOTES + _STILL + f"<p>Requested by {_ASKER} on {{{{ today }}}}.</p>"
+        html = _table(False) + _NOTES + f"<p>Requested by {_ASKER} on {{{{ today }}}}.</p>"
     else:
         heading = _RESERVED_HEADING
         intro = _RESERVED_INTRO
@@ -215,7 +215,7 @@ def _text(code: str) -> str:
     link = "{% if reserve.batch %}View these {{ reserve.oi_count }} order inquiries{% else %}View this order inquiry{% endif %}: {{ reserve.link }}\n"
     if code == REQUEST_CODE:
         return (
-            f"{_REQUEST_INTRO}\n\n{_text_table(False)}\n{_NOTES_TEXT}{_STILL_TEXT}"
+            f"{_REQUEST_INTRO}\n\n{_text_table(False)}\n{_NOTES_TEXT}"
             f"Requested by {_ASKER} on {{{{ today }}}}.\n{link}"
         )
     return (
