@@ -132,6 +132,17 @@ Reviewer and security-reviewer at c50bd32793, both failed. All fixed red first, 
 - **Smaller:** the turn id leaves `pending_action` for a reader without the slug. `POST /agent/conversation/new` refuses a panel key. A failed agent turn rolls back (AC-24). A sales agentless holder of `sales.opportunities.add` can log a prospect (AC-12).
 - **Not fixed:** `TurnAttachments` has no URL scheme allowlist. React blocks `javascript:` and the linkifier allows only http(s), so it is not exploitable.
 
+## Review round 2 rulings
+
+Reviewers at fdef525938. Fixed red first:
+
+- **Customer names, two more reaches:** a DO number prints the debtor's name (`S/entity_resolver.py:1046, 2172`), so `customer_order` needs `order_management.orders.view`. The casual lane resolves on its own (`CHAT/lanes/casual.py:132`), so it takes the same filter.
+- **Import boundary:** the round 1 fix made core import the chatbot package (`S/entity_resolver.py:1167`, `S/sales/opportunity_chat.py:144`). The lane hands the read check and the real user in.
+- **Screen:** Undo no longer waits on a send, or the window could lapse with the button disabled and the change commit. A failed send counts as a draw. A send's answer for a thread no longer open is dropped: this predates the lane, but agent turns take long enough to hit it, and the open thread ref exists now.
+- **Label:** a marked row reads `Task`, as before, never `panel_escalation` (`team-pending/components/TeamPendingList.tsx:85`).
+
+Not changed, shown at hand test: the closing line of a proposal ("Reply yes to go ahead", `CHAT/agent/loop.py:510`) and of `composers/status.py:38-40` sits inside the last list item, one indent. A blank line before it would change WhatsApp and console text, and the words are unchanged either way.
+
 Accepted for hand test: `*Co B:*` under `3. Carol` sits inside that item, since it has no blank line before it (`tail/member_offer.py:255-262`). It needs more than one routing company, and the principal has one.
 
 ## Still to count or prove
