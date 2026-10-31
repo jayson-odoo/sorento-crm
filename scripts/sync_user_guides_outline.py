@@ -182,6 +182,13 @@ class Outline:
             {"id": doc_id, "title": title, "text": text, "append": False},
         )["data"]
 
+    def current_user_id(self) -> str | None:
+        """The API token's own user id, or None when Outline will not say."""
+        try:
+            return self._post("auth.info", {})["data"]["user"]["id"]
+        except Exception:
+            return None
+
     def get_document(self, doc_id: str) -> dict[str, Any]:
         return self._post("documents.info", {"id": doc_id})["data"]
 
@@ -389,14 +396,31 @@ def push(args: argparse.Namespace) -> None:
     parent_ids: dict[str, str] = {}
     failures: list[str] = []
 
+    force = os.environ.get("OUTLINE_SYNC_FORCE", "").lower() in ("1", "true", "yes")
+    self_id = o.current_user_id()
+    kept: list[str] = []
+
+    def update_if_changed(doc: dict[str, Any], title: str, body_md: str, state_key: str, verb: str) -> str:
+        if doc["title"] == title and _same_text(_outline_text(o, doc), body_md):
+            print(f"  [same] {state_key}")
+            return doc["id"]
+        page = GUIDES_DIR / state_key
+        if not force and not state_key.endswith("/__parent__") and outline_is_newer(page, doc, self_id):
+            # Pull has not brought this Outline edit back yet: overwriting it
+            # would lose it. The next scheduled pull opens the PR for it.
+            kept.append(state_key)
+            print(f"  [keep] {state_key}  (Outline copy edited after the repo commit, pull it)")
+            return doc["id"]
+        updated = o.update_document(doc["id"], title, body_md)
+        print(f"  [{verb}] {state_key}  -> {updated['id']}")
+        return updated["id"]
+
     def ensure_doc(
         title: str, body_md: str, parent_key: str | None, state_key: str
     ) -> str:
         cached = state.get(state_key)
         if cached and cached in by_id:
-            doc = o.update_document(cached, title, body_md)
-            print(f"  [update] {state_key}  -> {doc['id']}")
-            return doc["id"]
+            return update_if_changed(by_id[cached], title, body_md, state_key, "update")
         match = next(
             (
                 d
@@ -410,9 +434,7 @@ def push(args: argparse.Namespace) -> None:
             None,
         )
         if match:
-            doc = o.update_document(match["id"], title, body_md)
-            print(f"  [adopt+update] {state_key}  -> {doc['id']}")
-            return doc["id"]
+            return update_if_changed(match, title, body_md, state_key, "adopt+update")
         doc = o.create_document(
             title=title,
             text=body_md,
@@ -476,6 +498,10 @@ def push(args: argparse.Namespace) -> None:
     print("[3/3] Save state")
     save_state(state)
     print(f"  state -> {STATE_FILE}")
+    if kept:
+        print(f"\n{len(kept)} page(s) kept (Outline is newer; set OUTLINE_SYNC_FORCE=1 to overwrite):")
+        for key in kept:
+            print(f"  - {key}")
     if failures:
         print(f"\n{len(failures)} page(s) FAILED to push:")
         for line in failures:
@@ -564,6 +590,39 @@ def learn_state_by_title(state: dict[str, str], docs: list[dict[str, Any]]) -> l
     for key in learnt:
         print(f"  [learn] {key}  -> {state[key]}  (matched by title)")
     return learnt
+
+
+def outline_is_newer(path: Path, doc: dict[str, Any], self_id: str | None = None) -> bool:
+    """True when a person edited Outline's copy after the repo page's last commit.
+
+    An edit by ``self_id`` (the sync's own API user, i.e. an earlier push) is
+    not a person's edit: Outline re-normalises the markdown it stores, so the
+    text never matches byte for byte and every page would otherwise read as
+    edited.
+
+    Push must not overwrite such a page: it holds an Outline edit the pull has
+    not brought back yet. The mirror of ``repo_is_newer``; unknown timestamps
+    fall back to pushing.
+    """
+    if not path.exists():
+        return False
+    editor = (doc.get("updatedBy") or {}).get("id")
+    if self_id is not None and editor == self_id:
+        return False
+    committed = _repo_committed_at(path)
+    updated = _outline_updated_at(doc)
+    return committed is not None and updated is not None and updated > committed
+
+
+def _same_text(a: str, b: str) -> bool:
+    return a.strip() == b.strip()
+
+
+def _outline_text(o: "Outline", doc: dict[str, Any]) -> str:
+    text = doc.get("text")
+    if text is None:
+        text = o.get_document(doc["id"]).get("text", "")
+    return text
 
 
 def pull(args: argparse.Namespace) -> None:

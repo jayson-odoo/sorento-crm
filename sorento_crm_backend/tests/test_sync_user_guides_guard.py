@@ -227,6 +227,12 @@ class _FakeOutline:
         self._maybe_fail(title)
         return {"id": doc_id, "title": title}
 
+    def get_document(self, doc_id):
+        return next(d for d in self.docs if d["id"] == doc_id)
+
+    def current_user_id(self):
+        return "bot"
+
 
 def test_push_continues_past_a_bad_page_and_fails_at_the_end(monkeypatch, tmp_path, capsys):
     import json
@@ -284,3 +290,45 @@ def test_pull_learns_ids_by_title_instead_of_duplicating(monkeypatch, tmp_path):
     state2 = {"warehouse/a.md": "other"}
     mod.learn_state_by_title(state2, docs)
     assert state2["warehouse/a.md"] == "other"
+
+
+def test_push_keeps_an_outline_edit_not_yet_pulled(monkeypatch, tmp_path, capsys):
+    from datetime import datetime, timezone
+
+    mod = _load_module()
+    _fake_guides(mod, monkeypatch, tmp_path, {"warehouse/a.md": "# A\n\nrepo text\n", "warehouse/b.md": "# B\n\nnew\n"})
+    committed = datetime(2026, 10, 31, 5, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(mod, "_repo_committed_at", lambda _p: committed)
+    parent = mod.PARENT_TITLES["warehouse"]
+    later = "2026-10-31T06:00:00.000Z"
+    fake = _FakeOutline(
+        existing=[
+            {"id": "p1", "title": parent, "parentDocumentId": None, "text": "Department guides for **%s**.\n" % parent},
+            # A person edited A in Outline after the repo commit: keep it.
+            {"id": "a1", "title": "A", "parentDocumentId": "p1", "text": "outline edit", "updatedAt": later, "updatedBy": {"id": "human"}},
+            # B was last written by the sync itself: push the repo copy.
+            {"id": "b1", "title": "B", "parentDocumentId": "p1", "text": "old", "updatedAt": later, "updatedBy": {"id": "bot"}},
+        ]
+    )
+    fake.updated = []
+    real_update = fake.update_document
+
+    def spy(doc_id, title, text):
+        fake.updated.append(doc_id)
+        return real_update(doc_id, title, text)
+
+    fake.update_document = spy
+    fake.current_user_id = lambda: "bot"
+    monkeypatch.setattr(mod, "load_env", lambda: ("http://x", "t", "cid"))
+    monkeypatch.setattr(mod, "Outline", lambda **_k: fake)
+    monkeypatch.delenv("OUTLINE_SYNC_FORCE", raising=False)
+    mod.push(None)
+    out = capsys.readouterr().out
+    assert "[keep] warehouse/a.md" in out
+    assert "[same] warehouse/__parent__" in out
+    assert fake.updated == ["b1"]
+
+    monkeypatch.setenv("OUTLINE_SYNC_FORCE", "1")
+    fake.updated.clear()
+    mod.push(None)
+    assert "a1" in fake.updated
