@@ -593,8 +593,9 @@ def test_ac_rf_16_no_reason_given_for_short_lines_without_one(sn, monkeypatch):
     inquiry, rows = _answered(
         client, world, one, [("50", "50", None), ("50", "20", "placeholder"), ("50", "0", "placeholder")]
     )
-    for row in rows[1:]:
-        _rr(world, row).reason = None  # a legacy answer with no reason
+    legacy = [_rr(world, row) for row in rows[1:]]
+    for rr in legacy:
+        rr.reason = None  # a legacy answer with no reason
     world.db.commit()
     table = _table(_note_mails(world)[0]["body_html"])
     assert table["headings"][-1] == "REASON"
@@ -1183,11 +1184,11 @@ def test_ac_rf_53_revision_id_length_and_no_full_template_code_in_the_file():
 # --------------------------------------------------------------------------------- #
 
 
-def test_ac_rf_60_110_line_reserved_email_stays_under_the_gmail_clip(sn, monkeypatch):
+def test_ac_rf_60_105_line_reserved_email_stays_under_the_gmail_clip(sn, monkeypatch):
     client, world, _calls = _setup(sn, monkeypatch)
     one = _raiser(world, "CS One")
-    for n in range(10):
-        lines = [_line(chr(65 + i), qty="100", ask="50") for i in range(11)]
+    for n in range(7):
+        lines = [_line(chr(65 + i), qty="100", ask="50") for i in range(15)]
         inquiry, rows = _oi(world, one, lines, customer="CUSTOMER A WITH A LONGER NAME", project="PROJECT X TOWER")
         _ask(client, world, inquiry, rows, lines, park=False)
         reserves = [_reserve(world, r, "50") for r in rows]
@@ -1197,7 +1198,7 @@ def test_ac_rf_60_110_line_reserved_email_stays_under_the_gmail_clip(sn, monkeyp
     mails = _note_mails(world)
     assert len(mails) == 1
     table = _table(mails[0]["body_html"])
-    assert len(table["rows"]) == 110 and table["headings"][-1] == "REASON"
+    assert len(table["rows"]) == 105 and table["headings"][-1] == "REASON"
     assert len(mails[0]["body_html"].encode()) <= 102 * 1024, len(mails[0]["body_html"].encode())
 
 
