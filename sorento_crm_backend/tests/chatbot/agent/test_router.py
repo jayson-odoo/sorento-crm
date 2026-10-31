@@ -719,7 +719,7 @@ def test_S5_engine_run_turn_never_calls_the_router_or_jev(monkeypatch):
 @pytest.mark.parametrize(
     "module",
     [
-        "app.services.chatbot.inbox_queue",
+        # inbox_queue routes since PLAN-agentic-knowledge-w1-01nov.md S3 (WhatsApp, gated per contact).
         "app.api.v1.external.chat",
         "app.tasks.chat_turns",
     ],
