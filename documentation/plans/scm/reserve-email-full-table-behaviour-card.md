@@ -1,7 +1,7 @@
 # Behaviour card: reserve request / reserved emails, full table (RESERVE-EMAIL-FULL-TABLE)
 
-Status: card v3 (31 Oct 2026). Owner has answered Q1-Q4 and annotated mockup v2. Mockup v3 sits at the same path, `mockups/reserve-email-full-table-mock-v2.html`, so the review session carries on.
-No code until the owner OKs mockup v3.
+Status: card v4 (31 Oct 2026). Owner has answered Q1-Q4 and annotated mockups v2 and v3. Mockup v4 sits at the same path, `mockups/reserve-email-full-table-mock-v2.html`, so the review session carries on.
+No code until the owner OKs mockup v4.
 
 **This reverses owner note 3 on OI-STAGED-NOTIFY mock v1** (the 5-OI cap with "and N more order
 inquiries", `oi-staged-notify-behaviour-card.md` :94-97). **It also reverses owner rule 6 of
@@ -34,6 +34,13 @@ column carries the reserved figure instead.
 | "If rejecred need to say rejected instead of reserved 0" | A Reserve 0 line says Rejected | STATUS reads Rejected, reason underneath. An all-rejected email also says Rejected in subject and heading. |
 | "Yes" on L1 | Legacy imports need no special case | See L below, now closed. |
 
+## Owner notes on mockup v3 (31 Oct)
+
+| Note | In mockup v4 |
+| --- | --- |
+| "I think the Oi put as a column instead of group like that, easier to filter" | Flat table: OI NO on every row, no group lines. |
+| "Rejected need to show the reason, does this coincide with how they want the excel to be represented when downloading the OI from system?" | A REASON column in the row. The Excel comparison is below. |
+
 ## Today (main, checked 31 Oct)
 
 | What | Where |
@@ -53,19 +60,29 @@ holds the seeded text, and leave an admin-edited template alone. No schema chang
 
 ### (1) Full per-line table in both emails, no cap
 
-One table for one OI and for a batch, in the export's column order without TOTAL QTY, RESERVED and
-BALANCE:
+One flat table for one OI and for a batch. Column names and order come from the export's
+`EXPORT_HEADINGS` (`order_inquiry_worklist_service.py:196-240`), and OI NO and REASON go after them, by
+the export's own rule that a new column goes after the existing ones (`:216-219`):
 
-- **Request email (7 columns):** `SO DATE | SO NO | ITEM CODE | QTY | REQUESTED RESERVE | DELIVERY DATE | PROJECT/CUSTOMER`
-- **Reserved email (8 columns):** `SO DATE | SO NO | ITEM CODE | QTY | REQUESTED RESERVE | STATUS | DELIVERY DATE | PROJECT/CUSTOMER`
+- **Request email (8 columns):** `SO DATE | S/O NO | ITEM CODE | QTY | REQUESTED RESERVE | DELIVERY DATE | PROJECT/CUSTOMER | OI NO`
+- **Reserved email (9 columns, 10 with REASON):** `SO DATE | S/O NO | ITEM CODE | QTY | REQUESTED RESERVE | STATUS | DELIVERY DATE | PROJECT/CUSTOMER | OI NO | REASON`
 
-| CS's answer on the line | STATUS shows | Under the line |
+| CS's answer on the line | STATUS shows | REASON shows |
 | --- | --- | --- |
-| `qty_reserved >= qty_requested` (an amend can raise it past the ask, `order_inquiry_reserve_service.py:889,996`) | Reserved 80 | Nothing, unless documents were released ("Released ... (received).", `:379`) |
-| `0 < qty_reserved < qty_requested` | Partial 150 of 212 | CS's reason, required on a short answer (`:262-267`) |
-| `qty_reserved = 0` ("Reserve 0", `:942`) | Rejected | CS's reason, same rule |
+| `qty_reserved >= qty_requested` (an amend can raise it past the ask, `order_inquiry_reserve_service.py:889,996`) | Reserved 80 | Blank, unless documents were released ("Released ... (received).", `:379`) |
+| `0 < qty_reserved < qty_requested` | Partial 150 of 212 | CS's reason |
+| `qty_reserved = 0` ("Reserve 0", `:942`) | Rejected | CS's reason |
 
 This is display only: no new status, no schema change. A line amended back to 0 also reads Rejected.
+REASON prints only when a line in that email has one: on the dev copy no line has any, so an always-on
+column would be empty on every real email so far.
+
+**When there is no reason:** the form requires one whenever Reserved is below Requested
+(`ReserveLineForm.tsx:35,112`). The server only requires it below what the line could still take
+(`order_inquiry_reserve_service.py:847,854,262`), and an amendment across two requests sets it on the
+last row touched (`:974`). So a blank can reach the email, and a Rejected or Partial line without a
+reason prints "No reason given". Card v3 and the v3 ask called the reason mandatory on any short
+answer. That was too broad.
 
 **Subject and heading follow the answers on the email's lines:**
 
@@ -80,9 +97,12 @@ A one-OI email names the OI and SO instead of a count, as today, without the `#n
 **With BALANCE gone:** today's "Check the balance still to buy" line goes too. On OI-2609-0165, QTY is
 170 and STATUS is Reserved 70, so the reader works out the 100 still to buy.
 
-- A grey line above each OI's rows names the OI, with no request numbers. A request's note, when it
-  has one, prints on that line (today's bulk email drops it; the single email prints it, `:456`).
-- OIs are sorted by SO NO, and lines by item code, then delivery date.
+- OI NO is on every row, with no group lines. A request's note, when it has one, prints under the
+  table as "Note (OI-...): ...", as today's single email does (`oisn_0001_staged_notify.py:70`). Today's
+  bulk email drops it.
+- Lines sort by ITEM CODE, then DELIVERY DATE, as the export does after SUPPLIER
+  (`order_inquiry_worklist_service.py:3938`). A batch's OIs can interleave, and the OI NO column keeps
+  them apart.
 - "N lines still to reserve" still prints when a request has open lines (`:459`).
 - **One OI, several open requests:** one email and one table. Today each request gets its own email
   (`_groups`, `:1228-1244`, parked; `commit_request`, `:1013-1048`, answered together). Without `#n`
@@ -90,27 +110,54 @@ A one-OI email names the OI and SO instead of a count, as today, without the `#n
 - The card uses the layout's "wide" width (900 px; `email_layout.py:404`), as the handover email does
   (`oihr_0004_wide_line_table.py`). Today's reserve emails use the standard 600 px.
 
-**Size, measured on the v3 columns** with the app's own renderer (`email_layout.render_document`,
-default theme, masked real rows, no reason lines):
+**Size, measured on the v4 columns** with the app's own renderer (`email_layout.render_document`,
+default theme, masked real rows):
 
-| Lines | Request (7 columns) | Reserved (8 columns) |
-| --- | --- | --- |
-| 100 | 66 KB | 74 KB |
-| 110 | 71 KB | 81 KB |
-| 200 | 122 KB | 139 KB |
+| Lines | Request (8 columns) | Reserved (9) | Reserved with REASON (10) |
+| --- | --- | --- | --- |
+| 100 | 75 KB | 84 KB | 91 KB |
+| 110 | 81 KB | 91 KB | 100 KB |
+| 200 | 141 KB | 159 KB | 174 KB |
 
-**Gmail starts clipping at about 102 KB: about 165 lines on the request email and about 145 on the
-reserved email.** Most of each row's size is the per-cell default style `inline_defaults` adds
-(`email_layout.py:439-489`). Above the clip size, Gmail shows "[Message
+**Gmail starts clipping at about 102 KB: about 140 lines on the request email, about 125 on the reserved
+email, and about 110 when REASON prints** (estimated from these renders). Most of each row's size is the
+per-cell default style `inline_defaults` adds (`email_layout.py:439-489`). Above the clip size, Gmail shows "[Message
 clipped] View entire message", which opens every row, so nothing is lost. Real volume on the 28 Oct
 dev copy was 71 request lines across 28 OIs in 30 days, from one requester. After the per-CS split
 below, each email is smaller still. A test pins the rendered size of a 110-line email so a markup
 change that bloats rows is caught.
 
-On a phone (375 px), measured in a browser, the email is about 640 px wide (request) to 710 px
-(reserved), so the reader scrolls sideways, heading included. A wrapper scrolling only the table did
+On a desktop, measured in a browser, the email stays on the 900 px card, except when REASON prints:
+those 10 columns need about 955 to 1000 px, so the card grows to fit. On a phone (375 px) it is about 720
+to 990 px wide, so the reader scrolls sideways, heading included. A wrapper scrolling only the table did
 not help: the card's table layout grows to fit it anyway. No wrapper is added. UNVERIFIED in real mail
 apps, which may shrink the email instead; the hand test covers a phone.
+
+### Email compared with the OI Excel download
+
+The owner asked if this coincides with the Excel. **Yes for the columns they share, no for the outcome.**
+The PDF prints the same 19 columns as the Excel (`export_pdf`, `order_inquiry_worklist_service.py:3726-3734`).
+
+| Excel column, in order | Request email | Reserved email | Why |
+| --- | --- | --- | --- |
+| SO DATE, S/O NO, ITEM CODE, QTY | Yes | Yes | Same (mockups up to v3 wrongly said SO NO) |
+| REQUESTED RESERVE | Yes | Yes | Same on a first request. If a line was asked again, the email shows this request's figure and the Excel adds what earlier requests kept (`:563`) |
+| RESERVED | No | STATUS in this place | Owner note on v2 |
+| TOTAL QTY | No | No | Owner answer on card v1 |
+| DELIVERY DATE, PROJECT/CUSTOMER | Yes | Yes | Same |
+| SUPPLIER, PO NO | No | No | Not in the columns the stakeholder asked for |
+| LOCATION | No | No | Owner answer on card v1 |
+| ACKNOWLEDGED, TAKEN, REMAINING, SUGGESTED, CHANGE QUANTITY, CHANGE DATE, REMARK | No | No | Not in the columns the stakeholder asked for |
+| *In the email only:* OI NO | Yes | Yes | Owner note on v3 |
+| *In the email only:* STATUS | No | Yes | Owner notes on v2 |
+| *In the email only:* REASON | No | When a line has one | Owner note on v3 |
+
+**The gap:** in the Excel, a rejected line reads the same as one still waiting for CS. REQUESTED RESERVE
+stays filled after CS answers (`:516-522`, `:2601`), RESERVED prints blank at 0 (`:258-262`), and the
+reason appears nowhere. This lane leaves the Excel alone unless the owner says otherwise: the
+stakeholder asked for the email to follow the Excel, not the reverse, and no real rejected line exists
+on the dev copy yet. Trigger for the follow-up: the first time someone needs a rejected line's reason
+from the download.
 
 ### (2) The button opens exactly this email's OIs
 
@@ -178,8 +225,10 @@ The rule is the same either way (L1).
 
 1. Red tests first: full table rows and columns in both emails for 1 and N OIs; no "more" line; no
    RESERVED, BALANCE or `#n` anywhere, plain text included; STATUS for full, partial and rejected, and
-   an amend above the ask and back to 0; reason line under the row; subject and heading for all
-   reserved, mixed and all rejected; button URL lists exactly the email's OI numbers; split by raiser
+   an amend above the ask and back to 0; subject and heading for all
+   reserved, mixed and all rejected; OI NO on every row and no group lines; columns follow `EXPORT_HEADINGS` order (a test reads the constant,
+   so the email cannot drift from the export); REASON prints only when a line has one, and "No reason given"
+   on a Rejected or Partial line without one; button URL lists exactly the email's OI numbers; split by raiser
    (two CS lead to two emails, each Cc only its CS, each table only its OIs); a single-raiser batch
    stays one email; one OI with several requests is one email, parked and answered together; a size
    test for 110 lines; the migration updates a seeded template and leaves an edited one alone; the
