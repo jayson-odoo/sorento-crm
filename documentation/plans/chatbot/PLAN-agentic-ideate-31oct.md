@@ -1,7 +1,7 @@
 # PLAN: ideas through the agent, and routing that follows the agent's tools (AGENTIC-IDEATE)
 
-**Status:** in build. R1 and R3b are green with kill proof on PR #2038. Owner answered Q1, Q2 and Q3 on 31 Oct; Q4 is
-being explained to the owner, built as (a) for now. R3a and R2 in build. Track: size M, lead pattern.
+**Status:** code complete on PR #2038, in review. All four owner questions answered. Crew's hidden gate, console pass
+and hand test are still to come. Track: size M, lead pattern.
 UAC: `agentic-ideate-31oct-acceptance-criteria.md`. No screen changes, so Phase 1 (frontend mock) does not apply.
 
 Slices: **S1** = R1 routing. **S2** = R3 multi-turn. **S3** = R2 idea tools. They land as commits on this one lane branch.
@@ -56,7 +56,7 @@ Gate on all three: `ideation.board.view`, the same slug as the bot lane (`ideati
   builder moves out of `handle_capture_turn` so both paths share it. `intake_ref` is minted at the proposal, so a
   retried confirm lands on the same idea.
 - The agent fills the fields itself, so `extract_ideate_turn` is not called on this path.
-- Similar ideas: the proposal reads ss `similar-own` and names up to 3 of the user's similar ideas with their links.
+- Similar ideas: the proposal reads ss `similar-own` and names up to 3 of the user's similar ideas by number and title.
   The user confirms to log a new one or cancels. No held numbered list on this path.
 - The reply after confirm names the idea number and link, and the optional fields not given, same facts as today.
 - Status, merge, vote and editing other people's ideas stay on the board.
