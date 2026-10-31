@@ -55,3 +55,40 @@ Script: tools.dispatch for crm_knowledge_search with a context for the superadmi
 ## Verdict
 
 Step 1: PASS. Step 2: PASS on the detail page, FAIL on reachability (D1). Steps 3, 4, 5: PASS. Agent check: PASS.
+
+## Re-check (31 Oct 2026, HEAD 53233cec, session "akn2")
+
+Same stack, sidebar navigation only (Resources > Files, Resources > Attachment Types), 1280 and 375, no implementation code changed, nothing committed. Console and page errors: none recorded. The session was closed by name.
+
+### Environment finding (not a lane defect)
+
+The uvicorn on :8000 had been started at 08:20 without `--reload`, before commit dec498d1 (08:39) added the "file unchanged" rule to `knowledge_service.read_block_reason`. Against that stale process Read again on file (a) returned 202 instead of 409, and a read run by the old code stored a text-hash in `source_hash` instead of `file_hash`. I restarted uvicorn with the same command and env file (SORENTO_ENV_FILE=.env.dev-browse, 127.0.0.1:8000, log /tmp/akn2_uvicorn.log) and re-aligned file (a)'s stored hash with a data-only script (/tmp/scripts/akn2_reset_a.py). All results below are against HEAD code. The worker (started 08:50) is after dec498d1 and was not touched.
+
+### Results
+
+| Step | Result | Evidence |
+|---|---|---|
+| D1. Files (sidebar), modal for (a) Leave Policy.pdf: "Read by AI" row "Done, 42 pages, 3 read by OCR (est. USD 0.006)" and Read again | PASS | 30-file-a-modal-1280.png |
+| D1. Modal for (b) Dress Code.pdf: "Failed" with the error text and Read again | PASS | 32-file-b-failed-1280.png |
+| D1. Modal for (c) Parking Memo.pdf (type Off): no "Read by AI" row and no Read again | PASS | 37-file-c-off-1280.png |
+| D1 at 375: rows wrap, no horizontal overflow (document and dialog scrollWidth equal clientWidth) for (a), (b), (c) | PASS | 38-file-a-375.png, 39-file-b-375.png, 40-file-c-375.png |
+| D2. Read again on (b): POST ai-read 202, worker runs, error now reads "The file could not be downloaded from storage." with no AWS or S3 config text | PASS | 33-file-b-read-again-1280.png, 34-file-b-new-error-1280.png |
+| D3. Row Processing in the open modal, flipped to failed in the DB, modal showed Failed on its own with no reload (first read after 2 s, limit 10 s) | PASS, with the caveat below | 35-file-b-processing-before-1280.png, 36-file-b-failed-after-1280.png |
+| 4. Read again on (a) (done, file hash unchanged): POST ai-read 409, error toast "This file is already read and has not changed.", row stays Done | PASS (after the restart above) | 31-file-a-read-again-409-1280.png |
+| 5a. Non-admin viewer@example.com, role "AKN Types Viewer" with only resource.attachment_types.view: sidebar shows only Resources > Attachment Types, list loads (GET 200), Add, Edit and Delete controls count 0 | PASS | 41-types-viewer-view-only-1280.png |
+| 5b. Same role plus resource.attachment_types.edit (after a reload): Edit pencil on both rows, Delete and Add still absent | PASS | 42-types-viewer-edit-1280.png |
+| 6. No UUIDs in visible text (regex over innerText): the three file modals, the page behind them, and the viewer's types page, 0 matches each | PASS | scripted check |
+
+D3 caveat: the real job finishes in about 0.2 s, so Processing could not be held long enough for the worker itself to flip it while the modal was open. I set the row to Processing, reopened the modal (it showed Processing), then set it to failed from a script. That proves the modal polls and redraws on its own; it does not prove a worker-driven flip. The poll lives in AttachmentDetailModal.tsx:858-859 (5000 ms while in flight).
+
+### Seeding for step 5
+
+Via /tmp/scripts/akn2_viewer.py: a `user_roles` row (slug akn-types-viewer), a `users` row (viewer@example.com, ACTIVE, bcrypt password in /tmp/akn_viewer.env), a `user_role_assignments` row, and `user_role_permissions` rows pointing at the existing `user_permissions` slugs. Nothing else was needed for the sidebar: the Attachment Types leaf is gated only by `resource.attachment_types.view` (menu.config.tsx:876) and the Resources group by the `resources` module, which the earlier pass had enabled. No `user_companies` grant was required. Permission changes show after a page reload with no new sign-in.
+
+### Defects
+
+None new in lane code. The earlier D1, D2 and D3 are closed as described above. One thing to be aware of: a dev backend started without `--reload` serves stale code after a fix commit, which produced a false FAIL on step 4 until restarted.
+
+### Data left behind
+
+Files: (a) Done with its original display figures and hash aligned; (b) Failed with the storage-download sentence; (c) untouched. Added: the viewer role and user above, with view and edit permissions.
