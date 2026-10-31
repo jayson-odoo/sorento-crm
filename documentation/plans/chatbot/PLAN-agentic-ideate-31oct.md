@@ -53,7 +53,7 @@ Gate on all three: `ideation.board.view`, the same slug as the bot lane (`ideati
 | `crm_idea_update` | write | Edits one of the user's OWN ideas, same `isMine` check as the board (`api/v1/ideation/ideas.py:191-205`). |
 
 - Same shared-service call and payload as today (`call_create_idea`, `ideation_capture_service.py:113`). The payload
-  builder moves out of `handle_capture_turn` so both paths share it. `intake_ref` is minted at the proposal, so a
+  builder moves out of `handle_capture_turn` so both paths share it. `intake_ref` is derived (see the decisions below), so a
   retried confirm lands on the same idea.
 - The agent fills the fields itself, so `extract_ideate_turn` is not called on this path.
 - Similar ideas: the proposal reads ss `similar-own` and names up to 3 of the user's similar ideas by number and title.
@@ -237,6 +237,37 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 - **`intake_ref`** is derived from the linked user and the idea's text (uuid5) rather than minted, because a step keeps no
   private value between proposal and confirm. Proposing the same idea again lands on the same idea in ss.
 - **`raw_transcript`** is built from the fields given, because a write tool sees its arguments and not the message.
+
+### Decisions after the first review
+
+- **Only test ideas can be edited while `IDEA_IS_TEST` is on.** Q3 ruled on creates only, but an edit from a console trial
+  landing on a real idea is the same harm, and security review confirmed it was possible. It is one condition on the same flag.
+  This goes beyond the owner's answer, so it was reported to crew.
+- **A confirmed idea's link is added by code after verification**, as `proposal_block` does, because `final_reply` scrubs ids
+  from anything the model writes (`loop.py:432`). A model-written URL carrying an id is dropped whole.
+- **Test ideas in `crm_ideas_list` are read live by id**, not rebuilt from stored steps, so ss stays the one source of truth and
+  an edit on the board shows too. The cost is one ss call per listed test idea, capped.
+
+### To do when `IDEA_IS_TEST` flips (the lane that puts the agent on WhatsApp)
+
+- Drop the second source in `crm_ideas_list`, and the test-only edit rule.
+- Decide whether a view-only operator may create an idea in another user's name. R9 allows it, and the test flag hides it today.
+- A re-proposed idea whose ss status has moved past `captured` replays and reads "could not be reached" (`call_create_idea`
+  requires `captured`), and any ss 4xx reads the same. Unlikely while ideas are off the board; give these their own line then.
+
+### Accepted, not changed
+
+- The proposal's similar line can show a view-only operator the linked user's similar titles: test lane only for now.
+- `_recheck` repeats the similar lookup at confirm and discards it, up to 15 s more if ss hangs.
+
+### Found by review, pre-existing, reported to crew, not in this lane
+
+- Chat confirm is decided by the model alone (`loop.py:525`); the server only refuses a same-turn confirm. An injected model can
+  confirm a waiting proposal on any later message.
+- A pending proposal is checked before the daily cap (`router.py:74`, `:83`), so a chain of proposals stays on the agent over the
+  cap. `/agent/turn` (`api/v1/system/chatbot.py:713`) has no daily cap, only the rate limit.
+- Under impersonation, `run_as_user` records the target as `real_user_id` (`writes.py:148-155`), so the real admin is missing from
+  the agent's actor. A shared-service write has no CRM audit row.
 
 ## For crew (not the owner)
 

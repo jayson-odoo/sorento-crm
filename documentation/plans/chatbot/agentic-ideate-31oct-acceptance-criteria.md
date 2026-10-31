@@ -2,7 +2,7 @@
 
 Plan: `documentation/plans/chatbot/PLAN-agentic-ideate-31oct.md`.
 
-R1 is written now, because no open question blocks it. R2 and R3 ACs are added here once the owner answers Q1 to Q4.
+All four owner questions are answered and every slice's ACs are below. "Review round" at the end holds what the first review added.
 
 ## Journey
 
@@ -51,8 +51,6 @@ The people chatting decide nothing here. No screen changes, so Phase 1 (frontend
 
 ## R3b: a reply to the agent's own question stays with the agent
 
-No open question blocks this slice. R3a (the bot asked) is added after Q4.
-
 ### Journey
 
 1. A staff member writes "I want to submit an idea". The agent replies "What is the idea?".
@@ -95,7 +93,7 @@ No open question blocks this slice. R3a (the bot asked) is added after Q4.
 
 ## R3a: a reply to the bot's own question stays on the bot
 
-Built as Q4 (a), any bot question. Pending the owner's final word.
+Q4 is (a), owner 31 Oct: any bot question.
 
 - **AC-R3a-1 [BE]** Given the sent `session_vars` carry `focus.required_ask` (any lane's), when the contact writes, then the
   side is chat, reason `open_question`, with no Jev call. No key or prompt is needed to get there.
@@ -113,8 +111,9 @@ Built as Q4 (a), any bot question. Pending the owner's final word.
 
 1. A staff member with the Agent switch on, in the console, writes "I have an idea: the stock list is too long on my phone".
 2. Jev routes it to the agent. The agent fills in the fields and proposes the idea.
-3. The console shows the confirm card with the title, plus any similar ideas of theirs. Nothing has been created.
-4. They confirm. The idea is created, flagged test, and the reply gives its number, its link and the optional fields not
+3. The reply shows what will be logged, in full, plus any similar ideas of theirs. Nothing has been created. On the
+   console's Agent tab this is the confirm card with a button. On the routed tab it is text, and they confirm by typing.
+4. They confirm, by the button or by typing yes. The idea is created, flagged test, and the reply gives its number, its link and the optional fields not
    given. Or they cancel, and nothing is created.
 5. Later they write "change that idea's title to Nearest warehouse first". The agent finds it, proposes the edit, they
    confirm, and the title changes. No delete and no undo.
@@ -167,3 +166,26 @@ Built as Q4 (a), any bot question. Pending the owner's final word.
 - **AC-R2-15 [BE]** The bot's capture is unchanged: `tests/test_ideation_capture_turn.py` and
   `tests/test_ideation_capture_golden_script.py` stay green, with the payload builder now shared.
 - **AC-R2-16 [T]** Eval: the gate bar in the plan, on the final labels. Crew runs the hidden gate.
+
+## Review round (first review, 31 Oct)
+
+- **AC-RV-1 [BE]** Given a waiting idea proposal, when the user types yes and the agent confirms through `confirm_action`, then
+  the reply carries the idea's working link with its real id, exactly once, added by code after verification, whatever the
+  model wrote. A model that repeats the tool's text word for word leaves no broken link behind: a URL with an id in it is
+  dropped whole from model text, not turned into `.../(id)`. A bare id in model text still reads `(id)`.
+- **AC-RV-2 [BE]** A write that sets no `note` gets no added line on a chat confirm: its reply is unchanged.
+- **AC-RV-3 [BE]** The proposal shows every given value in full, never cut: on a create the title and each given field, on an
+  update each field's new value. A value of over 1000 characters appears whole in the summary.
+- **AC-RV-4 [BE]** `crm_ideas_list` reads each of this contact's created test ideas live from ss by id, as the linked user, so
+  after an edit it shows the new title, and search matches the live title and problem. A 404 on one idea skips that row. A
+  row whose `isMine` is not true is skipped. Other ss failures return the typed `error`. Test ideas come first in the list, so a
+  full ss list cannot push them out. Each row says whether it is a test idea.
+- **AC-RV-5 [BE]** A turn that stored a proposal never keeps `asked_back`, even if the final answer set it.
+- **AC-RV-6 [BE]** `intake_ref` differs between `IDEA_IS_TEST` true and false for the same user and text.
+- **AC-RV-7 [BE]** With an operator acting for someone else, `crm_ideas_list` needs the operator to hold `ideation.ideas.manage`,
+  else it is `denied`, with no ss call and no list of the linked user's ideas. With it, the rows come back.
+- **AC-RV-8 [BE]** `idea_id` must be one valid uuid: a comma-joined or JSON-list value is refused before any ss call.
+- **AC-RV-9 [BE]** `use_cases` takes at most 10 items, each at most 4000 characters. More is `invalid`, and nothing is sent to ss.
+- **AC-RV-10 [BE]** While `IDEA_IS_TEST` is true, `crm_idea_update` on a real idea (`isTest` not true) is refused at the proposal,
+  with a plain line pointing to the board, and no PATCH is sent. A test idea of the user's still works. When the flag is false,
+  a real idea of the user's works.
