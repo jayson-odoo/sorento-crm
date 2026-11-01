@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.models.project_so import OrderInquiryRow
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
 from app.services.project_supply_service import ProjectSupplyService, SupplyLinesRefused
 from app.services.scm.planning_predicate import (
@@ -21,9 +22,15 @@ from app.services.scm.planning_predicate import (
 )
 
 from .._pg_fixture import blank_session
-from ..test_so_supply_confirmation import _stock, _uid, _warehouse
-from .test_consign_plan import _consign_world
-from .test_project_supply_service_ladder import _components, _seed_line, _world
+from ..test_so_supply_confirmation import _core_line, _stock, _uid, _warehouse
+from .test_consign_plan import _board_world, _build, _consign_world, _contributions
+from .test_project_supply_service_ladder import (
+    REQUIRED_DATE,
+    _components,
+    _project_line,
+    _seed_line,
+    _world,
+)
 
 
 def _bin(*, segment, active=True, flag=False):
@@ -170,3 +177,136 @@ def test_a_consignment_at_a_flagged_off_dealer_bin_still_borrows_at_its_own_bin(
     assert [c["kind"] for c in components] == ["borrow"], components
     assert components[0]["source_location"] == own_code
     assert Decimal(str(components[0]["qty"])) == Decimal("10")
+
+
+# --------------------------------------------------------------------------- its own demand
+#
+# A line at a pool is inside that pool's book, so its own demand is netted against the very
+# stock it stands on: 10 on hand and 10 ordered read a net of zero and proposed Buy 10. Every
+# case below is the 50% default share (`available_for_project`).
+
+
+def _proposal_at_own_pool(*, qty, on_hand, other=0):
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=on_hand, product=product)
+        if other:
+            _seed_line(
+                db, company_id, project, product, pool, qty_ordered=str(other), line_no=20,
+            )
+        order, _line, _core_so, _core_line = _seed_line(
+            db, company_id, project, product, pool, qty_ordered=str(qty),
+        )
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+    return {
+        kind: sum(Decimal(str(c["qty"])) for c in components if c["kind"] == kind)
+        for kind in {c["kind"] for c in components}
+    }
+
+
+def test_its_own_demand_is_not_netted_against_its_own_pool():
+    """20 on hand, 10 ordered, nobody else. The share of 20 is 10, so nothing is bought."""
+    assert _proposal_at_own_pool(qty=10, on_hand=20) == {"reserve": Decimal("10")}
+
+
+def test_stock_for_exactly_its_own_quantity_is_not_all_bought():
+    """10 on hand, 10 ordered. The dealers' half stays back, and the other half is taken."""
+    assert _proposal_at_own_pool(qty=10, on_hand=10) == {
+        "reserve": Decimal("5"),
+        "buy": Decimal("5"),
+    }
+
+
+def test_every_other_lines_demand_at_the_pool_stays_netted():
+    """15 on hand, 10 ordered here and 10 by another order. Available is 15 - 10 = 5, share 2."""
+    assert _proposal_at_own_pool(qty=10, on_hand=15, other=10) == {
+        "reserve": Decimal("2"),
+        "buy": Decimal("8"),
+    }
+
+
+def test_two_lines_of_one_unit_both_get_their_own_demand_back():
+    """One order, one product, one date: the walk reads them as one unit. 40 on hand, 10 and
+    10 ordered, nobody else: Available is 40, share 20, so nothing is bought."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=40, product=product)
+        order, _line, core_so, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        second = _core_line(
+            db, core_so, product, pool, qty_ordered="10", required_date=REQUIRED_DATE,
+        )
+        _project_line(db, order, line_no=20, product=product, core_line=second)
+        db.commit()
+        proposal = ProjectSupplyService(db).proposal_for(order)
+        kinds = [c["kind"] for line in proposal["lines"] for c in line["components"]]
+
+    assert "buy" not in kinds, proposal["lines"]
+
+
+def test_a_line_at_a_project_bin_drawing_the_pool_gets_nothing_added_back():
+    """AC-6. Its demand is booked at its own bin, not the pool's, so there is nothing to
+    un-net: 10 at the pool still lends 5, as it does today."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _dealer_pool(db, on_hand=10, product=product)
+        own = _warehouse(db, f"ZZP{_uid()[:6]}-BB", segment="project", fulfilment_planning=True)
+        db.commit()
+        order, _line, _core_so, _core_line = _seed_line(
+            db, company_id, project, product, own, qty_ordered="10",
+        )
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    taken = sum(Decimal(str(c["qty"])) for c in components if c["kind"] == "reserve")
+    assert taken == Decimal("5"), components
+
+
+def test_confirming_the_engines_own_proposal_at_the_pool_raises_the_order_row():
+    """AC-7: Reserve at the pool, Buy for the rest, and the Buy reaches purchasing."""
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=10, product=product)
+        order, line, _core_so, _core_line = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(
+                        project_line_id=str(line.id),
+                        reserve=[{"warehouse_id": str(pool.id), "qty": Decimal("5")}],
+                        buy_qty=Decimal("5"),
+                    )
+                ]
+            ),
+            actor_user_id=eling,
+        )
+        db.commit()
+        rows = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).all()
+        got = [(row.verb, Decimal(str(row.qty)), row.stock_location) for row in rows]
+        code = pool.warehouse_code
+
+    assert got == [("ORDER", Decimal("5"), code)]
+
+
+def test_the_board_plans_a_line_at_a_dealer_pool_with_the_same_answer():
+    """AC-1 and AC-7 on the screen's own read: no verdict, and the walk's Reserve and Buy."""
+    with blank_session() as db:
+        world = _board_world(
+            db, doc_type="sales_order", status="open", qty="10", delivered="0", con_stock=10,
+            planned_stock=0,
+        )
+        pool = world["con"]
+        pool.segment = "dealer"
+        pool.pool_warehouse_id = pool.id
+        db.commit()
+        board = _build(db, world)
+        row = _contributions(board, world["order"].so_number)[0]
+        code = pool.warehouse_code
+
+    assert row["unplannable"] is False
+    assert [
+        (s["kind"], Decimal(s["qty"]), s.get("location")) for s in row["sources"]
+    ] == [("reserve", Decimal("5"), code), ("buy", Decimal("5"), None)]
