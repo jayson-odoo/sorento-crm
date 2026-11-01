@@ -18,12 +18,14 @@ const SLOT = '\uE000';
  */
 function InlineText({ text }: { text: string }) {
   const spans: string[] = [];
-  const masked = text.replace(CODE_SPAN, (whole, _fence, code) => {
+  // A slot character already in the reply would be read as a span, so it goes first.
+  const clean = text.split(SLOT).join('');
+  const masked = clean.replace(CODE_SPAN, (whole, _fence, code) => {
     if (code === undefined) return whole;
     spans.push(code);
     return SLOT;
   });
-  if (spans.length === 0) return <WhatsAppText text={text} />;
+  if (spans.length === 0) return <WhatsAppText text={clean} />;
   let next = 0;
   return (
     <>
@@ -43,7 +45,7 @@ function InlineText({ text }: { text: string }) {
         if (segment.href) {
           node = (
             <a
-              href={segment.href}
+              href={segment.href.split(SLOT).join('')}
               target="_blank"
               rel="noopener noreferrer"
               className="break-all underline underline-offset-2 hover:opacity-80"
