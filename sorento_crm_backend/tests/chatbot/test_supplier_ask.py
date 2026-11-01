@@ -364,3 +364,63 @@ def test_the_supplier_block_renders_with_its_header():
     row = ll.LookupRow("supplier", "k", SUPPLIER, (SUPPLIER,))
     lines = ll.render({"supplier": [ll.Hit(row, NATIVE, 0.0, 0.9)]})
     assert lines == [ll.header("supplier"), f"- {SUPPLIER}"]
+
+
+# --------------------------------------------------------------------------- #
+# prompts: new UNLABELLED versions only; the owner moves the label after the eval
+# --------------------------------------------------------------------------- #
+
+
+def test_the_span_prompt_edit_adds_the_supplier_type_after_the_customer_line():
+    from app.services.ai_prompt_registry import PROMPT_KEYS
+    from app.services.chatbot.head import span_extract
+
+    base = PROMPT_KEYS["chatbot_span_extractor"].fallback() + span_extract.MEANING_PARAGRAPH
+    out = span_extract.with_supplier_type(base)
+    lines = out.split("\n")
+    at = next(i for i, ln in enumerate(lines) if ln.startswith("- customer:"))
+    assert lines[at + 1] == span_extract.SUPPLIER_TYPE_LINE
+    assert out.rstrip().endswith(span_extract.NAME_MEANING_SENTENCE)
+    assert span_extract.with_supplier_type(out) is None, "applied once"
+    plain = span_extract.with_supplier_type(PROMPT_KEYS["chatbot_span_extractor"].fallback())
+    assert span_extract.NAME_MEANING_SENTENCE not in plain, "no meaning sentence on a prompt that asks for none"
+    assert span_extract.with_supplier_type("no anchor here") is None
+
+
+def _migration(name: str):
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "alembic" / "versions" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_span_migration_publishes_unlabelled_once(session_factory):
+    from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+
+    db = session_factory()
+    _migration("eem_0001_span_pass").seed_span_prompt(db)
+    label_before = db.query(AIPromptLabel.version_id).filter(
+        AIPromptLabel.name == "chatbot_span_extractor", AIPromptLabel.label == "production"
+    ).scalar()
+    sask = _migration("sask_0002_span_supplier")
+    version = sask.publish(db)
+    assert version is not None
+    row = db.query(AIPromptVersion).filter(
+        AIPromptVersion.name == "chatbot_span_extractor", AIPromptVersion.version == version
+    ).one()
+    assert "- supplier:" in row.template
+    assert db.query(AIPromptLabel.version_id).filter(
+        AIPromptLabel.name == "chatbot_span_extractor", AIPromptLabel.label == "production"
+    ).scalar() == label_before, "the production label never moves"
+    assert sask.publish(db) is None
+
+
+def test_the_parser_template_names_the_supplier_hint_and_still_lints():
+    from app.services.chatbot.head import parser_template
+
+    assert "\n- supplier: a company we buy goods from" in parser_template.TEMPLATE
+    assert parser_template.lint(parser_template.TEMPLATE) == []

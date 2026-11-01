@@ -42,6 +42,32 @@ MEANING_PARAGRAPH = (
     "sure what it means, \"meaning\" is null. Never invent a meaning."
 )
 
+#: SUPPLIER-ASK: the span type line for a supplier, placed after the customer line, and the sentence that has a company
+#: name written in Chinese characters read by its pinyin ("太阳" -> "Taiyang"), the form supplier and customer records
+#: are kept in. Semantic: the model reads the name, no word list.
+SUPPLIER_TYPE_LINE = "- supplier: a company we buy goods from, a supplier, vendor or factory (e.g. \"Xiamen ABC Technology\")"
+NAME_MEANING_SENTENCE = (
+    'When the span is a company name written in Chinese characters, "meaning" is its pinyin without tones (the form '
+    "the business keeps such names in), not a translation of its words."
+)
+
+
+def with_supplier_type(template: str) -> str | None:
+    """SUPPLIER-ASK: the span prompt with the supplier type line after the customer line, and (when the prompt asks for
+    meanings) the name sentence after the meaning paragraph. None when the text has no customer line to anchor on or
+    already names the supplier type."""
+    lines = (template or "").split("\n")
+    if any(ln.startswith("- supplier:") for ln in lines):
+        return None
+    at = next((i for i, ln in enumerate(lines) if ln.startswith("- customer:")), None)
+    if at is None:
+        return None
+    lines.insert(at + 1, SUPPLIER_TYPE_LINE)
+    out = "\n".join(lines)
+    if MEANING_ASK in out and NAME_MEANING_SENTENCE not in out:
+        out = out.rstrip() + " " + NAME_MEANING_SENTENCE
+    return out
+
 
 def _schema(with_meaning: bool) -> dict[str, Any]:
     props: dict[str, Any] = {"text": {"type": "string"}, "type": {"type": "string", "enum": list(SPAN_TYPES)}}
