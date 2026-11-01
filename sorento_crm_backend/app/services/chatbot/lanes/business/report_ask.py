@@ -1122,7 +1122,8 @@ def kind_edits(
             if plan is not None else ({}, None)
         )
         if found is None:
-            return None, line
+            # Never the resolver's line: it echoes the parser's word ("I don't know '...'", "matches several ...").
+            return None, "I don't know that brand."
         final = (
             {k: v for k, v in (("brand_ids", found.get("brand_ids")), ("account_types", plan["account_types"])) if v}
             if plan is not None else {}
