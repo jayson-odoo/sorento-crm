@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY tools (PR 4 of 4)
 
-Status: fix round built, green locally, re-review running. Run A done, its one-row miss with the owner. Run B held for the owner: no DB with a Jev key yet. Browser pass paused by the owner. 2 Nov 2026. Planned 1 Nov 2026. Full track: permission gates and writes. No migration, no new screen, so no mock. Branch `crew/agentic-unify-tools`, worktree `sorento_crm-agentic-unify-2`, based on #2060. PR opens after #2060 merges, because a stacked PR gets no CI until retargeted.
+Status: last small fix round after both re-reads, then push. Run A done, its one-row miss with the owner. Run B held for the owner: no DB with a Jev key yet. Browser pass paused by the owner. 2 Nov 2026. Planned 1 Nov 2026. Full track: permission gates and writes. No migration, no new screen, so no mock. Branch `crew/agentic-unify-tools`, worktree `sorento_crm-agentic-unify-2`, based on #2060. PR opens after #2060 merges, because a stacked PR gets no CI until retargeted.
 
 UAC: `agentic-unify-tools-acceptance-criteria.md`. Behaviour: `CARD-agentic-unify-v2-31oct.md` section 4, owner Q2 (a). `CHAT` = `sorento_crm_backend/app/services/chatbot`.
 

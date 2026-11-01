@@ -27,7 +27,7 @@ Records and figures follow your own permissions and your active company: if you 
 * **How do I...** questions. The answer comes from these user guides, as numbered steps.
 * **The page you are on**, such as what a record's status is.
 * **Complaints**, such as open complaints, how many a product has, or one complaint by its number.
-* **SLA tracking**, such as the dashboard's counts or a person's tracking rows.
+* **SLA tracking**, such as the dashboard's counts or recent tracking rows.
 * **Projects**, such as which projects are at a stage, one project by its code, its quotations, or the forecast.
 * **Order totals**, such as delivered value by customer or average delivery time.
 
@@ -48,7 +48,7 @@ A confirmed change does what the same action does on its screen, including telli
 
 * **Closing a complaint** tells the contact on WhatsApp once it applies, if the complaint has a contact to reach; the card says so. The complaint must be approved first.
 * **Cancelling an order** applies at once, with no countdown. An order that comes from AutoCount cannot be cancelled here.
-* **Raising an IT support ticket** creates a draft. The reply links to it, and you review and submit it on that page. You need permission to edit tickets.
+* **Raising an IT support ticket** creates a draft. The reply links to it, and you review and submit it on that page. You need permission to open and edit tickets.
 
 If you reload the page, the panel opens empty. Reopen the conversation from **History**: it looks the same as before, and a card you already answered does not ask again. A countdown keeps running during the reload, and it applies when it ends, so reopen the conversation quickly if you want to press **Undo**.
 
@@ -65,7 +65,7 @@ Ask for a person during a stock or sales question. The reply names who was assig
 
 ## How you'll be notified
 
-Replies appear in the panel. A panel conversation never sends anything to WhatsApp by itself. A person you asked for gets an in-app notification, not a WhatsApp message.
+Replies appear in the panel. A conversation in the panel sends nothing to WhatsApp unless you confirm a change that does, as described above. A person you asked for gets an in-app notification, not a WhatsApp message.
 
 There is a daily limit per person on the longer answers, such as reports and changes, across all your conversations. Past it, the assistant still answers quick lookups. If you send many messages in a short time, it asks you to try again shortly.
 
