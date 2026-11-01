@@ -242,3 +242,81 @@ def test_the_parser_answers_after_one_timeout(monkeypatch, clock) -> None:
     )
     assert parser_mod.parse(config, "block") is not None
     assert len(wire.timeouts) == 2
+
+
+# ---------------------------------------------------------------------- what review found open
+
+
+class APIConnectionError(Exception):
+    """The OpenAI / Anthropic SDK's own class name for a dropped connection."""
+
+
+class SdkProvider:
+    def __init__(self, failures: list[Exception]) -> None:
+        self.failures = list(failures)
+        self.calls = 0
+
+    def chat(self, messages, **kwargs):
+        self.calls += 1
+        if self.failures:
+            raise self.failures.pop(0)
+        return llm_provider.ChatResult(content="ok", prompt_tokens=1, completion_tokens=1, total_tokens=2)
+
+
+def test_a_dropped_sdk_connection_is_tried_again(monkeypatch, clock) -> None:
+    provider = SdkProvider([APIConnectionError("Connection error.")])
+    monkeypatch.setattr(llm_provider, "get_provider", lambda *a, **k: provider)
+    assert llm_call.chat("openai", "k", "m", MESSAGES).content == "ok"
+    assert provider.calls == 2
+
+
+def test_n_zero_stops_a_dropped_sdk_connection_too(monkeypatch, clock) -> None:
+    _retries(monkeypatch, 0)
+    provider = SdkProvider([APIConnectionError("Connection error.")])
+    monkeypatch.setattr(llm_provider, "get_provider", lambda *a, **k: provider)
+    with pytest.raises(llm_call.RateLimited):
+        llm_call.chat("openai", "k", "m", MESSAGES)
+    assert provider.calls == 1
+
+
+def test_the_real_limits_of_a_big_n_on_a_dropped_connection(monkeypatch, clock) -> None:
+    """Said plainly, because `CHATBOT_LLM_RETRIES` reads as if N were the whole rule: with the
+    real backoff and the 35 s budget a drop gets at most 4 retries, however big N is."""
+    slept: list[float] = []
+    real_sleep = llm_call._sleep
+
+    def _sleep(seconds: float) -> None:
+        slept.append(seconds)
+        real_sleep(seconds)
+
+    monkeypatch.setattr(llm_call, "_sleep", _sleep)
+    _retries(monkeypatch, 50)
+    wire = _wire(monkeypatch, clock, *[_drop() for _ in range(50)])
+    with pytest.raises(llm_call.RateLimited):
+        _call()
+    assert slept == [2.0, 5.0, 10.0, 10.0]
+    assert len(wire.timeouts) == 5
+
+
+def test_the_default_is_three(monkeypatch) -> None:
+    assert type(settings).model_fields["chatbot_llm_retries"].default == 3
+
+
+@pytest.mark.real_casual_llm
+def test_the_clarifier_keeps_the_one_attempt_it_always_had(monkeypatch, clock) -> None:
+    """Budget: one turn can make a parser call and a clarifier call, and the queue cap
+    (`dispatch.max_queue_wait_seconds`) counts one 35 s model call. A clarifier that fails
+    has an honest canned reply to fall back on, so it does not spend a second 15 s."""
+    from app.services.chatbot.lanes import casual
+
+    seen: list[dict[str, Any]] = []
+
+    def chat(provider, key, model, messages, **kwargs):
+        seen.append(kwargs)
+        raise llm_call.TimedOut("no answer")
+
+    monkeypatch.setattr(llm_call, "chat", chat)
+    config = casual.ClarifierConfig(system_prompt="s", prompt_version=1, provider="gemini", model=MODEL, api_key="k")
+    with pytest.raises(casual.ClarifierRateLimited):
+        casual.call_clarifier(config, "hello")
+    assert seen[0].get("deadline_seconds") == llm_call.ATTEMPT_TIMEOUT_SECONDS

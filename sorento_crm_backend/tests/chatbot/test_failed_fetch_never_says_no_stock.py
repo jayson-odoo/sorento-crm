@@ -187,3 +187,123 @@ def test_the_control_the_same_call_without_the_error_does_reach_the_absence_line
     text, probed = _ladder_over({"domain": "inventory", "figures": []})
     assert f"No stock and no incoming for {CODE}" in text, text
     assert probed == [INCOMING_TOOL]
+
+
+# ------------------------------------------------------------------ the CRM itself is unreachable
+#
+# Review of round 1: the MCP server answers a dropped CRM connection with a body that carries
+# `error` and no `status_code`. The presenter only knows `status_code >= 400`, so it rendered an
+# ordinary empty result, and the engine then told the customer there was no stock.
+
+
+def _wire_answer_when_the_crm(tool: str, handler: Any, **settings_overrides: Any) -> str:
+    """What the chatbot receives, built by the real MCP client, sanitizer and presenter."""
+    import asyncio
+
+    import httpx
+    from sorento_crm_mcp.http_client import CRMClient
+    from sorento_crm_mcp.presenters import present_response
+    from sorento_crm_mcp.server import _sanitize_tool_response
+    from sorento_crm_mcp.settings import Settings
+
+    async def read() -> str:
+        settings = Settings(crm_base_url="http://crm.test", external_api_key="k", **settings_overrides)
+        crm = CRMClient(settings, transport=httpx.MockTransport(handler))
+        try:
+            return await crm.get("/api/v1/external/stock", tool_name=tool)
+        finally:
+            await crm.aclose()
+
+    return present_response(tool, _sanitize_tool_response(tool, asyncio.run(read())))
+
+
+def _connection_refused(request: Any) -> Any:
+    import httpx
+
+    raise httpx.ConnectError("connection refused", request=request)
+
+
+def _not_utf8(request: Any) -> Any:
+    import httpx
+
+    return httpx.Response(200, content=b"\xff\xfe\xfa")
+
+
+def _too_large(request: Any) -> Any:
+    import httpx
+
+    return httpx.Response(200, content=b"x" * 64)
+
+
+CRM_FAILURES = {
+    "connection_refused": (_connection_refused, {}),
+    "not_utf8": (_not_utf8, {}),
+    "too_large": (_too_large, {"max_response_bytes": 8}),
+}
+
+
+@pytest.mark.parametrize("handler, overrides", CRM_FAILURES.values(), ids=CRM_FAILURES.keys())
+def test_the_crm_failing_behind_the_mcp_server_says_could_not_fetch(
+    console, monkeypatch, handler, overrides
+) -> None:
+    _failing(monkeypatch, console, STOCK_TOOL, _wire_answer_when_the_crm(STOCK_TOOL, handler, **overrides))
+    out = console.say(f"check stock {CODE} x 3", stock(product(CODE, 3)))
+    assert out == COULD_NOT_FETCH_STOCK
+
+
+def test_the_crm_failing_on_an_incoming_ask_claims_no_absence(console, monkeypatch) -> None:
+    _failing(monkeypatch, console, INCOMING_TOOL, _wire_answer_when_the_crm(INCOMING_TOOL, _connection_refused))
+    out = console.say(
+        f"{CODE} incoming?",
+        verdict(domain_hint="incoming", intent_hint="check_incoming", entities=[product(CODE)]),
+    )
+    assert "could not fetch" in out, out
+    assert "no incoming" not in out.lower() and "no stock" not in out.lower(), out
+
+
+# ------------------------------------------------------------------ a later rung of the ladder
+
+
+@pytest.mark.parametrize(
+    "po_answer",
+    [
+        {"error": "GET /api/v1/external/po returned HTTP 500", "answers": [], "has_result": False},
+        "Internal Server Error",
+        {"unknown": "shape"},
+    ],
+    ids=["error_envelope", "plain_text", "no_envelope"],
+)
+def test_a_failed_po_rung_never_says_nothing_on_order(po_answer: Any) -> None:
+    """Stock and incoming were read and are empty, so those two absences stand. The PO read
+    failed, so "nothing on order" would be a claim nobody measured."""
+    from tests.chatbot.test_crossdomain_ladder import _LADDER_WITH_PO, _run
+
+    result, _ = _run(
+        ladder=_LADDER_WITH_PO,
+        incoming_response={"answers": [], "has_result": False},
+        po_response=po_answer,
+    )
+    block = result["render"]["_xdBlock"]["block"]
+    assert "nothing on order" not in block, block
+    assert "No stock and no incoming for SRTWC8517" in block, block
+
+
+# ------------------------------------------------------------------ the multi-ask line
+
+
+@pytest.mark.parametrize("measure", ["stock", "incoming"])
+def test_a_plain_text_answer_is_no_zero_on_a_multi_ask_line(measure: str) -> None:
+    from app.services.chatbot.label_catalog import IDENTITY
+    from app.services.chatbot.turn import sub_asks
+
+    run = sub_asks.Run(
+        call=lambda name, args: "Internal Server Error",
+        localizer=IDENTITY,
+        grants=frozenset({"purchase_orders.placed"}),
+        contact_id="900000001",
+        space_id="900001",
+    )
+    calls = sub_asks._Calls(run)
+    lines = sub_asks._lines(run, calls, {"measure": measure}, ["11111111-2222-4333-8444-555555555555"], None)
+    assert calls.failures, lines
+    assert not any(line.rstrip().endswith(": 0") for line in lines), lines
