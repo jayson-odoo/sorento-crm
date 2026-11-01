@@ -1,10 +1,11 @@
 # Postgres 17 + pgvector + Patroni + WAL-G, for both CRM nodes.
 # Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md section 2.
-# Pin every version at build time in the private infra repo; the tags below are placeholders.
+# Pin the base image by digest at build time in the private infra repo.
 FROM pgvector/pgvector:pg17
 
-ARG PATRONI_VERSION=<PIN>
-ARG WALG_VERSION=<PIN>
+# Patroni and WAL-G versions as rehearsed in H4a (infra/rehearsal); bump only after a re-run.
+ARG PATRONI_VERSION=4.0.5
+ARG WALG_VERSION=v3.0.5
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3-venv curl ca-certificates \
