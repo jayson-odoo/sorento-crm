@@ -36,7 +36,13 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.product import Product
 from app.models.product_set import ProductSet, ProductSetMember
 from app.utils.product_display import distinct_name
-from app.services.dealer_kit.pricing import DEFAULT_CURRENCY, resolve_prices
+from app.services.dealer_kit.pricing import (
+    DEFAULT_CURRENCY,
+    combo_for_host,
+    combo_prices,
+    free_part_ids,
+    resolve_prices,
+)
 from app.services.dealer_kit.product_images import gallery_images
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.product_spec_registry import display_spec_value
@@ -790,6 +796,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
     # per tag: two split siblings that resolved the same candidate ask the
     # same question, and a 30-tag request paid for 30 engine runs.
     basis_cache: dict = {}
+    combo_cache: dict = {}
     for line_index, tag_index, line, tag in ordered_tags(request):
         if wanted is not None and tag.id not in wanted:
             continue
@@ -857,10 +864,20 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
             # The selling side takes the engine's offer where it HAS one and the
             # list price where it does not: an offer the engine cannot answer for
             # is not a discount, it is simply the price.
+            # AC-2.7: on a combo line a part the promotion lists at RM 0 is free.
+            free_ids = (
+                free_part_ids(
+                    db, [product.id for product in part_products], viewer, promotion_id
+                )
+                if line.combo_id
+                else set()
+            )
             sell_price = _sum_prices(
                 [sell_price if sell_price is not None else data["list_price"]]
                 + [
-                    _offer_or_list(part_prices.get(product.id))
+                    Decimal("0")
+                    if product.id in free_ids
+                    else _offer_or_list(part_prices.get(product.id))
                     for product in part_products
                 ]
             )
@@ -870,10 +887,23 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         elif open_groups:
             set_members = _package_text([], open_groups)
 
+        # PRICETAG-COMBO AC-2.4: the combo's own price replaces the sum, below a
+        # hand-typed line price and the tag override.
+        combo_row = _line_combo(db, line, combo_cache)
+        combo_obj = None
+        if combo_row is not None:
+            picked_ids = {product.id for product in part_products}
+            combo_obj = _combo_object(db, combo_row, picked_ids, viewer)
+            combo_list, combo_sell, sell_decided = combo_prices(combo_row, picked_ids)
+            if combo_list is not None:
+                list_price = combo_list
+            if sell_decided:
+                sell_price = combo_sell
+
         # D3/AC-S9-3: a hand-typed line price wins over the engine's sum, the
         # same as it does at save time (S7's `line_pricing`).
         if line.manual_sell_price is not None:
-            sell_price = line.manual_sell_price
+            sell_price = Decimal(str(line.manual_sell_price))
 
         # AC-S9-3/R11b: `sell_price_basis`, through the SAME engine
         # `line_pricing` (S7) uses for the create/update path and the
@@ -937,7 +967,11 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 "parent_sell_price": parent_sell_price,
                 "sell_price_basis": sell_price_basis,
                 "show_promo_price": show_promo_price,
-                "included_accessories": line.included_accessories or "",
+                # AC-2.3: the line's own text wins; blank reads the combo's free items.
+                "included_accessories": line.included_accessories
+                or (combo_obj or {}).get("free_items")
+                or "",
+                "combo": combo_obj,
                 # The TAG's own quantity, seeded from the line's at submit and
                 # marketing's to change afterwards.
                 "quantity": tag.quantity,
@@ -972,14 +1006,19 @@ def _tag_sell_price_basis(
     key = (line.id, tuple(sorted(resolved_product_ids)))
     if key in cache:
         return cache[key]
+    # PRICETAG-COMBO: a combo line names its host, so the combo price and the RM 0
+    # part rule read the same way the tag's own figure does.
+    combo_id = getattr(line, "combo_id", None)
+    host_id = line.product_id if combo_id and line.product_id else None
     row = line_pricing(
         db,
         lines=[
             {
                 "key": "_b",
-                "product_id": None,
-                "part_product_ids": resolved_product_ids,
+                "product_id": host_id,
+                "part_product_ids": [pid for pid in resolved_product_ids if pid != host_id],
                 "candidate_product_ids": [],
+                "combo_id": combo_id,
                 "promotion_id": line.promotion_id,
                 "manual_sell_price": line.manual_sell_price,
             }
@@ -993,6 +1032,159 @@ def _tag_sell_price_basis(
     )[0]
     cache[key] = row["sell_price_basis"]
     return cache[key]
+
+
+def _line_combo(db: Session, line, cache: dict):
+    """The combo row a line names, once per line, only when it hangs off the line's host."""
+    if line.id not in cache:
+        cache[line.id] = (
+            combo_for_host(
+                db, getattr(line, "combo_id", None), line.product_id, {line.product_id: True}
+            )
+            if line.product_id
+            else None
+        )
+    return cache[line.id]
+
+
+def _option_description(product) -> str:
+    """The product's description text, else its product name (equal to the code on real data)."""
+    return (product.description or "").strip() or product.product_name or ""
+
+
+def _combo_object(db: Session, combo, picked_ids: set, viewer) -> dict:
+    """AC-2.1: the combo as a tag shows it. Choices group by role in part order;
+    `picked` follows the dealer's line part or the tag's choices (`picked_ids`)."""
+    parts = [part for part in (combo.parts or []) if part.part_product is not None]
+    views = resolve_prices(db, [part.part_product for part in parts], viewer, None)
+    groups: dict[str, list[dict]] = {}
+    upgrades: list[dict] = []
+    for part in parts:
+        product = part.part_product
+        picked = part.part_product_id in picked_ids
+        if part.is_upgrade:
+            upgrades.append(
+                {
+                    "product_id": product.id,
+                    "code": product.product_code,
+                    "description": _option_description(product),
+                    "topup_amount": part.topup_amount,
+                    "picked": picked,
+                }
+            )
+        elif part.choice_group:
+            view = views.get(product.id)
+            groups.setdefault(part.choice_group, []).append(
+                {
+                    "product_id": product.id,
+                    "code": product.product_code,
+                    "description": _option_description(product),
+                    "list_price": view.list_price if view else None,
+                    "sell_price": part.sell_price,
+                    "picked": picked,
+                }
+            )
+    return {
+        "id": combo.id,
+        "name": combo.name,
+        "description": combo.description,
+        "free_items": combo.free_items,
+        "choices": [{"role": role, "options": options} for role, options in groups.items()],
+        "upgrades": upgrades,
+    }
+
+
+def search_combos(db: Session, query: Optional[str], limit: int = 20) -> list[dict]:
+    """Combos for the template editor's Preview combo picker (PRICETAG-COMBO AC-5.2).
+
+    Joined to the host so the host's company scope applies (`ProductCombo` has no
+    company column of its own); matched on the combo name or the host's code.
+    """
+    from app.models.product_combo import ProductCombo
+
+    statement = db.query(ProductCombo, Product).join(
+        Product, Product.id == ProductCombo.host_product_id
+    )
+    if query and query.strip():
+        needle = f"%{query.strip()}%"
+        statement = statement.filter(
+            or_(ProductCombo.name.ilike(needle), Product.product_code.ilike(needle))
+        )
+    rows = statement.order_by(Product.product_code, ProductCombo.name).limit(limit).all()
+    return [
+        {
+            "combo_id": combo.id,
+            "name": combo.name,
+            "host_product_id": host.id,
+            "host_code": host.product_code,
+        }
+        for combo, host in rows
+    ]
+
+
+def with_preview_combo(db: Session, product, data: dict, combo_id: Optional[str]) -> dict:
+    """``data`` (a product's tag data) plus the combo the designer previews it as.
+
+    No `combo_id`: `combo` is null and nothing else changes (AC-5.3). A combo that is not
+    this product's, or is not visible, is a 404, same as an unknown or malformed id. The
+    combo's cover leads the images, as it does on a real tag line (AC-4.3).
+    """
+    from app.services.error_handler import AppException
+    from app.services.uuid_path_param import validate_uuid_path
+
+    if not combo_id:
+        return {**data, "combo": None}
+    validate_uuid_path(combo_id, resource="Combo")
+    combo = combo_for_host(db, combo_id, product.id, {product.id: product})
+    if combo is None:
+        raise AppException(status_code=404, message="Combo not found.", code="NOT_FOUND")
+    return {
+        **data,
+        "images": _lead_with_cover(combo, data["images"]) if combo.image_attachment_id else data["images"],
+        "combo": _combo_object(db, combo, set(), staff_viewer()),
+    }
+
+
+def _combo_with_picks(combo: Optional[dict], line, tag) -> Optional[dict]:
+    """A pinned combo with `picked` read fresh: a pick is the tag's own fact (like its
+    quantity), not master data the review gate freezes."""
+    if not combo:
+        return None
+    picked_ids = {str(part.product_id) for part in (line.parts or []) if part.product_id}
+    picked_ids |= {str(value) for value in (tag.choices or {}).values()}
+    return {
+        **combo,
+        "choices": [
+            {
+                **group,
+                "options": [
+                    {**option, "picked": option["product_id"] in picked_ids}
+                    for option in group["options"]
+                ],
+            }
+            for group in combo.get("choices") or []
+        ],
+        "upgrades": [
+            {**up, "picked": up["product_id"] in picked_ids}
+            for up in combo.get("upgrades") or []
+        ],
+    }
+
+
+def _combo_options_text(combo: Optional[dict]) -> str:
+    """The options as one comparable string, for the change note."""
+    if not combo:
+        return ""
+    lines = [
+        f"{group['role']}: {option['code']} {_money(option['sell_price']) or ''}".strip()
+        for group in combo.get("choices") or []
+        for option in group["options"]
+    ]
+    lines += [
+        f"Upgrade: {up['code']} {_money(up['topup_amount']) or ''}".strip()
+        for up in combo.get("upgrades") or []
+    ]
+    return "\n".join(lines)
 
 
 def _combo_lead_image(db: Session, line, images: list[dict]) -> list[dict]:
@@ -1012,6 +1204,10 @@ def _combo_lead_image(db: Session, line, images: list[dict]) -> list[dict]:
     combo = db.query(ProductCombo).filter(ProductCombo.id == combo_id).first()
     if combo is None or not combo.image_attachment_id:
         return images
+    return _lead_with_cover(combo, images)
+
+
+def _lead_with_cover(combo, images: list[dict]) -> list[dict]:
     lead = next(
         (img for img in images if img.get("attachment_id") == combo.image_attachment_id),
         None,
@@ -1437,7 +1633,11 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     # resolver at pin time, and stays frozen consistently with the basis
     # it was derived from until the tag is re-pinned - never echoed from a
     # column that answers a different question.
-    row["included_accessories"] = line.included_accessories or ""
+    # PRICETAG-COMBO: a payload pinned before the combo fields has no `combo` key.
+    row["combo"] = _combo_with_picks(pinned.get("combo"), line, tag)
+    row["included_accessories"] = (
+        line.included_accessories or (row["combo"] or {}).get("free_items") or ""
+    )
     if tag.marketing_price_override is not None:
         row["sell_price"] = Decimal(str(tag.marketing_price_override))
     return row
@@ -1550,6 +1750,8 @@ def data_hash(row: dict) -> str:
             "price_tag_description",
         )
     }
+    # PRICETAG-COMBO AC-2.8: the combo's text, options and picks move the hash.
+    subject["combo"] = _plain(row.get("combo")) or None
     # AC-S5-10: WHICH photo leads (`is_primary`) is part of what prints - a
     # combo's picture swapping the lead (the designer's product-image slot
     # draws `images[0]`) must move the hash even when the underlying set of
@@ -1651,6 +1853,29 @@ def diff_pin_against_live(
         _money(pinned.get("list_price")),
         _money(live.get("list_price")),
     )
+    # PRICETAG-COMBO AC-2.8: only against a pin that carries a combo, so a combo
+    # line pinned before this lane is not flagged for fields it never held.
+    if pinned.get("combo") and live.get("combo"):
+        old_combo, new_combo = pinned["combo"], live["combo"]
+        add("combo:name", "Combo name", old_combo.get("name"), new_combo.get("name"))
+        add(
+            "combo:description",
+            "Combo description",
+            old_combo.get("description"),
+            new_combo.get("description"),
+        )
+        add(
+            "combo:free_items",
+            "Combo free items",
+            old_combo.get("free_items"),
+            new_combo.get("free_items"),
+        )
+        add(
+            "combo:options",
+            "Combo options",
+            _combo_options_text(old_combo),
+            _combo_options_text(new_combo),
+        )
 
     pinned_offer = _money(pinned.get("sell_price"))
     live_offer = _money(live.get("sell_price"))
@@ -1831,6 +2056,8 @@ __all__ = [
     "diff_pin_against_live",
     "ordered_tags",
     "resolve_tags_live",
+    "with_preview_combo",
+    "search_combos",
     "resolve_version_line_data",
     "pin_tags",
     "pin_payload",

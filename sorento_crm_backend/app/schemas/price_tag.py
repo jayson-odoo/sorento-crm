@@ -1083,8 +1083,10 @@ class LinePricingLineIn(BaseModel):
     part_product_ids: list[str] = Field(default_factory=list, max_length=50)
     candidate_product_ids: list[str] = Field(default_factory=list, max_length=50)
     promotion_id: Optional[str] = None
+    #: PRICETAG-COMBO: the combo the line names, so the lookup answers the combo's price.
+    combo_id: Optional[str] = None
 
-    @field_validator("product_id", "promotion_id", mode="after")
+    @field_validator("product_id", "promotion_id", "combo_id", mode="after")
     @classmethod
     def _validate_id(cls, value):
         return _uuid_or_none(value)
@@ -1174,6 +1176,40 @@ class SpecKeyItem(BaseModel):
     unit: Optional[str] = None
 
 
+class TagComboOption(BaseModel):
+    product_id: str
+    code: str
+    description: str = ""
+    list_price: Optional[float] = None
+    sell_price: Optional[float] = None
+    picked: bool = False
+
+
+class TagComboChoice(BaseModel):
+    role: str
+    options: list[TagComboOption] = []
+
+
+class TagComboUpgrade(BaseModel):
+    product_id: str
+    code: str
+    description: str = ""
+    topup_amount: Optional[float] = None
+    picked: bool = False
+
+
+class TagCombo(BaseModel):
+    """PRICETAG-COMBO AC-2.1: the combo a tag's line names, as the tag shows it.
+    Declared here or `response_model` drops it without a word."""
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    free_items: Optional[str] = None
+    choices: list[TagComboChoice] = []
+    upgrades: list[TagComboUpgrade] = []
+
+
 class ProductTagData(BaseModel):
     """Everything a product block draws. Resolved per request, never stored."""
 
@@ -1201,6 +1237,8 @@ class ProductTagData(BaseModel):
     # already defaults it - the text-slot price prints a bare figure now
     # (Slice A), so the currency travels as its own field.
     currency: str = "MYR"
+    #: PRICETAG-COMBO AC-5.3: the previewed combo, null without a `combo_id`.
+    combo: Optional[TagCombo] = None
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1234,6 +1272,19 @@ class ResolvePreviewIn(BaseModel):
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     promotion_id: Optional[str] = None
+    #: PRICETAG-COMBO AC-5.3: with `product_id`, previews that product's combo.
+    combo_id: Optional[str] = None
+
+
+class ComboSearchItem(BaseModel):
+    combo_id: str
+    name: str
+    host_product_id: str
+    host_code: str
+
+
+class ComboSearchOut(BaseModel):
+    data: list[ComboSearchItem] = []
 
 
 class ResolvePreviewOut(BaseModel):
@@ -1358,6 +1409,8 @@ class ResolvedLineData(BaseModel):
     sell_price_basis: Optional[str] = None
     show_promo_price: bool
     included_accessories: str = ""
+    #: PRICETAG-COMBO AC-2.1: null on a line with no combo and on a pre-lane pin.
+    combo: Optional[TagCombo] = None
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None

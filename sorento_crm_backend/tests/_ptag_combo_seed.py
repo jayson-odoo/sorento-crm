@@ -25,6 +25,7 @@ def product(db, stem: str = "ZZC", *, list_price="100.00", tag_text=None, compan
     row.product_code = unique_code(stem)
     row.product_name = row.product_code
     row.price_tag_description = tag_text
+    row.description = tag_text  # option text reads products.description (AC-2.1)
     row.company_id = company_id
     db.flush()
     return row
