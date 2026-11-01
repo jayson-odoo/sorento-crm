@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY tools (PR 4 of 4)
 
-Status: Plan, 1 Nov 2026. Full track: permission gates and writes. No migration, no new screen, so no mock. Branch `crew/agentic-unify-tools`, worktree `sorento_crm-agentic-unify-2`, based on #2060. PR opens after #2060 merges, because a stacked PR gets no CI until retargeted.
+Status: slices 1 and 2 built and green locally, review next, live gate and browser pass owed, 2 Nov 2026. Planned 1 Nov 2026. Full track: permission gates and writes. No migration, no new screen, so no mock. Branch `crew/agentic-unify-tools`, worktree `sorento_crm-agentic-unify-2`, based on #2060. PR opens after #2060 merges, because a stacked PR gets no CI until retargeted.
 
 UAC: `agentic-unify-tools-acceptance-criteria.md`. Behaviour: `CARD-agentic-unify-v2-31oct.md` section 4, owner Q2 (a). `CHAT` = `sorento_crm_backend/app/services/chatbot`.
 
