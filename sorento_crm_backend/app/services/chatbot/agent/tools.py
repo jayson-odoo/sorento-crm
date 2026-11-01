@@ -674,12 +674,12 @@ def clean_detail(text: Any) -> str:
     return re.sub(r"\s+", " ", out).strip()[:MAX_DETAIL_CHARS]
 
 
-def _http_failure(status: int, detail: Any) -> ToolResult:
+def _http_failure(status: int, detail: Any, who: str = "") -> ToolResult:
     if status == 403:
         if staff_principal.current() is not None:
             # A panel user can be refused although they hold the slug (the shared key's role lacks it): the
             # model gets a plain line, never the route's slug, path or status. The detail goes to the log.
-            logger.warning("agent: a route refused a panel read (403): %s", clean_detail(detail))
+            logger.warning("agent: a route refused a panel read (403) %s: %s", who, clean_detail(detail))
             return ToolResult("denied", message=FIXED_NO_ACCESS)
         # The route refused this contact or user: a denial, not a bad request.
         return ToolResult("denied", message=clean_detail(detail) or "The route refused this request.")
@@ -688,7 +688,7 @@ def _http_failure(status: int, detail: Any) -> ToolResult:
     return ToolResult("error", message=FIXED_ERROR)
 
 
-def _body_failure(data: Any) -> ToolResult | None:
+def _body_failure(data: Any, who: str = "") -> ToolResult | None:
     """A route's non-2xx answer carried back as data (`status_code` on the body)."""
     if not (isinstance(data, dict) and isinstance(data.get("status_code"), int) and data["status_code"] >= 400):
         return None
@@ -698,7 +698,7 @@ def _body_failure(data: Any) -> ToolResult | None:
     if not isinstance(detail, str) or not detail.strip():
         match = _HTTP_ERR.search(str(data.get("http_error") or data.get("error") or ""))
         detail = match.group(2) if match else ""
-    return _http_failure(int(data["status_code"]), detail)
+    return _http_failure(int(data["status_code"]), detail, who)
 
 
 def _has_rows(data: dict) -> bool:
@@ -1235,11 +1235,11 @@ def _dispatch_inner(
         logger.warning("agent: tool %s failed", name, exc_info=True)
         match = _HTTP_ERR.search(str(exc))
         if match and match.group(1).startswith("4"):
-            return _http_failure(int(match.group(1)), match.group(2))
+            return _http_failure(int(match.group(1)), match.group(2), f"tool {name} user {ctx.user_id}")
         return ToolResult("error", message=FIXED_ERROR)
 
     data = _strip_echo(_as_data(raw), (str(ctx.contact_respond_id), str(ctx.contact_pk)), ctx.space_id)
-    failure = _body_failure(data)
+    failure = _body_failure(data, f"tool {name} user {ctx.user_id}")
     if failure is not None:
         return failure
     if tool.render:

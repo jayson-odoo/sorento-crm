@@ -240,13 +240,19 @@ def _ask_read_before(db, user: dict, args: dict) -> dict:
     return _ask_row(stock_ask_service.serialize(db, [ask])[0])
 
 
+def _escape_quotes(text: str) -> str:
+    """`text` for the inside of a quote the memory reader parses (`memory._QUOTED`): a quote or backslash in a value
+    cannot end the quote early, so a name or a note cannot pose as the words around it."""
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _quoted(value: Any) -> str:
     """Free text as a person reads it in a summary: quoted, in full up to 200 characters, else the
     first 200 and the length."""
     text = _line(value)
     if len(text) <= SUMMARY_NOTE_CHARS:
-        return f'"{text}"'
-    return f'"{text[:SUMMARY_NOTE_CHARS]}" ({len(text)} characters)'
+        return f'"{_escape_quotes(text)}"'
+    return f'"{_escape_quotes(text[:SUMMARY_NOTE_CHARS])}" ({len(text)} characters)'
 
 
 def _ask_summary(args: dict, before: dict) -> str:
@@ -1482,17 +1488,21 @@ def _pr_read_before(db, user: dict, args: dict) -> dict:
     }
 
 
-def _card(value: Any) -> str:
-    """Free text the model wrote, for a card only: no UUID in it (what is stored and sent is not changed)."""
-    from app.services.chatbot.agent.actions import scrub_ids
+def _refuse_ids_in(**texts: Any) -> None:
+    """A text that is sent or stored as the user's must not hold a record id the model copied in: refused, so the
+    card shows exactly what is sent."""
+    from app.services.chatbot.agent.actions import _UUID_TEXT
+    from app.services.error_handler import handle_validation_error
 
-    return scrub_ids(_line(value)) or ""
+    for label, text in texts.items():
+        if text and _UUID_TEXT.search(str(text)):
+            raise handle_validation_error(f"The {label} holds a record id. Say it in words and propose again.")
 
 
 def _in_full(value: Any) -> str:
     """Text that leaves the system (a reason sent to the dealer): quoted whole, never cut, so the person
     confirming reads exactly what will be sent."""
-    return f'"{_line(value)}"'
+    return f'"{_escape_quotes(_line(value))}"'
 
 
 def _pr_summary(args: dict, before: dict) -> str:
@@ -2330,6 +2340,7 @@ def _complaint_read_before(db, user: dict, args: dict) -> dict:
 
     cid = str(args["complaint_id"])
     validate_uuid_path(cid, resource="Complaint")
+    _refuse_ids_in(note=args.get("note"))
     _module_open(user, db, "complaints")
     _complaint_scope(db, user, cid)
     handling_lock_service.assert_can_act_on_form(db, cid, user, source_entity_type="complaint")
@@ -2358,7 +2369,7 @@ def _complaint_summary(args: dict, before: dict) -> str:
     if before["customer"]:
         text += f" for {_quoted(before['customer'])}"
     if _line(args.get("note")):
-        text += f", with the note {_in_full(_card(args['note']))}"
+        text += f", with the note {_in_full(args['note'])}"
     return text + (". The contact will be told." if before.get("tells_contact") else ".")
 
 
@@ -2446,6 +2457,7 @@ def _order_read_before(db, user: dict, args: dict) -> dict:
     from app.services.order_field_ownership import reject_autocount_owned_edit
     from app.services.order_service import OrderService
 
+    _refuse_ids_in(reason=args.get("reason"))
     _module_open(user, db, "order")
     number = _line(args["order_number"])
     order = OrderService(db).get_order_by_order_number(number)
@@ -2467,7 +2479,7 @@ def _order_summary(args: dict, before: dict) -> str:
     if before["customer"]:
         text += f" for {_quoted(before['customer'])}"
     if _line(args.get("reason")):
-        text += f", with the reason {_in_full(_card(args['reason']))}"
+        text += f", with the reason {_in_full(args['reason'])}, which replaces the order's remarks"
     return text + ". Complaints on this order are re-evaluated."
 
 
@@ -2530,17 +2542,18 @@ def _ticket_read_before(db, user: dict, args: dict) -> dict:
 
     if not _line(args["title"]):
         raise handle_validation_error("`title` is required.")
+    _refuse_ids_in(title=args["title"], description=args.get("description"))
     return {}
 
 
 def _ticket_summary(args: dict, before: dict) -> str:
-    text = f"Create a draft IT support ticket {_in_full(_card(args['title']))}"
+    text = f"Create a draft IT support ticket {_in_full(args['title'])}"
     extras = [f"priority {args['priority']}" if args.get("priority") else "", f"category {args['category']}" if args.get("category") else ""]
     extras = [e for e in extras if e]
     if extras:
         text += f" ({', '.join(extras)})"
     if _line(args.get("description")):
-        text += f", described as {_in_full(_card(args['description']))}"
+        text += f", described as {_in_full(args['description'])}"
     return text + ". You can review it before it is submitted."
 
 

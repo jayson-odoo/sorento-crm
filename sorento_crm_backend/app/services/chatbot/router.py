@@ -310,6 +310,8 @@ def agent_tool_labels(db=None, user=None) -> list[str]:
         label = agent_tools.TOOL_LABELS.get(name)
         if label and label not in labels:
             labels.append(label)
+    if db is not None and staff_principal.current() is None:
+        return labels  # a panel-only label is never sent off the panel, and nothing of the panel part runs
     # AGENTIC-UNIFY PR 4: the panel's reads no chat lane answers, through the tool gate itself (`user_may_use` and the
     # contact reveal), so the label and the tool are one predicate. A panel-only tool is not sent off the panel.
     ctx = None

@@ -39,6 +39,7 @@ from app.services.chatbot.agent.tools import (
     KNOWLEDGE,
     REGISTRY,
     RESOLVE,
+    PORTED_READS,
     TOOL_LABELS,
     ToolResult,
     panel_closed,
@@ -388,6 +389,8 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
             ):
                 return True
         return False
+    if entry["name"] in PORTED_READS and entry["status"] == "empty":
+        return True  # a plain read that came back empty backs "none found", whatever the filters were
     if entry["name"] in (writes.FIND_COMPLAINTS, writes.FIND_PROJECTS):
         # An empty find backs a claim for the term it searched, and only that term.
         term = _fold_text(str(entry["args"].get("query") or ""))
@@ -595,7 +598,16 @@ def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str]) -> To
         # The notes are added to the reply in code; the model never reads them, so it cannot invent or repeat one.
         for note in outcome.notes:
             reply_text = reply_text.replace(f" {note}", "").replace(note, "")
-        message = "The reference and link are added to your reply automatically. Do not write them."
+        # A ticket's link is the only thing a ticket adds; an idea keeps main's exact words.
+        from app.models.chatbot_agent import AgentAction
+
+        row = db.get(AgentAction, outcome.action_id)
+        tools = {s.get("tool") for s in (row.steps if row is not None else []) if s.get("note")}
+        message = (
+            "The ticket link is added to your reply automatically. Do not write it."
+            if tools == {writes.CREATE_TICKET}
+            else "The idea's number and link are added to your reply automatically. Do not write them."
+        )
     return ToolResult(
         "ok", data={"status": outcome.status, "reply_text": reply_text, "steps": outcome.steps}, message=message
     )
