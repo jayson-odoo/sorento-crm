@@ -58,7 +58,7 @@ def seed_user(db, *, contact_pk: str | None, slugs=(), status: str = "ACTIVE") -
         role = UserRole(id=str(uuid.uuid4()), slug=unique_code("role").lower(), name=unique_code("Role"))
         db.add(role)
         db.flush()
-        for slug in slugs:
+        for slug in dict.fromkeys(slugs):  # a slug named twice is held once
             perm = db.query(UserPermission).filter(UserPermission.slug == slug).first()
             if perm is None:
                 perm = UserPermission(id=str(uuid.uuid4()), slug=slug, name=slug)
