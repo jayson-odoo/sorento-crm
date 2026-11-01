@@ -224,15 +224,17 @@ class TestRouting:
         assert [(c["name"], c["status"]) for c in result.agent["tool_calls"]] == [(STOCK, "denied")]
         assert [c for c in world.mcp if c["name"] == STOCK] == []
 
-    def test_a_low_score_goes_to_chat(self, session_factory, monkeypatch, staff, grants, world, jev, agent_model):
+    def test_a_low_score_still_goes_to_the_agent(
+        self, session_factory, monkeypatch, staff, grants, world, jev, agent_model
+    ):
+        """Round 7: was `test_a_low_score_goes_to_chat` (Jev agent at 0.2 gave route chat)."""
         jev.answer = jev_answer("agent", 0.2)
-        world.parser_output = stock_output("ZZTLOW")
+        agent_model.set([answer_("ZZT ok.")])
 
         result = run_panel(session_factory, monkeypatch, staff, "stock ZZTLOW")
 
-        assert result.route == "chat" and len(jev.calls) == 1  # Jev was asked
-        assert world.blocks, "the bot did not answer"
-        assert agent_model.provider.seen == []
+        assert result.route == "agent" and len(jev.calls) == 1  # Jev was asked, its pick stands
+        assert world.blocks == [], "the bot answered a turn Jev sent to the agent"
 
     def test_a_jev_failure_goes_to_chat(self, session_factory, monkeypatch, staff, grants, world, jev, agent_model):
         jev.error = JevError("timeout", "ReadTimeout")
@@ -299,6 +301,84 @@ class TestRouting:
         assert result.route == "agent"
         assert jev.calls == []
         assert world.blocks == []
+
+
+# --------------------------------------------------------------------------- #
+# Round 7: on the panel Jev's own pick stands whatever its confidence
+# --------------------------------------------------------------------------- #
+# Already pinned elsewhere, not repeated: a waiting proposal gives `pending_action` without asking Jev
+# (`TestRouting::test_a_waiting_proposal_goes_to_the_agent_without_asking_jev`), an open chat question
+# stays on chat (`test_an_open_chat_question_stays_on_chat_without_asking_jev`), and over the daily cap
+# gives chat (`TestLimits::test_the_daily_cap_counts_every_panel_thread_of_the_user`). The console's floor
+# with no principal is pinned by `agent/test_router.py::test_R8_confidence_below_the_min_score_goes_to_chat_with_the_score_kept`.
+
+
+def _decide(session_factory, staff_, text="why did stock fall"):
+    from app.services.chatbot import principal as principal_mod
+    from app.services.chatbot.router import decide_route
+
+    db = session_factory()
+    principal = principal_mod.StaffPrincipal(user_id=staff_.user_id, conversation_id=staff_.conv_id)
+    with principal_mod.acting_as(principal):
+        return decide_route(db, contact_respond_id=principal.key, text=text, session_vars={}, has_media=False)
+
+
+def _seed_asked_back(session_factory, staff_):
+    from app.services.chatbot.agent import memory
+
+    db = session_factory()
+    key = panel_key(staff_)
+    db.add(ChatbotTurn(
+        contact_respond_id=key, message_id=f"ZZT-ask-{uuid.uuid4()}", ingress="agent", is_test=True, status="done",
+        trace=[], envelope={"text": "q", "agent_conversation_id": str(memory.new_conversation(db, key).id)},
+        response={"reply_text": "Which one?", "status": "answered", "asked_back": True},
+    ))
+    db.commit()
+
+
+class TestJevsOwnPickStands:
+    def test_agent_at_a_very_low_score_is_agent(self, session_factory, staff, grants, jev):
+        jev.answer = jev_answer("agent", 0.04)
+
+        decision = _decide(session_factory, staff)
+
+        assert (decision.side, decision.reason) == ("agent", "classified")
+        assert decision.score == pytest.approx(0.04)
+
+    def test_chat_at_a_very_low_score_is_chat_classified(self, session_factory, staff, grants, jev):
+        jev.answer = jev_answer("chat", 0.04)
+
+        decision = _decide(session_factory, staff)
+
+        assert (decision.side, decision.reason) == ("chat", "classified")
+
+    def test_a_malformed_choice_is_still_chat_router_failed(self, session_factory, staff, grants, jev):
+        jev.answer = jev_answer("agent", 0.9)
+        jev.answer.choice = "maybe"
+
+        decision = _decide(session_factory, staff)
+
+        assert (decision.side, decision.reason) == ("chat", "router_failed:malformed")
+
+    def test_after_the_agent_asked_back_a_weak_chat_pick_stays_on_the_agent(
+        self, session_factory, staff, grants, jev
+    ):
+        _seed_asked_back(session_factory, staff)
+        jev.answer = jev_answer("chat", 0.30)
+
+        decision = _decide(session_factory, staff, "the second one")
+
+        assert (decision.side, decision.reason) == ("agent", "agent_asked")
+
+    def test_after_the_agent_asked_back_a_sure_chat_pick_leaves_the_agent(
+        self, session_factory, staff, grants, jev
+    ):
+        _seed_asked_back(session_factory, staff)
+        jev.answer = jev_answer("chat", 0.90)
+
+        decision = _decide(session_factory, staff, "stock SRTWB888")
+
+        assert decision.side == "chat"
 
 
 # --------------------------------------------------------------------------- #
