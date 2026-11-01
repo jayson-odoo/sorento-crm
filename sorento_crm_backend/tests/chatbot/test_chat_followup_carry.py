@@ -455,7 +455,7 @@ def _settled(
     verdict: dict[str, Any], frame: dict[str, Any], *entities: dict[str, Any], replaced: dict[str, Any] | None = None
 ) -> tuple[Any, dict[str, Any]]:
     """The seam and the lane in the engine's order. Returns the outcome and the args it would run or the slot holds."""
-    full = {"message_type": "business_query", "topic_reset": False, **verdict}
+    full = {"message_type": "business_query", "topic_reset": False, "capability_from": "sales_report", **verdict}
     stamped = report_ask.with_held(full, _focus(frame), open_ask=replaced, replaced=replaced)
     outcome, line = report_ask.settle(None, {**stamped, "sales_ranking_frame": frame}, list(entities), companies=TWO_COMPANIES)
     assert outcome is not None, line
