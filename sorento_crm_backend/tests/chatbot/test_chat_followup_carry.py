@@ -637,7 +637,7 @@ def test_s18_an_outstanding_ask_is_never_asked_the_company(over):
     verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True, **over}
     outcome, args = _settled(verdict, UNDELIVERED)
     assert not args.get("customer_ids") or over.get("self_reference"), args
-    assert (outcome.slot or {}).get("asking") != "company", outcome.reply
+    assert not outcome.extras.get("company_options") and "company" not in {outcome.slot and outcome.slot.get("asking")}, outcome
 
 
 def test_s19_a_pick_that_lost_its_row_never_falls_back_to_the_held_customer():
