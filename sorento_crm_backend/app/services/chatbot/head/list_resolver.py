@@ -62,8 +62,10 @@ MEANING_FLOORS_BY_MODEL: dict[str, dict[str, float]] = {
     "gemini-embedding-001": {
         "category": 0.70, "spec": 0.75, "file_type": 0.65, "brand": 0.60, "promotion_kind": 0.75,
         "location": 0.65, "salesperson": 0.70, "customer": 0.75, "sales_channel": 0.65, "spec_key": 0.75,
-        # SUPPLIER-ASK: the customer list's floor, borrowed (both are company names); not audited on a supplier gold.
-        "supplier": 0.75,
+        # SUPPLIER-ASK: measured on the dev copy (crew, 1 Nov 2026, scripts/measure_supplier_span_floor.py, all 1,502
+        # supplier texts): the owner's "太阳" scores 0.665-0.669 and "tai yang" 0.696-0.699 on the three TAIYANG
+        # suppliers; the closest real negative ("water closet") 0.628. At 0.75 every TAIYANG name phrase missed.
+        "supplier": 0.65,
     },
 }
 _OPENAI_MODEL = "text-embedding-3-small"

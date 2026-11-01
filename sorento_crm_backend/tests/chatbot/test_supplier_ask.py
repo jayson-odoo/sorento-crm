@@ -773,3 +773,59 @@ def test_two_suppliers_with_one_name_are_two_lines_each_with_its_code(session_fa
     assert not _po_calls(captured), captured
     assert same != ids["ours"]
 
+
+
+class _MeasuredGemini:
+    """An embedder reproducing crew's floor measurement (dev copy, gemini-embedding-001, 1 Nov 2026): the three
+    TAIYANG suppliers score 0.665-0.669 against "太阳" and 0.696-0.699 against "tai yang"; the closest real negative,
+    "water closet", scores 0.628 against an unrelated supplier. Every other text is orthogonal."""
+
+    model = "gemini-embedding-001"
+
+    def __init__(self, taiyang: list[str], unrelated: str) -> None:
+        import math
+
+        self.dim = 4096
+        self.fixed: dict[str, list[float]] = {}
+        for name in taiyang:
+            self.fixed[name.casefold()] = self._axis(0)
+        self.fixed[unrelated.casefold()] = self._axis(1)
+        for phrase, axis, cos in (("太阳", 0, 0.667), ("tai yang", 0, 0.698), ("water closet", 1, 0.628)):
+            v = [0.0] * self.dim
+            v[axis], v[2] = cos, math.sqrt(1 - cos * cos)
+            self.fixed[phrase] = v
+
+    def _axis(self, i: int) -> list[float]:
+        v = [0.0] * self.dim
+        v[i] = 1.0
+        return v
+
+    def __call__(self, texts):
+        import hashlib
+
+        out = []
+        for t in texts:
+            v = self.fixed.get(t.casefold().strip())
+            if v is None:
+                v = self._axis(3 + int(hashlib.md5(t.encode()).hexdigest(), 16) % (self.dim - 3))
+            out.append(v)
+        return out
+
+
+def test_the_measured_gemini_supplier_floor_places_the_owner_word_and_keeps_the_negative_out(session_factory):
+    """Crew's table: at 0.75 every TAIYANG name phrase missed (console pass 3 step 1); at 0.65, 太阳 and "tai yang" ask
+    among the three TAIYANG suppliers and "water closet" (0.628) stays out."""
+    _seed_suppliers(session_factory)
+    _seed_twin(session_factory)
+    _seed_named(session_factory, THIRD, "ZZTSUP-TY03")
+    unrelated = _seed_named(session_factory, "ZZT CERAMIC SANITARYWARE CO", "ZZTSUP-CR01")
+    rows = ll.load_rows(scoped(session_factory), include_suppliers=True)
+    embed = _MeasuredGemini([SUPPLIER, "ZZT TAIYANG SANITARY CO LTD", THIRD], "ZZT CERAMIC SANITARYWARE CO")
+    for span in (list_resolver.Span(NATIVE, "customer"), list_resolver.Span(NATIVE, "customer", meaning="Tai Yang")):
+        res = list_resolver.resolve([span], rows, embed=embed)[0]
+        suppliers = sorted(c.row.label for c in res.candidates if c.row.list_name == "supplier")
+        assert res.status == "ambiguous" and suppliers == sorted([SUPPLIER, "ZZT TAIYANG SANITARY CO LTD", THIRD]), (
+            span, res.status, [(c.row.label, round(c.score, 3)) for c in res.candidates]
+        )
+    negative = list_resolver.resolve([list_resolver.Span("water closet")], rows, embed=embed)[0]
+    assert not any(c.row.key == unrelated for c in negative.candidates), negative

@@ -44,8 +44,10 @@ See `supplier-ask-acceptance-criteria.md`.
   `parser.SUPPLIER_ID_ASK` each Supplier line carries its row id and the parser answers with it. The id binds
   (`resolve_gate.bind_span_suppliers`) together with every supplier the span scored within the runner-up margin
   (`list_resolver.AMBIGUITY_MARGIN`, `engine._supplier_groups`), so a near tie asks "Which one do you mean?" from the
-  scores; a span-matched supplier never goes through the resolver's name probes. Floors: measured on the dev copy with
-  the Gemini embedder (`scripts/measure_supplier_span_floor.py`, crew runs it); until then the customer list's.
+  scores; a span-matched supplier never goes through the resolver's name probes. Gemini meaning floor 0.65, measured on the
+  dev copy's 822 suppliers (`scripts/measure_supplier_span_floor.py`, crew, 1 Nov 2026): "太阳" 0.665-0.669, "tai yang"
+  0.696-0.699 on the three TAIYANG suppliers, closest real negative 0.628; at the borrowed 0.75 all eight TAIYANG name
+  phrases missed. The OpenAI supplier floor stays the customer list's (OpenAI is no longer used).
 - Prompts, UNLABELLED (migration `sask_0002_span_supplier`): a span version (production text + the meaning
   paragraph it lacked + a supplier type line + one sentence asking for a company name in another script in the Latin
   letters the company writes it in; no example name) and a span-pass parser version (span marker kept, the
@@ -60,5 +62,5 @@ See `supplier-ask-acceptance-criteria.md`.
 
 ## Open
 
-- Measure the supplier meaning floor (both embedders) on real supplier names; the sandbox's OpenAI
-  route answered 429, so no live cosine was taken here.
+- The Gemini floor margin is thin (0.65 against a 0.628 negative); re-measure with the script when the supplier
+  book changes much.
