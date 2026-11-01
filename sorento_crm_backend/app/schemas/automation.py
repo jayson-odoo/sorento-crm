@@ -27,6 +27,10 @@ class RecipientConfig(BaseModel):
     #: original one-per-recipient shape.
     one_email: bool = False
     extra_emails: list[str] = Field(default_factory=list)
+    #: DEALER-OI-ROUTE: explicit Cc. `user_ids` / `role_ids` / `extra_emails` are To.
+    cc_user_ids: list[str] = Field(default_factory=list)
+    cc_role_ids: list[str] = Field(default_factory=list)
+    cc_emails: list[str] = Field(default_factory=list)
 
 
 class AutomationBase(BaseModel):

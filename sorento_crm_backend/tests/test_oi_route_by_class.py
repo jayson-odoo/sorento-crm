@@ -497,7 +497,7 @@ def test_outbox_row_carries_every_to(monkeypatch):
     with blank_session() as db:
         outbox_id = enqueue(
             db,
-            event_key="automation_email",
+            event_key="notification_delivery",
             to="a@test.local",
             extra_to=["b@test.local"],
             cc=["c@test.local"],
