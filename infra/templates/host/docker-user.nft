@@ -10,6 +10,7 @@
 # check in plan section 12, drill 9, from INSIDE an app container.
 #
 # <APP_SUBNETS>: every docker network the app containers join (pin them with compose `ipam`).
+# Witness app containers must not use `network_mode: host` (it bypasses these hooks).
 # IPv4 only: keep Docker IPv6 off on those networks (or add the same rules for ip6).
 
 # Re-runnable: drop the old table first so a reload never duplicates rules.
@@ -39,6 +40,6 @@ table inet sorento_ha_guard {
   chain prerouting_guard {
     type filter hook prerouting priority -110; policy accept;
     ip saddr @app_nets ip daddr @ha_peers drop
-    ip saddr @app_nets tcp dport { 2379, 2380, 5432, 8008 } drop
+    ip saddr @app_nets fib daddr type local tcp dport { 2379, 2380, 5432, 8008 } drop
   }
 }

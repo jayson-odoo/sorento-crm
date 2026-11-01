@@ -16,7 +16,8 @@ restapi:
     username: patroni-admin
     # password from PATRONI_RESTAPI_PASSWORD; the image's entrypoint refuses to start without it.
   # Defence in depth only (container traffic can arrive masqueraded as a member address; the
-  # real guard is templates/host/docker-user.nft).
+  # real guards are the REST login above, the etcd mTLS + RBAC user and the pg_hba scram rules;
+  # templates/host/docker-user.nft guards the witness only).
   allowlist:
     - 127.0.0.1
     - <A_WG_IP>
