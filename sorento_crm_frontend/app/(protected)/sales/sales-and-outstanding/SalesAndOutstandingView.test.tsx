@@ -4,6 +4,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { watchTabWrites } from '@/test-mocks/urlTab';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 const state = vi.hoisted(() => ({
@@ -88,14 +89,14 @@ describe('SalesAndOutstandingView', () => {
 
   it('a tab click writes the tab to the URL, and Invoiced (the landing tab) writes none', () => {
     state.tab = 'delivered';
+    const written = watchTabWrites('/sales/sales-and-outstanding', 'tab=delivered');
     render(<SalesAndOutstandingView />);
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'Unpaid invoices' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Unpaid invoices' }));
-    expect(state.replace).toHaveBeenCalledWith('/sales/sales-and-outstanding?tab=unpaid', { scroll: false });
-    state.replace.mockClear();
+    expect(written()).toBe('/sales/sales-and-outstanding?tab=unpaid');
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'Invoiced' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Invoiced' }));
-    expect(state.replace).toHaveBeenCalledWith('/sales/sales-and-outstanding', { scroll: false });
+    expect(written()).toBe('/sales/sales-and-outstanding');
   });
 
   it('hides Invoiced and Unpaid invoices from a user with the orders permission only and opens on Delivered', () => {

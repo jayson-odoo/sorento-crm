@@ -21,6 +21,7 @@ import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { useCreatePromotion, useUpdatePromotion, usePromotion } from '../hooks/usePromotions';
 import { PromotionSchema, type PromotionSchemaType } from '../forms/promotion-schema';
 import type { PromotionFormData } from '../types/promotion.types';
@@ -40,6 +41,11 @@ interface PromotionFormProps {
 export default function PromotionForm({ promotionId, onSuccess }: PromotionFormProps) {
   const router = useRouter();
   const isEditMode = !!promotionId;
+  // `?tab=`, so the edit screen's pager keeps the open tab on prev/next (NAV-KEEP-TAB).
+  const [formTab, setFormTab] = useUrlTab({
+    tabs: isEditMode ? ['basic', 'attachments'] : ['basic'],
+    defaultTab: 'basic',
+  });
   const { data: promotion, isLoading: isLoadingPromotion } = usePromotion(promotionId || null);
   const createMutation = useCreatePromotion();
   const updateMutation = useUpdatePromotion();
@@ -152,7 +158,7 @@ export default function PromotionForm({ promotionId, onSuccess }: PromotionFormP
             />
           </div>
         )}
-        <Tabs defaultValue="basic" className="w-full">
+        <Tabs value={formTab} onValueChange={setFormTab} className="w-full">
           <TabsList className="mb-5">
             <TabsTrigger value="basic">
               <Info />

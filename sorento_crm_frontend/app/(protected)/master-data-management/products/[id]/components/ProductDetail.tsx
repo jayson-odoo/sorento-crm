@@ -63,7 +63,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   // search params when Next/Prev is clicked, so a tab living here is the only way it
   // survives stepping to a different product without extra plumbing between the two
   // components.
-  const activeTab = searchParams.get('tab') || 'overview';
+  const requestedTab = searchParams.get('tab') || 'overview';
   const handleTabChange = useCallback(
     (tab: string) => {
       const params = new URLSearchParams(searchParams.toString());
@@ -80,6 +80,9 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   const { data: product, isLoading } = useProduct(productId);
   const canViewChatbotLimits = useHasPermission('master_data.chatbot_stock_limits.view');
   const canViewSuppliers = useHasPermission('procurement.product_suppliers.view');
+  // The pager carries `?tab=` to the next product (NAV-KEEP-TAB); Suppliers hidden by
+  // permission falls back to Overview rather than an empty panel.
+  const activeTab = requestedTab === 'suppliers' && !canViewSuppliers ? 'overview' : requestedTab;
   const canEditProduct = useHasPermission('master_data.products.edit');
 
   // Tab badge counts - same hooks the tab content components use, so React

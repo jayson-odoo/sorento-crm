@@ -37,19 +37,18 @@ describe('listNavQuery round-trip', () => {
     expect(parsed.filters.status).toBe('responded');
   });
 
-  // S1, AC-A2: the record's `?tab=` is not one of the reserved page/limit/sort/dir/query
-  // params, so it rides through as an ordinary filter - which is exactly what lets the
-  // pager (`useListPager` -> `stepHref` -> `buildDetailSearch`) carry it from one record to
-  // the next without either the pager or `useUrlTab` having to know about the other.
-  it('carries an arbitrary detail-only param like ?tab= through the round-trip (AC-A2)', () => {
+  // NAV-KEEP-TAB supersedes S1 AC-A2's "tab rides as a filter": as a filter it entered the
+  // list's cache key (a miss) and the list GET. It is reserved now, and `useListPager` copies
+  // it onto every step itself.
+  it('keeps ?tab= out of the list filters: the pager carries it explicitly (NAV-KEEP-TAB)', () => {
     const search = buildDetailSearch(
       { pageIndex: 0, pageSize: 50, sorting: [], searchQuery: '' },
-      { tab: 'lines' },
+      { tab: 'lines', status: 'open' },
     );
 
     const parsed = parseDetailSearch(new URLSearchParams(search));
 
-    expect(parsed.filters.tab).toBe('lines');
+    expect(parsed.filters).toEqual({ status: 'open' });
   });
 
   it('round-trips an ascending sort', () => {

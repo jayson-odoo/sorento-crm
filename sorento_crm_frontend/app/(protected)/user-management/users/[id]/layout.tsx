@@ -189,7 +189,11 @@ export default function UserLayout({
           )
         ) : (
           <>
-            <UserHero user={user} isLoading={isLoading} />
+            <UserHero
+              user={user}
+              isLoading={isLoading}
+              tabSegment={activeTab === 'logs' ? '/logs' : ''}
+            />
             <Tabs defaultValue={activeTab} value={activeTab}>
               <TabsList variant="line" className="mb-5">
                 {Object.entries(navRoutes).map(
