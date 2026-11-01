@@ -82,7 +82,7 @@ baseline. "Stored types" are the types the customers of the asker's company carr
 - **AT-29 [T]** The owner's examples on AT-16's invented figures: account RM 100,400.00, brand RM 150,000.00.
 - **AT-30 [T]** The AI panel's agent can pass an account type word or number through `crm_report_ask` and reads the same reply.
 - **AT-32 [T]** A customer-scoped contact (dealer): "cabana" stays the brand with no question, "account 4" is the dealer refusal, and the Known account types line is never in their parser input.
-- **AT-33 [T]** A customer's own ledger stays: "hanlim a/c 3" (a customer entity with `account: 3`) keeps today's reading and sends no `account_types`.
+- **AT-33 [T]** A customer's own ledger stays: "ZZT TRADING a/c 3" (a customer entity with `account: 3`) keeps today's reading and sends no `account_types`.
 - **AT-34 [T]** On a follow-up: a word that is both asks and the answer keeps what is on screen; an account word replaces the held account filter; a new axis keeps the held account filter; `group_by` account type on the bot lists one row per type.
 - **AT-35 [T]** A contact in two companies who names only an account type is asked the company first; a contact naming the company is not. The answer runs the held filter for that company.
 - **AT-36 [T]** Before the label moves: a parse whose entities have no `kind_said` key (a text that does not define it) asks nothing and reads as today, and the user block carries no Known account types line for that text. With a text that defines it, the line lists the stored types of the scoped company only, and is absent when no customer carries a type.

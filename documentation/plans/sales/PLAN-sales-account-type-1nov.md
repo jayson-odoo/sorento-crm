@@ -124,7 +124,7 @@ was right and whose head is the defect. UNVERIFIED: the owner's own turn is in p
 3. **Parser reads, data decides.** The parser says only what the message says: `hint: account_type` for a numbered account or a typed-only word, and `kind_said: true` when the message itself says brand or account ("cabana brand", "cabana account"). Whether a word overlaps comes from the data: stored types against active brands, in the contact's scoped session. A parser that forgets `kind_said` costs one extra question, never a silent wrong figure.
 4. **Merge changes nothing until the label moves.** `kind_said` follows the `by_words` rule (`typed_group_by`, `report_ask.py:727`): a parse without the key comes from a text that does not define it, so no question. The Known account types line and the schema key follow the prompt text (`head/parser.py:1071-1075`). `account_type` is written in the prompt beside `sales_agent` (`parser_template.py:138`), not in `chatbot_entity_kinds`, whose rows render into every text.
 5. **Also fixed, UNVERIFIED until measured.** Any axis on the same path takes `account_type` once listed (`GROUP_BY`, `AXIS_NOUNS`, `_AXIS_FILTERS`, held filters); a trend head stops saying "Top N" on month and year alike.
-6. **Removes.** The "Which customer is Account 4 for?" dead end on a report ask when no customer is named. A customer's own ledger ("hanlim a/c 3") stays as it is.
+6. **Removes.** The "Which customer is Account 4 for?" dead end on a report ask when no customer is named. A customer's own ledger ("ZZT TRADING a/c 3") stays as it is.
 7. **Not built.** No word list, no regex on the message, no table of numbers, no second question type.
 
 ### Calls made here, filed with crew
