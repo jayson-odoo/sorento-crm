@@ -87,6 +87,9 @@ def test_AC1_the_slug_is_checked_at_call_time_not_only_at_exposure(db, name, slu
     assert role_ids
     db.query(UserRolePermission).filter(UserRolePermission.role_id.in_(role_ids)).delete(synchronize_session=False)
     db.flush()
+    from app.services.user_service import invalidate_rbac_cache
+
+    invalidate_rbac_cache(user_id)
     rec = Recorder()
     out = dispatch(db, ctx, name, rec=rec)
     assert out.status == "denied", (out.status, out.message)

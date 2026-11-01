@@ -26,7 +26,7 @@ from tests.chatbot.agent.test_router import (  # noqa: F401
     set_jev_key,
 )
 from tests.chatbot.agent.test_router_tool_labels import publish_criteria, stored_prompt  # noqa: F401
-from tests.chatbot.agent._seed import seed_agent_contact
+from tests.chatbot.agent._seed import all_agent_slugs, seed_agent_contact
 
 
 @pytest.fixture(scope="module")
@@ -86,7 +86,7 @@ def test_AC8_the_list_has_no_repeats_and_keeps_the_existing_labels():
 
 
 def test_AC8_the_labels_reach_jev_and_the_stored_router_prompt_is_not_modified(db, jev):
-    contact = seed_agent_contact(db)
+    contact = seed_agent_contact(db, slugs=all_agent_slugs())
     set_jev_key(db)
     publish_criteria(db, {"chat": {"what": "c"}, "agent": {"what": "a"}})
     before = stored_prompt(db)
@@ -96,6 +96,14 @@ def test_AC8_the_labels_reach_jev_and_the_stored_router_prompt_is_not_modified(d
     for name in PORTED_NAMES:
         assert label_of(name) in sent, f"{name} did not reach Jev"
     assert label_of(FIND) not in sent and label_of(CAPABILITIES) not in sent
+    assert stored_prompt(db) == before
+
+    # The per-user filter (#2053): a contact with stock and orders slugs only is sent just the ported label
+    # its slugs open (`crm_order_analytics`), and none it lacks the slug for.
+    narrow = seed_agent_contact(db)
+    route(db, narrow["respond_id"])
+    narrow_sent = jev.calls[-1]["criteria"]["agent"]["tools"]
+    assert [label_of(n) for n in PORTED_NAMES if label_of(n) in narrow_sent] == ["order totals and trends"]
     assert stored_prompt(db) == before
 
 

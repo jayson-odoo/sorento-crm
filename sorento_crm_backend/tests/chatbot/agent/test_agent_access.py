@@ -103,17 +103,19 @@ def test_permitted_tools_returns_only_tools_whose_slug_the_user_holds(db):
 
     tools = permitted_tools(db, ctx)
 
-    assert [t.name for t in tools] == ["crm_inventory_stock_balance_list", "user_guides_read"]
+    assert [t.name for t in tools] == [
+        "crm_inventory_stock_balance_list", "user_guides_read", "crm_system_tool_capabilities_summary",
+    ]
 
 
-def test_a_user_with_no_role_gets_only_the_user_guides_tool(db):
+def test_a_user_with_no_role_gets_only_the_guides_and_capabilities_tools(db):
     from app.services.chatbot.agent.access import build_context, permitted_tools
 
     contact = seed_contact(db)
     seed_user(db, contact_pk=contact["pk"], slugs=[])
     ctx = build_context(db, contact["respond_id"])
 
-    assert [t.name for t in permitted_tools(db, ctx)] == ["user_guides_read"]
+    assert [t.name for t in permitted_tools(db, ctx)] == ["user_guides_read", "crm_system_tool_capabilities_summary"]
 
 
 def test_two_slugs_expose_every_tool_behind_them(db):
@@ -133,4 +135,7 @@ def test_two_slugs_expose_every_tool_behind_them(db):
         "crm_incoming_stock_by_product",
         "crm_incoming_stock_shipments",
         "user_guides_read",
+        # AGENTIC-UNIFY PR 4: orders.view also opens the order analytics; capabilities is open to every user.
+        "crm_order_analytics",
+        "crm_system_tool_capabilities_summary",
     }

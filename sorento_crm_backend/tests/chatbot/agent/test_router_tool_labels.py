@@ -219,6 +219,8 @@ def test_AC_R1_6_shared_lookup_labels_are_not_listed():
     assert "stock on hand" not in labels
     assert "incoming stock" not in labels
     for name in agent_tools.REGISTRY:
+        if name in agent_tools.PORTED_READS:
+            continue  # AGENTIC-UNIFY PR 4: no chat lane answers these, so Jev is told of them
         label = agent_tools.TOOL_LABELS.get(name)
         if label:
             assert label not in labels, f"registry tool {name} label {label!r} is listed"
