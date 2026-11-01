@@ -51,7 +51,7 @@ Owner, 1 Nov ~00:15: document access control must become "easier, straightforwar
    `["end_user"]`: nobody outside reads it, and no screen says so. 308 Product Photos files and 105 Promotion files
    carry `["end_user"]` only.
 3. **The file levels default to every active code** (`BE/api/v1/resources/attachments.py:1086-1087`,
-   `contact_access_type_service.py:92-95`), so in practice the type is the gate: 1104 of 1120 Technical
+   `contact_access_type_service.py:92-95`), so in practice the type is the gate: 1105 of 1120 Technical
    Specifications files carry all 7 codes. Narrowing a type to dealers today means editing the type, not 1120 files,
    but the type only offers four fixed buckets, not per-brand codes.
 4. **Company scope is invisible.** Direct Access is a Shared type, yet 9 of its 15 files belong to Sorento (uploaded
@@ -84,6 +84,70 @@ Data: `attachment_types.ai_readers` JSONB (list of codes, plus `staff`) replaces
 today's behaviour exactly (off -> [], staff -> [staff], dealer -> staff + every active code except end_user,
 public -> staff + every active code). Details after the owner approves the mock.
 
+## Behaviour card v1 (filed 1 Nov with mock v1)
+
+### Rules
+
+1. One page, Resource Management > Document Access (`config/menu.config.tsx:859-878`, after Attachment Types):
+   one row per document type, one tick per ACTIVE access type plus Staff. View needs
+   `resource.attachment_types.view`; a tick needs `resource.attachment_types.edit`
+   (`BE/api/v1/resources/attachment_types.py:28,86`).
+2. Contact reads document D of type T when a code is in (contact's active codes) AND (T's ticks) AND (D's access
+   levels), and D's company is one of the contact's companies or D is shared. No access type, or no company: nothing.
+3. Staff (Console agent, AI side panel, a contact linked to an active CRM user): T has Staff ticked AND the user
+   holds `resource.attachments.view` (unchanged permission, `knowledge_service.py:41,645`).
+4. Each ticked cell shows "reach/total" in amber when some of T's documents do not carry that code.
+5. Preview as a contact: per row "Reads X of Y" plus why not (no shared access type, other company), or the first
+   gate that stops everything (No access type, No company, Not ticked, Staff only, Off, runs as staff).
+6. The type sheet lists the documents with their access levels (editable, `AccessLevelsMultiSelect.tsx:30`) and a
+   per-document verdict for the previewed contact, plus "Sent as a file".
+7. The Attachment Type dialog loses "AI can read"; "Escalate to" stays there.
+
+### Examples (dev copy sorento_dev_1028; contacts masked, each a real shape)
+
+- **CONTACT A** (Sorento Dealer, Cabana Dealer, End User; Sorento; 129 contacts share this shape), Direct Access
+  ticked for every code: reads 13 of 15; Iborn and Mocha Pricetag Templates carry only Mocha codes.
+- **CONTACT C** (Mocha Dealer, End User; Mocha; 19), Direct Access: reads 5 of 15. 8 are Sorento-company files
+  in a Shared type (uploaded before the switch): "Other company: Sorento". 2 carry no Mocha code. Invisible today.
+- **CONTACT B** (End User; Sorento; 80), Technical Specifications ticked for the three Dealer codes: reads 0 of
+  82 ("Not ticked for End User"); tick End User: reads 82.
+- **CONTACT D** (Sorento Office only; Mocha + Sorento; no CRM user; 4), Certification on today's "Dealers":
+  reads 120 of 121, because office counts as dealer (`knowledge_service.py:695`). On the new page that is a visible
+  Sorento Office tick (Q2).
+- **CONTACT E** (no access type, no company; 3): "No access type", reads nothing (W-Q5 (a)).
+
+### Edge cases
+
+- Linked active CRM user: runs as staff (W-Q1 (a), `agent/access.py:83-90`), the preview says "Runs as Staff user".
+- Agent switch off for the contact: the preview still computes and shows "Agent on WhatsApp: Off" (0 of 495
+  contacts have it on in the dev copy).
+- Inactive access type (NL Dealer): no column; it is ignored in file levels, as today (`agent/access.py:171-188`).
+- Staff unticked, a code ticked: contacts read, staff do not (today impossible: every non-Off audience includes
+  staff, `knowledge_service.py:44`).
+- First tick on an Off type queues its unread files as today (`resources_service.py:589-593`); removing the last
+  tick hides the chunks, as Off does today.
+
+### Questions (at most 5)
+
+- **Q1 Model.** (a) a tick per access type + Staff per type, documents still narrow; (b) keep the four buckets in
+  the dialog, add only the preview, and make "Dealers" mean the three Dealer codes. **Rec (a)**: per-brand control
+  at the type, without editing file rows (1105 of 1120 Technical Specifications files carry all 7 codes), and the
+  rule says exactly who reads.
+- **Q2 Carry-over on deploy.** (a) tick for tick as today reads: Dealers -> Staff + every active code except End
+  User (the 3 Office codes come out ticked, visibly); Everyone -> Staff + all; Staff only -> Staff; (b) Dealers ->
+  Staff + the three Dealer codes only (office contacts without a CRM user lose those types). **Rec (a)**: deploy
+  changes nobody's access; untick Office on the page if wanted. UNVERIFIED: which types prod has on (dev is all Off).
+- **Q3 New access type added later.** (a) new column, unticked everywhere; (b) auto-ticked where every other code
+  is ticked. **Rec (a)**: no silent widening; today a new code silently joins every Dealers and Everyone type
+  (`knowledge_service.py:695,701`).
+- **Q4 Saving a tick.** (a) saves at once, toast names the count ("Technical Specifications: End User can now read
+  82 documents."), untick undoes; (b) Edit + Save with a who-gains summary. **Rec (a)**: one click, the count is
+  the summary.
+- **Q5 Sending files** (Direct access + per-contact Document types, MCP list). (a) rule unchanged; the page shows
+  it ("Sent as a file") and the sheet gets the Direct access switch (no screen sets it today); (b) sending follows
+  the same ticks. **Rec (a)**: W-Q5 kept sending separate, and (b) changes what dealers receive today; it can be
+  its own lane.
+
 ## Open (owner)
 
-Card v1 questions Q1-Q5 in the crew ask. Build starts only after the mock and the answers come back.
+Mock v1 + card v1 in the crew ask. Build starts only after the owner approves the mock and answers Q1-Q5.
