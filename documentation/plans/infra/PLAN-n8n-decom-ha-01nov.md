@@ -9,7 +9,8 @@ Owner, 1 Nov 2026: retire n8n now and make the n8n box serve as the HA standby.
 
 Builds on HA plan v2, `documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md` (PR #1915), which
 kept n8n on node B "unchanged, for Tier 1" (its section 6, lines 393-440). This plan replaces that
-section and lists every other v2 line that changes (section 5). It also supersedes the 25 Oct owner
+section and lists every other v2 line that changes (section 5). v2 line numbers cited here are as on
+main before this PR: its amendment banner moves them down 7 lines. It also supersedes the 25 Oct owner
 ruling Q1 (a) "replies keep going out through the thin n8n `chatbot-sender`"
 (`documentation/plans/chatbot/PLAN-chat-inbox-queue.md:11`): replies move into the CRM.
 
@@ -98,7 +99,8 @@ Box size per plan v2: 8 vCPU / 32 GB / 400 GB (v2 lines 180-184, not measured).
 
 What node B needs as a CRM node (v2 lines 186-198): about 9 GB steady, plus 5.4 GB during a
 blue/green deploy, plus about 0.3 GB of workers after promotion: about 15 GB of 32 GB. Disk: about
-30 GB plus the database size. Everything n8n uses today is freed.
+60 GB plus the database size, the leader's headroom (v2 lines 471-472), since with no preferred
+node (Q4) node B may lead for good. Everything n8n uses today is freed.
 
 ## 4. Decommission order (zero chat downtime, rollback per step)
 
@@ -117,8 +119,8 @@ workflow and turns the CRM job on in the same minute.
 | 3 | PRs B, C, D, E ship in parallel lanes; each switched on with its n8n twin off (poller, ht-sweeper + forms, SLA schedule + hand-off + close, revise) | lanes B-E, owner | stage 2 for B and C | per PR: CRM switch off, n8n workflow back on |
 | 4 | PR F ports EVERY attachment type the n8n workflow handles (Q5 b), shipped type by type (`triggers_n8n_webhook` off per type as each native task lands) | lane F | the live workflow export (the only copy in the repo's reach is a backup of 3 Aug or older) | per type: flag back on |
 | 5 | Deactivate producer, dispatcher, spine (gap slice 6); remove n8n's respond.io webhook / trigger subscription | owner | stages 2-3 soaked 48 h | reactivate |
-| 6 | Stop the n8n containers (do not delete) for 14 days; then final export + n8n DB dump to the private backup; MCP server on its own key | owner | stage 5, and stage 4 done for every type | start the containers |
-| 7 | PR G cleanup (dead code, settings columns, routes, runbooks); revoke n8n's key; close the n8n private path and its firewall openings into the CRM box | lane G, owner | stage 6 ended | revert PR (columns dropped last) |
+| 6 | Stop the n8n containers (do not delete) for 14 days; then final export + n8n DB dump to the private backup; MCP server on its own key; turn off the `n8n_liveness_ping` scheduled task (`scheduled_tasks.enabled`, handler `app/scheduler/task_scheduler.py:823`) and the uptime check on n8n's health URL | owner | stage 5, and stage 4 done for every type | start the containers |
+| 7 | PR G cleanup (dead code, settings columns, routes, runbooks, and the cutover switches PRs A-F added); revoke n8n's key; close the n8n private path and its firewall openings into the CRM box | lane G, owner | stage 6 ended | revert PR (columns dropped last) |
 | 8 | Node B rebuilt as a CRM node, joins HA (section 5) | crew + owner | stage 6 ended | n/a |
 
 Order of CRM PRs: A first (largest, gates stage 5); B and C next (both need A's sender for the
@@ -155,7 +157,7 @@ PR-sized steps:
 | H2 | Read-only pre-flight on node A and the witness (Postgres settings, data directory, sizes, compose location, OS, watchdog, free capacity); then capture the prod compose, nginx and `.deploy.env` key names into the private infra repo (v2 step 9.1) | owner commands, crew | now | 0.5 d |
 | H3 | WireGuard between node A and the witness; etcd with all three members LISTED but only node A and the witness started (quorum 2 of 3, no fault tolerance until node B joins); R2 bucket + scoped token | owner commands | after H2 | 1 d |
 | H4a | Rehearse H4 on a local throwaway stack (pgvector pg17 + Patroni + etcd + WAL-G to a test bucket, a copy of the dev schema): adoption, PITR restore to a minute, etcd loss with node A staying primary (`failsafe_mode`), a Postgres crash restart | lane | after H1 | 1 d |
-| H4 | Adopt prod Postgres into Patroni on node A as a one-member cluster, WAL-G archiving on (one 1-2 minute window, v2 step 6). Gives point-in-time restore (RPO 24 h to about 60 s) before node B exists | owner commands, crew on the call | after H2, H3, H4a | 1.5-2 d |
+| H4 | Adopt prod Postgres into Patroni on node A as a one-member cluster, WAL-G archiving on (one 1-2 minute window, v2 step 6). Gives point-in-time restore (RPO 24 h to about 60 s) before node B exists. Until node B joins, `infra/scripts/ha-checks.sh` runs with `EXPECT_REPLICAS=0 ETCD_MEMBERS=2` | owner commands, crew on the call | after H2, H3, H4a | 1.5-2 d |
 | H5 | Release deploys both nodes, migrations only on the leader (v2 step 7) | lane | after H2 (needs the prod compose shape) | 1-1.5 d |
 | H6 | Node B: fresh OS (Q3 a), edge rules, WireGuard, etcd member 3, CRM compose with `SKIP_MIGRATIONS=1`, role watcher; Patroni seeds the replica; `synchronous_mode` on (non-strict) once the measured RTT is under 2 ms (v2 line 137) | owner commands | after stage 6 ends, H5 merged | 1 d |
 | H7 | Allowlists for node B's egress address (OpenAI and any other provider with one; v2 step 8) | owner | with H6 | - |
@@ -194,8 +196,9 @@ write protection are separate layers:
 4. **What a failover can still lose.** Writes in flight on the old primary at the moment it dies
    fail with an error (staff retry; respond.io retries its webhooks for about 3 minutes; chatbot
    turns are Postgres rows and are picked up again). Commits the old primary acknowledged but had not
-   yet streamed are discarded when it rejoins: normally under a second, never more than 16 MB
-   (`patroni.yml:41`, beyond that no automatic promotion). With both nodes in Malaysia,
+   yet streamed are discarded when it rejoins: normally under a second, at most about 16 MB plus up to 10 s of WAL (Patroni compares
+   against the leader position it last wrote to etcd, every `loop_wait`; `patroni.yml:41`; beyond
+   that no automatic promotion). With both nodes in Malaysia,
    `synchronous_mode` (non-strict) closes even that while both nodes are up (H6).
 
 ## 6. Owner rulings (1 Nov 2026 about 12:05, on the plan card)

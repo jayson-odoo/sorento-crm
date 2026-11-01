@@ -26,7 +26,7 @@ table inet sorento_ha_guard {
   # Container traffic to the host itself (published ports, host-network etcd).
   chain input {
     type filter hook input priority -10; policy accept;
-    ip saddr @app_nets tcp dport { 2379, 2380, 5432, 8008 } drop
+    ip saddr @app_nets tcp dport { 2379, 2380 } drop
     ip saddr @app_nets ip daddr @ha_peers drop
   }
 
@@ -40,6 +40,6 @@ table inet sorento_ha_guard {
   chain prerouting_guard {
     type filter hook prerouting priority -110; policy accept;
     ip saddr @app_nets ip daddr @ha_peers drop
-    ip saddr @app_nets fib daddr type local tcp dport { 2379, 2380, 5432, 8008 } drop
+    ip saddr @app_nets fib daddr type local tcp dport { 2379, 2380 } drop
   }
 }

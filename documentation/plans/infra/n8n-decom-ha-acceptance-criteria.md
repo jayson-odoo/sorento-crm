@@ -6,8 +6,9 @@ lane named in the plan copies the criteria it owns into its own UAC and adds its
 ## Chat stays up through the whole retirement
 
 1. At every stage of plan section 4, a customer message sent to the bot gets exactly one reply:
-   none lost, none sent twice. Proof per switch: the inbound message count and the bot-turn count
-   for the 48 h after the switch match the 48 h before it, minus messages a human took over.
+   none lost, none sent twice. Proof per switch: within each 48 h window (before and after the
+   switch), inbound customer messages, bot turns and replies sent match one to one, apart from
+   messages a human took over; the after window has no more gaps than the before window.
 2. Every switch in plan section 4 is undone by one settings change or one workflow re-activation,
    in under a minute, with no deploy and no restart.
 3. A message whose respond.io webhook never reached the CRM still gets a reply once the CRM's
@@ -24,9 +25,9 @@ lane named in the plan copies the criteria it owns into its own UAC and adds its
 
 ## n8n is gone
 
-9. With every n8n container stopped for 14 days, nothing in the CRM logs an n8n call, waits on an
-   n8n callback, or shows an n8n setting, and the staff AI assistant still reaches the MCP server
-   with its own key.
+9. With every n8n container stopped (stage 6), nothing in the CRM logs an n8n call or waits on an
+   n8n callback (the liveness ping task is off), and the staff AI assistant still reaches the MCP
+   server with its own key. After PR G (stage 7), no screen shows an n8n setting.
 10. The n8n API key is revoked and the CRM box accepts no traffic from the old n8n box outside the
     HA tunnel.
 
