@@ -1364,20 +1364,28 @@ def _run(
     if status != "failed":
         reply = to_whatsapp(reply)
         # Code-added after the model's answer: the knowledge-miss line and the offer, once.
-        say = next(
+        handoff = next(
             (
-                str((e.get("data") or {}).get("say") or "")
+                e["data"]
                 for e in ledger.values()
                 if e.get("name") == HANDOFF and e.get("status") == "ok" and isinstance(e.get("data"), dict)
             ),
-            "",
+            {},
         )
+        say = str(handoff.get("say") or "")
         from app.services import knowledge_service
+        from app.services.chatbot.agent import knowledge_miss
+        from app.services.chatbot.turn import refer
 
         offer_armed = handoff_armed(ledger)
         if say and offer_armed and status != "answered":
             # The offer sentence is in the reply if and only if the offer gets armed: a limited turn arms nothing.
             say = knowledge_service.KNOWLEDGE_MISS_LINE
+        if say and handoff.get("refer") is True:
+            # The salesman line, through the one helper that marks the turn (CUSTOMER-ASKS-REFER-ONLY). Here
+            # and not in the tool: this block runs only for a turn that did not fail, and the line always
+            # reaches the reply from here (appended below unless the model already wrote the whole sentence).
+            say = refer.after(say, sep=" ")
         if say and say not in reply:
             if reply.strip() in ("", NO_ANSWER_REPLY):
                 reply = say  # nothing else to say: the hand-off sentence stands alone
@@ -1405,7 +1413,7 @@ def _run(
             # The write lives here, after the answer and the backstop: never in a test turn, after a
             # failure, or when the offer sentence did not survive into the reply.
             try:
-                knowledge_service.arm_knowledge_miss_offer(db, ctx.contact_pk)
+                knowledge_miss.arm_knowledge_miss_offer(db, ctx.contact_pk)
             except Exception:  # noqa: BLE001 - the offer is lost, the turn still closes
                 logger.warning("agent: arming the knowledge-miss offer failed", exc_info=True)
                 db.rollback()
