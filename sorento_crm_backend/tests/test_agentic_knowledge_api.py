@@ -20,6 +20,7 @@ from tests._fake_storage import patch_storage
 from tests._knowledge_seed import (
     EXACT_VEC,
     seed_attachment,
+    seed_access_codes,
     seed_chunk,
     seed_reader,
     seed_team,
@@ -50,6 +51,7 @@ def api(monkeypatch):
         enqueued: list[str] = []
         monkeypatch.setattr(knowledge_service, "_enqueue", lambda attachment_id: enqueued.append(str(attachment_id)))
 
+        seed_access_codes(db, ["dealer", "end_user"])
         manager = seed_reader(
             db,
             slugs=(
@@ -101,7 +103,8 @@ def test_create_defaults_to_off_with_no_team(api):
 
     assert res.status_code == 201, res.text
     body = res.json()
-    assert body["ai_audience"] == "off"
+    assert (body["ai_read_staff"], body["ai_read_codes"]) == (False, [])
+    assert "ai_audience" not in body
     assert body["ai_escalate_team_id"] is None
     assert body["ai_escalate_team_name"] is None
 
@@ -109,25 +112,25 @@ def test_create_defaults_to_off_with_no_team(api):
 def test_create_accepts_audience_and_team_and_returns_the_team_name(api):
     team = seed_team(api.db, "ZZTK HR")
 
-    res = api.c.post(f"{TYPES}/", json=_type_body(ai_audience="staff", ai_escalate_team_id=team))
+    res = api.c.post(f"{TYPES}/", json=_type_body(ai_read_staff=True, ai_escalate_team_id=team))
 
     assert res.status_code == 201, res.text
     body = res.json()
-    assert body["ai_audience"] == "staff"
+    assert body["ai_read_staff"] is True
     assert body["ai_escalate_team_id"] == team
     assert body["ai_escalate_team_name"] == "ZZTK HR"
 
 
 def test_get_one_and_list_return_the_ai_fields(api):
     team = seed_team(api.db, "ZZTK HR")
-    created = api.c.post(f"{TYPES}/", json=_type_body(ai_audience="dealer", ai_escalate_team_id=team)).json()
+    created = api.c.post(f"{TYPES}/", json=_type_body(ai_read_staff=True, ai_read_codes=["dealer"], ai_escalate_team_id=team)).json()
 
     one = api.c.get(f"{TYPES}/{created['id']}").json()
     listed = api.c.get(f"{TYPES}/", params={"limit": 100}).json()["data"]
     row = next(r for r in listed if r["id"] == created["id"])
 
     for body in (one, row):
-        assert body["ai_audience"] == "dealer"
+        assert (body["ai_read_staff"], body["ai_read_codes"]) == (True, ["dealer"])
         assert body["ai_escalate_team_id"] == team
         assert body["ai_escalate_team_name"] == "ZZTK HR"
 
@@ -136,31 +139,31 @@ def test_update_changes_audience_and_team_and_null_clears_the_team(api):
     team = seed_team(api.db, "ZZTK HR")
     created = api.c.post(f"{TYPES}/", json=_type_body()).json()
 
-    res = api.c.put(f"{TYPES}/{created['id']}", json={"ai_audience": "public", "ai_escalate_team_id": team})
+    res = api.c.put(f"{TYPES}/{created['id']}", json={"ai_read_staff": True, "ai_read_codes": ["dealer", "end_user"], "ai_escalate_team_id": team})
     assert res.status_code == 200, res.text
-    assert (res.json()["ai_audience"], res.json()["ai_escalate_team_name"]) == ("public", "ZZTK HR")
+    assert (res.json()["ai_read_codes"], res.json()["ai_escalate_team_name"]) == (["dealer", "end_user"], "ZZTK HR")
 
     res = api.c.put(f"{TYPES}/{created['id']}", json={"ai_escalate_team_id": None})
     assert res.status_code == 200, res.text
     assert res.json()["ai_escalate_team_id"] is None
     assert res.json()["ai_escalate_team_name"] is None
-    assert res.json()["ai_audience"] == "public", "an unsent field is left alone"
+    assert res.json()["ai_read_codes"] == ["dealer", "end_user"], "an unsent field is left alone"
 
 
-@pytest.mark.parametrize("bad", ["everyone", "STAFF", "", "admin"])
-def test_create_rejects_any_other_audience_with_422(api, bad):
-    res = api.c.post(f"{TYPES}/", json=_type_body(ai_audience=bad))
+@pytest.mark.parametrize("field,bad", [("ai_read_staff", "maybe"), ("ai_read_codes", "dealer"), ("ai_read_codes", [1, {}])])
+def test_create_rejects_a_malformed_tick_with_422(api, field, bad):
+    res = api.c.post(f"{TYPES}/", json=_type_body(**{field: bad}))
 
     assert res.status_code == 422, res.text
 
 
-def test_update_rejects_any_other_audience_with_422(api):
+def test_update_rejects_a_malformed_tick_with_422(api):
     created = api.c.post(f"{TYPES}/", json=_type_body()).json()
 
-    res = api.c.put(f"{TYPES}/{created['id']}", json={"ai_audience": "everyone"})
+    res = api.c.put(f"{TYPES}/{created['id']}", json={"ai_read_staff": "maybe"})
 
     assert res.status_code == 422, res.text
-    assert api.c.get(f"{TYPES}/{created['id']}").json()["ai_audience"] == "off"
+    assert api.c.get(f"{TYPES}/{created['id']}").json()["ai_read_staff"] is False
 
 
 def test_the_type_routes_refuse_an_anonymous_caller(api):
@@ -170,8 +173,8 @@ def test_the_type_routes_refuse_an_anonymous_caller(api):
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(get_current_user_or_api_key, None)
 
-    assert api.c.post(f"{TYPES}/", json=_type_body(ai_audience="staff")).status_code == 401
-    assert api.c.put(f"{TYPES}/{created['id']}", json={"ai_audience": "staff"}).status_code == 401
+    assert api.c.post(f"{TYPES}/", json=_type_body(ai_read_staff=True)).status_code == 401
+    assert api.c.put(f"{TYPES}/{created['id']}", json={"ai_read_staff": True}).status_code == 401
 
 
 # ---------------------------------------------------------------- AC-K6 re-queue on a type save
@@ -191,7 +194,7 @@ def test_turning_a_type_on_queues_files_never_read_or_failed_and_no_others(api):
     done = _file(api, att_type, "done", "done.pdf")
     other_type_file = _file(api, seed_type(api.db, audience="off"), None, "elsewhere.pdf")
 
-    res = api.c.put(f"{TYPES}/{att_type.id}", json={"ai_audience": "staff"})
+    res = api.c.put(f"{TYPES}/{att_type.id}", json={"ai_read_staff": True})
 
     assert res.status_code == 200, res.text
     assert sorted(api.enqueued) == sorted([str(never.id), str(failed.id)])
@@ -210,7 +213,7 @@ def test_turning_a_type_off_queues_nothing_and_keeps_the_status(api):
     done = _file(api, att_type, "done", "done.pdf")
     never = _file(api, att_type, None, "never.pdf")
 
-    res = api.c.put(f"{TYPES}/{att_type.id}", json={"ai_audience": "off"})
+    res = api.c.put(f"{TYPES}/{att_type.id}", json={"ai_read_staff": False})
 
     assert res.status_code == 200, res.text
     assert api.enqueued == []
@@ -234,7 +237,7 @@ def test_moving_between_readable_audiences_does_not_requeue(api):
     att_type = seed_type(api.db, audience="staff")
     _file(api, att_type, None, "never.pdf")
 
-    res = api.c.put(f"{TYPES}/{att_type.id}", json={"ai_audience": "dealer"})
+    res = api.c.put(f"{TYPES}/{att_type.id}", json={"ai_read_codes": ["dealer"]})
 
     assert res.status_code == 200, res.text
     assert api.enqueued == []
@@ -260,7 +263,7 @@ def test_a_type_save_queues_at_most_the_per_save_cap(api):
     )
     api.db.flush()
 
-    res = api.c.put(f"{TYPES}/{att_type.id}", json={"ai_audience": "staff"})
+    res = api.c.put(f"{TYPES}/{att_type.id}", json={"ai_read_staff": True})
 
     assert res.status_code == 200, res.text
     assert len(api.enqueued) == MAX_REQUEUE_PER_SAVE
@@ -419,7 +422,7 @@ from datetime import datetime, timedelta  # noqa: E402
 def test_a_signed_in_user_with_no_role_cannot_create_a_type(api):
     api.who["id"] = api.nobody
 
-    res = api.c.post(f"{TYPES}/", json=_type_body(ai_audience="staff"))
+    res = api.c.post(f"{TYPES}/", json=_type_body(ai_read_staff=True))
 
     assert res.status_code == 403, res.text
 
@@ -428,11 +431,11 @@ def test_a_signed_in_user_with_no_role_cannot_edit_a_type(api):
     created = api.c.post(f"{TYPES}/", json=_type_body()).json()
     api.who["id"] = api.nobody
 
-    res = api.c.put(f"{TYPES}/{created['id']}", json={"ai_audience": "staff"})
+    res = api.c.put(f"{TYPES}/{created['id']}", json={"ai_read_staff": True})
 
     assert res.status_code == 403, res.text
     api.who["id"] = api.manager
-    assert api.c.get(f"{TYPES}/{created['id']}").json()["ai_audience"] == "off"
+    assert api.c.get(f"{TYPES}/{created['id']}").json()["ai_read_staff"] is False
 
 
 def test_a_signed_in_user_with_no_role_cannot_delete_a_type(api):
