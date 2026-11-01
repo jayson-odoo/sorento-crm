@@ -33,8 +33,8 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
 
   const priced =
     belowFloor === 1
-      ? 'One line is priced below its floor'
-      : `${belowFloor} lines are priced below their floor`;
+      ? 'One line is priced below minimum price'
+      : `${belowFloor} lines are priced below minimum price`;
 
   const tone = blocked
     ? 'border-amber-500/40 bg-amber-500/5'

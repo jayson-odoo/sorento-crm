@@ -323,11 +323,14 @@ function Harness({
   projectOverrides,
   editing,
   unsaved = false,
+  seriesId,
 }: {
   projectOverrides: Partial<Project>;
   editing: boolean;
   /** A scope added on the quotation form and not saved yet (#1341, round 3). */
   unsaved?: boolean;
+  /** The series the form has picked for the scope (undefined: the quotation's own). */
+  seriesId?: string | null;
 }) {
   const held = useQuotationEditSession();
   session = held;
@@ -356,18 +359,29 @@ function Harness({
     <QuotationVersionEditor
       project={project(projectOverrides)}
       quotation={unsaved ? null : QUOTATION}
+      seriesId={seriesId}
       edit={edit}
     />
   );
 }
 
-function renderEditor(overrides: Partial<Project> = {}, editing = false, unsaved = false) {
+function renderEditor(
+  overrides: Partial<Project> = {},
+  editing = false,
+  unsaved = false,
+  seriesId?: string | null,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <Harness projectOverrides={overrides} editing={editing} unsaved={unsaved} />
+      <Harness
+        projectOverrides={overrides}
+        editing={editing}
+        unsaved={unsaved}
+        seriesId={seriesId}
+      />
     </QueryClientProvider>,
   );
 }
@@ -545,7 +559,8 @@ describe('QuotationVersionEditor', () => {
     const pill = await screen.findByText('Minimum price RM 700.00');
     const list = screen.getByText('List RM 1,000.00');
     expect(pill.closest('td')).toBe(list.closest('td'));
-    expect(screen.getByText('Set on a parent category.').closest('td')).toBe(list.closest('td'));
+    // PRICING-UX-FIXES (owner, 1 Nov): no printed "Set on ..." line under the rate.
+    expect(screen.queryByText(/Set on/)).toBeNull();
     expect(screen.queryByText('Below floor')).toBeNull();
   });
 
@@ -622,7 +637,7 @@ describe('QuotationVersionEditor', () => {
     // Debounced 400ms, then judged. NOTHING was saved on the way to the badge.
     expect(await screen.findByText('Non-standard', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(judgeQuotationLine).toHaveBeenCalledWith(
-      QUOTATION.id,
+      expect.objectContaining({ quotationId: QUOTATION.id }),
       expect.objectContaining({ product_id: 'p9' }),
     );
     expect(replaceQuotationLines).not.toHaveBeenCalled();
@@ -650,7 +665,7 @@ describe('QuotationVersionEditor', () => {
     expect(pill.closest('td')).toBe(priceInput.closest('td'));
     expect(screen.queryByText('Below floor')).toBeNull();
     expect(judgeQuotationLine).toHaveBeenCalledWith(
-      QUOTATION.id,
+      expect.objectContaining({ quotationId: QUOTATION.id }),
       expect.objectContaining({ unit_price: '90.00' }),
     );
   });
@@ -1178,7 +1193,7 @@ describe('QuotationVersionEditor', () => {
     await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledWith('v2'));
     expect(
       await screen.findByText(
-        '6 lines are no longer non-standard, 1 line is now below floor.',
+        '6 lines are no longer non-standard, 1 line is now below minimum price.',
       ),
     ).toBeInTheDocument();
     // And WHICH lines, because "6 lines" is not something anybody can go and check.
@@ -1299,13 +1314,13 @@ describe('describeRecompute', () => {
         now_below_floor: 1,
       }),
     ).toBe(
-      '6 lines are no longer non-standard, 2 lines are now non-standard, 3 lines are no longer below floor, 1 line is now below floor.',
+      '6 lines are no longer non-standard, 2 lines are now non-standard, 3 lines are no longer below minimum price, 1 line is now below minimum price.',
     );
   });
 
   it('names the floor moving under a line that did not cross it', () => {
     expect(describeRecompute({ ...base, changed_count: 2, floor_changed: 2 })).toBe(
-      '2 lines picked up a different floor.',
+      '2 lines picked up a different minimum price.',
     );
   });
 });
@@ -1316,8 +1331,8 @@ describe('describeRecompute', () => {
  * like a saved scope, asking the server for nothing it cannot answer.
  */
 describe('QuotationVersionEditor on a scope not saved yet (AC-QF073)', () => {
-  it('starts with no lines, stages an added line, and reads no version or verdict', async () => {
-    renderEditor({}, true, true);
+  it('starts with no lines, stages an added line, reads no version, and judges the line by series', async () => {
+    renderEditor({}, true, true, 's-new');
 
     await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines).toEqual([]));
     fireEvent.click(await screen.findByRole('button', { name: 'Add a line' }));
@@ -1335,7 +1350,16 @@ describe('QuotationVersionEditor on a scope not saved yet (AC-QF073)', () => {
     expect(screen.queryByTitle('Not a catalogue product')).toBeNull();
     expect(listQuotationVersions).not.toHaveBeenCalled();
     expect(listQuotationLines).not.toHaveBeenCalled();
-    expect(judgeQuotationLine).not.toHaveBeenCalled();
+    // PRICING-UX-FIXES A: the minimum-price and non-standard alerts are live on a new scope
+    // too, judged against the series the editor holds (no quotation id to ask by).
+    await waitFor(
+      () =>
+        expect(judgeQuotationLine).toHaveBeenCalledWith(
+          { quotationId: null, seriesId: 's-new' },
+          expect.objectContaining({ product_id: 'p9' }),
+        ),
+      { timeout: 5000 },
+    );
     // A revise would write at once; the form never offers it.
     expect(screen.queryByRole('button', { name: /Revise to/ })).toBeNull();
     expectNothingWritten();

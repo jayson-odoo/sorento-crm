@@ -103,6 +103,8 @@ class SeriesMembership:
     brand_ids: Set[str] = field(default_factory=set)
     #: The series' company: scope products are the company's own, never another's.
     company_id: Optional[str] = None
+    #: Products the admin took OUT of the series (owner ruling Q1): never standard by scope.
+    excluded: Set[str] = field(default_factory=set)
 
 
 # --------------------------------------------------------------- category walk
@@ -195,8 +197,9 @@ def resolve_floor(
     # The SERIES wins where it has an opinion (AC-C3). A scope quoted from a series is a
     # commercial deal already struck: the price was agreed and the margin with it, so a
     # generic `price_floor_rules` entry must not quietly override the number in the
-    # contract. Where the series is silent - product not named, or missing either half of
-    # the answer - it falls through and the rules apply exactly as they always did (AC-C4).
+    # contract. Where the series is silent - product not named, or no selling price - it falls
+    # through and the rules apply exactly as they always did. A price with no max discount is
+    # NOT silence: it allows no discount (owner ruling Q2, 1 Nov 2026).
     if series_id is not None:
         pricing_for = (
             series_pricing
@@ -635,7 +638,25 @@ def series_product_ids(db: Session, series_id: Optional[str]) -> Set[str]:
     return {
         row[0]
         for row in db.query(ProjectSeriesProduct.product_id)
-        .filter(ProjectSeriesProduct.series_id == series_id)
+        .filter(
+            ProjectSeriesProduct.series_id == series_id,
+            ProjectSeriesProduct.excluded.is_(False),
+        )
+        .all()
+    }
+
+
+def series_excluded_ids(db: Session, series_id: Optional[str]) -> Set[str]:
+    """Products taken OUT of the series (owner ruling Q1): not listed, standard or priced."""
+    if not series_id:
+        return set()
+    return {
+        row[0]
+        for row in db.query(ProjectSeriesProduct.product_id)
+        .filter(
+            ProjectSeriesProduct.series_id == str(series_id),
+            ProjectSeriesProduct.excluded.is_(True),
+        )
         .all()
     }
 
@@ -652,7 +673,10 @@ def series_pricing_map(db: Session, series_id: Optional[str]) -> Dict[str, tuple
     return {
         row.product_id: (row.selling_price, row.max_discount_pct)
         for row in db.query(ProjectSeriesProduct)
-        .filter(ProjectSeriesProduct.series_id == str(series_id))
+        .filter(
+            ProjectSeriesProduct.series_id == str(series_id),
+            ProjectSeriesProduct.excluded.is_(False),
+        )
         .all()
     }
 
@@ -751,7 +775,15 @@ def series_product_rows(
                 ProjectSeriesProduct.series_id == str(series_id),
             ),
         )
-        .filter(or_(ProjectSeriesProduct.product_id.isnot(None), in_scope))
+        .filter(
+            or_(
+                and_(
+                    ProjectSeriesProduct.product_id.isnot(None),
+                    ProjectSeriesProduct.excluded.is_(False),
+                ),
+                and_(ProjectSeriesProduct.product_id.is_(None), in_scope),
+            )
+        )
     )
     if priced_only:
         base = base.filter(ProjectSeriesProduct.selling_price.isnot(None))
@@ -805,6 +837,8 @@ def set_series_product_pricing(
             )
         link = ProjectSeriesProduct(series_id=series.id, product_id=str(product_id))
         db.add(link)
+    # Pricing a product the admin had removed adds it back (owner ruling Q1).
+    link.excluded = False
     link.selling_price = selling_price
     link.max_discount_pct = max_discount_pct
     db.flush()
@@ -815,17 +849,37 @@ def set_series_product_pricing(
 
 
 def remove_series_product(db: Session, *, series: ProjectSeries, product_id: str) -> bool:
-    """Take one product off the series. False when it was not on it to begin with."""
-    deleted = (
+    """Take one product off the series. False when it was not on it to begin with.
+
+    A product the brand / category scope lists cannot just lose its row: the scope would list
+    it again. It keeps an ``excluded`` row instead (owner ruling Q1, 1 Nov 2026), with its
+    numbers cleared, so it is not listed, not standard and not priced until it is added back.
+    A product named outside the scope has nothing to reappear from, so its row is deleted.
+    """
+    link = (
         db.query(ProjectSeriesProduct)
         .filter(
             ProjectSeriesProduct.series_id == series.id,
             ProjectSeriesProduct.product_id == str(product_id),
         )
-        .delete(synchronize_session=False)
+        .first()
     )
+    if link is not None and link.excluded:
+        return False
+    if product_in_series_scope(db, series, product_id):
+        if link is None:
+            link = ProjectSeriesProduct(series_id=series.id, product_id=str(product_id))
+            db.add(link)
+        link.excluded = True
+        link.selling_price = None
+        link.max_discount_pct = None
+        db.flush()
+        return True
+    if link is None:
+        return False
+    db.delete(link)
     db.flush()
-    return bool(deleted)
+    return True
 
 
 # ------------------------------------------------------------ product sets in a series
@@ -871,7 +925,8 @@ def resolve_set_floor(
 ) -> Optional[ResolvedFloor]:
     """The floor for one SET line, or None.
 
-    The series row wins when it states both numbers. Otherwise ONLY the company default
+    The series row wins when it states a selling price (no max discount = no discount, owner
+    ruling Q2). Otherwise ONLY the company default
     (system) rule applies, against the set list price: a set is not a product and has no
     category, so product and category rules never reach it (owner answer Q4 b).
     """
@@ -992,6 +1047,7 @@ def series_membership(db: Session, series_id: Optional[str]) -> SeriesMembership
         categories=series_category_ids(db, series_id),
         products=series_product_ids(db, series_id),
         brand_ids=series_brand_ids(db, series_id),
+        excluded=series_excluded_ids(db, series_id),
     )
 
 
@@ -1032,6 +1088,8 @@ def is_in_series(
     resolved = membership if membership is not None else series_membership(db, series_id)
     if product.id in resolved.products:
         return True
+    if product.id in resolved.excluded:
+        return False
     if not product.is_active:
         return False
     if resolved.company_id and product.company_id != resolved.company_id:
@@ -1133,18 +1191,27 @@ def set_series_products(
     Returns what it did, because the importer above it has to be able to say so.
     """
     wanted = {pid for pid in product_ids if pid}
-    existing = {
+    rows = {
         row.product_id: row
         for row in db.query(ProjectSeriesProduct)
         .filter(ProjectSeriesProduct.series_id == series.id)
         .all()
     }
+    # An exclusion row is not a nomination: an import that names the product adds it back,
+    # one that does not leaves it excluded (owner ruling Q1).
+    existing = {pid: row for pid, row in rows.items() if not row.excluded}
 
     added = wanted - set(existing)
     removed = set(existing) - wanted
     priced = pricing or {}
     for product_id in added:
         price, pct = priced.get(product_id, (None, None))
+        excluded_row = rows.get(product_id)
+        if excluded_row is not None:
+            excluded_row.excluded = False
+            excluded_row.selling_price = price
+            excluded_row.max_discount_pct = pct
+            continue
         db.add(
             ProjectSeriesProduct(
                 series_id=series.id,
@@ -1169,19 +1236,18 @@ def series_floor(selling_price: Any, max_discount_pct: Any) -> Optional[Decimal]
 
     ``selling_price * (1 - pct/100)``, to two places: 220 at 6% is 206.80.
 
-    **Both numbers are required.** A series that names a price but no percentage returns
-    ``None`` here and the line falls through to ``price_floor_rules`` - see AC-C4. The
-    alternative, reading a missing percentage as zero, makes the floor equal the selling
-    price and puts the 56 of the client's 151 codes that carry a price and no percentage in
-    breach the moment anybody discounts a cent.
+    A selling price with NO max discount means no discount is allowed: the floor is the
+    selling price itself (owner ruling Q2, 1 Nov 2026, which replaces the earlier "both numbers
+    or nothing" rule). No selling price means the series has no opinion and the line falls
+    through to ``price_floor_rules``.
 
     One function, called by the pricing engine AND by the screen that displays the number,
     because a floor computed two ways is a refusal the user can argue with.
     """
-    if selling_price is None or max_discount_pct is None:
+    if selling_price is None:
         return None
     price = Decimal(str(selling_price))
-    pct = Decimal(str(max_discount_pct))
+    pct = Decimal(str(max_discount_pct)) if max_discount_pct is not None else Decimal(0)
     if price < 0 or pct < 0 or pct > 100:
         return None
     floor = price * (Decimal(1) - pct / Decimal(100))

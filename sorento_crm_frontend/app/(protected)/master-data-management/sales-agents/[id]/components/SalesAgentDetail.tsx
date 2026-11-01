@@ -21,6 +21,7 @@ import {
   SearchableSelect,
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import SalesAgentCustomersTab from './SalesAgentCustomersTab';
 import SalesAgentClassTab from './SalesAgentClassTab';
 import SalesOrdersGrid from '@/app/(protected)/scm/sales-orders/components/SalesOrdersGrid';
@@ -100,7 +101,10 @@ export function SalesAgentDetail({ id }: { id: string }) {
   const [pickedContact, setPickedContact] = useState<SearchableSelectOption | null>(
     null,
   );
-  const [tab, setTab] = useState('general');
+  const [tab, setTab] = useUrlTab({
+    tabs: ['general', 'sales-orders', 'transfers', 'customers', 'class-history'],
+    defaultTab: 'general',
+  });
 
   // Contacts, searched on the server rather than capped at a page: the book runs to
   // thousands of people and the salesperson being linked is rarely in the first 20.

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import Link from 'next/link';
 import { type ColumnDef } from '@tanstack/react-table';
 import { Info, Link2, ListOrdered } from 'lucide-react';
@@ -14,6 +14,7 @@ import ListPager from '@/components/common/ListPager';
 import { QueryErrorState } from '@/components/common/LoadErrorState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { isNotFound } from '@/lib/api-client';
 import { formatDateTimeInMalaysia, formatMoney2dp } from '@/lib/helpers';
 import { BillingStatusBadge, BillingTypeBadge } from '../../components/BillingBadges';
@@ -72,7 +73,7 @@ function LineFrom({ line, doIds }: { line: BillingDocumentLine; doIds: Map<strin
 export default function BillingDocumentDetail({ id }: { id: string }) {
   const canSeeOutstanding = useCanViewOutstanding();
   const { data: doc, isLoading, error, refetch, isFetching } = useBillingDocumentQuery(id);
-  const [tab, setTab] = useState<Tab>('details');
+  const [tab, setTab] = useUrlTab<Tab>({ tabs: ['details', 'lines', 'related'], defaultTab: 'details' });
 
   const notFound = isNotFound(error);
   const failed = !!error && (!doc || notFound);
@@ -264,7 +265,7 @@ export default function BillingDocumentDetail({ id }: { id: string }) {
             ) : null}
           </div>
 
-          <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+          <Tabs value={tab} onValueChange={setTab}>
             <TabsList variant="line" className="mb-5">
               <TabsTrigger value="details">
                 <Info className="size-4" />

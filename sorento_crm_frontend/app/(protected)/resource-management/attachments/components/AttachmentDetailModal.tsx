@@ -252,10 +252,16 @@ function LinkagesTabs({
   attachment,
   onRefetch,
   defaultAccessLevels = ['dealer', 'end_user'],
+  tab,
+  onTabChange,
 }: {
   attachment: Attachment;
   onRefetch: () => void;
   defaultAccessLevels?: string[];
+  /** Held by the modal, which stays mounted across prev/next, so a step keeps the tab
+   *  (NAV-KEEP-TAB). This body remounts on every step (the skeleton replaces it). */
+  tab: string;
+  onTabChange: (tab: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [linkDialogTab, setLinkDialogTab] = useState<keyof typeof ENTITY_ROUTES | null>(null);
@@ -373,7 +379,7 @@ function LinkagesTabs({
 
   return (
     <>
-      <Tabs defaultValue="products" className="w-full">
+      <Tabs value={tab} onValueChange={onTabChange} className="w-full">
         {/* Five link kinds wrapped onto three rows of squeezed pills at 375; the
             line strip scrolls on one row and the icon survives the scroll. */}
         <TabsList className="mb-1">
@@ -840,6 +846,12 @@ export default function AttachmentDetailModal({
   const [detailsTab, setDetailsTab] = useState<'details' | 'integration'>(
     'details',
   );
+  // The Linkages strip's tab, here rather than in `LinkagesTabs` so prev/next keeps it.
+  const [linkagesTab, setLinkagesTab] = useState('products');
+  // A fresh open starts on Products; prev/next inside an open modal keeps the tab.
+  useEffect(() => {
+    if (open) setLinkagesTab('products');
+  }, [open]);
 
   const {
     data: accessTypeOptions = [],
@@ -1230,7 +1242,7 @@ export default function AttachmentDetailModal({
                     <CardTitle className="text-base">Linkages</CardTitle>
                   </CardHeader>
                   <CardContent className="pt-0">
-                    <LinkagesTabs attachment={attachment} onRefetch={() => queryClient.invalidateQueries({ queryKey: ['attachments'] })} defaultAccessLevels={defaultAccessLevels} />
+                    <LinkagesTabs attachment={attachment} onRefetch={() => queryClient.invalidateQueries({ queryKey: ['attachments'] })} defaultAccessLevels={defaultAccessLevels} tab={linkagesTab} onTabChange={setLinkagesTab} />
                   </CardContent>
                 </Card>
               </div>

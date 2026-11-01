@@ -279,6 +279,73 @@ def _quotation_for_edit(db: Session, quotation_id: str, current_user: dict):
     return quotation
 
 
+def _judge_line(
+    db: Session,
+    *,
+    series_id: Optional[str],
+    product_id: Optional[str],
+    product_set_id: Optional[str],
+    unit_price: Optional[str],
+) -> dict:
+    """The live verdict for one DRAFT line against a series (or none): what the save runs.
+
+    One implementation for both routes below, so a new scope and a saved one cannot disagree.
+    `unit_price` arrives as the decimal STRING the drafts hold; a half-typed price that does not
+    parse is judged as "no price yet", not an error - the person is mid-keystroke.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    from app.models.product import Product
+
+    price: Optional[Decimal] = None
+    if unit_price:
+        try:
+            price = Decimal(unit_price)
+        except InvalidOperation:
+            price = None
+
+    if product_set_id:
+        # A set draft: the same two rules the save runs, on the set's own series row and
+        # the company default. A set the company scope cannot see judges as not in series.
+        from app.models.product_set import ProductSet
+        from app.services import product_set_service
+
+        product_set = db.query(ProductSet).filter(ProductSet.id == product_set_id).first()
+        in_series = product_set is not None and pricing.is_set_in_series(
+            db, series_id, product_set.id
+        )
+        if product_set is None and not series_id:
+            in_series = True
+        floor = (
+            pricing.resolve_set_floor(
+                db,
+                company_id=acting_company_id(db),
+                product_set=product_set,
+                list_price=product_set_service.resolve_set_price(product_set).resolved,
+                series_id=series_id,
+            )
+            if product_set is not None
+            else None
+        )
+    else:
+        product = (
+            db.query(Product).filter(Product.id == product_id).first() if product_id else None
+        )
+        # A product id the company scope cannot see judges exactly like no product at all:
+        # off-catalog. This is the Mocha-copy case - the row exists, but not for us.
+        in_series = pricing.is_in_series(db, series_id=series_id, product=product)
+        floor = pricing.resolve_floor(
+            db, company_id=acting_company_id(db), product=product, series_id=series_id
+        )
+    below = bool(floor and price is not None and price < floor.value)
+    return {
+        "is_non_standard": not in_series,
+        "is_below_floor": below,
+        "floor_value": floor.value if floor else None,
+        "floor_level": floor.level if floor else None,
+    }
+
+
 @router.get(
     "/quotations/{quotation_id}/line-verdict",
     response_model=QuotationLineVerdictResponse,
@@ -291,27 +358,17 @@ def judge_draft_line(
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
-    """Judge one DRAFT line, before anything is saved.
+    """Judge one DRAFT line of a saved quotation, against that quotation's series.
 
     The client's requirement, verbatim: "the computation of whether it is non standard or
     off catalog needs to be on the spot, cannot wait until I save". The verdicts cannot be
     computed in the browser - series membership counts nominated CATEGORIES the browser
     never fetched, and the floor means walking the category ancestry - so the browser asks,
     per keystroke-settled draft, and this answers with the same `is_in_series` and
-    `resolve_floor` the save path runs. One implementation, two moments.
-
-    Nothing is written. `unit_price` arrives as the decimal STRING the drafts hold; a
-    half-typed price that does not parse is judged as "no price yet", not an error - the
-    person is mid-keystroke, and a 422 would toast at them for typing.
-
-    A draft with no product or set is not a saveable line: it is non-standard only through a
-    series check, and has no floor.
+    `resolve_floor` the save path runs. One implementation, two moments. Nothing is written.
     """
-    from decimal import Decimal, InvalidOperation
-
     try:
         validate_uuid_path(quotation_id, resource="Quotation")
-        from app.models.product import Product
         from app.models.projects import ProjectQuotation
 
         quotation = (
@@ -321,71 +378,46 @@ def judge_draft_line(
             raise AppException(
                 status_code=404, message="Quotation not found.", code="quotation_not_found"
             )
-
-        price: Optional[Decimal] = None
-        if unit_price:
-            try:
-                price = Decimal(unit_price)
-            except InvalidOperation:
-                price = None
-
-        if product_set_id:
-            # A set draft: the same two rules the save runs, on the set's own series row and
-            # the company default. A set the company scope cannot see judges as not in series.
-            from app.models.product_set import ProductSet
-            from app.services import product_set_service
-
-            product_set = (
-                db.query(ProductSet).filter(ProductSet.id == product_set_id).first()
-            )
-            in_series = product_set is not None and pricing.is_set_in_series(
-                db, quotation.series_id, product_set.id
-            )
-            if product_set is None and not quotation.series_id:
-                in_series = True
-            floor = (
-                pricing.resolve_set_floor(
-                    db,
-                    company_id=acting_company_id(db),
-                    product_set=product_set,
-                    list_price=product_set_service.resolve_set_price(product_set).resolved,
-                    series_id=quotation.series_id,
-                )
-                if product_set is not None
-                else None
-            )
-            below = bool(floor and price is not None and price < floor.value)
-            return {
-                "is_non_standard": not in_series,
-                "is_below_floor": below,
-                "floor_value": floor.value if floor else None,
-                "floor_level": floor.level if floor else None,
-            }
-
-        product = (
-            db.query(Product).filter(Product.id == product_id).first()
-            if product_id
-            else None
-        )
-        # A product id the company scope cannot see judges exactly like no product at all:
-        # off-catalog. This is the Mocha-copy case - the row exists, but not for us.
-        in_series = pricing.is_in_series(
-            db, series_id=quotation.series_id, product=product
-        )
-
-        floor = pricing.resolve_floor(
+        return _judge_line(
             db,
-            company_id=acting_company_id(db),
-            product=product,
             series_id=quotation.series_id,
+            product_id=product_id,
+            product_set_id=product_set_id,
+            unit_price=unit_price,
         )
-        below = bool(floor and price is not None and price < floor.value)
-        return {
-            "is_non_standard": not in_series,
-            "is_below_floor": below,
-            "floor_value": floor.value if floor else None,
-            "floor_level": floor.level if floor else None,
-        }
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/quotation-line-verdict", response_model=QuotationLineVerdictResponse)
+def judge_new_scope_line(
+    series_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
+    product_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
+    product_set_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
+    unit_price: Optional[str] = Query(None),
+    _user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """Judge one DRAFT line before its scope is saved (PRICING-UX-FIXES A).
+
+    A new scope has no quotation id yet, and the per-quotation route used the id only to find
+    the series. The editor already holds the series it is quoting from, so it sends that. The
+    series is read through the company-scoped session: another company's series judges like
+    no series. Nothing is written.
+    """
+    try:
+        if series_id:
+            from app.models.projects import ProjectSeries
+
+            if db.query(ProjectSeries.id).filter(ProjectSeries.id == series_id).first() is None:
+                series_id = None
+        return _judge_line(
+            db,
+            series_id=series_id,
+            product_id=product_id,
+            product_set_id=product_set_id,
+            unit_price=unit_price,
+        )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -1000,7 +1032,7 @@ def remove_series_product(
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
     db: Session = Depends(get_db),
 ):
-    """Take one product off the series. Hard delete, confirmed on the screen."""
+    """Take one product off the series. An in-scope product is excluded (owner ruling Q1)."""
     try:
         validate_uuid_path(series_id, resource="Series")
         validate_uuid_path(product_id, resource="Product")
@@ -1290,7 +1322,10 @@ def _serialize_series(
     product_links = (
         db.query(ProjectSeriesProduct.series_id, Product.product_code)
         .join(Product, Product.id == ProjectSeriesProduct.product_id)
-        .filter(ProjectSeriesProduct.series_id.in_(ids))
+        .filter(
+            ProjectSeriesProduct.series_id.in_(ids),
+            ProjectSeriesProduct.excluded.is_(False),
+        )
         .order_by(Product.product_code.asc())
         .all()
     )

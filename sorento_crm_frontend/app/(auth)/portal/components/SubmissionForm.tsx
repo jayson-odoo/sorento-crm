@@ -1,5 +1,6 @@
 'use client';
 
+import { useUrlTab, withTab } from '@/hooks/useUrlTab';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useEffect,
@@ -556,7 +557,9 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
   // Set once a Save / Submit found a wrong line quantity; line rows then show their sentence.
   const [showNumberErrors, setShowNumberErrors] = useState(false);
   const [staffPreviewOpen, setStaffPreviewOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('details');
+  // `?tab=` (NAV-KEEP-TAB): prev/next keeps the open tab. Validated against the tabs this
+  // record shows once they are known (`shownTab` below), since some arrive with the load.
+  const [requestedTab, setActiveTab] = useUrlTab({ defaultTab: 'details' });
   const [neighbours, setNeighbours] =
     useState<PortalSubmissionNeighbours | null>(null);
   const [reviseMode, setReviseMode] = useState(false);
@@ -1821,6 +1824,14 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
   // The portal's client adds none.
   const extraTabs = submissionId ? clientExtraTabs(client) : [];
   const tabbed = revisionsTabbed || commentsTabbed || extraTabs.length > 0;
+  const shownTabs = [
+    'details',
+    ...(commentsTabbed ? ['comments'] : []),
+    ...(revisionsTabbed ? ['revisions'] : []),
+    ...extraTabs.map((t) => t.value),
+  ];
+  const activeTab = shownTabs.includes(requestedTab) ? requestedTab : 'details';
+  const stepHref = (id: string) => withTab(detailHref(id), activeTab, 'details');
 
   const detailsContent = (
     <>
@@ -2461,8 +2472,8 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
               total={neighbours.total}
               hasPrevious={Boolean(neighbours.prev_id)}
               hasNext={Boolean(neighbours.next_id)}
-              onPrevious={() => neighbours.prev_id && router.push(detailHref(neighbours.prev_id))}
-              onNext={() => neighbours.next_id && router.push(detailHref(neighbours.next_id))}
+              onPrevious={() => neighbours.prev_id && router.push(stepHref(neighbours.prev_id))}
+              onNext={() => neighbours.next_id && router.push(stepHref(neighbours.next_id))}
               ariaLabel={SUBMISSION_LABELS[kind].toLowerCase()}
               className="shrink-0"
             />
@@ -2640,7 +2651,7 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
         <button
           type="button"
           onClick={() =>
-            router.push(detailHref(neighbours.prev_id as string))
+            router.push(stepHref(neighbours.prev_id as string))
           }
           aria-label="Previous submission"
           className="fixed left-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition-opacity hover:opacity-100 sm:left-3 sm:size-10"
@@ -2652,7 +2663,7 @@ export function SubmissionForm({ kind, submissionId, slug, initialValues }: Prop
         <button
           type="button"
           onClick={() =>
-            router.push(detailHref(neighbours.next_id as string))
+            router.push(stepHref(neighbours.next_id as string))
           }
           aria-label="Next submission"
           className="fixed right-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition-opacity hover:opacity-100 sm:right-3 sm:size-10"

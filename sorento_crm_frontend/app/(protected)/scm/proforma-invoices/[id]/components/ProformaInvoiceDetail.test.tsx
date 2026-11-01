@@ -14,6 +14,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { watchTabWrites } from '@/test-mocks/urlTab';
 /* The grace window is the server's; what this file proves is that the control parks one. */
 const createPendingAction = vi.fn().mockResolvedValue({
   id: 'pa-1',
@@ -559,27 +560,27 @@ describe('ProformaInvoiceDetail - deleting the invoice', () => {
 describe('ProformaInvoiceDetail - the tab lives in the URL (S1)', () => {
   it('clicking Lines writes ?tab=lines (AC-A1)', () => {
     state.data = detail();
+    const written = watchTabWrites('/scm/proforma-invoices/pi-1', currentSearchParams);
     renderDetail();
 
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'Lines' }), {
       button: 0,
       ctrlKey: false,
     });
-    expect(replace).toHaveBeenCalledWith('/scm/proforma-invoices/pi-1?tab=lines', {
-      scroll: false,
-    });
+    expect(written()).toBe('/scm/proforma-invoices/pi-1?tab=lines');
   });
 
   it('clicking General from another tab clears ?tab= rather than writing ?tab=general (AC-A1)', () => {
     state.data = detail();
     currentSearchParams = new URLSearchParams('tab=lines');
+    const written = watchTabWrites('/scm/proforma-invoices/pi-1', currentSearchParams);
     renderDetail();
 
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'General' }), {
       button: 0,
       ctrlKey: false,
     });
-    expect(replace).toHaveBeenCalledWith('/scm/proforma-invoices/pi-1', { scroll: false });
+    expect(written()).toBe('/scm/proforma-invoices/pi-1');
   });
 
   it('a reload on ?tab=revisions lands on Revisions, not General (AC-A3)', () => {

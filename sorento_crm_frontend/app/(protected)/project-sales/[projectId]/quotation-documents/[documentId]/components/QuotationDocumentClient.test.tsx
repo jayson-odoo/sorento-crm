@@ -1580,7 +1580,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     getQuotationDocument.mockResolvedValue(belowFloor('pending_approval'));
     renderScreen();
 
-    const sentence = await screen.findByText(/2 lines are priced below their floor/i);
+    const sentence = await screen.findByText(/2 lines are priced below minimum price/i);
     const banner = sentence.closest('div.rounded-lg') as HTMLElement;
     expect(banner).not.toBeNull();
     expect(within(banner).queryByRole('button')).toBeNull();

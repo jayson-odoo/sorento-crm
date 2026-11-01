@@ -19,6 +19,7 @@ import type { RecordAction } from '@/components/common/recordActions';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useUrlTab, withTab } from '@/hooks/useUrlTab';
 import { formatDateInMalaysia, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import {
   useSalesTeam,
@@ -140,7 +141,10 @@ export function SalesTeamDetail({ id }: { id: string }) {
     onDeleted: () => router.push('/sales/teams'),
   });
 
-  const [tab, setTab] = useState<TeamTab>('details');
+  const [tab, setTab] = useUrlTab<TeamTab>({
+    tabs: TEAM_TABS.map((t) => t.value),
+    defaultTab: 'details',
+  });
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState('');
   const [isActive, setIsActive] = useState(true);
@@ -313,8 +317,8 @@ export function SalesTeamDetail({ id }: { id: string }) {
                     total={teams.length}
                     hasPrevious={index > 0}
                     hasNext={index >= 0 && index < teams.length - 1}
-                    onPrevious={() => router.push(`/sales/teams/${teams[index - 1].id}`)}
-                    onNext={() => router.push(`/sales/teams/${teams[index + 1].id}`)}
+                    onPrevious={() => router.push(withTab(`/sales/teams/${teams[index - 1].id}`, tab, 'details'))}
+                    onNext={() => router.push(withTab(`/sales/teams/${teams[index + 1].id}`, tab, 'details'))}
                     ariaLabel="sales team"
                   />
                 }
@@ -335,7 +339,7 @@ export function SalesTeamDetail({ id }: { id: string }) {
         </CardHeader>
       </Card>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as TeamTab)}>
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line" className="mb-5">
           {TEAM_TABS.map((t) => (
             <TabsTrigger key={t.value} value={t.value} onClick={() => setTab(t.value)}>

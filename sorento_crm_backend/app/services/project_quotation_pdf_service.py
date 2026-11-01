@@ -87,6 +87,13 @@ RATE_ONLY_TEXT = "rate only"
 # markup.
 _BLOCK_BREAK = re.compile(r"(?i)</\s*(p|div|li|h[1-6]|tr|blockquote)\s*>|<\s*br\s*/?\s*>")
 _TAG = re.compile(r"<[^>]*>")
+# Bold survives the tag strip as two private marker characters, turned back into <strong> only
+# after the text is escaped, so no editor markup other than bold ever reaches the page.
+_BOLD_TAG = re.compile(r"(?i)<\s*(/?)\s*(?:strong|b)(?:\s[^>]*)?>")
+_BOLD_ON, _BOLD_OFF = "\x01", "\x02"
+# A clause that already starts with its own number ("1. Payment", "2) Delivery"). The PDF's <ol>
+# numbers every clause, so the typed number is dropped rather than printed twice.
+_LEADING_NUMBER = re.compile(r"^(\x01*)\s*\(?\d{1,3}[.)]\s+")
 
 
 # --------------------------------------------------------------------- formatting
@@ -173,19 +180,46 @@ def _date(value: Any) -> str:
     return _cell(value)
 
 
-def _text_blocks(raw: Optional[str]) -> List[str]:
-    """Reduce a rich-text snapshot to escaped plain-text blocks.
+def _text_blocks(raw: Optional[str], *, strip_numbering: bool = False) -> List[str]:
+    """Reduce a rich-text snapshot to escaped text blocks, keeping bold.
 
     Rendering the stored HTML directly would put unvalidated customer-era markup straight into the
     PDF, and this text is snapshotted from an editor rather than authored here. Splitting on block
-    boundaries keeps the paragraph and clause structure, which is all the layout needs.
+    boundaries keeps the paragraph and clause structure, which is all the layout needs. Only
+    ``<strong>``/``<b>`` is carried through (as ``<strong>``), re-balanced inside every block.
+
+    ``strip_numbering`` drops a number the author typed at the start of a block, for callers that
+    print the blocks in a numbered list of their own.
     """
     if not raw:
         return []
-    text = _BLOCK_BREAK.sub("\n", str(raw))
+    text = str(raw).replace(_BOLD_ON, "").replace(_BOLD_OFF, "")
+    text = _BOLD_TAG.sub(lambda m: _BOLD_OFF if m.group(1) else _BOLD_ON, text)
+    text = _BLOCK_BREAK.sub("\n", text)
     text = _TAG.sub("", text)
     text = unescape(text)
-    return [escape(part.strip()) for part in text.splitlines() if part.strip()]
+    blocks: List[str] = []
+    bold = False
+    for line in text.splitlines():
+        line = (_BOLD_ON if bold else "") + line
+        if strip_numbering:
+            line = _LEADING_NUMBER.sub(r"\1", line)
+        for ch in line:
+            if ch == _BOLD_ON:
+                bold = True
+            elif ch == _BOLD_OFF:
+                bold = False
+        if bold:
+            line += _BOLD_OFF
+        plain = line.replace(_BOLD_ON, "").replace(_BOLD_OFF, "").strip()
+        if not plain:
+            continue
+        blocks.append(
+            escape(line.strip())
+            .replace(_BOLD_ON, "<strong>")
+            .replace(_BOLD_OFF, "</strong>")
+        )
+    return blocks
 
 
 # --------------------------------------------------------------------- images
@@ -549,7 +583,7 @@ def _scope_html(
 
 
 def _terms_html(issue: ProjectQuotationIssue) -> str:
-    clauses = _text_blocks(issue.terms_rendered)
+    clauses = _text_blocks(issue.terms_rendered, strip_numbering=True)
     if not clauses:
         return ""
     items = "".join(f"<li>{clause}</li>" for clause in clauses)

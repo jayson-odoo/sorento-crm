@@ -118,6 +118,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
             "path": "/project-sales/price-floors",
             "title": "Price Floors",
           },
+          {
+            "path": "/project-sales/quotation-templates",
+            "title": "Quotation Templates",
+          },
         ],
         "title": "Configuration",
       },

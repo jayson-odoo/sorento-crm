@@ -102,6 +102,7 @@ type MenuAction = 'below' | 'section' | 'remove';
 interface GridContextValue {
   editing: boolean;
   quotationId: string | null;
+  seriesId?: string | null;
   fetchProducts: (query: string) => Promise<SearchableSelectOption[]>;
   resolveProduct: (
     line: QuotationLine | null,
@@ -518,6 +519,7 @@ function ProductCell({ row: tableRow }: CellContext<GridRow, unknown>) {
       )}
       <LineFlags
         quotationId={grid.quotationId}
+        seriesId={grid.seriesId}
         line={staged.line}
         draft={staged.draft}
       />
@@ -695,7 +697,12 @@ function RateCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   ) : null;
   // Under the price it judges (owner meeting, 29 Oct), not in the Product cell.
   const minimum = (
-    <MinimumPriceFlag quotationId={grid.quotationId} line={staged.line} draft={staged.draft} />
+    <MinimumPriceFlag
+      quotationId={grid.quotationId}
+      seriesId={grid.seriesId}
+      line={staged.line}
+      draft={staged.draft}
+    />
   );
 
   const suggested = grid.editing ? null : grid.suggestionOf(row, 'unit_price');
@@ -1179,6 +1186,8 @@ export interface QuotationLinesGridProps {
   lines: StagedQuotationLine[];
   editing: boolean;
   quotationId: string | null;
+  /** The series the scope is quoted from: what a draft line is judged against before a save. */
+  seriesId?: string | null;
   /** Live search: rows that fail it are hidden, never renumbered or left out of the total. */
   rowFilter?: (line: StagedQuotationLine) => boolean;
   emptyHint: string;
@@ -1216,6 +1225,7 @@ export function QuotationLinesGrid({
   lines,
   editing,
   quotationId,
+  seriesId,
   rowFilter,
   emptyHint,
   filterEmptyHint,
@@ -1523,6 +1533,7 @@ export function QuotationLinesGrid({
     () => ({
       editing,
       quotationId,
+      seriesId,
       fetchProducts,
       resolveProduct,
       uomOptions,
@@ -1560,6 +1571,7 @@ export function QuotationLinesGrid({
       quotationId,
       resolveProduct,
       reviewDisabled,
+      seriesId,
       selectProduct,
       suggestionOf,
       total,
