@@ -260,6 +260,13 @@ changed screen. Name the track in the plan's Status line.
   2. `./scripts/alembic-reparent.sh` re-parents the lane's first new migration onto main's
      current alembic head (manual down_revision flips are retired).
   3. Confirm CI's fast gate logic locally: single alembic head.
+- **CI runners (CI-MAC-ONLY, owner 1 Nov 2026; the repo is private, 3,000 GitHub-hosted
+  min/month):** every CI job runs on the Mac mini's self-hosted runner `sorento-mac-1`
+  (`runs-on: [self-hosted, sorento-mac]`, Linux arm64 colima VM, `scripts/ci-runner/`), the PR
+  gate, the release tests, the shards, `outline-user-guides-sync` and the never-stuck smoke
+  included. Only `build-images` and `build-and-deploy` (amd64 images, deploy secrets) and
+  `rollback.yml` run GitHub-hosted. No fallback: with the Mac busy or offline a job queues, and
+  jobs run one at a time. Budget per release: `documentation/reference/CI-LABELS-AND-MINUTES.md`.
 - CI enforcement already in place: `check-migration-heads` job fails any PR/merge-queue entry
   with two heads; `build-and-deploy` runs in the `deploy-production` concurrency group so
   two releases dispatched close together deploy serially instead of overlapping.

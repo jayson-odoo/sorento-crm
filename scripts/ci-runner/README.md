@@ -2,11 +2,17 @@
 
 One self-hosted GitHub Actions runner, `sorento-mac-1` (labels
 `self-hosted, Linux, ARM64, sorento-mac`), registered to
-`jayson-odoo/sorento-crm` only. `deploy.yml` sends jobs here only on a
-release dispatch with `-f runner=mac` (or `auto`); PR runs and the repo
-variables never route here since CI-HOSTED-RUNNERS (29 Oct 2026, repo public
-again). See the note above `jobs:` in `.github/workflows/deploy.yml`.
-Image builds and the deploy always stay on GitHub-hosted (prod is amd64).
+`jayson-odoo/sorento-crm` only. Since CI-MAC-ONLY (1 Nov 2026, repo private,
+3,000 GitHub-hosted minutes a month) every CI job runs here: the PR gate, the
+release tests and shards, `outline-user-guides-sync.yml` and
+`never-stuck-nightly.yml` (`runs-on: [self-hosted, sorento-mac]`, no fallback
+to GitHub-hosted; a busy or offline runner queues the job). Image builds, the
+deploy and `rollback.yml` stay on GitHub-hosted (prod is amd64). See the note
+above `jobs:` in `.github/workflows/deploy.yml`.
+
+After pulling a change to `provision.sh` (CI-MAC-ONLY added chromium's
+libraries for the never-stuck smoke), run `REGISTER=0 scripts/ci-runner/up.sh`
+once.
 
 ## Layout
 
