@@ -1360,3 +1360,68 @@ def test_at35_a_scoped_drill_on_a_held_company_reads_that_book(console, monkeypa
     text, calls = console.say(dd._drill(entities=[_word(), _acct("4")]), "top 10 customers on cabana account 4")
     (args,) = calls
     assert args["account_types"] == ["4"] and args.get("brand_ids"), args
+
+
+# ============================================================================================= round 5
+_PICK2 = {"mode": "pick", "picked": [2], "items": [], "qty_for_all": None}
+
+
+@pytest.mark.parametrize(
+    "entity, key, ids_key",
+    [
+        (lambda b: _customer(b), "customer_ids", "customer"),
+        (lambda b: _e("ZZT CATEGORY", "category"), "category_ids", "category"),
+    ],
+    ids=["customer", "category"],
+)
+def test_at21_a_pick_naming_another_filter_word_is_a_new_ask(bot, seeded, entity, key, ids_key) -> None:
+    _open_agent(bot)
+    verdict = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[entity(bot)],
+        basis="delivered", open_question_answer=dict(_PICK2), **JAN,
+    )
+    text, calls = bot.say(verdict, "account type, for the customer")
+    args = _only_report_ask(calls)
+    assert args[key] == [bot.ids[ids_key]], args
+    assert "account_types" not in args, args
+
+
+def test_at21_a_pick_on_another_subject_is_a_new_ask(bot, seeded) -> None:
+    _open_agent(bot)
+    verdict = _reply(
+        message_type="business_query", domain_hint="inventory", intent_hint="check_stock", order_status=None,
+        domain_in_message=True, entities=[], open_question_answer=dict(_PICK2),
+    )
+    text, calls = bot.say(verdict, "2, stock")
+    assert not any(n == "crm_report_ask" for n, _a in calls), calls
+
+
+@pytest.mark.parametrize(
+    "extra", [JAN, {"date_filter_start": None, "date_filter_end": None}, {"order_status": None}],
+    ids=["jan_echoed", "null_dates", "no_status"],
+)
+def test_at21_a_number_answers_the_question(bot, seeded, extra) -> None:
+    _open_agent(bot)
+    text, calls = bot.say(_reply(domain_hint=None, intent_hint=None, entities=[_acct("4")], **extra), "account 4")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["4"] and args["sales_agent_ids"] == [bot.ids["agent"]], args
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-01-31", args
+    assert QUESTION not in text, text
+
+
+def test_at21_a_word_and_number_answers_the_question(bot, seeded) -> None:
+    _open_agent(bot)
+    verdict = _reply(
+        domain_hint=None, intent_hint=None, entities=[_word("cabana", "account_type", None, "account"), _acct("4")]
+    )
+    text, calls = bot.say(verdict, "cabana account 4")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["4"] and "brand_ids" not in args, args
+    assert args["sales_agent_ids"] == [bot.ids["agent"]], args
+
+
+def test_at21_a_tag_answers_the_question(bot, seeded) -> None:
+    _open_agent(bot)
+    text, calls = bot.say(_reply(domain_hint=None, intent_hint=None, entities=[_acct("A/C IV")]), "A/C IV")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["A/C IV"] and args["sales_agent_ids"] == [bot.ids["agent"]], args
