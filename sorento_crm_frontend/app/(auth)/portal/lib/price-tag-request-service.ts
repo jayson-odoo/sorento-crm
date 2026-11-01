@@ -113,6 +113,8 @@ export interface LinePartCandidate {
   product_id: string;
   code: string;
   name: string;
+  /** Set on an upgrade candidate: its top-up. */
+  topup_amount?: number | null;
 }
 
 /**
@@ -306,6 +308,8 @@ export interface ComboPartOption {
   choice_group: string | null;
   /** An upgrade is offered, never included: it reaches the line as one open `Upgrade` row. */
   is_upgrade?: boolean;
+  /** An upgrade's top-up, when set. */
+  topup_amount?: number | null;
 }
 
 /** One catalogue package on a host product, named the way the catalogue names it. */

@@ -185,7 +185,13 @@ function candidateOptionLabel(
   candidate: LinePartCandidate,
   pricing: LinePricingResult | null,
   priceMode: PriceMode,
+  isUpgrade = false,
 ): string {
+  const code0 = candidate.code || candidate.name;
+  // An upgrade is offered at a top-up, not at its list price.
+  if (isUpgrade && candidate.topup_amount != null) {
+    return `${code0}  +${formatRM(Number(candidate.topup_amount))}`;
+  }
   const price = pricing?.candidates.find((c) => c.product_id === candidate.product_id);
   const code = candidate.code || candidate.name;
   if (!price) return code;
@@ -219,7 +225,8 @@ function PartRow({
   // (`partsFromCombo`) and reads like a fixed part - no select, even though
   // `candidates` still carries the one entry. A genuinely open row always
   // has two or more.
-  const choosable = part.candidates.length > 1;
+  // An upgrade is always a choice, even with one candidate: the dealer may take it or not.
+  const choosable = part.candidates.length > 1 || part.role === 'Upgrade';
   const label = part.role || part.code || part.name;
   return (
     <tr className="align-top">
@@ -235,10 +242,12 @@ function PartRow({
                   onChange={(value) => onResolvePart(lineKey, part.key, value)}
                   options={part.candidates.map((candidate) => ({
                     value: candidate.product_id,
-                    label: candidateOptionLabel(candidate, pricing, priceMode),
+                    label: candidateOptionLabel(candidate, pricing, priceMode, part.role === 'Upgrade'),
                     description: candidate.code,
                   }))}
-                  placeholder={`Not sure, any of ${part.candidates.length}`}
+                  placeholder={
+                    part.role === 'Upgrade' ? 'No upgrade' : `Not sure, any of ${part.candidates.length}`
+                  }
                   emptyMessage="No options."
                   size="sm"
                 />
@@ -337,7 +346,7 @@ function LineRow({
   // once per line.
   const lastOpenPartKey = [...line.parts]
     .reverse()
-    .find((part) => !part.product_id && part.candidates.length > 1)?.key;
+    .find((part) => !part.product_id && (part.candidates.length > 1 || part.role === 'Upgrade'))?.key;
 
   // Owner ruling after #948: List price / Promotion / Selling price are real
   // `<td>` columns on the line's own row (above the app's 992px mobile
@@ -428,7 +437,12 @@ function LineRow({
               ? numberFieldError(line.manual_sell_price, { min: 0.01, optional: true })
               : undefined
           }
-          placeholder="Type a price"
+          // A combo's own price prints without a promotion: show it, not a blank box (AC-2.6).
+          placeholder={
+            line.combo_id && pricing?.sell_price_basis !== 'list' && pricing?.sell_price != null
+              ? formatRM(pricing.sell_price)
+              : 'Type a price'
+          }
           aria-label={`Selling price for line ${index + 1}`}
         />
       )}

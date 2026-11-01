@@ -53,3 +53,20 @@ describe('partsFromCombo with an upgrade', () => {
     expect(packageWarningFor(line)).toBeNull();
   });
 });
+
+describe('partsFromCombo with a grouped part ticked Upgrade', () => {
+  it('lists it once, in the Upgrade row, and a group left with one real option auto-resolves', () => {
+    const combo = {
+      ...COMBO,
+      parts: [
+        { product_id: 'p-white', code: 'ZZW', name: 'White', choice_group: 'Basin' },
+        { product_id: 'p-stone', code: 'ZZU', name: 'Stone', choice_group: 'Basin', is_upgrade: true },
+      ],
+    };
+    const parts = partsFromCombo(combo);
+    const basin = parts.find((part) => part.role === 'Basin');
+    expect(basin?.candidates.map((c) => c.product_id)).toEqual(['p-white']);
+    expect(basin?.product_id).toBe('p-white');
+    expect(parts.find((part) => part.role === 'Upgrade')?.candidates.map((c) => c.product_id)).toEqual(['p-stone']);
+  });
+});

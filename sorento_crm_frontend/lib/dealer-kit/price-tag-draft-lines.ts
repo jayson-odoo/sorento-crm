@@ -130,7 +130,7 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
     if (seen.has(part.choice_group)) continue;
     seen.add(part.choice_group);
     const candidates = combo.parts
-      .filter((p) => p.choice_group === part.choice_group)
+      .filter((p) => !p.is_upgrade && p.choice_group === part.choice_group)
       .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name }));
     // D17 (AC-S12-1): one candidate is not a choice - the group resolves on
     // the spot, same as a fixed part. `candidates` is kept (not cleared) so
@@ -156,7 +156,12 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
       code: '',
       name: '',
       role: 'Upgrade',
-      candidates: upgrades.map((p) => ({ product_id: p.product_id, code: p.code, name: p.name })),
+      candidates: upgrades.map((p) => ({
+        product_id: p.product_id,
+        code: p.code,
+        name: p.name,
+        topup_amount: p.topup_amount ?? null,
+      })),
     });
   }
   return out;

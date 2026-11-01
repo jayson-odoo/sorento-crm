@@ -802,6 +802,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
                                 ),
                                 "choice_group": part.choice_group,
                                 "is_upgrade": bool(part.is_upgrade),
+                                "topup_amount": part.topup_amount,
                             }
                             for part in parts
                         ],
