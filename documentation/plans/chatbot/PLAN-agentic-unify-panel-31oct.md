@@ -158,6 +158,16 @@ Ruling: with a readable record open (`record_ref` on the principal's page), and 
 
 **The old path stays refused (AC-26).** The MCP fix above also opened those four tools to the old panel, which sends the same staff mark and blank pair. They errored there; they would now run, for every panel user at the next release, with no rollout gate: `crm_low_stock_report` starts a real run and a file, `crm_sales_analysis` a paid job. Route gates hold, so this is not an exposure, but it is not "as today". `respond()`'s own tool call answers `tool_not_available` for those four, beside its existing check (`S/ai_assistant_service.py`). Amending AC-26 was the other choice, and it would ship them to all staff unasked. Trigger to remove: `respond()` retiring.
 
+## Round 6: the owner's hand test, list pages and how-to questions
+
+Owner at ab25d91b1e on Sales Orders, a list page: "how do i plan the sales orders" made a real task for a colleague (parser: request for help, Jev 0.26). "what page am i looking at" answered "Hello" (Jev chat 0.94, twice). "how to plan sales orders" answered "I could not fetch this request just now" (parser: portal link, Jev 0.62). His Admin role held the grant, so all ran on the new path. The browser pass proved only a record page. Today's panel answers all three.
+
+Rulings:
+- **Any page, not only a record.** A panel turn with a page adds a second agent criterion, `open_page`: a question about the screen or about how to use the CRM needs the agent, which holds the screen's text and the guide reader (`user_guides_read`). `open_record` stays as it is. No page or a contact's turn: nothing changes. A stock question must stay on chat: the live probe checks it.
+- **The portal link lane on a panel turn** does not call `crm_portal_link_get`, which has no meaning without a contact, and says plainly that it cannot answer that here, not that a fetch failed.
+- **Asked of the owner, not assumed:** on the panel only, low confidence to the agent instead of chat. AC-3 stands until answered.
+- The escalation on a how-to is reduced by the routing, not removed: if the parser still reads a chat turn as a request for help, a task follows, as on WhatsApp.
+
 Accepted for hand test: `*Co B:*` under `3. Carol` sits inside that item, since it has no blank line before it (`tail/member_offer.py:255-262`). It needs more than one routing company, and the principal has one.
 
 ## Still to count or prove
