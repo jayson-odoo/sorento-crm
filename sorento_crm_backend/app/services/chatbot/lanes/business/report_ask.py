@@ -403,7 +403,7 @@ COMPANY = rf.FieldSpec(
 
 #: SALES-ACCOUNT-TYPE PR 2: a word that is both a brand and a stored account type is asked once, before any other owed
 #: field. Its options are the pick the parser is shown; the reply to the user is the bare question (`_kind_question`).
-KIND_OPTIONS = (("brand", "Brand"), ("account_type", "Account type"))
+WORD_KIND_OPTIONS = (("brand", "Brand"), ("account_type", "Account type"))
 
 
 def _kind_question(extras: dict[str, Any]) -> str:
@@ -416,7 +416,7 @@ def _kind_question(extras: dict[str, Any]) -> str:
 KIND = rf.FieldSpec(
     name="kind", noun="kind", question="Brand or account type?", question_fn=_kind_question,
     resolve=lambda _db, _word, _extras: rf.Resolved("unknown"), allow_all=False, required=False,
-    pick_head_is_question=True, parser_only=True, offered=lambda _extras: KIND_OPTIONS,
+    pick_head_is_question=True, parser_only=True, offered=lambda _extras: WORD_KIND_OPTIONS,
 )
 
 SALES_RANKING_ASK = rf.register(rf.AskType(
@@ -728,7 +728,7 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     if jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME or verdict.get("required_ask"):
         return verdict
     kept: list[Any] = []
-    words: dict[str, list[str]] = {hint: [] for hint in WORD_HINTS}
+    words: dict[str, list[str]] = {hint: [] for hint in WORD_HINTS if hint != "account_type"}  # that key only when said
     #: SALES-ACCOUNT-TYPE PR 2: per brand / account word, what the message itself said (`kind_said`). An entity
     #: with no such key (a prompt text that does not define it) leaves no entry: no question for that word.
     kinds: list[dict[str, Any]] = []
@@ -752,7 +752,7 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
         if hint not in WORD_HINTS:
             kept.append(e)
             continue
-        if raw and e.get("current_message") is not False and raw not in words[hint]:
+        if raw and e.get("current_message") is not False and raw not in words.setdefault(hint, []):
             words[hint].append(raw)
             if hint in ("brand", "account_type") and "kind_said" in e:
                 kinds.append({"hint": hint, "word": raw, "raw": typed, "said": e.get("kind_said") is True})
@@ -2107,7 +2107,7 @@ def _settle(
 
 def _ask_kind(given: dict[str, Any], extras: dict[str, Any], kind_ask: dict[str, Any]) -> None:
     """Owe the kind question: it is the first field, so the period the message named rides the extras to the answer."""
-    given["kind"] = rf.Resolved("ambiguous", options=KIND_OPTIONS)
+    given["kind"] = rf.Resolved("ambiguous", options=WORD_KIND_OPTIONS)
     extras["kind_words"] = kind_ask["words"]
     extras["kind_choices"] = kind_ask["choices"]
     period = given.get("period")
