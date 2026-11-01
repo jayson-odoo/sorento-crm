@@ -62,8 +62,8 @@ def _delivered(**over: Any) -> dict[str, Any]:
     return _follow(order_status="sales_report", basis="delivered", sales_basis="delivered", **over)
 
 
-def _last_month(**over: Any) -> dict[str, Any]:
-    return _follow(order_status="sales_report", **SEP_2026, **over)
+def _last_month(order_status: str = "sales_report", **over: Any) -> dict[str, Any]:
+    return _follow(order_status=order_status, **SEP_2026, **over)
 
 
 def _reported(chat, session_factory, tag: str):
