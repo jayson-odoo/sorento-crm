@@ -189,6 +189,36 @@ describe('BoardDecisionPill: a line with no location', () => {
   });
 });
 
+describe('BoardDecisionPill: a line at a bin outside fulfilment planning', () => {
+  it('states that reason, never "Needs a location", because the line has a location', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          unplannable: true,
+          fulfilment_location: 'BRW-SMC',
+          sources: [{
+          kind: 'unplannable',
+          qty: '40',
+          location: null,
+          warehouse_id: null,
+          reason: 'Outside fulfilment planning',
+          spo_number: null,
+          arrival_date: null,
+        },
+          ] as BoardContribution['sources'],
+        })}
+        decision={null}
+      />,
+    );
+    const pill = screen.getByText('Outside fulfilment planning');
+    expect(pill).toHaveAttribute(
+      'title',
+      'BRW-SMC is outside fulfilment planning, so this line cannot be decided here.',
+    );
+    expect(screen.queryByText('Needs a location')).not.toBeInTheDocument();
+  });
+});
+
 describe('BoardDecisionPill: cancelled outranks unplannable (R3)', () => {
   it('reads Cancelled, not "Needs a location", for a cancelled line that also has no location', () => {
     render(

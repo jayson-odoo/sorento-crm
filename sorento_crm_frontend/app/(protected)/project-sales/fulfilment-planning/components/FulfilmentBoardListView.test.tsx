@@ -404,6 +404,43 @@ describe('FulfilmentBoardListView', () => {
   });
 });
 
+describe('FulfilmentBoardListView: a line at a bin outside fulfilment planning', () => {
+  it('states the real reason in both cells, never "Needs a location"', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          unplannable: true,
+          fulfilment_location: 'BRW-SMC',
+          sources: [{
+          kind: 'unplannable',
+          qty: '40',
+          location: null,
+          warehouse_id: null,
+          reason: 'Outside fulfilment planning',
+          spo_number: null,
+          arrival_date: null,
+        },
+          ] as BoardContribution['sources'],
+        }),
+      ],
+    });
+
+    expect(await screen.findAllByText('Outside fulfilment planning')).toHaveLength(2);
+    expect(screen.queryByText('Needs a location')).not.toBeInTheDocument();
+    // The row's checkbox will not tick, and its title says why with the same words.
+    expect(
+      screen.getAllByTitle(
+        'BRW-SMC is outside fulfilment planning, so this line cannot be decided here.',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.queryByTitle(
+        'This line cannot be decided here: its sales order states no fulfilment location.',
+      ),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe('FulfilmentBoardListView marks a row whose supply is already decided', () => {
   /**
    * The same tick the grid puts on a fully-decided cell, here per row - one row IS one

@@ -1329,6 +1329,31 @@ describe('BoardLineDecisionPanel: Buy on then off restores the composition', () 
  * confirmation leaves it out (`lineFor` returns null), so an editable panel over it would let
  * a planner compose something the press silently drops.
  */
+describe('BoardLineDecisionPanel: a line at a bin outside fulfilment planning', () => {
+  it('names the bin, and does not tell the planner to set a location it already has', () => {
+    renderPanel({
+      unplannable: true,
+      fulfilment_location: 'BRW-SMC',
+      sources: [{
+          kind: 'unplannable',
+          qty: '40',
+          location: null,
+          warehouse_id: null,
+          reason: 'Outside fulfilment planning',
+          spo_number: null,
+          arrival_date: null,
+        },
+      ] as BoardContribution['sources'],
+    });
+
+    const blocked = screen.getByTestId(`line-decision-blocked-${KEY}`);
+    expect(blocked).toHaveTextContent(
+      'BRW-SMC is outside fulfilment planning, so this line cannot be decided here.',
+    );
+    expect(blocked).not.toHaveTextContent('states no fulfilment location');
+  });
+});
+
 describe('BoardLineDecisionPanel: an unplannable line states why, and offers no verb', () => {
   it('renders the figures and the reason, with no inputs and no buttons', () => {
     renderPanel({

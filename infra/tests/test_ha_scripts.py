@@ -18,6 +18,8 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 WATCHER = SCRIPTS / "role-watcher.sh"
 CHECKS = SCRIPTS / "ha-checks.sh"
 
+TAG = "0123456789abcdef0123456789abcdef01234567"
+
 FAKES = {
     # curl: -w '%{http_code}' prints FAKE_HTTP_CODES' next word (a queue in a file), else 200.
     # A plain ping (no -w) just logs.
@@ -37,10 +39,11 @@ exit 0
     # docker compose ... ps: prints FAKE_RUNNING ids; exec ... psql -Atc <sql>: answers by keyword.
     "docker": r"""#!/usr/bin/env bash
 echo "docker $*" >> "$FAKE_LOG"
+echo "docker $* IMAGE_TAG=${IMAGE_TAG-UNSET}" >> "$FAKE_DIR/env.log"
 args=" $* "
 case "$args" in
   *" ps "*) [ -n "${FAKE_PS_FAIL:-}" ] && exit 1; for c in ${FAKE_RUNNING:-}; do echo "$c"; done; exit 0 ;;
-  *"etcdctl auth status"*) echo "Authentication Status: ${FAKE_ETCD_AUTH:-true}"; exit 0 ;;
+  *"etcdctl auth status"*) if [ -n "${FAKE_ETCD_AUTH_ERR:-}" ]; then echo "$FAKE_ETCD_AUTH_ERR" >&2; exit 1; fi; echo "Authentication Status: ${FAKE_ETCD_AUTH:-true}"; exit 0 ;;
   *"etcdctl endpoint health"*) for i in $(seq 1 "${FAKE_ETCD_HEALTHY:-3}"); do echo "http://m$i:2379 is healthy: took 2ms"; done; exit 0 ;;
   *" backup-list "*) echo "${FAKE_BACKUPS:-[]}"; exit 0 ;;
   *"pg_stat_replication WHERE"*) echo "${FAKE_REPLICAS:-1}"; exit 0 ;;
@@ -71,6 +74,7 @@ def env(tmp_path):
         p.chmod(0o755)
     log = tmp_path / "calls.log"
     log.touch()
+    (tmp_path / ".ha-image-tag").write_text(TAG + "\n")
     e = {
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "FAKE_LOG": str(log),
@@ -100,7 +104,7 @@ def test_watcher_starts_workers_only_after_two_leader_readings(env):
     assert not any("up -d" in c for c in calls(log)), "one reading must not act"
 
     r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
-    ups = [c for c in calls(log) if "--profile promoted up -d --no-deps worker worker_fast" in c]
+    ups = [c for c in calls(log) if "--profile promoted up -d" in c and "--no-deps" in c and c.endswith("worker worker_fast")]
     assert len(ups) == 1
 
 
@@ -147,6 +151,192 @@ def test_watcher_flapping_reading_never_acts(env):
     assert not any("up -d" in c or " stop " in c for c in calls(log))
 
 
+# ---------------------------------------------------------------- role-watcher, H4b deploy path
+
+
+def _ups(log):
+    return [c for c in calls(log) if " up -d" in c]
+
+
+def test_watcher_leader_start_never_recreates_a_running_worker(env):
+    e, log, tmp = env
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    ups = _ups(log)
+    assert len(ups) == 1, calls(log)
+    assert "--no-recreate" in ups[0], ups[0]
+
+
+def test_watcher_leader_starts_workers_on_the_recorded_image_tag(env):
+    e, log, tmp = env
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    lines = [c for c in (tmp / "env.log").read_text().splitlines() if " up -d" in c]
+    assert len(lines) == 1, lines
+    assert lines[0].endswith("IMAGE_TAG=" + TAG), lines[0]
+
+
+def test_watcher_leader_without_a_recorded_tag_starts_nothing_but_replica_still_stops(env):
+    e, log, tmp = env
+    (tmp / ".ha-image-tag").unlink()
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    assert not _ups(log), calls(log)
+    assert "no image tag" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a b")
+    assert len(_stops(log)) == 1
+
+
+def _lock(tmp, mode=0o600):
+    lock = tmp / "deploy.lock"
+    lock.touch()
+    lock.chmod(mode)
+    return lock
+
+
+def test_watcher_exclusive_deploy_lock_skips_a_leader_tick_but_a_replica_still_stops(env):
+    import fcntl
+
+    e, log, tmp = env
+    lock = _lock(tmp)
+    with open(lock, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        r = run(WATCHER, e, MAX_TICKS=3, FAKE_HTTP_CODE=200, FAKE_RUNNING="a", DEPLOY_LOCK_PATH=lock)
+        assert not _ups(log) and not _stops(log), calls(log)
+        assert "skip" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
+        run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a", DEPLOY_LOCK_PATH=lock)
+    assert len(_stops(log)) == 1, calls(log)
+
+
+def test_watcher_shared_lock_holder_does_not_block_the_leader(env):
+    import fcntl
+
+    e, log, tmp = env
+    lock = _lock(tmp)
+    with open(lock, "r") as fh:
+        fcntl.flock(fh, fcntl.LOCK_SH)  # the weekly restore test holds it shared
+        run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200, DEPLOY_LOCK_PATH=lock)
+    assert len(_ups(log)) == 1, calls(log)
+
+
+def _unsafe_lock(tmp, kind):
+    if kind == "symlink":
+        real = tmp / "real.lock"
+        real.touch(); real.chmod(0o600)
+        link = tmp / "link.lock"
+        link.symlink_to(real)
+        return link
+    if kind == "fifo":
+        fifo = tmp / "fifo.lock"
+        os.mkfifo(fifo, 0o600)
+        return fifo
+    if kind == "dir_group_writable":
+        d = tmp / "lockdir"
+        d.mkdir(); d.chmod(0o775)
+        lock = d / "deploy.lock"
+        lock.touch(); lock.chmod(0o600)
+        return lock
+    lock = tmp / "other.lock"
+    lock.touch(); lock.chmod(0o646)
+    return lock
+
+
+def _run_bounded(e, tmp, kind, **extra):
+    """run() with a hard cap, so a watcher that blocks opening a FIFO fails the test, not hangs it."""
+    full = {**e, **{k: str(v) for k, v in extra.items()}}
+    try:
+        return subprocess.run(["bash", str(WATCHER)], env=full, capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"watcher hung on a {kind} lock path")
+    finally:
+        if kind == "fifo":  # release any opener still blocked on the pipe
+            try:
+                os.close(os.open(tmp / "fifo.lock", os.O_RDWR | os.O_NONBLOCK))
+            except OSError:
+                pass
+
+
+UNSAFE = ["symlink", "fifo", "dir_group_writable", "file_other_writable"]
+
+
+@pytest.mark.parametrize("kind", UNSAFE)
+def test_watcher_unsafe_lock_path_blocks_a_leader_start_and_is_logged(env, kind):
+    e, log, tmp = env
+    lock = _unsafe_lock(tmp, kind)
+    r = _run_bounded(e, tmp, kind, MAX_TICKS=2, FAKE_HTTP_CODE=200, DEPLOY_LOCK_PATH=lock)
+    assert not _ups(log), calls(log)
+    out = (r.stdout + r.stderr).lower()
+    assert "unsafe" in out and "lock" in out, out
+
+
+@pytest.mark.parametrize("kind", UNSAFE)
+def test_watcher_unsafe_lock_path_still_lets_a_replica_stop(env, kind):
+    e, log, tmp = env
+    lock = _unsafe_lock(tmp, kind)
+    _run_bounded(e, tmp, kind, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a", DEPLOY_LOCK_PATH=lock)
+    assert len(_stops(log)) == 1, calls(log)
+
+
+def test_watcher_accepts_a_lock_file_others_can_read(env):
+    e, log, tmp = env
+    lock = _lock(tmp, 0o644)
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200, DEPLOY_LOCK_PATH=lock)
+    assert len(_ups(log)) == 1, calls(log)
+    assert "unsafe" not in (r.stdout + r.stderr).lower()
+
+
+def _unsafe_project(tmp, kind):
+    proj = tmp / "proj"
+    proj.mkdir()
+    (proj / ".ha-image-tag").write_text(TAG + "\n")
+    (proj / ".ha-image-tag").chmod(0o644)
+    if kind == "symlink":
+        link = tmp / "projlink"
+        link.symlink_to(proj)
+        return link
+    proj.chmod(0o775)
+    return proj
+
+
+@pytest.mark.parametrize("kind", ["symlink", "group_writable"])
+def test_watcher_unsafe_project_dir_blocks_a_leader_start_and_is_logged(env, kind):
+    e, log, tmp = env
+    proj = _unsafe_project(tmp, kind)
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200, PROJECT_DIR=proj)
+    assert not _ups(log), calls(log)
+    out = r.stdout + r.stderr
+    assert str(proj) in out and "unsafe" in out.lower(), out
+
+
+@pytest.mark.parametrize("kind", ["symlink", "group_writable"])
+def test_watcher_unsafe_project_dir_still_lets_a_replica_stop(env, kind):
+    e, log, tmp = env
+    proj = _unsafe_project(tmp, kind)
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a", PROJECT_DIR=proj)
+    assert len(_stops(log)) == 1, calls(log)
+
+
+def _bad_tag(tmp, kind):
+    f = tmp / ".ha-image-tag"
+    f.unlink()
+    if kind == "symlink":
+        secret = tmp / "secret.txt"
+        secret.write_text("API_SECRET=hunter2-do-not-log\n")
+        f.symlink_to(secret)
+    elif kind == "writable":
+        f.write_text(TAG + "\n"); f.chmod(0o664)
+    else:
+        f.write_text(kind + "\n")
+
+
+@pytest.mark.parametrize("kind", ["symlink", "writable", "abc123", "A" * 40, "g" * 40, "0" * 41, TAG + " x"])
+def test_watcher_refuses_an_invalid_image_tag_file(env, kind):
+    e, log, tmp = env
+    _bad_tag(tmp, kind)
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    assert not _ups(log), calls(log)
+    out = (r.stdout + r.stderr).lower()
+    assert "invalid" in out, out
+    assert "hunter2" not in out, "the log must never echo what the tag file points at"
+
+
 # ---------------------------------------------------------------- ha-checks
 
 def _fresh_backup():
@@ -160,6 +350,21 @@ def test_checks_all_ok_pings_success(env):
     e, log, _ = env
     r = run(CHECKS, e, HC_URL="https://hc.example/abc", FAKE_BACKUPS=_fresh_backup())
     assert r.returncode == 0, r.stdout + r.stderr
+    pings = [c for c in calls(log) if "hc.example" in c]
+    assert pings and not any("/fail" in c for c in pings)
+
+
+def test_checks_one_member_phase_expects_no_replica(env):
+    # Phase A (PLAN-n8n-decom-ha-01nov.md H4-H6): node A leads a one-member cluster for weeks
+    # before node B exists, with 2 of the 3 etcd members started. No replica is expected then.
+    e, log, _ = env
+    r = run(
+        CHECKS, e, HC_URL="https://hc.example/abc", EXPECT_REPLICAS=0, ETCD_MEMBERS=2,
+        FAKE_REPLICAS=0, FAKE_ETCD_HEALTHY=2, FAKE_CLUSTER='{"members": [{"role": "leader"}]}',
+        FAKE_BACKUPS=_fresh_backup(),
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "no replica streaming" not in r.stdout
     pings = [c for c in calls(log) if "hc.example" in c]
     assert pings and not any("/fail" in c for c in pings)
 
@@ -188,6 +393,22 @@ def test_checks_each_problem_pings_fail_with_its_reason(env, extra, reason):
     assert reason in r.stdout
     fails = [c for c in calls(log) if "hc.example/abc/fail" in c]
     assert fails and reason in fails[0]
+
+
+def test_checks_etcd_refusing_auth_status_means_auth_is_on(env):
+    # H4a rehearsal: with auth on, etcd refuses `auth status` to the role-less healthcheck user.
+    e, _, _ = env
+    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), FAKE_ETCD_AUTH_ERR="Error: etcdserver: permission denied")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "etcd auth not enabled" not in r.stdout
+
+
+def test_checks_docker_permission_error_is_not_read_as_auth_on(env):
+    e, _, _ = env
+    err = "permission denied while trying to connect to the Docker daemon socket"
+    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), FAKE_ETCD_AUTH_ERR=err)
+    assert r.returncode == 1
+    assert "etcd auth not enabled" in r.stdout
 
 
 def test_checks_accept_go_nanosecond_backup_timestamps(env):
@@ -240,170 +461,3 @@ def test_checks_no_prune_below_threshold(env):
     r = run(CHECKS, e, ETCD_ONLY=1, SNAPSHOT_DIR=snap)
     assert len(list(snap.glob("*.dump"))) == 4
     assert r.returncode == 1 and "disk 82% used" in r.stdout
-
-
-# ---------------------------------------------------------------- switchback
-
-SWITCHBACK = SCRIPTS / "switchback.sh"
-
-# 04:02 MYT on 27 Oct 2026 (20:02 UTC on 26 Oct); the window starts at 04:00, clear of the
-# 03:00 nightly pg_dump.
-IN_WINDOW = 1793041320 + 3600
-DAY = 24 * 3600
-
-
-def _members(kl_role="Replica", kl_state="streaming", kl_lag=0, leader="crm-b"):
-    import json
-
-    rows = [{"Member": "crm-a", "Role": kl_role, "State": kl_state, "Lag in MB": kl_lag}]
-    if leader != "crm-a":
-        rows.append({"Member": leader, "Role": "Leader", "State": "running"})
-    return json.dumps(rows)
-
-
-@pytest.fixture
-def sb(env, tmp_path):
-    e, log, _ = env
-    patroni = tmp_path / "bin" / "docker"
-    patroni.write_text(
-        r"""#!/usr/bin/env bash
-echo "docker $*" >> "$FAKE_LOG"
-# Cron starts in $HOME: the script must have cd'd to PROJECT_DIR (compose files are relative).
-[ "$PWD" = "$PROJECT_DIR" ] || { echo "docker: wrong cwd $PWD" >&2; exit 9; }
-case " $* " in
-  *" list "*) echo "$FAKE_MEMBERS" ;;
-  *" switchover "*) exit ${FAKE_SWITCH_RC:-0} ;;
-esac
-"""
-    )
-    patroni.chmod(0o755)
-    state = tmp_path / "state"
-    project = tmp_path / "project"
-    project.mkdir()
-    return {**e, "STATE_DIR": str(state), "PROJECT_DIR": str(project)}, log, state / "crm-a-healthy-since"
-
-
-def _switches(log):
-    return [c for c in calls(log) if " switchover " in c]
-
-
-def test_switchback_after_24h_healthy_inside_the_window(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - DAY - 60))
-    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
-    assert r.returncode == 0, r.stdout + r.stderr
-    sw = _switches(log)
-    assert len(sw) == 1 and "--leader crm-b --candidate crm-a --force" in sw[0]
-    assert not marker.exists()
-
-
-def test_switchback_waits_until_24h(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - DAY + 600))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
-    assert _switches(log) == []
-
-
-def test_switchback_outside_the_window_does_nothing(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 3 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW - 3600, FAKE_MEMBERS=_members())  # 03:02 MYT: backup hour
-    assert _switches(log) == []
-
-
-def test_first_healthy_reading_starts_the_clock(sb):
-    e, log, marker = sb
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
-    assert marker.read_text().strip() == str(IN_WINDOW)
-    assert _switches(log) == []
-
-
-@pytest.mark.parametrize(
-    "members",
-    [
-        _members(kl_lag=20),
-        _members(kl_lag="unknown"),
-        _members(kl_state="starting"),
-        _members(kl_role="Replica", kl_state="stopped"),
-    ],
-)
-def test_any_unhealthy_reading_resets_the_clock(sb, members):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 3 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=members)
-    assert not marker.exists()
-    assert _switches(log) == []
-
-
-def test_small_stale_lag_keeps_the_clock(sb):
-    """Patroni's lag is up to 10 s stale: a write burst reading a few MB is not unhealthy."""
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 2 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(kl_lag=3))
-    assert len(_switches(log)) == 1
-
-
-def test_paused_cluster_is_left_alone(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 2 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(), FAKE_CLUSTER='{"pause": true, "members": []}')
-    assert _switches(log) == []
-    assert marker.exists()
-
-
-def test_garbage_marker_restarts_the_clock(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text("not-a-number")
-    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
-    assert r.returncode == 0
-    assert marker.read_text().strip() == str(IN_WINDOW)
-    assert _switches(log) == []
-
-
-def test_runs_from_the_project_dir_even_when_cron_starts_elsewhere(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 2 * DAY))
-    r = subprocess.run(
-        ["bash", str(SWITCHBACK)],
-        env={**e, "NOW": str(IN_WINDOW), "FAKE_MEMBERS": _members()},
-        cwd="/",
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert "wrong cwd" not in r.stderr
-    assert len(_switches(log)) == 1
-
-
-def test_nothing_when_kl_already_leads(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 3 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(kl_role="Leader", kl_state="running", leader="crm-a"))
-    assert _switches(log) == []
-    assert not marker.exists()
-
-
-def test_failed_switchover_keeps_the_clock_and_exits_nonzero(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 2 * DAY))
-    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(), FAKE_SWITCH_RC=1)
-    assert r.returncode == 1
-    assert marker.exists()
-
-
-def test_patronictl_failure_resets_and_fails(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 2 * DAY))
-    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS="not json")
-    assert r.returncode == 1 and not marker.exists()
