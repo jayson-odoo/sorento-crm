@@ -135,14 +135,22 @@ def account_book(db: Any, company_ids: Optional[Sequence[str]]) -> AccountBook:
             current = best.get(key)
             if current is None or count > current[0] or (count == current[0] and dtype < current[1]):
                 best[key] = (count, dtype)
-    for (cid, number), (_count, dtype) in best.items():
+    # A type answers to one number only: the one most of its ledgers carry (a tie goes to the lowest number).
+    winners: Dict[Tuple[str, str], Tuple[int, int]] = {}
+    for (cid, number), (count, dtype) in sorted(best.items(), key=lambda kv: kv[0][1]):
+        current = winners.get((cid, dtype))
+        if current is None or count > current[0]:
+            winners[(cid, dtype)] = (count, number)
+    for (cid, dtype), (_count, number) in winners.items():
         book.numbers.setdefault(cid, {})[number] = dtype
     return book
 
 
 def _asked_number(value: str) -> Optional[int]:
-    if value.isdigit():
-        return int(value)
+    if len(value) > 50:
+        return None
+    if value.isascii() and value.isdigit():
+        return int(value) if len(value) <= 6 else None
     match = _NUMBER.match(value)
     return roman_to_int(match.group(1)) if match else None
 

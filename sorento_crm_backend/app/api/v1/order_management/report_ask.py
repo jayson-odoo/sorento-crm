@@ -405,6 +405,8 @@ def report_ask(
     for name in _FILTER_PARAMS:
         if name in request.query_params.keys() and not resolved_filters[name]:
             raise _unprocessable(f"'{name}' was given but names nothing", "empty_filter", name)
+    if any(len(v) > 50 for v in account_values):
+        raise _unprocessable("An account type value is at most 50 characters", "value_too_long", "account_types")
     for name in (
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
         "customer_agent_ids", "account_types",
