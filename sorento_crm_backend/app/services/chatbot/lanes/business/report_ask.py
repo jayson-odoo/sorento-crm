@@ -1038,8 +1038,9 @@ def _follows_up(verdict: dict[str, Any], frame: dict[str, Any], replaced: dict[s
 
 
 def _holds_a_customer(frame: dict[str, Any]) -> bool:
-    """A report filtered to a customer, still what the person last saw. On a customer ranking they are its ranked side."""
-    return bool(frame.get("customer_ids")) and not frame.get("stale") and frame.get("group_by") != "customer"
+    """A report filtered to a customer. On a customer ranking they are its ranked side, not its filter. A `stale` frame counts:
+    a turn that said a line and ran nothing is not on the owner's list of what replaces a customer."""
+    return bool(frame.get("customer_ids")) and frame.get("group_by") != "customer"
 
 
 def with_held(
@@ -1779,14 +1780,6 @@ def _settle(
 
     frame = parse_output.get("sales_ranking_frame")
     frame = frame if isinstance(frame, dict) else {}
-    if parse_output.get("ranking_refine") is True and _widened(parse_output) == "customer" and frame.get("customer_ids"):
-        # "all customers" flagged a refine, over a report held for a customer: with the customer gone nothing it held settles
-        # the company, so this is a new ask on the axis on screen, and it asks what it owes (AC-8, SALES-TOTAL-ASK).
-        parse_output = {
-            **parse_output, "ranking_refine": False,
-            "group_by": parse_output.get("group_by") or frame.get("group_by"),
-            "top_n": parse_output.get("top_n") or frame.get("top_n"),
-        }
     drill = parse_output.get("ranking_drill")
     raw_group = jsc.js_string(parse_output.get("group_by") or "").strip().lower()
     # A refine never changes the axis: a verdict naming another axis than the held ranking's
@@ -1807,7 +1800,7 @@ def _settle(
         # The same axis typed again is a new ask (a new frame): read whole, nothing held.
         parse_output = {**parse_output, "ranking_refine": False}
     if parse_output.get("ranking_refine") is True and frame and not new_axis:
-        return _refine(db, parse_output, frame, entities, dealer=dealer)
+        return _refine(db, parse_output, frame, entities, dealer=dealer, companies=companies)
     if drill == "scoped":
         # Owner ruling B (23 Oct): only the parser's `scoped` narrows to the rows on screen. A new axis
         # read as global, unsure or not at all runs across all (below), and the header says so.
@@ -1930,23 +1923,19 @@ def _settle(
     agent_pick = args.pop("sales_agent_pick", None)
     if agent_pick:
         given["sales_agent"] = rf.Resolved("ambiguous", options=tuple((i, str(n)) for i, n in agent_pick))
-    company_options: list[list[str]] = []
-    own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) == 3]
+    company_extras: dict[str, Any] = {}
+    own = _own_companies(companies)
     if own and not dealer and parse_output.get("ranking_refine") is not True and not outstanding_ask:
         # Item 4: never the company question on an outstanding ask (pre-#1922 it ran over the contact's own companies).
         # R1: the company the message (the parser's `sales_company`) names, among the contact's own; else, with two or
         # more companies and no named subject (a customer, product, brand, category, agent or spec), the company question.
-        said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
-        named = next((c for c in own if said and said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
-        if named is None and said:
+        named = _named_company(parse_output, own)
+        if named is None and parse_output.get("sales_company") and " ".join(jsc.js_string(parse_output.get("sales_company")).split()):
             return None, COMPANY_FORBIDDEN_LINE  # the message named a company the contact does not hold
         if named is not None:
             args["company"] = str(named[0])
-        elif len(own) > 1 and not any(
-            args.get(k) for k in ("company", "customer_ids", "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "spec")
-        ):
-            given["company"] = rf.Resolved("ambiguous", options=tuple((str(c[0]), str(c[1])) for c in own))
-            company_options = [[str(c[0]), str(c[1])] for c in own]
+        elif _owes_company(args, own):
+            given["company"], company_extras = _company_question_fields(own)
     if (
         parse_output.get("capability_from") == "outstanding"
         and args.get("basis") in OUTSTANDING_KINDS
@@ -1969,9 +1958,7 @@ def _settle(
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
     if breakdown:
         extras["breakdown"] = True
-    if company_options:
-        extras["company_options"] = company_options
-        extras["company_codes"] = [str(c[2]) for c in own]  # the pick's aliases (`sales_company_ask.as_answer`)
+    extras.update(company_extras)
     if not_applied:
         extras["not_applied"] = not_applied
     if parse_output.get("capability_from") == "outstanding":
@@ -1983,6 +1970,31 @@ def _settle(
         # Owner ruling B: after a ranking, a new axis runs across all, and the header line says so.
         extras["note"] = f"Across all {AXIS_NOUNS[frame['group_by']][1]}"
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
+
+
+def _own_companies(companies: Any) -> list[Any]:
+    return [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) == 3]
+
+
+def _named_company(parse_output: dict[str, Any], own: list[Any]) -> Any:
+    """The contact's own company the message names (the parser's `sales_company`), by name or code."""
+    said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
+    return next((c for c in own if said and said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
+
+
+def _owes_company(args: dict[str, Any], own: list[Any]) -> bool:
+    """Two or more companies, and nothing in the ask says which: a company, a customer, a product or another subject."""
+    return len(own) > 1 and not any(
+        args.get(k) for k in ("company", "customer_ids", "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "spec")
+    )
+
+
+def _company_question_fields(own: list[Any]) -> tuple[rf.Resolved, dict[str, Any]]:
+    """The company question as a field to ask, and what its slot needs to read the answer."""
+    return rf.Resolved("ambiguous", options=tuple((str(c[0]), str(c[1])) for c in own)), {
+        "company_options": [[str(c[0]), str(c[1])] for c in own],
+        "company_codes": [str(c[2]) for c in own],  # the pick's aliases (`sales_company_ask.as_answer`)
+    }
 
 
 def _customer_stays(parse_output: dict[str, Any], axis: str | None) -> bool:
@@ -2010,7 +2022,7 @@ def _widened(parse_output: dict[str, Any]) -> str | None:
 
 
 def _refine(
-    db: Any, parse_output: dict[str, Any], frame: dict[str, Any], entities: Any = (), *, dealer: bool = False
+    db: Any, parse_output: dict[str, Any], frame: dict[str, Any], entities: Any = (), *, dealer: bool = False, companies: Any = ()
 ) -> tuple[rf.Outcome | None, str | None]:
     """The parser said this message only refines the sales ranking that ran (`ranking_refine`):
     the held route args re-run with ONLY the keys the verdict changed (count, period, basis,
@@ -2041,8 +2053,13 @@ def _refine(
     if filters is None:
         return None, line
     args.update(filters)
-    if "customer" in _current_kinds(parse_output) and _gate_ids(entities, "customer"):
-        args["customer_ids"] = _gate_ids(entities, "customer")  # a customer named replaces the held one (AC-7)
+    # A customer of its own (named, or the one a pick just answered) replaces the held one, and may be in the other company.
+    own_customer = _gate_ids(entities, "customer") if (
+        "customer" in _current_kinds(parse_output) or parse_output.get("ranking_pick") is True
+    ) else []
+    if own_customer:
+        args["customer_ids"] = own_customer
+        args.pop("company", None)
     if "product" in _current_kinds(parse_output):
         product_args, line = _product_args(entities)
         if product_args is None:
@@ -2069,11 +2086,12 @@ def _refine(
         args["compare_to"] = parse_output["compare_to"]
     if parse_output.get("self_reference") is True:
         args["mine"] = True
-        # "my ...": the contact's own accounts, as a fresh ask reads them, never the customer held.
-        own = _gate_ids([e for e in jsc.array(entities) if isinstance(e, dict) and e.get("scope")], "customer")
-        args.pop("customer_ids", None)
-        if own:
-            args["customer_ids"] = own
+        if not own_customer:
+            # "my ...": the contact's own accounts, as a fresh ask reads them, never the customer held.
+            args.pop("customer_ids", None)
+            scope = _gate_ids([e for e in jsc.array(entities) if isinstance(e, dict) and e.get("scope")], "customer")
+            if scope:
+                args["customer_ids"] = scope
     if args.get("compare_to") and args.get("group_by") == "month":
         return None, COMPARE_BY_MONTH_LINE
     top_n = parse_output.get("top_n")
@@ -2092,6 +2110,15 @@ def _refine(
     if period is not None:
         given["period"] = period
     extras = {"args": args, "top_n": top_n, **({"kind_ask": True} if asks_kind else {})}
+    if frame.get("customer_ids") and not args.get("customer_ids") and not dealer:
+        # The customer went (all customers, "my ..."): it was the subject, so the company is owed now, as on a fresh ask.
+        own = _own_companies(companies)
+        named = _named_company(parse_output, own)
+        if named is not None:
+            args["company"] = str(named[0])
+        elif _owes_company(args, own):
+            given["company"], company_extras = _company_question_fields(own)
+            extras.update(company_extras)
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
 
 
