@@ -591,6 +591,7 @@ export function QuotationVersionEditor({
           lines={gridLines}
           editing={gridEditing}
           quotationId={quotation?.id ?? null}
+          seriesId={(seriesId !== undefined ? seriesId : quotation?.series_id) ?? null}
           rowFilter={rowFilter}
           emptyHint={
             gridEditing

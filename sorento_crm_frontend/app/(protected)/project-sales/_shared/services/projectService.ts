@@ -1130,17 +1130,21 @@ export async function getImportJobStatus(jobId: string): Promise<ImportJobStatus
  * disagree. Nothing is written.
  */
 export async function judgeQuotationLine(
-  quotationId: string,
+  target: { quotationId: string | null; seriesId: string | null },
   params: { product_id?: string; product_set_id?: string; unit_price?: string },
 ): Promise<QuotationLineVerdict> {
   const search = new URLSearchParams();
   if (params.product_id) search.set('product_id', params.product_id);
   if (params.product_set_id) search.set('product_set_id', params.product_set_id);
   if (params.unit_price) search.set('unit_price', params.unit_price);
+  // A scope not saved yet has no quotation id: it is judged against the series the editor
+  // holds instead (PRICING-UX-FIXES A). Same server functions either way.
+  if (!target.quotationId && target.seriesId) search.set('series_id', target.seriesId);
   const qs = search.toString();
-  const response = await apiFetch(
-    `${BASE}/quotations/${quotationId}/line-verdict${qs ? `?${qs}` : ''}`,
-  );
+  const path = target.quotationId
+    ? `${BASE}/quotations/${target.quotationId}/line-verdict`
+    : `${BASE}/quotation-line-verdict`;
+  const response = await apiFetch(`${path}${qs ? `?${qs}` : ''}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Could not check the line'));
   return response.json();

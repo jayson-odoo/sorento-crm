@@ -16,6 +16,7 @@ const FLOOR_LEVEL_LABELS: Record<string, string> = {
   category: 'its category',
   category_ancestor: 'a parent category',
   system: 'the company default',
+  series: 'the series',
 };
 
 /**
@@ -29,7 +30,12 @@ const FLOOR_LEVEL_LABELS: Record<string, string> = {
  * sits under the price in the Rate cell and reads "Minimum price RM x". Both ask the same query
  * key, so React Query asks the server once.
  */
-function useLineFacts(quotationId: string | null, line: QuotationLine | null, draft: LineDraft) {
+function useLineFacts(
+  quotationId: string | null,
+  seriesId: string | null,
+  line: QuotationLine | null,
+  draft: LineDraft,
+) {
   const productId = (draft.product_id ?? '').trim();
   const setId = (draft.product_set_id ?? '').trim();
   const price = (draft.unit_price ?? '').trim();
@@ -38,14 +44,16 @@ function useLineFacts(quotationId: string | null, line: QuotationLine | null, dr
     (line.product_id ?? '') === productId &&
     (line.product_set_id ?? '') === setId &&
     (price || '') === (line.unit_price ?? '');
+  // A new scope has no quotation id yet: it is judged against the series the editor holds
+  // (PRICING-UX-FIXES A), so the alerts are live before the first save too.
   const verdict = useLineVerdict(
-    quotationId ?? '',
+    { quotationId, seriesId },
     {
       product_id: productId || undefined,
       product_set_id: setId || undefined,
       unit_price: price || undefined,
     },
-    !pristine && quotationId !== null && Boolean(productId || setId),
+    !pristine && Boolean(productId || setId),
   );
 
   const belowFloor = pristine
@@ -67,15 +75,18 @@ function useLineFacts(quotationId: string | null, line: QuotationLine | null, dr
 /** The Product cell's flag: Non-standard, once. */
 export function LineFlags({
   quotationId,
+  seriesId = null,
   line,
   draft,
 }: {
-  /** Null on a scope not saved yet: the verdict is asked of a saved scope only. */
+  /** Null on a scope not saved yet: the verdict is then asked by `seriesId`. */
   quotationId: string | null;
+  /** The series the editor is quoting from (null for none). */
+  seriesId?: string | null;
   line: QuotationLine | null;
   draft: LineDraft;
 }) {
-  const { nonStandard } = useLineFacts(quotationId, line, draft);
+  const { nonStandard } = useLineFacts(quotationId, seriesId, line, draft);
   if (!nonStandard) return null;
 
   return (
@@ -92,23 +103,27 @@ export function LineFlags({
   );
 }
 
-/** The Rate cell's flag, under the price: "Minimum price RM x" and where that was set. */
+/**
+ * The Rate cell's flag, under the price: "Minimum price RM x". Where the floor was set is the
+ * badge's tooltip only; the owner removed the printed "Set on ..." line (1 Nov 2026).
+ */
 export function MinimumPriceFlag({
   quotationId,
+  seriesId = null,
   line,
   draft,
 }: {
   quotationId: string | null;
+  seriesId?: string | null;
   line: QuotationLine | null;
   draft: LineDraft;
 }) {
-  const { belowFloor, floor } = useLineFacts(quotationId, line, draft);
+  const { belowFloor, floor } = useLineFacts(quotationId, seriesId, line, draft);
   if (!belowFloor) return null;
 
   return (
-    <div className="mt-1 space-y-0.5 text-end">
+    <div className="mt-1 text-end">
       <MinimumPriceBadge value={floor.value} title={floor.source} />
-      <p className="whitespace-normal break-words text-2xs text-destructive">{floor.source}</p>
     </div>
   );
 }
