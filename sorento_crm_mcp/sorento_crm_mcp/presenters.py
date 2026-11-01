@@ -3393,6 +3393,7 @@ _REPORT_ASK_PLURALS = {
     "sales_agent": "sales agents",
     "location": "locations",
     "channel": "channels",
+    "account_type": "account types",
     "month": "months",
     "year": "years",
     "sales_order": "sales orders",
@@ -3492,7 +3493,7 @@ _NOT_APPLIED_REASONS = {
 _NOT_APPLIED_LABELS = {
     "customer": "Customer", "product": "Product", "brand": "Brand", "category": "Category",
     "sales_agent": "Sales agent", "customer_agent": "Customers assigned to", "location": "Location",
-    "channel": "Channel", "spec": "Specification",
+    "channel": "Channel", "spec": "Specification", "account_type": "Account type",
 }
 
 

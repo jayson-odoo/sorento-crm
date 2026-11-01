@@ -9,10 +9,12 @@ Sales by debtor type reports.
 """
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence, Tuple
+import re
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import false
+from sqlalchemy import false, func, or_, and_
 
+from app.models.base import company_scope
 from app.models.order import Customer
 from app.models.product import ProductCategory
 from app.services.reports import spec_set
@@ -71,6 +73,122 @@ def spec_condition(ctx: Any, values: Sequence[str]) -> Optional[Any]:
     grants = ctx.company_grants
     ids, _echo, _not_applied = spec_set.resolve(ctx.db, terms, set(), None if grants is None else set(grants))
     return column.in_(ids) if ids else false()
+
+
+# ------------------------------------------------------------------------ account type
+#
+# A ledger's account type is `customers.autocount_debtor_type`. The AutoCount book also tags a ledger's name with a
+# number, `[A/C IV]` at the end; a number means the type most of its tagged ledgers hold, derived per company.
+
+_TAG = r"\[(A/C [IVX]+)\]\s*$"
+_ROMAN = {"I": 1, "V": 5, "X": 10}
+_NUMBER = re.compile(r"^(?:A/C\s+)?([IVX]+)$")
+
+
+def roman_to_int(numeral: str) -> int:
+    total = 0
+    for i, ch in enumerate(numeral):
+        value = _ROMAN[ch]
+        total += -value if i + 1 < len(numeral) and _ROMAN[numeral[i + 1]] > value else value
+    return total
+
+
+class AccountBook:
+    """Per company: the types its typed ledgers hold, and the type each tag number means."""
+
+    def __init__(self) -> None:
+        self.types: Dict[str, set] = {}
+        self.numbers: Dict[str, Dict[int, str]] = {}
+
+    @property
+    def loaded(self) -> bool:
+        return any(self.types.values())
+
+    def numbered(self) -> Dict[int, set]:
+        out: Dict[int, set] = {}
+        for company_numbers in self.numbers.values():
+            for number, dtype in company_numbers.items():
+                out.setdefault(number, set()).add(dtype)
+        return out
+
+
+def account_book(db: Any, company_ids: Optional[Sequence[str]]) -> AccountBook:
+    """One GROUP BY company, tag, type over the ledgers of `company_ids` (None = every company). Only typed ledgers
+    count; a number's type is the one most ledgers carrying that tag hold, a tie going to the first type by name."""
+    tag = func.substring(Customer.customer_name, _TAG)
+    stmt = (
+        db.query(Customer.company_id, tag, Customer.autocount_debtor_type, func.count())
+        .filter(Customer.autocount_debtor_type.isnot(None), func.btrim(Customer.autocount_debtor_type) != "")
+        .group_by(Customer.company_id, tag, Customer.autocount_debtor_type)
+    )
+    if company_ids is not None:
+        stmt = stmt.filter(Customer.company_id.in_([str(c) for c in company_ids]))
+    with company_scope(db, None):
+        rows = stmt.all()
+    book = AccountBook()
+    best: Dict[Tuple[str, int], Tuple[int, str]] = {}
+    for company, label, dtype, count in rows:
+        cid = str(company)
+        book.types.setdefault(cid, set()).add(dtype)
+        if label:
+            key = (cid, roman_to_int(label.split()[-1]))
+            current = best.get(key)
+            if current is None or count > current[0] or (count == current[0] and dtype < current[1]):
+                best[key] = (count, dtype)
+    for (cid, number), (_count, dtype) in best.items():
+        book.numbers.setdefault(cid, {})[number] = dtype
+    return book
+
+
+def _asked_number(value: str) -> Optional[int]:
+    if value.isdigit():
+        return int(value)
+    match = _NUMBER.match(value)
+    return roman_to_int(match.group(1)) if match else None
+
+
+def resolve_account_types(book: AccountBook, values: Sequence[str]) -> Tuple[Dict[str, set], List[str]]:
+    """({company: the stored types the asked values mean there}, the values meaning nothing in any company)."""
+    per_company: Dict[str, set] = {}
+    unknown: List[str] = []
+    for raw in values:
+        value = raw.strip().upper()
+        number = _asked_number(value)
+        hit = False
+        for cid, types in book.types.items():
+            by_name = {t for t in types if t.strip().upper() == value}
+            found = by_name or ({book.numbers[cid][number]} if number is not None and number in book.numbers.get(cid, {}) else set())
+            if found:
+                per_company.setdefault(cid, set()).update(found)
+                hit = True
+        if not hit:
+            unknown.append(raw)
+    return per_company, unknown
+
+
+def unknown_account_message(book: AccountBook, unknown: Sequence[str]) -> str:
+    numbered = book.numbered()
+    led = {t for types in numbered.values() for t in types}
+    stored = {t for types in book.types.values() for t in types}
+    names = [str(n) for n in sorted(numbered)] + sorted(stored - led)
+    return f"No account type {', '.join(unknown)}. Account types: {', '.join(names)}."
+
+
+def account_type_options(db: Any) -> List[Tuple[str, str]]:
+    rows = db.query(Customer.autocount_debtor_type).filter(Customer.autocount_debtor_type.isnot(None)).distinct().all()
+    return sorted(((t, t) for (t,) in rows if t and t.strip()), key=lambda r: r[1].casefold())
+
+
+def account_type_condition(ctx: Any, values: Sequence[str]) -> Optional[Any]:
+    """Customers whose stored type is what each company's own book makes of the asked values."""
+    grants = ctx.company_grants
+    book = account_book(ctx.db, None if grants is None else sorted(grants))
+    per_company, _unknown = resolve_account_types(book, values)
+    parts = [
+        and_(Customer.company_id == cid, Customer.autocount_debtor_type.in_(sorted(types)))
+        for cid, types in sorted(per_company.items())
+    ]
+    return or_(*parts) if parts else false()
 
 
 #: The Detail tab's default columns of the line-level asks (the Top selling items report's shape: what, who, how much).

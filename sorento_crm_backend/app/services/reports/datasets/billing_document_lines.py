@@ -190,6 +190,9 @@ ASK_COLUMNS = tuple(
     else dataclasses.replace(c, label="Month of the year") if c.key == "month_of_year"
     else c
     for c in COLUMNS
+) + (
+    # The account type split and filter (SALES-ACCOUNT-TYPE): the ask's copy only, so Top selling items is unchanged.
+    reg.Column("account_type", "Account type", "text", "dimension", lambda c: Customer.autocount_debtor_type, size=140, hidden=True),
 )
 
 DATASET = reg.Dataset(
@@ -235,6 +238,7 @@ ASK_DEFINITION = reg.ReportDefinition(
         reg.SelectParam("location", "Location", True, (), _no_options, location_condition, hidden=True),
         reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition, hidden=True),
         reg.SelectParam("spec", "Specification", True, (), ap.spec_options, ap.spec_condition),
+        reg.SelectParam("account_type", "Account type", True, (), ap.account_type_options, ap.account_type_condition, hidden=True),
     ),
     detail=reg.DetailLayout(
         title="Billing document lines",
