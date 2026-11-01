@@ -1,6 +1,6 @@
 # SALES-ACCOUNT-TYPE: sales by the customer's account type
 
-**Status:** PR 1 reviewed READY at 3c498df5c3, waits for the browser pass on the 1028 copy. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
+**Status:** PR 1 in CI. Reviewed READY. On-screen figures and the hand test wait for INVOICED-CHANNEL-PERF; merge after SS-DEBTOR-TYPE is live. PR 2 (parser) follows. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
 
 Lane brief: crew `SALES-ACCOUNT-TYPE`. Branch `crew/sales-account-type`. UAC: `sales-account-type-acceptance-criteria.md`.
 Agent codes are masked (AGENT A, AGENT B) because this repo is public. The real codes are in the crew card.
