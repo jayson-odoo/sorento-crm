@@ -124,6 +124,11 @@ flips"), item by item (I1-I8):
 - I8: a re-proposed idea whose ss status moved past `captured` reads "This idea was already captured as idea N."
   (no "could not be reached"); any other ss 4xx reads "The Ideas workspace refused this idea." with no ss detail.
 Tests first (tester), then the coder; the two decisions go to the owner as one crew-ask.
+Owner answers, 1 Nov ~10:15: I2 (a), I7 (a) as built, and console = test: an idea created from a console agent turn
+stays a test idea (off the board); only a live (WhatsApp) turn creates a real idea (C1, the turn's `is_test` is
+carried into the create step by the loop, never by the model). Owner rule for next time: these follow from existing
+rulings ("console turns are test turns everywhere"), so decide from the ruling and record the reasoning here instead
+of asking.
 
 ## W2 - dealer writes (next lane, after AGENT-CONFIRM-GATE #2055), least risk first
 
