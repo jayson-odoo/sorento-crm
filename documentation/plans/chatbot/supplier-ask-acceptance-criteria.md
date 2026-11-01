@@ -4,4 +4,6 @@
   that supplier's open POs (not fully received) only.
 - AC-2: The same with the supplier's English name, its code, and a one-letter typo of the name.
 - AC-3: `GET /procurement/purchase-orders/placed?supplier_id=<id>` returns only that supplier's rows.
-- AC-4: A dealer/customer asker never gets the supplier kind resolved or PO data (gates unchanged).
+- AC-4: A dealer/customer asker, or staff without the `purchase_orders.supplier` reveal, never gets a
+  supplier resolved or `supplier_ids` sent (PO data gates unchanged).
+- AC-5: Prompt changes are new UNLABELLED versions; no production label moves in code.
