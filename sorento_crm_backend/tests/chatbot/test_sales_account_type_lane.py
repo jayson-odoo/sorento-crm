@@ -1124,7 +1124,10 @@ def test_at21_a_stray_axis_on_the_repeat_is_still_the_answer(bot, seeded, by_wor
 
 def test_at21_a_typed_axis_on_the_repeat_is_a_new_ask(bot, seeded) -> None:
     bot.say(_sales(_e("AGENT A", "sales_agent"), _word()), "AGENT sales for cabana in Jan")
-    text, calls = bot.say(_repeat(group_by="customer", by_words="by customer", top_n=5), "cabana account by customer top 5")
+    typed = _rank(
+        _word("cabana", "account_type", None, "account"), group_by="customer", by_words="by customer", top_n=5, **JAN
+    )
+    text, calls = bot.say(typed, "cabana account by customer top 5")
     args = _only_report_ask(calls)
     assert args["group_by"] == "customer" and args["account_types"] == ["CABANA"], args
 
