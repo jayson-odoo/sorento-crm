@@ -31,7 +31,7 @@ export function QuotationTemplateDialog({
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
-      <DialogContent className="max-h-[92vh] w-full max-w-2xl overflow-hidden">
+      <DialogContent className="max-h-[92dvh] w-full max-w-2xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>{template ? `Edit ${template.name}` : 'Add a terms template'}</DialogTitle>
         </DialogHeader>
@@ -52,7 +52,7 @@ export function QuotationTemplateDialog({
             }
           }}
         >
-          <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">
+          <DialogBody className="max-h-[65dvh] space-y-4 overflow-y-auto">
             <div className="space-y-1.5">
               <Label htmlFor="quotation-template-name">
                 Name <span className="text-destructive">*</span>
