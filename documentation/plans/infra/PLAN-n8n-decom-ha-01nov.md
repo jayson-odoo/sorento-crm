@@ -1,7 +1,8 @@
 # PLAN: retire n8n, reuse its box as the HA standby (N8N-DECOM-HA)
 
-Status: APPROVED with owner rulings 1 Nov about 12:05 (section 6); in progress: HA steps H1-H4 on
-node A + witness, and stage 0 (owner read-only checks). The lane changes nothing in production:
+Status: APPROVED with owner rulings 1 Nov about 12:05 (section 6); H1 and H4a done (H4a rehearsal
+all PASS 1 Nov); in progress: H2 (owner pre-flight screenshots), then H3-H4 on node A + witness,
+and stage 0 (owner read-only checks). The lane changes nothing in production:
 every prod step goes to crew as owner commands. Track: L (cross-repo, prod infra), LEAD pattern;
 each CRM PR in section 4 is its own lane with its own track.
 
@@ -155,11 +156,11 @@ PR-sized steps:
 |---|---|---|---|---|
 | H1 | Amend plan v2 + trim the templates above, delete `switchback.sh` and drill 8 (this lane's PR) | lane | now | S |
 | H2 | Read-only pre-flight on node A and the witness (Postgres settings, data directory, sizes, compose location, OS, watchdog, free capacity); then capture the prod compose, nginx and `.deploy.env` key names into the private infra repo (v2 step 9.1) | owner commands, crew | now | 0.5 d |
-| H3 | WireGuard between node A and the witness; etcd with all three members LISTED but only node A and the witness started (quorum 2 of 3, no fault tolerance until node B joins); R2 bucket + scoped token | owner commands | after H2 | 1 d |
-| H4a | Rehearse H4 on a local throwaway stack (pgvector pg17 + Patroni + etcd + WAL-G to a test bucket, a copy of the dev schema): adoption, PITR restore to a minute, etcd loss with node A staying primary (`failsafe_mode`), a Postgres crash restart | lane | after H1 | 1 d |
+| H3 | WireGuard between node A and the witness; etcd bootstrapped with node A and the witness ONLY (2 members, quorum 2, no fault tolerance until node B joins; listing node B unstarted pins the etcd cluster version and breaks Patroni's v3 API, H4a finding); R2 bucket + scoped token | owner commands | after H2 | 1 d |
+| H4a | DONE 1 Nov, all PASS (`infra/rehearsal/`, throwaway VM, synthetic data): adoption outage 4 s, row counts equal, one leader, WAL archiving, `wal-g backup-push`, PITR to a noted time exact, postmaster kill restarts, one etcd member down 70 s with node A still primary and writing (`failsafe_mode`), ha-checks ok with `EXPECT_REPLICAS=0 ETCD_MEMBERS=2`. Template fixes it found: etcdctl TLS endpoint, 2-member etcd bootstrap, CN-less Patroni etcd cert, wal-g on the unix socket, ha-checks auth reading; Patroni 4.0.5 + WAL-G v3.0.5 pinned. Not covered: watchdog device, a replica | lane | done | 1 d |
 | H4 | Adopt prod Postgres into Patroni on node A as a one-member cluster, WAL-G archiving on (one 1-2 minute window, v2 step 6). Gives point-in-time restore (RPO 24 h to about 60 s) before node B exists. Until node B joins, `infra/scripts/ha-checks.sh` runs with `EXPECT_REPLICAS=0 ETCD_MEMBERS=2` | owner commands, crew on the call | after H2, H3, H4a | 1.5-2 d |
 | H5 | Release deploys both nodes, migrations only on the leader (v2 step 7) | lane | after H2 (needs the prod compose shape) | 1-1.5 d |
-| H6 | Node B: fresh OS (Q3 a), edge rules, WireGuard, etcd member 3, CRM compose with `SKIP_MIGRATIONS=1`, role watcher; Patroni seeds the replica; `synchronous_mode` on (non-strict) once the measured RTT is under 2 ms (v2 line 137) | owner commands | after stage 6 ends, H5 merged | 1 d |
+| H6 | Node B: fresh OS (Q3 a), edge rules, WireGuard, etcd member 3 added with `etcdctl member add` (learner, then promote), CRM compose with `SKIP_MIGRATIONS=1`, role watcher; Patroni seeds the replica; `synchronous_mode` on (non-strict) once the measured RTT is under 2 ms (v2 line 137) | owner commands | after stage 6 ends, H5 merged | 1 d |
 | H7 | Allowlists for node B's egress address (OpenAI and any other provider with one; v2 step 8) | owner | with H6 | - |
 | H8 | Cloudflare LB + monitor on `/api/v1/health/role` (section 5b) | owner | after H6 | 0.5 d |
 | H9 | Drills 1-7, 9 (witness only) and 10 (v2 section 12) | owner + crew | after H8 | 1 d |
@@ -229,9 +230,9 @@ yes, A. No, actually, every time. Every time." Crew's reading, applied in this p
   owner checks in respond.io.
 - Stopping n8n removes the failover poller; PR B must be on first or missed messages get no
   answer during a respond.io webhook outage.
-- Until node B joins, etcd runs on two of its three listed members (node A, witness): losing either
-  drops etcd quorum. Node A must then stay primary through `failsafe_mode` (it still reaches every
-  Patroni member, itself); H4a rehearses exactly this before the prod window. UNVERIFIED until then.
+- Until node B joins, etcd has two members (node A, witness): losing either drops etcd quorum.
+  Node A then stays primary through `failsafe_mode` (it still reaches every Patroni member, itself);
+  H4a proved it on the rehearsal stack (one member down 70 s, writes kept working).
 - Adopting the running prod Postgres into Patroni points Patroni at the real data directory; a wrong
   path makes Patroni create an empty cluster (v2 step 6). H2's pre-flight reads the path and H4a
   rehearses the adoption first.
