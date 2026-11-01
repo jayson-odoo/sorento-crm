@@ -505,11 +505,10 @@ def test_the_pools_share_is_seeded_from_the_true_net():
         own = _project_bin(db, pool)
         _seed_line(db, company_id, project, product, short, qty_ordered="8", line_no=30)
         _order, _line, at_pool, _core = _seed_line(
-            db, company_id, project, product, pool, qty_ordered="10",
+            db, company_id, project, product, pool, qty_ordered="10", required_date=_far(10),
         )
         _order, _line, at_bin, _core = _seed_line(
-            db, company_id, project, product, own, qty_ordered="5",
-            required_date=REQUIRED_DATE + timedelta(days=1),
+            db, company_id, project, product, own, qty_ordered="5", required_date=_far(20),
         )
         row = _board_row(_board(db, at_pool, at_bin), at_bin)
 
