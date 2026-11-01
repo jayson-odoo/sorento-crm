@@ -95,6 +95,7 @@ def decide_route(
     if prompt is None:
         return RouteDecision("chat", "router_failed:no_prompt")
     instructions, criteria, model = prompt
+    criteria = _with_open_record(criteria)
 
     state = _state(db, contact_respond_id, text)
     started = time.perf_counter()
@@ -189,6 +190,25 @@ def _agent_turns_today(db, contact_respond_id: str) -> int:
         )
         .count()
     )
+
+
+OPEN_RECORD_CRITERION = (
+    "The user has a record open on their screen, named in current_page in the state. A question about that "
+    "record, in words like this purchase request, this one, what happened here, or its status, needs the "
+    "agent, which holds the record's facts."
+)
+
+
+def _with_open_record(criteria: dict[str, Any]) -> dict[str, Any]:
+    """The criteria Jev is sent. For a panel turn with a record open, a copy with one more `agent` criterion;
+    the published label is never touched, so this is panel only and no other caller sees it."""
+    principal = staff_principal.current()
+    if principal is None or not (principal.page or {}).get("record_ref"):
+        return criteria
+    agent = criteria.get("agent")
+    if not isinstance(agent, dict):
+        return criteria
+    return {**criteria, "agent": {**agent, "open_record": OPEN_RECORD_CRITERION}}
 
 
 def _router_prompt(db) -> tuple[str, dict[str, Any], str] | None:
