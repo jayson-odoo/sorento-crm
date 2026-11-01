@@ -14,15 +14,13 @@ set -uo pipefail
 P=ha-rehearsal
 NET=$P-net
 # Under $HOME: bind mounts must be visible to the Docker host (Colima shares $HOME, not $TMPDIR).
-WORK="${HA_REHEARSAL_WORK:-$HOME/.cache/$P-work}"
+WORK="$HOME/.cache/$P-work"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TPL="$HERE/../templates"
 SCRIPTS="$HERE/../scripts"
 
 PG_IMAGE="${PG_IMAGE:-pgvector/pgvector:pg17}"
 ETCD_IMAGE="${ETCD_IMAGE:-quay.io/coreos/etcd:v3.5.17}"
-PATRONI_VERSION="${PATRONI_VERSION:-4.0.5}"
-WALG_VERSION="${WALG_VERSION:-v3.0.5}"
 # The Dockerfile downloads the amd64 WAL-G build, so every Postgres container runs amd64 (slow
 # but correct under emulation on an arm64 host). Override only if the Dockerfile changes.
 PLATFORM="${REHEARSAL_PLATFORM:-linux/amd64}"
@@ -104,28 +102,19 @@ openssl x509 -req -in "$WORK/ca.csr" -signkey "$WORK/ca-private/ca.key" -days 2 
 SAN="DNS:$P-etcd-a,DNS:$P-etcd-b,DNS:$P-etcd-w,DNS:localhost,IP:127.0.0.1"
 mint server server "$SAN"; mint peer peer "$SAN"       # one shared cert per kind (prod: one per member)
 # Patroni cert has NO CN: it speaks the HTTP gateway, which rejects a client cert with a CN (finding)
-mint patroni "" ""; mint healthcheck healthcheck ""; mint admin root ""
+mint patroni "" ""; mint healthcheck healthcheck ""
 
 # ---- 2b. etcd env rendered FROM the template ------------------------------------------------
 render_etcd_env() { # render_etcd_env MEMBER-NAME HOST
   grep -v '^[[:space:]]*#' "$TPL/etcd/etcd.env.template" | grep -v '^[[:space:]]*$' | sed \
-    -e "s|<THIS_WG_IP>|$2|g" -e "s|<A_WG_IP>|$P-etcd-a|g" -e "s|<B_WG_IP>|$P-etcd-b|g" \
+    -e "s|<THIS_WG_IP>|$2|g" -e "s|<A_WG_IP>|$P-etcd-a|g" \
     -e "s|<WITNESS_WG_IP>|$P-etcd-w|g" -e 's|\${WITNESS_NAME}|witness|g' -e 's|<WITNESS_NAME>|witness|g' \
     -e "s|<HEALTHCHECK_PASSWORD>|$ETCD_HCPW|" -e "s|^ETCD_NAME=.*|ETCD_NAME=$1|" \
     -e 's|^ETCD_LISTEN_PEER_URLS=.*|ETCD_LISTEN_PEER_URLS=https://0.0.0.0:2380|' \
     -e 's|^ETCD_LISTEN_CLIENT_URLS=.*|ETCD_LISTEN_CLIENT_URLS=https://0.0.0.0:2379|'  # etcd binds IPs only
 }
-# Finding: with crm-b LISTED but never started, the etcd cluster version stays 3.0.0 (an unknown
-# member version blocks the upgrade), Patroni 4.0.5 then picks the removed /v3alpha API and gets
-# 404 forever. So phase A bootstraps with the two real members only; crm-b joins later through
-# `etcdctl member add`. ETCD_LISTED=3 reproduces the failure.
-two_member_cluster() {
-  if [ "${ETCD_LISTED:-2}" = 2 ]; then
-    sed "s|^ETCD_INITIAL_CLUSTER=.*|ETCD_INITIAL_CLUSTER=crm-a=https://$P-etcd-a:2380,witness=https://$P-etcd-w:2380|"
-  else cat; fi
-}
-render_etcd_env crm-a "$P-etcd-a" | two_member_cluster > "$WORK/etcd-a.env"
-render_etcd_env witness "$P-etcd-w" | two_member_cluster > "$WORK/etcd-w.env"
+render_etcd_env crm-a "$P-etcd-a" > "$WORK/etcd-a.env"
+render_etcd_env witness "$P-etcd-w" > "$WORK/etcd-w.env"
 if grep -h '[<>]' "$WORK"/etcd-?.env; then die "unrendered placeholder in etcd env"; fi
 
 # ---- 1. Standalone pgvector Postgres 17 with synthetic data --------------------------------
@@ -159,12 +148,14 @@ DATADIR=$(pgq "SHOW data_directory" postgres); PRELOAD=$(pgq "SHOW shared_preloa
 echo "ha-rehearsal: standalone seeded: items=$ITEMS0 plain_t=$PLAIN0 data_directory=$DATADIR preload=$PRELOAD"
 
 # ---- 2c. etcd: three members LISTED, two STARTED (phase A shape), auth on --------------------
+# Only each etcd's own files, as compose.ha.yml does (never patroni.key, never ca.key).
+ETCD_PKI=(); for f in ca.crt peer.crt peer.key server.crt server.key healthcheck.crt healthcheck.key; do
+  ETCD_PKI+=(-v "$PKI/$f:/etc/etcd/pki/$f:ro"); done
 for m in a w; do
   must d run -d --name "$P-etcd-$m" "${LBL[@]}" --network "$NET" --env-file "$WORK/etcd-$m.env" \
-    -v "$P-etcd-$m:/etcd-data" -v "$PKI:/etc/etcd/pki:ro" "$ETCD_IMAGE" /usr/local/bin/etcd >/dev/null
+    -v "$P-etcd-$m:/etcd-data" "${ETCD_PKI[@]}" "$ETCD_IMAGE" /usr/local/bin/etcd >/dev/null
 done
 ectl_pre() { d exec -e ETCDCTL_USER= "$P-etcd-a" etcdctl "$@"; }                  # before auth is on
-ectl() { d exec -e "ETCDCTL_USER=root:$ETCD_ROOTPW" "$P-etcd-a" etcdctl "$@"; }  # after
 waitfor 90 ectl_pre endpoint health --cluster || die "etcd did not become healthy"
 # Order from the template: users and roles first, then `auth enable`, all BEFORE Patroni starts.
 must ectl_pre user add root --new-user-password="$ETCD_ROOTPW" >/dev/null
@@ -174,7 +165,7 @@ must ectl_pre role grant-permission patroni --prefix=true readwrite /sorento/ >/
 must ectl_pre user grant-role patroni patroni >/dev/null
 must ectl_pre user add healthcheck --new-user-password="$ETCD_HCPW" >/dev/null
 must ectl_pre auth enable >/dev/null
-echo "ha-rehearsal: etcd members started: crm-a, witness (crm-b not bootstrapped; see the cluster-version finding); auth enabled"
+echo "ha-rehearsal: etcd members started: crm-a, witness; auth enabled"
 
 # ---- render patroni.yml and the env files FROM the templates ---------------------------------
 sed -e "s|<PROD_SHARED_PRELOAD_LIBRARIES>|$PRELOAD|" -e "s|<PROD_DATA_DIRECTORY>|$DATADIR|" \
@@ -203,17 +194,16 @@ ENV
 
 # ---- build the Patroni image from the template Dockerfile ------------------------------------
 must d build -q --platform "$PLATFORM" -t "$P-patroni:test" "${LBL[@]}" \
-  --build-arg "PATRONI_VERSION=$PATRONI_VERSION" --build-arg "WALG_VERSION=$WALG_VERSION" \
   "$TPL/patroni" >/dev/null
 # WAL-G archive volume must be writable by the postgres user (uid of the image).
 must d run --rm --platform "$PLATFORM" -u 0 -v "$P-walg:/walg-archive" --entrypoint chown \
   "$P-patroni:test" postgres:postgres /walg-archive
 
 # ---- 3. Cut over: stop standalone cleanly, start Patroni on the SAME data directory ----------
+T0=$SECONDS
 must d stop -t 120 "$P-pg" >/dev/null
 CTL=$(d run --rm --platform "$PLATFORM" -u postgres -v "$P-pgdata:$DATADIR" --entrypoint pg_controldata \
   "$P-patroni:test" "$DATADIR" 2>&1 | grep 'cluster state')
-T0=$SECONDS
 must d run -d --name "$P-patroni" "${LBL[@]}" --network "$NET" --platform "$PLATFORM" \
   --env-file "$WORK/patroni.env" --env-file "$WORK/walg.env" \
   -v "$P-pgdata:$DATADIR" -v "$P-walg:/walg-archive" -v "$WORK/patroni.yml:/etc/patroni/patroni.yml:ro" \
@@ -332,7 +322,7 @@ exec "$REAL_DOCKER" --context "$ctx" exec "\$c" "\$@"
 SHIM
 chmod +x "$WORK/shim/docker"
 # Disk checks are meaningless against the host disk, so they are switched off (>100%).
-HC=$(PATH="$WORK/shim:$PATH" PROJECT_DIR="$WORK" EXPECT_REPLICAS=0 ETCD_MEMBERS=2 \
+HC=$(PATH="$WORK/shim:$PATH" PROJECT_DIR="$WORK" HC_URL='' SNAPSHOT_DIR="$WORK/none" EXPECT_REPLICAS=0 ETCD_MEMBERS=2 \
   ALERT_AT_PCT=101 PRUNE_AT_PCT=101 \
   PATRONI_URL="http://127.0.0.1:$HPORT/primary" PATRONI_CLUSTER_URL="http://127.0.0.1:$HPORT/cluster" \
   bash "$SCRIPTS/ha-checks.sh" 2>&1); HCRC=$?
