@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sales by account type mock</title>
 <!-- SALES-ACCOUNT-TYPE v4 (1 Nov 2026, owner 15:30: a word that is both a brand and an account type asks which; account type 4 still works, with no definition printed). Annotated static mock, not shipped code. Plan: documentation/plans/sales/PLAN-sales-account-type-1nov.md.
-     Figures are sorento_prod_1028 read-only, tied to the AutoCount "Sorento sales report by account". Agent codes are masked (AGENT A, AGENT B) because this repo is public; totals are real. -->
+     Agent codes are masked and every figure is invented, of the same shape, because this repo is public. The real tie-out is kept outside it. -->
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7eb;--line-soft:#f1f2f4;--primary:#1b84ff;--primary-soft:#e9f3ff;--callout:#e11d74;--radius:8px;--font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 *{box-sizing:border-box}
@@ -44,7 +44,7 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 .case{color:var(--muted);font-size:12px;margin:12px 0 2px;font-weight:600}
 </style></head><body><div class="doc">
 <h1>Sales by account type (v4)</h1>
-<p class="sub">Account type is the customer's AutoCount debtor type. It joins the filters and the summary on Sales &amp; outstanding, on the same figures the bot reads. The blue field is the only new control. Qty stays as it is today and is left out here because the tie-out checked RM only.</p>
+<p class="sub">Account type is the customer's AutoCount debtor type. It joins the filters and the summary on Sales &amp; outstanding, on the same figures the bot reads. The blue field is the only new control. Qty stays as it is today and is left out here. All figures on this page are invented.</p>
 
 <h2 class="frame-title">1. Filter on: AGENT A, CABANA account, by month (1280)</h2>
 <div class="layout"><div class="scroll"><div class="frame w1280">
@@ -61,24 +61,24 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 </div>
 <p class="caption">Invoiced sales</p>
 <div class="grid" style="max-width:520px"><table><thead><tr><th>Month</th><th class="num">RM</th></tr></thead><tbody>
-<tr><td>Jan 2026</td><td class="num">96,416.80</td></tr>
-<tr><td>Feb 2026</td><td class="num">71,106.53</td></tr>
-<tr><td>Mar 2026</td><td class="num">102,371.78</td></tr>
-<tr><td>Apr 2026</td><td class="num">118,942.40</td></tr>
-<tr><td>May 2026</td><td class="num">86,356.80</td></tr>
-<tr><td>Jun 2026</td><td class="num">114,335.11</td></tr>
-<tr><td>Jul 2026</td><td class="num">91,924.56</td></tr>
-<tr><td>Aug 2026</td><td class="num">76,240.53</td></tr>
-<tr><td>Sep 2026</td><td class="num">88,781.93</td></tr>
-<tr><td>Oct 2026</td><td class="num">83,873.54</td></tr>
-<tr class="tot"><td>Total</td><td class="num">930,349.98</td></tr>
+<tr><td>Jan 2026</td><td class="num">100,400.00</td></tr>
+<tr><td>Feb 2026</td><td class="num">70,000.00</td></tr>
+<tr><td>Mar 2026</td><td class="num">105,000.00</td></tr>
+<tr><td>Apr 2026</td><td class="num">120,000.00</td></tr>
+<tr><td>May 2026</td><td class="num">85,000.00</td></tr>
+<tr><td>Jun 2026</td><td class="num">110,000.00</td></tr>
+<tr><td>Jul 2026</td><td class="num">90,000.00</td></tr>
+<tr><td>Aug 2026</td><td class="num">75,000.00</td></tr>
+<tr><td>Sep 2026</td><td class="num">90,000.00</td></tr>
+<tr><td>Oct 2026</td><td class="num">80,000.00</td></tr>
+<tr class="tot"><td>Total</td><td class="num">925,400.00</td></tr>
 </tbody></table></div>
 </div></div>
 <div class="notes"><ol>
 <li><span class="co">1</span><div><b>Account type filter</b>A multi-select like Brand. Its options are the types the customers carry, never a fixed list.<span class="ref">sorento_crm_frontend/components/reports/ReportFilterBar.tsx, drawn from a new SelectParam beside brand in reports/datasets/billing_document_lines.py:231</span></div></li>
 <li><span class="co">2</span><div><b>Same tabs on every basis</b>The filter appears on all six tabs.<span class="ref">sales/sales-and-outstanding/SalesAndOutstandingView.tsx:17-29</span></div></li>
 <li><span class="co">3</span><div><b>Summary table</b>The existing pivot, unchanged.<span class="ref">components/reports/ReportPivotTable.tsx</span></div></li>
-<li><span class="co">4</span><div><b>Tie-out</b>January to August match the AutoCount PDF's CABANA column for this agent to the cent. The PDF stops on 4 Sep, so September and October are the 28 Oct copy's own figures.</div></li>
+<li><span class="co">4</span><div><b>Tie-out</b>Figures here are invented. On the real data the account figure is checked against the AutoCount report.</div></li>
 </ol></div></div>
 
 <h2 class="frame-title">2. Split: AGENT A, January, by account type (1280)</h2>
@@ -94,10 +94,10 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <div class="f"><label>Specification</label><div class="sel">All</div></div>
 </div>
 <div class="grid" style="max-width:520px"><table><thead><tr><th>Account type</th><th class="num">RM</th></tr></thead><tbody>
-<tr><td>SORENTO</td><td class="num">282,203.77</td></tr>
-<tr><td>CERAMIC</td><td class="num">315,483.59</td></tr>
-<tr><td>CABANA</td><td class="num">96,416.80</td></tr>
-<tr class="tot"><td>Total</td><td class="num">694,104.16</td></tr>
+<tr><td>SORENTO</td><td class="num">200,100.00</td></tr>
+<tr><td>CERAMIC</td><td class="num">300,300.00</td></tr>
+<tr><td>CABANA</td><td class="num">100,400.00</td></tr>
+<tr class="tot"><td>Total</td><td class="num">600,800.00</td></tr>
 </tbody></table></div>
 </div></div>
 <div class="notes"><ol>
@@ -113,9 +113,9 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <div class="f"><label>Sales agent</label><div class="sel">AGENT A I, AGENT A III, AGENT A IV</div></div>
 </div>
 <div class="grid"><table><thead><tr><th>Month</th><th class="num">RM</th></tr></thead><tbody>
-<tr><td>Jan 2026</td><td class="num">96,416.80</td></tr>
-<tr><td>Feb 2026</td><td class="num">71,106.53</td></tr>
-<tr><td>Mar 2026</td><td class="num">102,371.78</td></tr>
+<tr><td>Jan 2026</td><td class="num">100,400.00</td></tr>
+<tr><td>Feb 2026</td><td class="num">70,000.00</td></tr>
+<tr><td>Mar 2026</td><td class="num">105,000.00</td></tr>
 </tbody></table></div>
 </div>
 
@@ -128,50 +128,50 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <div class="u">account type</div>
 <div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
 Account type: CABANA
-RM 96,416.80</div>
+RM 100,400.00</div>
 <div class="case">Same question, answered "brand"</div>
 <div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
 Brand: CABANA
-RM 153,888.62</div>
+RM 150,000.00</div>
 <div class="case">The message says which, so no question</div>
 <div class="u">AGENT A sales for cabana brand in Jan</div>
 <div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
 Brand: CABANA
-RM 153,888.62</div>
+RM 150,000.00</div>
 <div class="u">AGENT A sales for cabana account in Jan</div>
 <div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
 Account type: CABANA
-RM 96,416.80</div>
+RM 100,400.00</div>
 <div class="case">A word that is only an account type</div>
 <div class="u">AGENT A sales for ceramic in Jan</div>
 <div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
 Account type: CERAMIC
-RM 315,483.59</div>
+RM 300,300.00</div>
 <div class="case">Account type by number, shown the way it was asked</div>
 <div class="u">AGENT A sales for account type 4 in Jan</div>
 <div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
 Account type: 4
-RM 96,416.80</div>
+RM 100,400.00</div>
 <div class="case">The word and the number name the same account: no question, no brand filter</div>
 <div class="u">total sales 2026 for sales agent AGENT A, cabana, invoiced, breakdown by month, for account 4</div>
 <div class="b">AGENT A invoiced sales by month, 1 Jan - 31 Dec 2026
 Account type: 4
-Jan 2026 RM 96,416.80
-Feb 2026 RM 71,106.53
+Jan 2026 RM 100,400.00
+Feb 2026 RM 70,000.00
 ... one line per month ...</div>
 <div class="case">The word and the number differ: the word can only be the brand, so no question</div>
 <div class="u">cabana on account type 3 for AGENT A in Jan</div>
 <div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
 Brand: CABANA
 Account type: 3
-RM 76,877.71</div>
+RM 70,000.00</div>
 <div class="case">Split by account type</div>
 <div class="u">AGENT A January by account type</div>
 <div class="b">AGENT A invoiced sales by account type, 1 Jan - 31 Jan 2026
-CERAMIC RM 315,483.59
-SORENTO RM 282,203.77
-CABANA RM 96,416.80
-Total RM 694,104.16</div>
+CERAMIC RM 300,300.00
+SORENTO RM 200,100.00
+CABANA RM 100,400.00
+Total RM 600,800.00</div>
 <div class="case">A number the customers do not carry</div>
 <div class="u">AGENT A sales for account type 9 in Jan</div>
 <div class="b">No account type 9. Account types: 1, 2, 3, 4, PROJECT, SAMPLE.</div>

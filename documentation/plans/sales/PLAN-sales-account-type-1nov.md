@@ -7,15 +7,11 @@ Agent codes are masked (AGENT A, AGENT B) because this repo is public. The real 
 
 ## 1. Why
 
-The bot's "sales for cabana in Jan" did not tally with AutoCount's "Sorento sales report by account". Both figures are right for
-what they read:
+The bot's "sales for cabana in Jan" did not tally with AutoCount's "Sorento sales report by account". Both figures were right for what
+they read: one read the customer's account, the other the item's brand (`billing_document_lines.py:85-86`). On the real data the two differ
+by about half. The CRM could not answer the first reading, and a bot asked for "account 4" read it as a customer name.
 
-| Reading | AGENT A, January 2026 |
-| --- | --- |
-| CABANA is the customer's account (the AutoCount report) | RM 96,416.80 |
-| CABANA is the item's brand (the bot, `billing_document_lines.py:85-86`) | RM 153,888.62 |
-
-The CRM cannot answer the first reading, and a bot asked for "account 4" reads it as a customer name.
+Figures in this repo (plan, mock, tests) are invented, of the same shape. The real tie-out is kept out of this public repo.
 
 ## 2. Findings (measured)
 
@@ -43,8 +39,8 @@ The CRM cannot answer the first reading, and a bot asked for "account 4" reads i
 
 ## 3. Tie-out: the `[A/C]` tag against the AutoCount PDF
 
-The PDF is "Sorento sales report by account", 01/01/26 to 04/09/26. Its file is an Excel export, so a hand adjustment cannot be
-ruled out. Compared per agent and month: 78 agent-months across 10 agents. Four other PDF rows were not mapped to agent codes.
+The PDF is "Sorento sales report by account", 1 Jan to 4 Sep 2026. Its file is an Excel export, so a hand adjustment cannot be ruled out.
+Compared per agent and month: 78 agent-months across 10 agents. Four other PDF rows were not mapped to agent codes.
 
 | Number | PDF column | Cells that tie | Gap % |
 | --- | --- | --- | --- |
@@ -55,20 +51,17 @@ ruled out. Compared per agent and month: 78 agent-months across 10 agents. Four 
 
 The gaps have two causes:
 
-- **An untagged ledger the report counts in a column.** AGENT A, January: RM 393.00 is in SORENTO. It is the agent's only gap in
-  nine months and four columns. The same shape lands elsewhere for another agent: RM 1,588.50 untagged is in PROJECT.
-- **A ledger whose tag and report column disagree.** AGENT B: CABANA by tag is RM 14,047.08 above the PDF over March to August,
-  and SORENTO is below it by nearly the same amounts. UNVERIFIED cause, most likely ledgers tagged `[A/C IV]` with type SORENTO;
-  the partner lane's DebtorType x tag table will show it.
+- **An untagged ledger the report counts in a column.** The same shape lands in SORENTO for one agent and PROJECT for another, so a name with no
+  tag cannot say which column it belongs to.
+- **A ledger whose tag and report column disagree.** One agent's CABANA by tag is above the PDF over six months, and SORENTO below it by nearly
+  the same amounts. UNVERIFIED cause, most likely ledgers tagged `[A/C IV]` with type SORENTO; the partner lane's DebtorType x tag table will show it.
 
-Four of the differing cells belong to one PDF row whose agent code was inferred from its January figures, and the PDF has a similar
-row beside it, so those four may be the comparison's mapping rather than the tag.
+Four of the differing cells belong to one PDF row whose agent code was inferred from its January figures, and the PDF has a similar row beside it, so
+those four may be the comparison's mapping rather than the tag.
 
-AGENT A by month, CABANA account and `[A/C IV]` both: Jan 96,416.80, Feb 71,106.53, Mar 102,371.78, Apr 118,942.40, May 86,356.80,
-Jun 114,335.11, Jul 91,924.56, Aug 76,240.53, 1-4 Sep 27,290.36; total 784,984.87.
-
-AGENT A January: SORENTO 282,203.77 (A/C I 281,810.77 + untagged 393.00), CERAMIC 315,483.59, CABANA 96,416.80, total 694,104.16.
-Brand CABANA across accounts: A/C III 76,877.71 + A/C IV 77,010.91 = 153,888.62, the bot's figure.
+Shape of the agreed examples, in invented figures. AGENT A, January: account 1 RM 200,100.00 (199,700.00 tagged + 400.00 untagged), account 3 RM
+300,300.00, account 4 RM 100,400.00, total RM 600,800.00. Brand CABANA across accounts RM 150,000.00: RM 70,000.00 on account 3 and RM 80,000.00 on
+account 4.
 
 ## 4. Behaviour card (decided)
 
@@ -96,15 +89,14 @@ Rules:
    is already the CRM's own project / cash concept, `app/models/order.py:184-190`).
 5. A month alone is that month of this year. A month or year split never prints "Top N".
 6. A word and a number in one message need no question: if the word is the number's type they name one account, so the account filter
-   alone (the owner's "AGENT A, cabana, invoiced, by month, for account 4" ties to the report, January RM 96,416.80); if it differs, the word can
-   only be the brand ("cabana on account type 3", RM 76,877.71). "project" stays the channel and "sample" the category, as today, unless the
+   alone (the owner's "AGENT A, cabana, invoiced, by month, for account 4" ties to the report); if it differs, the word can
+   only be the brand ("cabana on account type 3"). "project" stays the channel and "sample" the category, as today, unless the
    message says account type.
 7. Nothing loaded: "Account types are not loaded from AutoCount yet", never RM 0. An unknown number says so and lists the numbers and
    any type with no number. Rows add up to all sales. "top accounts" stays customers.
 
-Known limits on "tally 100%": the CRM's agent total itself differs from the PDF on two agent-months, whatever the account reads
-(RM 2,592.24 and RM 290.57, cause UNVERIFIED; the PDF was made on 4 Sep and the copy is from 28 Oct). The match on every other cell
-is expected, not measured, until real types arrive.
+Known limits on "tally 100%": the CRM's agent total itself differs from the PDF on two agent-months, whatever the account reads (cause UNVERIFIED; the
+PDF was made on 4 Sep and the copy is from 28 Oct). The match on every other cell is expected, not measured, until real types arrive.
 
 Test data: an UPDATE from the tag on this lane's own test copy only, never a shared copy.
 

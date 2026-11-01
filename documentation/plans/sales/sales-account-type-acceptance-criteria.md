@@ -42,9 +42,9 @@ The route is `GET /api/v1/order-management/report-ask`. The param is `account_ty
 - **AT-13 [BE]** A customer-scoped contact (dealer) naming the filter or the split is 403 `report_dimension_not_allowed`.
 - **AT-14 [BE]** Another company's types and numbers are neither listed nor matched, and figures never cross companies: not on the screen run for a user granted one company, and not with `company=` naming one of a contact's two companies, where the number and the list are that company's own. A brand-scoped contact's figure stays inside its brands with the filter on.
 - **AT-15 [BE]** `dataset=chat` with `account_types` is 422 `unknown_param`.
-- **AT-16 [T]** Tie-out on seeded rows with the AutoCount report's figures, one agent, January 2026, types on every ledger: account 1 RM
-  282,203.77 (281,810.77 on `[A/C I]` ledgers + 393.00 on an untagged ledger typed SORENTO), account 3 RM 315,483.59 (27,717.93 + 287,765.66 across
-  two agent codes), account 4 RM 96,416.80 (6,561.00 + 89,855.80), total RM 694,104.16. Brand CABANA on account 3: RM 76,877.71.
+- **AT-16 [T]** Tie-out shape on seeded rows, invented figures, one agent, January 2026, types on every ledger: account 1 RM 200,100.00 (199,700.00 on `[A/C I]`
+  ledgers + 400.00 on an untagged ledger typed SORENTO), account 3 RM 300,300.00 (30,000.00 + 270,300.00 across two agent codes), account 4 RM 100,400.00 (6,000.00 +
+  94,400.00), total RM 600,800.00. Brand CABANA on account 3: RM 70,000.00.
 - **AT-17** Dropped. A same-code fan-out for the type has no problem to solve: no company has two ledgers with one debtor code on the
   28 Oct copy (`account-type-check-4-output.txt`).
 - **AT-18 [BE]** Screen, approved on mock v4 (owner, 1 Nov 15:34): on the reports metadata for the six Sales & outstanding definitions, the
@@ -79,5 +79,5 @@ baseline. "Stored types" are the types the customers of the asker's company carr
   "top accounts" stays customers.
 - **AT-28 [T]** "sales for cabana in Jan" means 1 Jan to 31 Jan of this year, one total, on a fresh conversation. A month or year split never prints
   "Top N".
-- **AT-29 [T]** The owner's examples tie on seeded figures: AT-16's agent gives RM 96,416.80 on account, RM 153,888.62 on brand.
+- **AT-29 [T]** The owner's examples on AT-16's invented figures: account RM 100,400.00, brand RM 150,000.00.
 - **AT-30 [T]** The AI panel's agent can pass an account type word or number through `crm_report_ask` and reads the same reply.
