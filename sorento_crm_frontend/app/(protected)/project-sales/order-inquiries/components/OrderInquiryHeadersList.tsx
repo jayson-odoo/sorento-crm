@@ -56,6 +56,7 @@ import {
   orderInquiryHeaderStatusLabel,
   orderInquiryHeaderStatusVariant,
   orderInquiryReserveStatusLabel,
+  reserveStatusFrom,
   orderInquiryReserveStatusVariant,
   type OrderInquiryReserveStatus,
 } from '../../_shared/lib/orderInquiryHeaderStatus';
@@ -75,11 +76,7 @@ const ACTION_PERMISSION = 'projects.order_inquiry.action';
 /** The send route's own cap (`HandoverResendIn`). */
 const MAX_RESEND = 50;
 
-function reserveFrom(value: string | null): OrderInquiryReserveStatus | '' {
-  return (ORDER_INQUIRY_RESERVE_STATUSES as string[]).includes(value ?? '')
-    ? (value as OrderInquiryReserveStatus)
-    : '';
-}
+const reserveFrom = reserveStatusFrom;
 
 function stateFrom(value: string | null): StateFilter {
   return value === 'all' || value === 'completed' ? value : 'outstanding';

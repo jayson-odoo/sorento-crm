@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
+import { reserveStatusFrom } from '../lib/orderInquiryHeaderStatus';
 import { useUploadActivity } from '@/components/upload-activity/useUploadActivity';
 import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
 import {
@@ -127,7 +128,8 @@ function orderInquiryHeaderListParamsFromUrl(
     raised_by: params.filters.raised_by || undefined,
     agent: params.filters.agent || undefined,
     project: params.filters.project || undefined,
-    reserve: (params.filters.reserve as OrderInquiryHeaderListParams['reserve']) || undefined,
+    // A request id (the one-OI email link) is not a list status: the API refuses it.
+    reserve: reserveStatusFrom(params.filters.reserve) || undefined,
     inquiry_no: params.filters.inquiry_no || undefined,
   };
 }
@@ -135,6 +137,14 @@ function orderInquiryHeaderListParamsFromUrl(
 /** The detail page's prev/next pager (`DetailActions`'s `pager` prop): the same key and
  * fetch the list itself uses, so a step within the loaded page issues no request. */
 export const orderInquiryHeadersPagerQuery = {
+  /** The next OI is on the same list, so a list status stays; a request id was for the OI it
+   * came with and goes. */
+  hrefFor: (id: string, search: string): string => {
+    const query = new URLSearchParams(search);
+    if (!reserveStatusFrom(query.get('reserve'))) query.delete('reserve');
+    const qs = query.toString();
+    return `/project-sales/order-inquiries/${id}${qs ? `?${qs}` : ''}`;
+  },
   listQueryKey: (params: ListPagerParams) =>
     orderInquiryHeadersListQueryKey(orderInquiryHeaderListParamsFromUrl(params)),
   fetchPage: (params: ListPagerParams): Promise<ListPagerPage> =>

@@ -29,6 +29,14 @@ export const ORDER_INQUIRY_RESERVE_STATUSES: OrderInquiryReserveStatus[] = [
   'reserved',
 ];
 
+/** `?reserve=` holds a list status or, from a one-OI email link, a request id: only the
+ * former is a status. `''` for anything else. */
+export function reserveStatusFrom(value: string | null | undefined): OrderInquiryReserveStatus | '' {
+  return (ORDER_INQUIRY_RESERVE_STATUSES as string[]).includes(value ?? '')
+    ? (value as OrderInquiryReserveStatus)
+    : '';
+}
+
 export function orderInquiryReserveStatusLabel(status: OrderInquiryReserveStatus): string {
   switch (status) {
     case 'parked':
