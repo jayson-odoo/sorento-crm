@@ -783,33 +783,36 @@ def test_a_pg_dump_that_dies_part_way_stops_the_deploy(box):
 # Patroni allows only local peer auth: admin commands inside `db` run as OS user postgres
 # AND DB user postgres. Prod-dependent bits fail loudly in a preflight, never guessed.
 
+SHA = "0123456789abcdef0123456789abcdef01234567"
 
-def _ha_box(box, *, compose_file=True, postgres_db=True):
-    """compose.ha.yml in the project dir; COMPOSE_FILE (and POSTGRES_DB) set in .deploy.env."""
-    (box["root"] / "compose.ha.yml").write_text("services: {}\n")
-    lines = []
-    if compose_file:
-        lines.append("COMPOSE_FILE=docker-compose.yml:compose.ha.yml")
-    if postgres_db:
-        lines.append("POSTGRES_DB=sorento_app")
-    (box["root"] / ".deploy.env").write_text("\n".join(lines) + "\n")
-    # Extend the docker stub: log COMPOSE_FILE per call; admin psql can be made to fail.
+
+def _patch_stub(box, *, admin_fail_hook=True):
+    """Extend the docker stub: log COMPOSE_FILE and FOO_KNOB per call; admin psql can fail."""
     stub = (box["stub"] / "docker_stub.py").read_text()
     stub = stub.replace(
         'args = sys.argv[1:]\n',
         'args = sys.argv[1:]\n'
-        'open(os.path.join(d, "env.log"), "a").write("COMPOSE_FILE=" + os.environ.get("COMPOSE_FILE", "<unset>") + "\\n")\n',
+        'open(os.path.join(d, "env.log"), "a").write("COMPOSE_FILE=" + os.environ.get("COMPOSE_FILE", "<unset>") + " FOO_KNOB=" + os.environ.get("FOO_KNOB", "<unset>") + "\\n")\n',
         1,
     )
-    stub = stub.replace(
-        '        elif "psql" in joined:\n',
-        '        elif "psql" in joined:\n'
-        '            if os.path.exists(os.path.join(d, "admin_fail")) and "-u postgres" in joined:\n'
-        '                sys.stderr.write("psql: error: peer authentication failed\\n")\n'
-        '                sys.exit(2)\n',
-        1,
-    )
+    if admin_fail_hook:
+        stub = stub.replace(
+            '        elif "psql" in joined:\n',
+            '        elif "psql" in joined:\n'
+            '            if os.path.exists(os.path.join(d, "admin_fail")) and "-u postgres" in joined:\n'
+            '                sys.stderr.write("psql: error: peer authentication failed\\n")\n'
+            '                sys.exit(2)\n',
+            1,
+        )
     (box["stub"] / "docker_stub.py").write_text(stub)
+
+
+def _ha_box(box, *, compose_file=True):
+    """compose.ha.yml in the project dir; COMPOSE_FILE set in .deploy.env."""
+    (box["root"] / "compose.ha.yml").write_text("services: {}\n")
+    lines = ["COMPOSE_FILE=docker-compose.yml:compose.ha.yml"] if compose_file else []
+    (box["root"] / ".deploy.env").write_text("\n".join(lines) + "\n")
+    _patch_stub(box)
 
 
 def _changed_anything(calls) -> bool:
@@ -819,23 +822,28 @@ def _changed_anything(calls) -> bool:
     ) or _swapped(calls)
 
 
-def test_h4b_every_deploy_env_variable_is_exported_to_compose(box):
-    (box["root"] / ".deploy.env").write_text("COMPOSE_FILE=docker-compose.yml:compose.ha.yml\nPOSTGRES_DB=sorento_app\n")
-    stub = (box["stub"] / "docker_stub.py").read_text().replace(
-        'args = sys.argv[1:]\n',
-        'args = sys.argv[1:]\n'
-        'open(os.path.join(d, "env.log"), "a").write("COMPOSE_FILE=" + os.environ.get("COMPOSE_FILE", "<unset>") + "\\n")\n',
-        1,
-    )
-    (box["stub"] / "docker_stub.py").write_text(stub)
+def test_h4b_only_compose_file_is_exported_from_deploy_env(box):
+    (box["root"] / ".deploy.env").write_text("COMPOSE_FILE=docker-compose.yml:compose.ha.yml\nFOO_KNOB=1\n")
+    _patch_stub(box, admin_fail_hook=False)
     _run(box)
     seen = (box["stub"] / "env.log").read_text().splitlines()
-    assert seen and all(l == "COMPOSE_FILE=docker-compose.yml:compose.ha.yml" for l in seen), seen[:3]
+    assert seen and all(l == "COMPOSE_FILE=docker-compose.yml:compose.ha.yml FOO_KNOB=<unset>" for l in seen), seen[:3]
+
+
+@pytest.mark.parametrize("mode", [0o664, 0o666, 0o622])
+def test_h4b_group_or_other_writable_deploy_env_is_refused_before_any_change(box, mode):
+    env_file = box["root"] / ".deploy.env"
+    env_file.write_text("DEPLOY_MIN_AVAILABLE_MB=1\n")
+    env_file.chmod(mode)
+    r = _run(box)
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert ".deploy.env" in r.stdout + r.stderr
+    assert not _changed_anything(_calls(box)), _calls(box)
 
 
 def test_h4b_compose_ha_file_present_but_not_in_compose_file_is_refused_before_any_change(box):
     _ha_box(box, compose_file=False)
-    r = _run(box)
+    r = _run(box, IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
     assert r.returncode != 0, r.stdout + r.stderr
     assert "compose.ha.yml" in r.stdout + r.stderr
     assert not _changed_anything(_calls(box)), _calls(box)
@@ -844,24 +852,51 @@ def test_h4b_compose_ha_file_present_but_not_in_compose_file_is_refused_before_a
 def test_h4b_failed_admin_connection_stops_the_deploy_before_any_change(box):
     _ha_box(box)
     (box["stub"] / "admin_fail").write_text("1")
-    r = _run(box)
+    r = _run(box, IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
     assert r.returncode != 0, r.stdout + r.stderr
     assert "admin connection" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
     assert any("exec -T -u postgres db psql -U postgres" in l for l in _calls(box)), _calls(box)
     assert not _changed_anything(_calls(box)), _calls(box)
 
 
-def test_h4b_unset_postgres_db_stops_the_deploy_before_any_change(box):
-    _ha_box(box, postgres_db=False)
-    r = _run(box)
+def test_h4b_preflight_flags_compose_ha_file_that_is_not_loaded(box):
+    _ha_box(box, compose_file=False)
+    r = _run(box, args=("--preflight",), IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
     assert r.returncode != 0, r.stdout + r.stderr
-    assert "POSTGRES_DB" in r.stdout + r.stderr
+    assert "compose.ha.yml" in r.stdout + r.stderr
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_h4b_preflight_flags_a_failing_admin_connection(box):
+    _ha_box(box)
+    (box["stub"] / "admin_fail").write_text("1")
+    r = _run(box, args=("--preflight",), IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "admin connection" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_h4b_ha_alembic_preflight_with_no_rows_stops_before_any_pull(box):
+    _ha_box(box)
+    (box["stub"] / "alembic_rows").write_text("0")
+    r = _run(box, IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "alembic_version" in r.stdout + r.stderr
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+@pytest.mark.parametrize("tag", ["abc123", "A" * 40, "0123456789abcdef0123456789abcdef0123456", "g" * 40])
+def test_h4b_ha_image_tag_must_be_a_40_hex_sha(box, tag):
+    _ha_box(box)
+    r = _run(box, IMAGE_TAG=tag, POSTGRES_DB="sorento_app")
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "IMAGE_TAG" in r.stdout + r.stderr
     assert not _changed_anything(_calls(box)), _calls(box)
 
 
 def test_h4b_ha_snapshot_and_alembic_preflight_run_as_the_postgres_user(box):
     _ha_box(box)
-    r = _run(box)
+    r = _run(box, IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
     assert r.returncode == 0, r.stdout + r.stderr
     calls = _calls(box)
     for needle in ("pg_dump", "count(*) from public.alembic_version"):
@@ -883,8 +918,15 @@ def test_h4b_non_ha_snapshot_and_preflight_commands_are_unchanged(box):
 
 def test_h4b_successful_deploy_records_the_image_tag_for_the_role_watcher(box):
     _ha_box(box)
-    r = _run(box, IMAGE_TAG="tag-h4b-1")
+    r = _run(box, IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
     assert r.returncode == 0, r.stdout + r.stderr
     tag = box["root"] / ".ha-image-tag"
     assert tag.exists(), list(box["root"].iterdir())
-    assert tag.read_text().strip() == "tag-h4b-1"
+    assert tag.read_text().strip() == SHA
+
+
+def test_h4b_a_lock_file_the_deploy_creates_is_owner_only(box):
+    assert not box["lock"].exists()
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert stat.S_IMODE(box["lock"].stat().st_mode) == 0o600, oct(box["lock"].stat().st_mode)
