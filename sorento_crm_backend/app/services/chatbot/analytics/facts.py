@@ -66,8 +66,9 @@ _SWEEP_CHUNK = 100
 
 
 #: Ingresses that are never customer facts: a console turn is a rehearsal, and a panel turn is a
-#: staff member's own question (AGENTIC-UNIFY Q3: it stays in the panel's usage views).
-_NOT_FACTS = ("console", "panel")
+#: staff member's own question (AGENTIC-UNIFY Q3: it stays in the panel's usage views), and an agent
+#: turn is counted on the inbox row that carried it (`_eligible`).
+_NOT_FACTS = ("console", "panel", "agent")
 
 
 def _turn_dict(row: ChatbotTurn) -> dict[str, Any]:
@@ -82,7 +83,9 @@ def _turn_dict(row: ChatbotTurn) -> dict[str, Any]:
 
 
 def _eligible(row: ChatbotTurn | None) -> bool:
-    """A closed LIVE turn. Test turns and console turns never become facts (D14)."""
+    """A closed LIVE turn. Test turns and console turns never become facts (D14). An agent turn is
+    not one either: a WhatsApp agent answer is counted once, on the inbox row that carried it (the
+    row the customer's message and the post belong to), so its own `ingress="agent"` row is skipped."""
     return (
         row is not None
         and not row.is_test

@@ -306,7 +306,6 @@ def test_AC10_a_forced_turn_runs_past_the_daily_cap_and_is_counted(
 # The words per reason: `AGENT_REFUSAL_MESSAGES` (the console's own map).
 REFUSAL_WORDS = {
     "switch_off": "Agent mode is off for this contact (Contact Details > Chatbot).",
-    "no_linked_user": "This contact has no linked active user.",
     "ai_replies_off": "AI replies are off for this contact.",
 }
 
@@ -339,10 +338,13 @@ def test_AC11_a_refused_contact_gets_the_refusal_in_words_that_name_the_reason_n
 def test_AC11_two_reasons_do_not_read_the_same(
     client, eligible, jev_must_not_run, real_agent, stub_console_seams, bot_parser,
 ):
-    _refuse(eligible["db"], eligible, "no_linked_user")
+    _refuse(eligible["db"], eligible, "ai_replies_off")  # no_linked_user is no longer a refusal (W1)
     linked = _post(client, eligible, "x", force_agent=True).json()["reply_text"]
     db = eligible["db"]
-    db.execute(text("UPDATE respond_contacts SET chatbot_agent_enabled = false WHERE id = :i"), {"i": eligible["pk"]})
+    db.execute(
+        text("UPDATE respond_contacts SET chatbot_allowed = true, chatbot_agent_enabled = false WHERE id = :i"),
+        {"i": eligible["pk"]},
+    )
     db.commit()
     off = _post(client, eligible, "x", force_agent=True).json()["reply_text"]
     assert linked != off

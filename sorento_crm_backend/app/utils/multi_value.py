@@ -23,8 +23,11 @@ def _capped(values: list[str], label: str) -> list[str]:
     return values
 
 
-def multi_values(raw: Iterable[str] | str | None, label: str = "filter") -> Optional[list[str]]:
-    """The distinct non-blank values, in the order given; None when there are none (no filter)."""
+def multi_values(
+    raw: Iterable[str] | str | None, label: str = "filter", *, capped: bool = True
+) -> Optional[list[str]]:
+    """The distinct non-blank values, in the order given; None when there are none (no filter).
+    `capped=False` skips the 200-value cap (the reserve emails' OI list)."""
     if raw is None:
         return None
     items = [raw] if isinstance(raw, str) else raw
@@ -34,7 +37,7 @@ def multi_values(raw: Iterable[str] | str | None, label: str = "filter") -> Opti
             value = part.strip()
             if value and value not in out:
                 out.append(value)
-    return _capped(out, label) or None
+    return (_capped(out, label) if capped else out) or None
 
 
 def multi_text(raw: Iterable[str] | str | None, label: str = "filter") -> Optional[list[str]]:

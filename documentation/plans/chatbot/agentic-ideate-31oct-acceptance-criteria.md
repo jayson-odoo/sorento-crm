@@ -128,7 +128,7 @@ Q4 is (a), owner 31 Oct: any bot question.
 ### Contract for the tests
 
 - In `agent/writes.py`: `CREATE_IDEA = "crm_idea_create"`, `UPDATE_IDEA = "crm_idea_update"`, `LIST_IDEAS = "crm_ideas_list"`,
-  `IDEA_IS_TEST = True`. Slug for all three: `ideation.board.view`.
+  `IDEA_IS_TEST = True`. Slug for all three: `ideation.board.view`. (Historical: the flag was replaced by the turn-carried `_is_test`, fail-safe True; AGENTIC-KNOWLEDGE W1 S6.)
 - `crm_idea_create` args: `problem` (required), `title`, `desired_outcome`, `use_cases` (list of text), `current_workaround`.
 - `crm_idea_update` args: `idea_id` (required), and the same five fields, all optional but at least one required.
 - `crm_ideas_list` args: optional `search`.
@@ -190,13 +190,13 @@ Q4 is (a), owner 31 Oct: any bot question.
   row whose `isMine` is not true is skipped. Other ss failures return the typed `error`. Test ideas come first in the list, so a
   full ss list cannot push them out. Each row says whether it is a test idea.
 - **AC-RV-5 [BE]** A turn that stored a proposal never keeps `asked_back`, even if the final answer set it.
-- **AC-RV-6 [BE]** `intake_ref` differs between `IDEA_IS_TEST` true and false for the same user and text.
+- **AC-RV-6 [BE]** `intake_ref` differs between `IDEA_IS_TEST` true and false for the same user and text. (Now: differs between a test step and a live step, `_is_test`.)
 - **AC-RV-7 [BE]** With an operator acting for someone else, `crm_ideas_list` needs the operator to hold `ideation.ideas.manage`,
   else it is `denied`, with no ss call and no list of the linked user's ideas. With it, the rows come back.
 - **AC-RV-8 [BE]** `idea_id` must be one valid uuid: a comma-joined or JSON-list value is refused before any ss call.
 - **AC-RV-9 [BE]** `use_cases` takes at most 5 items (the shared cleaner keeps 5, so more would be cut silently), each at most
   4000 characters. More is `invalid`, and nothing is sent to ss.
-- **AC-RV-10 [BE]** While `IDEA_IS_TEST` is true, `crm_idea_update` on a real idea (`isTest` not true) is refused at the proposal,
+- **AC-RV-10 [BE]** While `IDEA_IS_TEST` is true, `crm_idea_update` on a real idea (`isTest` not true) is refused at the proposal, (Rule removed in S6.)
   with a plain line pointing to the board, and no PATCH is sent. A test idea of the user's still works. When the flag is false,
   a real idea of the user's works.
 

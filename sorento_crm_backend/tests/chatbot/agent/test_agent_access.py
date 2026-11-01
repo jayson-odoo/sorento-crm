@@ -2,7 +2,8 @@
 
 Postgres via the blank schema (the new `chatbot_agent_enabled` column and the agent table
 exist only once the ORM carries them). Refusal order is part of the contract:
-contact_not_found, ai_replies_off, switch_off, no_linked_user.
+contact_not_found, ai_replies_off, switch_off. A contact with no active linked user is eligible
+and runs as the contact principal (AGENTIC-KNOWLEDGE W1).
 """
 from __future__ import annotations
 
@@ -40,22 +41,31 @@ def test_switch_off_is_refused_before_the_linked_user_is_looked_at(db):
     assert _reason(db, contact["respond_id"]) == "switch_off"
 
 
-def test_no_linked_user_is_refused(db):
+def test_no_linked_user_runs_as_the_contact_principal(db):
+    from app.services.chatbot.agent.access import build_context
+
     contact = seed_contact(db)
-    assert _reason(db, contact["respond_id"]) == "no_linked_user"
+    ctx = build_context(db, contact["respond_id"])
+    assert (ctx.principal, ctx.user_id) == ("contact", "")
 
 
-def test_an_inactive_linked_user_is_no_linked_user(db):
+def test_an_inactive_linked_user_leaves_a_contact_principal(db):
+    from app.services.chatbot.agent.access import build_context
+
     contact = seed_contact(db)
     seed_user(db, contact_pk=contact["pk"], status="INACTIVE")
-    assert _reason(db, contact["respond_id"]) == "no_linked_user"
+    ctx = build_context(db, contact["respond_id"])
+    assert (ctx.principal, ctx.user_id) == ("contact", "")
 
 
-def test_a_user_linked_to_another_contact_does_not_count(db):
+def test_a_user_linked_to_another_contact_does_not_make_this_one_a_user_principal(db):
+    from app.services.chatbot.agent.access import build_context
+
     contact = seed_contact(db)
     other = seed_contact(db)
     seed_user(db, contact_pk=other["pk"])
-    assert _reason(db, contact["respond_id"]) == "no_linked_user"
+    ctx = build_context(db, contact["respond_id"])
+    assert (ctx.principal, ctx.user_id) == ("contact", "")
 
 
 def test_success_fills_the_context(db):

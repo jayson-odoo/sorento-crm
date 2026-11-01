@@ -169,3 +169,22 @@ describe('AC-SN-44 ParkedSendDialog', () => {
     expect(screen.queryByRole('button', { name: /^send \d+ emails?$/i })).not.toBeInTheDocument();
   });
 });
+
+describe('AC-RF-28 desktop preview width', () => {
+  it('gives the email preview the 900 px card width', () => {
+    renderDialog();
+    expect(frameProps).toHaveBeenCalled();
+    expect(frameProps.mock.calls[frameProps.mock.calls.length - 1][0]).toEqual(
+      expect.objectContaining({ desktopWidth: 900 }),
+    );
+  });
+});
+
+describe('AC-RF-28 dialog is wide enough for a 900 px frame', () => {
+  it('is capped at sm:max-w-5xl, not max-w-4xl', () => {
+    renderDialog();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.className).toContain('sm:max-w-5xl');
+    expect(dialog.className).not.toMatch(/max-w-4xl/);
+  });
+});
