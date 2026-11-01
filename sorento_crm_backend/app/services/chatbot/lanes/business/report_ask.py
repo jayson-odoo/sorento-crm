@@ -1009,11 +1009,34 @@ _HELD_TOTAL_KEYS = (
     "date_from", "date_to", "product_code", "product_ids", "brand_ids", "category_ids", "customer_ids",
     "sales_agent_ids", "customer_agent_ids", "channel", "spec", "warehouse_codes", "company",
 )
+#: A follow-up over a held customer (`_customer_stays`) keeps the basis and any measure on screen too (S6c; the message's
+#: own win, and the reply's header names them). A company total with no customer is still asked (SALES-TOTAL-ASK).
+_HELD_CUSTOMER_KEYS = (*_HELD_TOTAL_KEYS, "basis", "measure")
 #: REPORT-SMART-L R9: the open question a sales report reply arms with its drill offer (`fetch._sales_report_output`),
 #: so the engine-held sign that the last answer was a sales report (`contracts.DETAIL_OFFER_KINDS`).
 SALES_REPORT_OFFER = "sales_report_detail"
 #: The bases `crm_sales_report` answers: delivered only (none named is that report's own figure).
 _SALES_REPORT_BASES = (None, "delivered")
+
+
+def _follows_up(verdict: dict[str, Any], frame: dict[str, Any], replaced: dict[str, Any] | None) -> bool:
+    """Is this message a follow-up on the report held, by the parser's own `entity_op`? `reuse` always. Owner ruling, 1 Nov
+    2026 (CHATBOT-FOLLOWUP-CARRY): a follow-up over a held customer keeps it unless a new customer is named, and the parser
+    reads the same words as `modify` on some runs and `replace_combine` on others (its own table: "a new product keeps the
+    held customer"), so those count too when they name no customer. `replace_combine` needs a customer held: over anything
+    else it stays what R8 ruled, a message naming its own value."""
+    entity_op = verdict.get("entity_op")
+    if entity_op == "reuse":
+        return True
+    if entity_op not in ("modify", "replace_combine") or "customer" in _current_kinds(verdict):
+        return False
+    held_args = _dict(_dict(replaced).get("extras")).get("args") if replaced is not None else frame
+    return entity_op == "modify" or bool(_dict(held_args).get("customer_ids"))
+
+
+def _ranking_holds_a_customer(frame: dict[str, Any]) -> bool:
+    """A ranking filtered to a customer, still on screen. The customer is its filter, not its ranked side."""
+    return bool(frame.get("customer_ids")) and not frame.get("stale") and frame.get("group_by") != "customer"
 
 
 def with_held(
@@ -1029,9 +1052,10 @@ def with_held(
     """Engine seam, REPORT-SMART-L R8 (crew ruling, EVAL-BENCH v63 gate): when the reply to a held sales report
     total becomes a ranking, what that total showed stays, and only what is still missing is asked.
 
-    On only when the parser reuses the held subject (`entity_op` reuse, no topic reset, no `new_subject` op), the
+    On only when the parser keeps the held subject (`_follows_up`, no topic reset, no `new_subject` op), the
     verdict is a ranking (R9: an axis-less one too, which runs the total), no ranking frame is held (a held one
-    keeps its own rules: refine, S6b, ruling B, stale), the last ask was a sales figure, and no open ask is being
+    keeps its own rules: refine, S6b, ruling B, stale; one filtered to a customer also keeps that customer when the
+    parser reads no refine), the last ask was a sales figure, and no open ask is being
     answered. `held_domains`: the domains the focus held before this turn's State applier wrote its own (the engine
     reads them; `Focus.domains` when not given). The source is the open report ask this verdict replaced
     (`names_its_own_ask`), alone, less what a total or month trend settled on its own (`_settled_by_its_axis`: no
@@ -1044,12 +1068,13 @@ def with_held(
     back to `sales_report`, whose lane reuses the held window and products as it always has); ordered or
     outstanding, which that report has not, runs the report-ask total on the held product and period below."""
     domains = held_domains if held_domains is not None else getattr(focus, "domains", None)
+    frame = _dict(getattr(focus, "sales_ranking_frame", None))
     if (
         jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME
-        or verdict.get("entity_op") != "reuse"
+        or not _follows_up(verdict, frame, replaced)
         or verdict.get("topic_reset") is True
         or _new_subject(verdict, parser_ops)
-        or _dict(getattr(focus, "sales_ranking_frame", None)).get("group_by")
+        or (frame.get("group_by") and not _ranking_holds_a_customer(frame))
         or contracts.SALES_DOMAIN not in (domains or [])
         or (open_ask is not None and replaced is None)
     ):
@@ -1059,7 +1084,7 @@ def with_held(
         # AC-OR9: a typed count keeps the ranking. With no axis there is no total to hold it (a total settles no
         # count), so neither the carry nor the reroute applies: the reply is today's.
         return verdict
-    if replaced is None and verdict.get("top_n") is None and verdict.get("bare_top_selling") is True:
+    if replaced is None and verdict.get("top_n") is None and verdict.get("bare_top_selling") is True and not frame.get("group_by"):
         # R9 (ruling A on v63), REPORT-UNIFY: the top selling label with no grain and no count, under a held total,
         # answers THAT total (the held window and product, below), like the axis-less ranking it is.
         verdict = {**{k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}, "group_by": None}
@@ -1070,10 +1095,10 @@ def with_held(
         values = _settled_by_its_axis(_dict(replaced.get("values")), _dict(extras.get("args")).get("group_by"))
         args = route_args(rf.Outcome(values=values, extras=extras))
         held = {k: v for k, v in args.items() if k not in ("group_by", "sort") and v not in (None, "", [])}
-    elif _dict(getattr(focus, "sales_ranking_frame", None)):
-        # A held TOTAL (a report ask run with no axis): its period and filters stay (what that total showed).
-        total = _dict(getattr(focus, "sales_ranking_frame", None))
-        held = {k: v for k, v in total.items() if k in _HELD_TOTAL_KEYS and v not in (None, "", [])}
+    elif frame:
+        # A held report (a total, or a ranking filtered to a customer): its period and filters stay.
+        keys = _HELD_CUSTOMER_KEYS if frame.get("customer_ids") and _customer_stays(verdict, None, None) else _HELD_TOTAL_KEYS
+        held = {k: v for k, v in frame.items() if k in keys and v not in (None, "", [])}
     else:
         window = _dict(getattr(focus, "date_window", None))
         held = {"date_from": window.get("start"), "date_to": window.get("end"), "product": bool(getattr(focus, "products", None))}
@@ -1791,9 +1816,9 @@ def _settle(
         else:
             # A total has no rows to rank across, so the product it was for stays on a product axis too.
             source, keep_product = frame, total_frame
-    elif not _dict(frame).get("group_by") and _dict(parse_output.get(HELD_KEY)):
-        # R8: no ranking held, and the engine stamped what the held sales report total (or the open ask this
-        # replaced) showed (`with_held`): the same hold, one more source. A total has no rows to rank across, so
+    elif _dict(parse_output.get(HELD_KEY)):
+        # R8: the engine stamped what the held sales report total, a ranking held for a customer, or the open ask this
+        # replaced showed (`with_held`): the same hold, one more source. A total has no rows to rank across, so
         # the product it was for stays on a product axis too (crew target: its variants ranked).
         source, keep_product = _dict(parse_output.get(HELD_KEY)), True
     if source:
@@ -1809,11 +1834,15 @@ def _settle(
         }
         if axis != "channel" and widened != "channel" and source.get("channel") in ("dealer", "project"):
             held_channel = source["channel"]
-        # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not).
+        # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not), and the
+        # company it ran in.
         held_filters = {
-            k: source[k] for k in ("brand_ids", "category_ids", "sales_agent_ids")
+            k: source[k] for k in ("brand_ids", "category_ids", "sales_agent_ids", "company")
             if source.get(k) and k not in _AXIS_FILTERS.get(axis, ())
         }
+        if source.get("customer_ids") and _customer_stays(parse_output, axis, frame.get("group_by") if across_all else None):
+            # The ids the report ran on, so a pick's ledgers stay exactly the pick's: never re-read from a code or a name.
+            held_filters["customer_ids"] = source["customer_ids"]
         holding = True
         parse_output = {**parse_output, "ranking_refine": False}
 
@@ -1895,7 +1924,7 @@ def _settle(
         if named is not None:
             args["company"] = str(named[0])
         elif len(own) > 1 and not any(
-            args.get(k) for k in ("customer_ids", "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "spec")
+            args.get(k) for k in ("company", "customer_ids", "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "spec")
         ):
             given["company"] = rf.Resolved("ambiguous", options=tuple((str(c[0]), str(c[1])) for c in own))
             company_options = [[str(c[0]), str(c[1])] for c in own]
@@ -1937,13 +1966,26 @@ def _settle(
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
 
 
+def _customer_stays(parse_output: dict[str, Any], axis: str | None, ranked: Any) -> bool:
+    """Owner ruling, 1 Nov 2026 (CHATBOT-FOLLOWUP-CARRY): the held customer stays on a follow-up unless this message replaces
+    it: a customer of its own (named, or the one a pick just answered), "my ...", the parser's widening to all customers, or
+    customers as the axis now ranked or just ranked ("across all" says so). Parser fields and engine keys only."""
+    return (
+        "customer" not in (axis, ranked)
+        and _widened(parse_output) != "customer"
+        and "customer" not in _current_kinds(parse_output)
+        and parse_output.get("ranking_pick") is not True
+        and parse_output.get("self_reference") is not True
+    )
+
+
 def _widened(parse_output: dict[str, Any]) -> str | None:
     """The one held axis the parser widened to "all" this turn (`broaden_axis` with `broaden_to`
     "all", template R-P3-09): the hold drops it and keeps the rest. Parser fields only."""
     if parse_output.get("broaden_to") != "all":
         return None
     axis = jsc.js_string(parse_output.get("broaden_axis") or "").strip().lower()
-    return axis if axis in ("channel", "product") else None
+    return axis if axis in ("channel", "product", "customer") else None
 
 
 def _refine(

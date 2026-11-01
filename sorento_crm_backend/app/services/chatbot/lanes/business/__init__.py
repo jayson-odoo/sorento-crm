@@ -2159,6 +2159,9 @@ def run_fetch(
                 order_status_raw == report_ask.ASK_NAME
                 and parse_output.get("capability_from") == "sales_analysis"
                 and jsc.js_string(parse_output.get("group_by") or "") in ("", "year")
+                # A follow-up over a held customer is that customer's report, not a company total: the report ask reads
+                # it whole, and its slot holds the customer across any question it still owes.
+                and not (parse_output.get(report_ask.HELD_KEY) or {}).get("customer_ids")
             )
         )
     ):
