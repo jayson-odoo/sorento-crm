@@ -5957,15 +5957,31 @@ def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dic
         compatible = [e for e in compatible if e.get("entity_type") in allowed]
     kinds = {e.get("hint") for e in spec.entities if e.get("hint")}
     codes = {_code_of(e) for e in spec.entities}
-    picked = [
-        e
-        for e in compatible
-        if e.get("entity_type") not in kinds
-        or not codes
-        or _code_of(e) in codes
-    ]
+    plan_rows = [_spec_row(e) for e in spec.entities]
+    # CHATBOT-PICK-CARRY (owner, 1 Nov 2026): a plan row holding a uuid is settled, and a code does not identify it. An
+    # account code is per company and a picked option's ledgers all carry one code, so a parser echo of the pick had the
+    # resolver return that code's rows: another company's customer replaced the pick, or one ledger stood for all of it.
+    settled: dict[tuple[Any, str], set[str]] = {}
+    for row in plan_rows:
+        if row.get("uuid"):
+            settled.setdefault((row["entity_type"], _code_of(row)), set()).add(str(row["uuid"]))
+
+    def answers_the_plan(e: dict[str, Any]) -> bool:
+        kind, code = e.get("entity_type"), _code_of(e)
+        if kind not in kinds or not codes:
+            return True
+        held = settled.get((kind, code))
+        return code in codes and (held is None or str(e.get("uuid")) in held)
+
+    picked = [e for e in compatible if answers_the_plan(e)]
     answered = {e.get("entity_type") for e in picked}
-    return picked + [e for e in map(_spec_row, spec.entities) if e["entity_type"] not in answered]
+    returned = {(e.get("entity_type"), _code_of(e)) for e in compatible}
+    kept = {str(e.get("uuid")) for e in picked}
+    return picked + [
+        row for row in plan_rows
+        if row["entity_type"] not in answered
+        or (row.get("uuid") and (row["entity_type"], _code_of(row)) in returned and str(row["uuid"]) not in kept)
+    ]
 
 
 #: A uuid is an internal identity and never a subject a person reads (the frontend's own
