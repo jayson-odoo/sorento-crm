@@ -13,14 +13,20 @@ dir=/home/runner/actions-runner
 
 # What the jobs call directly on a GitHub-hosted runner (gh, psql/pg_isready,
 # jq, zstd for actions/cache) and the libraries WeasyPrint loads (same list
-# as the backend image). Rootless Docker needs the rest.
+# as the backend image), plus the libraries Playwright's chromium loads (what
+# `playwright install --with-deps` would apt-install; the runner user has no
+# sudo, so never-stuck-nightly.yml installs the browser only). Rootless Docker
+# needs the rest.
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
   docker-ce-rootless-extras uidmap dbus-user-session slirp4netns \
   git jq curl unzip zstd xz-utils python3 postgresql-client \
   libglib2.0-0 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 \
-  libcairo2 libffi8 shared-mime-info fonts-dejavu-core >/dev/null
+  libcairo2 libffi8 shared-mime-info fonts-dejavu-core \
+  libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 libcups2 \
+  libdbus-1-3 libdrm2 libgbm1 libxkbcommon0 libxcomposite1 libxdamage1 \
+  libxext6 libxfixes3 libxrandr2 libasound2 >/dev/null
 
 if [ "$(gh --version 2>/dev/null | awk 'NR==1 {print $3}')" != "$GH_VERSION" ]; then
   tmp="$(mktemp -d)" && cd "$tmp"

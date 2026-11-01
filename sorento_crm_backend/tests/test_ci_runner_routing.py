@@ -1,207 +1,58 @@
-"""Where the CI jobs run: GitHub-hosted, or the self-hosted Mac mini runners on request.
+"""Where the CI jobs run: the self-hosted Mac mini runner, bar the image build and the deploy.
 
-CI-HOSTED-RUNNERS (owner, 29 Oct 2026): the repo is public again, so
-GitHub-hosted minutes are free and run in parallel, where the one Mac runner
-queued PR runs for hours. Everything runs on `ubuntu-latest` unless a release
-dispatch asks otherwise:
+CI-MAC-ONLY (owner, 1 Nov 2026): the repo is private, so GitHub-hosted minutes
+bill against a 3,000 min/month quota; "only the build and deploy to server
+should be ran on github, others can run on mac mini as the runner".
 
-1. The repo variables `RUNNER_TESTS` / `RUNNER_FAST` route nothing any more,
-   and a PR run has no inputs, so a PR gate is always GitHub-hosted.
-2. The workflow_dispatch input `runner`: `github` (the default), `auto`,
-   `mac`. `mac` sends the test and fast-gate jobs to the Mac (label
-   `sorento-mac`); `auto` sends the test jobs there when a `sorento-mac`
-   runner is online and idle, else GitHub-hosted, decided inside
-   `Changed areas` from the runners API with the `RUNNERS_READ_TOKEN` secret;
-   no secret, or a failed call, means GitHub-hosted. Anything unknown lands
-   on GitHub-hosted.
-3. build-images and build-and-deploy always run on GitHub-hosted: the prod
-   images are amd64 and the Mac runners are arm64.
-
-The picker step is extracted from the workflow and executed with a stub `gh`,
-as in test_ci_docs_only_filter.py, so nothing here can drift from the file.
+1. Every deploy.yml job but build-images and build-and-deploy runs on
+   `[self-hosted, sorento-mac]`, written literally: no expression, so nothing
+   can route it back to `ubuntu-latest` when the Mac is busy or offline (the
+   job queues instead).
+2. build-images and build-and-deploy run on `ubuntu-latest`: the prod images
+   are amd64 and the Mac runner is arm64.
+3. The dispatch input `runner` stays declared (a dispatch passing
+   `-f runner=github` must still parse) and routes nothing.
+4. outline-user-guides-sync and never-stuck-nightly run on the Mac too;
+   rollback stays GitHub-hosted (it reaches the server).
 """
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
 import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = ROOT / ".github" / "workflows" / "deploy.yml"
-MAC = "sorento-mac"
+WORKFLOWS = ROOT / ".github" / "workflows"
+WORKFLOW = WORKFLOWS / "deploy.yml"
+MAC_LABELS = ["self-hosted", "sorento-mac"]
 GH = "ubuntu-latest"
-PICK_STEP = "Pick the test runner"
 
 TEST_JOBS = ["lean-gate", "test-backend", "test-backend-scm", "validate-frontend", "typecheck-frontend"]
 FAST_JOBS = ["check-migration-heads", "pii-guard", "changes", "refuse-ci-full", "ci-gate"]
-GITHUB_ONLY_JOBS = ["build-images", "build-and-deploy", "validate-backend", "validate-mcp"]
+IMAGE_JOBS = ["validate-backend", "validate-mcp"]
+MAC_JOBS = TEST_JOBS + FAST_JOBS + IMAGE_JOBS
+GITHUB_ONLY_JOBS = ["build-images", "build-and-deploy"]
 
 pytestmark = pytest.mark.skipif(not WORKFLOW.is_file(), reason="workflow not present (backend-only checkout)")
 
 
-def _workflow() -> dict:
-    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+def _workflow(path: Path = WORKFLOW) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def _jobs() -> dict:
     return _workflow()["jobs"]
 
 
-def _pick_script() -> str:
-    steps = _jobs()["changes"]["steps"]
-    step = next(s for s in steps if s.get("name") == PICK_STEP)
-    return textwrap.dedent(step["run"])
-
-
-GH_STUB = """\
-#!/usr/bin/env bash
-if [ "${GH_STUB_FAIL:-0}" = "1" ]; then echo "stub gh: failing on purpose" >&2; exit 1; fi
-expr=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --jq) expr="$2"; shift ;;
-  esac
-  shift
-done
-exec jq -r "$expr" "$GH_STUB_FILE"
-"""
-
-
-def _runner(name: str, status: str, busy: bool, labels=("self-hosted", "Linux", "ARM64", MAC)) -> dict:
-    return {"name": name, "status": status, "busy": busy, "labels": [{"name": n} for n in labels]}
-
-
-def pick(tmp_path: Path, *, override: str = "", token: str = "", runners=None, gh_fails=False):
-    if shutil.which("jq") is None:
-        pytest.skip("jq is not installed (the CI runner has it)")
-    bindir = tmp_path / "bin"
-    bindir.mkdir(exist_ok=True)
-    (bindir / "gh").write_text(GH_STUB)
-    (bindir / "gh").chmod(0o755)
-    payload = tmp_path / "runners.json"
-    payload.write_text(json.dumps({"total_count": len(runners or []), "runners": runners or []}))
-    output = tmp_path / "output.txt"
-    output.write_text("")
-    env = {
-        "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
-        "GITHUB_OUTPUT": str(output),
-        "REPO": "jayson-odoo/sorento-crm",
-        "OVERRIDE": override,
-        "GH_TOKEN": token,
-        "GH_STUB_FILE": str(payload),
-        "GH_STUB_FAIL": "1" if gh_fails else "0",
-    }
-    result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _pick_script()],
-        env=env, capture_output=True, text=True,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    out = dict(line.split("=", 1) for line in output.read_text().splitlines() if "=" in line)
-    assert set(out) == {"runner"}, out
-    return out["runner"]
-
-
-# --- the picker ------------------------------------------------------------
-
-@pytest.mark.parametrize(
-    "override,expected",
-    [
-        ("", GH),
-        ("github", GH),
-        ("mac", MAC),
-        ("vars", GH),
-        ("something-else", GH),
-        ("self-hosted", GH),
-    ],
-)
-def test_only_an_explicit_mac_override_leaves_github_hosted(tmp_path, override, expected):
-    assert pick(tmp_path, override=override) == expected
-
-
-def test_a_pr_run_stays_on_github_even_with_an_idle_mac(tmp_path):
-    # A pull_request event has no inputs: OVERRIDE is empty whatever the repo variables say.
-    idle = [_runner("mac-1", "online", False)]
-    assert pick(tmp_path, override="", token="t", runners=idle) == GH
-
-
-def test_auto_without_the_token_secret_stays_on_github(tmp_path):
-    idle = [_runner("mac-1", "online", False)]
-    assert pick(tmp_path, override="auto", token="", runners=idle) == GH
-
-
-def test_auto_takes_the_mac_when_a_mac_runner_is_online_and_idle(tmp_path):
-    runners = [_runner("mac-1", "online", True), _runner("mac-2", "online", False)]
-    assert pick(tmp_path, override="auto", token="t", runners=runners) == MAC
-
-
-def test_auto_overflows_to_github_when_every_mac_runner_is_busy(tmp_path):
-    runners = [_runner("mac-1", "online", True), _runner("mac-2", "online", True)]
-    assert pick(tmp_path, override="auto", token="t", runners=runners) == GH
-
-
-def test_auto_falls_back_to_github_when_the_mac_is_offline(tmp_path):
-    runners = [_runner("mac-1", "offline", False), _runner("mac-2", "offline", False)]
-    assert pick(tmp_path, override="auto", token="t", runners=runners) == GH
-
-
-def test_auto_ignores_idle_runners_without_the_mac_label(tmp_path):
-    runners = [_runner("other", "online", False, labels=("self-hosted", "Linux", "X64"))]
-    assert pick(tmp_path, override="auto", token="t", runners=runners) == GH
-
-
-def test_auto_falls_back_to_github_when_the_runners_api_fails(tmp_path):
-    assert pick(tmp_path, override="auto", token="t", gh_fails=True) == GH
-
-
 # --- the workflow wiring -----------------------------------------------------
 
-def test_dispatch_has_a_runner_choice_defaulting_to_github():
-    inputs = _workflow()[True]["workflow_dispatch"]["inputs"]
-    runner = inputs["runner"]
-    assert runner["type"] == "choice" and runner["default"] == "github", runner
-    assert runner["options"] == ["github", "auto", "mac"], runner
-
-
-def test_no_job_reads_a_runner_repo_variable():
-    text = WORKFLOW.read_text(encoding="utf-8")
-    assert "vars.RUNNER_TESTS" not in text and "vars.RUNNER_FAST" not in text
-
-
-def test_the_picker_is_the_first_step_of_changed_areas_and_feeds_its_output():
-    changes = _jobs()["changes"]
-    assert changes["steps"][0]["name"] == PICK_STEP
-    step = changes["steps"][0]
-    assert step["id"] == "runner"
-    env = step["env"]
-    assert env["OVERRIDE"] == "${{ inputs.runner }}"
-    assert "SETTING" not in env
-    # The token is only this step's, never the job's or the workflow's.
-    assert env["GH_TOKEN"] == "${{ secrets.RUNNERS_READ_TOKEN }}"
-    assert "RUNNERS_READ_TOKEN" not in json.dumps(changes.get("env", {}))
-    assert "RUNNERS_READ_TOKEN" not in json.dumps(_workflow().get("env", {}))
-    assert changes["outputs"]["tests_runner"] == "${{ steps.runner.outputs.runner }}"
-
-
-@pytest.mark.parametrize("job", TEST_JOBS)
-def test_test_jobs_run_where_the_picker_says(job):
-    jobs = _jobs()
-    assert "changes" in jobs[job]["needs"], job
-    assert jobs[job]["runs-on"] == "${{ needs.changes.outputs.tests_runner || 'ubuntu-latest' }}", job
-
-
-FAST_EXPR = "${{ inputs.runner == 'mac' && 'sorento-mac' || 'ubuntu-latest' }}"
-
-
-@pytest.mark.parametrize("job", FAST_JOBS)
-def test_fast_jobs_leave_github_hosted_only_on_a_mac_dispatch(job):
-    assert _jobs()[job]["runs-on"] == FAST_EXPR, job
+@pytest.mark.parametrize("job", MAC_JOBS)
+def test_every_gate_and_test_job_runs_on_the_mac_with_no_fallback(job):
+    assert _jobs()[job]["runs-on"] == MAC_LABELS, job
 
 
 @pytest.mark.parametrize("job", GITHUB_ONLY_JOBS)
@@ -210,19 +61,69 @@ def test_image_and_deploy_jobs_stay_on_github_hosted(job):
 
 
 def test_every_job_is_routed_on_purpose():
-    assert set(_jobs()) == set(TEST_JOBS) | set(FAST_JOBS) | set(GITHUB_ONLY_JOBS)
+    assert set(_jobs()) == set(MAC_JOBS) | set(GITHUB_ONLY_JOBS)
+
+
+def test_no_job_routes_by_expression_or_repo_variable():
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "vars.RUNNER_TESTS" not in text and "vars.RUNNER_FAST" not in text
+    assert "tests_runner" not in text
+    assert "RUNNERS_READ_TOKEN" not in re.sub(r"(?m)^\s*#.*$", "", text)
+    for name, body in _jobs().items():
+        assert "${{" not in json.dumps(body["runs-on"]), name
+
+
+def test_the_runner_input_still_parses_and_routes_nothing():
+    inputs = _workflow()[True]["workflow_dispatch"]["inputs"]
+    runner = inputs["runner"]
+    assert runner["type"] == "choice" and runner["default"] == "github", runner
+    assert runner["options"] == ["github", "auto", "mac"], runner
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "inputs.runner" not in text
+
+
+def test_the_image_and_deploy_jobs_need_no_output_of_a_removed_path():
+    jobs = _jobs()
+    produced = set(jobs["changes"]["outputs"])
+    for job in GITHUB_ONLY_JOBS:
+        used = set(re.findall(r"needs\.changes\.outputs\.([a-z_]+)", json.dumps(jobs[job])))
+        assert used <= produced, (job, used - produced)
+
+
+@pytest.mark.parametrize("workflow,job", [("outline-user-guides-sync.yml", "sync"), ("never-stuck-nightly.yml", "smoke")])
+def test_the_other_ci_workflows_run_on_the_mac(workflow, job):
+    path = WORKFLOWS / workflow
+    if not path.exists():
+        pytest.skip(f"{path} not present")
+    assert _workflow(path)["jobs"][job]["runs-on"] == MAC_LABELS
+
+
+def test_never_stuck_installs_chromium_without_apt():
+    path = WORKFLOWS / "never-stuck-nightly.yml"
+    if not path.exists():
+        pytest.skip(f"{path} not present")
+    runs = "\n".join(s.get("run", "") for s in _workflow(path)["jobs"]["smoke"]["steps"])
+    runs = re.sub(r"(?m)^\s*#.*$", "", runs)
+    assert "playwright install chromium" in runs and "--with-deps" not in runs
+
+
+def test_rollback_stays_on_github_hosted():
+    path = WORKFLOWS / "rollback.yml"
+    if not path.exists():
+        pytest.skip(f"{path} not present")
+    assert {j["runs-on"] for j in _workflow(path)["jobs"].values()} == {GH}
 
 
 # --- what a job on the Mac can hold -------------------------------------------
 # The Mac runner keeps state between jobs, so a job routed there gets the
 # least the job needs: read-only contents plus the writes it states (the two
-# label-removing jobs), and no secret but the job token and, in the picker
-# step only, RUNNERS_READ_TOKEN. Deploy, registry, SSH and SMTP secrets never.
+# label-removing jobs), and no secret but the job token. Deploy, registry
+# (Docker Hub), SSH and SMTP secrets never.
 
 WRITES_ALLOWED = {"lean-gate": {"pull-requests"}, "refuse-ci-full": {"pull-requests"}}
 
 
-@pytest.mark.parametrize("job", TEST_JOBS + FAST_JOBS)
+@pytest.mark.parametrize("job", MAC_JOBS)
 def test_mac_routable_jobs_hold_a_least_privilege_token(job):
     perms = _jobs()[job].get("permissions")
     assert isinstance(perms, dict), f"{job}: no permissions block (the repo default is write-all)"
@@ -230,13 +131,13 @@ def test_mac_routable_jobs_hold_a_least_privilege_token(job):
     assert writes == WRITES_ALLOWED.get(job, set()), (job, perms)
 
 
-@pytest.mark.parametrize("job", TEST_JOBS + FAST_JOBS)
+@pytest.mark.parametrize("job", MAC_JOBS)
 def test_mac_routable_jobs_reach_no_secret_but_the_job_token(job):
     body = _jobs()[job]
     for step in body.get("steps", []):
         text = json.dumps(step)
         secrets = set(re.findall(r"secrets\.([A-Za-z_]+)", text))
-        allowed = {"GITHUB_TOKEN"} | ({"RUNNERS_READ_TOKEN"} if step.get("name") == PICK_STEP else set())
+        allowed = {"GITHUB_TOKEN"}
         assert secrets <= allowed, (job, step.get("name"), secrets - allowed)
     rest = json.dumps({k: v for k, v in body.items() if k != "steps"})
     assert set(re.findall(r"secrets\.([A-Za-z_]+)", rest)) <= {"GITHUB_TOKEN"}, job
@@ -262,7 +163,7 @@ def test_the_gitleaks_cli_matches_the_runner_architecture(tmp_path, machine, exp
 # The Mac runner's VM is 4 CPU, 6 GiB, no swap (scripts/ci-runner/up.sh). `-n
 # auto` there is 4 workers at about 1.4 GB each, plus Postgres and Redis: the
 # release run 39126899668 lost four workers of shard 5 to the OOM killer and
-# shard 7 hung to its cap. Two workers on the Mac, `auto` on GitHub-hosted, set
+# shard 7 hung to its cap. Two workers, now that every test job runs there, set
 # in the step's env (the PR gate's script is executed by
 # test_ci_docs_only_filter.py, and bash cannot run a `${{ }}`).
 # `--max-worker-restart 0` ends the session on the first crashed worker, where
@@ -270,7 +171,7 @@ def test_the_gitleaks_cli_matches_the_runner_architecture(tmp_path, machine, exp
 # `-p tests._xdist_crash_guard` keeps that exit non-zero when the worker died
 # before running a test (tests/test_xdist_crash_guard.py).
 
-XDIST_WORKERS = "${{ needs.changes.outputs.tests_runner == 'sorento-mac' && 2 || 'auto' }}"
+XDIST_WORKERS = "2"
 XDIST_JOBS = ["lean-gate", "test-backend", "test-backend-scm"]
 # An xdist call: `--dist`, or a worker count (not `[ -n "$x" ]` or `echo -n`).
 _XDIST_CALL = re.compile(r"\s--dist[\s=]|\s(-n|--numprocesses)[\s=]+(auto|logical|\d+|\$\{\{)")
