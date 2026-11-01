@@ -280,11 +280,14 @@ def canon(value) -> str:
     return json.dumps(value, sort_keys=True)
 
 
-def baseline(published):
-    """What Jev gets with no open record: the published criteria through main's `_with_agent_tools`."""
+def baseline(published, session_factory, user_id):
+    """What Jev gets with no open record: the published criteria through main's `_with_agent_tools`, with the
+    labels `agent_tool_labels` gives for the user the turn ran as (never read back from what Jev was sent)."""
     from app.services.chatbot import router
 
-    return router._with_agent_tools(copy.deepcopy(published))
+    db = session_factory()
+    user = db.get(User, user_id)
+    return router._with_agent_tools(copy.deepcopy(published), router.agent_tool_labels(db, user))
 
 
 def without_keys(criteria: dict, *keys: str) -> dict:
@@ -313,8 +316,24 @@ class TestJevIsToldTheOpenRecord:
         sentence = sent["agent"].get("open_record")
         assert isinstance(sentence, str) and sentence.strip() and "current_page" in sentence
         open_page_of(sent)
-        assert canon(without_keys(sent, "open_record", "open_page")) == canon(baseline(published))
+        assert canon(without_keys(sent, "open_record", "open_page")) == canon(baseline(published, session_factory, staff.user_id))
         assert call["instructions"] == PUBLISHED_INSTRUCTIONS
+
+    def test_a_panel_turn_sends_jev_both_the_page_and_the_tools_the_user_holds(
+        self, session_factory, monkeypatch, staff, grants, world, jev
+    ):
+        """Merge pin (panel x #2053): `open_page` and the user's own `tools` list meet in one criteria."""
+        publish_criteria(session_factory, dict(AGENT_DICT))
+        grants.add("sales.opportunities.view_own")
+
+        run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(None))
+
+        agent = jev.calls[0]["criteria"]["agent"]
+        open_page_of(jev.calls[0]["criteria"])
+        assert agent["tools"], "the panel turn sent Jev no tools"
+        assert "your sales opportunities" in agent["tools"]
+        assert "create an opportunity" not in agent["tools"], "a tool whose slug the user lacks reached Jev"
+        assert "approve or reject a purchase request" not in agent["tools"]
 
     def test_a_page_with_no_entity_adds_open_page_and_nothing_else(
         self, session_factory, monkeypatch, staff, grants, world, jev
@@ -327,7 +346,7 @@ class TestJevIsToldTheOpenRecord:
         sent = jev.calls[0]["criteria"]
         open_page_of(sent)
         assert "open_record" not in sent["agent"]
-        assert canon(without_keys(sent, "open_page")) == canon(baseline(published))
+        assert canon(without_keys(sent, "open_page")) == canon(baseline(published, session_factory, staff.user_id))
         assert jev.calls[0]["instructions"] == PUBLISHED_INSTRUCTIONS
 
     def test_a_page_with_a_readable_record_has_both_open_page_and_open_record(
@@ -364,7 +383,7 @@ class TestJevIsToldTheOpenRecord:
         sent = jev.calls[0]["criteria"]
         open_page_of(sent)
         assert "open_record" not in sent["agent"]
-        assert canon(without_keys(sent, "open_page")) == canon(baseline(published))
+        assert canon(without_keys(sent, "open_page")) == canon(baseline(published, session_factory, staff.user_id))
 
         grants.add(VIEW)
         run_chat(session_factory, monkeypatch, new_thread(session_factory, staff), world, jev, snapshot(inquiry))
@@ -378,7 +397,7 @@ class TestJevIsToldTheOpenRecord:
 
         run_chat(session_factory, monkeypatch, staff, world, jev, None)
 
-        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published))
+        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published, session_factory, staff.user_id))
         assert jev.calls[0]["instructions"] == PUBLISHED_INSTRUCTIONS
 
     def test_a_contact_turn_without_a_principal_sends_the_published_criteria(self, session_factory, jev):
@@ -392,7 +411,7 @@ class TestJevIsToldTheOpenRecord:
 
         decide_route(db, contact_respond_id=contact["respond_id"], text="why did sales drop", session_vars=None, has_media=False)
 
-        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published))
+        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published, session_factory, contact["user_id"]))
         assert "current_page" not in jev.calls[0]["state"]
 
     def test_the_published_prompt_is_not_mutated_by_a_call_with_a_page(
@@ -405,7 +424,7 @@ class TestJevIsToldTheOpenRecord:
         assert "open_record" in jev.calls[0]["criteria"]["agent"], "fixture: the first call carries the line"
         run_chat(session_factory, monkeypatch, new_thread(session_factory, staff), world, jev, None)
 
-        assert canon(jev.calls[1]["criteria"]) == canon(baseline(published))
+        assert canon(jev.calls[1]["criteria"]) == canon(baseline(published, session_factory, staff.user_id))
 
     def test_an_agent_criterion_that_is_not_a_dict_does_not_raise(
         self, session_factory, monkeypatch, staff, grants, world, jev
@@ -416,7 +435,7 @@ class TestJevIsToldTheOpenRecord:
         run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(None))
 
         assert jev.calls, "decide_route must not raise"
-        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published))
+        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published, session_factory, staff.user_id))
 
 
 # --------------------------------------------------------------------------- #
