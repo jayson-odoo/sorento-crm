@@ -1974,6 +1974,9 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
     if _valid_uuid(result.get("idea_id")) is None:
         logger.warning("agent: the idea create returned an unexpected body")
         raise AppException(status_code=502, message=IDEA_NOT_CREATED, code="IDEATION_UNREACHABLE")
+    if "status" not in result or result.get("status") is None:
+        logger.warning("agent: the idea create returned no status")
+        raise AppException(status_code=502, message=IDEA_NOT_CREATED, code="IDEATION_UNREACHABLE")
     if result.get("status") != "captured":
         # A replay of an idea that has since moved on (I8): it exists, so say so.
         number = idea_number(result.get("idea_number"))

@@ -16,7 +16,7 @@ from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.chatbot.agent import tools as agent_tools
 from app.services.chatbot.agent import writes
 from tests._pg_fixture import unique_code
-from tests.chatbot.agent._seed import seed_agent_contact, seed_contact, seed_user
+from tests.chatbot.agent._seed import all_agent_slugs, seed_agent_contact, seed_contact, seed_user
 
 # Fixtures and helpers from the router suite (fixtures must live in this namespace to be found).
 from tests.chatbot.agent.test_router import (  # noqa: F401
@@ -102,7 +102,7 @@ def new_read(name):
 
 
 def test_AC_R1_1_agent_criteria_gain_tools_and_nothing_else_changes(db, jev):
-    contact = seed_agent_contact(db)
+    contact = seed_agent_contact(db, slugs=all_agent_slugs())
     set_jev_key(db)
     criteria = {
         "chat": {"what": "single lookups", "examples": ["stock of X"]},
@@ -126,7 +126,7 @@ def test_AC_R1_1_agent_criteria_gain_tools_and_nothing_else_changes(db, jev):
 
 
 def test_AC_R1_2_stored_prompt_is_untouched_and_list_does_not_grow(db, jev):
-    contact = seed_agent_contact(db)
+    contact = seed_agent_contact(db, slugs=all_agent_slugs())
     set_jev_key(db)
     publish_criteria(db, {"chat": {"what": "c"}, "agent": {"what": "a"}})
     before = stored_prompt(db)
@@ -214,7 +214,8 @@ def test_AC_R1_6_shared_lookup_labels_are_not_listed():
 # ------------------------------------------------------------------ AC-R1-7
 
 
-def test_AC_R1_7_the_list_is_not_filtered_per_user(db, jev):
+def test_AC_R1_7_the_list_follows_what_the_user_may_use(db, jev):
+    """Flipped (AGENTIC-KNOWLEDGE W1 review R2): a user is told only of the tools its permissions allow."""
     narrow = seed_agent_contact(db, slugs=())
     wide = seed_agent_contact(
         db,
@@ -232,14 +233,16 @@ def test_AC_R1_7_the_list_is_not_filtered_per_user(db, jev):
     route(db, wide["respond_id"])
     assert len(jev.calls) == 2
     first, second = (c["criteria"]["agent"]["tools"] for c in jev.calls)
-    assert first == second == router_labels()
+    assert first == ["recent changes"], "the one tool that needs no permission"
+    assert second and set(first) < set(second) < set(router_labels())
+    assert "change a customer ask" in second
 
 
 # ------------------------------------------------------------------ AC-R1-8
 
 
 def test_AC_R1_8_string_agent_criterion_becomes_an_object(db, jev):
-    contact = seed_agent_contact(db)
+    contact = seed_agent_contact(db, slugs=all_agent_slugs())
     set_jev_key(db)
     publish_criteria(db, {"chat": "single lookups", "agent": "several reads combined"})
     route(db, contact["respond_id"])
@@ -258,7 +261,7 @@ def test_AC_R1_8_no_agent_key_is_not_invented(db, jev):
 
 
 def test_AC_R1_8_published_tools_key_is_replaced(db, jev):
-    contact = seed_agent_contact(db)
+    contact = seed_agent_contact(db, slugs=all_agent_slugs())
     set_jev_key(db)
     publish_criteria(db, {"chat": {"what": "c"}, "agent": {"what": "a", "tools": ["stale label"]}})
     route(db, contact["respond_id"])
@@ -340,7 +343,7 @@ OLD_IDEA_LABEL = "submit a new idea or feature request"
 def test_AC_HT_5_the_owners_message_reaches_jev_with_the_stated_need_label(db, jev):
     # Jev is faked here, so this pins what Jev is TOLD. Whether the real model routes the message to the
     # agent is shown by the crew eval and a live run, not by this test.
-    contact = seed_agent_contact(db)
+    contact = seed_agent_contact(db, slugs=all_agent_slugs())
     arm(db)
     jev.answer = jev_answer("agent", 0.9)
     decision = route(db, contact["respond_id"], OWNER_MESSAGE)
@@ -349,3 +352,38 @@ def test_AC_HT_5_the_owners_message_reaches_jev_with_the_stated_need_label(db, j
     assert OLD_IDEA_LABEL not in tools
     assert jev.calls[0]["state"]["latest_message"] == OWNER_MESSAGE
     assert (decision.side, decision.reason) == ("agent", "classified")
+
+
+# ------------------------------------------------------------------ FIX ROUND (S6 review): labels follow who the agent runs as
+
+
+def _sent_labels(db, jev, contact):
+    set_jev_key(db)
+    if not db.query(AIPromptVersion).filter_by(name="chatbot_router").count():
+        publish_criteria(db, {"chat": {"what": "c"}, "agent": {"what": "a"}})
+    route(db, contact["respond_id"])
+    return jev.calls[-1]["criteria"]["agent"]["tools"]
+
+
+IDEA_LABEL = "record a suggestion or wish for what the system should have or do, an idea or a feature request"
+
+
+def test_fr4_r2_an_unlinked_contact_is_told_of_no_write_or_user_read(db, jev):
+    contact = seed_contact(db)
+
+    labels = _sent_labels(db, jev, contact)
+
+    assert labels == []
+    assert IDEA_LABEL not in labels
+
+
+def test_fr4_r2_a_linked_user_without_the_idea_slug_gets_no_idea_label_and_with_it_gets_it(db, jev):
+    without = seed_agent_contact(db, slugs=("inventory.stock.view",))
+    with_slug = seed_agent_contact(db, slugs=("inventory.stock.view", writes.IDEA_VIEW))
+
+    no_idea = _sent_labels(db, jev, without)
+    has_idea = _sent_labels(db, jev, with_slug)
+
+    assert IDEA_LABEL not in no_idea and "your ideas" not in no_idea
+    assert IDEA_LABEL in has_idea and "your ideas" in has_idea
+    assert "change a dealer contact" not in has_idea, "only the tools this user may use"

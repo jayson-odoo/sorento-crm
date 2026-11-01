@@ -75,3 +75,14 @@ def seed_agent_contact(db, *, slugs=("inventory.stock.view", "order_management.o
     contact = seed_contact(db)
     contact["user_id"] = seed_user(db, contact_pk=contact["pk"], slugs=slugs)
     return contact
+
+
+def all_agent_slugs() -> tuple[str, ...]:
+    """Every permission slug the agent's writes and user reads need: a user holding them is told of every tool."""
+    from app.services.chatbot.agent import writes
+
+    out: list[str] = []
+    for definition in [*writes.WRITES.values(), *writes.USER_READS.values()]:
+        slugs = (definition.user_permission,) if isinstance(definition.user_permission, str) else definition.user_permission
+        out += [slug for slug in slugs if slug]
+    return tuple(dict.fromkeys(out))

@@ -528,28 +528,13 @@ def waiting_line(action) -> str:
     return f"A change is waiting for the user's decision (action {action.id}, {n} change(s))."
 
 
-#: The most characters of one quoted value handed back to the model while a change waits (I3): injected text
-#: gets little room right where the model decides `confirm_action`. The stored step and the lines the user
-#: reads keep the whole value.
-WAITING_VALUE_CHARS = 300
-_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
-
-
-def _cap_quoted(match: "re.Match[str]") -> str:
-    value = match.group(1)
-    if len(value) <= WAITING_VALUE_CHARS:
-        return match.group(0)
-    kept = value[:WAITING_VALUE_CHARS]
-    # Never cut inside an escape: an odd run of backslashes at the end would eat the closing quote.
-    if (len(kept) - len(kept.rstrip("\\"))) % 2:
-        kept = kept[:-1]
-    return f'"{kept}..."'
+WAITING_VALUE_CHARS = memory.WAITING_VALUE_CHARS  # the cap lives in memory, which history uses too
 
 
 def waiting_reference(action) -> str:
     """The waiting change's summary lines, quoted as data in a message of their own, each quoted value
     cut to `WAITING_VALUE_CHARS`."""
-    lines = [_QUOTED.sub(_cap_quoted, line) for line in actions.proposal_lines(action)]
+    lines = [memory.cap_quoted_values(line) for line in actions.proposal_lines(action)]
     return "Waiting change, for reference only: " + "; ".join(lines)
 
 
@@ -623,6 +608,9 @@ class AgentTurnResult:
     tool_calls: list[dict]
     #: The proposal this turn stored: {"id", "turn_id", "lines", "expires_at"}, or None.
     pending_action: dict | None = None
+    #: The notes (idea number, link) of changes a confirm made this turn, already in `reply_text`. A caller that
+    #: replaces a failed reply keeps them: the change happened.
+    notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1458,4 +1446,5 @@ def _run(
         usage=run.usage(),
         tool_calls=run.tool_calls,
         pending_action=pending,
+        notes=list(confirm_notes),
     )

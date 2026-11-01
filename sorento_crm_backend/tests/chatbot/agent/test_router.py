@@ -20,7 +20,7 @@ from app.models.chatbot_agent import AgentAction
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from tests._pg_fixture import blank_session, unique_code
-from tests.chatbot.agent._seed import seed_agent_contact, seed_contact, seed_user
+from tests.chatbot.agent._seed import all_agent_slugs, seed_agent_contact, seed_contact, seed_user
 
 MYT = ZoneInfo("Asia/Kuala_Lumpur")
 JEV_KEY = "ZZT-jev-secret-key-9876"
@@ -534,7 +534,7 @@ def test_R9_state_rule_decisions_carry_no_score_model_or_tokens(db, jev):
 
 
 def test_R10_the_request_carries_message_recent_exchanges_and_the_prompt(db, jev):
-    contact = seed_agent_contact(db)
+    contact = seed_agent_contact(db, slugs=all_agent_slugs())
     arm(db)
     base = datetime.now(timezone.utc) - timedelta(minutes=30)
     long_reply = "r" * 500

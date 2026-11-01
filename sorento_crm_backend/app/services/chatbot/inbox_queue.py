@@ -885,6 +885,9 @@ def _run_agent_row(
         ):
             reply = result.reply_text
             answered = True
+        elif getattr(result, "notes", None):
+            # The turn failed after a confirm made a change: the fixed line stays, with the note of what was made.
+            reply = AGENT_FAILED_LINE + "\n\n" + "\n".join(result.notes)
     except Exception as exc:  # noqa: BLE001 - AgentBusy, AgentRefused, anything: one honest line
         logger.warning("chatbot inbox: agent failed for turn %s", turn_id, exc_info=True)
         facts["agent_error"] = type(exc).__name__

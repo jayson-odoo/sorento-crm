@@ -96,7 +96,7 @@ def decide_route(
     if prompt is None:
         return RouteDecision("chat", "router_failed:no_prompt")
     instructions, criteria, model = prompt
-    criteria = _with_agent_tools(criteria)
+    criteria = _with_agent_tools(criteria, agent_tool_labels(db, user))
 
     state = _state(db, contact_respond_id, text)
     started = time.perf_counter()
@@ -236,25 +236,31 @@ def _router_prompt(db) -> tuple[str, dict[str, Any], str] | None:
     return instructions, criteria, row[1] or jev_client.DEFAULT_MODEL
 
 
-def agent_tool_labels() -> list[str]:
+def agent_tool_labels(db=None, user=None) -> list[str]:
     """Plain labels of what the agent can do: every write, then every per-user read. `tools.REGISTRY`
     (stock, ETA, cost) is left out on purpose: the bot answers those lookups too and the static
-    criteria text already covers them. A tool without a label is skipped (a guard test catches it)."""
+    criteria text already covers them. A tool without a label is skipped (a guard test catches it).
+
+    With `db` the labels are the ones THIS contact's agent could do (AGENTIC-KNOWLEDGE W1): a contact with
+    no linked user (`user` None) has no writes or user reads, and a linked user only the tools whose slug it
+    holds. Called with nothing, it lists every tool (the guard tests)."""
     labels: list[str] = []
-    for name in [*agent_writes.WRITES, *agent_writes.USER_READS]:
+    for name, definition in [*agent_writes.WRITES.items(), *agent_writes.USER_READS.items()]:
+        if db is not None and (user is None or not agent_writes.holds(db, str(user.id), definition.user_permission)):
+            continue
         label = agent_tools.TOOL_LABELS.get(name)
         if label and label not in labels:
             labels.append(label)
     return labels
 
 
-def _with_agent_tools(criteria: dict[str, Any]) -> dict[str, Any]:
+def _with_agent_tools(criteria: dict[str, Any], labels: list[str]) -> dict[str, Any]:
     """A copy of the criteria whose agent entry lists the tools; the stored prompt is never changed."""
     if "agent" not in criteria:
         return criteria
     agent = criteria["agent"]
     agent = dict(agent) if isinstance(agent, dict) else {"what": str(agent)}
-    agent["tools"] = agent_tool_labels()
+    agent["tools"] = labels
     return {**criteria, "agent": agent}
 
 

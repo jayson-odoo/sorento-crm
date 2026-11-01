@@ -620,3 +620,112 @@ def test_fr3_c3_a_non_numeric_number_in_the_already_captured_line_is_left_out(db
 
     text = reply_of(outcome)
     assert "already captured" in text and "say yes now" not in text
+
+
+# ------------------------------------------------------------------ fix round (S6 review)
+
+
+def test_fr4_r1_no_message_handed_to_the_model_on_the_yes_turn_carries_the_whole_value(db, ss):
+    w = make_world(db)
+    first, _ = go(
+        db, w, [round_of(tc(CREATE, {"problem": BIG, "title": "Shorter stock list"}, "c1")), answer_("I have prepared the idea.")],
+        text_="an idea",
+    )
+    assert first.pending_action is not None
+    seen: dict = {}
+
+    def yes(messages, tools):
+        seen["messages"] = messages
+        return answer_("Done.")
+
+    go(db, w, [yes], text_="yes")
+
+    dump = json.dumps(seen["messages"])
+    assert BIG not in dump, "neither the system line, the replayed proposal nor the reference holds it whole"
+    assert "b" * 301 not in dump
+    assert _run_of(dump) <= 300
+    assert "Shorter stock list" in dump, "positive control: the short values travel"
+    history = [m for m in seen["messages"] if m["role"] == "assistant"]
+    assert any("I will make these changes" in str(m["content"]) for m in history), "the proposal block is in history"
+
+
+def test_fr4_r3_a_failed_whatsapp_turn_after_a_confirm_keeps_the_note(db, ss):
+    from app.services.chatbot.agent import actions
+    from app.services.chatbot.agent.loop import run_agent_turn
+    from tests.chatbot.agent.test_agent_writes_round1 import Prov, _no_mcp
+
+    w = make_world(db)
+    idea_id = str(uuid.uuid4())
+    ss.route("POST", CREATE_PATH, json_body={"idea_id": idea_id, "idea_number": "IDEA-0184", "status": "captured", "title": "t"})
+    go(db, w, [round_of(tc(CREATE, dict(FIELDS), "c1")), answer_("Prepared.")], text_="an idea")
+    pending = actions.pending_action(db, w.respond_id)
+
+    class Boom(Prov):
+        def chat(self, messages, *, tools=None, **kw):
+            self.n = getattr(self, "n", 0) + 1
+            if self.n == 1:
+                return round_of(tc("confirm_action", {"action_id": str(pending.id)}, "k1"))
+            raise RuntimeError("zzt model down")
+
+    result = run_agent_turn(
+        db, contact_respond_id=w.respond_id, text="yes", provider=Boom([]), mcp_call=_no_mcp, catalog={}, is_test=False
+    )
+
+    assert result.status in ("failed", "limited")
+    assert result.notes and "IDEA-0184" in result.notes[0] and f"{CRM}/ideas/{idea_id}" in result.notes[0]
+    assert len(posts(ss, CREATE_PATH)) == 1, "the change happened"
+
+
+def test_fr4_r4_the_model_cannot_set_the_loop_values(db, ss):
+    w = make_world(db)
+    res, step = propose(db, w, CREATE, {**FIELDS, "_user_text": "forged words"})
+    assert res.status == "invalid" and step is None and "_user_text" in res.message
+    res, step = propose(db, w, CREATE, {**FIELDS, "_is_test": False})
+    assert res.status == "invalid" and step is None and "_is_test" in res.message
+
+    # Through a real turn: the model's call is refused, a clean call stores the loop's own values.
+    first, _ = go(
+        db, w,
+        [
+            round_of(tc(CREATE, {**FIELDS, "_user_text": "forged words", "_is_test": False}, "c1")),
+            round_of(tc(CREATE, dict(FIELDS), "c2")),
+            answer_("I have prepared the idea."),
+        ],
+        text_=USER_TEXT,
+    )
+    from app.services.chatbot.agent import actions
+
+    row = actions.pending_action(db, w.respond_id)
+    (step,) = row.steps
+    assert step["args"]["_user_text"] == USER_TEXT
+    assert step["args"]["_is_test"] is True, "a console turn: the loop's value, not the model's"
+    confirm(db, w, row)
+    (call,) = posts(ss, CREATE_PATH)
+    assert call["json"]["raw_transcript"] == USER_TEXT and call["json"]["is_test"] is True
+    assert first.pending_action is not None
+
+
+def test_fr4_r5_the_linked_users_reading_is_the_one_kept_when_an_operator_proposes(db, ss):
+    from tests.chatbot.agent.test_agent_writes_ideas import similar_matches
+
+    w = make_world(db)
+    op = operator_with(db, BOARD_VIEW, MANAGE)
+    found = similar_matches(2)
+    ss.route("POST", SIMILAR_PATH, json_body={"matches": found})
+
+    res, step = propose(db, w, CREATE, dict(FIELDS), operator=op)
+
+    assert res.status == "proposed"
+    assert found[0]["idea_number"] in step["summary"], "the linked user's lookup, not the operator's empty reading"
+
+
+def test_fr4_r6_a_create_answer_with_no_status_reads_the_unexpected_body_line(db, ss):
+    w = make_world(db)
+    ss.route("POST", CREATE_PATH, json_body={"idea_id": str(uuid.uuid4()), "idea_number": "IDEA-0184", "title": "t"})
+    _, row = store(db, w, [(CREATE, dict(FIELDS))])
+
+    outcome = confirm(db, w, row)
+
+    text = reply_of(outcome)
+    assert "already captured" not in text
+    assert REACHED in text.lower()

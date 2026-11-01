@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Callable
@@ -93,10 +94,34 @@ def digest_line(entry: dict) -> str:
     return f"{entry.get('name')}({args}) {entry.get('status')}"
 
 
+#: The most characters of one quoted value handed back to the model after a change was proposed (I3): injected
+#: text gets little room right where the model decides `confirm_action`. The waiting-change reference, and an
+#: earlier reply replayed as history (which holds the proposal block), are capped the same way; the stored step
+#: and the reply the user read keep the whole value. Applied at read time, so nothing stored is cut.
+WAITING_VALUE_CHARS = 300
+_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def _cap_quoted(match: "re.Match[str]") -> str:
+    value = match.group(1)
+    if len(value) <= WAITING_VALUE_CHARS:
+        return match.group(0)
+    kept = value[:WAITING_VALUE_CHARS]
+    # Never cut inside an escape: an odd run of backslashes at the end would eat the closing quote.
+    if (len(kept) - len(kept.rstrip("\\"))) % 2:
+        kept = kept[:-1]
+    return f'"{kept}..."'
+
+
+def cap_quoted_values(text: str) -> str:
+    """`text` with every quoted value cut to `WAITING_VALUE_CHARS` (then "...")."""
+    return _QUOTED.sub(_cap_quoted, text)
+
+
 def _turn_messages(turn: ChatbotTurn) -> list[dict]:
     envelope = turn.envelope if isinstance(turn.envelope, dict) else {}
     response = turn.response if isinstance(turn.response, dict) else {}
-    reply = str(response.get("reply_text") or "")
+    reply = cap_quoted_values(str(response.get("reply_text") or ""))
     digest = [d for d in (response.get("tool_digest") or []) if isinstance(d, dict)]
     if digest:
         reply += "\n[tools: " + "; ".join(digest_line(d) for d in digest) + "]"
