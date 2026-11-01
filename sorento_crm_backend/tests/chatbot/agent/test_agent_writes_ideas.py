@@ -281,13 +281,17 @@ def test_AC_R2_1_the_model_is_shown_the_tools_only_with_the_slug(db, ss):
 
 
 def test_AC_R2_1_a_contact_with_no_linked_user_never_reaches_them(db, ss):
-    from app.services.chatbot.agent.access import AgentRefused, build_context
+    # AGENTIC-KNOWLEDGE W1 (owner, 31 Oct): an unlinked contact is no longer refused; it runs as a
+    # contact principal, which holds no writes, so the idea tools are still never offered to it.
+    from app.services.chatbot.agent import writes
+    from app.services.chatbot.agent.access import build_context
 
     contact = seed_contact(db)
     db.commit()
-    with pytest.raises(AgentRefused) as exc:
-        build_context(db, contact["respond_id"])
-    assert exc.value.reason == "no_linked_user"
+    ctx = build_context(db, contact["respond_id"])
+    assert ctx.principal == "contact"
+    offered = {w.name for w in writes.permitted_writes(db, ctx)} | {r.name for r in writes.permitted_user_reads(db, ctx)}
+    assert not offered & {CREATE, "crm_idea_update", "crm_ideas_list"}
 
 
 # ------------------------------------------------------------------ AC-R2-2 propose creates nothing
