@@ -20,6 +20,7 @@ import type { PortalContact } from '../lib/portal-client';
 const push = vi.fn();
 const replace = vi.fn();
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push, replace }),
 }));
 

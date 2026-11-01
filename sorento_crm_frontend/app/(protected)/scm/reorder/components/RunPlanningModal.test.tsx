@@ -12,7 +12,7 @@
  * first page deliberately does NOT contain those two codes.
  */
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -260,7 +260,22 @@ async function renderModal(over: Partial<React.ComponentProps<typeof RunPlanning
   return { onSubmit, onOpenChange };
 }
 
-beforeEach(() => vi.clearAllMocks());
+// Fixed clock. The modal refuses a To cut-off before today (B2, `submit()` in
+// RunPlanningModal.tsx), and the scenarios below type literal 2026 dates (2026-10-31,
+// 2026-12-31). On the real clock those turned past on 1 Nov 2026 and V2/V4 failed the
+// release. Only `Date` is faked, so `waitFor` and `setTimeout` keep running for real.
+// 15 Jul 2026, local noon: before every To date the file uses as a valid cut-off.
+const FIXED_NOW = new Date(2026, 6, 15, 12, 0, 0);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(FIXED_NOW);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
   it('shows the three inputs, and no cash budget, market toggle or buy_scope', async () => {

@@ -456,12 +456,9 @@ def test_the_series_price_beats_a_floor_rule_on_the_same_product():
         assert floor.rule_id == series.id
 
 
-def test_a_series_that_states_no_discount_falls_through_to_the_floor_rule():
-    """AC-C4, and the single most consequential decision in this slice.
-
-    56 of the client's 151 codes carry a price and NO percentage. Reading that blank as
-    "zero discount permitted" would put a hard floor at the selling price under every one of
-    them, and every discount would read as a breach. Silence falls through instead.
+def test_a_series_price_with_no_discount_is_the_floor_and_wins_over_the_rule():
+    """Owner ruling Q2 (1 Nov 2026), replacing AC-C4: a series price with no max discount
+    allows no discount, so the floor is the series price and the series beats the rule.
     """
     from app.services import project_pricing_service as pricing
 
@@ -477,9 +474,8 @@ def test_a_series_that_states_no_discount_falls_through_to_the_floor_rule():
         )
 
         assert floor is not None
-        # The RULE, not 180.00 and emphatically not "no discount off 180".
-        assert floor.value == Decimal("100.00")
-        assert floor.level == pricing.LEVEL_PRODUCT
+        assert floor.value == Decimal("180.00")
+        assert floor.level == pricing.LEVEL_SERIES
 
 
 def test_a_product_the_series_does_not_name_is_unaffected_by_it():

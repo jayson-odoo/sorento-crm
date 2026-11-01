@@ -12,16 +12,20 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import OrderDetailPage from './page';
 
 const searchString = 'page=2&limit=50&sort=created_at&dir=desc&order_status_id=s1';
+// The record's own open tab rides on the URL too (NAV-KEEP-TAB); it is not list state.
+const nav = vi.hoisted(() => ({ tab: '' }));
 
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(searchString),
+  useSearchParams: () => new URLSearchParams(`${searchString}${nav.tab ? `&tab=${nav.tab}` : ''}`),
   useRouter: () => ({ push: vi.fn() }),
   usePathname: () => '/order-management/orders/o-1',
 }));
 
 // The record card has its own tests; this one is about the toolbar row.
 vi.mock('../components/OrderDetail', () => ({
-  default: () => <div data-testid="order-detail" />,
+  default: ({ listSearch }: { listSearch?: string }) => (
+    <div data-testid="order-detail" data-list-search={listSearch} />
+  ),
 }));
 
 vi.mock('@/components/common/container', () => ({
@@ -50,6 +54,7 @@ const PARAMS = Promise.resolve({ id: 'o1' });
 
 beforeEach(async () => {
   cleanup();
+  nav.tab = '';
   grant(['order_management.orders.view']);
   await PARAMS;
 });
@@ -79,6 +84,15 @@ describe('Delivery order detail toolbar', () => {
     expect(screen.queryByRole('button', { name: /Delivery order options/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Edit$/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Previous delivery order/ })).toBeNull();
+  });
+
+  it('NAV-KEEP-TAB: the open tab is not handed on as list state (Back, Edit, post-delete)', async () => {
+    nav.tab = 'invoices';
+    await renderPage();
+
+    const listSearch = screen.getByTestId('order-detail').getAttribute('data-list-search') ?? '';
+    expect(new URLSearchParams(listSearch).has('tab')).toBe(false);
+    expect(listSearch).toBe(searchString);
   });
 
   it('#1669: a user without order_management.orders.view sees the access-denied state, not the record', async () => {

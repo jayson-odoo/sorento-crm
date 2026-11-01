@@ -186,7 +186,9 @@ _OWN_PERMISSION_PREFIXES = (
     "/planning-changes",
     "/divergences",
 )
-_REFERENCE_PATHS = frozenset({"/quotation-approval-graph", "/quotation-line-images", "/quotation-line-stock"})
+_REFERENCE_PATHS = frozenset(
+    {"/quotation-approval-graph", "/quotation-line-images", "/quotation-line-stock", "/quotation-line-verdict"}
+)
 
 
 def _not_found() -> HTTPException:

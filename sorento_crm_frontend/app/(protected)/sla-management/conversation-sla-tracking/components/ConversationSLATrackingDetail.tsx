@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -93,6 +94,8 @@ export default function ConversationSLATrackingDetail({
   const queryClient = useQueryClient();
   const canSlaTestOverride = useHasPermission(SLA_TEST_OVERRIDE_PERMISSION);
   const { data: tracking, isLoading } = useConversationSLATrackingDetail(trackingId);
+  // `?tab=` so the record pager keeps the open tab on prev/next (NAV-KEEP-TAB).
+  const [tab, setTab] = useUrlTab({ tabs: ['overview', 'event-log'], defaultTab: 'overview' });
   // Only the conversation-context detail carries the pager. The form SLA tracking
   // page reuses this component with its own backHref; its records live in the form
   // scope, so the conversation list page it would walk is not the one it came from.
@@ -772,7 +775,7 @@ export default function ConversationSLATrackingDetail({
       </AlertDialog>
 
 
-      <Tabs defaultValue="overview" className="w-full">
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList className="mb-4">
           <TabsTrigger value="overview">
             <Info />

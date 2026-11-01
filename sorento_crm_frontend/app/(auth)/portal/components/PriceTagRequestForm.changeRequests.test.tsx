@@ -33,6 +33,7 @@ class StubResizeObserver {
 
 const push = vi.fn();
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push, replace: vi.fn(), back: vi.fn() }),
 }));
 
