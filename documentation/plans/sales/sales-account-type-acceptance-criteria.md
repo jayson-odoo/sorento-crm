@@ -75,7 +75,7 @@ baseline. "Stored types" are the types the customers of the asker's company carr
   number's type.
 - **AT-26 [T]** A word and a number: "cabana ... account 4", where CABANA is 4's type, asks nothing and runs the account filter alone, no brand
   filter. "cabana on account type 3", where it is not, asks nothing and runs brand CABANA on account 3.
-- **AT-27 [T]** Unchanged readings: "cabana stock" stays the brand with no question; "project sales" stays the channel; "sample" stays the category;
+- **AT-27 [T]** Unchanged readings: "cabana stock" stays the brand with no question; "project sales" stays the channel; a verdict reading "sample" as a category stays the category (the production parser gives it no entity today, so the gate grades it as any stored type);
   "top accounts" stays customers.
 - **AT-28 [T]** "sales for cabana in Jan" means 1 Jan to 31 Jan of this year, one total, on a fresh conversation and after a held 2026 month list. A month or year split never prints
   "Top N": its first line reads "By month, invoiced" ("By year, delivered"), and the lines under it stay as they are. Every other axis keeps "Top N".

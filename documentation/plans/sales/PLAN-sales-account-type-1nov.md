@@ -90,8 +90,7 @@ Rules:
 5. A month alone is that month of this year. A month or year split never prints "Top N".
 6. A word and a number in one message need no question: if the word is the number's type they name one account, so the account filter
    alone (the owner's "AGENT A, cabana, invoiced, by month, for account 4" ties to the report); if it differs, the word can
-   only be the brand ("cabana on account type 3"). "project" stays the channel and "sample" the category, as today, unless the
-   message says account type.
+   only be the brand ("cabana on account type 3"). "project" stays the channel, as today, unless the message says account type. "sample" reads like any other stored type: the 1 Nov gold run shows today's parser gives "sample sales" no entity at all, so there was no category reading to keep.
 7. Nothing loaded: "Account types are not loaded from AutoCount yet", never RM 0. An unknown number says so and lists the numbers and
    any type with no number. Rows add up to all sales. "top accounts" stays customers.
 
@@ -115,17 +114,20 @@ Test data: an UPDATE from the tag on this lane's own test copy only, never a sha
 **"In Jan" replay (1 Nov, 2 rows x1, baseline text, gemini-3.5-flash-lite, USD 0.0067).** "AGENT A sales for cabana in Jan" parses to 1 Jan to 31 Jan 2026 with no `group_by`, fresh and after a
 held 2026 month list. So the parser is not the cause on this text. No code widens a named month: `period_from` keeps the parser's two dates (`report_ask.py:175`, `:1916`). "Top 10 months" is the printed row
 count (`presenters.py`: `{lead} {len(rows)} {plural}`) over a month list, ten months with sales, the shape of the owner's other message, "2026 ... breakdown by month". Reading: the reply belongs to that ask, whose period
-was right and whose head is the defect. UNVERIFIED: the owner's own turn is in production and nobody on this lane can read it. One row x1 on another arm could still flip. So PR 2 fixes the head, pins the month in a lane test and in gold rows, and adds no month rule to the prompt.
+was right and whose head is the defect. UNVERIFIED: the owner's own turn is in production and nobody on this lane can read it. One row x1 on another arm could still flip. 
+
+**Corrected by the gold run (1 Nov, 19 rows x1).** The production text has no month rule at all; the rule at `parser_template.py:37` is in a different lineage (item 4 below). `group_by: month` appeared on "in Jan" asks: 1 row of 19 on the baseline and 3 of 19 on the first candidates, each with January dates. So the "in Jan" axis fault is real and flaky; the "1 Jan to 31 Dec" period is still not reproduced. PR 2 fixes the head, pins the month in a lane test and in gold rows, and adds the month rule to the candidate text.
 
 ### ARCHITECTURE
 
 1. **Layer.** Parser input and prompt (a data line, one hint, one entity field) plus the report ask's own field. No route change: PR 1's param does the work.
 2. **Shared mechanism.** The report ask's parser-only question, the one the company pick uses (`COMPANY`, `report_ask.py:390`; `offered` for the bare question). Every sales and outstanding ask already passes through it.
 3. **Parser reads, data decides.** The parser says only what the message says: `hint: account_type` for a numbered account or a typed-only word, and `kind_said: true` when the message itself says brand or account ("cabana brand", "cabana account"). Whether a word overlaps comes from the data: stored types against active brands, in the contact's scoped session. A parser that forgets `kind_said` costs one extra question, never a silent wrong figure.
-4. **Merge changes nothing until the label moves.** `kind_said` follows the `by_words` rule (`typed_group_by`, `report_ask.py:727`): a parse without the key comes from a text that does not define it, so no question. The Known account types line and the schema key follow the prompt text (`head/parser.py:1071-1075`). `account_type` is written in the prompt beside `sales_agent` (`parser_template.py:138`), not in `chatbot_entity_kinds`, whose rows render into every text.
-5. **Also fixed, UNVERIFIED until measured.** Any axis on the same path takes `account_type` once listed (`GROUP_BY`, `AXIS_NOUNS`, `_AXIS_FILTERS`, held filters); a trend head stops saying "Top N" on month and year alike.
-6. **Removes.** The "Which customer is Account 4 for?" dead end on a report ask when no customer is named. A customer's own ledger ("ZZT TRADING a/c 3") stays as it is.
-7. **Not built.** No word list, no regex on the message, no table of numbers, no second question type.
+4. **Production is a different text.** The production parser is a DB lineage, md5 `57d7d412`, not `head/parser_template.py`: it has no "Known brands" line and no `by_words`, and `publish_parser_template.py` would ship the wrong text. So the gated change is a patch on the production text, kept beside this plan as `PROMPT-sales-account-type-<md5>.patch`, as #2030 did; `TEMPLATE` carries the same rule for its own lineage. When #2030's text E is live, gold re-runs on E plus the patch.
+5. **Merge changes nothing until the label moves.** `kind_said` follows the `by_words` rule (`typed_group_by`, `report_ask.py:727`): a parse without the key comes from a text that does not define it, so no question. The Known account types line and the schema key follow the prompt text (`head/parser.py:1071-1075`). `account_type` is written in the prompt beside `sales_agent` (`parser_template.py:138`), not in `chatbot_entity_kinds`, whose rows render into every text.
+6. **Also fixed, UNVERIFIED until measured.** Any axis on the same path takes `account_type` once listed (`GROUP_BY`, `AXIS_NOUNS`, `_AXIS_FILTERS`, held filters); a trend head stops saying "Top N" on month and year alike.
+7. **Removes.** The "Which customer is Account 4 for?" dead end on a report ask when no customer is named. A customer's own ledger ("ZZT TRADING a/c 3") stays as it is.
+8. **Not built.** No word list, no regex on the message, no table of numbers, no second question type.
 
 ### Calls made here, filed with crew
 
