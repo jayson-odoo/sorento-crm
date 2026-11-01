@@ -259,3 +259,11 @@ yes, A. No, actually, every time. Every time." Crew's reading, applied in this p
 - Adopting the running prod Postgres into Patroni points Patroni at the real data directory; a wrong
   path makes Patroni create an empty cluster (v2 step 6). H2's pre-flight reads the path and H4a
   rehearses the adoption first.
+- H4b accepted risk: the role watcher accepts a deploy-lock file that others can read (mode 644, as
+  the runbooks create it), refusing only one that is group- or other-writable, the rule
+  `scripts/ops/restore-test.sh` already uses. A local account with read access could therefore hold
+  the lock and pause worker starts; the nodes are single-tenant (root and the release user only), so
+  this is accepted rather than forcing a mode change on the live lock at H4.
+- From the first release that carries H4b, the deploy refuses a `.deploy.env` that is group- or
+  other-writable (non-HA too). The 1 Nov pre-flight found no keys in it (it may not exist); the owner
+  checks its mode before that release.
