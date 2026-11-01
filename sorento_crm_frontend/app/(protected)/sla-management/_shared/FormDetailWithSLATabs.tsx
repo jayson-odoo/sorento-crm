@@ -1,6 +1,6 @@
 'use client';
 
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import { FileText, MessageSquare, Timer } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import FormSLATrackingTab from './FormSLATrackingTab';
@@ -12,6 +12,7 @@ import { useStockInquiry } from '@/app/(protected)/procurement-management/stock-
 import { usePurchaseRequest } from '@/app/(protected)/procurement-management/purchase-requests/hooks/usePurchaseRequests';
 import type { FormCommentKind } from '@/types/formComments';
 import { useUrlTab } from '@/hooks/useUrlTab';
+import { RecordCardSlotContext } from './RecordCardSlot';
 
 export interface FormDetailExtraTab {
   value: string;
@@ -45,7 +46,9 @@ function useCommentsTab(kind: FormCommentKind, id: string): FormDetailExtraTab {
   );
   const status = (complaint.data ?? inquiry.data ?? request.data)?.status;
   const isVoided = (status ?? '').trim().toLowerCase() === 'voided';
-  const count = (data ?? []).filter((c) => c.kind !== 'response' && !c.deleted).length;
+  const count = (data ?? []).filter(
+    (c) => c.kind !== 'response' && !c.deleted,
+  ).length;
   return {
     value: 'comments',
     label: `Comments (${count})`,
@@ -54,8 +57,11 @@ function useCommentsTab(kind: FormCommentKind, id: string): FormDetailExtraTab {
   };
 }
 
-export default function FormDetailWithSLATabs(props: FormDetailWithSLATabsProps) {
-  if (props.commentsKind) return <WithCommentsTab {...props} commentsKind={props.commentsKind} />;
+export default function FormDetailWithSLATabs(
+  props: FormDetailWithSLATabsProps,
+) {
+  if (props.commentsKind)
+    return <WithCommentsTab {...props} commentsKind={props.commentsKind} />;
   return <Shell {...props} />;
 }
 
@@ -80,41 +86,60 @@ function Shell({
     tabs: ['details', ...extraTabs.map((t) => t.value), 'sla'],
     defaultTab: 'details',
   });
+  // Where the detail component's `<RecordCardSlot>` lands: above the tab strip, so its
+  // pager (and the gear, and the CTA) can be pressed from every tab.
+  const [recordCardSlot, setRecordCardSlot] = useState<HTMLElement | null>(
+    null,
+  );
   return (
-    <Tabs value={tab} onValueChange={setTab}>
-      {/* The house underlined strip (same as the product/user detail pages), so
+    <RecordCardSlotContext.Provider value={recordCardSlot}>
+      <div
+        ref={setRecordCardSlot}
+        className="empty:hidden mb-5"
+        data-slot="record-card"
+      />
+      <Tabs value={tab} onValueChange={setTab}>
+        {/* The house underlined strip (same as the product/user detail pages), so
           every record in the system wears one tab style. The list carries its
           own bottom margin, so the root drops space-y. */}
-      <TabsList variant="line" className="mb-5 w-full justify-start">
-        <TabsTrigger value="details">
-          <FileText />
-          <span>Details</span>
-        </TabsTrigger>
-        {extraTabs.map((tab) => (
-          <TabsTrigger key={tab.value} value={tab.value}>
-            {tab.icon}
-            <span>{tab.label}</span>
+        <TabsList variant="line" className="mb-5 w-full justify-start">
+          <TabsTrigger value="details">
+            <FileText />
+            <span>Details</span>
           </TabsTrigger>
-        ))}
-        <TabsTrigger value="sla">
-          <Timer />
-          <span>SLA Tracking</span>
-        </TabsTrigger>
-      </TabsList>
-      <TabsContent value="details" className="m-0">
-        {children}
-      </TabsContent>
-      {extraTabs.map((tab) => (
-        <TabsContent key={tab.value} value={tab.value} className="m-0">
-          {tab.content}
+          {extraTabs.map((tab) => (
+            <TabsTrigger key={tab.value} value={tab.value}>
+              {tab.icon}
+              <span>{tab.label}</span>
+            </TabsTrigger>
+          ))}
+          <TabsTrigger value="sla">
+            <Timer />
+            <span>SLA Tracking</span>
+          </TabsTrigger>
+        </TabsList>
+        {/* Kept mounted on every tab (hidden while another is open): the record card it
+          portals above the strip belongs to this subtree, and unmounting it took the
+          pager away from every tab but Details. */}
+        <TabsContent
+          value="details"
+          forceMount
+          className="m-0 data-[state=inactive]:hidden"
+        >
+          {children}
         </TabsContent>
-      ))}
-      <TabsContent value="sla" className="m-0">
-        <FormSLATrackingTab
-          sourceEntityType={sourceEntityType}
-          sourceEntityId={sourceEntityId}
-        />
-      </TabsContent>
-    </Tabs>
+        {extraTabs.map((tab) => (
+          <TabsContent key={tab.value} value={tab.value} className="m-0">
+            {tab.content}
+          </TabsContent>
+        ))}
+        <TabsContent value="sla" className="m-0">
+          <FormSLATrackingTab
+            sourceEntityType={sourceEntityType}
+            sourceEntityId={sourceEntityId}
+          />
+        </TabsContent>
+      </Tabs>
+    </RecordCardSlotContext.Provider>
   );
 }

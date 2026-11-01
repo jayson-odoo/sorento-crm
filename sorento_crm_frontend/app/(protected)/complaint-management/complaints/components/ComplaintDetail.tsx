@@ -1,5 +1,6 @@
 'use client';
 
+import { RecordCardSlot } from '@/app/(protected)/sla-management/_shared/RecordCardSlot';
 import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
@@ -363,6 +364,8 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
+      {/* Above the tab strip, on every tab, so prev/next works from any tab (NAV-KEEP-TAB). */}
+      <RecordCardSlot>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1 min-w-0">
           <h2 className="text-2xl font-bold break-words">
@@ -653,6 +656,7 @@ function StaffComplaintDetail({ complaintId }: ComplaintDetailProps) {
           }
         />
       </div>
+      </RecordCardSlot>
 
       <HandlingLockBanner
         state={handlingLock.state}

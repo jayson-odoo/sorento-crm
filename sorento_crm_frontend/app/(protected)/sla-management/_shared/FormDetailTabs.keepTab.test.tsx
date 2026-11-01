@@ -38,6 +38,7 @@ vi.mock('@/app/(protected)/procurement-management/purchase-requests/hooks/usePur
 vi.mock('./FormRevisionsTab', () => ({ __esModule: true, default: () => <div>revisions body</div> }));
 
 import FormDetailTabsWithRevisions from './FormDetailTabsWithRevisions';
+import { RecordCardSlot } from './RecordCardSlot';
 
 /** The complaint detail page's own composition (`complaints/[id]/page.tsx`). */
 function mountComplaint(id: string) {
@@ -51,6 +52,11 @@ function mountComplaint(id: string) {
         commentsKind="complaint"
         extraTabs={[{ value: 'fulfilment', label: 'Fulfilment DOs', content: <div>dos of {id}</div> }]}
       >
+        {/* What ComplaintDetail renders: the record card (pager inside) through the slot,
+            then the Details body. */}
+        <RecordCardSlot>
+          <button type="button">Next complaint</button>
+        </RecordCardSlot>
         <div>details of {id}</div>
       </FormDetailTabsWithRevisions>
     </QueryClientProvider>,
@@ -96,5 +102,27 @@ describe('Complaint detail keeps the tab across prev/next', () => {
     mountComplaint('cp-3');
     expect(selected()).toBe('Details');
     expect(screen.getByText('details of cp-3')).toBeTruthy();
+  });
+});
+
+describe('The record card (and its pager) is on every tab', () => {
+  it('on Fulfilment DOs the pager is still there, above the tab strip', () => {
+    search = 'tab=fulfilment';
+    mountComplaint('cp-2');
+    const next = screen.getByRole('button', { name: 'Next complaint' });
+    expect(next).toBeTruthy();
+    // Above the strip, not inside a tab panel.
+    expect(next.closest('[role="tabpanel"]')).toBeNull();
+    const strip = screen.getByRole('tablist');
+    expect(next.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('on SLA Tracking too, and the Details body is hidden there', () => {
+    search = 'tab=sla';
+    mountComplaint('cp-2');
+    expect(screen.getByRole('button', { name: 'Next complaint' })).toBeTruthy();
+    expect(screen.getByText('details of cp-2').closest('[role="tabpanel"]')?.getAttribute('data-state')).toBe(
+      'inactive',
+    );
   });
 });

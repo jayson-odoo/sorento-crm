@@ -1,5 +1,6 @@
 'use client';
 
+import { RecordCardSlot } from '@/app/(protected)/sla-management/_shared/RecordCardSlot';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
@@ -626,6 +627,8 @@ function StaffPurchaseRequestDetail({
 
   return (
     <div className="space-y-6">
+      {/* Above the tab strip, on every tab, so prev/next works from any tab (NAV-KEEP-TAB). */}
+      <RecordCardSlot>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1 min-w-0">
           <h2 className="text-2xl font-bold break-words">
@@ -977,6 +980,7 @@ function StaffPurchaseRequestDetail({
           }
         />
       </div>
+      </RecordCardSlot>
 
       <ExportWithRevisionsDialog
         open={exportChoice !== null}
