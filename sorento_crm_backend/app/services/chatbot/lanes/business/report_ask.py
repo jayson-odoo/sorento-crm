@@ -982,52 +982,74 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
 
 def as_kind_answer(verdict: dict[str, Any], slot: Any) -> tuple[dict[str, Any], bool]:
     """Engine seam beside the company pick, the word question open. `(verdict, True)` when the reply settles the kind:
-    the parser's declared pick of an offered option, or a repeat of one of the held words with the parser's
-    `kind_said` ("cabana account"). Whatever else such a reply says edits the held ask (`kind_edits`). The only exits to
-    a new ask: `domain_in_message` true with a non-sales read, or an entity beyond the held words. An untyped
-    `group_by` is a guess and is dropped (the company seam's `_typed` rule). Parser fields only."""
+    the parser's declared pick of an offered option, a repeat of one of the held words with the parser's `kind_said`
+    ("cabana account"), or an account type number or tag (alone or beside the held word), which answers as the account
+    type and is carried in `report_ask_kind_reply`. Whatever else such a reply says edits the held ask (`kind_edits`).
+    The only exits to a new ask, for the pick and the repeat alike: `domain_in_message` true with a non-sales read, or
+    an entity beyond the held words (an `account_type` entity is the held dimension). A reply that exits has any declared
+    answer stripped (as `as_basis_answer`), since `reply_verdict` would still honour the pick. An untyped `group_by` is
+    a guess and is dropped (the company seam's `_typed` rule). Parser fields only."""
     from app.services.chatbot import contracts
 
     if not isinstance(slot, dict) or slot.get("ask") != ASK_NAME or slot.get("asking") != "kind":
         return verdict, False
     options = [o[0] for o in slot.get("options") or [] if isinstance(o, (list, tuple)) and o]
+    answer = verdict.get("open_question_answer")
+    declared = isinstance(answer, dict) and answer.get("mode") in rf.ANSWER_MODES
+    stripped = {k: v for k, v in verdict.items() if k != "open_question_answer"}
     status = jsc.js_string(verdict.get("order_status") or "").strip()
     domain = verdict.get("domain_hint")
-    if verdict.get("domain_in_message") is True and (
-        (status and status not in (*SALES_STATUSES, ASK_NAME)) or (domain and domain not in contracts.ORDER_OR_SALES_DOMAINS)
-    ):
-        return verdict, False
-    current = [e for e in jsc.array(verdict.get("entities")) if isinstance(e, dict) and e.get("current_message") is not False]
-    answer = verdict.get("open_question_answer")
-    typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
-        verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
-    )
-    untyped = {} if typed else {"group_by": None}
-    if isinstance(answer, dict) and answer.get("mode") in rf.ANSWER_MODES:
-        picked = [p for p in jsc.array(answer.get("picked")) if isinstance(p, int) and not isinstance(p, bool)]
-        if answer.get("mode") != "pick" or not picked or not 1 <= picked[0] <= len(options):
-            return verdict, False
-        return {**verdict, **untyped}, True
     asked = {
         " ".join(jsc.js_string(w).split()).casefold()
         for w in (*_dict(slot.get("extras")).get("kind_words", ()), *_dict(slot.get("extras")).get("kind_match", ()))
     }
-    said = [
-        e for e in current
-        if kind_was_said(e.get("kind_said")) and jsc.js_string(e.get("hint") or "").strip().lower() in options
-        and {" ".join(jsc.js_string(e.get(k) or "").split()).casefold() for k in ("raw", "canonical_code")} & asked
-    ]
-    hints = {jsc.js_string(e.get("hint")).strip().lower() for e in said}
+    current = [e for e in jsc.array(verdict.get("entities")) if isinstance(e, dict) and e.get("current_message") is not False]
+
+    def hint_of(e: dict[str, Any]) -> str:
+        return jsc.js_string(e.get("hint") or "").strip().lower()
+
+    def held_word(e: dict[str, Any]) -> bool:
+        return bool({" ".join(jsc.js_string(e.get(k) or "").split()).casefold() for k in ("raw", "canonical_code")} & asked)
+
+    words = [e for e in current if held_word(e) and hint_of(e) in options]
+    numbers = [e for e in current if hint_of(e) == "account_type" and not held_word(e)]
+    other_subject = verdict.get("domain_in_message") is True and (
+        (status and status not in (*SALES_STATUSES, ASK_NAME)) or (domain and domain not in contracts.ORDER_OR_SALES_DOMAINS)
+    )
+    if other_subject:
+        return (stripped if declared else verdict), False
+    if len(words) + len(numbers) != len(current):
+        # Another filter word: a new ask. It was said under a sales question, so a reply naming no report type of its
+        # own is read as the sales report it continues (`by_capability` types it, as it types every sales ask).
+        new_ask = stripped if declared else verdict
+        return (new_ask if status else by_capability({**new_ask, "order_status": "sales_report"}, seam=False)), False
+    typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
+        verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
+    )
+    base = {**verdict, **({} if typed else {"group_by": None})}
+    if declared:
+        picked = [p for p in jsc.array(answer.get("picked")) if isinstance(p, int) and not isinstance(p, bool)]
+        if answer.get("mode") != "pick" or not picked or not 1 <= picked[0] <= len(options):
+            return verdict, False
+        return base, True
+    if numbers:
+        # A number or tag answers as the account type; the held word beside it reads through the fresh ask's plan.
+        reply = {
+            "numbers": [" ".join(jsc.js_string(e.get("raw")).split()) for e in numbers],
+            "words": [" ".join(jsc.js_string(e.get("raw")).split()) for e in words if hint_of(e) == "account_type"],
+        }
+        pick = {"mode": "pick", "picked": [options.index("account_type") + 1], "items": [], "qty_for_all": None}
+        return {**base, "entities": [], "open_question_answer": pick, "report_ask_kind_reply": reply}, True
+    said = [e for e in words if kind_was_said(e.get("kind_said"))]
+    hints = {hint_of(e) for e in said}
     if len(hints) != 1 or len(said) != len(current):
-        return verdict, False  # no word of the question, or another subject beside it
-    position = options.index(next(iter(hints))) + 1
-    rest = [e for e in jsc.array(verdict.get("entities")) if not any(e is s for s in said)]
-    pick = {"mode": "pick", "picked": [position], "items": [], "qty_for_all": None}
-    return {**verdict, **untyped, "entities": rest, "open_question_answer": pick}, True
+        return verdict, False  # no word of the question said as a kind
+    pick = {"mode": "pick", "picked": [options.index(next(iter(hints))) + 1], "items": [], "qty_for_all": None}
+    return {**base, "entities": [], "open_question_answer": pick}, True
 
 
 def kind_edits(
-    parse_output: dict[str, Any], slot: dict[str, Any], *, dealer: bool, companies: Any
+    db: Any, parse_output: dict[str, Any], slot: dict[str, Any], *, dealer: bool, companies: Any
 ) -> tuple[dict[str, Any] | None, str | None]:
     """A reply that settled the word question edits the held ask with what else it says: the period, measure, basis and
     channel (`_reply_wins`), a count and direction, a typed axis (`_swap_axis`), a named company among the contact's own.
@@ -1061,7 +1083,21 @@ def kind_edits(
             return None, COMPANY_FORBIDDEN_LINE
         args["company"] = str(named[0])
         values["company"] = {"value": str(named[0]), "label": str(named[1])}
-    return {**slot, "values": values, "extras": {**extras, "args": args, "top_n": top_n}}, None
+    new_extras = {**extras, "args": args, "top_n": top_n}
+    reply = _dict(parse_output.get("report_ask_kind_reply"))
+    if reply.get("numbers") and not dealer:
+        # A number or tag answered: it replaces the account filter, read with the held word through the fresh plan.
+        typed_words = [w for w in jsc.array(reply.get("words")) if w]
+        read = {
+            **parse_output,
+            "report_ask_words": {"brand": [], "account_type": [*typed_words, *jsc.array(reply["numbers"])]},
+            "report_ask_kind": [{"hint": "account_type", "word": w, "raw": w, "said": True} for w in typed_words],
+        }
+        plan = _account_plan(db, read, companies, held_company=args.get("company"))
+        if plan["account_types"]:
+            choices = _dict(extras.get("kind_choices"))
+            new_extras["kind_choices"] = {**choices, "account_type": {"account_types": plan["account_types"]}}
+    return {**slot, "values": values, "extras": new_extras}, None
 
 
 def restates_the_ask(verdict: dict[str, Any]) -> bool:
@@ -1948,7 +1984,7 @@ def _settle(
             answer = _dict(parse_output.get("required_ask_answer"))
             if asked_field.name == "kind":
                 # What else the reply says edits the held ask (`kind_edits`); the held values are recomputed from it.
-                slot, line = kind_edits(parse_output, slot, dealer=dealer, companies=companies)
+                slot, line = kind_edits(db, parse_output, slot, dealer=dealer, companies=companies)
                 if slot is None:
                     return None, line
                 extras = _dict(slot.get("extras"))

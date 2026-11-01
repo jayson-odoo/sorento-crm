@@ -72,7 +72,7 @@ ALL_WORDS = frozenset({"all", "any", "everything", "every", "semua", "全部", "
 ENGINE_KEYS = frozenset(
     {
         "required_ask", "required_ask_reply", "required_ask_answer", "low_stock_frame",
-        "report_ask_words", "report_ask_spec", "report_ask_kind", "sales_ranking_frame", "ranking_pick", "ranking_detail",
+        "report_ask_words", "report_ask_spec", "report_ask_kind", "report_ask_kind_reply", "sales_ranking_frame", "ranking_pick", "ranking_detail",
         # the channel the parser read off an answering reply (`answer_drops` removes `sales_channel` itself)
         "required_ask_channel",
         # V1-DOC-SCOPE: who may see any customer's documents is the engine's call alone.
