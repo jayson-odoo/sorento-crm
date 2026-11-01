@@ -32,7 +32,7 @@ A combo has two kinds of part:
 9. Remove a part with the trash icon on its row, or a whole combo with the trash icon in its header. Both are countdown actions with a **Cancel**, and there is no confirmation dialog to answer.
 10. For a product on two catalogue pages, click **Add combo** again and build the second one. Order matters only within a combo: fixed parts print first, then each choice group in the order its label first appears.
 
-Editing a combo takes effect on requests raised **after** the change. A request already submitted keeps the parts that were copied onto it, so a package you correct today never quietly rewrites a tag marketing already approved.
+Editing a combo's **parts** takes effect on requests raised **after** the change: a request already submitted keeps the parts that were copied onto it. A change to its **description, free items or prices** reaches tags still being designed, with the usual change note and roll back. An approved tag stays as it was, apart from the cover picture, which always shows the current one.
 
 ### Reading it from a part's own page
 
@@ -96,7 +96,7 @@ Everything here is immediate and in-app: a toast when a combo or part saves, and
 
 ## Bulk import
 
-None. Packages are recorded by hand, product by product, off the catalogue pages. That is a deliberate choice for the sixty to a hundred packages in the current catalogue; reading them off the catalogue page automatically is a job for the next season.
+There is no import screen. The technical team can load combos from the printed catalogue in one run: name, parts, choice groups, upgrades, description, free items and picture. No price is loaded, so fill those in yourself. The run produces a report listing every code that could not be matched, which part was dropped, and every reading of the page that was a guess, so you can correct them on the product. Re-running never overwrites what you changed. Anything else is recorded by hand, product by product.
 
 ## See also
 
