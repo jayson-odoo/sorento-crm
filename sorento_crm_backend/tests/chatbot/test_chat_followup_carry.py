@@ -680,3 +680,21 @@ def test_s21_the_company_question_a_refine_opens_answers_on_the_next_turn(frame)
     args = report_ask.route_args(done)
     assert args.get("company") == COMPANY_A and not args.get("customer_ids"), args
     assert args["date_from"] == "2026-10-01" and args["basis"] == "delivered", args
+
+
+def test_s18b_the_parser_s_outstanding_kind_is_enough_over_a_sales_report_on_screen():
+    """The frame is on a sales basis, so only `capability_from` says this is an outstanding ask (`_refine` pops the basis)."""
+    frame = {"sort": "desc", "basis": "delivered", "customer_ids": [U1, U2], "date_from": "2026-10-01", "date_to": "2026-10-31"}
+    verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True, "capability_from": "outstanding"}
+    outcome, args = _settled(verdict, frame)
+    assert not args.get("customer_ids"), args
+    assert not outcome.extras.get("company_options") and "company" not in {outcome.slot and outcome.slot.get("asking")}, outcome
+
+
+def test_s22_a_contact_with_no_company_row_is_never_refused_a_company_on_a_refine():
+    """`_settle` reads a named company only when the contact has companies at all: `companies` [] is not "not yours"."""
+    verdict = {"message_type": "business_query", "topic_reset": False, "capability_from": "sales_report",
+               **_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True, "sales_company": "Sorento"}
+    stamped = report_ask.with_held(verdict, _focus(RANKING), open_ask=None, replaced=None)
+    outcome, line = report_ask.settle(None, {**stamped, "sales_ranking_frame": RANKING}, [], companies=[])
+    assert line != report_ask.COMPANY_FORBIDDEN_LINE and outcome is not None, (outcome, line)
