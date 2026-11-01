@@ -54,8 +54,8 @@ Owner, 1 Nov ~00:15: document access control must become "easier, straightforwar
    `contact_access_type_service.py:92-95`), so in practice the type is the gate: 1105 of 1120 Technical
    Specifications files carry all 7 codes. Narrowing a type to dealers today means editing the type, not 1120 files,
    but the type only offers four fixed buckets, not per-brand codes.
-4. **Company scope is invisible.** Direct Access is a Shared type, yet 9 of its 15 files belong to Sorento (uploaded
-   before the switch): a Mocha-only dealer misses the Cabana / Sorento warranty policies though the codes match.
+4. **Company scope is invisible.** Direct Access is a Shared type, yet 8 of its 15 files belong to Sorento (why: UNVERIFIED,
+   likely uploaded before Shared was set): a Mocha-only dealer misses the Cabana / Sorento warranty policies though the codes match.
    27 of 495 contacts have no company and read nothing.
 5. **Three "who gets this type" ideas that do not talk:** AI can read (#1), Direct access (#7, no screen), and the
    per-contact Document types grant (#7) that governs sending, not AI. The contact page's grant section looks like
@@ -108,7 +108,7 @@ public -> staff + every active code). Details after the owner approves the mock.
 - **CONTACT A** (Sorento Dealer, Cabana Dealer, End User; Sorento; 129 contacts share this shape), Direct Access
   ticked for every code: reads 13 of 15; Iborn and Mocha Pricetag Templates carry only Mocha codes.
 - **CONTACT C** (Mocha Dealer, End User; Mocha; 19), Direct Access: reads 5 of 15. 8 are Sorento-company files
-  in a Shared type (uploaded before the switch): "Other company: Sorento". 2 carry no Mocha code. Invisible today.
+  in a Shared type (why UNVERIFIED): "Other company: Sorento". 2 carry no Mocha code. Invisible today.
 - **CONTACT B** (End User; Sorento; 80), Technical Specifications ticked for the three Dealer codes: reads 0 of
   82 ("Not ticked for End User"); tick End User: reads 82.
 - **CONTACT D** (Sorento Office only; Mocha + Sorento; no CRM user; 4), Certification on today's "Dealers":
