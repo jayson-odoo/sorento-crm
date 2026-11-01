@@ -1,8 +1,8 @@
 # PLAN: RELEASE-FIX-2NOV (release tests red on main 41ef8f1c0a)
 
-Status: in progress. Small fix track (no migration, no auth/RBAC change, no new behaviour, diff well under 300 lines).
+Status: PR #2083 open, reviewer READY, red/kill proof posted; crew labels and merges. Small fix track (no migration, no auth/RBAC change, no new behaviour, diff well under 300 lines).
 
-Release run 41357449170 (full suite) is red on main 41ef8f1c0a. Fix only the three listed failures.
+Release run 41357449170 (full suite) is red on main 41ef8f1c0a. Fix only the listed failures (brief items 1-3, plus crew's item 4 from the finished shards).
 
 ## 1. Staff AI panel turn raises NameError (#2073)
 
@@ -29,6 +29,13 @@ does not change.
 `tests/scm/test_line_splits_confirm.py:876` unpacks three values from `OrderInquiryHandoverResend._plan`, which returns
 `(sendable, skipped)` (`app/services/oi_handover_resend.py:281`). Fix to `sendable, _skipped = ...`. If the assertions it
 feeds then fail, report, do not bend. Correct the stale docstring at `oi_handover_resend.py:261-262`.
+
+## 4. Migration tests pinned their own revision as THE head (#2073, shard 9)
+
+`tests/test_product_combo_fields.py::test_ac_0_1_the_revision_id_fits_and_alembic_has_one_head` asserted `ptc_0001` is the
+single head; #2073's `das_0001` sits on top. Check the real claim instead: the id fits, the revision is in the graph, the repo
+has one head. `tests/test_doc_access_migration.py` pinned `das_0001` the same way and gets the same fix. #2075 has no migration
+test. Precedent: `tests/test_migration_453_shared_brand_attach.py::test_452_has_exactly_one_child`.
 
 ## Tests run locally (throwaway DB)
 
