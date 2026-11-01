@@ -10,7 +10,7 @@ from app.config import settings
 from app.models.integration import IntegrationLog
 from app.schemas.integration import IntegrationLogCreate, IntegrationLogUpdate
 from app.services.error_handler import handle_not_found
-from app.services.respond_outbound_service import assert_outbound_enabled
+from app.services.respond_outbound_service import assert_not_panel_thread, assert_outbound_enabled
 from app.services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
@@ -347,7 +347,11 @@ class RespondClient:
         return httpx.Client(timeout=timeout, event_hooks={"request": [httpx_request_hook]})
 
     def _contact_api_identifier(self, identifier: str) -> str:
-        """Format contact identifier for API path: use id:xxxx for plain IDs, keep phone: etc. as-is."""
+        """Format contact identifier for API path: use id:xxxx for plain IDs, keep phone: etc. as-is.
+
+        Every call on a contact's URL builds its path here, so a panel thread's key stops here too:
+        not only a message but an assign, a comment or a close (AGENTIC-UNIFY AC-9)."""
+        assert_not_panel_thread(identifier)
         if not identifier or ":" in identifier:
             return identifier or ""
         return f"id:{identifier}"

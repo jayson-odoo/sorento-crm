@@ -32,6 +32,7 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.contracts import (
     DEFAULT_SUGGESTED_AGENT,
     DEFAULT_SUGGESTED_TEAM,
@@ -55,6 +56,7 @@ from app.services.chatbot.turn.reconcile import hits_for_token
 from app.services.chatbot.turn.state import (
     EXTRA_KIND_ALIASES,
     KIND_FIELD_MAP,
+    STAFF_TIER,
     Focus,
     Profile,
     State,
@@ -269,7 +271,7 @@ _MEMORY_COLUMNS = "c.id, c.chatbot_memory_level FROM respond_contacts c"
 
 def resolve_contact_pk(
     db: Session, contact_respond_id: str, space_id: str | None
-) -> tuple[str, str | None] | None:
+) -> tuple[str | None, str | None] | None:
     """The ONE `respond_contacts` row this `contact_respond_id` resolves to -
     workspace first, then the NULL-workspace fallback, exactly `_profile_rows`'s
     own two-tier lookup (chatbot memory lane A, security review 26 Sep 2026, B1).
@@ -283,7 +285,12 @@ def resolve_contact_pk(
     just those two flags) because a wrong pick here would leak or corrupt a
     DIFFERENT contact's stored profile facts and episodes, not just this turn's
     business answer.
+
+    A staff principal has no row: `(None, None)` keeps its thread's own frames and exchanges, at
+    the system's level, and every profile fact write skips on the empty pk.
     """
+    if staff_principal.current() is not None:
+        return None, None
     if not space_id:
         rows = list(
             db.execute(
@@ -479,7 +486,11 @@ def load_profile(
     (contract 59); wiring THIS field to that list would deny every domain that declares
     no `reveal_key` at all, since a domain with no key falls back to its bare name. The
     trigger for wiring it is S5's grant sweep, which gives every domain a key.
+
+    A staff principal is an office user with no contact's switches: stock allowed, no salesman job.
     """
+    if staff_principal.current() is not None:
+        return Profile(tier=STAFF_TIER), False
     try:
         if space_id is None:
             from app.services.chatbot.head.access import default_space_id
@@ -608,12 +619,14 @@ def _promotion_words_naming_no_promotion(db: Session, entities: Any) -> list[dic
     (case and surrounding whitespace aside)."""
     from app.models.marketing import Promotion
 
+    # A staff member who may not read promotions is told none matched, whatever the word.
+    denied = staff_principal.lacks(db, *staff_principal.PROMOTION_READERS)
     out: list[dict[str, Any]] = []
     for e in entities or []:
         if not (isinstance(e, dict) and jsc.nullish_str(e.get("hint")).strip().lower() == "promotion"):
             continue
         folded = " ".join(jsc.nullish_str(e.get("raw")).casefold().split())
-        if not folded or db.query(Promotion.id).filter(func.lower(func.trim(Promotion.description)) == folded).first() is None:
+        if denied or not folded or db.query(Promotion.id).filter(func.lower(func.trim(Promotion.description)) == folded).first() is None:
             out.append(e)
     return out
 
@@ -795,6 +808,8 @@ def _promotions_hold(
     from app.services.contact_access_type_service import ContactAccessTypeService
     from app.services.marketing_service import PromotionService
 
+    if staff_principal.lacks(db, *staff_principal.PROMOTION_READERS):
+        return False
     if access_levels is not None and not access_levels:
         # Reviewer R1: a contact whose levels the tier gate emptied (a dealer lacking the
         # asked brand) sees no promotion; None alone means no level filter (staff).
@@ -816,6 +831,8 @@ def promotion_kind_rows(db: Session) -> list[dict[str, Any]]:
     each turn; the parser is shown these and answers `promotion_kind` with one code."""
     from app.models.marketing import PromotionType
 
+    if staff_principal.lacks(db, *staff_principal.PROMOTION_READERS):
+        return []
     rows = db.query(PromotionType).order_by(PromotionType.match_priority, PromotionType.type_code).all()
     return [{"type_code": r.type_code, "type_name": r.type_name} for r in rows]
 
@@ -3216,7 +3233,7 @@ def fill_customer_names(db: Session, entities: list[dict[str, Any]]) -> None:
         uuid = row.get("uuid")
         if uuid:
             wanted.setdefault(str(uuid), []).append(row)
-    if not wanted:
+    if not wanted or staff_principal.lacks(db, staff_principal.CUSTOMERS_VIEW):
         return
     try:
         found = (

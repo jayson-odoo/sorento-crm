@@ -396,6 +396,8 @@ LABELS: dict[str, dict[str, str]] = {
     'Low stock report is not enabled for your account.': {"ms": 'Laporan stok rendah tidak diaktifkan untuk akaun anda.', "zh": '您的账户未开通低库存报告。'},
     # CHATBOT-FAIL-TRIAGE AC-3: a portal link ask for a form the contact is not granted.
     "That form is not available on your account.": {"ms": "Borang itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法使用该表格。"},
+    # AGENTIC-UNIFY round 9: a panel turn has no contact to send a portal link to.
+    "Portal links go to a contact on WhatsApp, so I can't send one from here. If you want the steps for something, ask me how to do it.": {"ms": "Pautan portal dihantar kepada kenalan di WhatsApp, jadi saya tidak dapat menghantarnya dari sini. Jika anda mahu langkah untuk sesuatu, tanya saya cara melakukannya.", "zh": "门户链接是通过 WhatsApp 发送给联系人的，所以我无法在这里发送。如果您想了解某件事的操作步骤，可以问我怎么做。"},
     'Could not run the low stock report right now.': {"ms": 'Laporan stok rendah tidak dapat dijalankan sekarang.', "zh": '暂时无法生成低库存报告。'},
     # REPORT-SMART-1021 step 5: a report failure is a plain sentence.
     "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.": {"ms": "Saya belum dapat membandingkan pecahan bulan demi bulan. Minta jumlah keseluruhan, atau pecahkan mengikut dimensi lain.", "zh": "暂时无法对比逐月明细。请查看总计，或按其他维度拆分。"},
@@ -743,6 +745,7 @@ INLINE = frozenset(
         "Which topic is this about - {topics}?",
         "Low stock report is not enabled for your account.",
         "That form is not available on your account.",
+        "Portal links go to a contact on WhatsApp, so I can't send one from here. If you want the steps for something, ask me how to do it.",
         "Could not run the low stock report right now.",
         "I can't compare a month by month breakdown yet. Ask for the total, or split by another dimension.",
         "I couldn't read that period. Which period? For example this month, September, 2026, or 1 to 15 Sep.",

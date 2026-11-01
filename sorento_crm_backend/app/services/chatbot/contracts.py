@@ -438,8 +438,11 @@ ActionKind = Literal[ACTION_KINDS]  # type: ignore[valid-type]
 
 # Which injector delivered this envelope (D15). The engine never behaves differently on
 # it; it exists so a trace row can say where a duplicate came from.
-INGRESS_KINDS = ("webhook", "poller", "retry", "console", "respond_webhook")
+INGRESS_KINDS = ("webhook", "poller", "retry", "console", "respond_webhook", "panel")
 IngressKind = Literal[INGRESS_KINDS]  # type: ignore[valid-type]
+# AGENTIC-UNIFY PR 3: a staff member's message from the AI side panel (`panel_service`). A live
+# turn that sends nothing: reserved, so only the CRM's own panel route can claim it.
+PANEL_INGRESS = "panel"
 # CHAT-SPEED: the CRM's own respond.io webhook started this turn (`direct_ingress.py`), not
 # the n8n producer. The one ingress the engine DOES treat differently: it is always ordered
 # per contact and never left delegated, because no n8n spine is waiting on its answer.
