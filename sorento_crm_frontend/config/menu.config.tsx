@@ -875,6 +875,11 @@ const STAFF_SIDEBAR: MenuConfig = [
         path: '/resource-management/attachment-types',
         permission: 'resource.attachment_types.view',
       },
+      {
+        title: 'Document Access',
+        path: '/resource-management/document-access',
+        permission: 'resource.attachment_types.view',
+      },
     ],
   },
 
@@ -2387,6 +2392,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
+      },
+      {
+        title: 'Document Access',
+        path: '/resource-management/document-access',
       },
     ],
   },
