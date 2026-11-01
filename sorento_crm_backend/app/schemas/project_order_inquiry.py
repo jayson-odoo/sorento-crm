@@ -1302,6 +1302,8 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
     #: LINKAGE-UNIFY U3 (Q5): the "Dead document" filter, as on the GET list.
     dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
+    #: RESERVE-EMAIL-FULL-TABLE: exact OI nos, comma-joined (no value cap).
+    inquiry_no: Optional[str] = None
 
     @field_validator("state")
     @classmethod
