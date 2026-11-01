@@ -1,5 +1,6 @@
 'use client';
 
+import { useUrlTab } from '@/hooks/useUrlTab';
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -127,10 +128,16 @@ export function DeliveryScheduleReviewClient({
   const scheduleIndex = scheduleRows.findIndex(
     (row) => row.latest_version_id === versionId,
   );
+  // The open tab rides in `?tab=` and onto the next schedule (NAV-KEEP-TAB).
+  const [activeTab, setActiveTab] = useUrlTab<ReviewTab>({
+    tabs: ['schedule', 'documents'],
+    defaultTab: 'schedule',
+  });
   const goToSchedule = (row: { latest_version_id: string | null } | undefined) => {
     if (row?.latest_version_id) {
+      const tabQs = activeTab === 'schedule' ? '' : `?tab=${activeTab}`;
       router.push(
-        `/project-sales/${projectId}/delivery-schedules/${row.latest_version_id}`,
+        `/project-sales/${projectId}/delivery-schedules/${row.latest_version_id}${tabQs}`,
       );
     }
   };
@@ -151,7 +158,6 @@ export function DeliveryScheduleReviewClient({
   const [confirming, setConfirming] = React.useState(false);
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<ReviewTab>('schedule');
   const [documentPage, setDocumentPage] = React.useState(1);
   /** Null until the reviewer picks one, so the default can follow the version's state. */
   const [rowFilter, setRowFilter] = React.useState<RowFilter | null>(null);
@@ -523,7 +529,7 @@ export function DeliveryScheduleReviewClient({
       )}
 
       {!readingNow && phase !== 'failed' && (
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as ReviewTab)}>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList variant="line" aria-label="Schedule sections">
             <TabsTrigger value="schedule">Schedule</TabsTrigger>
             <TabsTrigger value="documents">Documents</TabsTrigger>
