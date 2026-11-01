@@ -63,6 +63,7 @@ from app.models.project_so import (
 from app.services.error_handler import AppException
 from app.services.project_line_numbering import LineFacts, has_own_numbering, number_lines
 from app.services.scm.demand import PROJECT_CLASS, is_open_demand, is_undecided_demand
+from app.services.scm.planning_predicate import admitted_to_planning, why_not_admitted
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +319,7 @@ class ProjectSOAdoptionService:
         Each refusal names the sales order, never its id, and says which fact about it is
         the problem - a bare "cannot adopt" sends somebody to ask.
         """
-        self._assert_project_class(core)
+        self._assert_admitted(core)
         if core.status not in _PLANNABLE_STATUSES:
             # The actual status, not "is not open": two of the four ARE plannable now, so
             # "not open" would be read as a bug by somebody looking at a Completed order
@@ -337,12 +338,28 @@ class ProjectSOAdoptionService:
                 code="sales_order_nothing_outstanding",
             )
 
-    def _assert_project_class(self, core: SalesOrder) -> None:
-        """The one refusal BOTH entry points keep: this is not planning work at all.
+    def _assert_admitted(self, core: SalesOrder) -> None:
+        """`adopt`'s test: the board's own header predicate, so what it refuses here the board
+        does not show. The sentence is the one the board's empty state prints."""
+        admitted = (
+            self.db.query(SalesOrder.id)
+            .filter(SalesOrder.id == core.id, admitted_to_planning())
+            .first()
+        )
+        if admitted is None:
+            raise AppException(
+                409,
+                f"Sales order {core.so_number}: {why_not_admitted(core.demand_class)}",
+                code=(
+                    "sales_order_not_project_class"
+                    if core.demand_class
+                    else "sales_order_no_class"
+                ),
+            )
 
-        One spelling, because the migration path keeps only this check and a second copy of
-        the sentence would let the two drift.
-        """
+    def _assert_project_class(self, core: SalesOrder) -> None:
+        """`adopt_for_migration`'s one refusal, project only (DEALER-PLANNING R5): its population
+        is the history the sheet's migration was measured and accepted against."""
         if core.demand_class != PROJECT_CLASS:
             raise AppException(
                 409,

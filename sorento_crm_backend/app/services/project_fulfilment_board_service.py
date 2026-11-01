@@ -58,7 +58,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, case, func, not_, or_
 from sqlalchemy.orm import Session, aliased
 
 from app.models.inventory import Warehouse
@@ -99,11 +99,14 @@ from app.services.scm import priority
 from app.services.scm import sales_agent_service
 from app.services.scm import spo_supply
 from app.services.scm import supply_assignment
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS, planning_class
 from app.services.scm.supply_origin import buy_origin_by_product
 from app.services.scm.planning_predicate import (
     OUTSIDE_FULFILMENT_PLANNING,
+    admitted_to_planning,
     outside_fulfilment_planning,
     planned_at_own_bin,
+    why_not_admitted,
 )
 from app.services.scm.demand import (
     demand_qty,
@@ -418,6 +421,9 @@ def _remark_facts(order: SalesOrder, line: Any) -> Dict[str, Any]:
 
 
 def _project_label(order: SalesOrder) -> Optional[str]:
+    # A dealer order names no project, and its note is a note (DEALER-PLANNING R14).
+    if planning_class(order.demand_class) == DEFAULT_DEMAND_CLASS:
+        return None
     # PLAN-so-project-label.md: the column, once a rule has ever written it, before the
     # note-reading fallback below - so the board keeps reading exactly what it always has
     # for the vast majority of orders the migration's backfill has not reached yet.
@@ -950,6 +956,7 @@ class FulfilmentBoardService:
                 [self._contribution(row) for row in rows]
                 + [self._contribution(row) for row in cancelled_rows]
             ),
+            "unplanned_orders": self._unplanned_orders(numbers, rows),
             "orders": self._standings(
                 rows, adopted_by_so, pending_by_so, undo_by_so, decision_headers_by_so
             ),
@@ -1592,6 +1599,31 @@ class FulfilmentBoardService:
 
     # ------------------------------------------------------------ the demand
 
+    def _unplanned_orders(
+        self, numbers: Sequence[str], rows: Sequence["_Row"]
+    ) -> List[Dict[str, str]]:
+        """The selected orders the board left out because they are not admitted, each with
+        the true reason. Read only when a selected order carries no row at all, so an
+        ordinary board costs no statement for it."""
+        carried = {row.so_number for row in rows}
+        missing = [number for number in numbers if number not in carried]
+        if not missing:
+            return []
+        records = (
+            self.db.query(SalesOrder.so_number, SalesOrder.demand_class)
+            .filter(
+                SalesOrder.so_number.in_(missing),
+                SalesOrder.status.in_(["open", "closed"]),
+                # NULL first: a clause over a NULL class is NULL, and so is its negation.
+                or_(SalesOrder.demand_class.is_(None), not_(admitted_to_planning())),
+            )
+            .order_by(SalesOrder.so_number)
+            .all()
+        )
+        return [
+            {"so_number": number, "reason": why_not_admitted(klass)} for number, klass in records
+        ]
+
     def _demand_rows(
         self,
         so_numbers: Sequence[str],
@@ -1629,7 +1661,7 @@ class FulfilmentBoardService:
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status.in_(["open", "closed"]),
-                SalesOrder.demand_class == "project",
+                admitted_to_planning(),
                 is_undecided_demand(),
             )
             .all()
@@ -1706,7 +1738,9 @@ class FulfilmentBoardService:
                 # from the one predicate rather than from two lookups that could disagree.
                 # ACTIVE and flagged off - an inactive bin keeps whatever verdict it carried
                 # before the flag existed (`outside_fulfilment_planning`).
-                outside_planning=outside_fulfilment_planning(warehouse, order.doc_type),
+                outside_planning=outside_fulfilment_planning(
+                    warehouse, order.doc_type, order.demand_class
+                ),
                 priority=line.priority,
                 demand_class=order.demand_class,
                 so_doc_type=order.doc_type,
@@ -1823,7 +1857,7 @@ class FulfilmentBoardService:
                 # this read exists for - the one ordinary demand cannot see - vanished on
                 # exactly the completed orders this lane put on screen.
                 SalesOrder.status.in_(["open", "closed"]),
-                SalesOrder.demand_class == "project",
+                admitted_to_planning(),
                 (SalesOrderLine.line_status != "open") | (demand_qty() <= 0),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
                 PlanningChangeBatch.applied_at.is_(None),
@@ -1930,7 +1964,7 @@ class FulfilmentBoardService:
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status.in_(["open", "closed"]),
-                SalesOrder.demand_class == "project",
+                admitted_to_planning(),
                 SalesOrderLine.line_status == "cancelled",
                 or_(
                     SalesOrderLine.cancelled_at.isnot(None),

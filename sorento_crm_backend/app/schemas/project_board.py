@@ -1289,6 +1289,13 @@ class BoardPolicy(BaseModel):
     discriminates_nothing: bool = False
 
 
+class BoardUnplannedOrder(BaseModel):
+    """A selected order the board does not carry because it is not admitted to planning."""
+
+    so_number: str
+    reason: str
+
+
 class PlanningBoard(BaseModel):
     """`GET /project-sales/fulfilment-planning/board`. A pure read: opening it claims nothing."""
 
@@ -1311,6 +1318,9 @@ class PlanningBoard(BaseModel):
     #: confirm-all call all need EVERY decidable line, not only the ones currently rendered in
     #: the grid, so they read this list rather than flattening `cells`.
     contributions: List[BoardContribution] = []
+    #: DEALER-PLANNING R3: selected orders left out with the true reason, so the empty state
+    #: never tells a planner an open order's lines are all cancelled.
+    unplanned_orders: List[BoardUnplannedOrder] = []
 
     # ---- selection-scoped totals -------------------------------------------------
     #

@@ -9570,6 +9570,9 @@ class ProjectSupplyService:
                         outside_fulfilment_planning(
                             warehouse,
                             getattr(core_orders.get(str(core.sales_order_id)), "doc_type", None),
+                            getattr(
+                                core_orders.get(str(core.sales_order_id)), "demand_class", None
+                            ),
                         )
                         and str(core.id) not in decided_anywhere
                     )

@@ -48,6 +48,9 @@ class FulfilmentPlanningRow(BaseModel):
     sales_order_id: Optional[str] = None
     #: AC-CONSIGN-CRM: that core order's doc_type; null on an authored record (no core order).
     so_doc_type: Optional[str] = None
+    #: The class stored on the core order (project, retail, other); an authored record with no
+    #: core order is project work.
+    demand_class: Optional[str] = None
     #: The AutoCount / core sales-order number. The human key of a core-arm row.
     so_number: Optional[str] = None
     #: `authored` or `adopted`. Absent when nobody has planned this order yet.

@@ -77,6 +77,13 @@ def is_site_pool(segment: Optional[str]) -> bool:
     return (segment or _DEFAULT_SEGMENT) != PROJECT_SEGMENT
 
 
+def site_pool_clause(warehouse_model):
+    """The same segment rule as an ORM clause, for a query holding a `Warehouse` entity."""
+    from sqlalchemy import func
+
+    return func.coalesce(warehouse_model.segment, _DEFAULT_SEGMENT) != PROJECT_SEGMENT
+
+
 def is_project_reserve(segment: Optional[str], *, is_pool: bool) -> bool:
     """A PROJECT RESERVE: a pool (some location's `pool_warehouse_id`) that is ALSO
     `segment = project` - HQ (`PLAN-hq-project-reserve-12oct.md`). Its stock is project

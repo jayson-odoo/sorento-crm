@@ -43,6 +43,7 @@ from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import plan_qty_of
 from app.services.scm.demand import is_undecided_demand
 from app.services.scm.front_planning_engine import qty_text
+from app.services.scm.planning_predicate import admitted_to_planning
 
 #: `${sales_order_id}|${line_no}|${item_code}|${bucket_key}` - `_Row.key` in
 #: `project_fulfilment_board_service.py`, rebuilt by `standingsFor` on the frontend.
@@ -142,7 +143,7 @@ def _resolve_core_line(db: Session, sales_order_id: str, line_no: int, item_code
     of the order and numbers them distinctly, its numbers win over both.
 
     The SET of lines numbered is the board's own `_demand_rows` set - `SalesOrder.status in
-    (open, closed)`, `SalesOrder.demand_class == "project"`, `is_undecided_demand()` on the
+    (open, closed)`, `admitted_to_planning()`, `is_undecided_demand()` on the
     line - never every line the order has ever carried. A save against SO391698 line 10 read
     back "line not found" without this: the order carries lines this board never counted
     (non-project, cancelled, or already marked no purchase needed), so numbering ALL of them
@@ -159,7 +160,7 @@ def _resolve_core_line(db: Session, sales_order_id: str, line_no: int, item_code
         .filter(
             SalesOrder.id == sales_order_id,
             SalesOrder.status.in_(["open", "closed"]),
-            SalesOrder.demand_class == "project",
+            admitted_to_planning(),
         )
         .one_or_none()
     )

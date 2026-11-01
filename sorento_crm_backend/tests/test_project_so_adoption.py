@@ -347,7 +347,9 @@ def test_adopting_a_sales_order_of_another_company_is_a_404_and_writes_nothing()
 @pytest.mark.parametrize(
     "kwargs,code",
     [
-        ({"demand_class": "retail"}, "sales_order_not_project_class"),
+        # A retail order at a dealer bin adopts now (DEALER-PLANNING R1); an order nobody
+        # classified is what stays out at this bin, with its own refusal (R3).
+        ({"demand_class": None}, "sales_order_no_class"),
         # CANCELLED, not `closed` (AC-S2-14). A closed order is a book that SHIPPED, and a
         # line on it nobody sourced is exactly what this lane puts on the board - so adoption
         # has to reach it. A cancelled order is a book saying the demand went away, and there
