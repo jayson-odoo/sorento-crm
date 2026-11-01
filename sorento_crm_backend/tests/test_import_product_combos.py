@@ -489,3 +489,124 @@ def test_the_host_listed_among_the_components_is_not_a_drop_but_a_missing_code_s
         assert "ZZTH1" not in row["dropped_parts"], (apply, row["dropped_parts"])
         assert row["dropped_parts"] == "ZZTLOST"
     assert "ZZTH1" not in _parts(db, _combo(db, "ZZT 3 in 1", "ZZTH1"))
+
+
+# --------------------------------------------------------------------------- company of the rows written
+#
+# The script runs as its own process and never installs the company-scope listeners, so
+# nothing auto-stamps `company_id` there. The test process installs them (tests/conftest.py),
+# which stamped the starter templates for us and hid the defect. `_standalone` switches the
+# auto-stamp off, as it is in the real run.
+
+
+@pytest.fixture()
+def _standalone(monkeypatch):
+    from app.services import company_scope as scope_module
+
+    monkeypatch.setattr(scope_module, "_ENFORCE", False)
+
+
+def _templates_named(db, name):
+    db.expire_all()
+    with company_scope(db, None):
+        return db.query(TagTemplate).filter(TagTemplate.name == name).all()
+
+
+def _seed_template(db, name, company_id, *, published=True):
+    """A template row the way an earlier run (or marketing) left it, in `company_id`."""
+    from app.models.dealer_kit import TagTemplateVersion as Version
+
+    doc = {"layers": [], "width_mm": 10, "height_mm": 10, "marker": f"seeded {name}"}
+    with company_scope(db, frozenset({DEFAULT_COMPANY_ID})):
+        row = TagTemplate(name=name, family="sink_combo", doc=doc, print_size={"width_mm": 10, "height_mm": 10})
+        db.add(row)
+        db.flush()
+        version = Version(template_id=row.id, version_no=1, doc=doc, print_size=row.print_size)
+        db.add(version)
+        db.flush()
+        if published:
+            row.published_version_id = version.id
+        db.commit()
+        row_id, version_id = row.id, version.id
+    with company_scope(db, None):
+        db.query(TagTemplate).filter(TagTemplate.id == row_id).update(
+            {TagTemplate.company_id: company_id}, synchronize_session=False
+        )
+        db.commit()
+    return row_id, version_id
+
+
+def test_templates_are_written_in_the_chosen_company_and_list_for_it(
+    db, catalogue, photos, tmp_path, storage, _standalone
+):
+    _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
+    found = _templates_named(db, "Kitchen sink combo") + _templates_named(db, "Bathroom furniture combo")
+    assert len(found) == 2
+    assert {t.company_id for t in found} == {DEFAULT_COMPANY_ID}, "NULL company hides them from staff"
+    assert all(t.published_version_id for t in found)
+
+    from app.services.dealer_kit import tag_template_service
+
+    with company_scope(db, frozenset({DEFAULT_COMPANY_ID})):
+        listed = {t.name for t in tag_template_service._scoped(db).all()}
+    assert {"Kitchen sink combo", "Bathroom furniture combo"} <= listed
+
+
+def test_a_starter_left_with_no_company_is_claimed_not_duplicated(
+    db, catalogue, photos, tmp_path, storage, _standalone
+):
+    from app.models.dealer_kit import TagTemplateVersion as Version
+
+    row_id, version_id = _seed_template(db, "Kitchen sink combo", None)
+
+    # A dry run reports it and writes nothing.
+    _code, out, _rows = _run(db, tmp_path, photos, "--company", "SRT", templates=True)
+    assert "Kitchen sink combo" in out and "would" in out.lower()
+    assert _templates_named(db, "Kitchen sink combo")[0].company_id is None
+
+    _code, out, _rows = _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
+    rows = _templates_named(db, "Kitchen sink combo")
+    assert [r.id for r in rows] == [row_id], "no duplicate"
+    assert rows[0].company_id == DEFAULT_COMPANY_ID
+    assert rows[0].doc["marker"] == "seeded Kitchen sink combo", "its doc is left alone"
+    assert rows[0].published_version_id == version_id
+    with company_scope(db, None):
+        assert db.query(Version).filter(Version.template_id == row_id).count() == 1
+    assert "Kitchen sink combo" in out
+
+    # And a further rerun changes nothing.
+    _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
+    assert [r.id for r in _templates_named(db, "Kitchen sink combo")] == [row_id]
+
+
+def test_another_companys_template_and_other_unowned_names_are_not_touched(
+    db, catalogue, photos, tmp_path, storage, _standalone
+):
+    theirs_id, _ = _seed_template(db, "Kitchen sink combo", MOCHA_ID)
+    loose_id, _ = _seed_template(db, "ZZT Some other template", None)
+
+    _run(db, tmp_path, photos, "--company", "SRT", apply=True, templates=True)
+
+    theirs = [r for r in _templates_named(db, "Kitchen sink combo") if r.id == theirs_id]
+    assert theirs[0].company_id == MOCHA_ID and theirs[0].doc["marker"] == "seeded Kitchen sink combo"
+    mine = [r for r in _templates_named(db, "Kitchen sink combo") if r.id != theirs_id]
+    assert len(mine) == 1 and mine[0].company_id == DEFAULT_COMPANY_ID, "ours is created, theirs not claimed"
+    loose = _templates_named(db, "ZZT Some other template")[0]
+    assert loose.id == loose_id and loose.company_id is None
+
+
+def test_every_other_row_the_import_writes_is_in_the_hosts_company_or_has_none(
+    db, catalogue, photos, tmp_path, storage, _standalone
+):
+    from app.models.product import ProductAttachment
+
+    assert "company_id" not in ProductCombo.__table__.c
+    assert "company_id" not in ProductComboPart.__table__.c
+    _run(db, tmp_path, photos, apply=True)
+    db.expire_all()
+    with company_scope(db, None):
+        cover = db.query(Attachment).filter(Attachment.entity_type == "product_combo_image").all()
+        links = db.query(ProductAttachment).filter(ProductAttachment.attachment_id.in_([a.id for a in cover])).all()
+    assert cover and links
+    assert {a.company_id for a in cover} == {DEFAULT_COMPANY_ID}
+    assert {link.company_id for link in links} == {DEFAULT_COMPANY_ID}
