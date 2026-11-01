@@ -1,6 +1,6 @@
 # SALES-ACCOUNT-TYPE: sales by the customer's account type
 
-**Status:** PR 1 in CI. Reviewed READY. On-screen figures and the hand test wait for INVOICED-CHANNEL-PERF; merge after SS-DEBTOR-TYPE is live. PR 2 (parser) follows. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
+**Status:** PR 1 (#2067) ready, Waiting:ci; on-screen figures and the hand test wait for INVOICED-CHANNEL-PERF. PR 2 in Build on `crew/sales-account-type-pr2`, stacked on #2067: replay done, tests next. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
 
 Lane brief: crew `SALES-ACCOUNT-TYPE`. Branch `crew/sales-account-type`. UAC: `sales-account-type-acceptance-criteria.md`.
 Agent codes are masked (AGENT A, AGENT B) because this repo is public. The real codes are in the crew card.
@@ -34,8 +34,8 @@ Figures in this repo (plan, mock, tests) are invented, of the same shape. The re
   `(A/C 2)`, and one tag not at the end of the name.
 - **No same-code ledgers.** No company has two ledgers with one debtor code on the copy, so a pushed type reaches its one ledger;
   the agent's same-code fan-out (`master_ingest_service.py:1252`) has no twin here. The check compared codes exactly, not by case.
-- **Brands.** SORENTO, BRAVAT and CABANA are Sorento brands, so a bare word stays the brand. Production parser prompt on the copy:
-  v70, md5 `0e52eb27f27a6bd51d754ae34c43f4f0`.
+- **Brands.** SORENTO, BRAVAT and CABANA are Sorento brands. Production parser prompt on the 28 Oct copy:
+  v70, md5 `0e52eb27f27a6bd51d754ae34c43f4f0`; crew records a later production text, section 5.
 
 ## 3. Tie-out: the `[A/C]` tag against the AutoCount PDF
 
@@ -107,9 +107,30 @@ Test data: an UPDATE from the tag on this lane's own test copy only, never a sha
 - **PR 1, CRM, no prompt:** param `account_types` and axis `account_type` on the six datasets, route, MCP catalog, replies, and the screen's
   filter and column (drawn by the report kernel, no frontend code expected).
 - **Rollout:** merge PR 1 after the partner lane is live, or the Account type dropdown is empty and the split is one blank row, with no message on the screen.
-- **PR 2, CRM, prompt gate:** parser's reading of the numbered account, the brand-or-account-type question from the data, the period
-  fix, user guide. Prompt gate with v70 as the fixed
-  baseline; only the owner moves the production label.
+- **PR 2, CRM, prompt gate:** section 6. Baseline: the text crew records as the production label, md5 `57d7d412` (crew's ledger, 31 Oct; the 28 Oct copy's v70
+  `0e52eb27` predates it; today's label is the owner's to confirm). Only the owner moves the production label.
 
-The "in Jan" cause is not reproduced yet. `TEMPLATE` already states the month rule (`head/parser_template.py:37`). First Build step
-on PR 2: replay the message on pinned v70, fresh and with a held 2026 period, then fix where it falls.
+## 6. PR 2: the bot
+
+**"In Jan" replay (1 Nov, 2 rows x1, baseline text, gemini-3.5-flash-lite, USD 0.0067).** "AGENT A sales for cabana in Jan" parses to 1 Jan to 31 Jan 2026 with no `group_by`, fresh and after a
+held 2026 month list. So the parser is not the cause on this text. No code widens a named month: `period_from` keeps the parser's two dates (`report_ask.py:175`, `:1916`). "Top 10 months" is the printed row
+count (`presenters.py`: `{lead} {len(rows)} {plural}`) over a month list, ten months with sales, the shape of the owner's other message, "2026 ... breakdown by month". Reading: the reply belongs to that ask, whose period
+was right and whose head is the defect. UNVERIFIED: the owner's own turn is in production and nobody on this lane can read it. One row x1 on another arm could still flip. So PR 2 fixes the head, pins the month in a lane test and in gold rows, and adds no month rule to the prompt.
+
+### ARCHITECTURE
+
+1. **Layer.** Parser input and prompt (a data line, one hint, one entity field) plus the report ask's own field. No route change: PR 1's param does the work.
+2. **Shared mechanism.** The report ask's parser-only question, the one the company pick uses (`COMPANY`, `report_ask.py:390`; `offered` for the bare question). Every sales and outstanding ask already passes through it.
+3. **Parser reads, data decides.** The parser says only what the message says: `hint: account_type` for a numbered account or a typed-only word, and `kind_said: true` when the message itself says brand or account ("cabana brand", "cabana account"). Whether a word overlaps comes from the data: stored types against active brands, in the contact's scoped session. A parser that forgets `kind_said` costs one extra question, never a silent wrong figure.
+4. **Merge changes nothing until the label moves.** `kind_said` follows the `by_words` rule (`typed_group_by`, `report_ask.py:727`): a parse without the key comes from a text that does not define it, so no question. The Known account types line and the schema key follow the prompt text (`head/parser.py:1071-1075`). `account_type` is written in the prompt beside `sales_agent` (`parser_template.py:138`), not in `chatbot_entity_kinds`, whose rows render into every text.
+5. **Also fixed, UNVERIFIED until measured.** Any axis on the same path takes `account_type` once listed (`GROUP_BY`, `AXIS_NOUNS`, `_AXIS_FILTERS`, held filters); a trend head stops saying "Top N" on month and year alike.
+6. **Removes.** The "Which customer is Account 4 for?" dead end on a report ask when no customer is named. A customer's own ledger ("hanlim a/c 3") stays as it is.
+7. **Not built.** No word list, no regex on the message, no table of numbers, no second question type.
+
+### Calls made here, filed with crew
+
+- Account type is NOT a named subject for the company question (`report_ask.py:1897`): a number means a different type per company, so a two-company contact asking "account 4" and nothing else is asked the company. A brand keeps today's reading. Cost: one question, on a rare shape.
+- A customer-scoped contact (dealer) never gets the question or the line: the route refuses them the filter (AT-13), so "cabana" stays the brand and "account 4" is the dealer refusal.
+- The word question comes before every other owed field and prints bare, as mock v4 draws it. A basis still owed is asked next.
+- A word on a follow-up asks too, because rule 1 has no follow-up exception.
+- Side finding, not this lane: on baseline one row read AGENT A as a customer and the other as a sales agent.
