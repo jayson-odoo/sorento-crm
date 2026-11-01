@@ -65,8 +65,12 @@ if [ -z "$pct" ]; then note "disk: df failed"; elif [ "$pct" -ge "$ALERT_AT_PCT"
 # shellcheck disable=SC2086
 healthy=$(docker compose $COMPOSE_FILES exec -T "$ETCD_SERVICE" etcdctl endpoint health --cluster 2>&1 | grep -c "is healthy" || true)
 if [ "$healthy" -lt "$ETCD_MEMBERS" ]; then note "etcd ${healthy}/${ETCD_MEMBERS} members healthy"; fi
+# With auth on, etcd refuses `auth status` to the role-less healthcheck user ("etcdserver:
+# permission denied", found in the H4a rehearsal), which itself proves auth is on. Match etcd's own
+# error only, so a Docker socket "permission denied" still alerts.
 # shellcheck disable=SC2086
-if ! docker compose $COMPOSE_FILES exec -T "$ETCD_SERVICE" etcdctl auth status 2>/dev/null | grep -q "Authentication Status: true"; then
+auth_out=$(docker compose $COMPOSE_FILES exec -T "$ETCD_SERVICE" etcdctl auth status 2>&1)
+if ! printf '%s' "$auth_out" | grep -q -E "Authentication Status: true|etcdserver: permission denied"; then
   note "etcd auth not enabled"
 fi
 
