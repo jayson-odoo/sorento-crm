@@ -590,3 +590,21 @@ def test_a_console_parser_pin_runs_its_paired_span_prompt_on_a_dry_run_only(sess
     own = {**pin, "chatbot_span_extractor": "span-own"}
     assert engine_mod._span_override(db, env(own), dry_run=True) == "span-own"
     assert engine_mod._span_override(db, env({}), dry_run=True) is None
+
+
+def test_a_pick_from_the_supplier_roster_lists_that_suppliers_open_pos(session_factory, monkeypatch):
+    """Hand-test step 4: "1" after "Which one do you mean?" filters by the supplier on line 1."""
+    ids = _seed_suppliers(session_factory)
+    twin = _seed_twin(session_factory)
+    _seed_contact(session_factory, variables={})
+    _make_staff(session_factory)
+    asked, _ = _turn(session_factory, monkeypatch, _ask("taiyang", None), "outstanding PO for taiyang")
+    assert "Which one do you mean?" in asked, asked
+    first = next(ln for ln in asked.splitlines() if ln.startswith("1. "))
+    expected = ids["ours"] if SUPPLIER in first else twin
+    pick = _parser_output(
+        message_type="answer", intent_hint=None, domain_hint=None, entities=[], reference_positions=[1],
+    )
+    _reply, captured = _turn(session_factory, monkeypatch, pick, "1")
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [expected], captured
