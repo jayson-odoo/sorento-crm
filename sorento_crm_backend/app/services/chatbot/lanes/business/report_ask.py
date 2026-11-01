@@ -1091,13 +1091,22 @@ def kind_edits(
     reply = _dict(parse_output.get("report_ask_kind_reply"))
     if reply and not dealer:
         # ONE path: the reply's words and numbers, with what the pick says about the held word, go through the plan a
-        # fresh message uses; what it returns replaces the held brand and account filters.
+        # fresh message uses. A reply that only says the held word (a plain pick or repeat) keeps the question's own
+        # choices; a reply's own new value replaces its own dimension (`route_args` assigns the keys of `final`).
         words = {k: [w for w in jsc.array(v)] for k, v in _dict(reply.get("words")).items()}
         kinds = [k for k in jsc.array(reply.get("kinds")) if isinstance(k, dict)]
-        if not reply.get("synth"):
+        held_forms = {
+            " ".join(jsc.js_string(h.get(k)).split()).casefold()
+            for h in jsc.array(extras.get("kind_held")) for k in ("word", "raw", "type")
+        }
+
+        def own_words(hint: str) -> list[Any]:
+            return [w for w in words.get(hint, []) if " ".join(jsc.js_string(w).split()).casefold() not in held_forms]
+
+        plain = not own_words("brand") and not own_words("account_type")
+        if not plain and not reply.get("synth"):
             value = rf.picked_option(slot, _dict(parse_output.get("required_ask_answer"))).value
-            held_forms = {" ".join(jsc.js_string(h.get(k)).split()).casefold() for h in jsc.array(extras.get("kind_held")) for k in ("word", "raw", "type")}
-            own = [w for w in words.get("account_type", []) if " ".join(jsc.js_string(w).split()).casefold() not in held_forms]
+            own = own_words("account_type")
             if value == "brand" or not own:
                 hint = "brand" if value == "brand" else "account_type"
                 for h in jsc.array(extras.get("kind_held")):
@@ -1106,16 +1115,19 @@ def kind_edits(
                         words[hint].append(word)
                         kinds.append({"hint": hint, "word": word, "raw": h["raw"], "said": True})
         read = {**parse_output, "report_ask_words": words, "report_ask_kind": kinds}
-        plan = _account_plan(db, read, companies, ask=True, held_company=args.get("company"))
-        found, line = _word_filters(
-            db, {**read, "report_ask_words": {"brand": _brand_words(words, plan)}}, (("brand", "brand_ids"),)
+        held_company = args.get("company") or _dict(values.get("company")).get("value")  # named, or picked at its question
+        plan = _account_plan(db, read, companies, ask=True, held_company=held_company) if not plain else None
+        found, line = (
+            _word_filters(db, {**read, "report_ask_words": {"brand": _brand_words(words, plan)}}, (("brand", "brand_ids"),))
+            if plan is not None else ({}, None)
         )
         if found is None:
             return None, line
-        final = {k: v for k, v in (("brand_ids", found.get("brand_ids")), ("account_types", plan["account_types"])) if v}
+        final = (
+            {k: v for k, v in (("brand_ids", found.get("brand_ids")), ("account_types", plan["account_types"])) if v}
+            if plan is not None else {}
+        )
         if final:  # nothing read: the question's own choices stand, never a silent run without the word
-            for key in ("brand_ids", "account_types"):
-                args.pop(key, None)  # the answer replaces the held filters
             new_extras["kind_choices"] = {"brand": final, "account_type": final}
     return {**slot, "values": values, "extras": new_extras}, None
 
