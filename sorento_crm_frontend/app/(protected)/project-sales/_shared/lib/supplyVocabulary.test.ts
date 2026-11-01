@@ -27,6 +27,8 @@ import {
   movesText,
   suggestionBreakdown,
   takenByLocation,
+  outsidePlanningSentence,
+  unplannableLabel,
 } from './supplyVocabulary';
 import type {
   BoardCell,
@@ -1570,4 +1572,40 @@ describe('the Decided cell reads a location borrow as plain Borrow (owner, 9 Oct
 
 afterEach(() => {
   borrowKinds.shownApart = false;
+});
+
+describe('why a line cannot be planned', () => {
+  const outside = {
+    kind: 'unplannable',
+    qty: '40',
+    location: null,
+    warehouse_id: null,
+    reason: 'Outside fulfilment planning',
+    spo_number: null,
+    arrival_date: null,
+  } as BoardSource;
+  const noLocation = {
+    ...outside,
+    reason: 'No fulfilment location on the sales order line, so nothing can be sourced for it.',
+  } as BoardSource;
+
+  it('a line at a bin states the server reason, and names the bin in the sentence', () => {
+    const line = { fulfilment_location: 'BRW-SMC', sources: [outside] };
+    expect(unplannableLabel(line)).toBe('Outside fulfilment planning');
+    expect(outsidePlanningSentence(line)).toBe(
+      'BRW-SMC is outside fulfilment planning, so this line cannot be decided here.',
+    );
+  });
+
+  it('a line with no location needs a location, and has no bin sentence', () => {
+    const line = { fulfilment_location: null, sources: [noLocation] };
+    expect(unplannableLabel(line)).toBe('Needs a location');
+    expect(outsidePlanningSentence(line)).toBeNull();
+  });
+
+  it('a row that carries no stated reason falls back to needing a location', () => {
+    const line = { fulfilment_location: 'BRW-SMC', sources: [] };
+    expect(unplannableLabel(line)).toBe('Needs a location');
+    expect(outsidePlanningSentence(line)).toBeNull();
+  });
 });
