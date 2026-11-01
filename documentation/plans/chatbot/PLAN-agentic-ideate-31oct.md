@@ -205,7 +205,7 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 - **Q1, confirm before an idea is created: (a) confirm.** Same path as every agent write.
 - **Q2, undo after create: (a) confirm only.** A wrong idea is fixed with `crm_idea_update`. No delete and no undo.
 - **Q3, real or test idea from the console: (b) test.** Ideas the agent creates stay flagged test until the agent reaches
-  WhatsApp. The trigger to flip `writes.IDEA_IS_TEST` is the lane that puts the agent on WhatsApp.
+  WhatsApp. The trigger to flip the test flag (`writes.IDEA_IS_TEST`, since replaced by the turn-carried `_is_test`) is the lane that puts the agent on WhatsApp.
 - **Q4, how wide is R3a: (a).** Any bot question keeps the next reply on the bot, and an agent question keeps it on the
   agent (R3b). The owner confirmed the goal: new idea conversations start on the agent, and (a) only protects a bot
   conversation already mid-question.
@@ -260,7 +260,7 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 
 S6 of AGENTIC-KNOWLEDGE-P2 (`PLAN-agentic-knowledge-w1-01nov.md`, items I1 to I8) closed this list in commit 1c850e3085 on the local branch `s6-local` ( tests `tests/chatbot/agent/test_agent_ideas_live.py`):
 
-- [x] I1: `IDEA_IS_TEST = False`; `crm_ideas_list` reads only ss's own list; the test-only edit rule and the "test idea" note are gone.
+- [x] I1: the global `IDEA_IS_TEST` flag is removed; the test flag follows the turn (`_is_test`, loop-set, fail-safe True); `crm_ideas_list` reads only ss's own list; the test-only edit rule and the "test idea" note are gone.
 - [x] I2: a console operator creating an idea in another user's name needs `ideation.ideas.manage`, the same rule as editing for someone else (default built, owner asked; reversible in one condition in `_idea_create_read_before`). The operator is now checked before the linked user's lookup, so a refused step makes no ss call.
 - [x] I3: the waiting proposal handed back to the model caps each quoted value at `loop.WAITING_VALUE_CHARS = 300` (with "..."); the stored step and the lines the user reads are whole.
 - [x] I4: the invisible-text strip also removes variation selectors, CGJ, Hangul fillers and the braille blank (`writes.strip_invisible`).

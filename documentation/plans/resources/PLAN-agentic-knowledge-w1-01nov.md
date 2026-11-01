@@ -108,7 +108,8 @@ The owner ruled agent ideas stay TEST only until the agent reaches WhatsApp; thi
 stay user-principal only (a contact principal has no writes), so on WhatsApp only linked staff contacts create ideas.
 The IDEATE to-do list (`documentation/plans/chatbot/PLAN-agentic-ideate-31oct.md` "To do when `IDEA_IS_TEST`
 flips"), item by item (I1-I8):
-- I1: `writes.IDEA_IS_TEST = False`; `_ideas_list` drops the second source (the contact's confirmed creates read by
+- I1: the global flag `writes.IDEA_IS_TEST` is gone; an idea's test flag follows the turn (`_is_test`, set by the loop,
+  fail-safe True when absent: a live turn makes a real idea, a console turn or an old step a test idea); `_ideas_list` drops the second source (the contact's confirmed creates read by
   id) and reads only ss's own list; `_idea_update_read_before` drops the test-only edit rule; the create note no
   longer says "test idea".
 - I2 (owner decision, default built): a console operator creating an idea in ANOTHER user's name needs

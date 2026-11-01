@@ -5,7 +5,7 @@ test_agent_ideas_review.py: FakeSS at the httpx boundary, the blank Postgres sch
 through `run_agent_turn`. Behaviour that does not exist yet is reached at call time. A positive control
 sits beside each negative so a test cannot pass because nothing ever matched.
 
-Names the coder is held to: `writes.IDEA_IS_TEST`, `loop.WAITING_VALUE_CHARS` (300), `loop.waiting_reference`,
+Names the coder is held to: `loop.WAITING_VALUE_CHARS` (300), `loop.waiting_reference`,
 the create body's `raw_transcript`, and the list row key `use_cases`.
 """
 from __future__ import annotations
@@ -33,13 +33,7 @@ def reply_of(outcome) -> str:
     return " | ".join(failure_texts(outcome))
 
 
-# ------------------------------------------------------------------ AC-W28: the flag is off, ideas are real
-
-
-def test_ac_w28_the_test_flag_is_off():
-    from app.services.chatbot.agent import writes
-
-    assert writes.IDEA_IS_TEST is False
+# ------------------------------------------------------------------ AC-W28: the test flag follows the turn
 
 
 def test_ac_w28_a_confirmed_create_is_sent_as_a_real_idea(db, ss):
@@ -79,21 +73,6 @@ def test_ac_w28_the_note_does_not_call_the_idea_a_test(db, ss):
 
 def test_ac_w28_a_stored_step_with_no_origin_is_a_test_idea(db, ss):
     """Fail safe: a step without `_is_test` (stored before the turn's origin was carried) stays off the board."""
-    w = make_world(db)
-    _, row = store(db, w, [(CREATE, {"problem": PROBLEM})])
-
-    outcome = confirm(db, w, row)
-
-    (call,) = posts(ss, CREATE_PATH)
-    assert call["json"]["is_test"] is True
-    assert "test idea" in outcome.reply_text.lower()
-
-
-def test_ac_w28_control_with_the_flag_on_the_old_behaviour_is_still_reachable(db, ss, monkeypatch):
-    """The flag stays a flag: on, the body says is_test and the note says test idea (guards the assertions above)."""
-    from app.services.chatbot.agent import writes
-
-    monkeypatch.setattr(writes, "IDEA_IS_TEST", True)
     w = make_world(db)
     _, row = store(db, w, [(CREATE, {"problem": PROBLEM})])
 

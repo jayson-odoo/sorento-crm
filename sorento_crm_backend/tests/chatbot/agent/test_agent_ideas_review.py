@@ -402,10 +402,7 @@ def test_AC_RV_10_a_test_idea_of_the_users_still_works(db, ss):
     assert len(patches(ss)) == 1
 
 
-def test_AC_RV_10_with_the_flag_off_a_real_idea_of_the_users_works(db, ss, monkeypatch):
-    from app.services.chatbot.agent import writes
-
-    monkeypatch.setattr(writes, "IDEA_IS_TEST", False)
+def test_AC_RV_10_a_real_idea_of_the_users_can_be_edited(db, ss):
     w = make_world(db)
     Idea(ss, isTest=False)
     _, row = store(db, w, [(UPDATE, {"idea_id": IDEA, "title": "New title"})], seen=[IDEA])

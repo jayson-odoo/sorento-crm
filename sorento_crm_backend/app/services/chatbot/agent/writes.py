@@ -1740,10 +1740,6 @@ IDEA_MANAGE = "ideation.ideas.manage"
 CREATE_IDEA = "crm_idea_create"
 UPDATE_IDEA = "crm_idea_update"
 LIST_IDEAS = "crm_ideas_list"
-#: Whether an idea the agent creates is a test idea (kept off the board). Off since the agent reached WhatsApp
-#: (AGENTIC-KNOWLEDGE W1 S6, I1): the agent's ideas are real, `_ideas_list` reads ss's own list only, and the
-#: test-only edit rule is gone.
-IDEA_IS_TEST = False
 MAX_SIMILAR_IDEAS = 3
 MAX_USE_CASES = 5
 IDEA_PROBLEM_CHARS = 120

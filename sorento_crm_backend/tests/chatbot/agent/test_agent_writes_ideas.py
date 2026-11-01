@@ -240,11 +240,10 @@ def leaks(*texts) -> list[str]:
 # ------------------------------------------------------------------ constants
 
 
-def test_the_registry_names_and_the_test_flag_is_off():
+def test_the_registry_names():
     from app.services.chatbot.agent import tools, writes
 
     assert writes.CREATE_IDEA == CREATE and writes.UPDATE_IDEA == UPDATE and writes.LIST_IDEAS == LIST
-    assert writes.IDEA_IS_TEST is False  # S6: ideas left test mode
     assert CREATE in writes.WRITES and UPDATE in writes.WRITES and LIST in writes.USER_READS
     for name in (CREATE, UPDATE, LIST):
         entry = writes.WRITES.get(name) or writes.USER_READS.get(name)

@@ -55,8 +55,8 @@ Plan: `PLAN-agentic-knowledge-w1-01nov.md`. Each AC names its test.
 
 ## Ideas leave test mode (S6, #2038 merged)
 
-- AC-W28: `writes.IDEA_IS_TEST` is False; an agent-created idea is created with `is_test` False and its note does
-  not say "test idea".
+- AC-W28: an idea's test flag follows the turn: a live turn creates a real idea, a console turn or a step with no
+  origin a test idea (the note says "test idea" only for a test idea).
 - AC-W29: `crm_ideas_list` reads only ss's list (no read-by-id of the contact's creates); an edit of a non-test idea
   of the user's own is allowed (no test-only rule).
 - AC-W30: a console operator creating for another user without `ideation.ideas.manage` is denied (I2).
