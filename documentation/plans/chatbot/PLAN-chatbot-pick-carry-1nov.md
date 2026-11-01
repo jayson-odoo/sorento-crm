@@ -27,8 +27,9 @@ different customer in the other company, Total RM 0.00. Neither was offered or p
   `canonical_code`, `current_message` true, `entity_op` replace_combine, beside pick [1]. The resolver is asked
   `canonical_code` first (`resolve_gate.py:511`), so the name in `raw` did not protect it. Pinned as test p0.
 - Live on the crew copy, pre-fix, real resolver and gate: "1 <code>" at turn 2 sent turn 3's report the picked ledger of that
-  code and another company's unrelated customer. Same turns with the fix: all nine picked ledgers. The copy's own prompts did
-  not echo the code on a bare "1", so typing it is how the same parse is reached there.
+  code and another company's unrelated customer. Same turns with the fix: all nine picked ledgers.
+- The echo is the parser's call, turn by turn: of the copy's runs on a bare "1", most carried no such entity, and the browser
+  pass at 95bbc99403 did: the owner's shape, on the copy's production prompt, and the report ran on all nine.
 
 ## Leads checked and ruled out (with evidence)
 
