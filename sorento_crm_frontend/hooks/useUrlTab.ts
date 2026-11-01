@@ -77,3 +77,17 @@ export function useUrlTab<T extends string>({
 
   return [activeTab, setTab];
 }
+
+/**
+ * `href` with `tab` set on it (or left alone for the default tab / no tab). For the few
+ * pagers that build their own step href instead of going through `useListPager`, so they
+ * carry the open tab the same way (NAV-KEEP-TAB).
+ */
+export function withTab(href: string, tab: string | null | undefined, defaultTab?: string): string {
+  if (!tab || tab === defaultTab) return href;
+  const [beforeHash, hash] = href.split('#', 2);
+  const [path, query = ''] = beforeHash.split('?', 2);
+  const params = new URLSearchParams(query);
+  params.set(TAB_PARAM, tab);
+  return `${path}?${params.toString()}${hash != null ? `#${hash}` : ''}`;
+}

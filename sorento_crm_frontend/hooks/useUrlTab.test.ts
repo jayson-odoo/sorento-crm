@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
-import { useUrlTab } from './useUrlTab';
+import { useUrlTab, withTab } from './useUrlTab';
 
 let search = '';
 
@@ -112,5 +112,19 @@ describe('useUrlTab', () => {
     search = 'page=1&from=b2&tab=revisions';
     rerender();
     expect(result.current[0]).toBe('revisions');
+  });
+});
+
+
+describe('withTab (pagers that build their own step href)', () => {
+  it('adds tab to a bare path', () => {
+    expect(withTab('/x/2', 'lines')).toBe('/x/2?tab=lines');
+  });
+  it('keeps an existing query and replaces a stale tab', () => {
+    expect(withTab('/x/2?from=a&tab=old', 'lines')).toBe('/x/2?from=a&tab=lines');
+  });
+  it('leaves the href alone for the default tab or no tab', () => {
+    expect(withTab('/x/2?from=a', 'details', 'details')).toBe('/x/2?from=a');
+    expect(withTab('/x/2', null)).toBe('/x/2');
   });
 });
