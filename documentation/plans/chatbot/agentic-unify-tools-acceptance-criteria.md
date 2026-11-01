@@ -46,8 +46,8 @@ Status: written 1 Nov 2026. PR 4 of 4. Owner Q2 (a) on `CARD-agentic-unify-v2-31
 ## Proof
 
 - **AC-15** Red test commit before any code, kill proof after. Touched tests pass, including `tests/test_list_pagination_limit.py` if a list route's params change.
-- **AC-16** One live turn per tool family on a crew copy, with the panel as a staff user: complaints, SLA, projects, order analytics, find, capabilities, complaint close with Undo, order cancel, ticket draft. No step shows failed. Live call budget asked of crew first.
-- **AC-17** Jev gate: a fresh labelled set of ported-domain questions plus the fixed baseline rows, labels on against labels off. Bar in the plan.
+- **AC-16** One live turn per tool family on a staff panel turn, on an isolated API and MCP with Respond egress blocked: complaints, SLA, projects, order totals, find, "what can you do", order cancel, ticket draft. **Held for the owner (2 Nov):** it needs a DB with a Jev key and the OpenAI labels moved to Gemini. Complaint close is NOT RUN live unless the owner names a test contact; mocks cover it, and no real row is touched.
+- **AC-17** Jev gate. Run A, 2 Nov, 258 calls, 0.0099 USD, reported to the owner as is, no rewording: new rows 29/30 on Agent, bar 80 percent, PASS; baseline 49/50 against 50/50, bar no fewer, MISSED by one row, "please pass this to the sales team" going to an agent that cannot escalate; Chat controls 6/6. Without the labels, a complaint by number and a project by code go to Chat. Low-permission user with no labels: baseline 50/50, new rows 27/30.
 - **AC-18** Browser pass at 1280 and 375 on the panel: cards, countdown, Undo, draft link.
 
 ## Known limits, stated not fixed
