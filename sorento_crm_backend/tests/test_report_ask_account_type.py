@@ -134,7 +134,7 @@ def _sale(db, basis, customer, amount, *, prod=None, agent_row=None, when=SEP, k
         return header
     if basis == "pending_delivery":
         wh = warehouse(db, company_id=company_id)
-        return seed_do(db, customer_id=customer.id, order_date=when, source_book="db1", company_id=company_id,
+        return seed_do(db, customer_id=customer.id if customer is not None else None, order_date=when, source_book="db1", company_id=company_id,
                        lines=[do_line(prod.id, wh.id, 1, total=amount)])
     return seed_so_line(db, cust=customer, prod=prod, qty=1, total=amount, agent=agent_row, order_date=when,
                         delivered=1 if basis == "delivered" else 0, company_id=company_id)
@@ -528,10 +528,11 @@ def test_at_18_the_options_are_the_stored_types_of_the_callers_company_only(clie
     mocha = seed_mocha(db)
     _anchors(db, project=False)
     _ledger(db, "V", "ZZT TYPE B", company_id=mocha.id)
+    _ledger(db, "II", "ZZT TYPE A")  # a made-up type of the caller's own company: a fixed list would miss it
     db.commit()
     param = _meta_param(client, "sales_invoiced_ask", "account_type")
     assert param is not None, "no account_type param in the metadata"
-    assert {o["value"] for o in param["options"]} == {"SORENTO", "CERAMIC", "CABANA"}, param["options"]
+    assert {o["value"] for o in param["options"]} == {"SORENTO", "CERAMIC", "CABANA", "ZZT TYPE A"}, param["options"]
 
 
 def test_at_18_running_the_definition_with_account_type_equals_the_routes_account_types(client, db):
@@ -552,19 +553,178 @@ def test_at_18_running_the_definition_with_account_type_equals_the_routes_accoun
     assert from_screen == from_route == D("100.00"), (from_screen, from_route)
 
 
-def test_at_18_sales_by_debtor_type_keeps_its_visible_debtor_type_param():
+@pytest.mark.parametrize("key", ["sales_by_debtor_type", "top_selling_items"])
+def test_at_18_the_debtor_type_reports_have_no_account_type_and_keep_a_visible_debtor_type(key):
     from app.main import app  # noqa: F401  (import order)
     from app.services.reports import registry as reg
 
-    definition = reg.get("sales_by_debtor_type")
-    param = next(p for p in definition.params if getattr(p, "key", None) == "debtor_type")
-    assert param.label == "Debtor type" and param.hidden is False
+    definition = reg.get(key)
+    param_keys = {getattr(p, "key", None) for p in definition.params}
+    assert "account_type" not in param_keys, (key, sorted(k for k in param_keys if k))
+    assert "debtor_type" in param_keys
+    debtor = next(p for p in definition.params if getattr(p, "key", None) == "debtor_type")
+    assert debtor.label == "Debtor type" and debtor.hidden is False, key
+    for dataset in definition.datasets():
+        assert dataset.column("account_type") is None, (key, dataset)
+        col = dataset.column("debtor_type")
+        assert col is not None and col.hidden is False and col.label == "Debtor type", (key, col)
 
 
-def test_at_18_top_selling_items_still_reads_debtor_type():
-    from app.main import app  # noqa: F401  (import order)
-    from app.services.reports import registry as reg
+# ================================================================ review round: odd values (AT-5)
 
-    definition = reg.get("top_selling_items")
-    labels = {col.label for ds in definition.datasets() for col in [ds.column("debtor_type")] if col is not None}
-    assert labels == {"Debtor type"}, labels
+
+def _screen_amount(c, account_type):
+    params = {"date_basis": "order_date", "period": {"kind": "custom", "from": "2026-09-01", "to": "2026-09-30"},
+              "account_type": account_type}
+    body = {"params": params,
+            "view": {"params": params, "detail": {"columns": [], "order": []},
+                     "pivot": {"rows": "month", "cols": "all", "measures": ["qty", "amount"]}}}
+    resp = c.post("/api/v1/reports/sales_invoiced_ask/run", json=body)
+    assert resp.status_code == 200, resp.text[:300]
+    grand = resp.json()["layouts"]["summary"]["grand_total"] or {}
+    return money(grand.get("amount") or 0)
+
+
+@pytest.mark.parametrize("odd", ["\u00b2", "\u2460"])
+def test_at_5_an_odd_unicode_digit_is_an_unknown_value_never_a_500(client, db, odd):
+    _anchors(db, project=False)
+    db.commit()
+    resp = _ask(client, _staff(db), account_types=odd)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "refused" and body["rows"] == [], body
+    assert body["message"] == f"No account type {odd}. Account types: 1, 3, 4.", body["message"]
+
+
+def test_at_5_five_thousand_digits_on_the_route_are_422_value_too_long_never_a_500(client, db):
+    _anchors(db, project=False)
+    db.commit()
+    resp = _ask(client, _staff(db), account_types="9" * 5000)
+    assert resp.status_code == 422, resp.text[:300]
+    assert _code(resp) == "value_too_long", resp.text[:300]
+
+
+def test_at_5_five_thousand_digits_on_the_screen_run_are_zero_rows_never_a_500(client, db):
+    """The screen run has no length cap: the value is just unknown, so nothing matches."""
+    _anchors(db, project=False)
+    _sale(db, "invoiced", _ledger(db, "IV", "CABANA"), "100.00")
+    db.commit()
+    assert _screen_amount(client, ["9" * 5000]) == D("0.00")
+
+
+@pytest.mark.parametrize("odd", ["\u00b2", "\u2460"])
+def test_at_5_the_screen_run_with_an_odd_value_is_not_a_500_and_has_no_rows(client, db, odd):
+    _anchors(db, project=False)
+    _sale(db, "invoiced", _ledger(db, "IV", "CABANA"), "100.00")
+    db.commit()
+    params = {"date_basis": "order_date", "period": {"kind": "custom", "from": "2026-09-01", "to": "2026-09-30"},
+              "account_type": [odd]}
+    body = {"params": params,
+            "view": {"params": params, "detail": {"columns": [], "order": []},
+                     "pivot": {"rows": "month", "cols": "all", "measures": ["qty", "amount"]}}}
+    resp = client.post("/api/v1/reports/sales_invoiced_ask/run", json=body)
+    assert resp.status_code == 200, resp.text
+    grand = resp.json()["layouts"]["summary"]["grand_total"] or {}
+    assert money(grand.get("amount") or 0) == D("0.00"), resp.text[:300]
+
+
+# ================================================================ review round: one number per type (AT-6)
+
+
+def test_at_6_a_type_answers_to_one_number_only(client, db):
+    _anchors(db, project=False)
+    _ledger(db, "I", "SORENTO")
+    _ledger(db, "I", "SORENTO")
+    on_v = _ledger(db, "V", "SORENTO")  # one stray [A/C V] ledger typed SORENTO
+    _sale(db, "invoiced", _ledger(db, "I", "SORENTO"), "100.00")
+    _sale(db, "invoiced", on_v, "10.00")
+    db.commit()
+    contact = _staff(db)
+    body = _ok(client, contact, account_types="5")
+    assert body["status"] == "refused" and body["rows"] == [], body
+    assert body["message"] == "No account type 5. Account types: 1, 3, 4.", body["message"]
+    assert _amount(client, contact, account_types="1") == D("110.00")
+
+
+# ================================================================ review round: lines with no customer (AT-8)
+
+
+@pytest.mark.parametrize("basis", ["invoiced", "pending_delivery"])
+def test_at_8_a_line_with_no_customer_lands_in_blank_and_is_outside_any_account_filter(client, db, basis):
+    _anchors(db, project=False)
+    _sale(db, basis, _ledger(db, "IV", "CABANA"), "100.00")
+    _sale(db, basis, None, "7.00")
+    db.commit()
+    contact = _staff(db)
+    total = _amount(client, contact, basis=basis)
+    body = _ok(client, contact, basis=basis, group_by="account_type", top_n=20)
+    got = {r["name"]: money(r["amount"]) for r in body["rows"]}
+    assert got == {"CABANA": D("100.00"), "(blank)": D("7.00")}, body["rows"]
+    assert sum(got.values()) == total == D("107.00")
+    assert _amount(client, contact, basis=basis, account_types="4") == D("100.00")
+
+
+# ================================================================ review round: value length (AT-12)
+
+
+def test_at_12_a_value_of_51_characters_is_422_value_too_long(client, db):
+    _anchors(db, project=False)
+    db.commit()
+    resp = _ask(client, _staff(db), account_types="Z" * 51)
+    assert resp.status_code == 422, resp.text
+    assert _code(resp) == "value_too_long", resp.text
+
+
+def test_at_12_a_value_of_50_characters_is_an_ordinary_unknown_value(client, db):
+    _anchors(db, project=False)
+    db.commit()
+    body = _ok(client, _staff(db), account_types="Z" * 50)
+    assert body["status"] == "refused" and body["rows"] == [], body
+    assert body["message"] == f"No account type {'Z' * 50}. Account types: 1, 3, 4.", body["message"]
+
+
+# ================================================================ review round: scoping (AT-14)
+
+
+def test_at_14_the_screen_run_for_a_user_granted_one_company_never_sees_another_companys_type(db):
+    """A user granted company A only (not an admin: an admin's grants are every company). A type held only in
+    company B matches nothing for them; company A's own CABANA is readable, so the zero is not a blanket denial."""
+    from tests.test_sales_yearly_routes import _client as limited_client, _user
+
+    mocha = seed_mocha(db)
+    _anchors(db, project=False)
+    _ledger(db, "V", "ZZT TYPE B", company_id=mocha.id)
+    _sale(db, "invoiced", _ledger(db, None, "ZZT TYPE B", company_id=mocha.id), "500.00", company_id=mocha.id)
+    _sale(db, "invoiced", _ledger(db, "IV", "CABANA"), "100.00")
+    limited = _user(db, DEFAULT_COMPANY_ID)
+    db.commit()
+    with limited_client(db, limited, allow=("sales.reports.view",)) as c:
+        assert _screen_amount(c, ["CABANA"]) == D("100.00")
+        assert _screen_amount(c, ["ZZT TYPE B"]) == D("0.00")
+
+
+def _two_company_world(db):
+    mocha = seed_mocha(db)
+    _anchors(db, project=False)  # company A: 1, 3, 4; 4 is CABANA
+    _ledger(db, "IV", "ZZT TYPE B", company_id=mocha.id)
+    _ledger(db, "IV", "ZZT TYPE B", company_id=mocha.id)
+    _ledger(db, "II", "ZZT TYPE C", company_id=mocha.id)
+    _sale(db, "invoiced", _ledger(db, None, "CABANA"), "100.00")
+    _sale(db, "invoiced", _ledger(db, None, "ZZT TYPE B", company_id=mocha.id), "7.00", company_id=mocha.id)
+    db.commit()
+    return mocha
+
+
+def test_at_14_company_naming_one_of_two_companies_makes_the_number_that_companys_own(client, db):
+    mocha = _two_company_world(db)
+    contact = _staff(db, extra_company=mocha.id)
+    assert _amount(client, contact, account_types="4", company=mocha.id) == D("7.00")
+    assert _amount(client, contact, account_types="4", company=DEFAULT_COMPANY_ID) == D("100.00")
+
+
+def test_at_14_company_naming_one_company_lists_only_that_companys_own_types(client, db):
+    mocha = _two_company_world(db)
+    contact = _staff(db, extra_company=mocha.id)
+    body = _ok(client, contact, account_types="9", company=mocha.id)
+    assert body["status"] == "refused" and body["rows"] == [], body
+    assert body["message"] == "No account type 9. Account types: 2, 4.", body["message"]
