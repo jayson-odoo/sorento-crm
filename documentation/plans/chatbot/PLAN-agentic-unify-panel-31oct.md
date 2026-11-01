@@ -168,6 +168,16 @@ Rulings:
 - **Asked of the owner, not assumed:** on the panel only, low confidence to the agent instead of chat. AC-3 stands until answered.
 - The escalation on a how-to is reduced by the routing, not removed: if the parser still reads a chat turn as a request for help, a task follows, as on WhatsApp.
 
+**Measured, Jev only, labels fixed before each run** (aggregates; the real rows stay crew-only):
+
+| Set | Low to chat, before | Low to chat, after | Low to agent, after | Keep Jev's pick, after |
+| --- | --- | --- | --- | --- |
+| 30 panel questions, written with the fix | 16/30 | 30/30 | 30/30 | 30/30 |
+| 20 hard ones, also ours: lookups worded like how-to, Malay, Chinese, terse, escalation | 13/20 | 17/20 | 19/20 | 19/20 |
+| 90 real held-out staff messages from the P2 gold set, WhatsApp text sent as if from the dashboard | 82/90 | 82/90 | 78/90 | 83/90 |
+
+Live through the panel's route at 3176de279c, on Sales Orders: his three messages went to the agent at 0.94, 0.82 and 0.94; both how-to questions answered from `user_guides_read`, with no task created. A real panel question set is still owed before default.
+
 Accepted for hand test: `*Co B:*` under `3. Carol` sits inside that item, since it has no blank line before it (`tail/member_offer.py:255-262`). It needs more than one routing company, and the principal has one.
 
 ## Still to count or prove
