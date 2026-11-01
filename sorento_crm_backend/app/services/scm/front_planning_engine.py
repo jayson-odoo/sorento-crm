@@ -604,8 +604,10 @@ def pool_reserve_capacity(
     rather than the whole of one for a subset of items. A parameter nothing reads is a rule
     a reader still believes in.
 
-    Nothing is un-netted here, unlike rung 2: this line's demand is booked at
-    `BRW-<group>`, never at a pool, so none of it is inside `pools_net`.
+    Nothing is un-netted here, unlike rung 2: a line at a project bin is booked at
+    `BRW-<group>`, never at a pool, so none of it is inside `pools_net`. A line AT a pool
+    is booked there, and its caller hands in a net with that line's own demand already put
+    back (`project_supply_service._stands_on_its_own_pool`).
     """
     left = max(_dec(pools_net), ZERO)
     out: List[Tuple[str, Decimal]] = []

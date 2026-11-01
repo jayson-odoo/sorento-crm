@@ -1173,6 +1173,25 @@ def _location_only(candidate: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+
+def _stands_on_its_own_pool(fact: "_LineFacts") -> bool:
+    """Whether this line's own location IS the site pool it would draw on (a dealer order at
+    BRW, DEALER-PLANNING).
+
+    Such a line is inside that pool's book, so its own demand is netted against the stock it
+    stands on: 10 on hand and 10 ordered reads a net of zero and buys all 10. Its OWED quantity
+    goes back, the arithmetic `_group_offer` already does for a group and for the same reason,
+    and every other line's demand stays netted. A line at a project bin that merely draws the
+    pool is booked at its own bin, so it has nothing in the pool to add back
+    (`front_planning_engine.pool_reserve_capacity`).
+    """
+    return (
+        fact.warehouse is not None
+        and fact.pool is not None
+        and str(fact.warehouse.id) == str(fact.pool.id)
+    )
+
+
 class ProjectSupplyService:
     """The supply sheet (`proposal_for`) and the atomic commit (`confirm`)."""
 
@@ -2436,6 +2455,12 @@ class ProjectSupplyService:
         # one and not the ask, for the reason its docstring gives. On a unit whose members
         # have no delivery the two are the same number, which is nearly every unit.
         owed_total = sum((max(_dec(fact.owed_qty), _ZERO) for _key, fact in members), _ZERO)
+        # The same un-net `_apply_group_nets` gave `first` alone, for the rest of the unit.
+        pool_add_back = (
+            owed_total - max(_dec(first.owed_qty), _ZERO)
+            if _stands_on_its_own_pool(first)
+            else _ZERO
+        )
         unit = dataclass_replace(
             first,
             open_qty=total,
@@ -2446,6 +2471,8 @@ class ProjectSupplyService:
                 if first.group_code
                 else first.group_offer
             ),
+            pools_net=first.pools_net + pool_add_back,
+            pool_available=first.pool_available + pool_add_back,
         )
         if unit.group_code:
             # The unit's share of what the group has arriving in time, exactly as
@@ -5012,6 +5039,10 @@ class ProjectSupplyService:
         fact.group_net = group.net
         fact.group_net_by_location = list(group.by_location)
         fact.pools_net = pools.net
+        if _stands_on_its_own_pool(fact):
+            own = max(_dec(fact.owed_qty), _ZERO)
+            fact.pools_net += own
+            fact.pool_available += own
         fact.group_offer = (
             self._group_offer(fact, group) if fact.group_code else _ZERO
         )
