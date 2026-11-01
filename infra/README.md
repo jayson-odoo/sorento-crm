@@ -28,9 +28,6 @@ sorento-infra/
       .deploy.env.example         names only, no values
       nginx/  caddy/              captured from the box
       systemd/role-watcher.service
-    in-extra/                     node B (KVM 8) only
-      haproxy.cfg                 n8n + MCP follow the primary
-      n8n/                        the existing n8n compose, unchanged
     witness/                      shared-service box today, Hetzner EU later (config only)
       compose.witness.yml         etcd only
       etcd.env.example
@@ -47,12 +44,10 @@ sorento-infra/
 | `templates/patroni/Dockerfile` | Postgres 17 + pgvector + Patroni + WAL-G image |
 | `templates/etcd/etcd.env.template` | etcd member env for the three voters, WAN timeouts |
 | `templates/compose.ha.yml` | HA override for both CRM nodes: Patroni `db`, workers behind profile `promoted`, `SKIP_MIGRATIONS`, autoheal, etcd |
-| `templates/haproxy/haproxy.cfg` | node B (KVM 8): n8n API and DB traffic to whichever node leads |
 | `templates/ha-members.env.example` | the ONE place the three voters are named (witness movable by config) |
 | `templates/host/ha-members.nft` | the same addresses for the container firewall |
-| `templates/host/docker-user.nft` | container firewall: n8n / shared-service apps cannot reach the control plane |
+| `templates/host/docker-user.nft` | container firewall, witness only: shared-service apps cannot reach the control plane |
 | `templates/witness/compose.witness.yml` | the witness: etcd only (shared-service box today) |
-| `scripts/switchback.sh` | automatic move of the primary back to node A, the CRM box (04:00 MYT, 24 h healthy) |
 | `templates/walg.env.example` | WAL-G env names for Cloudflare R2 (values on the box only) |
 | `templates/wireguard/wg0.conf.template` | three-member mesh, if the tailnet is not used |
 | `templates/systemd/role-watcher.service` | runs the role watcher |
@@ -60,6 +55,5 @@ sorento-infra/
 | `scripts/ha-checks.sh` | disk / etcd / lag / archive / WAL / backup-age checks to Healthchecks.io, prunes old dumps |
 | `tests/test_ha_scripts.py` | shell tests with fake curl/docker/etcdctl/df: `python3 -m pytest infra/tests -q` |
 
-The app side is already in this repo: `GET /api/v1/health/role` (Cloudflare LB monitor and the
-HAProxy check) and the scheduler leader guard (`sorento_crm_backend/app/scheduler/leader.py`, env
+The app side is already in this repo: `GET /api/v1/health/role` (Cloudflare LB monitor) and the scheduler leader guard (`sorento_crm_backend/app/scheduler/leader.py`, env
 `SCHEDULER_LEADER_DATABASE_URL` = a DIRECT Postgres URL, not pgbouncer).
