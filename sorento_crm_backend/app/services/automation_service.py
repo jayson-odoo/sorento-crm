@@ -291,10 +291,14 @@ class AutomationService:
             )
             .all()
         )
+        context = dict(context or {})
         match = automation_triggers.TriggerMatch(
-            context=dict(context or {}),
+            context=context,
             source_kind=source_kind,
             source_id=source_id,
+            # DEALER-OI-ROUTE: a trigger whose facts live on the context (the order
+            # inquiry emails' `sales_order_class`) is filtered by each row's conditions.
+            fact_sources=automation_triggers.context_fact_sources(trigger_type, context),
         )
         results: list[dict[str, Any]] = []
         for automation in automations:
