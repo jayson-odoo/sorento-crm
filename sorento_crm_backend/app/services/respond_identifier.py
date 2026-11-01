@@ -42,6 +42,18 @@ def resolve_respond_io_id(db: Session, value: Optional[str]) -> Optional[str]:
     return rid or None
 
 
+#: A panel thread's chatbot key (`chatbot/principal.py`). It names no contact and is never sent to.
+PANEL_KEY_PREFIX = "panel-"
+
+
+def is_panel_key(identifier: Optional[str]) -> bool:
+    """Does this outbound identifier name a panel thread, bare or behind an `id:` style prefix?"""
+    value = str(identifier or "").strip()
+    if ":" in value:
+        value = value.split(":", 1)[1]
+    return value.startswith(PANEL_KEY_PREFIX)
+
+
 def contact_for_identifier(db: Session, identifier: Optional[str]) -> Optional[RespondContact]:
     """The RespondContact an OUTBOUND identifier addresses, or None.
 

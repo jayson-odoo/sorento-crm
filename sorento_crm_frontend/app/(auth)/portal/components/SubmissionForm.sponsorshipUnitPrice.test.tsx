@@ -12,6 +12,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import type { PortalContact } from '../lib/portal-client';
 
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 

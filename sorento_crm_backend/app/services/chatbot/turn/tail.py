@@ -11,7 +11,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Mapping
 
-from app.services.conversation_variables_service import get_for_contact, overwrite_for_contact
+from app.services.conversation_variables_service import (
+    get_for_contact,
+    get_for_panel_thread,
+    lock_panel_thread,
+    overwrite_for_contact,
+    overwrite_for_panel_thread,
+)
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.turn.pending import to_wire
 from app.services.chatbot.turn.state import State, focus_to_wire
 
@@ -290,14 +297,20 @@ def write_merged(
     merged = payload
     clobbered: list[str] = []
     merged_any = False
+    # AGENTIC-UNIFY PR 3: a staff principal's state lives on its panel thread, not a contact row.
+    principal = staff_principal.current()
     if base is not None:
         # The same lock `overwrite_for_contact` takes, taken FIRST so the read below and
         # the write after it are one critical section.
-        db.execute(
-            text("SELECT id FROM respond_contacts WHERE respond_io_id = :cid FOR UPDATE"),
-            {"cid": respond_io_id},
-        )
-        stored = get_for_contact(db, respond_io_id=respond_io_id)
+        if principal is not None:
+            lock_panel_thread(db, conversation_id=principal.conversation_id)
+            stored = get_for_panel_thread(db, conversation_id=principal.conversation_id)
+        else:
+            db.execute(
+                text("SELECT id FROM respond_contacts WHERE respond_io_id = :cid FOR UPDATE"),
+                {"cid": respond_io_id},
+            )
+            stored = get_for_contact(db, respond_io_id=respond_io_id)
         now = session_state.five_keys({"session_vars": stored})
         if any(now.get(k) != base.get(k) for k in payload):
             unchanged = _as_written_unchanged(base)
@@ -316,7 +329,11 @@ def write_merged(
                     merged[key] = mine
                     if theirs != start and theirs != mine:
                         clobbered.append(key)
-    written = overwrite_for_contact(db, respond_io_id=respond_io_id, state=merged)
+    written = (
+        overwrite_for_panel_thread(db, conversation_id=principal.conversation_id, state=merged)
+        if principal is not None
+        else overwrite_for_contact(db, respond_io_id=respond_io_id, state=merged)
+    )
     if clobbered or merged_any:
         # Looked up AFTER the write committed, outside the lock: a failed lookup must
         # not abort the transaction the write rides on (review W1).

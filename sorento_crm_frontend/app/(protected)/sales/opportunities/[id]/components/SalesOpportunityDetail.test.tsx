@@ -13,6 +13,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('@/components/common/RecordNavigation', () => ({

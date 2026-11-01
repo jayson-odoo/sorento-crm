@@ -27,6 +27,15 @@ free-text description as a line.
 * A **Non-standard** flag on a line means the product is real but outside the series this scope
   is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed.
 
+### Minimum price, while you type
+
+* Under a line's rate, **Minimum price RM x** appears as soon as the price you type is below the
+  lowest price allowed for that item. It shows on a new quotation too, before the first save.
+* **Non-standard** also appears while you pick, on a new quotation as on a saved one.
+* A quotation with a line below the minimum price says *One line is priced below minimum price*
+  (or *N lines are priced below minimum price*) and needs a manager's approval before it can be
+  sent.
+
 ### The customer wants something we do not sell yet (bespoke item)
 
 Get the product into the catalogue first, then quote it:

@@ -15,7 +15,7 @@ import type {
 } from '../lib/portal-client';
 
 const stableRouter = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
-vi.mock('next/navigation', () => ({ useRouter: () => stableRouter }));
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams(), useRouter: () => stableRouter }));
 vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
 }));

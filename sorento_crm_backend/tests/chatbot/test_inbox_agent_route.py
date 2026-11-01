@@ -441,7 +441,7 @@ def _arming_agent(seams, monkeypatch, *, other_question=None):
     """A fake agent that, like a live turn, arms the knowledge-miss offer on the contact."""
     from sqlalchemy import text as sql
 
-    from app.services import knowledge_service
+    from app.services.chatbot.agent import knowledge_miss
     from app.services.chatbot import inbox_queue
     from app.services.chatbot.agent import loop
 
@@ -456,7 +456,7 @@ def _arming_agent(seams, monkeypatch, *, other_question=None):
                 {"sv": json.dumps({"open_question": other_question}), "i": pk},
             )
         else:
-            knowledge_service.arm_knowledge_miss_offer(db, str(pk))
+            knowledge_miss.arm_knowledge_miss_offer(db, str(pk))
         db.commit()
         return loop.AgentTurnResult(
             turn_id=seams.agent_turn_id, conversation_id=str(uuid.uuid4()), reply_text=AGENT_REPLY,

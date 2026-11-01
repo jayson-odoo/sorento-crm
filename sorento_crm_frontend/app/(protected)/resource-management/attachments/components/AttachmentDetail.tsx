@@ -25,6 +25,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { LoaderCircleIcon } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDate } from '@/lib/helpers';
@@ -164,6 +165,11 @@ function LinkagesTable({
 }
 
 function LinkagesTabs({ attachment }: { attachment: Attachment }) {
+  // `?tab=` so the record pager keeps the open tab on prev/next (NAV-KEEP-TAB).
+  const [tab, setTab] = useUrlTab({
+    tabs: ['products', 'promotions', 'forms', 'packing_lists', 'certificates'],
+    defaultTab: 'products',
+  });
   const products = attachment.linked_products ?? [];
   const promotions = attachment.linked_promotions ?? [];
   const form = attachment.linked_form ?? null;
@@ -174,7 +180,7 @@ function LinkagesTabs({ attachment }: { attachment: Attachment }) {
   const certificates = attachment.linked_certificates ?? [];
 
   return (
-    <Tabs defaultValue="products" className="w-full">
+    <Tabs value={tab} onValueChange={setTab} className="w-full">
       {/* Five link kinds wrapped onto three rows of squeezed pills at 375; the
           line strip scrolls on one row and the icon survives the scroll. */}
       <TabsList className="mb-1">

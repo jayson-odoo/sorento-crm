@@ -142,11 +142,23 @@ def contact_companies(db: Session, contact_uuid: str) -> List[tuple]:
     )
 
 
+def _staff_company(db: Session) -> List[tuple]:
+    """An identity read's company as `(id, name, code)`: the scope it already carries."""
+    from app.models.base import get_company_scope
+    from app.models.company import Company
+
+    scope = get_company_scope(db)
+    ids = [str(c) for c in scope] if isinstance(scope, frozenset) else []
+    rows = db.query(Company.id, Company.name, Company.code).filter(Company.id.in_(ids)).all() if ids else []
+    return [(str(i), str(name), str(code)) for i, name, code in rows]
+
+
 @dataclass
 class _Prepared:
     answer: Dict[str, Any]
     download_id: str
-    resolved_contact_id: str
+    #: Who the worker pushes the file to; None on an identity read, which has no one to push to.
+    resolved_contact_id: Optional[str]
     sync_wait_seconds: int
 
 
@@ -246,9 +258,10 @@ def _prepare(
     date_from: Optional[date],
     date_to: Optional[date],
     n: Optional[int],
-    contact_id: str,
-    space_id: str,
+    contact_id: Optional[str],
+    space_id: Optional[str],
     principal_id: str,
+    staff_read: bool = False,
 ) -> Union[Dict[str, Any], _Prepared]:
     """Every blocking step, on a worker thread (the low stock route's security B1 shape)."""
     from app.api.v1.reports.reports import _export_filename
@@ -258,7 +271,7 @@ def _prepare(
     from app.models.company import Company
     from app.schemas.report import ReportViewConfig
     from app.services import queue_service, rate_limit
-    from app.services.contact_field_reveal_service import granted_keys
+    from app.services.contact_field_reveal_service import granted_keys, staff_reveal_keys
     from app.services.download_service import DownloadService
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
     from app.services.reports import engine, registry as reg
@@ -276,16 +289,17 @@ def _prepare(
         channel = inv.CHANNEL_ALIASES.get(channel, channel)
     report_key = DEBTOR_TYPE_REPORT_KEY if {rows, cols} & INVOICED_AXES else REPORT_KEY
 
-    resolved = resolve_contact_with_null_workspace_fallback(
+    resolved = None if staff_read else resolve_contact_with_null_workspace_fallback(
         db, contact_id=contact_id, space_id=space_id
     )
     if not rate_limit.hit(
-        "sales_analysis", str(resolved or contact_id),
+        "sales_analysis", str(resolved or contact_id or principal_id),
         limit=_RATE_LIMIT, window_seconds=_RATE_WINDOW_SECONDS,
     ).allowed:
         return {"status": "busy", "message": "Too many sales reports in the last 10 minutes."}
 
-    keys = granted_keys(db, resolved) if resolved else []
+    # AGENTIC-UNIFY AC-7: an identity read has no contact, so the user's permissions stand in for its reveal.
+    keys = staff_reveal_keys(db, principal_id) if staff_read else granted_keys(db, resolved) if resolved else []
     if GRANT not in keys:
         raise AppException(
             status_code=403,
@@ -307,7 +321,8 @@ def _prepare(
 
     # The contact's OWN companies, read off the contact this route resolved (the low
     # stock route's rule 1): never the act-as principal's, which say nothing about them.
-    own = contact_companies(db, str(resolved))
+    # A staff member's is the one active company their identity read is scoped to.
+    own = _staff_company(db) if staff_read else contact_companies(db, str(resolved))
     grants = {cid for cid, _name, _code in own}
     companies = {
         str(i): (str(name), str(code))
@@ -427,7 +442,7 @@ def _prepare(
     sync_wait = _sync_wait_seconds(db)
     db.commit()
     return _Prepared(answer=answer, download_id=download_id,
-                     resolved_contact_id=str(resolved), sync_wait_seconds=sync_wait)
+                     resolved_contact_id=str(resolved) if resolved else None, sync_wait_seconds=sync_wait)
 
 
 def _ready_attachments(db: Session, download_id: str) -> Optional[List[Dict[str, str]]]:
@@ -462,6 +477,11 @@ def _finish(db: Session, prepared: _Prepared, snapshot: Optional[dict]) -> Dict[
     if ready:
         answer["attachments"] = ready
         return answer
+    if prepared.resolved_contact_id is None:
+        # AGENTIC-UNIFY AC-13: no contact, no WhatsApp claim. The file lands in the user's My Downloads.
+        answer["status"] = "pending"
+        answer["delivery"] = "my_downloads"
+        return answer
     claimed = db.execute(text(
         "UPDATE user_downloads SET deliver_to_contact_id = :c "
         "WHERE id = :id AND status <> 'ready'"
@@ -487,8 +507,8 @@ async def sales_analysis(
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     n: Optional[int] = Query(None),
-    contact_id: str = Query(...),
-    space_id: str = Query(...),
+    contact_id: Optional[str] = Query(None),
+    space_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(_GATE),
 ):
@@ -500,11 +520,16 @@ async def sales_analysis(
         # The chatbot's route only (security review B2): see the module docstring.
         raise AppException(status_code=403, message="This route is for the chatbot only",
                            code="api_key_required")
+    staff_read = bool(current_user.get("key_user_id"))
+    if not ((contact_id or "").strip() and (space_id or "").strip()) and not staff_read:
+        raise AppException(status_code=422, message="contact_id and space_id are required",
+                           code="contact_identity_required")
     prepared = await asyncio.to_thread(
         _prepare, db,
         rows=rows, cols=cols, channel=channel, basis=basis, company=company,
         date_from=date_from, date_to=date_to, n=n,
         contact_id=contact_id, space_id=space_id, principal_id=str(current_user["id"]),
+        staff_read=staff_read,
     )
     if isinstance(prepared, dict):
         return prepared

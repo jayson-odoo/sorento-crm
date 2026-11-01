@@ -19,9 +19,22 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { toast } from '@/lib/toast';
+import { WhatsAppBlocks } from '@/components/chatbot/WhatsAppBlocks';
+import { TurnAttachments } from '@/components/chatbot/TurnAttachments';
+import {
+  ActionsBlock,
+  ProposalActions,
+  ReplyMeta,
+  StepsDisclosure,
+} from '@/app/(protected)/system-management/chatbot-console/components/AgentTurnParts';
+import { RoutePill } from '@/app/(protected)/system-management/chatbot-console/components/RoutePill';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import {
+  cancelPanelAction,
+  confirmPanelAction,
+  withdrawPanelStep,
   fetchAIAssistantGreeting,
   listAIAssistantConversations,
   loadConversation,
@@ -78,6 +91,61 @@ function formatRelativeTime(iso: string): string {
   }
 }
 
+/** What sits under a brain reply: its files and card for everyone, the pill, steps and meta for a trace viewer. */
+function BrainReplyParts({
+  meta,
+  canViewTrace,
+  busy,
+  onConfirm,
+  onCancel,
+  onWithdraw,
+  onExpire,
+}: {
+  meta: AIAssistantMessage['metadata_json'];
+  canViewTrace: boolean;
+  busy: boolean;
+  onConfirm: (actionId: string) => void;
+  onCancel: (actionId: string) => void;
+  onWithdraw: (actionId: string, index: number) => void;
+  onExpire: () => void;
+}) {
+  const agent = meta.agent;
+  const pending = agent?.pending_action;
+  const actions = agent?.actions ?? [];
+  const files = meta.attachments ?? [];
+  return (
+    <>
+      {files.length > 0 ? <TurnAttachments attachments={files} /> : null}
+      {pending ? (
+        <ProposalActions
+          action={pending}
+          busy={busy}
+          onConfirm={() => onConfirm(pending.id)}
+          onCancel={() => onCancel(pending.id)}
+        />
+      ) : null}
+      {actions.length > 0 ? (
+        <ActionsBlock actions={actions} withdrawing={busy} onWithdraw={onWithdraw} onExpire={onExpire} />
+      ) : null}
+      {canViewTrace && meta.route_decision ? (
+        <div className="mt-2">
+          <RoutePill route={meta.route_decision} />
+        </div>
+      ) : null}
+      {canViewTrace && agent?.steps ? <StepsDisclosure steps={agent.steps} /> : null}
+      {canViewTrace && agent ? (
+        <ReplyMeta
+          meta={{
+            rounds: agent.rounds ?? null,
+            tool_calls: agent.tool_calls ?? [],
+            limit_hit: agent.limit_hit ?? null,
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
 export default function AIAssistantBubble() {
   const canUseAIAssistant = useHasPermission('system.ai_assistant_chat.use');
   // Admins can jump from any assistant message to its per-turn trace (M2).
@@ -87,6 +155,12 @@ export default function AIAssistantBubble() {
   const [messages, setMessages] = useState<AIAssistantMessage[]>([]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [isDeciding, setIsDeciding] = useState(false);
+  // The thread on screen and a count of what has been drawn into it. A reload that comes back for a
+  // thread no longer open, or older than the newest draw, is thrown away.
+  const openThreadRef = useRef<string | undefined>(undefined);
+  const drawCountRef = useRef(0);
+  const decidingRef = useRef(false);
   const [bubbleSize, setBubbleSize] = useState<BubbleSize>(DEFAULT_SIZE);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyItems, setHistoryItems] = useState<AIAssistantConversationSummary[]>([]);
@@ -111,6 +185,13 @@ export default function AIAssistantBubble() {
   const canSend = input.trim().length > 0 && !isSending;
   const prefersReducedMotion = useReducedMotion();
   const transition = surfaceTransition(prefersReducedMotion);
+
+  const drawThread = useCallback((id: string | undefined, next: AIAssistantMessage[]) => {
+    openThreadRef.current = id;
+    drawCountRef.current += 1;
+    setConversationId(id);
+    setMessages(next);
+  }, []);
 
   const sortedMessages = useMemo(
     () => [...messages].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()),
@@ -327,14 +408,21 @@ export default function AIAssistantBubble() {
         metadata_json: {},
         created_at: new Date().toISOString(),
       };
+      drawCountRef.current += 1;
       setMessages((prev) => [...prev, optimistic]);
       setIsSending(true);
+      // The thread this send started on: an answer for a thread no longer open is dropped.
+      const startedOn = openThreadRef.current;
       try {
         const snapshot = getPageSnapshot();
-        const conv = await sendAIAssistantMessage(trimmed, conversationId, snapshot, confirmAction);
-        setConversationId(conv.id);
-        setMessages(conv.messages || []);
+        const conv = await sendAIAssistantMessage(trimmed, startedOn, snapshot, confirmAction);
+        // Drawn when the thread on screen is the one this send started on, or the one the reply belongs to.
+        if (openThreadRef.current === startedOn || openThreadRef.current === conv.id) {
+          drawThread(conv.id, conv.messages || []);
+        }
       } catch (err) {
+        drawCountRef.current += 1;
+        if (openThreadRef.current !== startedOn) return;
         const errorMessage: AIAssistantMessage = {
           id: `temp-error-${Date.now()}`,
           role: 'assistant',
@@ -347,7 +435,38 @@ export default function AIAssistantBubble() {
         setIsSending(false);
       }
     },
-    [conversationId, isSending],
+    [drawThread, isSending],
+  );
+
+  // A card's Confirm, Cancel, Undo and a countdown's end: the server decides, then the thread is read
+  // again and drawn, so a live view and a reload cannot differ. A refusal says why and reloads too.
+  const decide = useCallback(
+    async (call?: () => Promise<unknown>) => {
+      if (decidingRef.current) return;
+      decidingRef.current = true;
+      setIsDeciding(true);
+      const thread = openThreadRef.current;
+      try {
+        await call?.();
+      } catch (err) {
+        toast.error((err as Error)?.message || 'That change could not be decided.');
+      }
+      try {
+        if (thread) {
+          const started = drawCountRef.current;
+          const conv = await loadConversation(thread);
+          if (openThreadRef.current === thread && drawCountRef.current === started) {
+            drawThread(thread, conv.messages || []);
+          }
+        }
+      } catch {
+        // Keep what is drawn; the next read catches up.
+      } finally {
+        decidingRef.current = false;
+        setIsDeciding(false);
+      }
+    },
+    [drawThread],
   );
 
   const onSubmit = async (e: FormEvent) => {
@@ -357,8 +476,7 @@ export default function AIAssistantBubble() {
   };
 
   const onNewConversation = () => {
-    setMessages([]);
-    setConversationId(undefined);
+    drawThread(undefined, []);
     setInput('');
     setHistoryOpen(false);
   };
@@ -370,8 +488,7 @@ export default function AIAssistantBubble() {
   const onPickConversation = async (id: string) => {
     try {
       const conv = await loadConversation(id);
-      setConversationId(conv.id);
-      setMessages(conv.messages || []);
+      drawThread(conv.id, conv.messages || []);
       setHistoryOpen(false);
     } catch (err) {
       setHistoryError((err as Error)?.message || 'Failed to load conversation');
@@ -398,8 +515,7 @@ export default function AIAssistantBubble() {
     (async () => {
       try {
         const conv = await loadConversation(deepLinkConvId);
-        setConversationId(conv.id);
-        setMessages(conv.messages || []);
+        drawThread(conv.id, conv.messages || []);
         if (deepLinkMsgId) {
           setHighlightedMessageId(deepLinkMsgId);
           requestAnimationFrame(() => {
@@ -426,6 +542,7 @@ export default function AIAssistantBubble() {
     router,
     searchParams,
     setOpenPersisted,
+    drawThread,
   ]);
 
   const onSuggestionClick = async (s: string) => {
@@ -657,7 +774,9 @@ export default function AIAssistantBubble() {
                             : 'bg-background/85 text-foreground'
                         } ${highlightedMessageId === m.id ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : ''}`}
                       >
-                        {m.role === 'assistant' ? (
+                        {m.role === 'assistant' && m.metadata_json?.route ? (
+                          <WhatsAppBlocks text={m.content} />
+                        ) : m.role === 'assistant' ? (
                           <div className="ai-markdown space-y-2 [&_p]:my-0 [&_ul]:my-1 [&_ol]:my-1 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_li]:my-0.5 [&_strong]:font-semibold [&_em]:italic [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[0.9em] [&_h1]:mt-2 [&_h1]:mb-1 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:mb-1 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-1.5 [&_h3]:mb-0.5 [&_h3]:text-sm [&_h3]:font-semibold [&_blockquote]:border-l-2 [&_blockquote]:border-muted [&_blockquote]:pl-2 [&_blockquote]:text-muted-foreground [&_table]:my-2 [&_table]:w-full [&_th]:border [&_th]:border-border [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-border [&_td]:px-1.5 [&_td]:py-1">
                             <ReactMarkdown
                               remarkPlugins={[remarkGfm]}
@@ -710,12 +829,28 @@ export default function AIAssistantBubble() {
                         ) : (
                           <p className="whitespace-pre-wrap">{m.content}</p>
                         )}
+                        {m.role === 'assistant' && m.metadata_json?.route ? (
+                          <BrainReplyParts
+                            meta={m.metadata_json}
+                            canViewTrace={canViewTrace}
+                            busy={isDeciding}
+                            onConfirm={(id) => decide(() => confirmPanelAction(id))}
+                            onCancel={(id) => decide(() => cancelPanelAction(id))}
+                            onWithdraw={(id, index) => decide(() => withdrawPanelStep(id, index))}
+                            onExpire={() => decide()}
+                          />
+                        ) : null}
                         {m.role === 'assistant' &&
                         canViewTrace &&
-                        !m.id.startsWith('temp-') ? (
+                        !m.id.startsWith('temp-') &&
+                        (!m.metadata_json?.route || m.metadata_json.chatbot_turn_id) ? (
                           <div className="mt-1.5 border-t border-border/50 pt-1.5">
                             <Link
-                              href={`/system-management/ai-assistant/usage/trace/${encodeURIComponent(m.id)}`}
+                              href={
+                                m.metadata_json?.route
+                                  ? `/system-management/chat-history?turn=${encodeURIComponent(m.metadata_json.chatbot_turn_id ?? '')}`
+                                  : `/system-management/ai-assistant/usage/trace/${encodeURIComponent(m.id)}`
+                              }
                               target="_blank"
                               rel="noreferrer noopener"
                               className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"

@@ -51,6 +51,8 @@ Each entry below is a top-level group in the left sidebar. Click a group to expa
 | A purchase request you raised | **Project Sales Admin → Purchase Requests** |
 | Your outstanding tasks and SLA deadlines | **SLA Management → My Team Tasks** |
 
+On any record you opened from a list, the **<** and **>** arrows next to the "7 / 73" counter step to the previous or next record and keep you on the tab you have open (for example **Fulfilment DOs** on a complaint). If the next record has no such tab, it opens on its first tab.
+
 ## 4. How to ask the AI assistant
 
 The AI assistant answers questions in plain language and points you to the right page. Open it from the **AI assistant button** (the chat bubble) shown on every page, type your question, and press **Enter**.

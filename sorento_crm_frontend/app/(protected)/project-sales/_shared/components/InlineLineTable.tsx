@@ -137,6 +137,22 @@ export interface InlineLineColumn<TRow> {
    * string the API wants (`900.00`), but a frozen version should still say `RM 900.00`.
    */
   formatReadOnly?: (value: string, row: TRow | null) => string;
+  /**
+   * Read-only on a SAVED row: the value is what identifies the row (a series' product), so it
+   * is not cleared or swapped in place. A new row still edits it.
+   */
+  lockOnSavedRow?: boolean;
+}
+
+/** What a screen can ask of the table before it changes the rows it hands in. */
+export interface InlineLineTableControl {
+  /**
+   * Save every edited row that can be saved, and name the ones that cannot (they fail their
+   * checks), so the screen can warn instead of dropping them.
+   */
+  flush: () => Promise<string[]>;
+  /** Whether any row holds an edit that is not saved. */
+  hasUnsaved: () => boolean;
 }
 
 /** A field that deserves keeping but not a column of its own. */
@@ -253,6 +269,8 @@ export interface InlineLineTableProps<TRow> {
   rowFilter?: (row: TRow | null, draft: InlineDraft) => boolean;
   /** Shown in place of rows when the filter hides all of them. */
   filterEmptyHint?: string;
+  /** Filled with this table's `InlineLineTableControl` (a paged screen flushes before paging). */
+  controlRef?: React.MutableRefObject<InlineLineTableControl | null>;
 }
 
 interface RowState {
@@ -347,6 +365,7 @@ export function InlineLineTable<TRow>({
   onDraftsChange,
   rowFilter,
   filterEmptyHint,
+  controlRef,
 }: InlineLineTableProps<TRow>) {
   const [states, setStates] = React.useState<Record<string, RowState>>({});
   const [newRowKeys, setNewRowKeys] = React.useState<string[]>([]);
@@ -392,6 +411,8 @@ export function InlineLineTable<TRow>({
    * re-render, and a state-based check would still read "idle" and CREATE the row twice.
    */
   const inFlight = React.useRef(new Set<string>());
+  /** The save running for a row, so a flush can wait for it rather than read it as done. */
+  const running = React.useRef(new Map<string, Promise<boolean>>());
 
   const editableColumns = React.useMemo(
     () => columns.filter((column) => column.kind !== 'derived'),
@@ -591,14 +612,15 @@ export function InlineLineTable<TRow>({
     [columns, validateRow],
   );
 
+  /** Resolves true when the row is saved (or had nothing to save), false when it is not. */
   const commitRow = React.useCallback(
-    async (rowKey: string) => {
+    async (rowKey: string): Promise<boolean> => {
       // Nothing is written in staged mode: the screen already has every change, and the one
       // Save it offers is the only thing that reaches the server.
-      if (isStaged) return;
+      if (isStaged) return true;
       const held = statesRef.current[rowKey];
-      if (!held) return;
-      if (inFlight.current.has(rowKey)) return;
+      if (!held) return true;
+      if (inFlight.current.has(rowKey)) return running.current.get(rowKey) ?? false;
 
       const isNew = rowKey.startsWith(NEW_ROW_PREFIX);
       const row = rowByKey.get(rowKey) ?? null;
@@ -612,44 +634,81 @@ export function InlineLineTable<TRow>({
       // abandoned, and it vanished under the cursor mid-click. A row that disappears
       // while you are using it is far worse than one that waits. Removing a row is the
       // Remove button's job, and it asks first.
-      if (isNew && sameDraft(held.draft, emptyDraft())) return;
+      if (isNew && sameDraft(held.draft, emptyDraft())) return true;
 
       if (!isNew && sameDraft(held.draft, held.committed)) {
         setErrors((previous) => ({ ...previous, [rowKey]: {} }));
-        return;
+        return true;
       }
 
       const found = collectErrors(held.draft);
       setErrors((previous) => ({ ...previous, [rowKey]: found }));
-      if (Object.keys(found).length > 0) return;
+      if (Object.keys(found).length > 0) return false;
 
       inFlight.current.add(rowKey);
       setSaving((previous) => [...previous, rowKey]);
-      try {
-        if (isNew) {
-          await onCreate?.(held.draft);
-          dropRow(rowKey);
-        } else if (row) {
-          await onUpdate?.(row, held.draft);
-          setStates((previous) => {
-            const current = previous[rowKey];
-            if (!current) return previous;
-            // What was SENT becomes committed, not whatever the draft holds now: somebody
-            // who kept typing during the request still has unsaved work, and marking it
-            // saved would lose it at the next refetch.
-            return { ...previous, [rowKey]: { ...current, committed: held.draft } };
-          });
+      const save = (async () => {
+        try {
+          if (isNew) {
+            await onCreate?.(held.draft);
+            dropRow(rowKey);
+          } else if (row) {
+            await onUpdate?.(row, held.draft);
+            setStates((previous) => {
+              const current = previous[rowKey];
+              if (!current) return previous;
+              // What was SENT becomes committed, not whatever the draft holds now: somebody
+              // who kept typing during the request still has unsaved work, and marking it
+              // saved would lose it at the next refetch.
+              return { ...previous, [rowKey]: { ...current, committed: held.draft } };
+            });
+          }
+          return true;
+        } catch {
+          // The mutation hooks already say what went wrong. Leaving the row dirty is the
+          // point: what the person typed is still on screen and still saveable.
+          return false;
+        } finally {
+          inFlight.current.delete(rowKey);
+          running.current.delete(rowKey);
+          setSaving((previous) => previous.filter((key) => key !== rowKey));
         }
-      } catch {
-        // The mutation hooks already say what went wrong. Leaving the row dirty is the
-        // point: what the person typed is still on screen and still saveable.
-      } finally {
-        inFlight.current.delete(rowKey);
-        setSaving((previous) => previous.filter((key) => key !== rowKey));
-      }
+      })();
+      running.current.set(rowKey, save);
+      return save;
     },
     [collectErrors, dropRow, emptyDraft, isStaged, onCreate, onUpdate, rowByKey],
   );
+
+  /** Rows holding an edit not saved yet; a new row nobody typed into does not count. */
+  const unsavedKeys = React.useCallback(
+    () =>
+      Object.entries(statesRef.current)
+        .filter(([key, held]) =>
+          key.startsWith(NEW_ROW_PREFIX)
+            ? !sameDraft(held.draft, emptyDraft())
+            : !sameDraft(held.draft, held.committed),
+        )
+        .map(([key]) => key),
+    [emptyDraft],
+  );
+
+  React.useEffect(() => {
+    if (!controlRef) return;
+    controlRef.current = {
+      hasUnsaved: () => !isStaged && unsavedKeys().length > 0,
+      flush: async () => {
+        if (isStaged) return [];
+        // Every edited row is committed (or its running save awaited); a row that fails its
+        // checks or whose save fails is named, so the screen warns instead of dropping it.
+        const keys = unsavedKeys();
+        const results = await Promise.all(keys.map((key) => commitRow(key)));
+        return keys
+          .filter((_key, index) => !results[index])
+          .map((key) => describeRow(rowByKey.get(key) ?? null, rowKeys.indexOf(key)));
+      },
+    };
+  }, [commitRow, controlRef, describeRow, isStaged, rowByKey, rowKeys, unsavedKeys]);
 
   /**
    * A new row at the bottom, with the caret in it.
@@ -1014,7 +1073,7 @@ export function InlineLineTable<TRow>({
                               invalid={Boolean(message)}
                               describedBy={describedBy}
                               label={`${column.header} on ${label}`}
-                              readOnly={cellsReadOnly}
+                              readOnly={cellsReadOnly || Boolean(column.lockOnSavedRow && row)}
                               onChange={(next) => setDraftValue(rowKey, column.key, next)}
                               onOptionChange={(option) =>
                                 applyOptionFill(rowKey, column, option)

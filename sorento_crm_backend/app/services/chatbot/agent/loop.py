@@ -22,6 +22,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent import actions, memory, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
@@ -935,7 +936,7 @@ def _run(
 ):
     from app.services import ai_prompt_registry
     from app.services.chatbot.trace import TurnTrace
-    from app.services.chatbot.usage import record_turn_llm_usage
+    from app.services.chatbot.usage import feature_name, record_turn_llm_usage
 
     t0 = clock()
     budgets = budgets_from_settings(db)
@@ -948,6 +949,8 @@ def _run(
     envelope = {"text": text, "agent_conversation_id": str(conv.id)}
     if operator_user_id:
         envelope["operator_user_id"] = str(operator_user_id)
+    if staff_principal.current() is not None:
+        envelope["user_id"] = str(ctx.user_id)  # the panel's daily cap outlives the thread (`router`)
     turn = ChatbotTurn(
         id=str(uuid.uuid4()),
         contact_respond_id=contact_respond_id,
@@ -1361,25 +1364,46 @@ def _run(
     if status != "failed":
         reply = to_whatsapp(reply)
         # Code-added after the model's answer: the knowledge-miss line and the offer, once.
-        say = next(
+        handoff = next(
             (
-                str((e.get("data") or {}).get("say") or "")
+                e["data"]
                 for e in ledger.values()
                 if e.get("name") == HANDOFF and e.get("status") == "ok" and isinstance(e.get("data"), dict)
             ),
-            "",
+            {},
         )
+        say = str(handoff.get("say") or "")
         from app.services import knowledge_service
+        from app.services.chatbot.agent import knowledge_miss
+        from app.services.chatbot.turn import refer
 
         offer_armed = handoff_armed(ledger)
         if say and offer_armed and status != "answered":
             # The offer sentence is in the reply if and only if the offer gets armed: a limited turn arms nothing.
             say = knowledge_service.KNOWLEDGE_MISS_LINE
+        if say and handoff.get("refer") is True:
+            # The salesman line, through the one helper that marks the turn (CUSTOMER-ASKS-REFER-ONLY). Here
+            # and not in the tool: this block runs only for a turn that did not fail, and the line always
+            # reaches the reply from here (appended below unless the model already wrote the whole sentence).
+            say = refer.after(say, sep=" ")
         if say and say not in reply:
             if reply.strip() in ("", NO_ANSWER_REPLY):
                 reply = say  # nothing else to say: the hand-off sentence stands alone
             else:
                 reply = f"{reply}\n\n{say}".strip()
+        # A panel idea create is refused (`propose_step`): the Ideas board link reaches the reply by code, once.
+        # Its own line, not `say`: a hand-off sentence arms the offer and this one must not.
+        ideas_say = next(
+            (
+                str(e["data"]["say"])
+                for e in ledger.values()
+                if e.get("name") == writes.CREATE_IDEA and e.get("status") == "invalid"
+                and isinstance(e.get("data"), dict) and e["data"].get("say")
+            ),
+            "",
+        )
+        if ideas_say and "/ideas" not in reply:
+            reply = f"{reply}\n\n{ideas_say}".strip()
         if ctx.principal == "contact":
             reply = _contact_reply_backstop(db, ctx, reply)
         if (
@@ -1389,7 +1413,7 @@ def _run(
             # The write lives here, after the answer and the backstop: never in a test turn, after a
             # failure, or when the offer sentence did not survive into the reply.
             try:
-                knowledge_service.arm_knowledge_miss_offer(db, ctx.contact_pk)
+                knowledge_miss.arm_knowledge_miss_offer(db, ctx.contact_pk)
             except Exception:  # noqa: BLE001 - the offer is lost, the turn still closes
                 logger.warning("agent: arming the knowledge-miss offer failed", exc_info=True)
                 db.rollback()
@@ -1432,7 +1456,7 @@ def _run(
         from app.models.ai_assistant import AIAssistantUsageLog
 
         db.query(AIAssistantUsageLog).filter(
-            AIAssistantUsageLog.chatbot_turn_id == turn_id, AIAssistantUsageLog.feature == FEATURE
+            AIAssistantUsageLog.chatbot_turn_id == turn_id, AIAssistantUsageLog.feature == feature_name(FEATURE)
         ).update({AIAssistantUsageLog.was_answered: False}, synchronize_session=False)
     db.commit()
 

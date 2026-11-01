@@ -731,11 +731,9 @@ def search_for_contact(
 KNOWLEDGE_MISS_SOURCE = "knowledge_miss"
 KNOWLEDGE_MISS_LINE = "I couldn't find that in our product documents."
 KNOWLEDGE_MISS_OFFER = "Would you like me to pass this to our marketing product team?"
-_MISS_TEAM = "marketing_product"
-_MISS_AGENT = "general_enquiries"
 
 
-def _offerable_contact(db: Session, contact_pk: str):
+def offerable_contact(db: Session, contact_pk: str):
     """The contact row when it may be offered the hand-off, else None: not barred (no row sharing the
     respond.io id is barred, as `load_profile`'s ambiguity rule) and not a staff-tier profile."""
     from app.models.access import RespondContact
@@ -755,34 +753,9 @@ def _offerable_contact(db: Session, contact_pk: str):
 
 
 def may_offer_knowledge_miss(db: Session, contact_pk: str) -> bool:
-    """Would `arm_knowledge_miss_offer` arm the offer now? Reads only."""
+    """Would `chatbot.agent.knowledge_miss.arm_knowledge_miss_offer` arm the offer now? Reads only."""
     with company_scope(db, None):
-        return _offerable_contact(db, contact_pk) is not None
-
-
-def arm_knowledge_miss_offer(db: Session, contact_pk: str) -> bool:
-    """Arm the bot's single-team offer as the contact's open question, so the contact's own next
-    "yes" reaches today's escalation lane (no ticket is made here). False, writing nothing, for a
-    barred contact, a staff-tier profile, or a missing contact."""
-    from app.services.chatbot.turn import pending as turn_pending
-
-    with company_scope(db, None):
-        contact = _offerable_contact(db, contact_pk)
-        if contact is None:
-            return False
-        option = {
-            "position": 1, "label": "Marketing product team", "entity_type": "team",
-            "payload": {"team": _MISS_TEAM, "agent": _MISS_AGENT, "brand_code": None},
-        }
-        pending = turn_pending.ask(
-            "team_pick", [option], team=_MISS_TEAM, expects="yes_no",
-            payload={"source": KNOWLEDGE_MISS_SOURCE, "agent": _MISS_AGENT},
-        )
-        session_vars = dict(contact.session_vars) if isinstance(contact.session_vars, dict) else {}
-        session_vars["open_question"] = turn_pending.to_wire(pending)
-        contact.session_vars = session_vars  # a new dict, so the JSONB change is seen
-        db.flush()
-    return True
+        return offerable_contact(db, contact_pk) is not None
 
 
 # ---------------------------------------------------------------- the prompt paragraph

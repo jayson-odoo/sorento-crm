@@ -239,11 +239,32 @@ def _traced_sales_order_ids(document_id: Any, company_id: Any) -> Any:
     )
 
 
-def _sales_order_class_kind(in_traced: Any) -> Any:
-    """The sales type the traced sales orders give (`in_traced(so_id_column)` says which):
-    none -> no sales order; two or more classes -> mixed; no class at all -> type not set;
-    else the one class's type."""
+def _traced_ids() -> Any:
+    """SELECT of the ids of the sales orders this document's figures follow: its own traced
+    orders, else (a credit or debit note with no traced line) its invoice's. A UNION, so each id
+    once."""
+    own = _traced_sales_order_ids(BillingDocument.id, BillingDocument.company_id)
+    inherited = _traced_sales_order_ids(
+        BillingDocument.against_document_id, BillingDocument.company_id
+    ).subquery("inherited_ids")
+    no_own = ~sa.exists(own.subquery("own_ids").select()).correlate(BillingDocument)
+    fallback = (
+        sa.select(inherited.c[0])
+        .where(BillingDocument.against_document_id.isnot(None), no_own)
+        .correlate(BillingDocument)
+    )
+    return sa.union(own, fallback)
+
+
+def _sales_order_class_kind() -> Any:
+    """The sales type the traced sales orders give: none -> no sales order; two or more classes
+    -> mixed; no class at all -> type not set; else the one class's type.
+
+    Driven FROM the traced ids and joined to `sales_orders` by key (INVOICED-CHANNEL-PERF): the
+    ids are a handful per document, so the orders are index lookups, never a scan of the table
+    tested against the ids once per document."""
     so = aliased(SalesOrder)
+    traced = _traced_ids().subquery("traced_ids")
     classes = sa.func.count(sa.distinct(so.demand_class))
     one = sa.func.max(so.demand_class)
     return (
@@ -256,24 +277,8 @@ def _sales_order_class_kind(in_traced: Any) -> Any:
                 else_=sa.literal(TYPE_NOT_SET),
             )
         )
-        .where(in_traced(so.id))
+        .select_from(traced.join(so, so.id == traced.c[0]))
         .correlate(BillingDocument).scalar_subquery()
-    )
-
-
-def in_traced_sales_orders(so_id: Any) -> Any:
-    """`so_id` is one of the sales orders this document's figures follow: its own traced
-    orders, else (a credit or debit note with no traced line) its invoice's."""
-    own = _traced_sales_order_ids(BillingDocument.id, BillingDocument.company_id)
-    has_own = (
-        sa.select(sa.func.count()).select_from(own.subquery("own_ids")).correlate(BillingDocument).scalar_subquery() > 0
-    )
-    inherited = _traced_sales_order_ids(
-        BillingDocument.against_document_id, BillingDocument.company_id
-    )
-    return sa.or_(
-        so_id.in_(own),
-        sa.and_(BillingDocument.against_document_id.isnot(None), ~has_own, so_id.in_(inherited)),
     )
 
 
@@ -295,16 +300,38 @@ def sales_type() -> Any:
     traced sales orders' class, then no sales order."""
     return sa.case(
         (_set_apart(), sa.literal(SET_APART)),
-        else_=_sales_order_class_kind(in_traced_sales_orders),
+        else_=_sales_order_class_kind(),
+    )
+
+
+def label_of(value: Any) -> Any:
+    """The label of a sales type value. A simple `CASE <value> WHEN ...`, so the value is
+    computed once: a searched `CASE WHEN <type> = ...` per type inlined (and ran) the whole
+    subquery seven times (INVOICED-CHANNEL-PERF)."""
+    return sa.case(
+        {key: sa.literal(label) for key, label in SALES_TYPES},
+        value=value,
+        else_=sa.null(),
     )
 
 
 def sales_type_label() -> Any:
-    value = sales_type()
-    return sa.case(
-        *[(value == key, sa.literal(label)) for key, label in SALES_TYPES],
-        else_=sa.null(),
-    )
+    return label_of(sales_type())
+
+
+def document_sales_type() -> Any:
+    """`sales_type()` as a LATERAL of one row, column `value`, for a query over LINES.
+
+    The expression is per document, but in a line query Postgres runs a correlated subquery once
+    per LINE, and each run reads the document's own lines: an invoice of n lines cost n x n
+    (INVOICED-CHANNEL-PERF round 3). Joined as `LEFT JOIN LATERAL (...) ON true`, the planner
+    memoizes it per document (`Memoize` keyed on the document's columns). `OFFSET 0` keeps the
+    planner from folding it into the documents scan, where it ran for EVERY document of the
+    period before the detail's sort and row cap (seeded month: 1.4 s, against 0.25 s computed
+    only for the documents of the rows fetched). It is one row (no FROM), so it
+    never changes a line count; a query that does not read `value` never computes it (the
+    planner drops the join or keeps it with its output unread)."""
+    return sa.select(sales_type().label("value")).offset(0).lateral("doc_sales_type")
 
 
 def normalise_sales_types(values: List[str]) -> List[str]:
@@ -335,11 +362,12 @@ INVOICED_SLUG = "sales.reports.view"
 
 
 def require_invoiced_access(db: Any, current_user: dict) -> None:
-    """403 unless the caller (a user, or an API key's act-as user) holds `sales.reports.view`."""
-    from app.services.user_service import UserPermissionService
+    """403 unless the caller (a user, or an API key's act-as user) holds `sales.reports.view`. On an
+    identity read both the staff member and act-as must hold it (AGENTIC-UNIFY AC-7)."""
+    from app.services.user_service import holds_permission
 
     # The route dependencies' own check (superadmin and admin pass), so the rule is one rule.
-    if not UserPermissionService(db).check_user_has_permission(str(current_user["id"]), INVOICED_SLUG):
+    if not holds_permission(db, current_user, INVOICED_SLUG):
         raise AppException(
             status_code=403,
             message="Invoiced sales need the sales reports permission; ask delivered or ordered sales",
@@ -354,10 +382,11 @@ UNPAID_SLUG = "finance.billing_documents.view"
 
 def require_unpaid_access(db: Any, current_user: dict) -> None:
     """The chatbot route's unpaid gate on the act-as user (superadmin and admin pass). The contact's Outstanding reveal
-    is checked separately, next to the other outstanding kinds."""
-    from app.services.user_service import UserPermissionService
+    is checked separately, next to the other outstanding kinds. On an identity read both users must
+    hold it (AGENTIC-UNIFY AC-7)."""
+    from app.services.user_service import holds_permission
 
-    if not UserPermissionService(db).check_user_has_permission(str(current_user["id"]), UNPAID_SLUG):
+    if not holds_permission(db, current_user, UNPAID_SLUG):
         raise AppException(
             status_code=403,
             message="Unpaid invoices need the finance billing documents permission",

@@ -17,6 +17,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { watchTabWrites } from '@/test-mocks/urlTab';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { LoadingPlanRecord } from '../../services/fulfilmentService';
@@ -362,13 +363,12 @@ describe('LoadingPlanView - General leads the tab strip (AC-3.2)', () => {
   });
 
   it('clicking General writes ?tab=general', () => {
+    const written = watchTabWrites('/scm/loading-plan/plan-1', currentSearchParams);
     renderView();
 
     selectTab('General');
 
-    expect(replace).toHaveBeenCalledWith('/scm/loading-plan/plan-1?tab=general', {
-      scroll: false,
-    });
+    expect(written()).toBe('/scm/loading-plan/plan-1?tab=general');
   });
 
   it('a reload on ?tab=general lands on the General tab', () => {
