@@ -836,7 +836,7 @@ def test_at21_a_reply_on_another_subject_drops_the_question(bot, seeded) -> None
     _ask_open(bot)
     stock = _status(
         "none", _word(kind_said="brand"), domain_hint="inventory", intent_hint="check_stock", order_status=None,
-        basis=None,
+        basis=None, domain_in_message=True,
     )
     text, calls = bot.say(stock, "cabana brand stock")
     assert not any(n == "crm_report_ask" for n, _a in calls), calls
@@ -999,3 +999,189 @@ def test_at28_the_new_head_and_question_are_translated(lang) -> None:
     question = loc.reply(report_ask._kind_question({"kind_words": ["cabana"]}))
     assert "brand or account type" not in question, question
     assert question.startswith("Cabana"), question
+
+
+# ============================================================================================= round 3
+from tests.chatbot.test_report_unify_routing import KIND_QUESTION  # noqa: E402,F401
+from tests.chatbot.test_report_ask_lane import TOPN_Q  # noqa: E402
+
+
+def _drive(bot, first, message, *, agent_code: str | None = None, limit: int = 8):
+    """Answer whatever the bot asks until a report runs. Returns (args, [the question texts asked in order])."""
+    asked: list[str] = []
+    text, calls = bot.say(first, message, spans=_agent_spans()) if hasattr(bot, "spans") else bot.say(first, message)
+    for _ in range(limit):
+        if calls:
+            args = _only_report_ask(calls)
+            return args, asked
+        asked.append(text.strip())
+        if WHICH_AGENT in text:
+            n = _number_of(text, agent_code or "ZZT-YU-3")
+            reply = _span_pick(n)
+        else:
+            reply = _pick(2)  # basis: delivered; company: the second; the word: account type
+        text, calls = bot.say(reply, "2")
+    raise AssertionError(("never ran", asked, text))
+
+
+def test_at20_the_word_question_survives_a_count_give_up(bot, seeded) -> None:
+    text, calls = bot.say(_rank(_word(), group_by="customer", top_n=None, **JAN), "top customers for cabana in Jan")
+    assert calls == [] and TOPN_Q in text, (text, calls)
+    text, calls = bot.say(_reply(top_n=None), "lots")
+    assert calls == [] and TOPN_Q in text, (text, calls)
+    text, calls = bot.say(_reply(top_n=None), "plenty")
+    assert calls == [] and text.strip() == QUESTION, (text, calls)
+    text, calls = bot.say(_pick(2), "account type")
+    args = _only_report_ask(calls)
+    assert args["top_n"] == 10 and args["account_types"] == ["CABANA"], args
+
+
+def test_at20_an_agent_pick_survives_an_owed_basis(span_bot) -> None:
+    _seed(span_bot, ledgers=BOOK)
+    args, asked = _drive(
+        span_bot, _status("sales_report", _ent("yu", "sales_agent"), _word(), basis=None, **JAN),
+        "sales agent yu cabana sales in Jan",
+    )
+    assert asked[-1] == QUESTION, asked
+    assert args["sales_agent_ids"] == [span_bot.ids["agents"]["ZZT-YU-3"]], (args, asked)
+    assert args["account_types"] == ["CABANA"] and args["basis"] == "delivered", args
+
+
+def test_at35_an_agent_pick_survives_the_company_question(span_bot) -> None:
+    _seed(span_bot, ledgers=BOOK)
+    sorento, mocha = _two_companies(span_bot)
+    args, asked = _drive(
+        span_bot, _status("sales_report", _ent("yu", "sales_agent"), _word(), basis="delivered", **JAN),
+        "sales agent yu cabana sales in Jan",
+    )
+    assert asked[-1] == QUESTION and any(f"{sorento} or {mocha}?" in a for a in asked), asked
+    assert args["sales_agent_ids"] == [span_bot.ids["agents"]["ZZT-YU-3"]], (args, asked)
+    assert args["account_types"] == ["CABANA"] and args["company"] == MOCHA_ID, args
+
+
+def test_an_agent_pick_survives_an_owed_basis_with_no_word(span_bot) -> None:
+    args, asked = _drive(
+        span_bot, _status("sales_report", _ent("yu", "sales_agent"), basis=None, **JAN), "sales agent yu sales in Jan"
+    )
+    assert any(WHICH_AGENT in a for a in asked), asked
+    assert args["sales_agent_ids"] == [span_bot.ids["agents"]["ZZT-YU-3"]], (args, asked)
+    assert args["basis"] == "delivered", args
+
+
+def test_at21_an_echoed_held_period_is_the_answer_not_a_new_ask(bot, seeded) -> None:
+    bot.say(_sales(_e("AGENT A", "sales_agent"), _word()), "AGENT sales for cabana in Jan")
+    echo = _reply(
+        domain_hint=None, intent_hint=None, entities=[_word("cabana", "account_type", None, "account")], **JAN
+    )
+    text, calls = bot.say(echo, "cabana account")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["CABANA"] and args["sales_agent_ids"] == [bot.ids["agent"]], args
+
+
+@pytest.mark.parametrize("mocha_ledgers", [(), (("ZZT MOCHA LEDGER ONE [A/C II]", "CERAMIC"),)], ids=["no_types", "no_4"])
+def test_at35_a_company_without_the_number_does_not_count(bot, seeded, mocha_ledgers) -> None:
+    _two_companies(bot)
+    db = bot.console.session_factory()
+    try:
+        for name, dtype in mocha_ledgers:
+            _ledger(db, MOCHA_ID, name, dtype)
+        db.commit()
+    finally:
+        db.close()
+    text, calls = bot.say(_sales(_word(), _acct("4")), "cabana on account 4 sales in Jan")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["4"] and not args.get("brand_ids"), args
+
+
+def test_at35_a_refine_on_a_held_company_reads_that_book(bot, seeded) -> None:
+    sorento, mocha, _ = _disagreeing_books(bot)
+    text, calls = bot.say(_sales(_acct("4"), sales_company=mocha), "mocha account 4 sales in Jan")
+    assert _only_report_ask(calls)["company"] == MOCHA_ID
+    refine = _rank(_word(), _acct("4"), group_by=None, top_n=None, ranking_refine=True, **JAN)
+    text, calls = bot.say(refine, "and cabana")
+    args = _only_report_ask(calls)
+    assert args["company"] == MOCHA_ID and args["account_types"] == ["4"], args
+    assert args.get("brand_ids"), args
+
+
+def _repeat(**over):
+    return _reply(domain_hint=None, intent_hint=None, entities=[_word("cabana", "account_type", None, "account")], **over)
+
+
+@pytest.mark.parametrize("by_words", [MISSING, None], ids=["no_key", "null"])
+def test_at21_a_stray_axis_on_the_repeat_is_still_the_answer(bot, seeded, by_words) -> None:
+    bot.say(_sales(_e("AGENT A", "sales_agent"), _word()), "AGENT sales for cabana in Jan")
+    verdict = _repeat(group_by="customer")
+    if by_words is MISSING:
+        verdict.pop("by_words", None)
+    else:
+        verdict["by_words"] = by_words
+    text, calls = bot.say(verdict, "cabana account")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["CABANA"] and not args.get("group_by"), args
+    assert "I can rank sales by" not in text and "I can break sales down by" not in text, text
+
+
+def test_at21_a_typed_axis_on_the_repeat_is_a_new_ask(bot, seeded) -> None:
+    bot.say(_sales(_e("AGENT A", "sales_agent"), _word()), "AGENT sales for cabana in Jan")
+    text, calls = bot.say(_repeat(group_by="customer", by_words="by customer", top_n=5), "cabana account by customer top 5")
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "customer" and args["account_types"] == ["CABANA"], args
+
+
+def test_at21_a_stray_domain_on_the_repeat_is_still_the_answer(bot, seeded) -> None:
+    _ask_open(bot)
+    verdict = _reply(domain_hint="master_products", intent_hint="check_product", entities=[_word(kind_said="brand")])
+    verdict.pop("domain_in_message", None)
+    text, calls = bot.say(verdict, "cabana brand")
+    args = _only_report_ask(calls)
+    assert args["brand_ids"] == [seeded["CABANA"]] and "account_types" not in args, args
+
+
+def test_at21_an_echo_with_no_status_is_still_the_answer(bot, seeded) -> None:
+    _ask_open(bot)
+    verdict = _reply(domain_hint=None, intent_hint=None, order_status=None, entities=[_word(kind_said="brand")])
+    text, calls = bot.say(verdict, "cabana brand")
+    args = _only_report_ask(calls)
+    assert args["brand_ids"] == [seeded["CABANA"]], args
+
+
+def test_at21_a_declared_pick_with_its_own_period_uses_it(bot, seeded) -> None:
+    bot.say(_sales(_e("AGENT A", "sales_agent"), _word()), "AGENT sales for cabana in Jan")
+    pick = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
+        open_question_answer={"mode": "pick", "picked": [2], "items": [], "qty_for_all": None}, **FEB,
+    )
+    text, calls = bot.say(pick, "account type, in Feb")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["CABANA"] and args["sales_agent_ids"] == [bot.ids["agent"]], args
+    assert args["date_from"] == "2026-02-01" and args["date_to"] == "2026-02-28", args
+
+
+def test_at20_a_bare_word_with_an_unbound_id_still_asks(bot, seeded) -> None:
+    text, calls = bot.say(_sales(_word("cabana", "brand", str(uuid.uuid4()))), "sales for cabana in Jan")
+    assert calls == [], calls
+    assert text.strip() == QUESTION, text
+
+
+@pytest.mark.parametrize("lang", ["ms", "zh"])
+def test_at28_the_account_type_ranking_and_refusals_are_translated(lang) -> None:
+    from app.services.chatbot import label_catalog
+    from sorento_crm_mcp.presenters import _report_ask
+
+    loc = label_catalog.Localizer(lang, label_catalog.defaults(lang))
+    rows = [{"rank": i, "name": n, "qty": 4, "amount": 100.0} for i, n in ((1, "CABANA"), (2, "CERAMIC"))]
+    body = {
+        "status": "ok", "message": None, "basis": "invoiced", "basis_label": "invoiced sales", "measure": "amount",
+        "group_by": "account_type", "group_label": "Account type", "sort": "desc",
+        "date_from": "2026-01-01", "date_to": "2026-03-31", "filters": [], "rows": rows, "more": 0,
+        "total_count": 2, "total": {"qty": 8, "amount": 200.0},
+    }
+    head = loc.reply(_report_ask(body)).splitlines()[0]
+    assert "account types" not in head and "Top" not in head, head
+    for line in (
+        "Account types are not loaded from AutoCount yet",
+        "No account type 9. Account types: 3, 4, CERAMIC.",
+    ):
+        out = loc.reply(line)
+        assert out != line and "ccount type" not in out.replace("CERAMIC", ""), (line, out)
