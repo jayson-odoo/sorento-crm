@@ -10,7 +10,7 @@ Use the AI assistant panel to ask how something works, look up stock or sales, a
 | **Use the AI Assistant on the chatbot's brain** | Your messages are answered by the same thinking as the WhatsApp chatbot, as described on this page. No role has it by default. Without it, the panel answers the way it did before |
 | **View AI Assistant Settings** | You also see how each reply was reached: the **Agent** or **Chat** pill, **Steps** and **View trace** |
 
-Records and figures follow your own permissions and your active company: if you cannot open a record on its screen, the assistant will not show it to you either. Reference names, such as products, brands, categories and warehouses, are open to every staff member.
+Records and figures follow your own permissions and your active company: if you cannot open a record on its screen, the assistant will not show it to you either. Reference names, such as products, brands and warehouses, help it read your question and may appear in a reply, whatever your permissions.
 
 ## Steps
 
@@ -29,7 +29,7 @@ Records and figures follow your own permissions and your active company: if you 
 
 If the question is vague, it may ask you back.
 
-Not on this path yet: complaints, SLA tracking, projects and order analytics. Ask about these on their own screens for now.
+Not on this path yet: complaints, SLA tracking, projects and order analytics. Ask about these on their own screens for now. To capture a product idea, use the Ideas board: the assistant gives you the link.
 
 ## Making a change
 
@@ -53,7 +53,7 @@ Ask for a person during a stock or sales question. The reply names who was assig
 * Your conversation, saved in **History**.
 * Any record you confirmed, under your name.
 * If a person was asked for, a task in their **My Pending** with an SLA clock. It cannot be escalated by hand from there.
-* Generated reports go to your **My Downloads**. Other files, such as a drawing, a certificate or a picture, come back on the reply.
+* Report files go to your **My Downloads**. Other files, such as a drawing, a certificate or a picture, come back on the reply.
 
 ## How you'll be notified
 

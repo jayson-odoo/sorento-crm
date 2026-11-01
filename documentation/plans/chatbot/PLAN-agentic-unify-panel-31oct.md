@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY panel, the staff principal on the chatbot brain
 
-Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slices 1 (staff principal, live chat turn) and 2 (agent side, write routes, report path, opportunity, escalation) 3 (page context) and 4 (panel screen) built, eight rounds done, PR #2060 in its second hand test. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
+Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slices 1 (staff principal, live chat turn) and 2 (agent side, write routes, report path, opportunity, escalation) 3 (page context) and 4 (panel screen) built, nine rounds done, PR #2060 in its second hand test. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
 
 Behaviour: `CARD-agentic-unify-v2-31oct.md` and its owner table (on branch `crew/agentic-unify`, #2048). Its section 2 (test path) was overruled by the owner: a panel turn is live, with no WhatsApp send. This plan replaces that section.
 
@@ -205,4 +205,14 @@ Crew asked for this review before merging. Verdict NOT READY on the guide and on
 - **`PANEL_NO_PORTAL_LINK`** said "try asking in different words", a dead end for a real form-link ask, with no MS or ZH. It now says why, with both.
 - **Two tests that only pinned shape:** the four-tool list now reads `sorento_crm_mcp/server.py` by path, and the portal test names a form and asserts the reply.
 - **Left as is:** round 6's criteria tests pin the key and words; real routing rests on the live measurements, and the labelled set measures it before default.
+
+### Round 9, second pass: the merge with #2053
+
+The reviewer re-read the fixes and the merge of main. No crossing: `_staff_context` keeps `principal="user"`, so no contact branch fires on a panel turn, and `inbox_queue.py:228` refuses panel ingress. The three hand resolutions hold. `_NOT_FACTS` gained `agent`, which only drops rows `_eligible` already discarded. `baseline()` in the page context tests now takes its labels from `agent_tool_labels(db, user)`, because `_with_agent_tools` takes two arguments since the merge.
+
+- **Ideas on the panel.** `run_agent_turn` defaults to `is_test=True`, which #2053 reads as a console test turn, so a staff member with a linked contact would confirm an idea and read "This is a test idea, so it is not on the board". Ruling: the agent refuses an idea create on a panel turn with the /ideas link, as the chat lane answers, and no card appears. `is_test` on the turn stays: the analytics views keep panel rows out through it. Real panel ideas wait for an owner ask, with AC-9's proof.
+- **The code slot.** A literal slot character is stripped before masking, and from a link's href.
+- **A marker touching code** is accepted, in the UAC's known limits. Not worth a second parser.
+- **The portal reply** points on to a how-to question, because the parser can read one as a portal link.
+- **For the labelled set before default:** rounds 6 and 7 were measured with the full tool list. Since the merge a low-permission panel user sends Jev a short or empty `tools`, unmeasured. Add such a user to the set.
 
