@@ -55,7 +55,14 @@ import { ColorPicker } from './ColorPicker';
 // Slot binding options
 // ---------------------------------------------------------------------------
 
-const SLOT_BINDING_OPTIONS = [
+const SLOT_BINDING_OPTIONS: SearchableSelectOption[] = [
+  // The Combo group leads the list: the select renders groups in order of first
+  // appearance, so listing it before the ungrouped options puts it above them.
+  { value: 'combo_image', label: 'Combo Photo', group: 'Combo' },
+  { value: 'combo_name', label: 'Combo Name', group: 'Combo' },
+  { value: 'combo_description', label: 'Combo Description', group: 'Combo' },
+  { value: 'combo_choices', label: 'Combo Choices', group: 'Combo' },
+  { value: 'combo_topups', label: 'Combo Top-ups', group: 'Combo' },
   { value: '__none__', label: '(None)' },
   { value: 'product_image', label: 'Product Image' },
   { value: 'code', label: 'Code' },

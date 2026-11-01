@@ -23,7 +23,7 @@
  * other to have finished loading.
  */
 
-import { resolveSlotText, subjectOf } from './product-block';
+import { comboOf, resolveSlotText, subjectOf } from './product-block';
 import type {
   SlotBinding,
   TagBindingData,
@@ -39,7 +39,7 @@ import type {
 export type MergeFieldMode = 'print' | 'editor';
 
 /** How the Insert field dialog sorts the catalogue into sections. */
-export type MergeFieldGroup = 'Product' | 'Specs' | 'Set' | 'Line';
+export type MergeFieldGroup = 'Product' | 'Specs' | 'Set' | 'Line' | 'Combo';
 
 /** AC-A7: an older pinned/cached payload predating `currency` renders this,
  *  never an empty string or the raw token - same default the backend column
@@ -113,6 +113,9 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   // names as two separate tokens, since a design might want either or both).
   { path: 'line.parts', label: 'Parts (codes)', group: 'Line' },
   { path: 'line.parts_names', label: 'Parts (names)', group: 'Line' },
+  { path: 'combo.name', label: 'Combo name', group: 'Combo' },
+  { path: 'combo.description', label: 'Combo description', group: 'Combo' },
+  { path: 'combo.free_items', label: 'Combo free items', group: 'Combo' },
 ];
 
 /** The specs the bound thing carries. A set has none of its own (D58).
@@ -175,6 +178,13 @@ function resolvePath(
     const key = path.slice('spec.'.length);
     const spec = specsOf(data, layer).find((row) => row.key === key);
     return spec ? specText(spec) : null;
+  }
+
+  if (path === 'combo.name' || path === 'combo.description' || path === 'combo.free_items') {
+    // Empty, never the raw token, on a line with no combo or an older payload (AC-4.2).
+    const combo = comboOf(data);
+    const field = path.slice('combo.'.length) as 'name' | 'description' | 'free_items';
+    return combo?.[field] ?? '';
   }
 
   if (path === 'line.quantity') {
@@ -354,6 +364,7 @@ export function mergeFieldCatalog(
     ...specs,
     ...fixed.filter((field) => field.group === 'Set'),
     ...fixed.filter((field) => field.group === 'Line'),
+    ...fixed.filter((field) => field.group === 'Combo'),
   ];
 
   return groups ? all.filter((field) => groups.includes(field.group)) : all;

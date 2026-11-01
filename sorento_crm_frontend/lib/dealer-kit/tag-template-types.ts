@@ -37,6 +37,11 @@ export type SlotBinding =
   | 'set_members'
   | 'barcode'
   | 'price_tag_description'
+  | 'combo_image'
+  | 'combo_name'
+  | 'combo_description'
+  | 'combo_choices'
+  | 'combo_topups'
   | null;
 
 export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line' | 'polygon';
@@ -558,6 +563,8 @@ export interface ProductTagData {
    *  (frozen before this field existed) still renders - `resolvePath` falls
    *  back to `MYR` when absent (AC-A7). */
   currency?: string;
+  /** The combo being previewed in the template editor (PRICETAG-COMBO AC-5.3). */
+  combo?: TagCombo | null;
 }
 
 export interface ProductSetMemberTagData {
@@ -602,6 +609,35 @@ export interface TagOpenGroup {
    * (AC-X-2), and D4's printed `ROLE: CODE / CODE` text still reads it.
    */
   candidates: { product_id: string; code: string }[];
+}
+
+/** One option of a combo choice group, as the tag shows it (PRICETAG-COMBO AC-2.1). */
+export interface TagComboOption {
+  product_id: string;
+  code: string;
+  description: string;
+  list_price: number | null;
+  /** The option's own selling price, null when blank. */
+  sell_price: number | null;
+  picked: boolean;
+}
+
+export interface TagComboUpgrade {
+  product_id: string;
+  code: string;
+  description: string;
+  topup_amount: number | null;
+  picked: boolean;
+}
+
+/** The combo a tag's line names. Null on a line with no combo and on an older pin. */
+export interface TagCombo {
+  id: string;
+  name: string;
+  description: string | null;
+  free_items: string | null;
+  choices: { role: string; options: TagComboOption[] }[];
+  upgrades: TagComboUpgrade[];
 }
 
 /**
@@ -698,6 +734,8 @@ export interface LineTagData {
   /** Staff-authored tag copy (r10 S4). Null for a set line - a set has no
    *  description of its own, same rule as barcode above. */
   price_tag_description?: string | null;
+  /** The line's combo (PRICETAG-COMBO). Absent on an older payload. */
+  combo?: TagCombo | null;
 }
 
 /** A binding's resolved data, whichever kind of thing it points at. */
