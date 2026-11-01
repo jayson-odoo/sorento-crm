@@ -58,6 +58,7 @@ class DocumentAccessDocument(BaseModel):
     access_levels: List[str]
     company_name: Optional[str] = None
     ai_read_status: Optional[str] = None
+    can_edit_levels: bool = False
     verdict: Optional[str] = None
 
 

@@ -1,17 +1,35 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
+import { useCallback, useMemo, useState } from 'react';
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+} from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import {
+  Sheet,
+  SheetBody,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import {
+  COARSE_HIT_TARGET_CLASS,
+  PRESSED_CLASS,
+} from '@/components/ui/primitive-classes';
+import { CONTACT_COLUMN_CLASS } from './tickStyles';
 import { AccessLevelsMultiSelect } from '../../attachments/components/AccessLevelsMultiSelect';
-import { useDocumentAccessDocuments, useDocumentAccessMutations } from '../hooks/useDocumentAccessQuery';
+import {
+  useDocumentAccessDocuments,
+  useDocumentAccessMutations,
+} from '../hooks/useDocumentAccessQuery';
 import type {
   AccessTypeColumn,
   DocumentAccessDocument,
@@ -30,11 +48,24 @@ interface Props {
   onClose: () => void;
 }
 
-export function DocumentAccessSheet({ row, accessTypes, contact, canEdit, onClose }: Props) {
+export function DocumentAccessSheet({
+  row,
+  accessTypes,
+  contact,
+  canEdit,
+  onClose,
+}: Props) {
   return (
     <Sheet open={row !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent side="right" className="w-full gap-0 p-0 sm:max-w-2xl">
-        {row ? <SheetBodyFor row={row} accessTypes={accessTypes} contact={contact} canEdit={canEdit} /> : null}
+        {row ? (
+          <SheetBodyFor
+            row={row}
+            accessTypes={accessTypes}
+            contact={contact}
+            canEdit={canEdit}
+          />
+        ) : null}
       </SheetContent>
     </Sheet>
   );
@@ -55,14 +86,27 @@ function SheetBodyFor({
   const { tick, direct, levels } = useDocumentAccessMutations();
   const docs = useDocumentAccessDocuments(row.id, contact?.id, page, PAGE_SIZE);
   const mutateLevels = levels.mutate;
+  const levelNames = useCallback(
+    (codes: string[]) =>
+      codes
+        .map((c) => accessTypes.find((a) => a.code === c)?.name ?? c)
+        .join(', '),
+    [accessTypes],
+  );
   const catalogue = accessTypes.map((a) => a.code);
-  const held = new Set(contact && contact.runs_as === 'contact' ? contact.access_types : []);
+  const held = new Set(
+    contact && contact.runs_as === 'contact' ? contact.access_types : [],
+  );
   const total = docs.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const chips = [
     { code: null as string | null, name: 'Staff', on: row.ai_read_staff },
-    ...accessTypes.map((a) => ({ code: a.code as string | null, name: a.name, on: row.ai_read_codes.includes(a.code) })),
+    ...accessTypes.map((a) => ({
+      code: a.code as string | null,
+      name: a.name,
+      on: row.ai_read_codes.includes(a.code),
+    })),
   ];
 
   const columns = useMemo<ColumnDef<DocumentAccessDocument>[]>(
@@ -82,14 +126,23 @@ function SheetBodyFor({
         id: 'levels',
         header: 'Access levels',
         size: 220,
-        cell: ({ row: r }) => (
-          <AccessLevelsMultiSelect
-            options={accessTypes}
-            value={r.original.access_levels}
-            disabled={!canEdit}
-            onChange={(next) => mutateLevels({ id: r.original.id, accessLevels: next })}
-          />
-        ),
+        cell: ({ row: r }) =>
+          canEdit && r.original.can_edit_levels ? (
+            <AccessLevelsMultiSelect
+              options={accessTypes}
+              value={r.original.access_levels}
+              onChange={(next) =>
+                mutateLevels({ id: r.original.id, accessLevels: next })
+              }
+            />
+          ) : (
+            <span
+              className="block truncate"
+              title={levelNames(r.original.access_levels)}
+            >
+              {levelNames(r.original.access_levels)}
+            </span>
+          ),
       },
       {
         id: 'company',
@@ -110,12 +163,16 @@ function SheetBodyFor({
               id: 'verdict',
               header: contact.name ?? 'Contact',
               size: 190,
-              cell: ({ row: r }: { row: { original: DocumentAccessDocument } }) => <DocumentVerdictPill doc={r.original} />,
+              cell: ({
+                row: r,
+              }: {
+                row: { original: DocumentAccessDocument };
+              }) => <DocumentVerdictPill doc={r.original} />,
             } as ColumnDef<DocumentAccessDocument>,
           ]
         : []),
     ],
-    [accessTypes, canEdit, contact, mutateLevels],
+    [accessTypes, canEdit, contact, mutateLevels, levelNames],
   );
 
   const table = useReactTable({
@@ -124,6 +181,16 @@ function SheetBodyFor({
     getRowId: (d) => d.id,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
+    manualPagination: true,
+    pageCount: pages,
+    state: { pagination: { pageIndex: page - 1, pageSize: PAGE_SIZE } },
+    onPaginationChange: (updater) => {
+      const next =
+        typeof updater === 'function'
+          ? updater({ pageIndex: page - 1, pageSize: PAGE_SIZE })
+          : updater;
+      setPage(next.pageIndex + 1);
+    },
   });
 
   return (
@@ -131,7 +198,11 @@ function SheetBodyFor({
       <SheetHeader className="border-b px-5 py-4">
         <div className="flex flex-wrap items-center gap-2 pe-8">
           <SheetTitle>{row.type_name}</SheetTitle>
-          {row.is_shared ? <Badge variant="secondary" appearance="light">Shared</Badge> : null}
+          {row.is_shared ? (
+            <Badge variant="secondary" appearance="light">
+              Shared
+            </Badge>
+          ) : null}
         </div>
         <div className="text-sm text-muted-foreground">
           {`${row.file_count.toLocaleString('en-US')} files · ${row.readable_count.toLocaleString('en-US')} readable`}
@@ -149,17 +220,30 @@ function SheetBodyFor({
                 aria-checked={chip.on}
                 disabled={!canEdit || tick.isPending}
                 onClick={() =>
-                  tick.mutate({ row, code: chip.code, name: chip.name, on: !chip.on, catalogue })
+                  tick.mutate({
+                    row,
+                    code: chip.code,
+                    name: chip.name,
+                    on: !chip.on,
+                    catalogue,
+                  })
                 }
                 className={cn(
                   'inline-flex h-8 items-center gap-2 rounded-full border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60',
+                  PRESSED_CLASS,
+                  COARSE_HIT_TARGET_CLASS,
                   chip.on ? 'border-primary bg-primary/10' : 'border-border',
-                  chip.code && held.has(chip.code) && 'ring-1 ring-primary',
+                  chip.code &&
+                    held.has(chip.code) &&
+                    cn('ring-1 ring-primary', CONTACT_COLUMN_CLASS),
                 )}
               >
                 <span
                   aria-hidden
-                  className={cn('size-3 rounded-sm border', chip.on ? 'border-primary bg-primary' : 'border-input')}
+                  className={cn(
+                    'size-3 rounded-sm border',
+                    chip.on ? 'border-primary bg-primary' : 'border-input',
+                  )}
                 />
                 <span>{chip.name}</span>
               </button>
@@ -177,26 +261,24 @@ function SheetBodyFor({
             error={docs.error}
             onRetry={() => void docs.refetch()}
             listingKey={null}
-            tableLayout={{ width: 'fixed', columnsResizable: true, dense: true }}
+            tableLayout={{
+              width: 'fixed',
+              columnsResizable: true,
+              dense: true,
+            }}
             emptyMessage={
               <div>
                 <div className="font-medium">No documents</div>
-                <div className="text-sm text-muted-foreground">Nothing readable is filed under this type.</div>
+                <div className="text-sm text-muted-foreground">
+                  Nothing readable is filed under this type.
+                </div>
               </div>
             }
           >
             <DataGridTable />
           </DataGrid>
           {pages > 1 ? (
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <Button type="button" variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-                Previous
-              </Button>
-              <span>{`Page ${page} of ${pages}`}</span>
-              <Button type="button" variant="outline" size="sm" disabled={page >= pages} onClick={() => setPage(page + 1)}>
-                Next
-              </Button>
-            </div>
+            <DataGridPagination sizes={[PAGE_SIZE]} sizesInfo="" />
           ) : null}
         </section>
 

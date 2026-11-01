@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { createContext, useContext, useMemo, useState } from 'react';
 import {
   getCoreRowModel,
   useReactTable,
@@ -18,6 +18,7 @@ import {
   SearchableSelect,
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
+import { cn } from '@/lib/utils';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
   useDocumentAccessMutations,
@@ -32,12 +33,16 @@ import type {
 import { useIsPhone } from '../hooks/useIsPhone';
 import { DocumentAccessCards } from './DocumentAccessCards';
 import { DocumentAccessSheet } from './DocumentAccessSheet';
+import { CONTACT_COLUMN_CLASS, REACH_CLASS } from './tickStyles';
 import { RowVerdictPill } from './DocumentAccessVerdict';
 
 const AI_FILTER_OPTIONS: SearchableSelectOption[] = [
   { value: 'on', label: 'On' },
   { value: 'off', label: 'Off' },
 ];
+
+/** The row whose tick save is pending; its ticks are locked until the row is re-read. */
+const PendingRowContext = createContext<string | null>(null);
 
 const isOn = (row: DocumentAccessRow) =>
   row.ai_read_staff || row.ai_read_codes.length > 0;
@@ -54,6 +59,7 @@ export function DocumentAccessView() {
     useDocumentAccessQuery(contact?.value);
   const { tick } = useDocumentAccessMutations();
   const mutateTick = tick.mutate;
+  const pendingRowId = tick.isPending ? (tick.variables?.row.id ?? null) : null;
   const phone = useIsPhone();
 
   const accessTypes = useMemo(() => data?.access_types ?? [], [data]);
@@ -82,6 +88,7 @@ export function DocumentAccessView() {
         const r = row.original;
         const on =
           code === null ? r.ai_read_staff : r.ai_read_codes.includes(code);
+        const pendingId = useContext(PendingRowContext);
         const reach = code === null ? r.readable_count : (r.reach[code] ?? 0);
         const short =
           code !== null &&
@@ -96,7 +103,7 @@ export function DocumentAccessView() {
             <Checkbox
               size="sm"
               checked={on}
-              disabled={!canEdit}
+              disabled={!canEdit || pendingId === r.id}
               aria-label={`${name} reads ${r.type_name}`}
               onCheckedChange={(next) =>
                 mutateTick({ row: r, code, name, on: next === true, catalogue })
@@ -104,7 +111,7 @@ export function DocumentAccessView() {
             />
             {short ? (
               <span
-                className="text-2xs font-medium text-amber-600 dark:text-amber-500"
+                className={REACH_CLASS}
                 title={`${reach} of ${r.readable_count} documents carry ${name}`}
               >
                 {`${reach}/${r.readable_count}`}
@@ -127,8 +134,8 @@ export function DocumentAccessView() {
       size: 84,
       cell: tickCell(code, name),
       meta: {
-        headerClassName: 'text-center',
-        cellClassName: 'text-center',
+        headerClassName: cn('text-center', highlight && CONTACT_COLUMN_CLASS),
+        cellClassName: cn('text-center', highlight && CONTACT_COLUMN_CLASS),
         headerAttributes: highlight
           ? { 'data-contact-access': 'true' }
           : undefined,
@@ -327,58 +334,61 @@ export function DocumentAccessView() {
   return (
     <>
       <PageHeader title="Document Access" />
-      <div className="mt-5">
-        {phone ? (
-          <div className="space-y-3">
-            {toolbar}
-            <DocumentAccessCards
-              rows={rows}
-              accessTypes={accessTypes}
-              contact={previewContact}
-              canEdit={canEdit}
+      <PendingRowContext.Provider value={pendingRowId}>
+        <div className="mt-5">
+          {phone ? (
+            <div className="space-y-3">
+              {toolbar}
+              <DocumentAccessCards
+                rows={rows}
+                accessTypes={accessTypes}
+                contact={previewContact}
+                canEdit={canEdit}
+                isLoading={isLoading}
+                error={error}
+                onRetry={() => void refetch()}
+                pendingRowId={pendingRowId}
+                onOpen={setOpenId}
+                onTick={(row, code, name, on) =>
+                  mutateTick({ row, code, name, on, catalogue })
+                }
+              />
+            </div>
+          ) : (
+            <DataGrid
+              table={table}
+              recordCount={rows.length}
               isLoading={isLoading}
+              isPlaceholderData={isPlaceholderData}
               error={error}
               onRetry={() => void refetch()}
-              onOpen={setOpenId}
-              onTick={(row, code, name, on) =>
-                mutateTick({ row, code, name, on, catalogue })
-              }
-            />
-          </div>
-        ) : (
-          <DataGrid
-            table={table}
-            recordCount={rows.length}
-            isLoading={isLoading}
-            isPlaceholderData={isPlaceholderData}
-            error={error}
-            onRetry={() => void refetch()}
-            listingKey={null}
-            onRowClick={(r) => setOpenId(r.id)}
-            tableLayout={{
-              width: 'fixed',
-              columnsResizable: true,
-              columnsPinnable: true,
-              headerSticky: true,
-            }}
-            emptyMessage={
-              <div>
-                <div className="font-medium">No types match</div>
-                <div className="text-sm text-muted-foreground">
-                  Try another name or switch the AI reads filter.
+              listingKey={null}
+              onRowClick={(r) => setOpenId(r.id)}
+              tableLayout={{
+                width: 'fixed',
+                columnsResizable: true,
+                columnsPinnable: true,
+                headerSticky: true,
+              }}
+              emptyMessage={
+                <div>
+                  <div className="font-medium">No types match</div>
+                  <div className="text-sm text-muted-foreground">
+                    Try another name or switch the AI reads filter.
+                  </div>
                 </div>
-              </div>
-            }
-          >
-            <Card>
-              <CardHeader className="block space-y-3">{toolbar}</CardHeader>
-              <CardTable>
-                <DataGridTable />
-              </CardTable>
-            </Card>
-          </DataGrid>
-        )}
-      </div>
+              }
+            >
+              <Card>
+                <CardHeader className="block space-y-3">{toolbar}</CardHeader>
+                <CardTable>
+                  <DataGridTable />
+                </CardTable>
+              </Card>
+            </DataGrid>
+          )}
+        </div>
+      </PendingRowContext.Provider>
       <DocumentAccessSheet
         row={openRow}
         accessTypes={accessTypes}

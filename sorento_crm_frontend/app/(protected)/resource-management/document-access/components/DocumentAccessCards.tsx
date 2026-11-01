@@ -3,6 +3,11 @@
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import {
+  COARSE_HIT_TARGET_CLASS,
+  PRESSED_CLASS,
+} from '@/components/ui/primitive-classes';
+import { CONTACT_COLUMN_CLASS, REACH_CLASS } from './tickStyles';
 import type {
   AccessTypeColumn,
   DocumentAccessRow,
@@ -18,6 +23,7 @@ interface Props {
   isLoading: boolean;
   error: unknown;
   onRetry: () => void;
+  pendingRowId: string | null;
   onOpen: (id: string) => void;
   onTick: (
     row: DocumentAccessRow,
@@ -36,6 +42,7 @@ export function DocumentAccessCards({
   isLoading,
   error,
   onRetry,
+  pendingRowId,
   onOpen,
   onTick,
 }: Props) {
@@ -97,12 +104,19 @@ export function DocumentAccessCards({
             onClick={() => onOpen(row.id)}
           >
             <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
+              <button
+                type="button"
+                className="min-w-0 text-start"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpen(row.id);
+                }}
+              >
                 <div className="break-words font-medium">{row.type_name}</div>
                 <div className="text-xs text-muted-foreground">
                   {`${row.readable_count.toLocaleString('en-US')} readable · ${row.file_count.toLocaleString('en-US')} files`}
                 </div>
-              </div>
+              </button>
               {row.is_direct_access ? (
                 <Badge variant="info" appearance="light" className="shrink-0">
                   Direct access
@@ -113,31 +127,56 @@ export function DocumentAccessCards({
               className="mt-3 flex flex-wrap gap-2"
               onClick={(e) => e.stopPropagation()}
             >
-              {chips.map((chip) => (
-                <button
-                  key={chip.code ?? 'staff'}
-                  type="button"
-                  role="checkbox"
-                  aria-checked={chip.on}
-                  aria-label={`${chip.name} reads ${row.type_name}`}
-                  disabled={!canEdit}
-                  onClick={() => onTick(row, chip.code, chip.name, !chip.on)}
-                  className={cn(
-                    'inline-flex h-8 items-center gap-2 rounded-full border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60',
-                    chip.on ? 'border-primary bg-primary/10' : 'border-border',
-                    chip.code && held.has(chip.code) && 'ring-1 ring-primary',
-                  )}
-                >
-                  <span
-                    aria-hidden
+              {chips.map((chip) => {
+                const reach =
+                  chip.code === null
+                    ? row.readable_count
+                    : (row.reach[chip.code] ?? 0);
+                const short =
+                  chip.code !== null &&
+                  chip.on &&
+                  row.readable_count > 0 &&
+                  reach < row.readable_count;
+                return (
+                  <button
+                    key={chip.code ?? 'staff'}
+                    type="button"
+                    role="checkbox"
+                    aria-checked={chip.on}
+                    aria-label={`${chip.name} reads ${row.type_name}`}
+                    disabled={!canEdit || pendingRowId === row.id}
+                    onClick={() => onTick(row, chip.code, chip.name, !chip.on)}
                     className={cn(
-                      'size-3 rounded-sm border',
-                      chip.on ? 'border-primary bg-primary' : 'border-input',
+                      'inline-flex h-8 items-center gap-2 rounded-full border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60',
+                      PRESSED_CLASS,
+                      COARSE_HIT_TARGET_CLASS,
+                      chip.on
+                        ? 'border-primary bg-primary/10'
+                        : 'border-border',
+                      chip.code &&
+                        held.has(chip.code) &&
+                        cn('ring-1 ring-primary', CONTACT_COLUMN_CLASS),
                     )}
-                  />
-                  <span>{chip.name}</span>
-                </button>
-              ))}
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        'size-3 rounded-sm border',
+                        chip.on ? 'border-primary bg-primary' : 'border-input',
+                      )}
+                    />
+                    <span>{chip.name}</span>
+                    {short ? (
+                      <span
+                        className={REACH_CLASS}
+                        title={`${reach} of ${row.readable_count} documents carry ${chip.name}`}
+                      >
+                        {`${reach}/${row.readable_count}`}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
             </div>
             {contact ? (
               <div className="mt-3">

@@ -17,7 +17,7 @@ declare module '@tanstack/react-table' {
     headerTitle?: string;
     headerClassName?: string;
     /** Extra DOM attributes on the header cell (`data-*`), for a column the page highlights. */
-    headerAttributes?: Record<string, string | undefined>;
+    headerAttributes?: Record<`data-${string}`, string | undefined>;
     cellClassName?: string;
     skeleton?: ReactNode;
     expandedContent?: (row: TData) => ReactNode;

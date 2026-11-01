@@ -68,6 +68,8 @@ export interface DocumentAccessDocument {
   /** Null for a shared file. */
   company_name: string | null;
   ai_read_status: string | null;
+  /** The caller may change this document's access levels (upload permission, shared or active company). */
+  can_edit_levels: boolean;
   verdict: DocumentVerdict | null;
 }
 

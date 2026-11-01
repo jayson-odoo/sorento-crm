@@ -366,6 +366,7 @@ def read_attachment(
         attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
         if attachment is None:
             return
+        ext = os.path.splitext(attachment.original_filename or "")[1].lower().lstrip(".")
         if not is_readable_filename(attachment.original_filename):
             _finish(db, attachment, "unsupported")
             return

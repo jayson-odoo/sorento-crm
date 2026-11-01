@@ -1,6 +1,7 @@
 """DOC-ACCESS-SIMPLE carry-over proof: the deploy must change nobody's access.
 
-Run against a THROWAWAY copy of the data (a database whose name contains "prod" is refused):
+Run against a THROWAWAY copy of the data (a database whose name contains "prod" is refused). The whole
+proof runs in one transaction that is rolled back, so nothing is left behind:
 
     python scripts/doc_access_carryover_check.py --database-url postgresql://... \
         [--seed-audiences "Technical Specifications=dealer,Certification=public"]
@@ -110,33 +111,40 @@ def main(argv=None) -> int:
         return 2
 
     engine = create_engine(args.database_url)
-    with engine.begin() as conn:
-        for pair in filter(None, (p.strip() for p in args.seed_audiences.split(","))):
-            type_name, _, audience = pair.rpartition("=")
-            if audience not in ("off", "staff", "dealer", "public") or not type_name:
-                print(f"bad --seed-audiences entry {pair!r}", file=sys.stderr)
-                return 2
-            n = conn.execute(
-                text("UPDATE attachment_types SET ai_audience = :a WHERE type_name = :n"), {"a": audience, "n": type_name.strip()}
-            ).rowcount
-            if not n:
-                print(f"no type named {type_name!r}", file=sys.stderr)
-                return 2
+    # The whole proof (seeded audiences, the two columns, the backfill) runs in ONE transaction that is
+    # always rolled back, so the database is exactly as it was afterwards.
+    with engine.connect() as conn:
+        tx = conn.begin()
+        try:
+            for pair in filter(None, (p.strip() for p in args.seed_audiences.split(","))):
+                type_name, _, audience = pair.rpartition("=")
+                if audience not in ("off", "staff", "dealer", "public") or not type_name:
+                    print(f"bad --seed-audiences entry {pair!r}", file=sys.stderr)
+                    return 2
+                n = conn.execute(
+                    text("UPDATE attachment_types SET ai_audience = :a WHERE type_name = :n"),
+                    {"a": audience, "n": type_name.strip()},
+                ).rowcount
+                if not n:
+                    print(f"no type named {type_name!r}", file=sys.stderr)
+                    return 2
 
-        contacts = _contacts(conn)
-        old = _old_pairs(conn, contacts)
-        type_names = {str(i): n for i, n in conn.execute(text("SELECT id, type_name FROM attachment_types"))}
-        old_staff = {
-            str(i): bool(s) for i, s in conn.execute(text("SELECT id, ai_audience <> 'off' FROM attachment_types"))
-        }
+            contacts = _contacts(conn)
+            old = _old_pairs(conn, contacts)
+            type_names = {str(i): n for i, n in conn.execute(text("SELECT id, type_name FROM attachment_types"))}
+            old_staff = {
+                str(i): bool(s) for i, s in conn.execute(text("SELECT id, ai_audience <> 'off' FROM attachment_types"))
+            }
 
-        conn.execute(text("ALTER TABLE attachment_types ADD COLUMN IF NOT EXISTS ai_read_staff BOOLEAN NOT NULL DEFAULT false"))
-        conn.execute(text("ALTER TABLE attachment_types ADD COLUMN IF NOT EXISTS ai_read_codes JSONB NOT NULL DEFAULT '[]'::jsonb"))
-        _migration().backfill(conn)
-        new_staff = {str(i): bool(s) for i, s in conn.execute(text("SELECT id, ai_read_staff FROM attachment_types"))}
+            conn.execute(text("ALTER TABLE attachment_types ADD COLUMN IF NOT EXISTS ai_read_staff BOOLEAN NOT NULL DEFAULT false"))
+            conn.execute(text("ALTER TABLE attachment_types ADD COLUMN IF NOT EXISTS ai_read_codes JSONB NOT NULL DEFAULT '[]'::jsonb"))
+            _migration().backfill(conn)
+            new_staff = {str(i): bool(s) for i, s in conn.execute(text("SELECT id, ai_read_staff FROM attachment_types"))}
 
-    with Session(engine) as session:
-        new = _new_pairs(session, contacts)
+            with Session(conn) as session:
+                new = _new_pairs(session, contacts)
+        finally:
+            tx.rollback()
 
     old_by, new_by = defaultdict(int), defaultdict(int)
     for _, _, t in old:

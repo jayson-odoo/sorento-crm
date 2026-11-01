@@ -56,10 +56,12 @@ export function useDocumentAccessMutations() {
       else next.delete(code);
       return updateAttachmentType(row.id, { ai_read_codes: catalogue.filter((c) => next.has(c)) });
     },
-    onSuccess: (_data, { row, code, name, on }) => {
+    // Returning the refresh keeps the mutation pending until the row is re-read, so a second tick on the
+    // same row cannot be built on the list from before this save.
+    onSuccess: async (_data, { row, code, name, on }) => {
       const n = code === null ? row.readable_count : (row.reach[code] ?? 0);
       toast.success(`${row.type_name}: ${name} ${on ? 'can now read' : 'no longer reads'} ${countText(n)}.`);
-      void refresh();
+      await refresh();
     },
     onError: (error) => toast.error(messageOf(error, 'The tick could not be saved.')),
   });

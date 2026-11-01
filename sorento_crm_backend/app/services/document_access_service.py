@@ -12,7 +12,7 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.base import company_scope
+from app.models.base import company_scope, get_company_scope
 from app.services import knowledge_service as ks
 from app.services.error_handler import handle_not_found
 
@@ -28,11 +28,20 @@ def _catalogue(db: Session) -> list:
     )
 
 
-def _contact_block(db: Session, contact_id: str, catalogue_codes: list) -> dict:
+def _allowed_company_ids(db: Session, user_id: Optional[str]) -> Optional[set]:
+    """Company ids the caller may see: the active scope plus the caller's grants. None = every company."""
+    from app.services.company_scope_resolver import grants_scope_value
+
+    scope = grants_scope_value(db, str(user_id)) if user_id else get_company_scope(db)
+    return None if scope is None else {str(c) for c in scope}
+
+
+def _contact_block(db: Session, contact_id: str, catalogue_codes: list, user_id: Optional[str] = None) -> dict:
     from app.models.access import RespondContact
     from app.models.company import Company, RespondContactCompany
     from app.services.chatbot.agent.access import _active_access_codes, _row_count, agent_switch_on, linked_active_user
 
+    allowed = _allowed_company_ids(db, user_id)  # the caller's scope, read before it is lifted below
     with company_scope(db, None):  # a contact row must not read as missing because of the caller's scope
         contact = db.query(RespondContact).filter(RespondContact.id == str(contact_id)).first()
         if contact is None:
@@ -57,6 +66,9 @@ def _contact_block(db: Session, contact_id: str, catalogue_codes: list) -> dict:
             blocked = "no_access_type"
         elif not companies:
             blocked = "no_company"
+    # Only companies the caller is granted are named: the block must not reveal the contact's others.
+    if allowed is not None:
+        companies = [c for c in companies if str(c[0]) in allowed]
     return {
         "id": str(contact.id),
         "name": contact.name,
@@ -113,21 +125,32 @@ def _doc_verdict(contact: dict, code_ok: bool, company_id) -> Optional[str]:
     return "reads"
 
 
-def build_matrix(db: Session, *, contact_id: Optional[str] = None) -> dict:
+def _grant_counts(db: Session, user_id: Optional[str]) -> dict:
+    """Document-type grants per type, counting only contacts linked to a company the caller may see."""
     from app.models.access import ContactAttachmentType
+    from app.models.company import RespondContactCompany
+
+    allowed = _allowed_company_ids(db, user_id)
+    with company_scope(db, None):
+        q = (
+            db.query(ContactAttachmentType.attachment_type_id, func.count(func.distinct(ContactAttachmentType.contact_id)))
+            .join(RespondContactCompany, RespondContactCompany.respond_contact_id == ContactAttachmentType.contact_id)
+            .group_by(ContactAttachmentType.attachment_type_id)
+        )
+        if allowed is not None:
+            q = q.filter(RespondContactCompany.company_id.in_(allowed))
+        return {str(k): int(v) for k, v in q.all()}
+
+
+def build_matrix(db: Session, *, contact_id: Optional[str] = None, user_id: Optional[str] = None) -> dict:
     from app.models.resources import AttachmentType
 
     catalogue = _catalogue(db)
     codes = [str(c) for c, _ in catalogue]
-    contact = _contact_block(db, contact_id, codes) if contact_id else None
+    contact = _contact_block(db, contact_id, codes, user_id) if contact_id else None
 
     types = db.query(AttachmentType).order_by(AttachmentType.type_name).all()
-    grants = dict(
-        db.query(ContactAttachmentType.attachment_type_id, func.count(ContactAttachmentType.id))
-        .group_by(ContactAttachmentType.attachment_type_id)
-        .all()
-    )
-    grants = {str(k): int(v) for k, v in grants.items()}
+    grants = _grant_counts(db, user_id)
 
     files: dict = {str(t.id): [] for t in types}
     for row in _attachment_rows(db):
@@ -188,13 +211,24 @@ def _row_preview(t, ticked: list, readable: list, contact: dict, contact_run: bo
     return {"verdict": verdict, "reads": reads, "total": len(readable), "no_shared_code": no_code, "other_company": other}
 
 
-def list_documents(db: Session, type_id: str, *, contact_id: Optional[str] = None, page: int = 1, limit: int = 50) -> dict:
+def list_documents(
+    db: Session,
+    type_id: str,
+    *,
+    contact_id: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50,
+    user_id: Optional[str] = None,
+    can_upload: bool = False,
+    active_companies=None,
+) -> dict:
+    """`can_edit_levels` per document: the caller may upload AND the file is shared or in an active company."""
     from app.models.company import Company
     from app.models.resources import AttachmentType
 
     if db.query(AttachmentType.id).filter(AttachmentType.id == str(type_id)).first() is None:
         raise handle_not_found("Attachment Type", str(type_id))
-    contact = _contact_block(db, contact_id, [str(c) for c, _ in _catalogue(db)]) if contact_id else None
+    contact = _contact_block(db, contact_id, [str(c) for c, _ in _catalogue(db)], user_id) if contact_id else None
     readable = [r for r in _attachment_rows(db, type_id) if ks.is_readable_filename(r.original_filename)]
     readable.sort(key=lambda r: ((r.original_filename or "").lower(), str(r.id)))
     total = len(readable)
@@ -208,6 +242,10 @@ def list_documents(db: Session, type_id: str, *, contact_id: Optional[str] = Non
             "access_levels": list(r.access_levels or []),
             "company_name": names.get(str(r.company_id)) if r.company_id else None,
             "ai_read_status": r.ai_read_status,
+            "can_edit_levels": bool(
+                can_upload
+                and (r.company_id is None or active_companies is None or str(r.company_id) in active_companies)
+            ),
             "verdict": _doc_verdict(contact, str(r.id) in code_ok, r.company_id) if contact is not None else None,
         }
         for r in window
