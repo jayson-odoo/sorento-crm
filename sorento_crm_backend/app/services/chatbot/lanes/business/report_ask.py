@@ -1929,8 +1929,8 @@ def _settle(
         # Item 4: never the company question on an outstanding ask (pre-#1922 it ran over the contact's own companies).
         # R1: the company the message (the parser's `sales_company`) names, among the contact's own; else, with two or
         # more companies and no named subject (a customer, product, brand, category, agent or spec), the company question.
-        named = _named_company(parse_output, own)
-        if named is None and parse_output.get("sales_company") and " ".join(jsc.js_string(parse_output.get("sales_company")).split()):
+        named, foreign = _company_said(parse_output, own)
+        if foreign:
             return None, COMPANY_FORBIDDEN_LINE  # the message named a company the contact does not hold
         if named is not None:
             args["company"] = str(named[0])
@@ -1976,10 +1976,12 @@ def _own_companies(companies: Any) -> list[Any]:
     return [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) == 3]
 
 
-def _named_company(parse_output: dict[str, Any], own: list[Any]) -> Any:
-    """The contact's own company the message names (the parser's `sales_company`), by name or code."""
+def _company_said(parse_output: dict[str, Any], own: list[Any]) -> tuple[Any, bool]:
+    """The contact's own company the message names (the parser's `sales_company`, by name or code), and whether it named one
+    the contact does not hold."""
     said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
-    return next((c for c in own if said and said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
+    named = next((c for c in own if said and said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
+    return named, bool(said) and named is None
 
 
 def _owes_company(args: dict[str, Any], own: list[Any]) -> bool:
@@ -2060,6 +2062,8 @@ def _refine(
     if own_customer:
         args["customer_ids"] = own_customer
         args.pop("company", None)
+    elif parse_output.get("ranking_pick") is True:
+        args.pop("customer_ids", None)  # a pick that lost its row is never the held customer: it asks
     if "product" in _current_kinds(parse_output):
         product_args, line = _product_args(entities)
         if product_args is None:
@@ -2110,10 +2114,14 @@ def _refine(
     if period is not None:
         given["period"] = period
     extras = {"args": args, "top_n": top_n, **({"kind_ask": True} if asks_kind else {})}
-    if frame.get("customer_ids") and not args.get("customer_ids") and not dealer:
+    outstanding = parse_output.get("capability_from") == "outstanding" or args.get("basis") in OUTSTANDING_KINDS
+    if frame.get("customer_ids") and not args.get("customer_ids") and not dealer and not outstanding:
         # The customer went (all customers, "my ..."): it was the subject, so the company is owed now, as on a fresh ask.
+        # Item 4 (owner 29 Oct): never the company question on an outstanding ask.
         own = _own_companies(companies)
-        named = _named_company(parse_output, own)
+        named, foreign = _company_said(parse_output, own)
+        if foreign:
+            return None, COMPANY_FORBIDDEN_LINE
         if named is not None:
             args["company"] = str(named[0])
         elif _owes_company(args, own):
