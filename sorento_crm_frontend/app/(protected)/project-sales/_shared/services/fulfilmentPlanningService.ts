@@ -37,7 +37,7 @@ import type {
  * new permission is introduced.
  *
  *   GET  /project-sales/fulfilment-planning
- *        ?page&limit&query&review_state&project_id&sales_order_id
+ *        ?page&limit&query&review_state&demand_class&project_id&sales_order_id
  *        -> { data: FulfilmentPlanningRow[], pagination: { total, page, limit } }
  *
  *        review_state is a CLOSED set, and the first value is the new one:
@@ -175,6 +175,7 @@ export async function listFulfilmentPlanning(
     },
     {
       review_state: params.review_state,
+      demand_class: params.demand_class?.join(',') || undefined,
       project_id: params.project_id,
       sales_order_id: params.sales_order_id,
     },

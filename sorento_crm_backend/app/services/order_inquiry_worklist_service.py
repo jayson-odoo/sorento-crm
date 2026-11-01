@@ -1391,6 +1391,8 @@ class OrderInquiryWorklistService:
         # LINKAGE-UNIFY U3 (Q5): keep a row holding a link whose document is dead for
         # this reason (`po_cancelled` / `spo_withdrawn`).
         dead_document: Optional[str] = None,
+        # RESERVE-EMAIL-FULL-TABLE: exact OI nos (already split by the route's `multi_values`).
+        inquiry_no: Optional[Sequence[str]] = None,
         # Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C3): the OI worksheet's own
         # row set - a run's `run_scope_oi_rows` result, fed in as the row ids to print
         # rather than as a new set of filter clauses. `None` (the default) means "every
@@ -1523,6 +1525,9 @@ class OrderInquiryWorklistService:
         supplier_ids = multi_values(supplier_id)
         if supplier_ids:
             base = base.filter(Supplier.id.in_(supplier_ids))
+        numbers = multi_values(inquiry_no, capped=False)
+        if numbers:
+            base = base.filter(OrderInquiry.inquiry_no.in_(numbers))
         raisers = multi_values(raised_by)
         if raisers:
             # By id, off the ROW's own raiser (its revision's confirmer, the header only

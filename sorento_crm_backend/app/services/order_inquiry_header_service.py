@@ -277,6 +277,7 @@ class OrderInquiryHeaderService:
         raised_by: Optional[str | List[str]] = None,
         agent: Optional[str | List[str]] = None,
         project: Optional[str | List[str]] = None,
+        inquiry_no: Optional[str | List[str]] = None,
         state: HeaderState = "outstanding",
     ):
         """`agg` is ALWAYS the caller's own `_rows_agg()` instance, never one built in
@@ -359,6 +360,10 @@ class OrderInquiryHeaderService:
                 code="invalid_state_filter",
             )
 
+        # RESERVE-EMAIL-FULL-TABLE: exact OI nos (never a prefix), the reserve emails' button.
+        numbers = multi_values(inquiry_no, capped=False)
+        if numbers:
+            base = base.filter(OrderInquiry.inquiry_no.in_(numbers))
         # FILTER-MULTISELECT PR6: Raised by, Agent and Project take several values, OR-ed.
         raisers = multi_values(raised_by)
         if raisers:
@@ -443,6 +448,7 @@ class OrderInquiryHeaderService:
         agent: Optional[str | List[str]] = None,
         project: Optional[str | List[str]] = None,
         reserve: Optional[str] = None,
+        inquiry_no: Optional[str | List[str]] = None,
         sort: Optional[str] = None,
         direction: Optional[str] = "asc",
         page: int = 1,
@@ -485,7 +491,7 @@ class OrderInquiryHeaderService:
 
         base = self._base(
             agg=agg, state=state, query=query, raised_by=raised_by, agent=agent,
-            project=project, reserve=reserve,
+            project=project, reserve=reserve, inquiry_no=inquiry_no,
         )
         total = int(
             base.with_entities(func.count(OrderInquiry.id)).order_by(None).scalar() or 0

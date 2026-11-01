@@ -2587,6 +2587,9 @@ export function FulfilmentBoardPanel({
     return soNumbers.filter((soNumber) => !present.has(soNumber));
   }, [board.data, soNumbers]);
 
+  /** DEALER-PLANNING R3: selected orders the server left out because they are not admitted. */
+  const unplannedOrders = board.data?.unplanned_orders ?? [];
+
   const bucketLabel = React.useMemo(() => {
     const map = new Map<string, string>();
     // Through the same de-jargoning the column headers go through: the dialog title reads the
@@ -3344,6 +3347,20 @@ export function FulfilmentBoardPanel({
                   {`The selection holds ${board.data?.line_count} lines on other dates.`}
                 </p>
               </>
+            ) : unplannedOrders.length > 0 ? (
+              <>
+                <h3 className="mt-2 text-sm font-semibold">
+                  No lines to plan on these sales orders
+                </h3>
+                {unplannedOrders.map((order) => (
+                  <p
+                    key={order.so_number}
+                    className="mx-auto mt-1 max-w-md text-sm text-muted-foreground"
+                  >
+                    {order.reason}
+                  </p>
+                ))}
+              </>
             ) : (
               <>
                 <h3 className="mt-2 text-sm font-semibold">
@@ -3369,6 +3386,13 @@ export function FulfilmentBoardPanel({
                     missingOrders.length === 1 ? 'has' : 'have'
                   } nothing to plan on this board.`}
                 </AlertTitle>
+                {unplannedOrders.length > 0 && (
+                  <AlertDescription>
+                    {unplannedOrders.map((order) => (
+                      <p key={order.so_number}>{order.reason}</p>
+                    ))}
+                  </AlertDescription>
+                )}
               </AlertContent>
             </Alert>
           )}
