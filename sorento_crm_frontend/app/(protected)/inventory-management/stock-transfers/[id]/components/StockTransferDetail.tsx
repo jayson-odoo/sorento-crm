@@ -8,6 +8,7 @@ import { Card, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import ProductStockTab from '@/app/(protected)/master-data-management/products/[id]/components/ProductStockTab';
 import { useStockTransfer } from '../../hooks/useStockTransfers';
 import {
@@ -42,7 +43,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
  */
 export function StockTransferDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = useStockTransfer(id);
-  const [tab, setTab] = React.useState('general');
+  const [tab, setTab] = useUrlTab({ tabs: ['general', 'history'], defaultTab: 'general' });
   const [action, setAction] = React.useState<TransferAction | null>(null);
   // One definition of what can be done to a transfer, shown here and on the row.
   const transferActions = React.useMemo(

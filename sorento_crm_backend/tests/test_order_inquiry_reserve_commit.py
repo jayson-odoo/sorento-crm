@@ -1133,8 +1133,8 @@ def test_AC_RS_79b_cancel_partly_answered_two_requests_and_rerequest(reserve_api
     assert reserve_after_cancel.status_code == 409, reserve_after_cancel.text
     assert row_b.item_code in reserve_after_cancel.text, reserve_after_cancel.text
 
-    # One commit touching rows of TWO open requests: one dispatch per request, each
-    # naming its own rows only.
+    # One commit touching rows of TWO open requests of the same requester on one OI: ONE
+    # dispatch (AC-RF-41), naming exactly the rows touched.
     row_c = _open_row(world, qty="10", item_code=f"{MARKER}-TWOC")
     row_d = _open_row(world, qty="10", item_code=f"{MARKER}-TWOD")
     request_c = _request(client, world, (row_c, "10"))
@@ -1152,9 +1152,10 @@ def test_AC_RS_79b_cancel_partly_answered_two_requests_and_rerequest(reserve_api
     assert both.status_code == 200, both.text
     world.db.commit()
     matches = _reserved_calls(calls)
-    assert len(matches) == 2, matches
-    by_source = {m["source_id"]: {r["item_code"] for r in m["context"]["reserve"]["rows"]} for m in matches}
-    assert by_source == {request_c: {row_c.item_code}, request_d: {row_d.item_code}}, by_source
+    assert len(matches) == 1, matches
+    assert matches[0]["source_id"] in {request_c, request_d}, matches[0]["source_id"]
+    named = {r["item_code"] for r in matches[0]["context"]["reserve"]["rows"]}
+    assert named == {row_c.item_code, row_d.item_code}, named
 
     # Re-requesting the balance of a row answered inside a STILL-OPEN request.
     row_e = _open_row(world, qty="50", item_code=f"{MARKER}-REQE")

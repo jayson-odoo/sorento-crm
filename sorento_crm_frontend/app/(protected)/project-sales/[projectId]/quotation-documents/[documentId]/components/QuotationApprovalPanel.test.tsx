@@ -164,7 +164,7 @@ describe('QuotationApprovalPanel: the block', () => {
     granted = new Set(['projects.quotations.approve']);
     renderPanel(quotationDocument({ requires_approval: true, below_floor_line_count: 2 }));
 
-    expect(screen.getByText(/2 lines are priced below their floor/i)).toBeInTheDocument();
+    expect(screen.getByText(/2 lines are priced below minimum price/i)).toBeInTheDocument();
     // The next action moved to the header; the banner only states the situation.
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
@@ -173,7 +173,7 @@ describe('QuotationApprovalPanel: the block', () => {
     granted = new Set();
     renderPanel(quotationDocument({ requires_approval: true, below_floor_line_count: 1 }));
 
-    expect(screen.getByText(/One line is priced below its floor/i)).toBeInTheDocument();
+    expect(screen.getByText(/One line is priced below minimum price/i)).toBeInTheDocument();
   });
 
   it('offers a reader with no edit rights the reason but no action', () => {
@@ -184,7 +184,7 @@ describe('QuotationApprovalPanel: the block', () => {
       false,
     );
 
-    expect(screen.getByText(/One line is priced below its floor/i)).toBeInTheDocument();
+    expect(screen.getByText(/One line is priced below minimum price/i)).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Send for approval' }),
     ).not.toBeInTheDocument();

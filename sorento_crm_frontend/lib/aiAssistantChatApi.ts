@@ -1,5 +1,19 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { AIPageSnapshot } from '@/lib/aiPageSnapshot';
+import type { TurnAttachment } from '@/components/chatbot/TurnAttachments';
+import {
+  ActionRefusedError,
+  actionRefusalReason,
+} from '@/app/(protected)/system-management/chatbot-console/services/agentConsoleService';
+import type {
+  AgentActionResponse,
+  AgentConversationAction,
+  AgentPendingAction,
+  AgentReplyMeta,
+  AgentSteps,
+} from '@/app/(protected)/system-management/chatbot-console/types/agentConsole.types';
+import type { ConsoleRoute } from '@/app/(protected)/system-management/chatbot-console/types/chatbotConsole.types';
 
 export type { AIPageSnapshot };
 
@@ -23,6 +37,22 @@ export interface AIAssistantMessage {
       status?: 'pending' | 'confirmed' | 'cancelled' | 'denied' | 'failed';
       summary?: string;
     };
+    // The chatbot's brain answered (AGENTIC-UNIFY): `route` is present only on its replies and picks
+    // the renderer. The server strips everything but `route`, `status`, files, chips and the card
+    // (`agent.pending_action`, `agent.actions`) for a reader without the settings view slug.
+    route?: 'chat' | 'agent';
+    status?: string | null;
+    chatbot_turn_id?: string | null;
+    route_decision?: ConsoleRoute | null;
+    attachments?: TurnAttachment[];
+    agent?: {
+      pending_action?: AgentPendingAction | null;
+      actions?: AgentConversationAction[];
+      rounds?: number | null;
+      tool_calls?: { name: string; status: string }[];
+      limit_hit?: AgentReplyMeta['limit_hit'];
+      steps?: AgentSteps;
+    } | null;
   };
   created_at: string;
 }
@@ -117,4 +147,37 @@ export async function loadConversation(id: string) {
     } as AIAssistantConversation;
   }
   return data as AIAssistantConversation;
+}
+
+const ACTIONS = '/api/v1/system/ai-assistant/agent/actions';
+
+async function decidePanelAction(path: string, fallback: string): Promise<AgentActionResponse> {
+  const r = await apiFetch(`${ACTIONS}/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!r.ok) {
+    if (r.status === 409) {
+      const reason = await actionRefusalReason(r);
+      if (reason) throw new ActionRefusedError(reason);
+    }
+    throw new Error(await extractApiError(r, fallback));
+  }
+  return (await r.json()) as AgentActionResponse;
+}
+
+export function confirmPanelAction(actionId: string) {
+  return decidePanelAction(`${encodeURIComponent(actionId)}/confirm`, 'Failed to confirm the changes');
+}
+
+export function cancelPanelAction(actionId: string) {
+  return decidePanelAction(`${encodeURIComponent(actionId)}/cancel`, 'Failed to cancel the changes');
+}
+
+export function withdrawPanelStep(actionId: string, index: number) {
+  return decidePanelAction(
+    `${encodeURIComponent(actionId)}/steps/${index}/withdraw`,
+    'Failed to withdraw the change',
+  );
 }

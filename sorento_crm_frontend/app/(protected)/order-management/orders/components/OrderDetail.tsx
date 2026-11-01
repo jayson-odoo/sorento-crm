@@ -1,7 +1,6 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
 import { Edit, FileText, Link2, ListOrdered, Receipt, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +12,7 @@ import { useOrder, ordersPagerQuery } from '../hooks/useOrders';
 import { useOrderActions } from '../actions';
 import { useDeletedRecordGuard } from '@/hooks/useDeletedRecordGuard';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { formatDate } from '@/lib/helpers';
 import OrderLinesCard from './OrderLinesCard';
 import OrderFulfilledComplaintsCard from './OrderFulfilledComplaintsCard';
@@ -35,7 +35,10 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   // see it (the SCM sales-order page's own gate).
   const canOpenSo = useHasPermission('scm.dashboard.view');
   const canSeeInvoices = useHasPermission(BILLING_VIEW_SLUG);
-  const [tab, setTab] = useState('general');
+  const [tab, setTab] = useUrlTab({
+    tabs: ['general', 'lines', 'delivery', ...(canSeeInvoices ? ['invoices'] : []), 'related'],
+    defaultTab: 'general',
+  });
   const { actions, dialogs, pending } = useOrderActions(order, {
     onDeleted: () => router.push(`/order-management/orders${listQs}`),
   });

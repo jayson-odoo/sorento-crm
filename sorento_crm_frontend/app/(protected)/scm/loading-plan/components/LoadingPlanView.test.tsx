@@ -14,6 +14,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { watchTabWrites } from '@/test-mocks/urlTab';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { LoadingPlanRecord } from '../../services/fulfilmentService';
@@ -683,20 +684,22 @@ describe('LoadingPlanView - the tab strip (S2, AC-B1-B4)', () => {
   });
 
   it('clicking Supplier codes writes ?tab=codes (AC-B2)', () => {
+    const written = watchTabWrites('/scm/loading-plan/plan-1', currentSearchParams);
     renderView();
 
     selectTab('Supplier codes');
 
-    expect(replace).toHaveBeenCalledWith('/scm/loading-plan/plan-1?tab=codes', { scroll: false });
+    expect(written()).toBe('/scm/loading-plan/plan-1?tab=codes');
   });
 
   it('clicking Lines from another tab clears ?tab= rather than writing ?tab=lines', () => {
     currentSearchParams = new URLSearchParams('tab=sent');
+    const written = watchTabWrites('/scm/loading-plan/plan-1', currentSearchParams);
     renderView();
 
     selectTab('Lines');
 
-    expect(replace).toHaveBeenCalledWith('/scm/loading-plan/plan-1', { scroll: false });
+    expect(written()).toBe('/scm/loading-plan/plan-1');
   });
 
   // `Tabs` is controlled by the URL (`activeTab`, derived from `?tab=`); the mocked router

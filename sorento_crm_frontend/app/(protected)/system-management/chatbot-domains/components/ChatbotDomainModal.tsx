@@ -83,11 +83,15 @@ export default function ChatbotDomainModal({
   useEffect(() => {
     if (!open) return;
     setDraft(current ? { ...current } : BLANK);
-    setTab('general');
     // Re-derive only when the modal opens on a different record - `rows` changes on
     // every keystroke in the list's search box and must not reset an in-progress edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, domainId]);
+  // The tab resets when the modal OPENS, not when prev/next steps to another domain
+  // (NAV-KEEP-TAB: a step keeps the open tab).
+  useEffect(() => {
+    if (open) setTab('general');
+  }, [open]);
 
   const set = <K extends keyof ChatbotDomainInput>(key: K, value: ChatbotDomainInput[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }));

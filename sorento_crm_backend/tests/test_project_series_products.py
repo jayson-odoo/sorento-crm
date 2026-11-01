@@ -731,16 +731,13 @@ def test_the_series_floor_is_the_price_less_the_percentage():
     assert series_floor(Decimal("220"), Decimal("0")) == Decimal("220.00")
 
 
-def test_a_series_with_only_half_the_answer_sets_no_floor_at_all():
-    """AC-C4, and the reason the columns are nullable.
-
-    A price with no percentage must fall through to `price_floor_rules` rather than becoming
-    a hard floor at the selling price - 56 of the client's 151 codes are exactly that shape,
-    and the alternative puts every one of them in breach on the first discount.
+def test_a_series_price_with_no_percentage_allows_no_discount():
+    """Owner ruling Q2 (1 Nov 2026), replacing AC-C4: a price with no max discount means no
+    discount is allowed, so the floor IS the selling price. No price is still no opinion.
     """
     from app.services.project_pricing_service import series_floor
 
-    assert series_floor(Decimal("220"), None) is None
+    assert series_floor(Decimal("220"), None) == Decimal("220.00")
     assert series_floor(None, Decimal("6")) is None
     assert series_floor(None, None) is None
     # Nonsense is refused rather than propagated as a negative floor.

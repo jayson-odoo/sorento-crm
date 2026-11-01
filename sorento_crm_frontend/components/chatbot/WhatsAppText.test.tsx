@@ -110,4 +110,10 @@ describe('WhatsAppText', () => {
     const { container } = render(<WhatsAppText text={'*ETA:* soon'} term="  " />);
     expect(container.querySelector('mark')).toBeNull();
   });
+
+  it('pin (round 8): a single-backtick span stays literal text, so the console and the inbox are unchanged', () => {
+    const { container } = render(<WhatsAppText text={'see `x` here'} />);
+    expect(container.textContent).toBe('see `x` here');
+    expect(container.querySelector('code')).toBeNull();
+  });
 });
