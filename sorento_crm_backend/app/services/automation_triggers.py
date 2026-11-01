@@ -626,7 +626,7 @@ register(
         label="Order inquiry: reserved by CS",
         description=(
             "Fires once CS confirms what was reserved against a request (event-driven), "
-            "telling the requester what was reserved and the balance still to buy."
+            "telling the requester what was reserved or rejected, line by line."
         ),
         config_schema={
             "type": "object",

@@ -837,6 +837,8 @@ class AcknowledgeFilter(BaseModel):
     #: md`): "Select all N matching" narrowed to one header, so pressing Confirm with
     #: nothing ticked means exactly that OI and nothing else.
     inquiry_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    #: RESERVE-EMAIL-FULL-TABLE: exact OI nos, comma-joined (the Lines chip with "Select all").
+    inquiry_no: Optional[str] = None
     #: OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status.
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
 
