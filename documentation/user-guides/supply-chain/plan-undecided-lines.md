@@ -57,6 +57,29 @@ If the order is refused, the message names the reason: an order whose status is 
 **Completed** (a cancelled one) cannot be planned, and neither can an order whose every line is
 cancelled or marked no purchase needed.
 
+## Lines at a dealer location
+
+A project sales order line at a dealer location such as **BRW** or **MWH** can be planned like any
+other line.
+
+* The location's stock counts for that line, after every other line already owed at that location.
+  The share a dealer location keeps back for dealers still applies, so the suggestion can be a
+  **Reserve** for part of the line and a **Buy** for the rest.
+* A **Buy** on the line goes to purchasing in the order inquiry the usual way.
+* Dealer (retail) sales orders do not reach this board yet.
+
+## When a line cannot be planned
+
+The line says why, in place of a suggestion:
+
+* **Needs a location**: the sales order line states no fulfilment location. Set it on the sales
+  order, then plan the line again.
+* **Outside fulfilment planning**: the line is at a project location that is switched off for
+  planning. An admin controls this on the Warehouses screen.
+
+The count on a board cell reads **N not plannable**, and the status filter option has the same
+name. Open the cell to see each line's reason.
+
 ## The quantities on a delivered line
 
 * The quantity a line asks the board for is the **ordered** quantity, not what is still owed. A

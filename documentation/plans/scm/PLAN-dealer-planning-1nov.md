@@ -1,6 +1,6 @@
 # PLAN: Dealer sales orders plannable on Fulfilment Planning
 
-**Status:** Planning. PR 1 scope waits on the crew decision below (widen to retail or not). PR 2 not started: behaviour card first. Track for PR 1: size S as briefed, M if widened.
+**Status:** PR 1 built on the briefed S track: flag exemption, own-pool netting fix, real reason. Retail widening is not in it; crew decision pending, recommendation in Open below. PR 2 not started: behaviour card first.
 
 UAC: `dealer-planning-1nov-acceptance-criteria.md` (beside this file).
 
@@ -39,11 +39,26 @@ Retail is what dealer agents sell: 1,559 open dealer-segment SOs have a retail a
 
 ## PR 1
 
-1. Red tests, then the exemption in `outside_fulfilment_planning`.
-2. Trace what the ladder proposes for a pool-bin line, then prove decide, confirm and OI end to end on a BRW line.
-3. Real reason in the frontend. `BoardDecisionPill.tsx:112,232-238`, `FulfilmentBoardListView.tsx:863-867,1266` and `BoardCellBreakdownDialog.tsx:519-520` say "Needs a location" for every unplannable line. A flagged-off bin must read "Outside fulfilment planning", the reason the server already sends in `sources[].reason` (`project_fulfilment_board_service.py:2786-2797`). A line with no location keeps "Needs a location".
-4. Regression test: consignment borrow unchanged.
-5. Guides: `documentation/user-guides/supply-chain/plan-undecided-lines.md`.
+1. Exemption in `outside_fulfilment_planning`, using `pool_predicate.is_site_pool`.
+2. **Own-pool netting (found while tracing, proved by running it).** A line at a pool is inside that pool's book, so 10 on hand and 10 ordered read net 0 and proposed Buy 10. `_stands_on_its_own_pool` in `project_supply_service.py` puts the line's owed quantity back, the arithmetic `_group_offer` does for a group (captain's rule, 26 Aug 2026). It is applied in `_apply_group_nets` and `_unit_fact`, so the walk, the board and the confirm check read one figure. A line at a project bin that draws the pool is untouched.
+3. Real reason in the frontend. A flagged-off bin reads "Outside fulfilment planning", the reason the server already sends. A line with no location keeps "Needs a location". The cell count and the filter read "not plannable", because they cover both.
+4. Regression: consignment borrow unchanged.
+5. Guide: `documentation/user-guides/supply-chain/plan-undecided-lines.md`.
+
+Results for a line of 10 at its own pool, 50% default share, due within the window:
+
+| On hand | Other lines there | Proposal |
+| --- | --- | --- |
+| 0 | 0 | Buy 10 |
+| 10 | 0 | Reserve 5, Buy 5 |
+| 20 | 0 | Reserve 10 |
+| 15 | 10 | Reserve 2, Buy 8 |
+
+### Known limits, left on purpose
+
+- **The dealer share still caps a project-class line at BRW.** It is the written rule for a project line (`available_for_project`), and only project-class lines reach the board in this PR. Retail lines are the ones it makes no sense for, so that decision belongs to the retail PR.
+- **Two dates of one product on one order at its own pool** read cautiously: the walk's ledger is seeded once per product, so the later date can propose more Buy than strictly needed. A planner can amend it.
+- **Own-arrival credit stays 0 at a pool**, because `_on_hand_at` reads the group list, which is empty for a pool. The line falls through to the pool share. Named by the trace at `project_supply_service.py:3852`, not separately tested.
 
 ## PR 2
 
@@ -51,6 +66,5 @@ Order inquiry recipients for dealer orders: To Josephine, Cc Joey, configurable.
 
 ## Open
 
-- Widen to retail: filed with crew 1 Nov, waiting on the answer.
-- Double-buy on a confirmed retail line against reorder runs: being traced.
-- Whether the SO list has a class filter dealer CS can use: UNVERIFIED.
+- **Widen to retail: not safe as designed, crew decision pending.** A retail line with a confirmed decision and a raised ORDER row counts twice: the book leg has no decided-line test (`scm/demand.py:503-510`, `:726-733`) and the confirmed leg has no class test (`:536-556`, `:736-770`). An All-scope run takes both (`:861`), so 10 owed with 0 on hand buys 20 (`reorder_run_service.py:2812-2816`). The Container Request drops the same line to 0 (`container_request_service.py:522,884`). The view fix needs a migration. Recommendation filed: ship this PR, demo on a project-class order at BRW, build retail as its own PR with a behaviour card.
+- Whether the SO list has a class filter dealer CS can use: UNVERIFIED, only matters for the retail PR.
