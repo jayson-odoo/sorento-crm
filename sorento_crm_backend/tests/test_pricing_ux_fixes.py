@@ -240,3 +240,45 @@ def test_a7_another_company_series_judges_like_no_series(world):
 def test_a8_a_junk_product_id_is_a_422_not_a_500(world):
     r = world.client.get(VERDICT, params={"product_id": "not-a-uuid"})
     assert r.status_code == 422, r.text
+
+
+# ------------------------------------------------- wording: "minimum price" in notifications
+
+
+def test_w1_floor_breach_and_approval_notifications_say_minimum_price(monkeypatch):
+    """Owner (1 Nov): users read "minimum price", never "floor", in the in-app notification
+    and the email built from it (title = subject)."""
+    from types import SimpleNamespace
+
+    from app.services import project_notify_service as notify
+
+    sent = []
+    monkeypatch.setattr(notify, "_send", lambda db, **kw: sent.append(kw) or 1)
+    monkeypatch.setattr(notify, "management_user_ids", lambda db, company_id=None: ["u1"])
+    monkeypatch.setattr(notify, "approver_user_ids", lambda db, company_id, skip: ["u1"])
+    monkeypatch.setattr(notify, "project_label", lambda project: "ZZT-P1")
+    project = SimpleNamespace(id="p1", title="Tower", project_code="ZZT-P1", company_id="c1")
+
+    notify.notify_floor_breach(
+        None,
+        project=project,
+        event={"line_id": "l1", "unit_price": "800.00", "floor_value": "900.00", "floor_level": "series"},
+    )
+    document = SimpleNamespace(id="d1", document_no="Q-1", company_id="c1")
+    notify.notify_quotation_approval_requested(
+        None, project=project, document=document, press=None, below=2,
+        requester_id="u2", requester_name="Sales One",
+    )
+    breach, approval = sent
+    assert breach["title"] == "ZZT-P1 priced below minimum price"
+    assert "below the minimum price of 900.00" in breach["body"]
+    assert "2 lines below the minimum price" in approval["body"]
+    for kw in sent:
+        assert "floor" not in kw["title"].lower() and "floor" not in kw["body"].lower()
+
+
+def test_w2_the_approval_permission_reads_minimum_price():
+    from app.rbac.permission_registry import PERMISSION_REGISTRY
+
+    entry = next(e for e in PERMISSION_REGISTRY if e["slug"] == "projects.quotations.approve")
+    assert entry["name"] == "Approve Quotations Below Minimum Price"

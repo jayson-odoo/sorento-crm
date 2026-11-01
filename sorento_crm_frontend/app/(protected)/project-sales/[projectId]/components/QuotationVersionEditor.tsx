@@ -675,17 +675,17 @@ export function describeRecompute(result: QuotationRecomputeResult): string {
   }
   if (result.no_longer_below_floor > 0) {
     parts.push(
-      `${result.no_longer_below_floor} ${result.no_longer_below_floor === 1 ? 'line is' : 'lines are'} no longer below floor`,
+      `${result.no_longer_below_floor} ${result.no_longer_below_floor === 1 ? 'line is' : 'lines are'} no longer below minimum price`,
     );
   }
   if (result.now_below_floor > 0) {
     parts.push(
-      `${result.now_below_floor} ${result.now_below_floor === 1 ? 'line is' : 'lines are'} now below floor`,
+      `${result.now_below_floor} ${result.now_below_floor === 1 ? 'line is' : 'lines are'} now below minimum price`,
     );
   }
   if (result.floor_changed > 0) {
     parts.push(
-      `${result.floor_changed} ${result.floor_changed === 1 ? 'line' : 'lines'} picked up a different floor`,
+      `${result.floor_changed} ${result.floor_changed === 1 ? 'line' : 'lines'} picked up a different minimum price`,
     );
   }
   if (parts.length === 0) {

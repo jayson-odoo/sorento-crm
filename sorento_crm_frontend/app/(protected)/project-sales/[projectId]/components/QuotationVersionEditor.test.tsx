@@ -1193,7 +1193,7 @@ describe('QuotationVersionEditor', () => {
     await waitFor(() => expect(recomputeQuotationVersion).toHaveBeenCalledWith('v2'));
     expect(
       await screen.findByText(
-        '6 lines are no longer non-standard, 1 line is now below floor.',
+        '6 lines are no longer non-standard, 1 line is now below minimum price.',
       ),
     ).toBeInTheDocument();
     // And WHICH lines, because "6 lines" is not something anybody can go and check.
@@ -1314,13 +1314,13 @@ describe('describeRecompute', () => {
         now_below_floor: 1,
       }),
     ).toBe(
-      '6 lines are no longer non-standard, 2 lines are now non-standard, 3 lines are no longer below floor, 1 line is now below floor.',
+      '6 lines are no longer non-standard, 2 lines are now non-standard, 3 lines are no longer below minimum price, 1 line is now below minimum price.',
     );
   });
 
   it('names the floor moving under a line that did not cross it', () => {
     expect(describeRecompute({ ...base, changed_count: 2, floor_changed: 2 })).toBe(
-      '2 lines picked up a different floor.',
+      '2 lines picked up a different minimum price.',
     );
   });
 });

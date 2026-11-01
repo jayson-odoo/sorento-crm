@@ -181,7 +181,7 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
       },
       {
         key: 'derived_floor',
-        header: 'Floor',
+        header: 'Minimum price',
         width: 130,
         kind: 'derived',
         align: 'end',

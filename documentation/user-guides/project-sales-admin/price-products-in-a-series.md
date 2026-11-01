@@ -5,14 +5,14 @@ Use this when a series needs a selling price, a maximum discount, or a product r
 ## Steps
 
 1. Open **Project Sales**, then **Configuration**, then **Series**, and open the series.
-2. In the products table, type a **Selling price** and, if a discount is allowed, a **Max discount %** on the product's row. The row saves when you move to another row or select the tick, and **Saved** confirms it.
+2. In the products table, type a **Selling price** and, if a discount is allowed, a **Max discount %** on the product's row. The row saves when you move to another row or select the tick, and **Saved** confirms it. The **Minimum price** column shows the result.
 3. To add a product, select **Add a product**, pick it in the **Product** cell, then type its numbers. A new row with no product says **Pick a product to save this row** and is not saved until you pick one.
 4. To take a product out of the series, select the bin on its row, then **Delete**. The row disappears.
 5. To put a removed product back, select **Add a product** and pick it again, or load it with **Load the sheet**.
 
 ## What's captured
 
-* **Floor** is the lowest price a quotation line may carry for this series: the selling price less the max discount. A selling price with no max discount allows no discount, so the floor is the selling price itself. With no selling price the series sets no floor, and the price floor rules apply.
+* **Minimum price** is the lowest price a quotation line may carry for this series: the selling price less the max discount. A selling price with no max discount allows no discount, so the minimum price is the selling price itself. With no selling price the series sets none, and the company's price floor rules apply.
 * A removed product is no longer in the series: a quotation line with it reads **Non-standard**, and the series no longer prices it. Products the series' brand and category would list stay out until you add them back.
 * A saved row's product is fixed. To quote a different product, add it as its own row.
 
