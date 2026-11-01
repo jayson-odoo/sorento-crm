@@ -24,7 +24,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import status
-from sqlalchemy import and_, distinct, false, func
+from sqlalchemy import and_, distinct, false, func, text
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import ColumnElement
 
@@ -1023,11 +1023,26 @@ def view_config(definition: reg.ReportDefinition, db: Any = None) -> ReportViewC
     return ReportViewConfig.model_validate(raw)
 
 
+def _jit_off(db: Session) -> None:
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SET LOCAL jit = off"))
+
+
 def _unscoped(ctx: QueryContext):
     """A scope="company" dataset owns its company arm (`_predicates`), so its statements
     run with the ORM listener's own per-entity scope OFF: the session's scope is the
     caller's ACTIVE company, and a user granted Sorento and Mocha must be able to read
-    Mocha from a Sorento session. Every other dataset runs exactly as before."""
+    Mocha from a Sorento session. Every other dataset runs exactly as before.
+
+    Every engine entry (run, run_summary, run_workbook, the ask's document list) runs its
+    statements inside this, so it is also where JIT is switched off for the transaction:
+    a report statement's per-row subqueries give it a planner cost far above
+    `jit_above_cost`, and Postgres then spent seconds compiling a query that executes in a
+    fraction of one (INVOICED-CHANNEL-PERF: an invoiced month, 5.2 s of JIT on 0.3 s of
+    execution). `SET LOCAL` lasts until the caller's transaction ends (the rest of that request or
+    chat turn runs without JIT too, harmless for short statements); the next transaction has it
+    back."""
+    _jit_off(ctx.db)  # every report statement runs in here: see the docstring
     if ctx.dataset.scope == "company":
         return company_scope(ctx.db, None)
     from contextlib import nullcontext
