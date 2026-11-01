@@ -1359,7 +1359,7 @@ def test_ac_rf_89_select_all_acknowledge_with_inquiry_no_acts_on_exactly_those_o
 
     def acknowledged(inquiry):
         world.db.expire_all()
-        rows = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.inquiry_id == inquiry.id).all()
+        rows = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.order_inquiry_id == inquiry.id).all()
         assert rows, "fixture check: the OI has rows"
         return {row.id for row in rows if row.acknowledged_at is not None}, {row.id for row in rows}
 
