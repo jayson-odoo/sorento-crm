@@ -48,12 +48,16 @@ fi
 
 # Owner-tunable knobs live on the box, never in the workflow: see the runbook. Read before
 # the lock so DEPLOY_LOCK_PATH / DEPLOY_LOCK_WAIT_SECONDS can be set there too.
-# Exported (set -a) so a COMPOSE_FILE line there reaches every `docker compose` call below.
+# Sourced as shell code, so only a file nobody else can write (same rule as backup-db.sh).
 if [ -f .deploy.env ]; then
-  set -a
+  if [ -n "$(find .deploy.env -maxdepth 0 \( -perm -020 -o -perm -002 \))" ]; then
+    echo "ERROR: .deploy.env must not be writable by group or others; it is sourced as shell code. Nothing was changed."
+    exit 1
+  fi
   # shellcheck disable=SC1091
   . ./.deploy.env
-  set +a
+  # Only COMPOSE_FILE is exported: it must reach every `docker compose` call below.
+  if [ -n "${COMPOSE_FILE:-}" ]; then export COMPOSE_FILE; fi
 fi
 
 # HA mode: this node runs Patroni (compose.ha.yml replaces `db`). Patroni allows only local peer
@@ -170,6 +174,27 @@ alembic_rows() {
   fi
 }
 
+# HA checks, one per output line "item|detail" for each failure; returns 1 when any fail.
+# IMAGE_TAG is checked only when deploying (--preflight has none).
+ha_checks() {
+  local bad=0
+  if [ "$HA_MODE" = 0 ] && [ -f compose.ha.yml ]; then
+    echo "compose.ha.yml|compose.ha.yml is present but COMPOSE_FILE does not load it; a deploy would run against the plain db (set COMPOSE_FILE=docker-compose.yml:compose.ha.yml in .deploy.env)"
+    bad=1
+  fi
+  if [ "$HA_MODE" = 1 ]; then
+    if [ "$MODE" = deploy ] && ! [[ "${IMAGE_TAG:-}" =~ ^[0-9a-f]{40}$ ]]; then
+      echo "IMAGE_TAG|IMAGE_TAG must be the 40 hex character git SHA in HA mode"
+      bad=1
+    fi
+    if ! docker compose exec -T -u postgres "$DB_SERVICE" psql -U postgres -c 'select 1' >/dev/null 2>&1; then
+      echo "admin connection|HA admin connection failed: ${DB_SERVICE} did not accept psql -U postgres as OS user postgres (peer auth)"
+      bad=1
+    fi
+  fi
+  return "$bad"
+}
+
 # --- preflight ------------------------------------------------------------------
 
 preflight() {
@@ -198,6 +223,12 @@ preflight() {
     else
       pf FAIL lock "${lockdir} missing or not writable, so ${DEPLOY_LOCK_PATH} cannot be created (runbook step 0)"
     fi
+  fi
+
+  if ha_msgs=$(ha_checks); then
+    pf PASS "ha checks" "ok (HA mode: ${HA_MODE})"
+  else
+    while IFS= read -r line; do pf FAIL "${line%%|*}" "${line#*|}"; done <<< "$ha_msgs"
   fi
 
   if [ -n "$(docker compose ps -q "$DB_SERVICE" 2>/dev/null || true)" ]; then
@@ -273,16 +304,21 @@ for knob in $NUMERIC_KNOBS; do require_number "$knob"; done
 # exit, because a child that inherited fd 9 would otherwise keep it held.
 if [ -e "$DEPLOY_LOCK_PATH" ] && [ ! -w "$DEPLOY_LOCK_PATH" ]; then
   exec 9<"$DEPLOY_LOCK_PATH"    # created by another user: flock works on a read-only fd
-elif ! exec 9>>"$DEPLOY_LOCK_PATH"; then
-  echo "ERROR: cannot open the deploy lock ${DEPLOY_LOCK_PATH}; see the runbook, step 0"
-  exit 1
+else
+  lock_umask=$(umask); umask 077   # a lock file created here is owner-only
+  if ! exec 9>>"$DEPLOY_LOCK_PATH"; then
+    echo "ERROR: cannot open the deploy lock ${DEPLOY_LOCK_PATH}; see the runbook, step 0"
+    exit 1
+  fi
+  umask "$lock_umask"
 fi
 echo "==> Waiting up to ${DEPLOY_LOCK_WAIT_SECONDS}s for ${DEPLOY_LOCK_PATH}"
 if ! flock -w "$DEPLOY_LOCK_WAIT_SECONDS" 9; then
   echo "ERROR: ${DEPLOY_LOCK_PATH} is still held (another deploy or the restore test); nothing was changed"
   exit 1
 fi
-trap 'flock -u 9' EXIT
+tag_tmp=""
+trap 'flock -u 9; if [ -n "$tag_tmp" ]; then rm -f "$tag_tmp"; fi' EXIT
 
 DEPLOY_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -387,21 +423,11 @@ take_snapshot() {
 
 echo "==> Active=${ACTIVE} New=${NEW} IMAGE_TAG=${IMAGE_TAG}"
 
-# HA preflight: fail loudly, before anything is pulled, stopped or recreated, on the things that
-# depend on how the box is set up and that this script must never guess.
-if [ "$HA_MODE" = 0 ] && [ -f compose.ha.yml ]; then
-  echo "ERROR: compose.ha.yml is present but COMPOSE_FILE does not load it; a deploy would run against the plain db. Set COMPOSE_FILE=docker-compose.yml:compose.ha.yml in .deploy.env. Nothing was changed."
+# HA preflight (also run by --preflight): fail loudly, before anything is pulled, stopped or
+# recreated, on what depends on how the box is set up and must never be guessed.
+if ! ha_msgs=$(ha_checks); then
+  while IFS= read -r line; do echo "ERROR: ${line#*|}. Nothing was changed."; done <<< "$ha_msgs"
   exit 1
-fi
-if [ "$HA_MODE" = 1 ]; then
-  if [ -z "${POSTGRES_DB:-}" ]; then
-    echo "ERROR: HA mode needs POSTGRES_DB set (in .deploy.env); it is unset. Nothing was changed."
-    exit 1
-  fi
-  if ! docker compose exec -T -u postgres "$DB_SERVICE" psql -U postgres -c 'select 1' >/dev/null 2>&1; then
-    echo "ERROR: HA admin connection failed: ${DB_SERVICE} did not accept psql -U postgres as OS user postgres (peer auth). Nothing was changed."
-    exit 1
-  fi
 fi
 
 echo "==> Recording Postgres state"
@@ -603,9 +629,12 @@ fi
 
 # HA mode: record the deployed tag for the role watcher, which starts workers on it.
 if [ "$HA_MODE" = 1 ]; then
+  [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]] || { echo "ERROR: IMAGE_TAG is not a 40 hex SHA; not recording it"; exit 1; }
   tag_tmp=$(mktemp "${PWD}/.ha-image-tag.XXXXXX")
   printf '%s\n' "$IMAGE_TAG" > "$tag_tmp"
+  chmod 644 "$tag_tmp"
   mv "$tag_tmp" "${PWD}/.ha-image-tag"
+  tag_tmp=""
 fi
 
 echo "==> Deploy complete. Active=${NEW}"
