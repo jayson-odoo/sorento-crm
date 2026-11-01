@@ -10,6 +10,8 @@
 #   BACKUP_NAME      file prefix, also the prune filter        (default sorento_crm)
 #   DB_CONTAINER     docker container running Postgres; unset = host pg_dump with libpq env
 #   DB_USER, DB_NAME role and database to dump                  (default postgres / postgres)
+#   PG_EXEC_USER     OS user for `docker exec` (set to postgres on a Patroni node, which allows
+#                    only local peer auth); unset = docker's default user
 #   RCLONE_DEST      rclone remote:path                         (default gdrive:db-backups)
 #   RETENTION_DAYS   prune dumps older than this on Drive       (default 30)
 #   BACKUP_DIR       local scratch dir                          (default /var/backups/sorento-db)
@@ -43,6 +45,7 @@ BACKUP_NAME="${BACKUP_NAME:-sorento_crm}"
 [[ "$BACKUP_NAME" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "error: BACKUP_NAME must be letters, digits, _ or -" >&2; exit 2; }
 DB_CONTAINER="${DB_CONTAINER:-}"
 DB_USER="${DB_USER:-postgres}"
+PG_EXEC_USER="${PG_EXEC_USER:-}"
 DB_NAME="${DB_NAME:-postgres}"
 RCLONE_DEST="${RCLONE_DEST:-gdrive:db-backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-30}"
@@ -102,7 +105,7 @@ LOCAL_FILES+=("$FILE")
 
 log "dumping ${DB_NAME}${DB_CONTAINER:+ from container $DB_CONTAINER}"
 if [ -n "$DB_CONTAINER" ]; then
-  docker exec "$DB_CONTAINER" pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$FILE" || die 3 "pg_dump failed"
+  docker exec ${PG_EXEC_USER:+-u "$PG_EXEC_USER"} "$DB_CONTAINER" pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$FILE" || die 3 "pg_dump failed"
 else
   pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$FILE" || die 3 "pg_dump failed"
 fi
