@@ -304,6 +304,26 @@ def test_at23_cabana_account_asks_nothing_and_runs_the_account_filter(bot, seede
     assert QUESTION not in text, text
 
 
+def test_at23_the_word_the_message_said_settles_it_as_brand(bot, seeded) -> None:
+    text, calls = bot.say(_sales(_word(kind_said="brand")), "cabana brand sales in Jan")
+    args = _only_report_ask(calls)
+    assert args["brand_ids"] == [seeded["CABANA"]] and "account_types" not in args, args
+    assert QUESTION not in text, text
+
+
+def test_at23_the_word_the_message_said_settles_it_as_account(bot, seeded) -> None:
+    text, calls = bot.say(_sales(_word("cabana", "account_type", None, "debtor type")), "cabana debtor type sales in Jan")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["CABANA"] and "brand_ids" not in args, args
+    assert QUESTION not in text, text
+
+
+def test_at23_a_blank_kind_said_is_not_said(bot, seeded) -> None:
+    text, calls = bot.say(_sales(_word(kind_said="  ")), "sales for cabana in Jan")
+    assert calls == [], calls
+    assert text.strip() == QUESTION, text
+
+
 # --------------------------------------------------------------------------------------------- AT-24
 
 
@@ -729,3 +749,8 @@ def test_at36_the_entity_schema_offers_kind_said_only_when_the_prompt_defines_it
     required = schema["properties"]["entities"]["items"]["required"]
     assert ("kind_said" in props) is defines, props.keys()
     assert ("kind_said" in required) is defines, required
+
+
+def test_at36_the_entity_schema_kind_said_is_a_string_or_null(monkeypatch, session_factory) -> None:
+    config, schema = _sent_schema(monkeypatch, session_factory, "Rules {{current_date}} compare_to by_words kind_said.\n")
+    assert _entity_props(schema)["kind_said"]["type"] == ["string", "null"], _entity_props(schema)["kind_said"]

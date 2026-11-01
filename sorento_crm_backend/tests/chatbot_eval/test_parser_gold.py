@@ -1652,6 +1652,16 @@ def test_account_type_brand_and_kind_said_graded_as_sets():
     assert pg.grade_parse(_ents(), {"brand": [], "account_type": [], "kind_said": []})[0] is True
 
 
+def test_kind_said_is_the_words_the_message_said_a_non_blank_string_counts():
+    said = _ents({"hint": "brand", "raw": "Cabana", "kind_said": "brand"})
+    assert pg.grade_parse(said, {"kind_said": ["cabana"]})[0] is True
+    blank = _ents({"hint": "brand", "raw": "Cabana", "kind_said": "  "})
+    assert pg.grade_parse(blank, {"kind_said": []})[0] is True
+    null = _ents({"hint": "brand", "raw": "Cabana", "kind_said": None})
+    assert pg.grade_parse(null, {"kind_said": ["cabana"]})[0] is False
+    assert pg.grade_parse(null, {"kind_said": []})[0] is True
+
+
 def test_a_carried_entity_is_not_graded_as_this_messages():
     v = {"entities": [{"hint": "brand", "raw": "cabana", "current_message": False}]}
     assert pg.grade_parse(v, {"brand": []})[0] is True
