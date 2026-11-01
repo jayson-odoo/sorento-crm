@@ -1425,3 +1425,59 @@ def test_at21_a_tag_answers_the_question(bot, seeded) -> None:
     text, calls = bot.say(_reply(domain_hint=None, intent_hint=None, entities=[_acct("A/C IV")]), "A/C IV")
     args = _only_report_ask(calls)
     assert args["account_types"] == ["A/C IV"] and args["sales_agent_ids"] == [bot.ids["agent"]], args
+
+
+# ============================================================================================= round 6
+def _pick_of(position: int, *entities: dict[str, Any]) -> dict[str, Any]:
+    return _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=list(entities),
+        open_question_answer={"mode": "pick", "picked": [position], "items": [], "qty_for_all": None},
+    )
+
+
+@pytest.mark.parametrize("kind_said", [None, "brand"], ids=["bare_word", "said_brand"])
+def test_at21_a_word_and_another_number_reads_as_one_message(bot, seeded, kind_said) -> None:
+    _open_agent(bot)
+    verdict = _reply(domain_hint=None, intent_hint=None, entities=[_word(kind_said=kind_said), _acct("3")])
+    text, calls = bot.say(verdict, "cabana on account 3")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["3"] and args["brand_ids"] == [seeded["CABANA"]], args
+    assert args["sales_agent_ids"] == [bot.ids["agent"]], args
+
+
+def test_at21_a_brand_pick_with_a_number_keeps_both(bot, seeded) -> None:
+    _open_agent(bot)
+    text, calls = bot.say(_pick_of(1, _acct("3")), "brand, account 3")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["3"] and args["brand_ids"] == [seeded["CABANA"]], args
+    assert args["sales_agent_ids"] == [bot.ids["agent"]], args
+
+
+def test_at21_an_account_pick_with_a_number_is_the_number(bot, seeded) -> None:
+    _open_agent(bot)
+    text, calls = bot.say(_pick_of(2, _acct("3")), "account type, account 3")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["3"] and "brand_ids" not in args, args
+    assert args["sales_agent_ids"] == [bot.ids["agent"]], args
+
+
+def test_at21_an_account_pick_with_another_type_word_is_that_type(bot, seeded) -> None:
+    _open_agent(bot)
+    text, calls = bot.say(_pick_of(2, _word("ceramic", "account_type", None, None)), "account type, ceramic")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["CERAMIC"], args
+    assert args["sales_agent_ids"] == [bot.ids["agent"]], args
+
+
+def test_at21_a_product_lookup_under_the_question_stays_a_lookup(bot, seeded) -> None:
+    from tests.chatbot.test_report_ask_lane import PRODUCT_CODE
+
+    _open_agent(bot)
+    verdict = _reply(
+        domain_hint="master_products", intent_hint="check_product", order_status=None,
+        entities=[_e(PRODUCT_CODE, "product")],
+    )
+    verdict.pop("domain_in_message", None)
+    text, calls = bot.say(verdict, PRODUCT_CODE.lower())
+    assert not any(n == "crm_report_ask" for n, _a in calls), calls
+    assert BASIS_Q not in text and "Invoiced, delivered" not in text, text
