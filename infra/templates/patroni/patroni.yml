@@ -10,9 +10,8 @@ restapi:
   # connect_address from PATRONI_RESTAPI_CONNECT_ADDRESS
   # Unsafe endpoints (POST/PATCH: failover, switchover, restart, config) need this login:
   # PATRONI_RESTAPI_USERNAME / PATRONI_RESTAPI_PASSWORD from patroni.env. GETs (/primary,
-  # /cluster, /liveness) stay open for HAProxy, the role watcher and ha-checks.
-  # Without this login anything that reaches the port (n8n's Code nodes on node B (the KVM 8, which also runs n8n)
-  # included) could POST a failover.
+  # /cluster, /liveness) stay open for the role watcher and ha-checks.
+  # Without this login anything that reaches the port could POST a failover.
   authentication:
     username: patroni-admin
     # password from PATRONI_RESTAPI_PASSWORD; the image's entrypoint refuses to start without it.
@@ -93,7 +92,7 @@ postgresql:
   # and authenticates the link. Switch to hostssl only together with ssl=on + certs.
   # The superuser works over the local socket only (security review S1). The app and
   # pgbouncer roles come from the CRM compose network, pinned to one /24 with compose `ipam`,
-  # never a broad range that would take in the n8n networks.
+  # never a broad range.
   pg_hba:
     - local   all          all                                  peer
     - host    all          postgres     0.0.0.0/0               reject
@@ -103,8 +102,6 @@ postgresql:
     - host    replication  replicator   <B_WG_IP>/32           scram-sha-256
     - host    all          rewinder     <A_WG_IP>/32           scram-sha-256
     - host    all          rewinder     <B_WG_IP>/32           scram-sha-256
-    # n8n's sorento-crm-db credential reaches node A's pgbouncer via node B's HAProxy over the
-    # tunnel; pgbouncer then connects locally, so no extra Postgres rule is needed for it.
 
 # Arms only if the container's postgres user can open /dev/watchdog: the host needs softdog
 # loaded and the udev rule in templates/host/ (root-owned 0600 by default, and Patroni runs as
