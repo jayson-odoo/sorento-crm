@@ -1637,3 +1637,38 @@ def test_product_raw_is_the_folded_raw_of_a_product_entity():
     assert pg.grade_parse(v, {"product_raw": "SRTWC287"})[0] is False
     assert pg.grade_parse({"entities": [{"hint": "customer", "raw": "SRTWC286"}]}, {"product_raw": "SRTWC286"})[0] is False
     assert pg.grade_parse({"entities": []}, {"product_raw": "SRTWC286"})[0] is False
+
+
+def _ents(*rows):
+    return {"entities": [dict({"current_message": True}, **r) for r in rows]}
+
+
+def test_account_type_brand_and_kind_said_graded_as_sets():
+    v = _ents({"hint": "brand", "raw": "Cabana", "kind_said": True}, {"hint": "account_type", "raw": "A/C IV"})
+    assert pg.grade_parse(v, {"brand": ["cabana"], "account_type": ["ac iv"], "kind_said": ["CABANA"]})[0] is True
+    assert pg.grade_parse(v, {"account_type": []})[0] is False
+    assert pg.grade_parse(v, {"brand": ["cabana", "sorento"]})[0] is False
+    assert pg.grade_parse(v, {"kind_said": []})[0] is False
+    assert pg.grade_parse(_ents(), {"brand": [], "account_type": [], "kind_said": []})[0] is True
+
+
+def test_a_carried_entity_is_not_graded_as_this_messages():
+    v = {"entities": [{"hint": "brand", "raw": "cabana", "current_message": False}]}
+    assert pg.grade_parse(v, {"brand": []})[0] is True
+
+
+def test_dates_are_equality_and_year_token_is_the_current_year():
+    from app.services.reports.registry import today_malaysia
+
+    year = today_malaysia().year
+    v = {"date_filter_start": f"{year}-01-01", "date_filter_end": f"{year}-01-31"}
+    assert pg.grade_parse(v, {"date_filter_start": "{year}-01-01", "date_filter_end": "{year}-01-31"})[0] is True
+    assert pg.grade_parse(v, {"date_filter_end": "{year}-02-28"})[0] is False
+    assert pg.grade_parse({}, {"date_filter_start": None, "date_filter_end": None})[0] is True
+    assert pg.grade_parse({}, {"date_filter_start": "{year}-01-01"})[0] is False
+
+
+def test_load_gold_checks_the_account_type_expect_types(tmp_path):
+    with pytest.raises(ValueError):
+        pg.load_gold(_write(tmp_path, [_row("a", "x", {"account_type": "4"})]))
+    assert pg.load_gold(_write(tmp_path, [_row("a", "x", {"account_type": ["4"], "date_filter_start": None})]))
