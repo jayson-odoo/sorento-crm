@@ -202,6 +202,31 @@ be proven no-change by a before/after reader count test on a dev-copy migration 
 - `config/menu.config.tsx`: entry after Attachment Types in both menus (:875, :2389).
 - `AttachmentTypeFormDialog.tsx`: remove the "AI can read" field (:428-441) and `ai_audience` from its schema/types.
 
+### Seams (the names tests import; tester and coder both hold to these)
+
+BE (`sorento_crm_backend/`):
+- Migration `alembic/versions/das_0001_ai_read_ticks.py`, `revision = "das_0001_ai_read_ticks"`, exposing
+  `backfill(bind) -> None` (the UPDATE the migration runs, callable on any connection).
+- `app/services/knowledge_service.py`: `contact_readable_clause(codes)` (SQLAlchemy clause over `AttachmentType`
+  + `Attachment`), `type_ai_on_clause()`, `is_readable_filename(name) -> bool`; `search` / `search_for_contact`
+  keep their signatures.
+- `app/services/document_access_service.py`: `build_matrix(db, *, contact_id=None) -> dict` (the DAS-BE-9/10 body)
+  and `list_documents(db, type_id, *, contact_id=None, page=1, limit=50) -> dict` (`{items, total, page, limit}`).
+- Routes `app/api/v1/resources/document_access.py`: `GET /api/v1/resources/document-access`,
+  `GET /api/v1/resources/document-access/{type_id}/documents`, query `contact_id`, `page`, `limit`,
+  `company_scope`.
+- `scripts/doc_access_carryover_check.py --database-url URL [--seed-audiences "Type=dealer,..."]`: the dev-copy
+  proof (refuses a DB name containing `prod`).
+
+FE (`sorento_crm_frontend/app/(protected)/resource-management/document-access/`):
+- `page.tsx` renders `components/DocumentAccessView.tsx` (named export `DocumentAccessView`, no props).
+- `services/documentAccessService.ts`: `getDocumentAccess({ contactId? })`, `getDocumentAccessDocuments(typeId,
+  { contactId?, page, limit })`, `searchPreviewContacts(query) -> {id, name}[]` (wraps the contacts list endpoint).
+- `types/documentAccess.types.ts`: the DAS-BE-9/10/11 shapes. `hooks/useDocumentAccessQuery.ts`.
+- `components/DocumentAccessSheet.tsx`. Ticks and the Direct access switch call
+  `attachment-types/services/attachmentTypeService.ts` `updateAttachmentType(id, { ai_read_staff } |
+  { ai_read_codes } | { is_direct_access })`; toasts via `sonner`.
+
 ### Slices (one lane, one PR; the tester writes all red tests first, then ONE coder)
 
 - S1 BE: migration + model + schemas + rule + carry-over (DAS-BE-1..8).
