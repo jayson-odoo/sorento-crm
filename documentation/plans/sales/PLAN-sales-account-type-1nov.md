@@ -1,6 +1,6 @@
 # SALES-ACCOUNT-TYPE: sales by the customer's account type
 
-**Status:** PR 1 (#2067) ready, Waiting:ci; on-screen figures and the hand test wait for INVOICED-CHANNEL-PERF. PR 2 (#2074, draft) stacked on #2067: review rounds running. Prompt gate: TRAIN A 99, B 97 of 118, write-up with crew; owner decides the prompt and HIDDEN. Track: full (prompt change, multi-company scoping). Plan created: 1 Nov 2026. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
+**Status:** PR 1 (#2067) ready, Waiting:ci; on-screen figures and the hand test wait for INVOICED-CHANNEL-PERF. PR 2 (#2074, draft) stacked on #2067: reviewer READY at eab66e4a69 after 7 rounds, code done. Waiting on the owner for the prompt and HIDDEN (write-up with crew). Track: full (prompt change, multi-company scoping). Plan created: 1 Nov 2026. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
 
 Lane brief: crew `SALES-ACCOUNT-TYPE`. Branch `crew/sales-account-type`. UAC: `sales-account-type-acceptance-criteria.md`.
 Agent codes are masked (AGENT A, AGENT B) because this repo is public. The real codes are in the crew card.
