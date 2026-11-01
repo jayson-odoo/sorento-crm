@@ -21,7 +21,9 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 
 from app.services.chatbot import principal as staff_principal
-from app.services.chatbot.agent.tools import ToolResult, _check_ids, _collect_uuids, _permitted, cap_result, clean_detail
+from app.services.chatbot.agent.tools import (
+    ToolResult, _check_ids, _collect_uuids, _permitted, cap_result, clean_detail, panel_closed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -425,7 +427,7 @@ def permitted_writes(db, ctx) -> list[WriteDef]:
     """WRITES the linked user holds the slug for, in registry order. None for a contact principal."""
     if getattr(ctx, "principal", "user") == "contact":
         return []
-    return [w for w in WRITES.values() if holds_ctx(db, ctx, w.user_permission)]
+    return [w for w in WRITES.values() if not panel_closed(w.name) and holds_ctx(db, ctx, w.user_permission)]
 
 
 def permitted_user_reads(db, ctx) -> list[UserRead]:
@@ -433,7 +435,8 @@ def permitted_user_reads(db, ctx) -> list[UserRead]:
         return []
     return [
         r for r in USER_READS.values()
-        if holds_ctx(db, ctx, r.user_permission) and not (r.linked_only and len(people(ctx)) > 1)
+        if not panel_closed(r.name) and holds_ctx(db, ctx, r.user_permission)
+        and not (r.linked_only and len(people(ctx)) > 1)
     ]
 
 
@@ -442,7 +445,10 @@ def run_user_read(db, ctx, name: str, args: Any, seen_ids: set[str]) -> ToolResu
     read = USER_READS.get(name)
     if read is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
-    if not holds_ctx(db, ctx, read.user_permission) or (read.linked_only and len(people(ctx)) > 1):
+    if (
+        panel_closed(name) or not holds_ctx(db, ctx, read.user_permission)
+        or (read.linked_only and len(people(ctx)) > 1)
+    ):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not isinstance(args, dict):
         return ToolResult("invalid", message="Arguments must be an object of named values.")
@@ -495,7 +501,7 @@ def propose_step(
     definition = WRITES.get(name) if isinstance(name, str) else None
     if definition is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use."), None
-    if not holds_ctx(db, ctx, definition.user_permission):
+    if panel_closed(name) or not holds_ctx(db, ctx, definition.user_permission):
         return ToolResult("denied", message=f"{name} is outside this user's access."), None
     if name == CREATE_IDEA and staff_principal.current() is not None:
         # A panel turn runs as a test turn, so an idea would be a test idea: keep the Ideas board link instead.
@@ -1476,6 +1482,13 @@ def _pr_read_before(db, user: dict, args: dict) -> dict:
     }
 
 
+def _card(value: Any) -> str:
+    """Free text the model wrote, for a card only: no UUID in it (what is stored and sent is not changed)."""
+    from app.services.chatbot.agent.actions import scrub_ids
+
+    return scrub_ids(_line(value)) or ""
+
+
 def _in_full(value: Any) -> str:
     """Text that leaves the system (a reason sent to the dealer): quoted whole, never cut, so the person
     confirming reads exactly what will be sent."""
@@ -1619,17 +1632,12 @@ PROJECT_READ = ("projects.projects.view", "projects.projects.view_own")
 COMPLAINTS_PATH = "/api/v1/complaints-management/complaints"
 
 
-def _find_query(ctx, args: dict) -> tuple[str | None, ToolResult | None]:
-    """The search text, or the refusal. A scope naming a brand gets no project or complaint-number lookup
-    through the screen's list: projects carry no brand (`brand_scope_allows_tool`), and the find reads the list."""
-    from app.services.contact_brand_scope import limits_brands
-
+def _find_query(args: dict) -> tuple[str | None, ToolResult | None]:
+    """The search text, or the refusal."""
     unknown = sorted(k for k in args if k != "query")
     query = args.get("query")
     if unknown or not isinstance(query, str) or not query.strip():
         return None, ToolResult("invalid", message="Give the number or code to find, as text, and nothing else.")
-    if limits_brands(getattr(ctx, "brand_scope", None)):
-        return None, ToolResult("denied", message="This lookup is outside this contact's access.")
     return query.strip(), None
 
 
@@ -1646,7 +1654,7 @@ def _complaints_find(db, ctx, args: dict) -> ToolResult:
     from app.api.v1._request_own_scope import check
     from app.api.v1.complaints.complaints import get_complaints
 
-    query, refused = _find_query(ctx, args)
+    query, refused = _find_query(args)
     if refused is not None:
         return refused
 
@@ -1677,7 +1685,7 @@ def _complaints_find(db, ctx, args: dict) -> ToolResult:
 def _projects_find(db, ctx, args: dict) -> ToolResult:
     from app.api.v1.projects.projects import list_projects
 
-    query, refused = _find_query(ctx, args)
+    query, refused = _find_query(args)
     if refused is not None:
         return refused
 
@@ -1686,7 +1694,9 @@ def _projects_find(db, ctx, args: dict) -> ToolResult:
         payload = list_projects(
             query=query, status_id=None, outcome=None, owner_user_id=None, developer_party_id=None, type_id=None,
             only_critical=False, project_ids=None, owner_user_ids=None, developer_party_ids=None, status_key=None,
-            approval_state=None, approved_only=False, page=1, limit=MAX_LIST, sort="created_at", dir="desc",
+            # Approved projects only, as the catalog's list returns on a machine read: a portal registration
+            # waiting for approval is not a project yet.
+            approval_state=None, approved_only=True, page=1, limit=MAX_LIST, sort="created_at", dir="desc",
             current_user=user, db=db,
         )
         return [
@@ -1705,15 +1715,6 @@ def _projects_find(db, ctx, args: dict) -> ToolResult:
     except Exception as exc:  # noqa: BLE001
         return _route_failure(exc)
     return _found("projects", rows)
-
-
-def _combine_found(key: str, id_key: str):
-    def combine(mine: ToolResult, theirs: ToolResult) -> ToolResult:
-        ids = {r[id_key] for r in theirs.data[key]}
-        rows = [r for r in mine.data[key] if r[id_key] in ids]
-        return _found(key, rows)
-
-    return combine
 
 
 def _find_schema(name: str, what: str, example: str) -> dict:
@@ -1739,14 +1740,12 @@ USER_READS[FIND_COMPLAINTS] = UserRead(
     user_permission=COMPLAINT_READ,
     schema=_find_schema(FIND_COMPLAINTS, "a complaint", "CMP-0123"),
     run=_complaints_find,
-    combine=_combine_found("complaints", "id"),
 )
 USER_READS[FIND_PROJECTS] = UserRead(
     name=FIND_PROJECTS,
     user_permission=PROJECT_READ,
     schema=_find_schema(FIND_PROJECTS, "a project", "PRJ-0042"),
     run=_projects_find,
-    combine=_combine_found("projects", "id"),
 )
 
 
@@ -2312,6 +2311,14 @@ _COMPLAINT_WORDS = {
 }
 
 
+def _complaint_scope(db, user: dict, cid: str) -> None:
+    """The complaints router's "only theirs" guard (`_request_own_scope.check`), which a direct call skips: a user
+    limited to their own complaints is refused the close (403)."""
+    from app.api.v1._request_own_scope import check
+
+    check(db, str(user["id"]), "complaint", "POST", COMPLAINTS_PATH + "/{complaint_id}/close", {"complaint_id": cid})
+
+
 def _complaint_read_before(db, user: dict, args: dict) -> dict:
     """The complaint as it is now, after every check the route and the service make before closing, and the
     one the service skips: a closed complaint is a no-op there, so a card for it would offer nothing."""
@@ -2324,6 +2331,7 @@ def _complaint_read_before(db, user: dict, args: dict) -> dict:
     cid = str(args["complaint_id"])
     validate_uuid_path(cid, resource="Complaint")
     _module_open(user, db, "complaints")
+    _complaint_scope(db, user, cid)
     handling_lock_service.assert_can_act_on_form(db, cid, user, source_entity_type="complaint")
     service = ComplaintService(db)
     complaint = service.get_complaint(cid)
@@ -2338,6 +2346,8 @@ def _complaint_read_before(db, user: dict, args: dict) -> dict:
         raise handle_conflict("Another action on this form is still pending. Wait for it to apply, or undo it first.")
     return {
         "status": status,
+        # The message goes out only when the complaint has an inbox to reach (`_finalize_complaint`).
+        "tells_contact": bool(service._identifier_from_respond_inbox_url(getattr(complaint, "respond_inbox_url", None))),
         "revision_no": int(getattr(complaint, "revision_no", None) or 0),
         "_show": {"number": complaint.complaint_number or "(no number)", "customer": complaint.customer_name or ""},
     }
@@ -2346,10 +2356,10 @@ def _complaint_read_before(db, user: dict, args: dict) -> dict:
 def _complaint_summary(args: dict, before: dict) -> str:
     text = f"Close complaint {_word(before['number'])}"
     if before["customer"]:
-        text += f" for {_word(before['customer'])}"
+        text += f" for {_quoted(before['customer'])}"
     if _line(args.get("note")):
-        text += f", with the note {_in_full(args['note'])}"
-    return text + ". The contact will be told."
+        text += f", with the note {_in_full(_card(args['note']))}"
+    return text + (". The contact will be told." if before.get("tells_contact") else ".")
 
 
 def _complaint_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
@@ -2362,6 +2372,7 @@ def _complaint_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
 
     cid = str(args["complaint_id"])
     _module_open(user, db, "complaints")
+    _complaint_scope(db, user, cid)
     # The route's revision fence, with the revision the user confirmed.
     assert_revision_current(db, "complaint", cid, confirmed.get("revision_no"))
     body = ComplaintFinalizeRequest(note=_line(args.get("note")) or None)
@@ -2377,8 +2388,8 @@ def _complaint_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
                 "window_seconds": parked.get("window_seconds"), "pending_action_id": parked.get("pending_action_id"),
             },
             "note": (
-                f"It applies in {parked.get('window_seconds')} seconds; until then it can be withdrawn "
-                "and nobody is told."
+                f"It applies in {parked.get('window_seconds')} seconds; until then it can be withdrawn"
+                + (" and nobody is told." if confirmed.get("tells_contact") else ".")
             ),
         }
     return {"id": cid, "after": {"status": "closed", "deferred": False}}
@@ -2454,9 +2465,9 @@ def _order_read_before(db, user: dict, args: dict) -> dict:
 def _order_summary(args: dict, before: dict) -> str:
     text = f"Cancel order {_word(before['number'])}"
     if before["customer"]:
-        text += f" for {_word(before['customer'])}"
+        text += f" for {_quoted(before['customer'])}"
     if _line(args.get("reason")):
-        text += f", with the reason {_quoted(args['reason'])}"
+        text += f", with the reason {_in_full(_card(args['reason']))}"
     return text + ". Complaints on this order are re-evaluated."
 
 
@@ -2523,13 +2534,13 @@ def _ticket_read_before(db, user: dict, args: dict) -> dict:
 
 
 def _ticket_summary(args: dict, before: dict) -> str:
-    text = f"Create a draft IT support ticket {_quoted(args['title'])}"
+    text = f"Create a draft IT support ticket {_in_full(_card(args['title']))}"
     extras = [f"priority {args['priority']}" if args.get("priority") else "", f"category {args['category']}" if args.get("category") else ""]
     extras = [e for e in extras if e]
     if extras:
         text += f" ({', '.join(extras)})"
     if _line(args.get("description")):
-        text += f", described as {_quoted(args['description'])}"
+        text += f", described as {_in_full(_card(args['description']))}"
     return text + ". You can review it before it is submitted."
 
 
@@ -2539,15 +2550,18 @@ def _ticket_execute(db, user: dict, args: dict) -> dict:
     from app.schemas.tickets import ITSupportTicketCreateRequest
     from app.services.ticket_intake_service import TicketIntakeService
 
-    description = _line(args.get("description"))
+    title = _line(args["title"])
+    # The draft shows the description, or the title when there is none: escaped either way, because the
+    # server would wrap the raw text in a `<p>` itself.
+    description = _line(args.get("description")) or title
     principal = staff_principal.current()
     payload = ITSupportTicketCreateRequest(
         # A title is always given (the schema requires it), so the server's LLM draft never runs.
-        title=_line(args["title"]),
+        title=title,
         priority=args.get("priority"),
         category=args.get("category"),
-        description_text=description or None,
-        description_html=f"<p>{escape(description)}</p>" if description else None,
+        description_text=description,
+        description_html=f"<p>{escape(description)}</p>",
         source_channel="ai_assistant",
         actor_user_id=str(user["id"]),
         source_conversation_id=principal.conversation_id if principal is not None else None,
@@ -2563,7 +2577,8 @@ def _ticket_execute(db, user: dict, args: dict) -> dict:
 
 WRITES[CREATE_TICKET] = WriteDef(
     name=CREATE_TICKET,
-    user_permission="",
+    # A draft is finished on its page, and submitting it needs this slug.
+    user_permission="tickets.tickets.edit",
     schema={
         "type": "function",
         "function": {

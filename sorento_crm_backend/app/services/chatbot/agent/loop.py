@@ -41,6 +41,7 @@ from app.services.chatbot.agent.tools import (
     RESOLVE,
     TOOL_LABELS,
     ToolResult,
+    panel_closed,
     _id_args,
     clip_args,
     dispatch,
@@ -387,6 +388,12 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
             ):
                 return True
         return False
+    if entry["name"] in (writes.FIND_COMPLAINTS, writes.FIND_PROJECTS):
+        # An empty find backs a claim for the term it searched, and only that term.
+        term = _fold_text(str(entry["args"].get("query") or ""))
+        return entry["status"] == "empty" and bool(term) and (
+            term == low or bool(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low))
+        )
     if entry["status"] == "empty":
         ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
         return bool(ids) and all(i in found for i in ids)
@@ -588,7 +595,7 @@ def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str]) -> To
         # The notes are added to the reply in code; the model never reads them, so it cannot invent or repeat one.
         for note in outcome.notes:
             reply_text = reply_text.replace(f" {note}", "").replace(note, "")
-        message = "The idea's number and link are added to your reply automatically. Do not write them."
+        message = "The reference and link are added to your reply automatically. Do not write them."
     return ToolResult(
         "ok", data={"status": outcome.status, "reply_text": reply_text, "steps": outcome.steps}, message=message
     )
@@ -772,7 +779,9 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
     # What this user's permissions leave out, by the constant labels (never outside text in the system role).
     names = set(tool_names)
     left_out = list(dict.fromkeys(
-        TOOL_LABELS[n] for n in [*REGISTRY, *writes.USER_READS, *writes.WRITES] if n not in names and n in TOOL_LABELS
+        TOOL_LABELS[n] for n in [*REGISTRY, *writes.USER_READS, *writes.WRITES]
+        # A panel-only tool is named only on a panel turn: elsewhere it is not "outside access", it does not exist.
+        if n not in names and n in TOOL_LABELS and not panel_closed(n)
     ))
     if left_out:
         text = (

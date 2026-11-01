@@ -152,7 +152,8 @@ def _out_steps(steps: list[dict]) -> list[dict]:
 def _recheck(db, ctx, step: dict) -> str | None:
     """Why this step may no longer run, or None. Reads the record again as the user."""
     definition = writes.WRITES.get(step["tool"])
-    if definition is None:
+    # A panel-only change confirmed from a thread that is not a panel thread (AGENTIC-UNIFY PR 4, AC-0).
+    if definition is None or writes.panel_closed(step["tool"]):
         return "This change is no longer available."
     if not writes.holds(db, ctx.user_id, definition.user_permission):
         return "You no longer have permission for this change."

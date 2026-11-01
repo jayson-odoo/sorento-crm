@@ -40,9 +40,8 @@ class ToolDef:
     #: Both were checked in the MCP catalogue: neither declares `restricted_fields`, so there
     #: is no field-level drop to lose by skipping the render view for them.
     render: bool = True
-    #: The slug of the screen's "only mine" rows, honoured on a panel turn only (`staff_principal.current()`):
-    #: there the read runs as the user and the route narrows to their own rows. On a console or WhatsApp turn
-    #: it runs as the shared key's user, whom the route does not narrow to this one, so this slug opens nothing.
+    #: The slug of the screen's "only mine" rows. Only on panel-only tools (`PANEL_ONLY_TOOLS`), where the read
+    #: runs as the user and the route narrows to their own rows.
     own_permission: str | None = None
 
 
@@ -63,7 +62,6 @@ NON_RENDER_TOOLS = frozenset(
         "crm_complaints_list", "crm_complaint_analytics", "crm_sla_conversation_tracking_dashboard",
         "crm_sla_conversation_tracking_list", "crm_sla_conversation_event_logs_list", "crm_projects_list",
         "crm_project_detail", "crm_project_quotations_list", "crm_project_forecast", "crm_order_analytics",
-        "crm_system_tool_capabilities_summary",
     }
 )
 RESOLVE = "crm_resolve"
@@ -72,10 +70,8 @@ FIND = "crm_products_find"
 KNOWLEDGE = "crm_knowledge_search"
 #: The Outline guide reader. Open to every linked user; its call carries only `query`.
 GUIDES = "user_guides_read"
-#: Open to every signed-in staff user, like the guides. Not a domain, so Jev is not told of it.
-CAPABILITIES = "crm_system_tool_capabilities_summary"
-#: AGENTIC-UNIFY PR 4: the panel's reads that no chat lane answers. Jev is told of them (`router.agent_tool_labels`)
-#: and a console operator must hold the slug too. `crm_find` and the capabilities summary are left out on purpose.
+#: AGENTIC-UNIFY PR 4: the panel's reads that no chat lane answers. Jev is told of them (`router.agent_tool_labels`).
+#: `crm_find` is left out on purpose: it overlaps `crm_products_find` and the bot's own lookups.
 PORTED_READS = frozenset(
     {
         "crm_complaints_list", "crm_complaint_analytics", "crm_sla_conversation_tracking_dashboard",
@@ -88,6 +84,22 @@ PORTED_READS = frozenset(
 HANDOFF = "crm_knowledge_handoff"
 PLAN = "plan"
 ANSWER = "answer"
+
+#: AGENTIC-UNIFY PR 4, AC-0: every tool this PR adds is offered on a staff-principal (panel) turn only, where the
+#: route runs as the user and its own rules hold. On any other turn the route runs as the shared key, so the
+#: agent's one slug would be the only guard. Reads (`REGISTRY`), the two finds (`writes.USER_READS`) and the
+#: three writes (`writes.WRITES`) share this one set, and every gate and the label filter read it.
+PANEL_ONLY_TOOLS = frozenset(
+    {
+        *PORTED_READS, "crm_find", "crm_complaints_find", "crm_projects_find",
+        "crm_complaint_close", "crm_order_cancel", "crm_it_support_ticket_create",
+    }
+)
+
+
+def panel_closed(name: Any) -> bool:
+    """True when `name` is a panel-only tool and this turn is not a panel turn."""
+    return name in PANEL_ONLY_TOOLS and staff_principal.current() is None
 
 
 # crm_report_ask: the sales / outstanding reveal is decided by the route itself from the
@@ -116,14 +128,16 @@ REGISTRY: dict[str, ToolDef] = _defs(
     ("crm_complaint_analytics", "complaint_management.complaints.view", None),
     ("crm_sla_conversation_tracking_dashboard", "sla_management.conversation_sla_tracking.view", None),
     ("crm_sla_conversation_tracking_list", "sla_management.conversation_sla_tracking.view", None),
-    ("crm_sla_conversation_event_logs_list", "sla_management.conversation_sla_tracking.view", None),
+    # The route's own rule for an unfiltered read (`sla_tracking.py` `_require_event_log_reader`).
+    ("crm_sla_conversation_event_logs_list", "sla_management.escalation_logs.view", None),
     ("crm_projects_list", "projects.projects.view", None, "projects.projects.view_own"),
     ("crm_project_detail", "projects.projects.view", None, "projects.projects.view_own"),
     ("crm_project_quotations_list", "projects.projects.view", None, "projects.projects.view_own"),
     ("crm_project_forecast", "projects.projects.view", None),
-    ("crm_order_analytics", "order_management.orders.view", None),
-    ("crm_find", "master_data.products.view", None),
-    ("crm_system_tool_capabilities_summary", "", None),
+    # The sales reveal as well, as `crm_report_ask` asks: the totals are the same figures.
+    ("crm_order_analytics", "order_management.orders.view", "sales_orders.sales_report"),
+    # Every answer carries stock, so the stock slug; the route itself asks the products one.
+    ("crm_find", "inventory.stock.view", None),
 )
 
 #: The contact principal's gate (AGENTIC-KNOWLEDGE W1 S1): tool -> the reveal key the contact must
@@ -167,6 +181,7 @@ ENVELOPE_KEYS = ("has_result", "result_type", "items", "answers", "response")
 #: Keys whose content makes an envelope non-empty.
 ROW_KEYS = ("items", "answers", "response", "groups", "summary_items", "drill_rows", "attachments", "action_links")
 FIXED_ERROR = "The tool failed."
+FIXED_NO_ACCESS = "You do not have access to this information."
 FIXED_TIMEOUT = "The tool did not answer in time."
 #: What `crm_resolve` may search, the slug the user needs for each kind, and the contact reveal
 #: a kind also needs.
@@ -217,8 +232,7 @@ TOOL_LABELS: dict[str, str] = {
     "crm_project_quotations_list": "a project's quotations",
     "crm_project_forecast": "the project pipeline forecast",
     "crm_order_analytics": "order totals and trends",
-    "crm_find": "finding records across the CRM",
-    "crm_system_tool_capabilities_summary": "what the assistant can do",
+    "crm_find": "finding the products that fit another product",
     "crm_complaint_close": "close a complaint",
     "crm_order_cancel": "cancel an order",
     "crm_it_support_ticket_create": "raise an IT support ticket",
@@ -435,6 +449,8 @@ def contact_tool_open(ctx: Any, tool: ToolDef) -> bool:
 def user_may_use(db: Any, ctx: Any, tool: ToolDef) -> bool:
     """Does the linked user hold what the tool needs (for `crm_resolve`: any searchable kind).
     A contact principal is gated by `CONTACT_TOOLS` instead of a user slug."""
+    if panel_closed(tool.name):
+        return False
     if is_contact_principal(ctx):
         if not contact_tool_open(ctx, tool):
             return False
@@ -445,29 +461,20 @@ def user_may_use(db: Any, ctx: Any, tool: ToolDef) -> bool:
         return True
     if tool.name == RESOLVE:
         return bool(searchable_kinds(db, ctx, list(KIND_SLUGS))[0])
-    if tool.name in (GUIDES, CAPABILITIES):
+    if tool.name == GUIDES:
         return True
-    if not _tool_permitted(db, ctx, tool):
+    if not _slug_held(db, ctx, tool):
         return False
     if tool.name == KNOWLEDGE:
         return _operator_may_read(db, ctx, tool.user_permission)
     return True
 
 
-def own_slug_counts(tool: ToolDef) -> bool:
-    """The tool's `.view_own` slug is honoured only on a panel turn."""
-    return tool.own_permission is not None and staff_principal.current() is not None
-
-
-def _tool_permitted(db: Any, ctx: Any, tool: ToolDef) -> bool:
-    """The linked user holds the tool's slug (or, on a panel turn, its own slug); for a ported read the console
-    operator must hold the full slug as well."""
-    if not (
-        _permitted(db, ctx.user_id, tool.user_permission)
-        or (own_slug_counts(tool) and _permitted(db, ctx.user_id, tool.own_permission))
-    ):
-        return False
-    return tool.name not in PORTED_READS or _operator_may_read(db, ctx, tool.user_permission)
+def _slug_held(db: Any, ctx: Any, tool: ToolDef) -> bool:
+    """The linked user holds the tool's slug, or its `.view_own` slug (a panel-only tool, where the route narrows)."""
+    return _permitted(db, ctx.user_id, tool.user_permission) or bool(
+        tool.own_permission and _permitted(db, ctx.user_id, tool.own_permission)
+    )
 
 
 def _operator_may_read(db: Any, ctx: Any, slug: str) -> bool:
@@ -669,6 +676,11 @@ def clean_detail(text: Any) -> str:
 
 def _http_failure(status: int, detail: Any) -> ToolResult:
     if status == 403:
+        if staff_principal.current() is not None:
+            # A panel user can be refused although they hold the slug (the shared key's role lacks it): the
+            # model gets a plain line, never the route's slug, path or status. The detail goes to the log.
+            logger.warning("agent: a route refused a panel read (403): %s", clean_detail(detail))
+            return ToolResult("denied", message=FIXED_NO_ACCESS)
         # The route refused this contact or user: a denial, not a bad request.
         return ToolResult("denied", message=clean_detail(detail) or "The route refused this request.")
     if 400 <= status < 500:
@@ -1082,7 +1094,8 @@ def data_domain(name: Any, args: Any) -> str | None:
         if _arg_value(args, "basis") in OUTSTANDING_BASES:
             return "outstanding"
         return "sales"
-    if name == "crm_order_management_orders_by_product_list":
+    # The order totals are the same figures as the by-product totals, so a refused sales read stays refused.
+    if name in ("crm_order_management_orders_by_product_list", "crm_order_analytics"):
         return "sales"
     return None
 
@@ -1139,10 +1152,12 @@ def _dispatch_inner(
     tool = REGISTRY.get(name) if isinstance(name, str) else None
     if tool is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
+    if panel_closed(name):
+        return ToolResult("denied", message=f"{name} is outside this user's access.")
     if is_contact_principal(ctx):
         if not contact_tool_open(ctx, tool):
             return ToolResult("denied", message=f"{name} is outside this contact's access.")
-    elif tool.name not in (RESOLVE, GUIDES, CAPABILITIES) and not _tool_permitted(db, ctx, tool):
+    elif tool.name not in (RESOLVE, GUIDES) and not _slug_held(db, ctx, tool):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not contact_allows(ctx, tool):
         return ToolResult("denied", message=f"{name} is outside this contact's access.")
