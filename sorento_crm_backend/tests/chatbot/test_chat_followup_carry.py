@@ -262,7 +262,7 @@ def test_g2c_all_customers_on_a_refine_naming_no_basis_asks_it(chat, session_fac
     assert _reply(result).strip() == BASIS_QUESTION, _reply(result)
 
 
-def test_g3_guard_a_topic_reset_drops_the_customer_and_the_period(chat, session_factory):
+def test_g3_guard_a_topic_reset_drops_the_customer(chat, session_factory):
     """Measured: "start over, total sales oct delivered" reads `entity_op` clear and `topic_reset` true, and asks the company."""
     ids, services = _reported(chat, session_factory, "g3")
     parse = _follow(entity_op="clear", topic_reset=True, sales_basis="delivered", basis="delivered", domain_in_message=True, **OCT_2026)
@@ -279,7 +279,9 @@ def test_g3b_guard_a_follow_up_after_a_reset_has_no_customer_or_period_to_keep(c
     result, captured = chat(_ordered(), "how about ordered", "ZZT-fc-g3b-2", resolve_services=services)
     assert not any(args.get("customer_ids") for args in _report_calls(captured)), captured
     assert not _slot_args(chat).get("customer_ids"), _slot_args(chat)
-    assert not any(args.get("date_from") == "2026-10-01" for args in _report_calls(captured)), captured
+    assert _report_calls(captured) == [], captured
+    values = ((chat.session().get("focus") or {}).get("required_ask") or {}).get("values") or {}
+    assert "period" not in values, f"a reset carries no period: {values}"
 
 
 @pytest.mark.parametrize("entity_op", ["replace", "replace_combine", "reuse"])
@@ -388,10 +390,10 @@ def test_u6_a_ranking_held_for_a_customer_is_stamped():
     "frame",
     [
         {"group_by": "product", "date_from": "2026-10-01"},
-        {**TOTAL, "group_by": "product", "stale": True},
+        {"group_by": "product", "date_from": "2026-10-01", "stale": True},
         {**TOTAL, "group_by": "customer"},
     ],
-    ids=["no-customer", "stale", "the-customer-is-the-ranked-side"],
+    ids=["no-customer", "stale-no-customer", "the-customer-is-the-ranked-side"],
 )
 def test_u7_guard_every_other_ranking_keeps_its_own_rules(frame):
     assert _stamp(_verdict("reuse"), _focus(frame)) is None
@@ -412,10 +414,11 @@ def test_u10_guard_when_the_customer_goes_the_basis_is_not_held_for_it(over):
     assert "basis" not in (_stamp({**_verdict("reuse"), **over}, _focus(TOTAL)) or {})
 
 
-def test_u11_guard_a_stale_total_holds_no_customer():
-    """The turn after it failed: what is held is no longer what the person last saw answered."""
-    held = _stamp(_verdict("reuse"), _focus({**TOTAL, "stale": True}))
-    assert "customer_ids" not in (held or {}) and "basis" not in (held or {}), held
+@pytest.mark.parametrize("frame", [TOTAL, {**TOTAL, "group_by": "product"}], ids=["total", "ranking"])
+def test_u11_a_failed_turn_between_ends_nothing_the_customer_stays(frame):
+    """The owner's rule names what replaces a customer, and a turn that said a line and ran nothing is not on that list."""
+    held = _stamp(_verdict("reuse"), _focus({**frame, "stale": True}))
+    assert held and held["customer_ids"] == [U1, U2], held
 
 
 @pytest.mark.parametrize("words", ["customers", None], ids=["typed", "a-guess-the-parser-did-not-type"])
@@ -484,9 +487,9 @@ def test_s2_a_new_axis_over_a_ranking_drops_the_customer_when_the_message_says_s
     assert not args.get("customer_ids"), args
 
 
-def test_s3_a_stale_ranking_refined_to_another_axis_holds_no_customer():
+def test_s3_a_stale_ranking_refined_to_another_axis_keeps_the_customer():
     _outcome, args = _settled(_new_axis("brand", top_n=5, ranking_refine=True), {**RANKING, "stale": True})
-    assert not args.get("customer_ids"), args
+    assert args.get("customer_ids") == [U1, U2], args
 
 
 def test_s4_the_open_ask_a_message_replaced_beats_an_older_ranking_on_screen():
@@ -503,7 +506,7 @@ def test_s5_a_new_customer_s_open_ask_replaced_keeps_that_customer_not_the_older
 
 
 def test_s6_the_company_answered_stays_and_is_not_asked_again():
-    frame = {"sort": "desc", "basis": "delivered", "company": COMPANY_A, "brand_ids": ["b1"], "date_from": "2026-10-01", "date_to": "2026-10-31"}
+    frame = {"sort": "desc", "basis": "delivered", "company": COMPANY_A, "date_from": "2026-10-01", "date_to": "2026-10-31"}
     outcome, args = _settled({**_verdict("reuse"), "basis": "ordered"}, frame)
     assert outcome.done and args.get("company") == COMPANY_A, (outcome.reply, args)
 
@@ -532,9 +535,15 @@ def test_s9_a_customer_named_on_a_refine_replaces_the_held_one():
     assert args.get("customer_ids") == [U3], args
 
 
-def test_s10_my_sales_on_a_refine_drops_the_held_customer():
-    _outcome, args = _settled({**_verdict("reuse"), "ranking_refine": True, "self_reference": True}, RANKING)
+def test_s10_my_sales_on_a_refine_drops_the_held_customer_and_asks_the_company():
+    outcome, args = _settled({**_verdict("reuse"), "ranking_refine": True, "self_reference": True}, RANKING)
     assert not args.get("customer_ids") and args.get("mine") is True, args
+    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+
+
+def test_s10c_my_sales_to_a_customer_named_on_a_refine_keeps_that_customer():
+    _outcome, args = _settled({**_verdict("reuse", ANOTHER), "ranking_refine": True, "self_reference": True}, RANKING, _row(U3))
+    assert args.get("customer_ids") == [U3] and args.get("mine") is True, args
 
 
 def test_s10b_my_sales_on_a_refine_takes_the_contact_s_own_accounts():
@@ -548,3 +557,69 @@ def test_s11_all_customers_on_a_refine_over_a_ranking_keeps_its_axis_and_asks_th
     outcome, args = _settled(verdict, RANKING)
     assert not args.get("customer_ids") and args.get("group_by") == "product", args
     assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+
+
+ALL_CUSTOMERS = {"broaden_axis": "customer", "broaden_to": "all"}
+
+
+def test_s12_the_top_selling_label_with_all_customers_asks_the_company_never_runs_it_unasked():
+    """`bare_top_selling` makes it a refine inside `_settle`: every way into `_refine` owes the company once the customer goes."""
+    verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "bare_top_selling": True, "capability_from": "top_selling", "group_by": "product"}
+    outcome, args = _settled(verdict, RANKING)
+    assert not args.get("customer_ids"), args
+    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+
+
+def test_s13_a_channel_word_with_all_customers_asks_the_company_never_runs_it_unasked():
+    verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "group_by": "channel", "sales_channel": "dealer", "by_words": "dealer"}
+    outcome, args = _settled(verdict, RANKING)
+    assert not args.get("customer_ids") and args.get("channel") == "dealer", args
+    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+
+
+def test_s14_all_customers_on_a_refine_keeps_everything_else_a_refine_keeps():
+    """Only the customer goes (R0: the widened axis is dropped, the rest held): the direction, the location, the count."""
+    frame = {**RANKING, "sort": "asc", "warehouse_codes": ["BB"], "compare_to": "previous_period"}
+    verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True}
+    outcome, args = _settled(verdict, frame)
+    assert not args.get("customer_ids"), args
+    assert args["sort"] == "asc" and args["warehouse_codes"] == ["BB"] and args["compare_to"] == "previous_period", args
+    assert args["group_by"] == "product" and args["basis"] == "delivered" and args["measure"] == "amount", args
+    assert outcome.extras.get("top_n") == 5 or (outcome.slot or {}).get("extras", {}).get("top_n") == 5, outcome.extras
+    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+
+
+def test_s15_all_customers_over_a_breakdown_owes_only_the_company():
+    """A breakdown shows both measures: "By quantity or by amount?" is not owed for it."""
+    frame = {"sort": "desc", "basis": "delivered", "group_by": "product", "customer_ids": [U1, U2], "top_n": 100,
+             "date_from": "2026-10-01", "date_to": "2026-10-31"}
+    verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True, "basis": "ordered"}
+    outcome, args = _settled(verdict, frame)
+    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+    assert "quantity" not in (outcome.reply or ""), outcome.reply
+
+
+def test_s15b_all_customers_on_a_refine_naming_the_company_asks_nothing():
+    verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True, "sales_company": "Sorento"}
+    outcome, args = _settled(verdict, RANKING)
+    assert outcome.done and args.get("company") == COMPANY_A and not args.get("customer_ids"), (outcome.reply, args)
+
+
+def test_s15c_guard_a_dealer_is_never_asked_the_company_on_a_refine():
+    verdict = {"message_type": "business_query", "topic_reset": False, "capability_from": "sales_report",
+               **_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True}
+    frame = {k: v for k, v in RANKING.items() if k != "shown"}
+    stamped = report_ask.with_held(verdict, _focus(frame), open_ask=None, replaced=None)
+    outcome, _line = report_ask.settle(None, {**stamped, "sales_ranking_frame": frame}, [], dealer=True, companies=TWO_COMPANIES)
+    assert outcome is not None and (outcome.slot or {}).get("asking") != "company", outcome
+
+
+def test_s16_a_customer_named_on_a_refine_is_not_narrowed_to_the_company_on_screen():
+    frame = {**RANKING, "company": COMPANY_A}
+    _outcome, args = _settled({**_verdict("reuse", ANOTHER), "ranking_refine": True}, frame, _row(U3))
+    assert args.get("customer_ids") == [U3] and not args.get("company"), args
+
+
+def test_s17_a_pick_answered_on_a_refine_is_that_customer_never_the_held_one():
+    _outcome, args = _settled({**_verdict("reuse"), "ranking_refine": True, "ranking_pick": True}, RANKING, _row(U3))
+    assert args.get("customer_ids") == [U3], args
