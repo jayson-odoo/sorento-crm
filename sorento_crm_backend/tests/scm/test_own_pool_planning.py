@@ -34,6 +34,7 @@ import pytest
 
 from app.models.inventory import Warehouse
 from app.models.project_so import OrderInquiryRow
+from app.models.scm import ItemClassification
 from app.schemas.project_board import BoardCellLocation
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
 from app.services.project_fulfilment_board_service import FulfilmentBoardService
@@ -475,24 +476,29 @@ def _random_world(db, rng, n_pools):
     company_id, actor, project, product = world
     hands = [rng.choice([0, 5, 10, 20, 30, 60]) for _ in range(n_pools)]
     pools = [_pool(db, hand, product) for hand in hands]
-    sites = [("pool", pools[0])]
-    sites += [("pool", pool) for pool in pools[1:]]
+    # Only a project order draws the bin: a retail line at a project bin is outside planning (R4).
+    pool_sites = [("pool", pool) for pool in pools]
+    project_sites = pool_sites + [("bin", _project_bin(db, pools[0]))]
     orders, book = [], {str(pool.id): 0 for pool in pools}
 
     for number in range(rng.randint(2, 4)):
         klass = rng.choice(["retail", "project"])
-        _kind, loc = rng.choice(sites)
+        sites = pool_sites if klass == "retail" else project_sites
+        kind, loc = rng.choice(sites)
         qty = rng.choice([5, 10, 20, 30])
         when = _far(rng.choice([5, 12, 19, 26]))
         order, line, core_so, _c = _line(db, world, loc, qty, klass=klass, line_no=10, when=when)
-        book[str(loc.id)] += qty
+        # A bin line is booked at its bin, never in a pool's book.
+        if kind == "pool":
+            book[str(loc.id)] += qty
         lines = [(str(loc.id), qty)]
         if rng.random() < 0.4:
-            _kind2, loc2 = rng.choice(sites)
+            kind2, loc2 = rng.choice(sites)
             qty2 = rng.choice([5, 10, 20])
             second = _core_line(db, core_so, product, loc2, qty_ordered=str(qty2), required_date=when)
             _project_line(db, order, line_no=20, product=product, core_line=second)
-            book[str(loc2.id)] += qty2
+            if kind2 == "pool":
+                book[str(loc2.id)] += qty2
             lines.append((str(loc2.id), qty2))
         db.commit()
         orders.append({"order": order, "core": core_so, "klass": klass, "lines": lines})
@@ -592,7 +598,7 @@ def test_r10_random_worlds_over_two_and_three_pools_confirm_their_own_proposal(n
 # --------------------------------------------------------------------------- R11
 
 
-def _confirm_reserve(db, order, line, pool, actor, qty):
+def _confirm_reserve(db, order, line, pool, actor, qty, reason=None):
     service = ProjectSupplyService(db)
     service.confirm(
         order,
@@ -601,6 +607,7 @@ def _confirm_reserve(db, order, line, pool, actor, qty):
                 ConfirmLine(
                     project_line_id=str(line.id),
                     reserve=[{"warehouse_id": str(pool.id), "qty": Decimal(qty)}],
+                    amend_reason=reason,
                 )
             ]
         ),
@@ -653,6 +660,145 @@ def test_r11_two_orders_pressed_separately_cannot_both_hold_the_same_10(klass):
         second = _confirm_reserve(db, order_y, line_y, pool, actor, "10")
 
     assert first + second >= Decimal("10"), (first, second)
+
+
+REASON = "Planner's own account of why this differs from the proposal"
+
+
+@pytest.mark.parametrize("klass", ["project", "retail"])
+def test_r11_a_reason_does_not_lift_a_reserve_past_what_the_book_owes_at_the_own_pool(klass):
+    """10 on hand, 50 owed to another order, Reserve 10 with a reason: short 10."""
+    with blank_session() as db:
+        world = _world(db)
+        actor, product = world[1], world[3]
+        pool = _pool(db, 10, product)
+        _line(db, world, pool, 50, klass="project", line_no=30)
+        order, line, _so, _c = _line(db, world, pool, 10, klass=klass)
+        short = _confirm_reserve(db, order, line, pool, actor, "10", reason=REASON)
+
+    assert short == Decimal("10")
+
+
+@pytest.mark.parametrize("klass", ["project", "retail"])
+def test_r11_a_reason_does_not_lift_a_reserve_past_what_the_book_has_reserved(klass):
+    """10 on hand, 8 reserved, Reserve 10 with a reason: short 8."""
+    with blank_session() as db:
+        world = _world(db)
+        actor, product = world[1], world[3]
+        pool = _pool(db, 0, product)
+        _stock(db, product, pool, on_hand=10, reserved=8)
+        db.commit()
+        order, line, _so, _c = _line(db, world, pool, 10, klass=klass)
+        short = _confirm_reserve(db, order, line, pool, actor, "10", reason=REASON)
+
+    assert short == Decimal("8")
+
+
+@pytest.mark.parametrize("klass", ["project", "retail"])
+def test_r11_two_orders_pressed_separately_with_reasons_cannot_both_hold_the_same_10(klass):
+    """10 on hand, two orders of 10, each pressed alone with a reason: the second is short 10."""
+    with blank_session() as db:
+        world = _world(db)
+        actor, product = world[1], world[3]
+        pool = _pool(db, 10, product)
+        order_x, line_x, _so, _c = _line(db, world, pool, 10, klass=klass, line_no=10)
+        order_y, line_y, _so, _c = _line(db, world, pool, 10, klass=klass, line_no=20)
+        _confirm_reserve(db, order_x, line_x, pool, actor, "10", reason=REASON)
+        second = _confirm_reserve(db, order_y, line_y, pool, actor, "10", reason=REASON)
+
+    assert second == Decimal("10")
+
+
+def test_r11_a_reason_still_lifts_a_project_bin_lines_reserve_at_its_own_bin():
+    """The control, as on main (the 8 Sep lift): a project bin line with stock on its own floor and
+    a group oversold on paper reserves it when a person says why."""
+    with blank_session() as db:
+        world = _world(db)
+        actor, product = world[1], world[3]
+        pool = _pool(db, 0, product)
+        own = _project_bin(db, pool)
+        _stock(db, product, own, on_hand=10)
+        db.commit()
+        _line(db, world, own, 50, klass="project", line_no=30)
+        order, line, _so, _c = _line(db, world, own, 10, klass="project")
+        short = _confirm_reserve(db, order, line, own, actor, "10", reason=REASON)
+
+    assert short == Decimal("0")
+
+
+def test_r10_two_hand_reserves_at_other_pools_share_the_true_net():
+    """0 here, 30 and 30 elsewhere, retail line of 40, so a true net of 20. The add-back is what
+    the line stands on, never a claim on another pool: 20 and 20 by hand comes up short 20."""
+    with blank_session() as db:
+        world = _world(db)
+        actor, product = world[1], world[3]
+        pool = _pool(db, 0, product)
+        first, second = _pool(db, 30, product), _pool(db, 30, product)
+        order, line, _so, _c = _line(db, world, pool, 40, klass="retail", when=_far(10))
+        service = ProjectSupplyService(db)
+        service.confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(
+                        project_line_id=str(line.id),
+                        reserve=[
+                            {"warehouse_id": str(first.id), "qty": Decimal("20")},
+                            {"warehouse_id": str(second.id), "qty": Decimal("20")},
+                        ],
+                    )
+                ]
+            ),
+            actor_user_id=actor,
+        )
+        db.commit()
+        short = _short(service)
+
+    assert short == Decimal("20")
+
+
+def test_r7_the_proof_beside_a_retail_reserve_does_not_call_the_pool_oversold():
+    """10 on hand, 10 ordered, a classified product, so the pool step's own sentence is read. The
+    pile's raw Available is 0 because this line's own demand is in it, and the walk puts that back:
+    the proof must not say "oversold, nothing is offered" beside the Reserve 10 it proposes."""
+    with blank_session() as db:
+        world = _world(db)
+        product = world[3]
+        pool = _pool(db, 10, product)
+        pool.counts_as_available = True
+        db.add(
+            ItemClassification(
+                id=_uid(), product_id=product.id, warehouse_id=pool.id, abc_class_retail="B",
+            )
+        )
+        db.commit()
+        _o, _l, core, _c = _line(db, world, pool, 10, klass="retail")
+        row = _board_row(_board(db, core), core)
+        step = next(entry for entry in row["trail"] if entry["kind"] == "pool")
+
+    assert _sources(row) == {"reserve": Decimal("10")}
+    assert "Not classified" not in step["why"], step["why"]
+    assert "oversold" not in step["why"], step["why"]
+
+
+def test_r12_the_own_row_nets_what_the_book_counted_for_the_line_not_its_plan_quantity():
+    """20 on hand, 10 owed by another order, this line 10 ordered and 3 delivered, so the book holds
+    17 and counted 7 for this line. The row prints the others' 10 as SO qty, and Available 10. Netting
+    the plan quantity of 10 instead would print 7 and 13, which the walk never read."""
+    with blank_session() as db:
+        world = _world(db)
+        pool = _pool(db, 20, world[3])
+        _line(db, world, pool, 10, klass="project", line_no=30)
+        _o, _l, core, core_line = _line(db, world, pool, 10, klass="retail")
+        core_line.qty_delivered = Decimal("3")
+        db.commit()
+        row = _board_row(_board(db, core), core)
+        pool_id = str(pool.id)
+
+    own = next(entry for entry in row["locations"] if entry["warehouse_id"] == pool_id)
+    assert Decimal(own["so_qty"]) == Decimal("10")
+    assert Decimal(own["available_qty"]) == Decimal("10")
+    assert Decimal(own["net"]) == Decimal("10")
 
 
 # --------------------------------------------------------------------------- R12, the server

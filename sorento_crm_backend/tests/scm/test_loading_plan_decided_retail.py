@@ -127,6 +127,23 @@ def test_r15_the_line_is_listed_once_and_the_lines_foot_to_the_demand_row():
     assert sum(l["qty"] for l in mine) == row["open_so_need"] == 6
 
 
+def test_r15_a_retail_line_placed_in_full_asks_for_nothing_and_is_not_listed():
+    """All 10 are on a shipping order: nothing left to ask for, no line, no order counted."""
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        _so, line = _decided_retail(db, w, "A", 10)
+        _place_spo(db, w, line, 10)
+
+        out = svc.build(db, supplier_id=str(w.supplier.id), include_lines=True)
+        code = w.product("A").product_code
+        rows = [r for r in out["rows"] if r["item_code"] == code and r["has_demand"]]
+        mine = [l for l in out["lines"] if l["product_id"] == str(w.product("A").id)]
+
+    assert mine == []
+    assert rows == []
+
+
 def test_r15_an_order_with_a_decided_and_an_undecided_line_counts_once():
     with pg_session() as db:
         w = World(db)

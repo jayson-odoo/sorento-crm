@@ -207,6 +207,132 @@ def test_r2_a_retail_order_with_no_line_at_a_dealer_location_stays_out(api):
     assert refused.value.status_code == 409
 
 
+# --------------------------------------------------------------------------- R1, open and active
+
+
+def _closed(world, core):
+    core.status = "closed"
+    world.db.commit()
+
+
+@pytest.mark.parametrize("klass", ["retail", "other"])
+def test_r1_a_closed_retail_order_is_refused_at_adoption_with_the_true_reason(api, klass):
+    client, world = api
+    core, _lines = _retail_order(world, klass=klass)
+    _closed(world, core)
+
+    with pytest.raises(AppException) as refused:
+        ProjectSOAdoptionService(world.db).adopt(str(core.id))
+
+    assert refused.value.status_code == 409
+    assert "closed" in refused.value.message.lower(), refused.value.message
+    assert "cancelled" not in refused.value.message.lower(), refused.value.message
+
+
+def test_r1_a_closed_retail_order_stays_off_the_board_with_the_true_reason(api):
+    client, world = api
+    core, _lines = _retail_order(world)
+    _closed(world, core)
+
+    board = client.get(
+        f"{BASE}/fulfilment-planning/board",
+        params={"orders": core.so_number, "granularity": "week"},
+    ).json()
+
+    assert core.so_number not in {row["so_number"] for row in board["contributions"]}
+    skipped = {row["so_number"]: row["reason"] for row in board.get("unplanned_orders", [])}
+    assert core.so_number in skipped, board.keys()
+    assert "closed" in skipped[core.so_number].lower()
+    assert "cancelled" not in skipped[core.so_number].lower()
+
+
+def test_r1_a_closed_project_order_still_adopts_and_opens_on_the_board(api):
+    """The control: the 14 Sep ruling put closed project orders on the board, and they stay."""
+    client, world = api
+    core, _lines = _retail_order(world, klass="project", lines=(("project", "10"),))
+    _closed(world, core)
+
+    body = _adopt(client, core)
+    board = client.get(
+        f"{BASE}/fulfilment-planning/board",
+        params={"orders": core.so_number, "granularity": "week"},
+    ).json()
+
+    assert body["project_sales_order_id"]
+    assert core.so_number in {row["so_number"] for row in board["contributions"]}
+
+
+def test_r1_plannable_lines_reads_the_same_admission(api):
+    """What the sales order page's Plan and the Planned pill read."""
+    from app.services.scm.sales_order_service import SalesOrderService
+
+    client, world = api
+    open_retail, _a = _retail_order(world)
+    closed_retail, _b = _retail_order(world)
+    _closed(world, closed_retail)
+    closed_project, _c = _retail_order(world, klass="project", lines=(("project", "10"),))
+    _closed(world, closed_project)
+
+    rows = SalesOrderService(world.db).with_planning_state(
+        [{"id": str(core.id)} for core in (open_retail, closed_retail, closed_project)]
+    )
+
+    assert [row["plannable_lines"] for row in rows] == [1, 0, 1]
+
+
+def test_r1_a_retail_order_at_a_retired_dealer_location_stays_out(api):
+    """R1 says ACTIVE: a retired dealer bin holds stock nobody can pick."""
+    client, world = api
+    core, _lines = _retail_order(world)
+    world.pool_wh.is_active = False
+    world.db.commit()
+
+    listed = _numbers(_listed(client, demand_class=["retail", "other", "project"]))
+    with pytest.raises(AppException) as refused:
+        ProjectSOAdoptionService(world.db).adopt(str(core.id))
+
+    assert core.so_number not in listed
+    assert refused.value.status_code == 409
+    assert "active" in refused.value.message.lower(), refused.value.message
+
+
+# --------------------------------------------------------------------------- an adopted mirror
+
+
+def _mirror_of(client, world, core):
+    order_id = _adopt(client, core)["project_sales_order_id"]
+    line = client.get(f"{BASE}/sales-orders/{order_id}/supply").json()["lines"][0]
+    return order_id, line["project_line_id"]
+
+
+@pytest.mark.parametrize(
+    "method, path, body",
+    [
+        ("put", "/sales-orders/{order}/lines/{line}", {"qty": "99"}),
+        ("put", "/sales-orders/{order}", {"area_group": "ZZT"}),
+        ("post", "/sales-orders/{order}/publish", None),
+    ],
+    ids=["edit-a-line", "save-the-document", "publish"],
+)
+def test_an_adopted_mirror_cannot_be_edited_or_published(api, method, path, body):
+    """An adopted order's lines are the book's. An `.edit` holder must not change quantity, price,
+    product or location on the mirror, drop its lines, or publish it."""
+    client, world = api
+    core, _lines = _retail_order(world)
+    order_id, line_id = _mirror_of(client, world, core)
+
+    response = getattr(client, method)(
+        f"{BASE}{path.format(order=order_id, line=line_id)}",
+        **({"json": body} if body is not None else {}),
+    )
+
+    assert response.status_code == 409, response.text
+    world.db.expire_all()
+    order = world.db.query(ProjectSalesOrder).filter(ProjectSalesOrder.id == order_id).one()
+    assert order.status == "adopted"
+    assert len(client.get(f"{BASE}/sales-orders/{order_id}/supply").json()["lines"]) == 1
+
+
 # --------------------------------------------------------------------------- R3
 
 
