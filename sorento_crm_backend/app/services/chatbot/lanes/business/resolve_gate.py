@@ -1843,7 +1843,14 @@ def supplier_ask_reads_purchase_orders(verdict: dict[str, Any]) -> dict[str, Any
     }
     if "supplier" not in hints or hints & ORDER_PARTY_HINTS:
         return verdict
-    return {**verdict, "domain_hint": "purchase_order", "intent_hint": "check_po", "order_status": None}
+    out = {**verdict, "domain_hint": "purchase_order", "intent_hint": "check_po", "order_status": None}
+    if isinstance(verdict.get("asks"), list):
+        # The plan reads `asks` before `domain_hint` (`turn/apply.py`), as `_dealer_cost_as_promotion` found.
+        out["asks"] = [
+            {**a, "domain": "purchase_order"} if isinstance(a, dict) and a.get("domain") in SUPPLIER_SWITCH_DOMAINS else a
+            for a in verdict["asks"]
+        ]
+    return out
 
 
 def probe_incoming(

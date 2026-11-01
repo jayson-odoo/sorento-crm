@@ -42,33 +42,6 @@ MEANING_PARAGRAPH = (
     "sure what it means, \"meaning\" is null. Never invent a meaning."
 )
 
-#: SUPPLIER-ASK: the span type line for a supplier, placed after the customer line, and the sentence that has a company
-#: name written in Chinese characters read by its pinyin ("太阳" -> "Taiyang"), the form supplier and customer records
-#: are kept in. Semantic: the model reads the name, no word list.
-SUPPLIER_TYPE_LINE = "- supplier: a company we buy goods from, a supplier, vendor or factory (e.g. \"Xiamen ABC Technology\")"
-NAME_MEANING_SENTENCE = (
-    'When the span is a company name written in Chinese characters, "meaning" is its pinyin without tones (the form '
-    "the business keeps such names in), not a translation of its words."
-)
-
-
-def with_supplier_type(template: str) -> str | None:
-    """SUPPLIER-ASK: the span prompt with the supplier type line after the customer line, and (when the prompt asks for
-    meanings) the name sentence after the meaning paragraph. None when the text has no customer line to anchor on or
-    already names the supplier type."""
-    lines = (template or "").split("\n")
-    if any(ln.startswith("- supplier:") for ln in lines):
-        return None
-    at = next((i for i, ln in enumerate(lines) if ln.startswith("- customer:")), None)
-    if at is None:
-        return None
-    lines.insert(at + 1, SUPPLIER_TYPE_LINE)
-    out = "\n".join(lines)
-    if MEANING_ASK in out and NAME_MEANING_SENTENCE not in out:
-        out = out.rstrip() + " " + NAME_MEANING_SENTENCE
-    return out
-
-
 def _schema(with_meaning: bool) -> dict[str, Any]:
     props: dict[str, Any] = {"text": {"type": "string"}, "type": {"type": "string", "enum": list(SPAN_TYPES)}}
     required = ["text", "type"]
@@ -120,13 +93,14 @@ class SpanAnswer:
     failure: str | None = None
 
 
-def resolve_config(db: Session, *, llm_choice=None) -> SpanConfig:
-    """The span prompt, its provider and model, and the API key. Session-bound; raises when no key is set."""
+def resolve_config(db: Session, *, llm_choice=None, override_version_id: str | None = None) -> SpanConfig:
+    """The span prompt, its provider and model, and the API key. Session-bound; raises when no key is set.
+    `override_version_id` (dry run only, `engine._span_override`) runs that span version instead of the label's."""
     from app.services import ai_prompt_registry
     from app.services.ai_assistant_service import AIAssistantConfigService
     from app.services.contact_llm_choice import apply_choice
 
-    resolved = ai_prompt_registry.get_prompt(db, PROMPT_KEY)
+    resolved = ai_prompt_registry.get_prompt(db, PROMPT_KEY, override_version_id=override_version_id)
     system_prompt, version = ai_prompt_registry.render_resolved(db, PROMPT_KEY, resolved)
     provider_label, model_label = ai_prompt_registry.agent_model(db, PROMPT_KEY)
     config = AIAssistantConfigService(db).get()

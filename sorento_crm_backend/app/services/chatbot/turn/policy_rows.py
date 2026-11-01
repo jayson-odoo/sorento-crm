@@ -288,7 +288,8 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         tools=["crm_procurement_po_placed_list"],
         escalation_team_code="purchasing",
         switch_words=["po"],
-        narrowing={"product": "narrow_to_code"},
+        # SUPPLIER-ASK (migration `sask_0001_supplier_kind`): one supplier filters, several are asked.
+        narrowing={"product": "narrow_to_code", "supplier": "optional_filter"},
         # answer._CROSSDOMAIN_RUNG_GRANT: the PO rung of the cross-domain climb is
         # refused without it.
         reveal_key="purchase_orders.placed",

@@ -170,6 +170,18 @@ def get_purchase_orders_placed(
         resolved_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
         resolved_warehouse_ids = parse_uuid_list(warehouse_ids, param_name="warehouse_ids")
         resolved_supplier_ids = parse_uuid_list(supplier_ids, param_name="supplier_ids")
+        if resolved_supplier_ids and contact_id:
+            # SUPPLIER-ASK (security review): asked on behalf of a contact, a supplier filter needs
+            # the reveal that shows the supplier (`purchase_orders.supplier`); without it the filter
+            # would still say which lines belong to that supplier.
+            from app.services import contact_field_reveal_service
+            from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+            pk = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
+            if not pk or "purchase_orders.supplier" not in contact_field_reveal_service.granted_keys(db, pk):
+                raise AppException(
+                    403, "Filtering by supplier is not available for this contact.", code="supplier_not_revealed"
+                )
         _from = _parse_flex_date(expected_date_from)
         _to = _parse_flex_date(expected_date_to, end_of_day=True)
         # CHAT-PO-LOCATION-SCOPE: under a `contact_id` the on-order rows are scoped exactly

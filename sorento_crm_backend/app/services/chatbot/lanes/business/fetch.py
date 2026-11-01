@@ -57,6 +57,7 @@ from app.services.chatbot import jsc
 from app.services.chatbot.composers import format as composers_format
 from app.services.chatbot.label_catalog import IDENTITY, Localizer, defaults as label_defaults
 from app.services.chatbot.contracts import (
+    SUPPLIER_GRANT,
     SALES_REPORT_GROUP_BYS,
     UNDOMAINED_CHATBOT_TOOLS,
     is_timeline,
@@ -950,6 +951,15 @@ def entity_ids_transformer(
         "skipped": skipped,
         "unmapped_types": unmapped_types,
     }
+
+    # SUPPLIER-ASK (security review): the second refusal below the resolver, as
+    # `RESTRICTED_SORT_KEYS` refuses a supplier sort: a supplier filter says which lines belong
+    # to a supplier, so it is never sent for an asker without the supplier reveal.
+    if "supplier_ids" in out:
+        access = trig.get("access") if isinstance(trig.get("access"), dict) else {}
+        attributes = access.get("attributes") if isinstance(access.get("attributes"), list) else []
+        if SUPPLIER_GRANT not in attributes:
+            out["_diagnostics"]["refused"] = {"supplier_ids": out.pop("supplier_ids")}
 
     out["view"] = "render"
     # `out.date_mode = semantic_input?.date_mode` - an ABSENT key leaves `undefined` here,

@@ -70,3 +70,36 @@ def test_supplier_filter_route_rejects_a_malformed_id(client, db):
     resp = client.get(f"{BASE}/placed", params={"supplier_ids": "not-a-uuid"})
     assert resp.status_code == 400, resp.text
 
+
+
+def test_supplier_filter_under_a_contact_without_the_reveal_is_403(client, db, monkeypatch):
+    from app.services import contact_field_reveal_service, field_access
+
+    ours, _other = _two_suppliers(db)
+    monkeypatch.setattr(field_access, "resolve_contact_with_null_workspace_fallback", lambda db, **kw: "pk-1")
+    monkeypatch.setattr(contact_field_reveal_service, "granted_keys", lambda db, pk: ["purchase_orders.placed"])
+    resp = client.get(f"{BASE}/placed", params={"supplier_ids": ours.id, "contact_id": "900000001"})
+    assert resp.status_code == 403, resp.text
+    assert resp.json().get("code") == "supplier_not_revealed" or "supplier" in resp.text
+
+
+def test_supplier_filter_under_an_unknown_contact_is_403(client, db):
+    ours, _other = _two_suppliers(db)
+    resp = client.get(f"{BASE}/placed", params={"supplier_ids": ours.id, "contact_id": "ZZT-no-such-contact"})
+    assert resp.status_code == 403, resp.text
+
+
+def test_supplier_filter_under_a_contact_with_the_reveal_filters(client, db, monkeypatch):
+    from app.services import contact_field_reveal_service, field_access
+
+    ours, _other = _two_suppliers(db)
+    monkeypatch.setattr(field_access, "resolve_contact_with_null_workspace_fallback", lambda db, **kw: "pk-1")
+    monkeypatch.setattr(contact_field_reveal_service, "granted_keys", lambda db, pk: ["purchase_orders.supplier"])
+    import types
+
+    # A contact whose stock policy shows every location (`scope_warehouse_ids` None = no narrowing).
+    monkeypatch.setattr("app.services.stock_visibility.resolve_policy", lambda db, c, s: types.SimpleNamespace(mode="full"))
+    monkeypatch.setattr("app.services.stock_visibility.scope_warehouse_ids", lambda db, policy: None)
+    resp = client.get(f"{BASE}/placed", params={"supplier_ids": ours.id, "contact_id": "900000001"})
+    assert resp.status_code == 200, resp.text
+    assert _numbers(resp.json()["data"]) == ["PO-OURS-A", "PO-OURS-B", "SPO-OURS"]

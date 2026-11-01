@@ -6,6 +6,8 @@ gains `supplier`; the AC-1502 contract (one `chatbot_entity_kinds` row per entit
 `tests/chatbot/test_rearch_s0_entity_kinds_seed.py`) needs its row. The resolver source is
 the `suppliers` table the shared resolver already probes (`entity_resolver._probe_supplier`).
 
+Also adds `supplier: optional_filter` to the purchase_order domain's narrowing.
+
 Data only, no schema change, no parser publish. A parser version that renders
 `{{entity_kinds}}` / `{{entity_kinds_detail}}` from this table gains the `supplier` hint value
 and one "Entity kind" line on the next turn after this runs. Idempotent: a kind already present
@@ -57,9 +59,25 @@ def insert_kind(bind) -> bool:
     return True
 
 
+def apply_narrowing(bind) -> None:
+    """The purchase_order domain narrows by supplier as an optional filter: one supplier filters,
+    several for one word is asked (`turn/narrow.decide`, "ambiguous_filter_asks"; crew console pass,
+    1 Nov 2026: "taiyang" placed three suppliers equally). Idempotent: a jsonb `||` merge."""
+    bind.execute(
+        sa.text(
+            "UPDATE chatbot_domains SET narrowing = narrowing || jsonb_build_object('supplier', 'optional_filter') "
+            "WHERE name = 'purchase_order'"
+        )
+    )
+
+
 def upgrade() -> None:
-    insert_kind(op.get_bind())
+    bind = op.get_bind()
+    insert_kind(bind)
+    apply_narrowing(bind)
 
 
 def downgrade() -> None:
-    op.get_bind().execute(sa.text("DELETE FROM chatbot_entity_kinds WHERE kind = 'supplier'"))
+    bind = op.get_bind()
+    bind.execute(sa.text("UPDATE chatbot_domains SET narrowing = narrowing - 'supplier' WHERE name = 'purchase_order'"))
+    bind.execute(sa.text("DELETE FROM chatbot_entity_kinds WHERE kind = 'supplier'"))

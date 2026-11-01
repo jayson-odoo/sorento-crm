@@ -165,6 +165,35 @@ def test_a_po_domain_ask_for_a_supplier_filters_by_it(session_factory, monkeypat
     assert calls and calls[0].get("supplier_ids") == [ids["ours"]], captured
 
 
+def _seed_twin(session_factory) -> str:
+    """A second supplier the same distinctive word names (the prod copy has three)."""
+    from app.models.procurement import Supplier
+
+    db = session_factory()
+    twin = Supplier(
+        id=str(uuid.uuid4()), supplier_code="ZZTSUP-TY02", supplier_name="ZZT TAIYANG SANITARY CO LTD",
+        company_id=DEFAULT_COMPANY_ID,
+    )
+    db.add(twin)
+    db.commit()
+    return twin.id
+
+
+@pytest.mark.parametrize("text_body", ["outstanding PO for taiyang", "outstanding for taiyng"])
+def test_several_equal_suppliers_ask_which_one_and_never_drop_the_filter(session_factory, monkeypatch, text_body):
+    """Crew console pass (1 Nov 2026): "taiyang" placed several suppliers equally and the turn
+    answered with no supplier filter. Two suppliers for one ask is a question."""
+    _seed_suppliers(session_factory)
+    _seed_twin(session_factory)
+    _seed_contact(session_factory, variables={})
+    _make_staff(session_factory)
+    reply, captured = _turn(session_factory, monkeypatch, _ask("taiyang", None), text_body)
+    assert "Which one do you mean?" in reply, reply  # the roster every optional filter asks with
+    assert SUPPLIER in reply and "ZZT TAIYANG SANITARY CO LTD" in reply, reply
+    assert not _po_calls(captured), f"no unfiltered (or all-supplier) PO list before the pick: {captured}"
+    assert not [n for n, _ in captured if n == "crm_report_ask"], captured
+
+
 # --------------------------------------------------------------------------- #
 # AC-4: a dealer never gets a supplier
 # --------------------------------------------------------------------------- #
@@ -178,7 +207,7 @@ def test_a_dealer_never_resolves_a_supplier(session_factory, monkeypatch):
         session_factory, monkeypatch, _ask("taiyang", None), "the outstanding for taiyang",
         attributes=("sales_orders.outstanding",),
     )
-    assert not [a for a in _po_calls(captured) if a.get("supplier_ids")], captured
+    assert not _po_calls(captured), f"a dealer's order ask never becomes a PO ask: {captured}"
     # The asker's own word may be echoed; the supplier record (its full name) never is.
     assert SUPPLIER not in reply, reply
 
@@ -190,8 +219,63 @@ def test_staff_without_the_supplier_reveal_never_resolves_a_supplier(session_fac
     reply, captured = _turn(
         session_factory, monkeypatch, _ask("taiyang", None), "the outstanding for taiyang", attributes=(PLACED,)
     )
+    assert not _po_calls(captured), f"without the reveal the order ask is never swapped: {captured}"
+    assert SUPPLIER not in reply, reply
+
+
+@pytest.mark.parametrize(
+    "raw,hint",
+    [("taiyang", "supplier"), ("ZZTSUP-TY01", "customer"), ("ZZTSUP-TY01", "product")],
+)
+def test_staff_without_the_reveal_get_no_supplier_filter_on_a_po_ask(session_factory, monkeypatch, raw, hint):
+    """A PO-domain ask (PO view held, supplier reveal not): neither the parser's supplier hint nor
+    the resolver placing another word on a supplier (its code) turns into a supplier filter."""
+    _seed_suppliers(session_factory)
+    _seed_contact(session_factory, variables={})
+    _make_staff(session_factory)
+    reply, captured = _turn(
+        session_factory, monkeypatch, _ask(raw, None, domain="purchase_order", hint=hint), f"POs for {raw}",
+        attributes=(PLACED,),
+    )
     assert not [a for a in _po_calls(captured) if a.get("supplier_ids")], captured
     assert SUPPLIER not in reply, reply
+
+
+def test_the_owner_message_with_asks_still_reads_the_po_book(session_factory, monkeypatch):
+    """The plan reads `asks` before `domain_hint`, so the swap rewrites both."""
+    ids = _seed_suppliers(session_factory)
+    _seed_contact(session_factory, variables={})
+    _make_staff(session_factory)
+    qf = {**_ask(NATIVE, SUPPLIER), "asks": [{"domain": "order"}]}
+    _reply, captured = _turn(session_factory, monkeypatch, qf, OWNER_MESSAGE)
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["ours"]], captured
+
+
+@pytest.mark.parametrize(
+    "staff,keys,expected",
+    [(True, [SUPPLIER_GRANT], True), (True, [PLACED], False), (False, [SUPPLIER_GRANT], False)],
+)
+def test_the_supplier_block_is_for_office_staff_with_the_reveal(monkeypatch, staff, keys, expected):
+    import types
+
+    from app.services import contact_customer_scope, contact_field_reveal_service, field_access
+    from app.services.chatbot import engine as engine_mod
+
+    class _Db:
+        def begin_nested(self):
+            import contextlib
+
+            return contextlib.nullcontext()
+
+    monkeypatch.setattr(field_access, "resolve_contact_with_null_workspace_fallback", lambda db, **kw: "pk-1")
+    monkeypatch.setattr(
+        contact_customer_scope, "contact_customer_scope",
+        lambda db, pk: types.SimpleNamespace(staff=staff, enforced=not staff, customer_ids=[]),
+    )
+    monkeypatch.setattr(contact_field_reveal_service, "granted_keys", lambda db, pk: list(keys))
+    monkeypatch.setattr(engine_mod, "_may_see_salespeople", lambda db, pk: False)
+    assert engine_mod._lookup_visibility(_Db(), "c-1", None)[3] is expected
 
 
 def test_supplier_visibility_needs_staff_and_the_reveal():
@@ -236,14 +320,17 @@ def test_the_po_domain_admits_a_supplier_and_fetch_maps_it():
     assert "supplier" in gate_mod.ALLOWED["purchase_order"]
     assert fetch_mod.TYPE_TO_PARAM["supplier"] == "supplier_ids"
     sid = str(uuid.uuid4())
-    out = fetch_mod.entity_ids_transformer(
-        {
-            "tool": PO_TOOL,
-            "semantic_input": {},
-            "entities": [{"uuid": sid, "entity_type": "supplier", "code": "ZZTSUP-TY01"}],
-        }
-    )
+    trig = {
+        "tool": PO_TOOL,
+        "semantic_input": {},
+        "entities": [{"uuid": sid, "entity_type": "supplier", "code": "ZZTSUP-TY01"}],
+    }
+    out = fetch_mod.entity_ids_transformer({**trig, "access": {"attributes": [SUPPLIER_GRANT]}})
     assert out["supplier_ids"] == [sid]
+    # The second refusal, below the resolver (the RESTRICTED_SORT_KEYS precedent).
+    refused = fetch_mod.entity_ids_transformer({**trig, "access": {"attributes": [PLACED]}})
+    assert "supplier_ids" not in refused
+    assert refused["_diagnostics"]["refused"] == {"supplier_ids": [sid]}
 
 
 def _resolved(*types: str) -> dict[str, Any]:
@@ -280,6 +367,12 @@ def test_a_product_beside_the_supplier_still_reads_the_po_book():
 def test_a_customer_beside_the_supplier_keeps_the_order_domain():
     v = _verdict("order", "supplier", "customer")
     assert resolve_gate.supplier_ask_reads_purchase_orders(v) is v
+
+
+def test_the_swap_rewrites_order_asks_too():
+    v = {**_verdict("order", "supplier"), "asks": [{"domain": "order"}, {"domain": "incoming"}]}
+    out = resolve_gate.supplier_ask_reads_purchase_orders(v)
+    assert out["asks"] == [{"domain": "purchase_order"}, {"domain": "incoming"}]
 
 
 def test_another_domain_is_left_alone():
@@ -371,22 +464,6 @@ def test_the_supplier_block_renders_with_its_header():
 # --------------------------------------------------------------------------- #
 
 
-def test_the_span_prompt_edit_adds_the_supplier_type_after_the_customer_line():
-    from app.services.ai_prompt_registry import PROMPT_KEYS
-    from app.services.chatbot.head import span_extract
-
-    base = PROMPT_KEYS["chatbot_span_extractor"].fallback() + span_extract.MEANING_PARAGRAPH
-    out = span_extract.with_supplier_type(base)
-    lines = out.split("\n")
-    at = next(i for i, ln in enumerate(lines) if ln.startswith("- customer:"))
-    assert lines[at + 1] == span_extract.SUPPLIER_TYPE_LINE
-    assert out.rstrip().endswith(span_extract.NAME_MEANING_SENTENCE)
-    assert span_extract.with_supplier_type(out) is None, "applied once"
-    plain = span_extract.with_supplier_type(PROMPT_KEYS["chatbot_span_extractor"].fallback())
-    assert span_extract.NAME_MEANING_SENTENCE not in plain, "no meaning sentence on a prompt that asks for none"
-    assert span_extract.with_supplier_type("no anchor here") is None
-
-
 def _migration(name: str):
     import importlib.util
     from pathlib import Path
@@ -398,29 +475,118 @@ def _migration(name: str):
     return module
 
 
-def test_the_span_migration_publishes_unlabelled_once(session_factory):
+def test_the_span_edit_asks_meanings_names_the_supplier_and_reads_chinese_names_by_pinyin():
+    """Crew console pass: the production span prompt (v1) asks for no meaning, so the edit adds it."""
+    from app.services.ai_prompt_registry import PROMPT_KEYS
+    from app.services.chatbot.head import span_extract
+
+    sask = _migration("sask_0002_span_supplier")
+    assert sask.MEANING_PARAGRAPH == span_extract.MEANING_PARAGRAPH, "the frozen copy matches the code"
+    v1 = PROMPT_KEYS["chatbot_span_extractor"].fallback()
+    out = sask.with_supplier_type(v1)
+    lines = out.split("\n")
+    at = next(i for i, ln in enumerate(lines) if ln.startswith("- customer:"))
+    assert lines[at + 1] == sask.SUPPLIER_TYPE_LINE
+    assert span_extract.MEANING_ASK in out, "the span model is asked for meanings"
+    assert span_extract.span_schema(out) is span_extract.SCHEMA
+    assert out.endswith(sask.NAME_MEANING_SENTENCE)
+    assert sask.with_supplier_type(out) is None, "applied once"
+    assert sask.with_supplier_type("no anchor here") is None
+
+
+def test_the_parser_edit_goes_right_after_the_span_marker():
+    from app.services.chatbot.head import lookup_lists as ll_mod
+
+    sask = _migration("sask_0002_span_supplier")
+    text = "head\n== LOOKUP SPANS ==\ntail"
+    out = sask.with_supplier_line(text)
+    assert out == f"head\n== LOOKUP SPANS ==\n{sask.PARSER_SUPPLIER_LINE}\ntail"
+    assert ll_mod.spans_gate_on(out), "the span pass stays on"
+    assert sask.with_supplier_line(out) is None
+    assert sask.with_supplier_line("no marker") is None
+
+
+def _seed_prompts(db) -> str:
+    """Production span v1 and a production parser that runs the span pass; the parser label's version id."""
     from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 
-    db = session_factory()
     _migration("eem_0001_span_pass").seed_span_prompt(db)
-    label_before = db.query(AIPromptLabel.version_id).filter(
-        AIPromptLabel.name == "chatbot_span_extractor", AIPromptLabel.label == "production"
-    ).scalar()
+    top = db.query(AIPromptVersion.version).filter(AIPromptVersion.name == "chatbot_semantic_parser").order_by(
+        AIPromptVersion.version.desc()
+    ).first()
+    parser_row = AIPromptVersion(
+        name="chatbot_semantic_parser", version=(int(top[0]) if top else 0) + 1, type="text",
+        template="ZZT parser\n== LOOKUP SPANS ==\nrules", variables=["current_date"], config_json={"blocks_hash": "x"},
+    )
+    db.add(parser_row)
+    db.flush()
+    label = db.query(AIPromptLabel).filter(
+        AIPromptLabel.name == "chatbot_semantic_parser", AIPromptLabel.label == "production"
+    ).first()
+    if label is None:
+        db.add(AIPromptLabel(name="chatbot_semantic_parser", label="production", version_id=parser_row.id))
+    else:
+        label.version_id = parser_row.id
+    db.flush()
+    return parser_row.id
+
+
+def _labels(db) -> dict[str, str]:
+    from app.models.ai_prompt import AIPromptLabel
+
+    return {
+        r.name: str(r.version_id)
+        for r in db.query(AIPromptLabel).filter(AIPromptLabel.label == "production")
+        if r.name in ("chatbot_semantic_parser", "chatbot_span_extractor")
+    }
+
+
+def test_the_migration_publishes_a_paired_span_and_parser_version_unlabelled_once(session_factory):
+    from app.models.ai_prompt import AIPromptVersion
+
+    db = session_factory()
+    _seed_prompts(db)
+    labels = _labels(db)
     sask = _migration("sask_0002_span_supplier")
-    version = sask.publish(db)
-    assert version is not None
-    row = db.query(AIPromptVersion).filter(
-        AIPromptVersion.name == "chatbot_span_extractor", AIPromptVersion.version == version
+    span_v, parser_v = sask.publish(db)
+    assert span_v is not None and parser_v is not None
+    span_row = db.query(AIPromptVersion).filter(
+        AIPromptVersion.name == "chatbot_span_extractor", AIPromptVersion.version == span_v
     ).one()
-    assert "- supplier:" in row.template
-    assert db.query(AIPromptLabel.version_id).filter(
-        AIPromptLabel.name == "chatbot_span_extractor", AIPromptLabel.label == "production"
-    ).scalar() == label_before, "the production label never moves"
-    assert sask.publish(db) is None
+    parser_row = db.query(AIPromptVersion).filter(
+        AIPromptVersion.name == "chatbot_semantic_parser", AIPromptVersion.version == parser_v
+    ).one()
+    assert sask.SUPPLIER_TYPE_LINE in span_row.template and sask.NAME_MEANING_SENTENCE in span_row.template
+    assert sask.PARSER_SUPPLIER_LINE in parser_row.template and "== LOOKUP SPANS ==" in parser_row.template
+    assert parser_row.config_json["span_prompt_version_id"] == str(span_row.id)
+    assert parser_row.config_json["blocks_hash"] == "x", "the base version's config rides along"
+    assert _labels(db) == labels, "no production label moves"
+    count = db.query(AIPromptVersion).count()
+    assert sask.publish(db) == (span_v, parser_v) and db.query(AIPromptVersion).count() == count
 
 
-def test_the_parser_template_names_the_supplier_hint_and_still_lints():
-    from app.services.chatbot.head import parser_template
+def test_a_console_parser_pin_runs_its_paired_span_prompt_on_a_dry_run_only(session_factory):
+    from types import SimpleNamespace
 
-    assert "\n- supplier: a company we buy goods from" in parser_template.TEMPLATE
-    assert parser_template.lint(parser_template.TEMPLATE) == []
+    from app.services.chatbot import engine as engine_mod
+
+    db = session_factory()
+    _seed_prompts(db)
+    sask = _migration("sask_0002_span_supplier")
+    span_v, parser_v = sask.publish(db)
+    from app.models.ai_prompt import AIPromptVersion
+
+    parser_id = db.query(AIPromptVersion.id).filter(
+        AIPromptVersion.name == "chatbot_semantic_parser", AIPromptVersion.version == parser_v
+    ).scalar()
+    paired = db.query(AIPromptVersion.config_json).filter(AIPromptVersion.id == parser_id).scalar()["span_prompt_version_id"]
+
+    def env(overrides):
+        return SimpleNamespace(model_extra={"prompt_overrides": overrides})
+
+    pin = {"chatbot_semantic_parser": str(parser_id)}
+    assert engine_mod._span_override(db, env(pin), dry_run=True) == paired
+    assert engine_mod._span_override(db, env(pin), dry_run=False) is None, "a live turn never pins"
+    own = {**pin, "chatbot_span_extractor": "span-own"}
+    assert engine_mod._span_override(db, env(own), dry_run=True) == "span-own"
+    assert engine_mod._span_override(db, env({}), dry_run=True) is None

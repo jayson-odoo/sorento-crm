@@ -26,18 +26,30 @@ See `supplier-ask-acceptance-criteria.md`.
 ## As built
 
 - PO placed: `supplier_ids` on `purchase_order_service` (rows, summary, unshipped SPO query), the
-  `/procurement/purchase-orders/placed` route and the MCP tool `crm_procurement_po_placed_list`.
+  `/procurement/purchase-orders/placed` route and the MCP tool `crm_procurement_po_placed_list`. Under a
+  `contact_id` without the `purchase_orders.supplier` reveal the route answers 403 (security review).
 - Kind: `contracts.ENTITY_HINTS` + `supplier`; `contracts.supplier_visible` = staff profile + the
-  `purchase_orders.supplier` reveal; `chatbot_entity_kinds` row (migration `sask_0001_supplier_kind`).
-- Gate/fetch: `purchase_order` admits `supplier`; `supplier` -> `supplier_ids`.
+  `purchase_orders.supplier` reveal; `chatbot_entity_kinds` row and `supplier: optional_filter` on the
+  purchase_order domain's narrowing (migration `sask_0001_supplier_kind`), so several suppliers for one word
+  ask "Which one do you mean?" through the existing roster (`turn/narrow.decide`), never an unfiltered list.
+- Gate/fetch: `purchase_order` admits `supplier`; `supplier` -> `supplier_ids`, refused again in
+  `fetch.entity_ids_transformer` without the reveal (the `RESTRICTED_SORT_KEYS` precedent).
 - Resolve: supplier tokens and resolver rows are dropped for anyone `supplier_visible` refuses.
 - Route: an order/sales verdict naming a supplier and no customer-side party becomes
-  `purchase_order` / `check_po` right after the access check (`engine`, the dealer-cost swap's precedent),
-  decided by the entity kind, never a word.
-- Span pass: `lookup_lists._supplier_rows` (name + code) for office contacts; `list_resolver.SPAN_TYPES`
-  gains `supplier`. Floors borrowed from the customer list (both are company names), not yet measured.
-- Prompts, UNLABELLED (owner moves the label after the eval): parser template hint line; span prompt
-  version with a supplier type line and a pinyin-meaning sentence for company names in Chinese characters.
+  `purchase_order` / `check_po` (its `asks` too) right after the access check (`engine`, the dealer-cost
+  swap's precedent), decided by the entity kind, never a word.
+- Span pass: `lookup_lists._supplier_rows` (name + code) only for office staff holding the supplier reveal;
+  `list_resolver.SPAN_TYPES` gains `supplier`. Floors borrowed from the customer list, not yet measured.
+- Prompts, UNLABELLED (migration `sask_0002_span_supplier`): a span version (production text + the meaning
+  paragraph it lacked + a supplier type line + a pinyin sentence for company names in Chinese characters) and a
+  span-pass parser version (span marker kept, one supplier line after it) that records its span version
+  (`config_json.span_prompt_version_id`). A console dry run pinning that parser runs that span prompt too
+  (`engine._span_override`); a live turn never does.
+
+## Owner steps to promote (after the chatbot eval)
+
+1. Prompts page: move `production` on `chatbot_span_extractor` to the SUPPLIER-ASK version.
+2. Prompts page: move `production` on `chatbot_semantic_parser` to the SUPPLIER-ASK version.
 
 ## Open
 

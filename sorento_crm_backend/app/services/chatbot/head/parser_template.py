@@ -140,7 +140,6 @@ An entity is a concrete value THIS message names that could look up or filter a 
 - category: a product type or family, not one item ("kitchen tap", "mirror", "wash basin").
 - brand: a name on the Known brands line (see R-P2-09).
 - customer: the party whose order, DO, account or delivery the ask is about (a person, dealer or trading name, any case); a name in a delivery or order ask is the customer the goods go to, not an inbound_shipment.
-- supplier: a company we buy goods from (a supplier, vendor or factory), by name or code, when a Supplier candidates line names it; canonical_code is that line's name. What is outstanding with a supplier is our open purchase orders to it.
 - transporter: the carrier moving goods. order: an existing customer order or its DO number. promotion: a named promotion or flyer.
 - attachment: a company document (see R-P2-07). attachment_type: the kind of file asked, one per file word of a file ask (see R-P2-06).
 - form: a named form or form type. inbound_shipment: an incoming supplier shipment or container number. warehouse: a named warehouse or location (see R-P2-03).

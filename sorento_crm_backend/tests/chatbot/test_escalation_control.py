@@ -214,7 +214,8 @@ class TestOffersEscalation:
         (which reference kinds the asker may probe), and `turn_runtime.py`'s `ref_staff`
         flag (staff read PO / PR numbers). V1-DOC-SCOPE slice 3 added one more data gate in
         `engine.py`: `customer_docs_hidden` (an unlinked contact that is not staff runs no
-        customer DO probe). Another call in either file turns this red."""
+        customer DO probe). SUPPLIER-ASK added one data gate in `engine.py`: whether the asker
+        may see suppliers (`contracts.supplier_visible`). Another call in either file turns this red."""
         import ast
 
         root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
@@ -227,7 +228,7 @@ class TestOffersEscalation:
         assert calls == {
             "answer_bridge.py": 1,
             "turn/state.py": 1,
-            "engine.py": 3,
+            "engine.py": 4,
             "turn_runtime.py": 1,
         }, calls
 

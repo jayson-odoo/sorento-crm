@@ -63,6 +63,7 @@ from app.services.chatbot.contracts import (
     TURN_FAILURE_STAGES,
     Envelope,
     named_count,
+    SUPPLIER_GRANT,
     supplier_visible,
     visible_reference_kinds,
 )
@@ -1230,11 +1231,15 @@ def _customer_visibility(db: Session, resolved: str) -> tuple[bool, frozenset[st
     return False, None
 
 
-def _sees_suppliers(include_customers: bool, customer_ids: frozenset[str] | None) -> bool:
-    """SUPPLIER-ASK: the Supplier block is office staff's only: the contact `_customer_visibility` gives every
-    customer (staff), never a dealer held to its links. The supplier reveal itself is checked at the resolver
-    (`contracts.supplier_visible`), where the turn's access is known."""
-    return bool(include_customers) and customer_ids is None
+def _may_see_suppliers(db: Session, resolved: str) -> bool:
+    """SUPPLIER-ASK: the Supplier block is built only for office staff (every customer visible, never a dealer
+    held to its links) holding the `purchase_orders.supplier` reveal, the key that shows a PO's supplier. Raises on
+    a lookup error; `_lookup_visibility` runs it in a savepoint and a failure means no block."""
+    from app.services import contact_customer_scope, contact_field_reveal_service
+
+    if not contact_customer_scope.contact_customer_scope(db, str(resolved)).staff:
+        return False
+    return SUPPLIER_GRANT in contact_field_reveal_service.granted_keys(db, resolved)
 
 
 def _guarded(db: Session, fn: Any, default: Any) -> Any:
@@ -1249,9 +1254,9 @@ def _guarded(db: Session, fn: Any, default: Any) -> Any:
 
 def _lookup_visibility(
     db: Session, contact_respond_id: str, space_id: Any
-) -> tuple[bool, bool, frozenset[str] | None]:
-    """(include_salespeople, include_customers, customer_ids) for the contact: the contact is resolved once and each
-    check runs in its own savepoint, so a database error in one drops only that block."""
+) -> tuple[bool, bool, frozenset[str] | None, bool]:
+    """(include_salespeople, include_customers, customer_ids, include_suppliers) for the contact: the contact is
+    resolved once and each check runs in its own savepoint, so a database error in one drops only that block."""
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
     resolved = _guarded(
@@ -1265,7 +1270,8 @@ def _lookup_visibility(
     include_customers, customer_ids = (
         _guarded(db, lambda: _customer_visibility(db, str(resolved)), (False, None)) if resolved else (False, None)
     )
-    return include_salespeople, include_customers, customer_ids
+    include_suppliers = bool(resolved) and _guarded(db, lambda: _may_see_suppliers(db, str(resolved)), False)
+    return include_salespeople, include_customers, customer_ids, include_suppliers
 
 
 def _lookup_lines(
@@ -1283,12 +1289,14 @@ def _lookup_lines(
         # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
         pieces_ready = lookup_lists.prefetch(message, embed)
-        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        include_salespeople, include_customers, customer_ids, include_suppliers = _lookup_visibility(
+            db, contact_respond_id, space_id
+        )
         with db.begin_nested():
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group,
-                include_suppliers=_sees_suppliers(include_customers, customer_ids),
+                include_suppliers=include_suppliers,
             )
             brand_words = lookup_lists.brand_words(db, brands)
             lookup_lists.warm(rows, embed)
@@ -1333,23 +1341,42 @@ class _SpanPrep:
     row_ids: bool = False
 
 
+def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | None:
+    """SUPPLIER-ASK: the span prompt version a DRY RUN pins: its own `prompt_overrides` entry, else the span version
+    the pinned parser version was published with (`config_json.span_prompt_version_id`, migration
+    `sask_0002_span_supplier`), because the Chatbot Console pins only the parser. None on a live turn."""
+    own = _prompt_override(envelope, span_extract.PROMPT_KEY, dry_run=dry_run)
+    if own:
+        return own
+    parser_pin = _prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run)
+    if not parser_pin:
+        return None
+    from app.models.ai_prompt import AIPromptVersion
+
+    row = db.query(AIPromptVersion.config_json).filter(AIPromptVersion.id == parser_pin).first()
+    paired = (row[0] or {}).get("span_prompt_version_id") if row and isinstance(row[0], dict) else None
+    return str(paired) if paired else None
+
+
 def _span_prep(
     db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
-    group_categories: bool = False, row_ids: bool = False,
+    group_categories: bool = False, row_ids: bool = False, span_override: str | None = None,
 ) -> _SpanPrep | None:
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
     rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
     try:
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
-        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        include_salespeople, include_customers, customer_ids, include_suppliers = _lookup_visibility(
+            db, contact_respond_id, space_id
+        )
         with db.begin_nested():
             from app.services.product_spec_registry import active_registry
 
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group_categories,
-                include_suppliers=_sees_suppliers(include_customers, customer_ids),
+                include_suppliers=include_suppliers,
             )
             spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
             brand_words = lookup_lists.brand_words(db, brands)
@@ -1357,7 +1384,7 @@ def _span_prep(
         config = None
         try:
             with db.begin_nested():
-                config = span_extract.resolve_config(db, llm_choice=llm_choice)
+                config = span_extract.resolve_config(db, llm_choice=llm_choice, override_version_id=span_override)
         except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
             logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
         lookup_lists.warm([*rows, *spec_keys], embed)
@@ -5291,6 +5318,7 @@ def _run_stages_body(  # noqa: PLR0915
                 db, user_turn.own_text, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
                 lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
                 group_categories=parser_config.category_pick, row_ids=parser_config.row_ids,
+                span_override=_guarded(db, lambda: _span_override(db, envelope, dry_run=dry_run), None),
             )
             lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
         elif parser_config.lookup_lists:
@@ -5965,7 +5993,9 @@ def _run_stages_body(  # noqa: PLR0915
         # SUPPLIER-ASK (owner, 1 Nov 2026): "outstanding for <supplier>" is that supplier's open
         # POs, for an asker who may see suppliers (staff with the supplier reveal); for anyone
         # else the supplier word is dropped at the resolver (`resolve_gate.resolve_entity_body`).
-        if supplier_visible(access.get("attributes"), is_staff_profile(state_in.profile)):
+        # One staff check for the turn: the swap here and the resolver ctx below both read it.
+        asker_sees_suppliers = supplier_visible(access.get("attributes"), is_staff_profile(state_in.profile))
+        if asker_sees_suppliers:
             from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
 
             swapped = supplier_ask_reads_purchase_orders(verdict)
@@ -6688,9 +6718,7 @@ def _run_stages_body(  # noqa: PLR0915
                 # REF-PROBES: the reference kinds this asker may have probed.
                 "reference_kinds": _reference_kinds(ctx, customer_scope, state_out.profile),
                 # SUPPLIER-ASK: a supplier is looked up only for staff with the supplier reveal.
-                "supplier_visible": supplier_visible(
-                    (ctx.get("access") or {}).get("attributes"), is_staff_profile(state_out.profile)
-                ),
+                "supplier_visible": asker_sees_suppliers,
             }
             resolve_outcome = (
                 turn_runtime.resolve_kinds(

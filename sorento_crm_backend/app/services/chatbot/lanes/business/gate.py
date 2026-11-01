@@ -362,7 +362,8 @@ def _display_name(match: Any) -> str | None:
     the customer typed. A product code IS the product's name to this audience.
     """
     display = jsc.get(match, "display")
-    for key in ("customer_name", "debtor_name"):
+    # SUPPLIER-ASK: a supplier's `canonical_code` is its supplier code, not what was typed either.
+    for key in ("customer_name", "debtor_name", "supplier_name"):
         value = jsc.get(display, key)
         if jsc.truthy(value):
             return jsc.js_string(value).strip()

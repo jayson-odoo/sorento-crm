@@ -810,6 +810,8 @@ def seed_chatbot_policy() -> None:
         s11.apply_narrowing(conn)
     with engine.begin() as conn:
         s12.apply_narrowing(conn)
+    with engine.begin() as conn:
+        sask.apply_narrowing(conn)
     # After every narrowing step: the `sales` row copies the `order` row's narrowing.
     with engine.begin() as conn:
         pdyn1.apply(conn)
