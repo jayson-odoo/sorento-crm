@@ -41,7 +41,7 @@ for the contact on its page is not offered over WhatsApp either.
 
 | The dealer asks | What happens | Undo |
 | --- | --- | --- |
-| "Please send a stock inquiry for 40 pcs of SRT5733, needed by mid December." (A plain "can I get 40 pcs?" is a stock check: the bot answers it.) | A **Stock Inquiry** goes to the project sales team, requested by the contact itself, with the product, quantity and any date, project or note the dealer gave. | "undo" within 10 minutes withdraws (deletes) it, as long as nobody on the team has responded to it, taken it, commented on it or moved it on. After that the agent replies *"It is with the team now, so I can't withdraw it. I can add a note to it instead."* |
+| "SRT5733, I need 40 pcs, please ask your project sales team for the lead time." | A **Stock Inquiry** goes to the project sales team, requested by the contact itself, with the product, quantity and any date, project or note the dealer gave. | "undo" within 10 minutes withdraws (deletes) it, as long as nobody on the team has responded to it, taken it, commented on it or moved it on. After that the agent replies *"It is with the team now, so I can't withdraw it. I can add a note to it instead."* |
 | "For my inquiry last week, the customer can only take delivery on Tuesday" | A note on one of the dealer's own submitted requests (stock inquiry, complaint, purchase request or sponsorship form). The team sees it on the form's comments. | The dealer can ask to remove their own note. |
 | "What did I send you?" | A list of the dealer's own submitted requests with their numbers and statuses. | - |
 
@@ -57,6 +57,11 @@ the project sales team. Reply undo within 10 minutes to withdraw it."* An unansw
 expires after 10 minutes and nothing is sent. The project sales team is told about a new stock
 inquiry as when it comes from the portal. An email it was already sent stays sent after a
 withdraw, and its link then opens no record.
+
+Each WhatsApp message is still routed one at a time, and today many ways of asking for a stock inquiry
+are answered by the bot as a stock check, with no confirm block. If that happens, the dealer can submit
+the inquiry from their portal; notes, undo and "what have I sent" questions do reach these requests.
+A plain "can I get 40 pcs?" is always a stock check that the bot answers.
 
 Not over WhatsApp (yet): warranty claims and complaints, purchase requests, sponsorship forms,
 sample and price tag requests, orders, and changes to the contact's own details. The agent says
