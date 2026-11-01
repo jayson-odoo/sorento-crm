@@ -1,8 +1,8 @@
 # PLAN: retire n8n, reuse its box as the HA standby (N8N-DECOM-HA)
 
 Status: APPROVED with owner rulings 1 Nov about 12:05 (section 6); H1 and H4a done (H4a rehearsal
-all PASS 1 Nov); in progress: H2 (owner pre-flight screenshots), then H3-H4 on node A + witness,
-and stage 0 (owner read-only checks). The lane changes nothing in production:
+all PASS 1 Nov); H2 pre-flight done 1 Nov (owner checks; facts in section 5); in progress: E1
+(edge fix, details private) before H3, H4b, and stage 0 (the n8n box checks are still to run). The lane changes nothing in production:
 every prod step goes to crew as owner commands. Track: L (cross-repo, prod infra), LEAD pattern;
 each CRM PR in section 4 is its own lane with its own track.
 
@@ -36,6 +36,27 @@ read-only owner checks (screenshots); until they arrive, section 1 rests on loca
   touch only node A and the witness can start now (section 5).
 
 ## 1. Inventory: n8n workflows
+
+**Live check, 1 Nov (owner, read-only):** the production n8n (2.27.4, queue mode: main, worker, its own
+Postgres 15, Redis 7 and Mongo 7) has 99 of 155 workflows active. Runs in the last 14 days (errors in
+brackets): sla-policy-checker 20160; save-message-redis 19271; consume-main (S7 spine) 9513; sendmsg
+9412; findcontact 9377; sorento-main 9310; chatbot-sender 4706; dispatcher 877; redis-consume-queue-mongo
+463 (287 errors, 62%); healthcheck 335 (1); send-attachments 323; upload-attachments 306;
+failover-poller-LIVE 175; respond-send-user 146; close-convo 40; create-update-contact 37; add-comment
+32; ht-sweeper 29; working-day-detection 14; error-logger 13; every fc-* and failover-* clone 0. So the
+S7 spine is live and the n8n chatbot-sender already carries CRM-started turns (stage 1 is at least
+partly in effect; the direct-ingress setting's value is still to be read). The table below is from the
+local exports and stays as the map of jobs; the counts above are the live truth.
+
+**redis-consume-queue-mongo, 62% errors (flagged):** every 5 s it pops one message from n8n's Redis list
+(filled by save-message-redis) and POSTs it to `/api/v1/external/chat-history/messages`
+(`sorento_crm_backend/app/api/v1/external/chat_history.py:63`): the chat-history mirror. The CRM already
+writes the same rows itself (respond.io webhook, `app/api/v1/public/respond_webhook.py:335`, and the
+enabled chat-history reconcile, `app/scheduler/task_scheduler.py:347`), so no CRM PR has to replace it:
+it retires at stage 1 after a read-only check of its error message and of the Redis list's backlog.
+Whether n8n saves this workflow's successful runs is UNVERIFIED, so 62% may overstate the failure rate.
+New job not in the export map: working-day-detection (daily; the CRM has work-calendar endpoints,
+`app/api/v1/external/work_calendar.py:23`, `:57`; what it writes is UNVERIFIED, owner export decides).
 
 Source: local exports only. Crew has no n8n API access (crew config points every n8n URL at
 `.invalid`). Newest export of any workflow is 3 Oct 2026; the export repo's HEAD is 2 Sep with a
@@ -114,8 +135,8 @@ workflow and turns the CRM job on in the same minute.
 
 | Stage | What | Who | Needs | Rollback |
 |---|---|---|---|---|
-| 0 | Read-only checks + full export archived privately; deactivate test clones the 14-day counts show unused | owner | - | reactivate |
-| 1 | `chatbot_direct_ingress_mode` to `all` (if not already): the CRM starts every turn, n8n only sends | owner, Settings | respond.io webhook to the CRM live (`RESPOND_WEBHOOK_SECRET` set) AND the n8n `chatbot-sender` live with its URL + key on the workspace: without them a covered contact silently keeps the n8n path (`sender_configured`, `app/services/chatbot/direct_ingress.py:215-227`). The exports hold the sender only as an inactive template (UNVERIFIED live). If it is not live, skip stage 1: stage 2 turns on both switches together | set `off` |
+| 0 | DONE 1 Nov except the full export (owner's Mac, from the n8n UI): read-only checks of both boxes and n8n. Next: deactivate the fc-* and failover-* clones (0 runs in 14 days) | owner | - | reactivate |
+| 1 | Retire redis-consume-queue-mongo and save-message-redis (the CRM writes chat history itself) after the error/backlog check. `chatbot_direct_ingress_mode` to `all` (if not already; chatbot-sender's 4706 runs say it is on for some or all contacts): the CRM starts every turn, n8n only sends | owner, Settings | respond.io webhook to the CRM live (`RESPOND_WEBHOOK_SECRET` set) AND the n8n `chatbot-sender` live with its URL + key on the workspace: without them a covered contact silently keeps the n8n path (`sender_configured`, `app/services/chatbot/direct_ingress.py:215-227`). The exports hold the sender only as an inactive template (UNVERIFIED live). If it is not live, skip stage 1: stage 2 turns on both switches together. Owner check 1 Nov: the workspace sender URL and retry URL ARE set, so stage 1 is viable (whether the n8n workflow behind it answers: the n8n box check) | set `off` |
 | 2 | PR A ships; switch "CRM sends replies" on (and direct ingress `all`, if stage 1 was skipped) after a test on the owner's own number | lane A, owner | stage 1, or PR A alone | switch off: back to the n8n path |
 | 3 | PRs B, C, D, E ship in parallel lanes; each switched on with its n8n twin off (poller, ht-sweeper + forms, SLA schedule + hand-off + close, revise) | lanes B-E, owner | stage 2 for B and C | per PR: CRM switch off, n8n workflow back on |
 | 4 | PR F ports EVERY attachment type the n8n workflow handles (Q5 b), shipped type by type (`triggers_n8n_webhook` off per type as each native task lands) | lane F | the live workflow export (the only copy in the repo's reach is a backup of 3 Aug or older) | per type: flag back on |
@@ -155,11 +176,13 @@ PR-sized steps:
 | # | Step | Who | Can start | Size |
 |---|---|---|---|---|
 | H1 | Amend plan v2 + trim the templates above, delete `switchback.sh` and drill 8 (this lane's PR) | lane | now | S |
-| H2 | Read-only pre-flight on node A and the witness (Postgres settings, data directory, sizes, compose location, OS, watchdog, free capacity); then capture the prod compose, nginx and `.deploy.env` key names into the private infra repo (v2 step 9.1) | owner commands, crew | now | 0.5 d |
+| H2 | Read-only pre-flight on node A and the witness: DONE 1 Nov. Node A: Postgres 17.9, database about 54 GB, WAL archiving off, `wal_log_hints` off, data checksums off, superuser `postgres` present, pgbouncer present, softdog available but not loaded, no `.deploy.env` keys yet, about 7 GB memory free of 16. Witness: about 9 GB memory and 100 GB disk free, room for etcd; it also runs an n8n container (whether that is the production n8n: the n8n box check). Still to do: capture the prod compose, nginx and `.deploy.env` key names into the private infra repo (v2 step 9.1) | owner commands, crew | now | 0.5 d |
+| E1 | Edge fix from the 1 Nov owner checks: apply `documentation/runbooks/prod-edge-lockdown.md` (Tier 0, merged earlier) with the current facts; details stay private | owner, from lane-written steps | now, before H3 | none |
 | H3 | WireGuard between node A and the witness; etcd bootstrapped with node A and the witness ONLY (2 members, quorum 2, no fault tolerance until node B joins; listing node B unstarted pins the etcd cluster version and breaks Patroni's v3 API, H4a finding); R2 bucket + scoped token | owner commands | after H2 | 1 d |
 | H4a | DONE 1 Nov, all PASS on the templates as written (head 456f4dd572; `infra/rehearsal/`, throwaway VM, synthetic data): adoption outage 6 s from before the stop to the first write, row counts equal, one leader, WAL archiving, `wal-g backup-push`, PITR to a noted time exact, postmaster kill restarts, one etcd member down 70 s with node A still primary and writing (`failsafe_mode`), ha-checks ok with `EXPECT_REPLICAS=0 ETCD_MEMBERS=2`. Template fixes it found: etcdctl TLS endpoint, 2-member etcd bootstrap, CN-less Patroni etcd cert, wal-g on the unix socket, ha-checks auth reading; Patroni 4.0.5 + WAL-G v3.0.5 pinned. Not covered: watchdog device, a replica | lane | done | 1 d |
-| H4 | Adopt prod Postgres into Patroni on node A as a one-member cluster, WAL-G archiving on (one 1-2 minute window, v2 step 6). Gives point-in-time restore (RPO 24 h to about 60 s) before node B exists. Until node B joins, `infra/scripts/ha-checks.sh` runs with `EXPECT_REPLICAS=0 ETCD_MEMBERS=2` | owner commands, crew on the call | after H2, H3, H4a | 1.5-2 d |
-| H5 | Release deploys both nodes, migrations only on the leader (v2 step 7) | lane | after H2 (needs the prod compose shape) | 1-1.5 d |
+| H4b | Release path on a Patroni node (crew go 1 Nov): today's deploy would break on the first release after H4. `scripts/blue_green_deploy.sh` exports `.deploy.env` so `COMPOSE_FILE` (with `compose.ha.yml`) reaches every compose call; a preflight fails loudly when `compose.ha.yml` is present but not loaded, or when the HA admin connection (`-u postgres`, peer auth) or `POSTGRES_DB` is missing; the snapshot and alembic preflight use that admin connection in HA mode (non-HA commands unchanged); `scripts/ops/backup-db.sh` can exec as `postgres`; `infra/scripts/role-watcher.sh` never recreates a running worker (`--no-recreate`), starts workers on the image tag the last deploy recorded, and skips its tick while the deploy lock is held. Analysis: crew/state/files (private). Phase B items move to H5 | lane | now (branch `crew/n8n-decom-ha-h4b`, PR after #2063 merges) | S-M |
+| H4 | Adopt prod Postgres into Patroni on node A as a one-member cluster, WAL-G archiving on (one 1-2 minute window, v2 step 6). Gives point-in-time restore (RPO 24 h to about 60 s) before node B exists. Until node B joins, `infra/scripts/ha-checks.sh` runs with `EXPECT_REPLICAS=0 ETCD_MEMBERS=2`. Inside the window (never before: the deploy preflight refuses a half-configured box): create `.deploy.env` with `COMPOSE_FILE` naming `compose.ha.yml`, stage `compose.ha.yml`, install `role-watcher.sh` and `backup-db.sh` by hand (the release copies only `blue_green_deploy.sh`), set `DEPLOY_LOCK_PATH` in the watcher unit, write `.ha-image-tag` from the running worker's image sha, set the backup's `DB_USER=postgres`, load softdog, and check the project folder's mode (`stat -c %a` on it): remove any group/other write bit, because the role watcher refuses to start workers from a group/other-writable folder (the deploy runbook allows such a folder today, `documentation/runbooks/memory-and-deploy-guards.md:71-72`) | owner commands, crew on the call; an OWNER WINDOW: nothing runs on prod until the owner schedules it | after H2, H3, H4a, H4b merged | 1.5-2 d |
+| H5 | Release deploys both nodes, migrations only on the leader (v2 step 7): both workflows get the second host, leader first; the deploy is role-aware on a replica (SKIP_MIGRATIONS=1, no snapshot, no worker steps); `start.sh` checks the role itself so a demoted node's restart never runs alembic; releases stay expand-only; a failover mid-deploy fails the deploy for a re-run on the new leader; backups only on the leader | lane | after H2 (needs the prod compose shape) | 1-1.5 d |
 | H6 | Node B: fresh OS (Q3 a), edge rules, WireGuard, etcd member 3 added with `etcdctl member add` (learner, then promote) and added to `PATRONI_ETCD3_HOSTS` on both nodes, CRM compose with `SKIP_MIGRATIONS=1`, role watcher; Patroni seeds the replica; `synchronous_mode` on (non-strict) once the measured RTT is under 2 ms (v2 line 137) | owner commands | after stage 6 ends, H5 merged | 1 d |
 | H7 | Allowlists for node B's egress address (OpenAI and any other provider with one; v2 step 8) | owner | with H6 | - |
 | H8 | Cloudflare LB + monitor on `/api/v1/health/role` (section 5b) | owner | after H6 | 0.5 d |
@@ -236,3 +259,13 @@ yes, A. No, actually, every time. Every time." Crew's reading, applied in this p
 - Adopting the running prod Postgres into Patroni points Patroni at the real data directory; a wrong
   path makes Patroni create an empty cluster (v2 step 6). H2's pre-flight reads the path and H4a
   rehearses the adoption first.
+- H4b accepted risk: the role watcher accepts a deploy-lock file that others can read (mode 644, as
+  the runbooks create it), refusing only one that is group- or other-writable, the rule
+  `scripts/ops/restore-test.sh` already uses. A local account with read access could therefore hold
+  the lock and pause worker starts; the nodes are single-tenant (root and the release user only), so
+  this is accepted rather than forcing a mode change on the live lock at H4. Trigger: if a third
+  account, or a host process under another uid, is ever added to a node, move the lock to mode 600
+  owned by the release user (root can still open it).
+- From the first release that carries H4b, the deploy refuses a `.deploy.env` that is group- or
+  other-writable (non-HA too). The 1 Nov pre-flight found no keys in it (it may not exist); the owner
+  checks its mode before that release.
