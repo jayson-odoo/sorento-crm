@@ -125,6 +125,40 @@ only non-zero counts in this order: `1 partial`, `1 rejected`. "line" is singula
 - **AC-RF-53** The revision id is at most 32 characters. The file never contains either full template code as
   one token (built from two halves, as `oisn_0001` does: other OI tests scan for that token).
 
+## I. Owner hand test, 1 Nov 2026 (FAIL on 453130d25)
+
+Owner: "reserve: Input should be 'parked', 'needs_reserve', 'notice_parked' or 'reserved'" toast on a detail page; prev/next
+gone after changing the line filter; "when i switch between Document and Lines, the filter need to preserve, cause some CS
+they like to use Lines view to reserve".
+
+`?reserve=` has two meanings on the detail page: a list status (`parked`, `needs_reserve`, `notice_parked`, `reserved`,
+written by the list) and a request id (written by the one-OI email link, including emails already in inboxes).
+
+- **AC-RF-80** A detail page opened with `reserve` holding anything other than a list status (a request id, or a value such
+  as `requested`) makes no failing API call and shows no toast. The pager's list call sends no `reserve`. Lines still
+  preselects "Request to reserve" for a request id.
+- **AC-RF-81** Changing the line filter on a detail page keeps the list's own filters in the URL, `reserve=needs_reserve`
+  included, so the pager asks about the same list and prev/next stays. Only a request id is dropped from the URL when the
+  line filter changes.
+- **AC-RF-82** Prev/next never carries a request id on to the next OI. A list status stays, because the next OI is on that list.
+- **AC-RF-83** `reserve=reserved` or `reserve=notice_parked` does not preselect "Request to reserve" on the Lines tab, because
+  those lines are already answered and the tab would read "No line matches the filter". `needs_reserve`, `parked` and a
+  request id still preselect it.
+- **AC-RF-84** Documents to Lines with `inquiry_no` in the URL keeps `inquiry_no`. Lines shows a removable chip naming the OIs,
+  and every row of exactly those OIs: no default narrowing (acknowledge, link horizon, or any other default) hides one, as
+  state All does on Documents. Lines to Documents keeps `inquiry_no` too.
+- **AC-RF-85** The Documents state chosen with that filter (Outstanding, All, Completed) comes back when the user returns from
+  Lines. It is never sent to the Lines API as a row state, because Lines' `state` means something else.
+- **AC-RF-86** The Lines API takes `inquiry_no` with the same rule as Documents: exact, multi-value, no 200-value cap, company
+  scoped. Every Lines route sharing that filter set honours it (list, schedule, and any count or export from that screen).
+- **AC-RF-87** Removing the Lines chip, or "Clear filters", drops `inquiry_no` from the URL. A filter change, sort or page change
+  on Lines keeps it. A detail page opened from Lines returns to Lines with the filter on.
+- **AC-RF-88** With no `inquiry_no`, the toggle stays as it is: a clean URL, since the two screens' other filters mean different
+  things.
+
+A one-OI email link names no list, so there is nothing to walk unless that OI is on the user's default list page: prev/next
+stays hidden there, as it does for any deep link (`hooks/useListPager.ts`), and changing the line filter does not change that.
+
 ## H. Size and the export
 
 - **AC-RF-60** A 105-line reserved email with a REASON column renders at or below 102 KiB (the Gmail clip size).
