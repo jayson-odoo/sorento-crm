@@ -1255,7 +1255,7 @@ describe('PriceTagRequestDetail - line pricing is told the combo (PRICETAG-COMBO
     const { lookupLinePricing } = await import('../../services/priceTagRequestService');
     mockGet.mockResolvedValue(
       requestWith({
-        lines: [lineWith({ id: 'line-c', code: 'SRTBF11834', combo_id: 'combo-1' })],
+        lines: [lineWith({ id: 'line-c', code: 'SRTBF99999', combo_id: 'combo-1' })],
       }),
     );
     renderDetail();
