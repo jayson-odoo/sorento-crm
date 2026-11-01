@@ -140,3 +140,116 @@ describe('WhatsAppBlocks: inline code (round 8)', () => {
     expect(container.querySelector('code')?.textContent).toBe('<b>x</b>');
   });
 });
+
+// Round 9: a marker that wraps a code span must style the run, not print its raw ends (AC-21).
+describe('WhatsAppBlocks: a marker around inline code (round 9)', () => {
+  it('bold around a code span: strong holding a code element, no raw * or backtick', () => {
+    const { container } = render(<WhatsAppBlocks text={'*Sales Orders (`/scm/sales-orders`)*'} />);
+    const strong = container.querySelector('strong');
+    expect(strong).not.toBeNull();
+    expect(strong!.querySelector('code')?.textContent).toBe('/scm/sales-orders');
+    expect(container.textContent).not.toContain('*');
+    expect(container.textContent).not.toContain('`');
+    expect(container.textContent).toBe('Sales Orders (/scm/sales-orders)');
+  });
+
+  it('italic around a code span: em holding a code element, no raw _ or backtick', () => {
+    const { container } = render(<WhatsAppBlocks text={'_Sales Orders (`/scm/sales-orders`)_'} />);
+    const em = container.querySelector('em');
+    expect(em).not.toBeNull();
+    expect(em!.querySelector('code')?.textContent).toBe('/scm/sales-orders');
+    expect(container.textContent).not.toContain('_');
+    expect(container.textContent).not.toContain('`');
+  });
+
+  it('strike around a code span: s holding a code element, no raw ~ or backtick', () => {
+    const { container } = render(<WhatsAppBlocks text={'~Sales Orders (`/scm/sales-orders`)~'} />);
+    const s = container.querySelector('s');
+    expect(s).not.toBeNull();
+    expect(s!.querySelector('code')?.textContent).toBe('/scm/sales-orders');
+    expect(container.textContent).not.toContain('~');
+    expect(container.textContent).not.toContain('`');
+  });
+
+  it('two code spans inside one bold, with text before and after on the same line', () => {
+    const { container } = render(<WhatsAppBlocks text={'Open *`/a` or `/b`* now'} />);
+    const strong = container.querySelector('strong');
+    expect(strong).not.toBeNull();
+    expect(Array.from(strong!.querySelectorAll('code')).map((c) => c.textContent)).toEqual(['/a', '/b']);
+    expect(container.textContent).toBe('Open /a or /b now');
+  });
+
+  it('a wrapped code span inside a list item', () => {
+    render(<WhatsAppBlocks text={'- *Orders (`/scm/orders`)*\n- plain'} />);
+    const first = screen.getAllByRole('listitem')[0];
+    expect(first.querySelector('strong code')?.textContent).toBe('/scm/orders');
+    expect(first.textContent).toBe('Orders (/scm/orders)');
+  });
+
+  it('literal HTML inside a bold that wraps code stays text', () => {
+    const { container } = render(<WhatsAppBlocks text={'*<b>x</b> `<i>y</i>`*'} />);
+    expect(container.querySelector('b')).toBeNull();
+    expect(container.querySelector('i')).toBeNull();
+    expect(container.querySelector('code')?.textContent).toBe('<i>y</i>');
+    expect(container.textContent).toBe('<b>x</b> <i>y</i>');
+  });
+
+  it('pin: bold beside code, as separate runs', () => {
+    const { container } = render(<WhatsAppBlocks text={'*a* `b`'} />);
+    expect(container.querySelector('strong')?.textContent).toBe('a');
+    expect(container.querySelector('code')?.textContent).toBe('b');
+    expect(container.textContent).toBe('a b');
+  });
+
+  it('pin: a lone * on a line with code stays as typed', () => {
+    const { container } = render(<WhatsAppBlocks text={'5 * 3 is `15`'} />);
+    expect(container.textContent).toBe('5 * 3 is 15');
+    expect(container.querySelector('strong')).toBeNull();
+    expect(container.querySelector('code')?.textContent).toBe('15');
+  });
+
+  it('pin: a lone backtick beside a bold stays as typed', () => {
+    const { container } = render(<WhatsAppBlocks text={"*a* it's 5` wide"} />);
+    expect(container.textContent).toBe("a it's 5` wide");
+    expect(container.querySelector('code')).toBeNull();
+  });
+});
+
+// Round 9, second pass: the slot that stands in for a code span (edge cases of the mask-and-fill).
+describe('WhatsAppBlocks: code slots (round 9, second pass)', () => {
+  const SLOT = '';
+
+  it('keeps spans in order across segments: bold, plain, a fence, italic', () => {
+    const { container } = render(<WhatsAppBlocks text={'*`/a`* and `/b` ```c``` _`/d`_'} />);
+    expect(Array.from(container.querySelectorAll('code')).map((c) => c.textContent)).toEqual(['/a', '/b', 'c', '/d']);
+    expect(container.textContent).not.toContain('`');
+    expect(container.textContent).not.toContain('*');
+    expect(container.textContent).not.toContain(SLOT);
+  });
+
+  it('a literal U+E000 in the reply never shows, and adds no extra or empty code element', () => {
+    const { container } = render(<WhatsAppBlocks text={`before ${SLOT} middle \`x\` after`} />);
+    expect(container.textContent).not.toContain(SLOT);
+    const codes = Array.from(container.querySelectorAll('code'));
+    expect(codes.map((c) => c.textContent)).toEqual(['x']);
+    expect(container.textContent).toContain('before');
+    expect(container.textContent).toContain('after');
+  });
+
+  it('a literal U+E000 before a bold-wrapped span leaves the span text right', () => {
+    const { container } = render(<WhatsAppBlocks text={`${SLOT} *\`/a\`* ${SLOT}`} />);
+    expect(container.textContent).not.toContain(SLOT);
+    expect(Array.from(container.querySelectorAll('code')).map((c) => c.textContent)).toEqual(['/a']);
+    expect(container.querySelector('strong code')?.textContent).toBe('/a');
+  });
+
+  it('a URL directly before a code span: any link rendered carries no U+E000 in its href', () => {
+    const { container } = render(<WhatsAppBlocks text={'https://x.test/a`b`'} />);
+    for (const a of Array.from(container.querySelectorAll('a'))) {
+      expect(a.getAttribute('href') ?? '').not.toContain(SLOT);
+      expect(decodeURIComponent(a.getAttribute('href') ?? '')).not.toContain(SLOT);
+    }
+    expect(container.textContent).not.toContain(SLOT);
+    expect(container.querySelector('code')?.textContent).toBe('b');
+  });
+});

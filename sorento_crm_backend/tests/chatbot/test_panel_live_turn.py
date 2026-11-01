@@ -867,15 +867,40 @@ class TestOutboundGuardOnEveryContactCall:
 # --------------------------------------------------------------------------- #
 
 
-def test_a_panel_portal_link_ask_never_calls_the_tool_and_closes_done_with_a_reply(
+PANEL_PORTAL_EN = (
+    "Portal links go to a contact on WhatsApp, so I can't send one from here. "
+    "If you want the steps for something, ask me how to do it."
+)
+PANEL_PORTAL_MS = (
+    "Pautan portal dihantar kepada kenalan di WhatsApp, jadi saya tidak dapat menghantarnya dari sini. "
+    "Jika anda mahu langkah untuk sesuatu, tanya saya cara melakukannya."
+)
+PANEL_PORTAL_ZH = "门户链接是通过 WhatsApp 发送给联系人的，所以我无法在这里发送。如果您想了解某件事的操作步骤，可以问我怎么做。"
+
+
+def _portal_form_must_not_be_checked(monkeypatch):
+    """The panel guard runs BEFORE the form grant check: reaching it is a failure."""
+    from app.services.chatbot.lanes.business import fetch as fetch_mod
+
+    def boom(*args, **kwargs):
+        raise AssertionError("portal_form_granted was called: the panel guard must run before the grant check")
+
+    monkeypatch.setattr(fetch_mod, "portal_form_granted", boom)
+
+
+def test_a_panel_portal_link_ask_for_a_named_form_gets_the_why_before_any_grant_check(
     session_factory, monkeypatch, staff, grants, world
 ):
-    """The contact-turn control is `test_carried_miss.py::test_portal_link_with_a_carried_unresolved_order_sends_the_link`
-    (and `test_dev_failures_portal_form.py::test_run_fetch_deep_links...`): a contact's portal link ask still calls
-    `crm_portal_link_get`, so it is not duplicated here."""
+    """The contact-turn control is `test_carried_miss.py::test_portal_link_with_a_carried_unresolved_order_sends_the_link`:
+    a contact's portal link ask still calls `crm_portal_link_get`, so it is not duplicated here."""
     grants.add(USE)
+    _portal_form_must_not_be_checked(monkeypatch)
     world.parser_output = _parser_output(
-        domain_hint="portal_link", intent_hint="get_portal_link", entities=[], user_goal="portal link"
+        domain_hint="portal_link",
+        intent_hint="get_portal_link",
+        entities=[],
+        user_goal="portal link",
+        portal_form="complaint",
     )
 
     result = run_panel(session_factory, monkeypatch, staff, "send me the complaint form link")
@@ -883,6 +908,58 @@ def test_a_panel_portal_link_ask_never_calls_the_tool_and_closes_done_with_a_rep
     assert [c for c in world.mcp if c["name"] == "crm_portal_link_get"] == [], "no portal link call on the panel"
     row = turn_row(session_factory, result.turn_id)
     assert row is not None and row.status == "done", getattr(row, "status", None)
-    reply = result.reply_text or ""
-    assert reply.strip(), "the turn must answer"
-    assert "could not fetch" not in reply.lower()
+    assert (result.reply_text or "").strip() == PANEL_PORTAL_EN, result.reply_text
+
+
+def test_a_panel_portal_link_ask_with_no_form_named_gets_the_same_why(
+    session_factory, monkeypatch, staff, grants, world
+):
+    grants.add(USE)
+    _portal_form_must_not_be_checked(monkeypatch)
+    world.parser_output = _parser_output(
+        domain_hint="portal_link", intent_hint="get_portal_link", entities=[], user_goal="portal link"
+    )
+
+    result = run_panel(session_factory, monkeypatch, staff, "send me the portal link")
+
+    assert [c for c in world.mcp if c["name"] == "crm_portal_link_get"] == []
+    assert (result.reply_text or "").strip() == PANEL_PORTAL_EN, result.reply_text
+
+
+def test_the_panel_portal_sentence_has_ms_and_zh_in_the_label_catalog():
+    from app.services.chatbot import label_catalog
+    from app.services.chatbot.lanes.business import fetch as fetch_mod
+
+    assert fetch_mod.PANEL_NO_PORTAL_LINK == PANEL_PORTAL_EN
+    entry = label_catalog.LABELS.get(PANEL_PORTAL_EN)
+    assert entry, "no label_catalog entry for the panel portal sentence"
+    assert entry.get("ms") == PANEL_PORTAL_MS
+    assert entry.get("zh") == PANEL_PORTAL_ZH
+    for lang, text in (("ms", PANEL_PORTAL_MS), ("zh", PANEL_PORTAL_ZH)):
+        assert label_catalog.defaults(lang).get(PANEL_PORTAL_EN) == text, lang
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("hantar pautan borang aduan kepada saya", PANEL_PORTAL_MS),
+        ("请把投诉表格的链接发给我", PANEL_PORTAL_ZH),
+    ],
+)
+def test_a_malay_or_chinese_panel_portal_ask_gets_its_catalog_text(
+    session_factory, monkeypatch, staff, grants, world, text, expected
+):
+    grants.add(USE)
+    _portal_form_must_not_be_checked(monkeypatch)
+    world.parser_output = _parser_output(
+        domain_hint="portal_link",
+        intent_hint="get_portal_link",
+        entities=[],
+        user_goal="portal link",
+        portal_form="complaint",
+    )
+
+    result = run_panel(session_factory, monkeypatch, staff, text)
+
+    assert [c for c in world.mcp if c["name"] == "crm_portal_link_get"] == []
+    assert (result.reply_text or "").strip() == expected, result.reply_text

@@ -396,7 +396,23 @@ def test_ac26_a_tool_outside_the_four_still_reaches_call_tool(db_session, monkey
 
 
 def test_ac26_the_backend_list_is_the_four_tools_the_mcp_server_hints():
-    """The MCP server's TOOL_REQUIRED_QUERY_HINTS keys. Copied literally: the backend venv's
-    editable `sorento_crm_mcp` resolves to another checkout, so importing it here would compare
-    with the wrong tree."""
-    assert svc_module.TOOLS_NEEDING_A_CONTACT == frozenset(FOUR_CONTACT_TOOLS)
+    """The keys of `TOOL_REQUIRED_QUERY_HINTS` in THIS worktree's MCP server, read by path and parsed
+    with `ast` (never imported: the backend venv's editable `sorento_crm_mcp` resolves to another
+    checkout, so an import would compare with the wrong tree)."""
+    import ast
+    from pathlib import Path
+
+    server = Path(__file__).resolve().parents[2] / "sorento_crm_mcp" / "sorento_crm_mcp" / "server.py"
+    assert server.is_file(), server
+    keys = None
+    for node in ast.parse(server.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            name, value = node.target.id, node.value
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            name, value = node.targets[0].id, node.value
+        else:
+            continue
+        if name == "TOOL_REQUIRED_QUERY_HINTS" and isinstance(value, ast.Dict):
+            keys = {ast.literal_eval(k) for k in value.keys if k is not None}
+    assert keys, "TOOL_REQUIRED_QUERY_HINTS not found as a dict literal in the MCP server"
+    assert svc_module.TOOLS_NEEDING_A_CONTACT == frozenset(keys), sorted(keys)

@@ -25,7 +25,7 @@ Contract: `CARD-agentic-unify-v2-31oct.md`, `PLAN-agentic-unify-panel-31oct.md` 
 - **AC-9** Nothing goes to WhatsApp or Respond, from the turn or later, by any path: phone gate, staff comment, salesman job, idea status send, low-stock push, file delivery claim, reminder sweep, inbox drain, trace Retry. Each pinned.
 - **AC-10** The audit table's decisions hold, each with a test: `ingress = "panel"` is reserved so an API-key caller cannot claim it; no worker offload; no delegated row left open; a duplicate message renders from its row; `dry_run` is false.
 - **AC-11** The panel renders `send_message` and `send_attachments`; `assign_conversation`, `add_comment`, `update_contact_fields` are dropped.
-- **AC-12** Chat lanes change data as on WhatsApp, as the staff member, and the record says so: an opportunity through the user's own `sales.opportunities.add`, with a real actor. Ideas keep the /ideas link until AGENTIC-IDEATE lands.
+- **AC-12** Chat lanes change data as on WhatsApp, as the staff member, and the record says so: an opportunity through the user's own `sales.opportunities.add`, with a real actor. Ideas keep the /ideas link, on the chat lane and in the agent: on a panel turn the agent refuses an idea create with the link and proposes nothing (round 9). AGENTIC-IDEATE has landed; a real idea from the panel would need AC-9's proof that its status sends reach no WhatsApp. Trigger: an owner ask.
 - **AC-13** Files that lanes would deliver by the worker go to the user's My Downloads.
 
 ## Escalation (owner Q1)
@@ -63,9 +63,10 @@ A labelled set of real panel questions run through both paths; "nothing lost" pe
 ## Known limits
 
 - A panel escalation has the SLA clock and My Pending, but never climbs a tier and refuses a manual escalate: tier climbing goes through the conversation (`/integration/escalate`), which a panel task does not have. Rows marked `panel_escalation` leave the runner's list so they cannot starve customers' escalations.
-- `crm_portal_link_get` has no meaning without a contact, so a how-to question the parser reads as a portal link can reply "I could not fetch this request just now". How-to questions go to the guides in PR 4.
+- `crm_portal_link_get` has no meaning without a contact, so a question the parser reads as a portal link replies that portal links go to a contact on WhatsApp (round 9). Jev sends how-to questions to the agent's guides first.
 - `entity_resolver.request_read_check` allows by default: a future thread running a purchase request probe inside a turn would skip the check. No such thread exists today.
-- The panel-only line telling Jev about an open record is sent from code, not the published prompt.
+- The panel-only lines telling Jev about the open page and an open record are sent from code, not the published prompt.
+- A marker touching code with no space, as in `*bold*`x``, shows raw `*`. Accepted (round 9): it is WhatsApp's own boundary rule for a marker touching a word, it is rare, and a marker wrapped around code or separated by a space renders.
 - AC-26 holds by a refusal: `respond()` answers `tool_not_available` for the four tools that need a contact, because the MCP fix would otherwise open them to every panel user.
 - The chat lane logs an opportunity only when the published parser label carries `OPPORTUNITY_LINE` (UNVERIFIED at prod; `engine.py:6023` says v63 lacks it). Until then staff log one through the agent, with Confirm.
 

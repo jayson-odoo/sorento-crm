@@ -75,6 +75,8 @@ from app.services import planning_change_service
 from app.services.error_handler import AppException
 from app.utils.multi_value import multi_values
 from app.services.scm.demand import PROJECT_CLASS, demand_qty, is_open_demand
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS, OTHER, planning_class
+from app.services.scm.planning_predicate import admitted_to_planning
 
 # Per-line outcomes (slice note section 2). `linked` is the only one that writes.
 LINK_LINKED = "linked"
@@ -216,8 +218,22 @@ def _duplicate_reason(other_ref: Optional[str], other_line_no: Optional[int]) ->
     return f"This core line is already linked to Project SO {where}, line {other_line_no}."
 
 
-def _project_string(internal_note: Optional[str]) -> Optional[str]:
-    """The project the Order Inquiry sheet named, without the prefix it wrote it under."""
+def _classes_wanted(demand_class: Optional[Sequence[str]]) -> List[str]:
+    """The stored classes the worklist's filter means: project when nobody picked, and `retail`
+    carries `other`, which weighs as retail (`demand_class.planning_class`)."""
+    picked = list(demand_class or [PROJECT_CLASS])
+    if DEFAULT_DEMAND_CLASS in picked and OTHER not in picked:
+        picked.append(OTHER)
+    return picked
+
+
+def _project_string(
+    internal_note: Optional[str], demand_class: Optional[str] = PROJECT_CLASS
+) -> Optional[str]:
+    """The project the Order Inquiry sheet named, without the prefix it wrote it under. A dealer
+    order names no project, and its note is a note (DEALER-PLANNING R14)."""
+    if planning_class(demand_class) == DEFAULT_DEMAND_CLASS:
+        return None
     text_value = (internal_note or "").strip()
     if not text_value:
         return None
@@ -1138,6 +1154,7 @@ class ProjectSOReconciliationService:
         review_state: Optional[str | Sequence[str]] = None,
         project_id: Optional[str] = None,
         sales_order_id: Optional[str] = None,
+        demand_class: Optional[Sequence[str]] = None,
         sort: Optional[str] = None,
         dir: Optional[str] = None,
         page: int = 1,
@@ -1240,10 +1257,16 @@ class ProjectSOReconciliationService:
             )
         descending = dir == "desc"
 
-        core_rows = self._core_arm(needle=needle, sales_order_id=sales_order_id)
+        classes = _classes_wanted(demand_class)
+        core_rows = self._core_arm(needle=needle, sales_order_id=sales_order_id, classes=classes)
         records = self._records_for([row["sales_order_id"] for row in core_rows])
-        authored_rows = self._authored_arm(
-            needle=needle, taken={str(row["sales_order_id"]) for row in core_rows}
+        # A planning record authored here is project work, so it answers to Project alone.
+        authored_rows = (
+            self._authored_arm(
+                needle=needle, taken={str(row["sales_order_id"]) for row in core_rows}
+            )
+            if PROJECT_CLASS in classes
+            else []
         )
 
         rows = [self._core_row(row, records.get(str(row["sales_order_id"]))) for row in core_rows]
@@ -1416,12 +1439,12 @@ class ProjectSOReconciliationService:
     # ------------------------------------------------------------- arm 1: the book
 
     def _core_arm(
-        self, *, needle: str, sales_order_id: Optional[str]
+        self, *, needle: str, sales_order_id: Optional[str], classes: Sequence[str]
     ) -> List[Dict[str, Any]]:
-        """Outstanding project-class core sales orders, with the numbers the row prints.
+        """Outstanding admitted core sales orders of `classes`, with the numbers the row prints.
 
         The predicate is `is_open_demand()` VERBATIM plus `status = 'open'` plus
-        `demand_class = 'project'` (plan section 3), imported and never restated: it is
+        `admitted_to_planning()` (plan section 3), imported and never restated: it is
         what `scm.committed_v` counts and what the SCM sales-order screen's
         `outstanding = true` filter already means, so the two screens cannot disagree about
         which orders are still owed. The inner join to the lines is what makes "has at
@@ -1445,11 +1468,13 @@ class ProjectSOReconciliationService:
                 SalesAgent.sales_agent,
                 SalesAgent.person_label,
                 SalesOrder.doc_type,
+                SalesOrder.demand_class,
             )
             .join(SalesOrderLine, SalesOrderLine.sales_order_id == SalesOrder.id)
             .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .filter(
-                SalesOrder.demand_class == PROJECT_CLASS,
+                SalesOrder.demand_class.in_(list(classes)),
+                admitted_to_planning(),
                 SalesOrder.status == _CORE_SO_OPEN,
                 is_open_demand(),
             )
@@ -1461,6 +1486,7 @@ class ProjectSOReconciliationService:
                 SalesAgent.sales_agent,
                 SalesAgent.person_label,
                 SalesOrder.doc_type,
+                SalesOrder.demand_class,
             )
         )
         if sales_order_id:
@@ -1480,7 +1506,7 @@ class ProjectSOReconciliationService:
             # `sales_order_lines` in its FROM, so a sub-select over the same table would
             # auto-correlate to the row being aggregated and quietly become that same
             # per-line filter. A separate query cannot be adapted wrongly.
-            owners = self._core_orders_matching_product(like)
+            owners = self._core_orders_matching_product(like, classes)
             if owners:
                 matched = matched | SalesOrder.id.in_(list(owners))
             aggregate = aggregate.filter(matched)
@@ -1490,7 +1516,7 @@ class ProjectSOReconciliationService:
             {
                 "sales_order_id": str(row[0]),
                 "so_number": row[1],
-                "project_string": _project_string(row[2]),
+                "project_string": _project_string(row[2], row[10]),
                 "customer_name": names.get(str(row[3] or "")),
                 "earliest_required_date": row[4],
                 "outstanding_qty": row[5],
@@ -1498,12 +1524,13 @@ class ProjectSOReconciliationService:
                 "agent_code": row[7],
                 "agent_label": row[8],
                 "so_doc_type": row[9],
+                "demand_class": row[10],
             }
             for row in rows
         ]
 
-    def _core_orders_matching_product(self, like: str) -> set:
-        """Which outstanding project-class core orders owe a product answering to `like`.
+    def _core_orders_matching_product(self, like: str, classes: Sequence[str]) -> set:
+        """Which outstanding admitted core orders owe a product answering to `like`.
 
         BOUNDED BY THE WORKLIST'S OWN POPULATION, deliberately. The same header predicate as
         `_core_arm` is applied here, so the answer can never be larger than the arm it
@@ -1522,7 +1549,8 @@ class ProjectSOReconciliationService:
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(Product, Product.id == SalesOrderLine.product_id)
             .filter(
-                SalesOrder.demand_class == PROJECT_CLASS,
+                SalesOrder.demand_class.in_(list(classes)),
+                admitted_to_planning(),
                 SalesOrder.status == _CORE_SO_OPEN,
                 is_open_demand(),
                 Product.product_code.ilike(like) | Product.product_name.ilike(like),
@@ -1601,6 +1629,7 @@ class ProjectSOReconciliationService:
             "agent_label": core["agent_label"],
             # AC-CONSIGN-CRM: the authored arm fills its own (a record's core order, if any).
             "so_doc_type": core["so_doc_type"],
+            "demand_class": core["demand_class"],
             "record": record,
             "project_id": str(record.project_id)
             if record is not None and record.project_id
@@ -1660,10 +1689,12 @@ class ProjectSOReconciliationService:
         # AC-CONSIGN-CRM: a record can point at a core order that is not on the project-class
         # arm; its doc_type still marks it, in one read for the page.
         so_ids = [str(order.so_id) for order in orders if order.so_id]
-        doc_types = (
+        core_headers = (
             {
-                str(sid): doc_type
-                for sid, doc_type in self.db.query(SalesOrder.id, SalesOrder.doc_type)
+                str(sid): (doc_type, klass)
+                for sid, doc_type, klass in self.db.query(
+                    SalesOrder.id, SalesOrder.doc_type, SalesOrder.demand_class
+                )
                 .filter(SalesOrder.id.in_(so_ids))
                 .all()
             }
@@ -1676,7 +1707,10 @@ class ProjectSOReconciliationService:
                 "id": str(order.id),
                 "sales_order_id": None,
                 "so_number": None,
-                "so_doc_type": doc_types.get(str(order.so_id or "")),
+                "so_doc_type": core_headers.get(str(order.so_id or ""), (None, None))[0],
+                "demand_class": (
+                    core_headers.get(str(order.so_id or ""), (None, None))[1] or PROJECT_CLASS
+                ),
                 "project_string": None,
                 "core_customer_name": None,
                 "earliest_required_date": totals.get(str(order.id), (None, None, 0))[0],
@@ -1795,6 +1829,7 @@ class ProjectSOReconciliationService:
             "sales_order_id": row["sales_order_id"],
             "so_number": row["so_number"],
             "so_doc_type": row.get("so_doc_type"),
+            "demand_class": row.get("demand_class"),
             "origin": _origin_of(record),
             "provisional_ref": record.provisional_ref if record is not None else None,
             "autocount_doc_no": record.autocount_doc_no if record is not None else None,

@@ -1811,13 +1811,13 @@ export function SalesOrderDetail({
                 // moved into the gear above, since a record already open has less need for
                 // a second, louder door into changing it. Absent - not disabled - without
                 // the permission the board's own page requires: a door that answers 403 is
-                // worse than no door. Also absent off a non-project demand class (AC-S2-6b):
-                // the fulfilment board only accepts project demand, so a retail order's Plan
-                // would open onto an empty board. A consignment gets Plan exactly like a sales
-                // order (CONSIGN-PLAN supersedes CONSIGN-DELIVERED-FIX's "nothing to plan"):
-                // its goods sit at CON and are borrowed from there on the board.
+                // worse than no door. Also absent when the board would admit no line of this
+                // order (`plannable_lines`, the board's own predicates, DEALER-PLANNING R6): a
+                // Plan there would open onto an empty board. A consignment gets Plan exactly
+                // like a sales order (CONSIGN-PLAN supersedes CONSIGN-DELIVERED-FIX's "nothing
+                // to plan"): its goods sit at CON and are borrowed from there on the board.
                 primary={
-                  canPlan && so.demand_class === 'project' ? (
+                  canPlan && (so.plannable_lines ?? 0) > 0 ? (
                     <Button asChild variant="primary" size="sm" className="gap-1.5">
                       <Link
                         href={`/project-sales/fulfilment-planning?orders=${encodeURIComponent(

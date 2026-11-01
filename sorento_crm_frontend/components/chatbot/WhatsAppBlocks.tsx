@@ -1,33 +1,63 @@
 'use client';
 
-import { parseWhatsAppBlocks } from '@/lib/whatsappText';
+import { Fragment } from 'react';
+import { parseWhatsAppBlocks, parseWhatsAppText } from '@/lib/whatsappText';
 import { WhatsAppText } from './WhatsAppText';
 
 // A triple-backtick fence (left whole for `WhatsAppText`) or a single-backtick span on one line.
 const CODE_SPAN = /(```[\s\S]*?```)|`([^`\n]+)`/g;
 
+// Stands in for a code span while the markup is parsed, so a marker around code pairs up as it does on a
+// handset. A private-use character is not whitespace, so it opens and closes a run like any word.
+const SLOT = '\uE000';
+
 /**
- * Inline code on the panel: a `span` becomes a code element with its content as plain text (literal HTML
- * stays text), everything else goes through `WhatsAppText`. Splitting first keeps `*bold*` beside code
- * working. A lone backtick stays as typed.
+ * Inline code on the panel: each single-backtick span becomes a code element with its content as plain text
+ * (literal HTML stays text). The spans are swapped for a slot, the rest is parsed by `parseWhatsAppText`
+ * (so `*bold*` can wrap code), and each slot is filled back in. A lone backtick stays as typed.
  */
 function InlineText({ text }: { text: string }) {
-  const parts: React.ReactNode[] = [];
-  let last = 0;
-  for (const match of text.matchAll(CODE_SPAN)) {
-    if (match[2] === undefined) continue;
-    const at = match.index ?? 0;
-    if (at > last) parts.push(<WhatsAppText key={`t${at}`} text={text.slice(last, at)} />);
-    parts.push(
-      <code key={`c${at}`} className="rounded bg-muted px-1 py-0.5 text-[0.9em]">
-        {match[2]}
-      </code>,
-    );
-    last = at + match[0].length;
-  }
-  if (parts.length === 0) return <WhatsAppText text={text} />;
-  if (last < text.length) parts.push(<WhatsAppText key="tail" text={text.slice(last)} />);
-  return <>{parts}</>;
+  const spans: string[] = [];
+  // A slot character already in the reply would be read as a span, so it goes first.
+  const clean = text.split(SLOT).join('');
+  const masked = clean.replace(CODE_SPAN, (whole, _fence, code) => {
+    if (code === undefined) return whole;
+    spans.push(code);
+    return SLOT;
+  });
+  if (spans.length === 0) return <WhatsAppText text={clean} />;
+  let next = 0;
+  return (
+    <>
+      {parseWhatsAppText(masked).map((segment, i) => {
+        if (segment.code) return <WhatsAppText key={i} text={`\`\`\`${segment.text}\`\`\``} />;
+        let node: React.ReactNode = segment.text.split(SLOT).map((part, j) => (
+          <Fragment key={j}>
+            {j > 0 && (
+              <code className="rounded bg-muted px-1 py-0.5 text-[0.9em]">{spans[next++]}</code>
+            )}
+            {part}
+          </Fragment>
+        ));
+        if (segment.strike) node = <s>{node}</s>;
+        if (segment.italic) node = <em>{node}</em>;
+        if (segment.bold) node = <strong className="font-semibold">{node}</strong>;
+        if (segment.href) {
+          node = (
+            <a
+              href={segment.href.split(SLOT).join('')}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="break-all underline underline-offset-2 hover:opacity-80"
+            >
+              {node}
+            </a>
+          );
+        }
+        return <span key={i}>{node}</span>;
+      })}
+    </>
+  );
 }
 
 /**
