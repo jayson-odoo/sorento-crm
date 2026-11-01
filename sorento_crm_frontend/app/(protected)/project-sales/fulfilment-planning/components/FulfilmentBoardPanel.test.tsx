@@ -1648,6 +1648,32 @@ describe('FulfilmentBoardPanel: states', () => {
   });
 
   /**
+   * DEALER-PLANNING PR 2, R3. An order with no demand class is left off the board, and the
+   * board says so in its own words (`unplanned_orders`, one `{so_number, reason}` each). The
+   * empty state must not blame cancelled or returned lines when the true cause is the class.
+   */
+  it('gives the true reason for an order left off the board, not the cancelled-lines one', async () => {
+    getPlanningBoard.mockResolvedValue({
+      ...boardOf([]),
+      unplanned_orders: [
+        {
+          so_number: 'SO403340',
+          reason: 'Sales order SO403340 has no demand class, so it is not planned here.',
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+
+    expect(
+      await screen.findByText(/SO403340 has no demand class/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Every line is cancelled, fully returned or marked no purchase needed.'),
+    ).not.toBeInTheDocument();
+  });
+
+  /**
    * The same window-scoped mistake as the banner, in the emptiest possible form: a day window
    * scrolled to a stretch nobody owes has no cells, and "these orders owe nothing" is then a
    * flat contradiction of the 161 lines the selection is holding.
