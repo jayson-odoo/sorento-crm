@@ -95,3 +95,48 @@ describe('WhatsAppBlocks: printed numbers and item lines (review round 1)', () =
     expect(screen.getAllByRole('listitem').map((li) => li.getAttribute('value'))).toEqual([null, null]);
   });
 });
+
+// Round 8: a single-backtick span is inline code on the panel, never raw backticks (AC-21).
+describe('WhatsAppBlocks: inline code (round 8)', () => {
+  it('draws a backtick span as a code element and keeps the text around it', () => {
+    const { container } = render(<WhatsAppBlocks text={'page (`/scm/sales-orders`) here'} />);
+    const codes = container.querySelectorAll('code');
+    expect(codes).toHaveLength(1);
+    expect(codes[0].textContent).toBe('/scm/sales-orders');
+    expect(container.textContent).not.toContain('`');
+    expect(container.textContent).toBe('page (/scm/sales-orders) here');
+  });
+
+  it('draws two spans inside one list item as two code elements', () => {
+    render(<WhatsAppBlocks text={'- open `/a` and `/b`'} />);
+    const li = screen.getAllByRole('listitem')[0];
+    expect(Array.from(li.querySelectorAll('code')).map((c) => c.textContent)).toEqual(['/a', '/b']);
+    expect(li.textContent).not.toContain('`');
+  });
+
+  it('keeps bold working beside inline code', () => {
+    const { container } = render(<WhatsAppBlocks text={'*see* `/a`'} />);
+    expect(container.querySelector('strong')?.textContent).toBe('see');
+    expect(container.querySelector('code')?.textContent).toBe('/a');
+    expect(container.textContent).not.toContain('`');
+  });
+
+  it('pin: a triple-backtick fence stays one code block', () => {
+    const { container } = render(<WhatsAppBlocks text={'SKU ```SKU-1``` ok'} />);
+    const codes = container.querySelectorAll('code');
+    expect(codes).toHaveLength(1);
+    expect(codes[0].textContent).toBe('SKU-1');
+  });
+
+  it('pin: a lone backtick stays as typed', () => {
+    const { container } = render(<WhatsAppBlocks text={"it's 5` wide"} />);
+    expect(container.textContent).toBe("it's 5` wide");
+    expect(container.querySelector('code')).toBeNull();
+  });
+
+  it('keeps literal HTML inside backticks as text', () => {
+    const { container } = render(<WhatsAppBlocks text={'`<b>x</b>`'} />);
+    expect(container.querySelector('b')).toBeNull();
+    expect(container.querySelector('code')?.textContent).toBe('<b>x</b>');
+  });
+});
