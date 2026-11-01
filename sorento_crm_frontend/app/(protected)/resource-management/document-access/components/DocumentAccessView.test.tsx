@@ -277,6 +277,56 @@ describe('DocumentAccessView - a pending tick save (R3)', () => {
   });
 });
 
+describe('DocumentAccessView - the row lock holds until the refresh resolves (B2, M3)', () => {
+  it('B2: after the PUT resolves the row stays locked until the matrix refetch resolves', async () => {
+    let releaseRefetch: (v?: unknown) => void = () => {};
+    let calls = 0;
+    svc.getDocumentAccess.mockImplementation(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve(matrix())
+        : new Promise((resolve) => {
+            releaseRefetch = () => resolve(matrix());
+          });
+    });
+    await renderView();
+
+    fireEvent.click(ticks('Technical Specifications')[2]); // End User: PUT resolves at once
+
+    await waitFor(() => expect(svc.updateAttachmentType).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(calls).toBeGreaterThanOrEqual(2)); // the refetch is in flight, held open
+    ticks('Technical Specifications').forEach((cb) => expect(cb).toBeDisabled());
+
+    releaseRefetch();
+
+    await waitFor(() => ticks('Technical Specifications').forEach((cb) => expect(cb).not.toBeDisabled()));
+  });
+
+  it('M3: ticking row B while row A is pending leaves row A locked until A saves and refreshes', async () => {
+    let releaseA: (v?: unknown) => void = () => {};
+    svc.updateAttachmentType.mockImplementation((id: string) =>
+      id === TECH
+        ? new Promise((resolve) => {
+            releaseA = () => resolve({});
+          })
+        : Promise.resolve({}),
+    );
+    await renderView();
+
+    fireEvent.click(ticks('Technical Specifications')[2]); // A pending
+    await waitFor(() => ticks('Technical Specifications').forEach((cb) => expect(cb).toBeDisabled()));
+    fireEvent.click(ticks('Direct Access')[2]); // B, while A is pending
+
+    await waitFor(() => expect(svc.updateAttachmentType).toHaveBeenCalledTimes(2));
+    await waitFor(() => ticks('Direct Access').forEach((cb) => expect(cb).not.toBeDisabled()));
+    ticks('Technical Specifications').forEach((cb) => expect(cb).toBeDisabled());
+
+    releaseA();
+
+    await waitFor(() => ticks('Technical Specifications').forEach((cb) => expect(cb).not.toBeDisabled()));
+  });
+});
+
 describe('DocumentAccessView - Preview as (DAS-FE-4)', () => {
   async function pickContact() {
     fireEvent.click(screen.getByRole('combobox', { name: /Preview as/i }));

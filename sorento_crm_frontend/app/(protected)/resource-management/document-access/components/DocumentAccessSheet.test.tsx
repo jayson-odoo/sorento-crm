@@ -181,6 +181,23 @@ describe('DocumentAccessSheet (DAS-FE-5)', () => {
     expect(svc.updateAttachmentType).toHaveBeenCalledTimes(1);
   });
 
+  it('pages a long document list: renders with a total of 120 and asks for page 2 (B1)', async () => {
+    svc.getDocumentAccessDocuments.mockImplementation(async (_id: string, o: { page: number; limit: number }) => ({
+      ...DOCS,
+      total: 120,
+      page: o.page,
+      limit: o.limit,
+    }));
+    const dialog = await openSheet();
+
+    expect(await within(dialog).findByText('Cabana Warranty.pdf')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: /Go to next page/i }));
+
+    await waitFor(() =>
+      expect(svc.getDocumentAccessDocuments).toHaveBeenCalledWith(TECH, expect.objectContaining({ page: 2, limit: 50 })),
+    );
+  });
+
   it('shows the Direct access switch and "Granted to N contacts"; flipping it saves is_direct_access', async () => {
     const dialog = await openSheet('Direct Access');
 

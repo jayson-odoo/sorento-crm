@@ -644,3 +644,45 @@ def test_documents_can_edit_levels_needs_write_permission_and_active_company_or_
     seen = flags(api.reader_no_edit)
     assert "c_other.pdf" not in seen, "granted Sorento only: company scope hides the other company's file"
     assert seen == {"a_mine.pdf": False, "b_shared.pdf": False}
+
+
+# ---------------------------------------------------------------- review round 2
+
+
+def test_an_unscoped_staff_user_gets_an_answer_not_a_500(api):
+    """M4: a staff user whose company scope is UNSET (no company grants) must not crash either GET."""
+    from app.models.base import UNSET, set_company_scope
+
+    t = seed_type(api.db, staff=True, codes=["dealer"])
+    _file(api.db, t, "a.pdf", ["dealer"])
+    set_company_scope(api.db, UNSET)
+
+    matrix = api.c.get(MATRIX)
+    docs = _docs(api, t.id)
+
+    assert matrix.status_code == 200, matrix.text
+    assert docs.status_code == 200, docs.text
+
+
+def test_grant_count_for_an_unscoped_caller_also_counts_companyless_contacts(api):
+    """M5: scope None (a superadmin) sees every grant, including a contact with no company; a scoped caller does not."""
+    from app.models.access import ContactAttachmentType
+    from app.models.base import set_company_scope
+
+    db = api.db
+    other = seed_company(db, "Other Co")
+    t = seed_type(db, staff=False, codes=[])
+    for c in (
+        _contact(db, "CONTACT A", [], [SORENTO_COMPANY_ID]),
+        _contact(db, "CONTACT B", [], [other]),
+        _contact(db, "CONTACT C", [], []),
+    ):
+        db.add(ContactAttachmentType(contact_id=c["pk"], attachment_type_id=str(t.id)))
+    db.flush()
+
+    scoped = _rows(api.c.get(MATRIX))[str(t.id)]["grant_count"]
+    set_company_scope(db, None)
+    unscoped = _rows(api.c.get(MATRIX))[str(t.id)]["grant_count"]
+
+    assert scoped == 1, "a scoped caller counts only contacts in their companies"
+    assert unscoped == 3, "an unscoped caller counts every grant, a contact with no company included"
