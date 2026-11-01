@@ -156,6 +156,8 @@ Live at ec4e704ad1: on PR26-0392's page, "what happened to this purchase request
 
 Ruling: with a readable record open (`record_ref` on the principal's page), and only then, the agent criterion carries one more line, sent from `router.py` on a copy of the published criteria. No production label changes. With no record, no page, or on any contact's turn, not one byte changes. If a live probe shows it is not enough, the labelled set says so before default. The trigger to move it into the published prompt: the owner tuning Jev's criteria for the panel at all.
 
+**The old path stays refused (AC-26).** The MCP fix above also opened those four tools to the old panel, which sends the same staff mark and blank pair. They errored there; they would now run, for every panel user at the next release, with no rollout gate: `crm_low_stock_report` starts a real run and a file, `crm_sales_analysis` a paid job. Route gates hold, so this is not an exposure, but it is not "as today". `respond()`'s own tool call answers `tool_not_available` for those four, beside its existing check (`S/ai_assistant_service.py`). Amending AC-26 was the other choice, and it would ship them to all staff unasked. Trigger to remove: `respond()` retiring.
+
 Accepted for hand test: `*Co B:*` under `3. Carol` sits inside that item, since it has no blank line before it (`tail/member_offer.py:255-262`). It needs more than one routing company, and the principal has one.
 
 ## Still to count or prove
