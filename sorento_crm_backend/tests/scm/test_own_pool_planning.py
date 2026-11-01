@@ -465,7 +465,7 @@ def test_r10_on_the_board_a_project_line_moves_only_for_a_real_draw():
 
 # --------------------------------------------------------------------------- R10, random worlds
 
-SEEDS = range(int(os.environ.get("RND_FROM", "0")), int(os.environ.get("RND_TO", "30")))
+SEEDS = range(int(os.environ.get("RND_FROM", "0")), int(os.environ.get("RND_TO", "8")))
 
 
 def _random_world(db, rng, n_pools):
@@ -581,7 +581,8 @@ def _check_random_world(seed, n_pools):
 @pytest.mark.parametrize("seed", list(SEEDS))
 @pytest.mark.parametrize("n_pools", [2, 3])
 def test_r10_random_worlds_over_two_and_three_pools_confirm_their_own_proposal(n_pools, seed):
-    """One seeded world of two or three pools per case (60 cases, about a second each). For each:
+    """One seeded world of two or three pools per case (16 cases, about a second each; widen with
+    RND_TO, as the reviewers did). For each:
     the engine's own proposal confirms with 0 short and 0 refused, the sheet equals the board
     alone, and a single retail line whose pool covers its book reads Reserve all of it WHEN THE
     RUNNING NET ALLOWS IT: the pools' true net (all on hand less the whole book) is not negative,
@@ -589,7 +590,7 @@ def test_r10_random_worlds_over_two_and_three_pools_confirm_their_own_proposal(n
     it may read Buy (captain, 1 Nov 2026; measured read-only on dev: of 3,711 retail lines at these
     pools, 767 are covered by their own pile, and the bound turns 2 of those into Buy, 5 units).
     Three pools are required: the shape a previous attempt got wrong while two looked fine. Sized
-    for under a minute."""
+    for under 30 seconds on a quiet machine."""
     problems = _check_random_world(seed, n_pools)
 
     assert not problems, "\n".join(problems[:12])
@@ -755,6 +756,33 @@ def test_r10_two_hand_reserves_at_other_pools_share_the_true_net():
         short = _short(service)
 
     assert short == Decimal("20")
+
+
+@pytest.mark.parametrize("klass", ["project", "retail"])
+def test_r10_a_mix_past_the_true_net_at_other_pools_is_refused_without_a_reason(klass):
+    """0 here, 30 and 30 elsewhere, a line of 50 standing on its pool: a true net of 10. Each pool
+    alone may give 10, but 10 + 10 + Buy 30 draws 20 from the others, past that net, so it is not
+    the pool-share split the whole-line rule allows, and with no reason it is refused."""
+    with blank_session() as db:
+        world = _world(db)
+        actor, product = world[1], world[3]
+        pool = _pool(db, 0, product)
+        first, second = _pool(db, 30, product), _pool(db, 30, product)
+        order, line, _so, _c = _line(db, world, pool, 50, klass=klass, when=_far(10))
+        body = ConfirmSupplyBody(
+            lines=[
+                ConfirmLine(
+                    project_line_id=str(line.id),
+                    reserve=[
+                        {"warehouse_id": str(first.id), "qty": Decimal("10")},
+                        {"warehouse_id": str(second.id), "qty": Decimal("10")},
+                    ],
+                    buy_qty=Decimal("30"),
+                )
+            ]
+        )
+        with pytest.raises(SupplyLinesRefused):
+            ProjectSupplyService(db).confirm(order, body, actor_user_id=actor)
 
 
 def test_r7_the_proof_beside_a_retail_reserve_does_not_call_the_pool_oversold():

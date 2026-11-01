@@ -296,6 +296,101 @@ def test_r1_a_retail_order_at_a_retired_dealer_location_stays_out(api):
     assert "active" in refused.value.message.lower(), refused.value.message
 
 
+# --------------------------------------------------------------------------- R1, planned then closed
+
+
+def _planned_retail_order(client, world):
+    """A retail order adopted and confirmed with a Buy: it has a planning record."""
+    core, lines = _retail_order(world)
+    order_id = _adopt(client, core)["project_sales_order_id"]
+    sheet = client.get(f"{BASE}/sales-orders/{order_id}/supply").json()
+    response = client.post(
+        f"{BASE}/sales-orders/{order_id}/confirm",
+        json={
+            "lines": [
+                _line_payload(line["project_line_id"], buy_qty=line["open_qty"])
+                for line in sheet["lines"]
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    return core, lines
+
+
+def _board_of(client, core):
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board",
+        params={"orders": core.so_number, "granularity": "week"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_r1_a_planned_retail_order_that_closes_keeps_its_decided_rows(api):
+    """Closing does not un-plan it. A closed retail order with a planning record stays on the
+    board, its decided row reads, and the list's Planned pill counts it rather than a dash."""
+    from app.services.scm.sales_order_service import SalesOrderService
+
+    client, world = api
+    core, _lines = _planned_retail_order(client, world)
+    _closed(world, core)
+
+    board = _board_of(client, core)
+    rows = [row for row in board["contributions"] if row["so_number"] == core.so_number]
+    progress = SalesOrderService(world.db).with_planning_state([{"id": str(core.id)}])[0]
+
+    assert len(rows) == 1, board.get("unplanned_orders")
+    assert rows[0]["decision"], rows[0]
+    assert core.so_number not in {row["so_number"] for row in board["unplanned_orders"]}
+    assert (progress["plannable_lines"], progress["planned_lines"]) == (1, 1)
+
+
+def test_r1_a_planned_retail_order_that_closes_can_still_apply_its_pending_change(api):
+    """The book closed the line and the order: the pending change row is on the board, addressed
+    to its batch, and applying it works. Hiding it would strand the change with no screen."""
+    from app.services import planning_change_service
+    from app.services.scm.outstanding_diff import CLOSED, Diff
+
+    from ..test_planning_changes import _diff_change
+
+    client, world = api
+    core, lines = _planned_retail_order(client, world)
+    line = lines[0]
+    line.line_status = "closed"
+    world.db.flush()
+    changed = _diff_change(
+        CLOSED, line, doc_number=core.so_number, item_code=world.product.product_code,
+        location=world.pool_wh.warehouse_code, old_date=SOON, new_date=None,
+        old_qty="10", new_qty="0",
+    )
+    batch = planning_change_service.build_batch(
+        world.db, Diff(scope_documents=(core.so_number,), changes=[changed]),
+        applied_line_ids={id(changed): str(line.id)},
+        order_ids={core.so_number: str(core.id)}, actor=_user(world.db, "zzt-planner"),
+        import_job_id=None, file_name="zzt-book.xlsx",
+    )
+    assert batch is not None
+    _closed(world, core)
+
+    board = _board_of(client, core)
+    rows = [row for row in board["contributions"] if row["so_number"] == core.so_number]
+
+    assert [row["pending_change_batch_id"] for row in rows] == [str(batch.id)], board.get(
+        "unplanned_orders"
+    )
+
+    detail = planning_change_service.get_batch(world.db, str(batch.id))
+    planning_change_service.set_row_decision(
+        world.db, str(batch.id), detail["orders"][0]["rows"][0]["id"], "confirm"
+    )
+    world.db.commit()
+    applied = client.post(f"{BASE}/planning-changes/{batch.id}/apply")
+
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["failed_orders"] == [], applied.text
+    assert applied.json()["applied_orders"] == [core.so_number], applied.text
+
+
 # --------------------------------------------------------------------------- an adopted mirror
 
 
