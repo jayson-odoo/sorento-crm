@@ -63,6 +63,7 @@ from app.services.chatbot.contracts import (
     TURN_FAILURE_STAGES,
     Envelope,
     named_count,
+    supplier_visible,
     visible_reference_kinds,
 )
 from app.services.chatbot.delegate import enabled_lanes_from
@@ -5951,6 +5952,21 @@ def _run_stages_body(  # noqa: PLR0915
         # promotion turn from here on (tier gate, fetch, compose, held state). The parser's own verdict
         # stays on the trace as `parser_verdict`; this event names the swap.
         verdict = _dealer_cost_as_promotion(db, verdict, access, remembered_before.get("_contact_pk"), turn_trace)
+        # SUPPLIER-ASK (owner, 1 Nov 2026): "outstanding for <supplier>" is that supplier's open
+        # POs, for an asker who may see suppliers (staff with the supplier reveal); for anyone
+        # else the supplier word is dropped at the resolver (`resolve_gate.resolve_entity_body`).
+        if supplier_visible(access.get("attributes"), is_staff_profile(state_in.profile)):
+            from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
+
+            swapped = supplier_ask_reads_purchase_orders(verdict)
+            if swapped is not verdict:
+                turn_trace.record(
+                    "supplier_ask",
+                    summary="A supplier's outstanding is its open purchase orders.",
+                    why="The message names a supplier and no customer, so the order ask reads the open PO book.",
+                    facts={"from_domain": verdict.get("domain_hint"), "to_domain": swapped.get("domain_hint")},
+                )
+                verdict = swapped
 
         stage[0] = "routed"
         settings_row = switches
@@ -6661,6 +6677,10 @@ def _run_stages_body(  # noqa: PLR0915
                 "parse": {**(ctx.get("parse") or {}), "output": resolver_parse_output},
                 # REF-PROBES: the reference kinds this asker may have probed.
                 "reference_kinds": _reference_kinds(ctx, customer_scope, state_out.profile),
+                # SUPPLIER-ASK: a supplier is looked up only for staff with the supplier reveal.
+                "supplier_visible": supplier_visible(
+                    (ctx.get("access") or {}).get("attributes"), is_staff_profile(state_out.profile)
+                ),
             }
             resolve_outcome = (
                 turn_runtime.resolve_kinds(

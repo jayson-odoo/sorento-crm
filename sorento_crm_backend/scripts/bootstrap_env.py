@@ -766,6 +766,8 @@ def seed_chatbot_policy() -> None:
     spk = _load("_spk_0001_specification_kind", "spk_0001_specification_kind.py")
     # REF-PROBES: the five reference kinds' rows, also before the republish.
     rkind3 = _load("_rkind_0003_reference_kind_rows", "rkind_0003_reference_kind_rows.py")
+    # SUPPLIER-ASK: the supplier kind's row, also before the republish.
+    sask = _load("_sask_0001_supplier_kind", "sask_0001_supplier_kind.py")
     top_selling = _load("_chatbot_top_selling_tool", "chatbot_top_selling_tool.py")
     sales_s1 = _load("_sales_s1_reports_module", "sales_s1_reports_module.py")
     pdyn1 = _load("_pdyn_0001_status_words_sales", "pdyn_0001_status_words_sales.py")
@@ -786,6 +788,8 @@ def seed_chatbot_policy() -> None:
         kinds_inserted += int(spk.insert_kind(conn))
     with engine.begin() as conn:
         kinds_inserted += rkind3.insert_kinds(conn)
+    with engine.begin() as conn:
+        kinds_inserted += int(sask.insert_kind(conn))
     with engine.begin() as conn:
         s4.publish_policy_blocks(conn)
     with engine.begin() as conn:

@@ -343,6 +343,9 @@ TYPE_TO_PARAM: dict[str, str] = {
     # tools that already take `product_ids` (orders list, orders by product) all
     # take `brand_ids` the same way.
     "brand": "brand_ids",
+    # SUPPLIER-ASK: `crm_procurement_po_placed_list` only. A supplier entity exists on a turn
+    # only for an asker `contracts.supplier_visible` admits (`resolve_gate`).
+    "supplier": "supplier_ids",
 }
 
 _UUID_RE = re.compile(

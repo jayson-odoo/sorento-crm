@@ -409,6 +409,19 @@ SPECIFICATION_KIND_ROW: dict[str, Any] = dict(
     roster_cap=50,
 )
 
+# SUPPLIER-ASK (owner, 1 Nov 2026): the supplier a staff member names ("outstanding for
+# supplier X"), resolved through the shared resolver and the span pass's Supplier list.
+SUPPLIER_KIND_ROW: dict[str, Any] = dict(
+    kind="supplier",
+    label="Supplier",
+    resolver_source="suppliers",
+    did_you_mean=True,
+    default_narrowing="optional_filter",
+    family_grouping=None,
+    base_property_words={},
+    roster_cap=50,
+)
+
 # REF-PROBES (#1569): the five reference kinds a typed number may be NAMED as ("SO 456",
 # "PO 123"). Exact-match resolver probes, no did-you-mean, same narrowing as `order`
 # (migration `rkind_0003_reference_kind_rows`).
@@ -556,6 +569,8 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
     # property, grounded against the specification registry after the parse.
     SPECIFICATION_KIND_ROW,
     *REFERENCE_KIND_ROWS,
+    # SUPPLIER-ASK (migration `sask_0001_supplier_kind`): a company we buy from, staff-only.
+    SUPPLIER_KIND_ROW,
 ]
 
 # `DEFAULT_TIER_ORDER` used to live here (AC-1502). Gone (AC-1594, S6): the one literal is

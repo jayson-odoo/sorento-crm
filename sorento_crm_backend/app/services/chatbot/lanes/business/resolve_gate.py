@@ -743,6 +743,10 @@ def resolve_entity_body(
         entities = [e for e in entities if not (isinstance(e, dict) and e.get("listed") == "cert_scheme")]
     if excluded_entity_ids:
         entities = [e for e in entities if id(e) not in excluded_entity_ids]
+    if not ctx.get("supplier_visible"):
+        # SUPPLIER-ASK: a supplier is staff-only (`contracts.supplier_visible`); a word the
+        # parser hinted as one is never looked up for anyone else.
+        entities = [e for e in entities if jsc.lower_or_empty(jsc.get(e, "hint")) != "supplier"]
 
     match_mode = parse_output.get("match_mode")
     match_mode = match_mode if jsc.truthy(match_mode) else "and"
@@ -1591,6 +1595,9 @@ def run(
         listed_scheme_resolutions(parser, resolved)
     if hide_customers and isinstance(resolved, dict):
         _without_customer_rows(resolved)
+    if isinstance(resolved, dict) and not ctx.get("supplier_visible"):
+        # SUPPLIER-ASK: the resolver's cross-type rerun can place any word on a supplier.
+        without_rows_of(resolved, "supplier")
     if customer_names is not None and isinstance(resolved, dict):
         name_unnamed_customers(resolved, customer_names)
 
@@ -1773,9 +1780,16 @@ def _without_customer_rows(resolved: dict[str, Any]) -> None:
     A token whose every match was a customer is named on `hidden_customer_tokens`. Under
     `order` the resolver reads a brand or category word as the customer it names
     (`entity_resolver._DOMAIN_HINT_EXPANSIONS`), so the parser's tag cannot be trusted here."""
+    without_rows_of(resolved, "customer")
+
+
+def without_rows_of(resolved: dict[str, Any], kind: str) -> None:
+    """Drop every `kind` row from the resolver's answer, in place; a token whose every match
+    was one is named on `hidden_<kind>_tokens`. SUPPLIER-ASK reuses it for `supplier`: the
+    resolver's cross-type rerun can place any word on a supplier, whatever the parser said."""
 
     def _kept(rows: Any) -> list[Any]:
-        return [r for r in jsc.array(rows) if jsc.nullish_str(jsc.get(r, "entity_type")).strip().lower() != "customer"]
+        return [r for r in jsc.array(rows) if jsc.nullish_str(jsc.get(r, "entity_type")).strip().lower() != kind]
 
     hidden: list[str] = []
     for resolution in jsc.array(resolved.get("resolutions")):
@@ -1799,10 +1813,37 @@ def _without_customer_rows(resolved: dict[str, Any]) -> None:
     by_type = resolved.get("by_entity_type")
     if isinstance(by_type, dict):
         resolved["by_entity_type"] = {
-            k: (_kept(v) if isinstance(v, list) else v) for k, v in by_type.items() if str(k).lower() != "customer"
+            k: (_kept(v) if isinstance(v, list) else v) for k, v in by_type.items() if str(k).lower() != kind
         }
     if hidden:
-        resolved["hidden_customer_tokens"] = hidden
+        resolved[f"hidden_{kind}_tokens"] = hidden
+
+
+#: SUPPLIER-ASK: the domains an "outstanding for <supplier>" ask is parsed into ("outstanding"
+#: is an order word) and the entity hints that keep it a customer-side ask.
+SUPPLIER_SWITCH_DOMAINS = frozenset({"order", "sales"})
+ORDER_PARTY_HINTS = frozenset(
+    {"customer", "customer_order", "order", "order_number", "delivery_order", "sales_order", "customer_po_ref", "transporter"}
+)
+
+
+def supplier_ask_reads_purchase_orders(verdict: dict[str, Any]) -> dict[str, Any]:
+    """SUPPLIER-ASK (owner, 1 Nov 2026: "outstanding for supplier X yes the open POs not yet
+    received"): what is outstanding with a supplier is our purchase orders to it, so an
+    order-side verdict whose message names a supplier and no customer-side party is the
+    purchase_order domain. Decided by the KIND the parser gave the entity (from the span pass's
+    Supplier list), never by a word. Runs before the plan, so every later step reads one domain.
+    Returns a new verdict; the one passed in is not changed."""
+    if verdict.get("domain_hint") not in SUPPLIER_SWITCH_DOMAINS:
+        return verdict
+    hints = {
+        jsc.lower_or_empty(jsc.get(e, "hint"))
+        for e in jsc.array(verdict.get("entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False
+    }
+    if "supplier" not in hints or hints & ORDER_PARTY_HINTS:
+        return verdict
+    return {**verdict, "domain_hint": "purchase_order", "intent_hint": "check_po", "order_status": None}
 
 
 def probe_incoming(

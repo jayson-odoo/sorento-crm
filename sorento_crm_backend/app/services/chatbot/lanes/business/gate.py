@@ -134,8 +134,9 @@ ALLOWED: dict[str, list[str]] = {
     # the PO tool takes `warehouse_ids`; a customer or transporter token no longer rides into
     # it. Supersedes PLAN-chatbot-warehouse-entity-and-last-in line 47 ("purchase_order
     # stays as is"). `ALLOWS_EMPTY` below keeps a bare "PO" listing the open book.
+    # SUPPLIER-ASK: "POs for supplier X" / "outstanding for supplier X" narrows by supplier.
     "purchase_order": [
-        "product", "warehouse", "category", "brand",
+        "product", "warehouse", "category", "brand", "supplier",
         "sales_order", "customer_po_ref", "purchase_order", "purchase_request",
     ],
 }

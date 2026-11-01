@@ -255,23 +255,36 @@ def _resolved(*types: str) -> dict[str, Any]:
     }
 
 
+def _verdict(domain: str, *hints: str) -> dict[str, Any]:
+    return {
+        "domain_hint": domain,
+        "intent_hint": "check_order",
+        "order_status": "so_outstanding",
+        "entities": [{"raw": h, "hint": h, "current_message": True} for h in hints],
+    }
+
+
 @pytest.mark.parametrize("domain", ["order", "sales"])
 def test_a_supplier_only_order_ask_reads_the_po_book(domain):
-    parser = {"domain_hint": domain, "intent_hint": "check_order"}
-    assert resolve_gate.supplier_ask_reads_purchase_orders(parser, _resolved("supplier")) is True
-    assert parser["domain_hint"] == "purchase_order" and parser["intent_hint"] == "check_po"
+    before = _verdict(domain, "supplier")
+    out = resolve_gate.supplier_ask_reads_purchase_orders(before)
+    assert (out["domain_hint"], out["intent_hint"], out["order_status"]) == ("purchase_order", "check_po", None)
+    assert before["domain_hint"] == domain, "the verdict passed in is not changed"
+
+
+def test_a_product_beside_the_supplier_still_reads_the_po_book():
+    out = resolve_gate.supplier_ask_reads_purchase_orders(_verdict("order", "supplier", "product"))
+    assert out["domain_hint"] == "purchase_order"
 
 
 def test_a_customer_beside_the_supplier_keeps_the_order_domain():
-    parser = {"domain_hint": "order", "intent_hint": "check_order"}
-    assert resolve_gate.supplier_ask_reads_purchase_orders(parser, _resolved("supplier", "customer")) is False
-    assert parser["domain_hint"] == "order"
+    v = _verdict("order", "supplier", "customer")
+    assert resolve_gate.supplier_ask_reads_purchase_orders(v) is v
 
 
 def test_another_domain_is_left_alone():
-    parser = {"domain_hint": "inventory", "intent_hint": "check_stock"}
-    assert resolve_gate.supplier_ask_reads_purchase_orders(parser, _resolved("supplier")) is False
-    assert parser["domain_hint"] == "inventory"
+    v = _verdict("inventory", "supplier")
+    assert resolve_gate.supplier_ask_reads_purchase_orders(v) is v
 
 
 def test_supplier_rows_are_dropped_for_an_asker_who_may_not_see_them():

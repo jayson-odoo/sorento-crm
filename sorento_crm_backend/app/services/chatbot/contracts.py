@@ -303,6 +303,9 @@ ENTITY_HINTS = (
     # Fix round 8 on PR #833: a product property from the specification registry
     # (`head/grounding.py`), never a document type.
     "specification",
+    # SUPPLIER-ASK: a company we buy from; staff with the supplier reveal only
+    # (`supplier_visible`).
+    "supplier",
 )
 EntityHint = Literal[ENTITY_HINTS]  # type: ignore[valid-type]
 
@@ -321,6 +324,15 @@ REFERENCE_NARROW: dict[str, frozenset[str] | None] = {
 
 _SO_GRANT = "sales_orders.outstanding"
 _PO_PLACED_GRANT = "purchase_orders.placed"
+
+
+SUPPLIER_GRANT = "purchase_orders.supplier"
+
+
+def supplier_visible(attributes: list[str] | None, is_staff: bool) -> bool:
+    """SUPPLIER-ASK: a supplier is resolved, filtered on and named only for staff holding the
+    supplier reveal, the same key that shows the PO's supplier field."""
+    return bool(is_staff) and SUPPLIER_GRANT in set(attributes or [])
 
 
 def visible_reference_kinds(attributes: list[str] | None, is_staff: bool) -> list[str]:
