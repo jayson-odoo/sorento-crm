@@ -250,8 +250,11 @@ def test_a_line_at_a_project_bin_drawing_the_pool_gets_nothing_added_back():
     un-net: 10 at the pool still lends 5, as it does today."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
-        _dealer_pool(db, on_hand=10, product=product)
-        own = _warehouse(db, f"ZZP{_uid()[:6]}-BB", segment="project", fulfilment_planning=True)
+        pool = _dealer_pool(db, on_hand=10, product=product)
+        own = _warehouse(
+            db, f"ZZP{_uid()[:6]}-BB", segment="project", pool_warehouse_id=pool.id,
+            fulfilment_planning=True,
+        )
         db.commit()
         order, _line, _core_so, _core_line = _seed_line(
             db, company_id, project, product, own, qty_ordered="10",
