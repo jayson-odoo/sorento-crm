@@ -1688,3 +1688,23 @@ def test_group_by_null_is_graded_not_skipped():
     assert pg.grade_parse({"group_by": "month"}, {"group_by": None})[0] is False
     assert pg.grade_parse({"group_by": None}, {"group_by": None})[0] is True
     assert pg.grade_parse({}, {"group_by": None})[0] is True
+
+
+def test_account_type_gold_open_question_is_the_object_the_engine_sends():
+    """at-17 to at-19 carry the real shape of `turn/question.of_required_ask` for the word question."""
+    from pathlib import Path
+
+    from app.services.chatbot.lanes.business import report_ask
+    from app.services.chatbot.turn import question
+
+    slot = {
+        "ask": report_ask.ASK_NAME, "asking": "kind", "options": [list(o) for o in report_ask.WORD_KIND_OPTIONS],
+        "values": {"basis": {"value": "delivered", "label": "delivered"}}, "extras": {"kind_words": ["Cabana"]},
+    }
+    sent = question.of_required_ask(slot)
+    rows = {r["id"]: r for r in pg.load_gold(Path(pg.__file__).parent / "gold" / "parser_account_type.jsonl")}
+    for row_id in ("at-17", "at-18", "at-19"):
+        asked = rows[row_id]["context"]["open_question"]
+        assert list(asked) == list(sent), (row_id, list(asked), list(sent))
+        assert asked["question"] == sent["question"] == "Brand or account type?"
+        assert asked["options"] == sent["options"] and asked["owed"] == ["kind"]
