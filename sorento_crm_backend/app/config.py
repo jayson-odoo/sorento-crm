@@ -201,6 +201,12 @@ class Settings(BaseSettings):
     # user watching a screen, not a customer waiting inside a whole WhatsApp turn's latency
     # target). CHATBOT_MCP_TIMEOUT_SECONDS.
     chatbot_mcp_timeout_seconds: int = 10
+    # How many times one model call is tried again after a timeout or a dropped connection
+    # (owner, 1 Nov 2026), always inside `llm_call.CALL_DEADLINE_SECONDS`. 3 is what every
+    # other transient error already gets. Today's 20 s attempt and 35 s budget fit only one
+    # timeout retry, however high this is set; a dropped connection fails fast and can use
+    # them all. 0 turns it off. CHATBOT_LLM_RETRIES.
+    chatbot_llm_retries: int = 3
 
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints

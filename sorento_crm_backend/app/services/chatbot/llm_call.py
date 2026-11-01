@@ -22,8 +22,14 @@ off (this loop is the only retry), and the whole call, backoff included, stops a
 `CALL_DEADLINE_SECONDS`. A timeout raises `TimedOut`, which IS a `RateLimited`: to the dealer
 both mean "the model did not answer, send that again", so every caller answers a hang the
 way it answers a 429, and the row keeps the real reason. With the SDK
-retries off, a 5xx / 529 / dropped connection (`is_transient`) is retried here on the same
-backoff as a 429, and ends the same way.
+retries off, a 5xx / 529 (`is_transient`) is retried here on the same backoff as a 429, and
+ends the same way.
+
+CHATBOT-FAIL-REVIEW (owner, 1 Nov 2026: "Gemini timeout can retry up to N times with
+configurable"): a timeout or a dropped connection is tried again up to `CHATBOT_LLM_RETRIES`
+times, inside the same budget. It used to end the turn on the first timeout, on the reasoning
+that a provider that hung was not answering this turn. Production says otherwise: on 29 Oct a
+call started 11:44:02 hung for 20 s while the same dealer's call started 11:44:03 was answered.
 """
 from __future__ import annotations
 
@@ -34,6 +40,9 @@ import time
 from contextlib import contextmanager
 from typing import Any, Iterator
 
+import httpx
+
+from app.config import settings
 from app.services.llm_provider import is_timeout  # noqa: F401 - re-exported, callers import it from here
 
 logger = logging.getLogger(__name__)
@@ -56,6 +65,8 @@ ATTEMPT_TIMEOUT_SECONDS = 20.0
 CALL_DEADLINE_SECONDS = 35.0
 #: An attempt with less than this left is not started: it could only time out.
 MIN_ATTEMPT_SECONDS = 1.0
+#: Nor is a retry after a lost answer with less than this: a normal parse takes 2.6-4.1 s.
+MIN_RETRY_SECONDS = 5.0
 
 _RETRY_IN_RE = re.compile(r"try again in (\d+(?:\.\d+)?)\s*(ms|s)\b", re.IGNORECASE)
 
@@ -130,7 +141,30 @@ def is_transient(exc: BaseException) -> bool:
         status = getattr(getattr(exc, "response", None), "status_code", None)
     if isinstance(status, int) and status >= 500:
         return True
-    return type(exc).__name__ in {"APIConnectionError", "InternalServerError", "OverloadedError"}
+    return type(exc).__name__ in {"InternalServerError", "OverloadedError"}
+
+
+def is_dropped_connection(exc: BaseException) -> bool:
+    """The connection failed before any answer came: an SDK's `APIConnectionError`, or
+    Gemini's RuntimeError wrapping httpx's own error. Walks the `from` chain as `is_timeout`
+    does, because Gemini re-raises; its other RuntimeErrors (a safety block, an empty
+    candidate) carry no such cause, and they are answers a retry would only repeat."""
+    seen = 0
+    current: BaseException | None = exc
+    while current is not None and seen < 5:
+        if type(current).__name__ == "APIConnectionError" or isinstance(current, httpx.TransportError):
+            return True
+        current = current.__cause__
+        seen += 1
+    return False
+
+
+def _retries() -> int:
+    """`CHATBOT_LLM_RETRIES`. A bad value reads as off, never as a failed turn."""
+    try:
+        return max(0, int(getattr(settings, "chatbot_llm_retries", 0)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _server_wait(exc: BaseException) -> float | None:
@@ -151,16 +185,22 @@ def chat(
     **kwargs: Any,
 ):
     """`get_provider(provider, api_key, model).chat(messages, model=model, **kwargs)`,
-    with a rate limit waited out and a hard time budget. Raises `RateLimited` when a rate
-    limit never clears, `TimedOut` when the budget runs out; any other error is raised as
-    it came, on the first attempt. `deadline_seconds` widens the budget only for a caller
+    with a rate limit waited out, a timeout or dropped connection tried again up to
+    `CHATBOT_LLM_RETRIES` times, and a hard time budget. Raises `RateLimited` when a rate
+    limit never clears or the connection stays down, `TimedOut` when the retries or the
+    budget run out; any other error is raised as it came, on the first attempt. `deadline_seconds` widens the budget only for a caller
     no dealer is waiting on (the nightly topic labeller)."""
     from app.services.llm_provider import get_provider
 
     client = get_provider(provider, api_key, model)
-    deadline = _monotonic() + deadline_seconds
+    started = _monotonic()
+    deadline = started + deadline_seconds
     waited = 0.0
-    for attempt, backoff in enumerate((*BACKOFF_SECONDS, None), 1):
+    backoffs = iter(BACKOFF_SECONDS)
+    retries_left = _retries()
+    attempt = 0
+    while True:
+        attempt += 1
         remaining = deadline - _monotonic()
         if remaining < MIN_ATTEMPT_SECONDS:
             logger.error(
@@ -173,22 +213,41 @@ def chat(
             _capture(provider, model, result)
             return result
         except Exception as exc:  # noqa: BLE001 - inspected, then re-raised
-            if is_timeout(exc):
-                # Not retried: a provider that hung for 20 s is not answering this turn,
-                # and a second hang would spend the rest of the dealer's wait on it.
+            timed_out = is_timeout(exc)
+            if timed_out or is_dropped_connection(exc):
+                # A hang has already spent its time, so it goes straight back. A drop fails
+                # fast, so it waits the same backoff as any other transient error.
+                wait = 0.0 if timed_out else next(backoffs, BACKOFF_SECONDS[-1])
+                if retries_left > 0 and deadline - (_monotonic() + wait) >= MIN_RETRY_SECONDS:
+                    retries_left -= 1
+                    logger.warning(
+                        "chatbot llm: %s/%s %s on attempt %s, trying again",
+                        provider,
+                        model,
+                        "timed out" if timed_out else "lost its connection",
+                        attempt,
+                    )
+                    _sleep(wait)
+                    waited += wait
+                    continue
                 logger.error(
-                    "chatbot llm: %s/%s timed out after %.1fs on attempt %s",
+                    "chatbot llm: %s/%s %s on attempt %s, giving up after %.1fs",
                     provider,
                     model,
-                    timeout,
+                    "timed out" if timed_out else "lost its connection",
                     attempt,
+                    _monotonic() - started,
                 )
-                raise TimedOut(
-                    f"no answer from {provider} within {timeout:.0f}s ({exc})"
-                ) from exc
+                if timed_out:
+                    raise TimedOut(
+                        f"no answer from {provider} within {_monotonic() - started:.0f}s "
+                        f"after {attempt} attempt(s) ({exc})"
+                    ) from exc
+                raise RateLimited(str(exc)) from exc
             transient = is_transient(exc)
             if not transient and not is_rate_limited(exc):
                 raise
+            backoff = next(backoffs, None)
             wait = None
             if backoff is not None and not _quota_exhausted(exc):
                 wait = min(max(backoff, _server_wait(exc) or 0.0), MAX_WAIT_SECONDS)
@@ -205,4 +264,3 @@ def chat(
             logger.info("chatbot llm: %s on attempt %s, waiting %.1fs", reason, attempt, wait)
             _sleep(wait)
             waited += wait
-    raise AssertionError("unreachable")  # pragma: no cover - the loop always returns or raises
