@@ -454,6 +454,8 @@ def test_documents_list_verdicts_and_pagination(api):
 
 
 def test_documents_unknown_type_404(api):
+    known = seed_type(api.db, staff=True)
+    assert _docs(api, known.id).status_code == 200, "the route exists: a known type answers"
     assert _docs(api, uuid.uuid4()).status_code == 404
 
 
