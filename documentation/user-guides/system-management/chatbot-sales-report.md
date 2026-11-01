@@ -172,3 +172,7 @@ WhatsApp, to a contact who holds the grant.
 * [Chatbot - outstanding report (sales order backlog and delivery order outstanding)](chatbot-outstanding-report.md)
 * [Read a chatbot turn trace, and retry a failed one](troubleshoot-chatbot-turn-failures.md)
 * [System Management - Data reference for admins](data-analysis.md)
+
+## See also
+
+* [Search sales by account type](../_shared/sales-by-account-type.md), including asking the bot by account type.

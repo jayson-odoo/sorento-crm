@@ -32,7 +32,7 @@ and group_by may also be "month" or "year", only when the message asks that spli
  A brand entity whose name the message calls a brand ("cabana brand", "brand cabana") has kind_said "brand" (see ACCOUNT TYPE).
 ```
 
-and on the lines right after it, this block:
+then one blank line, then this block:
 
 ```text
 == ACCOUNT TYPE: entities[].hint "account_type" == The user block may carry a "Known account types:" line, built fresh every turn: the account types stored on the customers' ledgers. On a sales or outstanding ask:
