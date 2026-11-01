@@ -404,8 +404,9 @@ def test_fr1_f7_a_barred_contacts_reply_refers_to_the_salesman_and_arms_nothing(
 
 # ---------------------------------------------------------------- CUSTOMER-ASKS-REFER-ONLY: the refer mark
 # The salesman line is printed through `turn/refer.py`, so the turn is marked for Customer asks when, and
-# only when, the reply the customer gets carries it. Each turn runs inside `refer.tracking()`, as a turn
-# the engine opens does, so the mark is observable.
+# only when, the reply the customer gets carries it. Each test opens `refer.tracking()` itself so the mark
+# is observable. No agent caller opens one today (inbox, console and panel all run the agent outside the
+# engine's tracking and write no Customer asks row), so in production this mark is not yet read.
 
 
 def test_refer_a_barred_contacts_knowledge_miss_marks_the_turn_and_the_reply_ends_with_the_line(db):
