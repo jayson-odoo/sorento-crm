@@ -257,6 +257,35 @@ def test_at22_no_customer_carrying_the_word_means_the_brand_with_no_question(bot
     assert args["brand_ids"] == [ids["CABANA"]] and "account_types" not in args, args
 
 
+def test_at22_a_type_only_another_company_carries_asks_nothing(bot) -> None:
+    ids = _seed(bot, ledgers=(("ZZT LEDGER THREE [A/C III]", "CERAMIC"),))
+    db = bot.console.session_factory()
+    try:
+        seed_mocha(db)
+        _ledger(db, MOCHA_ID, "ZZT MOCHA LEDGER [A/C IV]", "CABANA")  # the contact holds the default company only
+        db.commit()
+    finally:
+        db.close()
+    text, calls = bot.say(_sales(_word()), "sales for cabana in Jan")
+    args = _only_report_ask(calls)
+    assert args["brand_ids"] == [ids["CABANA"]] and "account_types" not in args, args
+    assert QUESTION not in text, text
+
+
+@pytest.mark.parametrize("kind", ["outstanding", "pending_delivery"])
+def test_at20_an_outstanding_ask_on_an_account_type_is_a_figure_not_a_list(bot, seeded, kind) -> None:
+    text, calls = bot.say(
+        _status(
+            "outstanding", _word("cabana", "account_type", None, True), basis=kind,
+            date_filter_start=None, date_filter_end=None,
+        ),
+        f"{kind} cabana account",
+    )
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["CABANA"], args
+    assert args.get("group_by") not in ("sales_order", "delivery_order"), args
+
+
 # --------------------------------------------------------------------------------------------- AT-23
 
 
