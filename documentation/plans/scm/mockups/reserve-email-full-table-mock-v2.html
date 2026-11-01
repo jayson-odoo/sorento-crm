@@ -1,0 +1,851 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reserve emails: full table, one per CS (mockup v4, approved)</title>
+<style>body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#f9fafb;color:#111827}
+main{max-width:1040px;margin:0 auto;padding:24px 16px 64px}h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:36px 0 8px}
+p,li{font-size:14px;line-height:21px;color:#374151}.meta{color:#6b7280;font-size:13px}
+.env{font-size:13px;line-height:20px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 12px;margin:20px 0 8px}
+.flag{background:#FEF3C7;color:#92400E;border-radius:999px;padding:1px 8px;font-size:12px;margin-left:6px}
+table.n{border-collapse:collapse;font-size:13px;margin:8px 0}table.n td,table.n th{border:1px solid #e5e7eb;padding:6px 10px;text-align:left;vertical-align:top}
+tr.gap td{background:#F3F4F6;font-weight:600}
+nav a{margin-right:16px;font-size:14px;color:#2563eb}.wrap{overflow-x:auto}</style></head><body><main>
+<h1>Reserve emails: full per-line table, one email per CS (mockup v4, approved)</h1>
+<p class="meta">RESERVE-EMAIL-FULL-TABLE, 31 Oct 2026. Each email is rendered by the app's own email renderer (<code>email_layout.render_document</code>, default theme, wide width) from 5 real OIs and 22 real lines on the 28 Oct dev copy, masked.</p>
+<p class="meta"><b>Illustrative:</b> only the Partial and Rejected answers and their reasons. On that copy every answered line so far is a full answer with no reason text, so no real one exists yet. Everything else, including who raised each OI, is real and masked.</p>
+<nav><a href="#changes">Your notes</a><a href="#excel">Excel compare</a><a href="#request">1. Request</a><a href="#reserved">2. Reserved</a><a href="#status">3. Status rule</a><a href="#rejected">4. All rejected</a><a href="#sizes">5. Sizes</a><a href="#reuse">6. Reuse</a></nav>
+
+<p class="meta"><b>Approved 31 Oct</b> with one change, shown here: OI NO is the first column in both emails. The Excel download stays as it is.</p>
+<h2 id="changes">What changed from v3 (your notes)</h2>
+<div class="wrap"><table class="n"><tr><th>Your note on v3</th><th>In v4</th></tr>
+<tr><td>Put OI as a column, not a group, easier to filter</td><td>Flat table with OI NO on every row and no grey group lines. Lines sort as the Excel does: ITEM CODE, then DELIVERY DATE.</td></tr>
+<tr><td>Rejected needs to show the reason</td><td>A REASON column in the row, replacing the line underneath. It prints only when a line in that email has a reason.</td></tr>
+<tr><td>Does this match the Excel download?</td><td>The shared columns now match by name and order, but the Excel has no OI NO, STATUS or REASON. Every column is compared below.</td></tr></table></div>
+<p class="meta">Your earlier notes still stand: no RESERVED or BALANCE, no #n, legacy imports need no special case.</p>
+
+<h2 id="excel">Email compared with the OI Excel download</h2>
+<p><b>Short answer: yes for the columns they share, no for the outcome.</b> In the Excel, a rejected line reads the same as one still waiting for CS: REQUESTED RESERVE filled, RESERVED blank, and the reason nowhere. The PDF prints the same 19 columns as the Excel.</p>
+<div class="wrap"><table class="n"><tr><th>Excel column, in order</th><th>Request email</th><th>Reserved email</th><th>Why</th></tr>
+<tr><td>SO DATE</td><td>Yes</td><td>Yes</td><td>Same</td></tr>
+<tr><td>S/O NO</td><td>Yes</td><td>Yes</td><td>Same. v3 wrongly said SO NO.</td></tr>
+<tr><td>ITEM CODE</td><td>Yes</td><td>Yes</td><td>Same</td></tr>
+<tr><td>QTY</td><td>Yes</td><td>Yes</td><td>Same</td></tr>
+<tr><td>REQUESTED RESERVE</td><td>Yes</td><td>Yes</td><td>Same on a first request. If a line was asked again, the email shows this request's figure and the Excel adds what earlier requests kept.</td></tr>
+<tr><td>RESERVED</td><td>No</td><td>STATUS in this place</td><td>Your note on v2. STATUS carries the figure.</td></tr>
+<tr><td>TOTAL QTY</td><td>No</td><td>No</td><td>Your answer on card v1</td></tr>
+<tr><td>DELIVERY DATE</td><td>Yes</td><td>Yes</td><td>Same</td></tr>
+<tr><td>PROJECT/CUSTOMER</td><td>Yes</td><td>Yes</td><td>Same</td></tr>
+<tr><td>SUPPLIER, PO NO</td><td>No</td><td>No</td><td>Not in the columns the stakeholder asked for</td></tr>
+<tr><td>LOCATION</td><td>No</td><td>No</td><td>Your answer on card v1</td></tr>
+<tr><td>ACKNOWLEDGED, TAKEN, REMAINING, SUGGESTED, CHANGE QUANTITY, CHANGE DATE, REMARK</td><td>No</td><td>No</td><td>Not in the columns the stakeholder asked for</td></tr>
+<tr class="gap"><td colspan="4">In the email, not in the Excel</td></tr>
+<tr><td>OI NO</td><td>Yes</td><td>Yes</td><td>Your note on v3, and first column by your note on v4.</td></tr>
+<tr><td>STATUS</td><td>No</td><td>Yes</td><td>Your notes on v2</td></tr>
+<tr><td>REASON</td><td>No</td><td>When a line has one</td><td>Your note on v3</td></tr></table></div>
+<p><b>Order of lines:</b> the Excel sorts by SUPPLIER, ITEM CODE, then DELIVERY DATE. The email has no SUPPLIER, so it sorts by ITEM CODE, then DELIVERY DATE.</p>
+
+<h2 id="request">1. Reserve request: one batch from User-F becomes 4 emails to User-G, one per raising CS</h2>
+<div class="env"><div><b>Subject:</b> Reserve request: OI-2610-0057 - SO421741, raised by User-B (User-F)</div><div><b>To:</b> User-G (answers reserve requests, set on the automation) &nbsp; <b>Cc:</b> User-F (requester), User-B (raised this OI)</div><div class="meta">1 OI, 3 lines, 11 KB</div></div><iframe title="Reserve request: OI-2610-0057 - SO421741, raised by User-B (User-F)" onload="this.style.height=this.contentWindow.document.documentElement.scrollHeight+'px'" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Reserve request: OI-2610-0057 - SO421741, raised by User-B (User-F)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint and print. Every other rule is inline. */
+  @media only screen and (max-width: 920px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+  /* Printing (OI-EMAIL-PRINT): A4 portrait, the card fills the sheet, a long table repeats
+     its header row on every page. Rows that must not split say so inline; a rule on every
+     `tr` here would also hold the shell&#x27;s own block rows together and push a whole table
+     onto the next page. Clients that ignore this still get a card that fits, when the
+     document is on the `print` width. */
+  @page { size: A4 portrait; margin: 10mm; }
+  @media print {
+    body { background-color: #ffffff !important; }
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; max-width: 100% !important; border: 0 !important; border-radius: 0 !important; }
+    thead { display: table-header-group; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;User-F asks CS to reserve stock on OI-2610-0057 raised by User-B (3 lines).&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;900&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:900px;max-width:900px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 24px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;OI-2610-0057 raised by User-B needs your reserve&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;User-F asks CS to reserve stock on OI-2610-0057 raised by User-B (3 lines).&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;!--block:custom_text--&gt;&lt;table width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;border-collapse:collapse;font-size:12px;&quot;&gt;&lt;thead&gt;&lt;tr style=&quot;background:#F3F4F6;&quot;&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;OI NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;ITEM CODE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;REQUESTED RESERVE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;DELIVERY DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;PROJECT/CUSTOMER&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0057&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;17/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO421741&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB6633-PP&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;80&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;80&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Haa… / Lum…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0057&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;17/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO421741&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB6638&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;212&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;212&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Haa… / Lum…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0057&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;17/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO421741&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTWT2225&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;42&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;42&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Haa… / Lum…&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Requested by User-F on 31/10/2026.&lt;/p&gt;&lt;!--/block:custom_text--&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 24px 8px 24px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example/project-sales/order-inquiries/this-oi&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;View this order inquiry&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 24px 0 24px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 24px 32px 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;" style="width:100%;height:491px;border:1px solid #e5e7eb;border-radius:12px;background:#fff"></iframe><div class="env"><div><b>Subject:</b> Reserve request: OI-2609-0780 - SO423386, raised by User-C (User-F)</div><div><b>To:</b> User-G (answers reserve requests, set on the automation) &nbsp; <b>Cc:</b> User-F (requester), User-C (raised this OI)</div><div class="meta">1 OI, 5 lines, 12 KB</div></div><iframe title="Reserve request: OI-2609-0780 - SO423386, raised by User-C (User-F)" onload="this.style.height=this.contentWindow.document.documentElement.scrollHeight+'px'" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Reserve request: OI-2609-0780 - SO423386, raised by User-C (User-F)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint and print. Every other rule is inline. */
+  @media only screen and (max-width: 920px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+  /* Printing (OI-EMAIL-PRINT): A4 portrait, the card fills the sheet, a long table repeats
+     its header row on every page. Rows that must not split say so inline; a rule on every
+     `tr` here would also hold the shell&#x27;s own block rows together and push a whole table
+     onto the next page. Clients that ignore this still get a card that fits, when the
+     document is on the `print` width. */
+  @page { size: A4 portrait; margin: 10mm; }
+  @media print {
+    body { background-color: #ffffff !important; }
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; max-width: 100% !important; border: 0 !important; border-radius: 0 !important; }
+    thead { display: table-header-group; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;User-F asks CS to reserve stock on OI-2609-0780 raised by User-C (5 lines).&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;900&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:900px;max-width:900px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 24px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;OI-2609-0780 raised by User-C needs your reserve&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;User-F asks CS to reserve stock on OI-2609-0780 raised by User-C (5 lines).&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;!--block:custom_text--&gt;&lt;table width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;border-collapse:collapse;font-size:12px;&quot;&gt;&lt;thead&gt;&lt;tr style=&quot;background:#F3F4F6;&quot;&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;OI NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;ITEM CODE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;REQUESTED RESERVE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;DELIVERY DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;PROJECT/CUSTOMER&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;18/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;11&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;11&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;25/01/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;02/03/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;03/04/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;04/05/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Requested by User-F on 31/10/2026.&lt;/p&gt;&lt;!--/block:custom_text--&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 24px 8px 24px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example/project-sales/order-inquiries/this-oi&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;View this order inquiry&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 24px 0 24px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 24px 32px 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;" style="width:100%;height:565px;border:1px solid #e5e7eb;border-radius:12px;background:#fff"></iframe><div class="env"><div><b>Subject:</b> Reserve request: OI-2610-0025 - SO424763, raised by User-E (User-F)</div><div><b>To:</b> User-G (answers reserve requests, set on the automation) &nbsp; <b>Cc:</b> User-F (requester), User-E (raised this OI)</div><div class="meta">1 OI, 10 lines, 15 KB</div></div><iframe title="Reserve request: OI-2610-0025 - SO424763, raised by User-E (User-F)" onload="this.style.height=this.contentWindow.document.documentElement.scrollHeight+'px'" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Reserve request: OI-2610-0025 - SO424763, raised by User-E (User-F)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint and print. Every other rule is inline. */
+  @media only screen and (max-width: 920px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+  /* Printing (OI-EMAIL-PRINT): A4 portrait, the card fills the sheet, a long table repeats
+     its header row on every page. Rows that must not split say so inline; a rule on every
+     `tr` here would also hold the shell&#x27;s own block rows together and push a whole table
+     onto the next page. Clients that ignore this still get a card that fits, when the
+     document is on the `print` width. */
+  @page { size: A4 portrait; margin: 10mm; }
+  @media print {
+    body { background-color: #ffffff !important; }
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; max-width: 100% !important; border: 0 !important; border-radius: 0 !important; }
+    thead { display: table-header-group; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;User-F asks CS to reserve stock on OI-2610-0025 raised by User-E (10 lines).&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;900&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:900px;max-width:900px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 24px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;OI-2610-0025 raised by User-E needs your reserve&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;User-F asks CS to reserve stock on OI-2610-0025 raised by User-E (10 lines).&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;!--block:custom_text--&gt;&lt;table width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;border-collapse:collapse;font-size:12px;&quot;&gt;&lt;thead&gt;&lt;tr style=&quot;background:#F3F4F6;&quot;&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;OI NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;ITEM CODE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;REQUESTED RESERVE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;DELIVERY DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;PROJECT/CUSTOMER&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;BT009&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;C-FH16&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;18&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;18&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB1178A-SS-NEW&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB6633-PP&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;36&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;36&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB6638&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;166&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;166&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRT1000-CR - NEW&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTFH15-HD&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTSA830-PJ&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;2&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;2&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTSS4150&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTWT2215&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;4&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;4&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Requested by User-F on 31/10/2026.&lt;/p&gt;&lt;!--/block:custom_text--&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 24px 8px 24px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example/project-sales/order-inquiries/this-oi&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;View this order inquiry&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 24px 0 24px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 24px 32px 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;" style="width:100%;height:750px;border:1px solid #e5e7eb;border-radius:12px;background:#fff"></iframe><div class="env"><div><b>Subject:</b> Reserve requests: 2 order inquiries raised by User-H (User-F)</div><div><b>To:</b> User-G (answers reserve requests, set on the automation) &nbsp; <b>Cc:</b> User-F (requester), User-H (raised these OIs)</div><div class="meta">2 OIs, 4 lines, 11 KB</div></div><iframe title="Reserve requests: 2 order inquiries raised by User-H (User-F)" onload="this.style.height=this.contentWindow.document.documentElement.scrollHeight+'px'" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Reserve requests: 2 order inquiries raised by User-H (User-F)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint and print. Every other rule is inline. */
+  @media only screen and (max-width: 920px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+  /* Printing (OI-EMAIL-PRINT): A4 portrait, the card fills the sheet, a long table repeats
+     its header row on every page. Rows that must not split say so inline; a rule on every
+     `tr` here would also hold the shell&#x27;s own block rows together and push a whole table
+     onto the next page. Clients that ignore this still get a card that fits, when the
+     document is on the `print` width. */
+  @page { size: A4 portrait; margin: 10mm; }
+  @media print {
+    body { background-color: #ffffff !important; }
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; max-width: 100% !important; border: 0 !important; border-radius: 0 !important; }
+    thead { display: table-header-group; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;User-F asks CS to reserve stock on 2 order inquiries raised by User-H (4 lines).&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;900&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:900px;max-width:900px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 24px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;2 order inquiries raised by User-H need your reserve&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;User-F asks CS to reserve stock on 2 order inquiries raised by User-H (4 lines).&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;!--block:custom_text--&gt;&lt;table width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;border-collapse:collapse;font-size:12px;&quot;&gt;&lt;thead&gt;&lt;tr style=&quot;background:#F3F4F6;&quot;&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;OI NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;ITEM CODE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;REQUESTED RESERVE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;DELIVERY DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;PROJECT/CUSTOMER&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0165&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/02/2025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO336600&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB315&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;170&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;70&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;01/01/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Fox…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0676&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;25/06/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO409325&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;M3155&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;78&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;78&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;07/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sig…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0676&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;25/06/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO409325&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;M3155&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;87&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;87&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/04/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sig…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0676&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;25/06/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO409325&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;M3155&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;72&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;72&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;19/05/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sig…&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Requested by User-F on 31/10/2026.&lt;/p&gt;&lt;!--/block:custom_text--&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 24px 8px 24px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example/project-sales/order-inquiries?inquiry_no=OI-2609-0165,OI-2609-0676&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;View these 2 order inquiries&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 24px 0 24px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 24px 32px 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;" style="width:100%;height:528px;border:1px solid #e5e7eb;border-radius:12px;background:#fff"></iframe>
+
+<h2 id="reserved">2. Reserved: User-G's answer becomes 4 emails back to User-F, one per raising CS</h2>
+<div class="env"><div><b>Subject:</b> Reserved: OI-2610-0057 - SO421741, raised by User-B, 1 partial (User-G)<span class="flag">partial line is illustrative</span></div><div><b>To:</b> User-F (requester) &nbsp; <b>Cc:</b> User-B (raised this OI)</div><div class="meta">1 OI, 3 lines, 12 KB</div></div><iframe title="Reserved: OI-2610-0057 - SO421741, raised by User-B, 1 partial (User-G)" onload="this.style.height=this.contentWindow.document.documentElement.scrollHeight+'px'" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Reserved: OI-2610-0057 - SO421741, raised by User-B, 1 partial (User-G)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint and print. Every other rule is inline. */
+  @media only screen and (max-width: 920px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+  /* Printing (OI-EMAIL-PRINT): A4 portrait, the card fills the sheet, a long table repeats
+     its header row on every page. Rows that must not split say so inline; a rule on every
+     `tr` here would also hold the shell&#x27;s own block rows together and push a whole table
+     onto the next page. Clients that ignore this still get a card that fits, when the
+     document is on the `print` width. */
+  @page { size: A4 portrait; margin: 10mm; }
+  @media print {
+    body { background-color: #ffffff !important; }
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; max-width: 100% !important; border: 0 !important; border-radius: 0 !important; }
+    thead { display: table-header-group; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;User-G answered 3 lines on OI-2610-0057 raised by User-B: 2 reserved, 1 partial.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;900&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:900px;max-width:900px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 24px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Reserved: OI-2610-0057 raised by User-B, 1 partial&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;User-G answered 3 lines on OI-2610-0057 raised by User-B: 2 reserved, 1 partial.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;!--block:custom_text--&gt;&lt;table width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;border-collapse:collapse;font-size:12px;&quot;&gt;&lt;thead&gt;&lt;tr style=&quot;background:#F3F4F6;&quot;&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;OI NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;ITEM CODE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;REQUESTED RESERVE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;STATUS&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;DELIVERY DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;PROJECT/CUSTOMER&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;min-width:120px;&quot;&gt;REASON&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0057&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;17/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO421741&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB6633-PP&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;80&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;80&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 80&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Haa… / Lum…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0057&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;17/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO421741&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB6638&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;212&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;212&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;color:#92400E;font-weight:600;&quot;&gt;Partial 150 of 212&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Haa… / Lum…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Only this much on hand, the rest arrives next container.&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0057&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;17/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO421741&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTWT2225&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;42&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;42&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 42&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Haa… / Lum…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Answered by User-G on 31/10/2026.&lt;/p&gt;&lt;!--/block:custom_text--&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 24px 8px 24px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example/project-sales/order-inquiries/this-oi&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;View this order inquiry&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 24px 0 24px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 24px 32px 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;" style="width:100%;height:491px;border:1px solid #e5e7eb;border-radius:12px;background:#fff"></iframe><div class="env"><div><b>Subject:</b> Reserved: OI-2609-0780 - SO423386, raised by User-C (User-G)</div><div><b>To:</b> User-F (requester) &nbsp; <b>Cc:</b> User-C (raised this OI)</div><div class="meta">1 OI, 5 lines, 13 KB</div></div><iframe title="Reserved: OI-2609-0780 - SO423386, raised by User-C (User-G)" onload="this.style.height=this.contentWindow.document.documentElement.scrollHeight+'px'" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Reserved: OI-2609-0780 - SO423386, raised by User-C (User-G)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint and print. Every other rule is inline. */
+  @media only screen and (max-width: 920px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+  /* Printing (OI-EMAIL-PRINT): A4 portrait, the card fills the sheet, a long table repeats
+     its header row on every page. Rows that must not split say so inline; a rule on every
+     `tr` here would also hold the shell&#x27;s own block rows together and push a whole table
+     onto the next page. Clients that ignore this still get a card that fits, when the
+     document is on the `print` width. */
+  @page { size: A4 portrait; margin: 10mm; }
+  @media print {
+    body { background-color: #ffffff !important; }
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; max-width: 100% !important; border: 0 !important; border-radius: 0 !important; }
+    thead { display: table-header-group; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;User-G reserved all 5 lines on OI-2609-0780 raised by User-C.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;900&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:900px;max-width:900px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 24px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Reserved: OI-2609-0780 raised by User-C&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;User-G reserved all 5 lines on OI-2609-0780 raised by User-C.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;!--block:custom_text--&gt;&lt;table width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;border-collapse:collapse;font-size:12px;&quot;&gt;&lt;thead&gt;&lt;tr style=&quot;background:#F3F4F6;&quot;&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;OI NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;ITEM CODE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;REQUESTED RESERVE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;STATUS&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;DELIVERY DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;PROJECT/CUSTOMER&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;18/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;11&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;11&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 11&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;25/01/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;02/03/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;03/04/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;04/05/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Answered by User-G on 31/10/2026.&lt;/p&gt;&lt;!--/block:custom_text--&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 24px 8px 24px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example/project-sales/order-inquiries/this-oi&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;View this order inquiry&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 24px 0 24px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 24px 32px 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;" style="width:100%;height:565px;border:1px solid #e5e7eb;border-radius:12px;background:#fff"></iframe><div class="env"><div><b>Subject:</b> Reserved: OI-2610-0025 - SO424763, raised by User-E, 1 rejected (User-G)<span class="flag">rejected line is illustrative</span></div><div><b>To:</b> User-F (requester) &nbsp; <b>Cc:</b> User-E (raised this OI)</div><div class="meta">1 OI, 10 lines, 18 KB</div></div><iframe title="Reserved: OI-2610-0025 - SO424763, raised by User-E, 1 rejected (User-G)" onload="this.style.height=this.contentWindow.document.documentElement.scrollHeight+'px'" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Reserved: OI-2610-0025 - SO424763, raised by User-E, 1 rejected (User-G)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint and print. Every other rule is inline. */
+  @media only screen and (max-width: 920px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+  /* Printing (OI-EMAIL-PRINT): A4 portrait, the card fills the sheet, a long table repeats
+     its header row on every page. Rows that must not split say so inline; a rule on every
+     `tr` here would also hold the shell&#x27;s own block rows together and push a whole table
+     onto the next page. Clients that ignore this still get a card that fits, when the
+     document is on the `print` width. */
+  @page { size: A4 portrait; margin: 10mm; }
+  @media print {
+    body { background-color: #ffffff !important; }
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; max-width: 100% !important; border: 0 !important; border-radius: 0 !important; }
+    thead { display: table-header-group; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;User-G answered 10 lines on OI-2610-0025 raised by User-E: 9 reserved, 1 rejected.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;900&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:900px;max-width:900px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 24px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Reserved: OI-2610-0025 raised by User-E, 1 rejected&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;User-G answered 10 lines on OI-2610-0025 raised by User-E: 9 reserved, 1 rejected.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;!--block:custom_text--&gt;&lt;table width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;border-collapse:collapse;font-size:12px;&quot;&gt;&lt;thead&gt;&lt;tr style=&quot;background:#F3F4F6;&quot;&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;OI NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;ITEM CODE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;REQUESTED RESERVE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;STATUS&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;DELIVERY DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;PROJECT/CUSTOMER&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;min-width:120px;&quot;&gt;REASON&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;BT009&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;C-FH16&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;18&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;18&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 18&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB1178A-SS-NEW&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB6633-PP&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;36&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;36&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;color:#B91C1C;font-weight:600;&quot;&gt;Rejected&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;No stock at this location yet.&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB6638&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;166&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;166&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 166&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRT1000-CR - NEW&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTFH15-HD&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTSA830-PJ&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;2&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;2&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 2&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTSS4150&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;8&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 8&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2610-0025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO424763&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTWT2215&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;4&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;4&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 4&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;15/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sta…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Answered by User-G on 31/10/2026.&lt;/p&gt;&lt;!--/block:custom_text--&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 24px 8px 24px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example/project-sales/order-inquiries/this-oi&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;View this order inquiry&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 24px 0 24px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 24px 32px 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;" style="width:100%;height:750px;border:1px solid #e5e7eb;border-radius:12px;background:#fff"></iframe><div class="env"><div><b>Subject:</b> Reserved: 2 order inquiries raised by User-H (User-G)</div><div><b>To:</b> User-F (requester) &nbsp; <b>Cc:</b> User-H (raised these OIs)</div><div class="meta">2 OIs, 4 lines, 12 KB</div></div><iframe title="Reserved: 2 order inquiries raised by User-H (User-G)" onload="this.style.height=this.contentWindow.document.documentElement.scrollHeight+'px'" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Reserved: 2 order inquiries raised by User-H (User-G)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint and print. Every other rule is inline. */
+  @media only screen and (max-width: 920px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+  /* Printing (OI-EMAIL-PRINT): A4 portrait, the card fills the sheet, a long table repeats
+     its header row on every page. Rows that must not split say so inline; a rule on every
+     `tr` here would also hold the shell&#x27;s own block rows together and push a whole table
+     onto the next page. Clients that ignore this still get a card that fits, when the
+     document is on the `print` width. */
+  @page { size: A4 portrait; margin: 10mm; }
+  @media print {
+    body { background-color: #ffffff !important; }
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; max-width: 100% !important; border: 0 !important; border-radius: 0 !important; }
+    thead { display: table-header-group; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;User-G reserved all 4 lines on 2 order inquiries raised by User-H.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;900&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:900px;max-width:900px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 24px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Reserved: 2 order inquiries raised by User-H&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;User-G reserved all 4 lines on 2 order inquiries raised by User-H.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;!--block:custom_text--&gt;&lt;table width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;border-collapse:collapse;font-size:12px;&quot;&gt;&lt;thead&gt;&lt;tr style=&quot;background:#F3F4F6;&quot;&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;OI NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;ITEM CODE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;REQUESTED RESERVE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;STATUS&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;DELIVERY DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;PROJECT/CUSTOMER&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0165&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;06/02/2025&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO336600&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;CB315&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;170&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;70&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 70&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;01/01/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Fox…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0676&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;25/06/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO409325&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;M3155&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;78&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;78&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 78&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;07/10/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sig…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0676&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;25/06/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO409325&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;M3155&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;87&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;87&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 87&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/04/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sig…&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0676&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;25/06/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO409325&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;M3155&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;72&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;72&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Reserved 72&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;19/05/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Otm… / Sig…&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Answered by User-G on 31/10/2026.&lt;/p&gt;&lt;!--/block:custom_text--&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 24px 8px 24px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example/project-sales/order-inquiries?inquiry_no=OI-2609-0165,OI-2609-0676&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;View these 2 order inquiries&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 24px 0 24px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 24px 32px 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;" style="width:100%;height:528px;border:1px solid #e5e7eb;border-radius:12px;background:#fff"></iframe>
+
+<h2 id="status">3. STATUS and REASON (reserved email only)</h2>
+<div class="wrap"><table class="n"><tr><th>CS's answer on the line</th><th>STATUS shows</th><th>REASON shows</th></tr>
+<tr><td>Reserved what was asked, or more</td><td>Reserved 80</td><td>Blank, unless documents were released ("Released ... (received).")</td></tr>
+<tr><td>Reserved some of what was asked</td><td style="color:#92400E;font-weight:600">Partial 150 of 212</td><td>CS's reason</td></tr>
+<tr><td>Reserve 0</td><td style="color:#B91C1C;font-weight:600">Rejected</td><td>CS's reason</td></tr></table></div>
+<p>This is display only: the app stores Reserve 0 as a quantity, and no new status or database field is added. An amendment back to 0 also reads Rejected, with the amendment's reason.</p>
+<p><b>When there is no reason:</b> the reserve form asks for one on every short answer, but the server can still leave it blank: when the line had less left than was asked, or on an amendment across two requests. A Rejected or Partial line with no reason then reads "No reason given", so the cell is never empty.</p>
+<p><b>What goes with BALANCE:</b> the old line "Check the balance still to buy" is removed. On OI-2609-0165 above, QTY is 170 and STATUS is Reserved 70, so the reader works out the 100 still to buy.</p>
+
+<h2 id="rejected">4. When every line in the email is rejected</h2>
+<p>User-C's OI again, if User-G had rejected all 5 lines.</p>
+<div class="env"><div><b>Subject:</b> Rejected: OI-2609-0780 - SO423386, raised by User-C (User-G)<span class="flag">illustrative</span></div><div><b>To:</b> User-F (requester) &nbsp; <b>Cc:</b> User-C (raised this OI)</div><div class="meta">1 OI, 5 lines, 14 KB</div></div><iframe title="Rejected: OI-2609-0780 - SO423386, raised by User-C (User-G)" onload="this.style.height=this.contentWindow.document.documentElement.scrollHeight+'px'" srcdoc="&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot; xmlns=&quot;http://www.w3.org/1999/xhtml&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;x-apple-disable-message-reformatting&quot;&gt;
+&lt;meta name=&quot;format-detection&quot; content=&quot;telephone=no, date=no, address=no, email=no&quot;&gt;
+&lt;meta name=&quot;color-scheme&quot; content=&quot;light&quot;&gt;
+&lt;meta name=&quot;supported-color-schemes&quot; content=&quot;light&quot;&gt;
+&lt;title&gt;Rejected: OI-2609-0780 - SO423386, raised by User-C (User-G)&lt;/title&gt;
+&lt;style&gt;
+  /* Only what inline styles cannot say: the phone breakpoint and print. Every other rule is inline. */
+  @media only screen and (max-width: 920px) {
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; border-radius: 0 !important; border-left: 0 !important; border-right: 0 !important; }
+    .em-pad { padding-left: 20px !important; padding-right: 20px !important; }
+    .em-btn-table { width: 100% !important; }
+    .em-btn-link { display: block !important; }
+    .em-facts td { display: block !important; width: 100% !important; }
+    .em-facts td.em-fact-label { padding-bottom: 0 !important; }
+  }
+  /* Printing (OI-EMAIL-PRINT): A4 portrait, the card fills the sheet, a long table repeats
+     its header row on every page. Rows that must not split say so inline; a rule on every
+     `tr` here would also hold the shell&#x27;s own block rows together and push a whole table
+     onto the next page. Clients that ignore this still get a card that fits, when the
+     document is on the `print` width. */
+  @page { size: A4 portrait; margin: 10mm; }
+  @media print {
+    body { background-color: #ffffff !important; }
+    .em-outer { padding: 0 !important; }
+    .em-card { width: 100% !important; max-width: 100% !important; border: 0 !important; border-radius: 0 !important; }
+    thead { display: table-header-group; }
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body data-sorento-layout=&quot;1&quot; style=&quot;margin:0;padding:0;width:100%;background-color:#F3F4F6;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;&quot;&gt;
+&lt;div style=&quot;display:none;max-height:0;max-width:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#F3F4F6;opacity:0;&quot; aria-hidden=&quot;true&quot;&gt;User-G rejected 5 lines on OI-2609-0780 raised by User-C.&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&amp;#847;&amp;zwnj;&amp;nbsp;&lt;/div&gt;
+&lt;table role=&quot;presentation&quot; width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:100%;background-color:#F3F4F6;&quot;&gt;
+  &lt;tr&gt;
+    &lt;td class=&quot;em-outer&quot; align=&quot;center&quot; style=&quot;padding:32px 12px;&quot;&gt;
+      &lt;table role=&quot;presentation&quot; class=&quot;em-card&quot; width=&quot;900&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; style=&quot;width:900px;max-width:900px;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;overflow:hidden;&quot;&gt;
+
+        &lt;tr&gt;
+          &lt;td align=&quot;center&quot; style=&quot;padding:24px 24px;background-color:#2563EB;&quot; class=&quot;em-pad&quot;&gt;
+            &lt;span style=&quot;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:20px;line-height:28px;font-weight:700;color:#FFFFFF;&quot;&gt;Sorento&lt;/span&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:36px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;&quot;&gt;
+            &lt;h1 style=&quot;margin:0;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:24px;line-height:32px;font-weight:700;color:#111827;&quot;&gt;Rejected: OI-2609-0780 raised by User-C&lt;/h1&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;left&quot; style=&quot;padding:16px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:26px;color:#374151;&quot;&gt;
+            &lt;p style=&quot;margin:0 0 12px 0;&quot;&gt;User-G rejected 5 lines on OI-2609-0780 raised by User-C.&lt;/p&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:20px 24px 0 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#374151;&quot;&gt;
+            &lt;!--block:custom_text--&gt;&lt;table width=&quot;100%&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; style=&quot;border-collapse:collapse;margin:0 0 16px 0;font-size:13px;line-height:18px;border-collapse:collapse;font-size:12px;&quot;&gt;&lt;thead&gt;&lt;tr style=&quot;background:#F3F4F6;&quot;&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;OI NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;SO DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;S/O NO&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;ITEM CODE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;QTY&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;REQUESTED RESERVE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;STATUS&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;DELIVERY DATE&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;&quot;&gt;PROJECT/CUSTOMER&lt;/th&gt;&lt;th style=&quot;padding:8px 10px;border:1px solid #e5e7eb;background-color:#f9fafb;text-align:left;font-weight:600;color:#374151;text-align:left;padding:6px 6px;font-size:11px;color:#374151;border-bottom:1px solid #E5E7EB;min-width:120px;&quot;&gt;REASON&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;color:#B91C1C;font-weight:600;&quot;&gt;Rejected&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;18/12/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;No stock at this location yet.&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;11&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;11&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;color:#B91C1C;font-weight:600;&quot;&gt;Rejected&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;25/01/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;No stock at this location yet.&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;color:#B91C1C;font-weight:600;&quot;&gt;Rejected&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;02/03/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;No stock at this location yet.&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;color:#B91C1C;font-weight:600;&quot;&gt;Rejected&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;03/04/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;No stock at this location yet.&lt;/td&gt;&lt;/tr&gt;&lt;tr&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;OI-2609-0780&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;28/09/2026&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SO423386&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;SRTUFV101&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;10&lt;/td&gt;&lt;td nowrap style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;color:#B91C1C;font-weight:600;&quot;&gt;Rejected&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;04/05/2027&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;Len… / Awa…&lt;/td&gt;&lt;td style=&quot;padding:8px 10px;border:1px solid #e5e7eb;color:#111827;&quot;&gt;No stock at this location yet.&lt;/td&gt;&lt;/tr&gt;&lt;/tbody&gt;&lt;/table&gt;&lt;p style=&quot;margin:0 0 16px 0;&quot;&gt;Answered by User-G on 31/10/2026.&lt;/p&gt;&lt;!--/block:custom_text--&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:32px 24px 8px 24px;&quot;&gt;
+            &lt;table role=&quot;presentation&quot; class=&quot;em-btn-table&quot; cellpadding=&quot;0&quot; cellspacing=&quot;0&quot; border=&quot;0&quot; &gt;
+              &lt;tr&gt;
+                &lt;td align=&quot;center&quot; bgcolor=&quot;#2563EB&quot; style=&quot;border-radius:8px;background-color:#2563EB;&quot;&gt;
+                  &lt;a class=&quot;em-btn-link&quot; href=&quot;https://crm.example/project-sales/order-inquiries/this-oi&quot; target=&quot;_blank&quot; style=&quot;display:inline-block;padding:16px 40px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;border-radius:8px;mso-padding-alt:0;&quot;&gt;View this order inquiry&lt;/a&gt;
+                &lt;/td&gt;
+              &lt;/tr&gt;
+            &lt;/table&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; style=&quot;padding:36px 24px 0 24px;&quot;&gt;&lt;div style=&quot;height:1px;line-height:1px;font-size:1px;background-color:#eef0f3;&quot;&gt;&amp;nbsp;&lt;/div&gt;&lt;/td&gt;
+        &lt;/tr&gt;
+        &lt;tr&gt;
+          &lt;td class=&quot;em-pad&quot; align=&quot;center&quot; style=&quot;padding:20px 24px 32px 24px;font-family:-apple-system,BlinkMacSystemFont,&#x27;Segoe UI&#x27;,Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#9ca3af;&quot;&gt;&lt;div style=&quot;font-weight:600;color:#6b7280;&quot;&gt;Sorento&lt;/div&gt;&lt;div style=&quot;padding-top:12px;&quot;&gt;You received this email because you have an account on Sorento. It is a service message about your work in the system.&lt;/div&gt;
+          &lt;/td&gt;
+        &lt;/tr&gt;
+
+      &lt;/table&gt;
+    &lt;/td&gt;
+  &lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;" style="width:100%;height:565px;border:1px solid #e5e7eb;border-radius:12px;background:#fff"></iframe>
+
+<h2 id="sizes">5. Sizes (measured with the v4 columns)</h2>
+<table class="n"><tr><th>Lines in one email</th><th>Request (8 columns)</th><th>Reserved (9 columns)</th><th>Reserved with REASON (10 columns)</th></tr><tr><td>100</td><td>75 KB</td><td>84 KB</td><td>91 KB</td></tr><tr><td>110</td><td>81 KB</td><td>91 KB</td><td>100 KB</td></tr><tr><td>120</td><td>88 KB</td><td>99 KB</td><td>108 KB</td></tr><tr><td>140</td><td>101 KB</td><td>114 KB</td><td>124 KB</td></tr><tr><td>160</td><td>114 KB</td><td>129 KB</td><td>141 KB</td></tr><tr><td>200</td><td>141 KB</td><td>159 KB</td><td>174 KB</td></tr></table>
+<p>Gmail clips a body above about 102 KB: about 140 lines on the request email, about 125 on the reserved email, and about 105 when the REASON column prints. "View entire message" still opens every row. Real volume on the dev copy: 71 request lines in 30 days from one requester, and the per-CS split makes each email smaller again. A test pins the 105-line size.</p>
+<p>On a desktop the email stays on the usual 900 px card, except when REASON prints: those 10 columns need about 955 to 1000 px, so the card grows to fit. On a phone (375 px) the email measures about 720 to 990 px wide, so the reader scrolls sideways, heading included.</p>
+<p>A one-OI email uses the same table, and its button goes straight to that OI's page. Several open requests on one OI now land in one email, because without #n separate emails would look like duplicates.</p>
+
+<h2 id="reuse">6. What each part reuses</h2>
+<div class="wrap"><table class="n"><tr><th>Element</th><th>Reuses</th></tr>
+<tr><td>Header, heading, intro, button, footer</td><td>Email blocks in <code>sorento_crm_backend/app/services/email_layout.py</code></td></tr>
+<tr><td>900 px card</td><td>The layout's <code>wide</code> width, <code>email_layout.py</code></td></tr>
+<tr><td>Column names and order</td><td><code>EXPORT_HEADINGS</code>, <code>order_inquiry_worklist_service.py</code></td></tr>
+<tr><td>STATUS and REASON</td><td>New words over the stored answer: <code>qty_reserved</code>, <code>qty_requested</code>, <code>reason</code> (<code>order_inquiry_reserve_service.py</code>). Today's reserved email already has a REASON column.</td></tr>
+<tr><td>Button filter</td><td>New multi-value <code>inquiry_no</code> on the OI headers list, <code>OrderInquiryHeadersList.tsx</code></td></tr></table></div>
+</main></body></html>

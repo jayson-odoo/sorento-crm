@@ -1,0 +1,188 @@
+# UAC: reserve request / reserved emails, full table (RESERVE-EMAIL-FULL-TABLE)
+
+Owner approved mockup v4 on 31 Oct 2026 with one change: **OI NO is the first column in both emails**.
+Mockup: `mockups/reserve-email-full-table-mock-v2.html`. Card: `reserve-email-full-table-behaviour-card.md`.
+The Excel and PDF download stay as they are (owner, "other than that all ok" on Q3).
+
+"Request email" = trigger `order_inquiry_reserve_requested`. "Reserved email" = trigger
+`order_inquiry_reserved`. "Batch" = an email covering 2 or more OIs. Everything below applies to the
+parked send, the parked preview and the immediate (not parked) send unless it says otherwise.
+
+## A. Table
+
+- **AC-RF-01** Request email table columns, exactly and in this order:
+  `OI NO | SO DATE | S/O NO | ITEM CODE | QTY | REQUESTED RESERVE | DELIVERY DATE | PROJECT/CUSTOMER`
+- **AC-RF-02** Reserved email table columns, exactly and in this order:
+  `OI NO | SO DATE | S/O NO | ITEM CODE | QTY | REQUESTED RESERVE | STATUS | DELIVERY DATE | PROJECT/CUSTOMER`,
+  plus `REASON` as the last column only under AC-RF-15.
+- **AC-RF-03** Apart from OI NO, STATUS and REASON, every heading is spelled as in `EXPORT_HEADINGS`
+  (`order_inquiry_worklist_service.py`) and keeps its relative order there. STATUS sits where RESERVED
+  sits. A test reads the constant, so the email cannot drift from the export.
+- **AC-RF-04** The table is flat: one row per line, OI NO on every row, no group rows, no `colspan`. A
+  one-OI email and a batch use the same table.
+- **AC-RF-05** No cap: every line of every OI prints (test with 7 OIs). No "and N more" text anywhere.
+- **AC-RF-06** Rows sort by ITEM CODE, then DELIVERY DATE as a real date (25/01/2027 before 02/03/2027),
+  then OI NO. A line with no delivery date sorts last in its item code.
+- **AC-RF-07** Values: SO DATE and DELIVERY DATE as dd/mm/yyyy. S/O NO is the OI's SO number. PROJECT/CUSTOMER
+  is `project_customer_label` ("CUSTOMER / PROJECT"). QTY is the line's qty. REQUESTED RESERVE is this
+  request row's `qty_requested`. Quantities print as `_qty_str` does (80, not 80.0000). A missing value
+  prints empty, never "None".
+- **AC-RF-08** RESERVED, BALANCE, REMAINING, TOTAL QTY and LOCATION headings, and any `#n` request number,
+  appear nowhere: subject, heading, intro, table or plain text. "Check the balance still to buy" is gone.
+- **AC-RF-09** The plain-text body carries the same lines in the same column order, and the button's URL.
+- **AC-RF-10** The document uses the layout's `wide` width. OI NO and STATUS cells do not wrap (`nowrap`).
+
+## B. STATUS and REASON (reserved email)
+
+- **AC-RF-11** `qty_reserved >= qty_requested` reads `Reserved N`, N being `qty_reserved`.
+- **AC-RF-12** `0 < qty_reserved < qty_requested` reads `Partial X of Y`, X = reserved, Y = requested.
+- **AC-RF-13** `qty_reserved = 0` reads `Rejected`.
+- **AC-RF-14** An amendment back to 0 reads `Rejected`. An amendment above the ask reads `Reserved N`.
+- **AC-RF-15** The REASON column prints only when a line in that email has a reason, or falls under
+  AC-RF-16. A line's reason is what the reserved email already carries, so "Released ... (received)."
+  text comes first when documents were released (`_context_reason`).
+- **AC-RF-16** A Rejected or Partial line with no reason reads `No reason given` in REASON. A fully
+  reserved line with no reason is empty.
+- **AC-RF-17** Rejected and Partial cells stand out (red and amber bold, as in the mockup).
+
+## C. Words
+
+Where `{raiser}` is unknown (`raised_by` is NULL), drop the "raised by" part entirely.
+`{what}` is `{OI} - {SO}, raised by {raiser}` for one OI and `{k} order inquiries raised by {raiser}` for a
+batch. `{short}` is `{OI} raised by {raiser}` for one OI and the same batch text for a batch. `{tag}` lists
+only non-zero counts in this order: `1 partial`, `1 rejected`. "line" is singular for 1.
+
+| Email | Subject | Heading | Intro |
+| --- | --- | --- | --- |
+| Request, one OI | `Reserve request: {what} ({requester})` | `{short} needs your reserve` | `{requester} asks CS to reserve stock on {short} (3 lines).` |
+| Request, batch | `Reserve requests: {what} ({requester})` | `{short} need your reserve` | same as above |
+| Reserved, all lines reserved | `Reserved: {what} ({actor})` | `Reserved: {short}` | `{actor} reserved all 5 lines on {short}.` (1 line: `reserved 1 line on`) |
+| Reserved, some partial or rejected | `Reserved: {what}, {tag} ({actor})` | `Reserved: {short}, {tag}` | `{actor} answered 10 lines on {short}: 9 reserved, {tag}.` (leave out `0 reserved`) |
+| Reserved, all rejected | `Rejected: {what} ({actor})` | `Rejected: {short}` | `{actor} rejected 5 lines on {short}.` |
+
+- **AC-RF-18** Subject, heading and intro match the table above.
+- **AC-RF-19** Under the table: request email `Requested by {requester} on {today}.`, reserved email
+  `Answered by {actor} on {today}.`. On the request email only, a request's note prints under the table as
+  `Note ({OI}): {text}`, one line per note. On the reserved email only, `{n} line(s) still to reserve.` still
+  prints when requests in the email have open rows.
+
+## D. Button
+
+- **AC-RF-20** Batch: label `View these {k} order inquiries`, URL
+  `{base}/project-sales/order-inquiries?inquiry_no=OI-1,OI-2` listing exactly this email's OIs, sorted.
+- **AC-RF-21** One OI: label `View this order inquiry`, URL goes straight to that OI's page (today's
+  link, with `?reserve=` when the email covers one request and without it when it covers several; no
+  `inquiry_no=`).
+- **AC-RF-22** `GET /api/v1/project-sales/order-inquiry-headers?inquiry_no=OI-1,OI-2` returns exactly those
+  OIs. Matching is exact: `OI-2610-002` does not match `OI-2610-0025`. An unknown number adds nothing. An
+  empty value is ignored. Company scope still applies. Comma-separated and repeated params both work.
+- **AC-RF-23** The OI list reads `inquiry_no` from the URL, sends it to the API, keeps it in the URL across
+  filter, sort and page changes, and shows a removable filter so the user can clear it.
+- **AC-RF-24** Arriving with `inquiry_no` and no explicit `state` shows state All, so a completed OI in the
+  email still appears (same rule as `?reserve=`). No UUIDs show anywhere.
+- **AC-RF-25** The `inquiry_no` filter has no 200-value cap, because the email has no OI cap: a link with 201
+  numbers returns those OIs. Other list filters keep their cap.
+- **AC-RF-26** Choosing Outstanding while `inquiry_no` or `reserve` is in the URL writes `state=outstanding`, so a
+  reload or a return from a detail page keeps it.
+- **AC-RF-27** Prev/next on an OI's detail page walks the same `inquiry_no` list the user came from.
+- **AC-RF-28** The "Send all parked" preview shows the email at the 900 px card width, as the template editor
+  does, so the table's right-hand columns are not cut off on a desktop.
+
+## E. One email per raising CS
+
+- **AC-RF-30** Parked requests on OIs raised by 2 CS become 2 emails. Each table holds only that CS's OIs,
+  and each Cc has that CS and the requester, never the other CS.
+- **AC-RF-31** Parked notices on OIs raised by 2 CS become 2 emails, To the requester, Cc only that email's CS.
+- **AC-RF-32** 2 OIs raised by one CS stay one email.
+- **AC-RF-33** An OI raised by the owner's account (a legacy import) is treated like any other raiser: its
+  own email, that account on Cc. There is no legacy marker and no special case.
+- **AC-RF-34** OIs with `raised_by` NULL form their own email with no raiser on Cc. It is not merged into
+  another CS's email.
+- **AC-RF-35** The preview returns the same emails as the send, and `emails_sent`, `items_sent`,
+  `inquiry_total` agree with them.
+- **AC-RF-36** Different To persons still get separate emails.
+- **AC-RF-37** Different requesters still get separate emails, even with the same To person, so one requester
+  is never on the Cc of another requester's email (`test_fix_N1` in `test_oi_staged_notify.py` pins this).
+
+## F. One OI, several requests
+
+- **AC-RF-40** Parked: one OI with 2 open requests is one email with both requests' lines. Every request and
+  row in it is stamped as sent.
+- **AC-RF-41** Immediate: `commit_request` answering 2 requests on one OI with the same requester is one email
+  with both requests' lines.
+- **AC-RF-42** Immediate: `commit_request` answering requests on 2 OIs is 2 emails, as today.
+- **AC-RF-43** Immediate: 2 requests on one OI with different requesters are 2 emails.
+- **AC-RF-44** Immediate: `create_request` without park sends the same table as the parked send.
+
+## G. Template migration
+
+- **AC-RF-50** A template still holding `oisn_0001_staged_notify`'s subject and layout is updated in place:
+  subject, `layout_json`, `body_text`. No schema change.
+- **AC-RF-51** An admin-edited template is left alone and still renders: the context keeps the keys today's
+  templates read (`reserve.requests`, `oi_count`, `line_count`, `more_count`, `rows`, `ordinal`, `link`).
+- **AC-RF-52** Upgrade is idempotent. Downgrade restores `oisn_0001`'s values only on a row still holding
+  this revision's values.
+- **AC-RF-54** The reserved template's `description` no longer mentions the balance: upgrade sets it, downgrade restores
+  it, and an admin-edited description is left alone both ways. The same words go from the trigger's description in
+  `automation_triggers.py`.
+- **AC-RF-53** The revision id is at most 32 characters. The file never contains either full template code as
+  one token (built from two halves, as `oisn_0001` does: other OI tests scan for that token).
+
+## I. Owner hand test, 1 Nov 2026 (FAIL on 453130d25)
+
+Owner: "reserve: Input should be 'parked', 'needs_reserve', 'notice_parked' or 'reserved'" toast on a detail page; prev/next
+gone after changing the line filter; "when i switch between Document and Lines, the filter need to preserve, cause some CS
+they like to use Lines view to reserve".
+
+`?reserve=` has two meanings on the detail page: a list status (`parked`, `needs_reserve`, `notice_parked`, `reserved`,
+written by the list) and a request id (written by the one-OI email link, including emails already in inboxes).
+
+- **AC-RF-80** A detail page opened with `reserve` holding anything other than a list status (a request id, or a value such
+  as `requested`) makes no failing API call and shows no toast. The pager's list call sends no `reserve`. Lines still
+  preselects "Request to reserve" for a request id.
+- **AC-RF-81** Changing the line filter on a detail page keeps the list's own filters in the URL, `reserve=needs_reserve`
+  included, so the pager asks about the same list and prev/next stays. Only a request id is dropped from the URL when the
+  line filter changes.
+- **AC-RF-82** Prev/next never carries a request id on to the next OI. A list status stays, because the next OI is on that list.
+- **AC-RF-83** `reserve=reserved` or `reserve=notice_parked` does not preselect "Request to reserve" on the Lines tab, because
+  those lines are already answered and the tab would read "No line matches the filter". `needs_reserve`, `parked` and a
+  request id still preselect it.
+- **AC-RF-84** Documents to Lines with `inquiry_no` in the URL keeps `inquiry_no`. Lines shows a removable chip naming the OIs,
+  and every row of exactly those OIs: no default narrowing (`ack=to_confirm`, the remembered saved view) hides one, as
+  state All does on Documents. The user can still narrow by hand after arriving. Lines to Documents keeps `inquiry_no` too.
+- **AC-RF-85** The Documents state chosen with that filter (Outstanding, All, Completed) comes back when the user returns from
+  Lines. It is never sent to the Lines API as a row state, because Lines' `state` means something else.
+- **AC-RF-86** The Lines API takes `inquiry_no` with the same rule as Documents: exact, multi-value, no 200-value cap, company
+  scoped. Every Lines route sharing that filter set honours it (list, schedule, and any count or export from that screen).
+- **AC-RF-87** Removing the Lines chip, or "Clear filters", drops `inquiry_no` from the URL. A filter change, sort or page change
+  on Lines keeps it. (A Lines row opens the SO line page, not an OI page, `orderInquiryWorklistColumns.tsx:1129`, so
+  there is no OI detail return from Lines to cover.)
+- **AC-RF-88** With no `inquiry_no`, the toggle stays as it is: a clean URL, since the two screens' other filters mean different
+  things.
+
+- **AC-RF-89** "Select all N" then Confirm on Lines with the chip on acknowledges exactly the rows of those OIs, with no 422
+  (`AcknowledgeFilter` forbids unknown keys).
+- **AC-RF-90** A chip session never changes the remembered Lines view, before or after the chip is removed: the next plain
+  Lines visit opens as it did before. After removing the chip in that session, the list shows the whole book with `ack` All.
+- **AC-RF-91** Narrowing by hand with the chip on survives a reload and a return from an SO line page: a real row state and a
+  hand-picked To confirm stay. Only a Documents state value (`outstanding`, `completed`, `all`) is ignored as a row state.
+- **AC-RF-92** Pressing the view button already active does nothing: no URL change, `doc_state` intact.
+- **AC-RF-93** With `inquiry_no` in the URL, `reserve` is also kept across the toggle both ways. It means the same on both
+  screens. Without `inquiry_no`, the toggle stays clean (AC-RF-88).
+
+Rulings from the fix-round review (lead, 1 Nov):
+- **Unlink all stays company-wide with the chip on.** Its dialog says "across the whole company", and location and agent filters
+  already behave this way, so it is out of scope for a filter that came from an email. It is the only Lines action the chip does not narrow.
+- A hand-changed line filter on a detail page opened from `reserve=needs_reserve` goes back to "Request to reserve" on reload
+  or tab return, because AC-RF-81 keeps that param for prev/next. Accepted: the walk matters more.
+- The Lines `inquiry_no` has no per-value length check, unlike Documents: a bound parameter behind the view permission, no harm.
+
+A one-OI email link names no list, so there is nothing to walk unless that OI is on the user's default list page: prev/next
+stays hidden there, as it does for any deep link (`hooks/useListPager.ts`), and changing the line filter does not change that.
+
+## H. Size and the export
+
+- **AC-RF-60** A 105-line reserved email with a REASON column renders at or below 102 KiB (the Gmail clip size).
+  Measured on the build: about 881 B per row, so the clip falls at about 108 lines. The pin catches markup that
+  bloats rows. The UAC first said 110 lines, from the mockup's shorter item codes; the lead moved it on 1 Nov.
+- **AC-RF-70** `EXPORT_HEADINGS` and the Excel and PDF download are unchanged.

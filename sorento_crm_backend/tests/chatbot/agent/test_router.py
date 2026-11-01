@@ -20,7 +20,7 @@ from app.models.chatbot_agent import AgentAction
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from tests._pg_fixture import blank_session, unique_code
-from tests.chatbot.agent._seed import seed_agent_contact, seed_contact, seed_user
+from tests.chatbot.agent._seed import all_agent_slugs, seed_agent_contact, seed_contact, seed_user
 
 MYT = ZoneInfo("Asia/Kuala_Lumpur")
 JEV_KEY = "ZZT-jev-secret-key-9876"
@@ -198,11 +198,10 @@ def test_R1_switch_off(db, jev):
     assert jev.calls == []
 
 
-def test_R1_no_linked_user(db, jev):
+def test_R1_no_linked_user_is_no_longer_refused(db, jev):
     contact = seed_contact(db)
     decision = route(db, contact["respond_id"])
-    assert (decision.side, decision.reason) == ("chat", "not_eligible:no_linked_user")
-    assert jev.calls == []
+    assert not decision.reason.startswith("not_eligible")
 
 
 def test_R1_not_eligible_wins_over_media_and_a_pending_action(db, jev):
@@ -535,7 +534,7 @@ def test_R9_state_rule_decisions_carry_no_score_model_or_tokens(db, jev):
 
 
 def test_R10_the_request_carries_message_recent_exchanges_and_the_prompt(db, jev):
-    contact = seed_agent_contact(db)
+    contact = seed_agent_contact(db, slugs=all_agent_slugs())
     arm(db)
     base = datetime.now(timezone.utc) - timedelta(minutes=30)
     long_reply = "r" * 500
@@ -669,7 +668,7 @@ def test_V2_the_jev_price_row_is_in_the_seed_list():
 
 @pytest.mark.parametrize(
     "reason",
-    ["contact_not_found", "ai_replies_off", "switch_off", "no_linked_user"],
+    ["contact_not_found", "ai_replies_off", "switch_off"],
 )
 def test_K4_agent_eligibility_and_build_context_refuse_with_the_same_reason(db, reason):
     from app.services.chatbot.agent.access import AgentRefused, agent_eligibility, build_context
@@ -678,10 +677,8 @@ def test_K4_agent_eligibility_and_build_context_refuse_with_the_same_reason(db, 
         respond_id = unique_code("nobody")
     elif reason == "ai_replies_off":
         respond_id = seed_contact(db, chatbot_allowed=False, agent_enabled=False)["respond_id"]
-    elif reason == "switch_off":
-        respond_id = seed_contact(db, agent_enabled=False)["respond_id"]
     else:
-        respond_id = seed_contact(db)["respond_id"]
+        respond_id = seed_contact(db, agent_enabled=False)["respond_id"]
 
     assert agent_eligibility(db, respond_id) == reason
     with pytest.raises(AgentRefused) as exc:
@@ -697,12 +694,12 @@ def test_K4_an_eligible_contact_has_no_refusal(db):
     assert build_context(db, contact["respond_id"]).user_id == contact["user_id"]
 
 
-def test_K4_an_inactive_linked_user_is_not_eligible(db):
+def test_K4_an_inactive_linked_user_is_eligible_as_a_contact(db):
     from app.services.chatbot.agent.access import agent_eligibility
 
     contact = seed_contact(db)
     seed_user(db, contact_pk=contact["pk"], status="INACTIVE")
-    assert agent_eligibility(db, contact["respond_id"]) == "no_linked_user"
+    assert agent_eligibility(db, contact["respond_id"]) is None
 
 
 # ------------------------------------------------------------------ S5: WhatsApp is not routed
@@ -727,7 +724,7 @@ def test_S5_engine_run_turn_never_calls_the_router_or_jev(monkeypatch):
 @pytest.mark.parametrize(
     "module",
     [
-        "app.services.chatbot.inbox_queue",
+        # inbox_queue routes since PLAN-agentic-knowledge-w1-01nov.md S3 (WhatsApp, gated per contact).
         "app.api.v1.external.chat",
         "app.tasks.chat_turns",
     ],
