@@ -477,7 +477,11 @@ class ProductComboService:
     # ------------------------------------------------------------------ parts
 
     def add_part(
-        self, combo_id: str, part_product_id: str, choice_group: Optional[str]
+        self,
+        combo_id: str,
+        part_product_id: str,
+        choice_group: Optional[str],
+        is_upgrade: bool = False,
     ) -> Dict[str, Any]:
         combo = self._combo_or_404(combo_id)
         if part_product_id == combo.host_product_id:
@@ -512,6 +516,7 @@ class ProductComboService:
             part_product_id=part_product_id,
             choice_group=(choice_group or "").strip() or None,
             sort_order=len(combo.parts),
+            is_upgrade=bool(is_upgrade),
         )
         self.db.add(part)
         self.db.commit()

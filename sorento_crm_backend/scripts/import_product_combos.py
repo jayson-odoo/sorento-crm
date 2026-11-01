@@ -184,55 +184,56 @@ def process_entry(db, entry, host, parts_by_code, photos, apply: bool) -> dict:
     if photo_name and photo is None:
         notes.append(f"photo file missing: {photo_name}")
 
+    if not name:
+        row["status"] = "skipped_no_name"
+        row["notes"] = "; ".join(notes)
+        return row
+
     service = ProductComboService(db)
     existing = (
         db.query(ProductCombo)
         .filter(ProductCombo.host_product_id == host.id, func.lower(ProductCombo.name) == name.lower())
         .first()
     )
-    if not name:
-        row["status"] = "skipped_no_name"
-        row["notes"] = "; ".join(notes)
-        return row
+    present = {part.part_product_id for part in existing.parts} if existing else set()
 
-    if not apply:
-        row["status"] = "would_update" if existing else "would_create"
-        row["notes"] = "; ".join(notes)
-        return row
-
-    created = existing is None
-    combo_id = (
-        service.create(host.id, name, created_by=None)["id"] if created else existing.id
-    )
-    combo = db.query(ProductCombo).filter(ProductCombo.id == combo_id).one()
-
-    # Blank fields only: what marketing wrote, or an earlier run loaded, stays.
-    fill = {}
-    description = (entry.get("combo_description") or "").strip()
-    free_items = free_items_text(entry.get("free_items"))
-    if description and not (combo.description or "").strip():
-        fill["description"] = description
-    if free_items and not (combo.free_items or "").strip():
-        fill["free_items"] = free_items
-    if fill:
-        service.update(combo_id, fill)
-
-    present = {part.part_product_id for part in combo.parts}
+    # What apply would add, judged the same way on a dry run, so the dry run reports what
+    # apply drops: the host as its own part, and a product named twice.
+    to_add: list[dict] = []
     for part in keep:
         product = parts_by_code[part["code"].upper()]
-        if product.id in present:
+        if product.id == host.id:
+            dropped.append(f"{part['code']} (is the host)")
+        elif product.id in present or any(a["product"].id == product.id for a in to_add):
             continue
-        try:
-            added = service.add_part(combo_id, product.id, part["group"])
-        except AppException as exc:
-            dropped.append(f"{part['code']} ({exc.message})")
-            continue
-        present.add(product.id)
-        if part["upgrade"]:
-            service.update_part(added["id"], {"is_upgrade": True}, fields_set={"is_upgrade"})
+        else:
+            to_add.append({**part, "product": product})
+
+    description = (entry.get("combo_description") or "").strip()
+    free_items = free_items_text(entry.get("free_items"))
+    fill = {}
+    if description and not (existing and (existing.description or "").strip()):
+        fill["description"] = description
+    if free_items and not (existing and (existing.free_items or "").strip()):
+        fill["free_items"] = free_items
+    want_photo = photo is not None and not (existing and existing.image_attachment_id)
+    changes = existing is None or bool(fill) or bool(to_add) or want_photo
     row["dropped_parts"] = "; ".join(dropped)
 
-    if photo is not None and not combo.image_attachment_id:
+    if not apply:
+        row["status"] = "would_create" if existing is None else ("would_update" if changes else "unchanged")
+        row["notes"] = "; ".join(notes)
+        return row
+
+    combo_id = (
+        service.create(host.id, name, created_by=None)["id"] if existing is None else existing.id
+    )
+    if fill:
+        service.update(combo_id, fill)
+    for part in to_add:
+        # `is_upgrade` goes in with the part, so a crash cannot leave an upgrade as a fixed part.
+        service.add_part(combo_id, part["product"].id, part["group"], is_upgrade=part["upgrade"])
+    if want_photo:
         content_type = mimetypes.guess_type(photo.name)[0]
         try:
             service.upload_image(
@@ -242,7 +243,7 @@ def process_entry(db, entry, host, parts_by_code, photos, apply: bool) -> dict:
         except AppException as exc:
             notes.append(f"photo not loaded: {photo.name} ({exc.message})")
 
-    row["status"] = "created" if created else "updated"
+    row["status"] = "created" if existing is None else ("updated" if changes else "unchanged")
     row["notes"] = "; ".join(notes)
     return row
 
@@ -284,8 +285,9 @@ STARTER_TEMPLATES = [
 PLACEHOLDERS = {
     "combo_name": "Combo name",
     "combo_description": "Combo description",
-    "list_price": "0",
-    "sell_price": "0",
+    # Empty, not "0": a combo with no price must print nothing, never a made-up figure.
+    "list_price": "",
+    "sell_price": "",
     "combo_choices": "Choices",
     "included_accessories": "Included accessories",
     "combo_topups": "Upgrade",
@@ -397,10 +399,6 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
                             {"id": str(entry.get("id") or ""), "status": "failed", "dropped_parts": "",
                              "guess": entry.get("guess") or "", "notes": str(exc)[:300]}
                         )
-            if args.templates:
-                create_templates(db, company_id, args.apply, out)
-            if not args.apply:
-                db.rollback()
         finally:
             clear_actor(db)
 
@@ -408,7 +406,12 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
         report = Path(args.report) if args.report else Path(args.file).with_name(
             f"{Path(args.file).stem}-report-{'apply' if args.apply else 'dryrun'}-{stamp}.csv"
         )
+        # The report first: a template failure must not lose it.
         write_report(report, rows)
+        if args.templates:
+            create_templates(db, company_id, args.apply, out)
+        if not args.apply:
+            db.rollback()
         for status in sorted({row["status"] for row in rows}):
             out.write(f"{status}: {sum(1 for row in rows if row['status'] == status)}\n")
         guesses = sum(1 for row in rows if row["guess"])

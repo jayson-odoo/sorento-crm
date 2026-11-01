@@ -403,6 +403,16 @@ def test_ac_8_9_templates_flag_creates_and_publishes_the_two_starters(
         text = json.dumps(template.doc)
         for slot in ("combo_image", "combo_name", "combo_description", "combo_choices", "combo_topups"):
             assert slot in text, f"{template.name} does not use {slot}"
+        # The doc is a valid TagTemplateDoc (the combo slots are in SLOT_BINDINGS), and a
+        # combo with no price prints nothing, never a placeholder figure.
+        from app.schemas.price_tag import TagTemplateDocModel
+
+        TagTemplateDocModel.model_validate(template.doc)
+        prices = [
+            layer for layer in template.doc["layers"] if layer["slot_binding"] in ("list_price", "sell_price")
+        ]
+        assert len(prices) == 2
+        assert all(layer["props"]["text"] == "" for layer in prices)
 
 
 def test_ac_8_9_no_templates_flag_means_no_templates(db, catalogue, photos, tmp_path, storage):
@@ -449,3 +459,14 @@ def test_ac_8_11_the_repo_holds_the_script_and_a_synthetic_fixture_only():
     assert real == [], f"real flyer data must not be committed: {real}"
     data = json.loads(SEED.read_text())
     assert all(entry["host_code"].startswith("ZZT") for entry in data), "made-up codes only"
+
+
+def test_a_rerun_with_nothing_to_change_reports_unchanged_and_an_upgrade_is_one_write(
+    db, catalogue, photos, tmp_path, storage
+):
+    _run(db, tmp_path, photos, apply=True)
+    _code, _out, rows = _run(db, tmp_path, photos, apply=True)
+    assert _by_id(rows)["C1"]["status"] == "unchanged"
+    _code, _out, dry = _run(db, tmp_path, photos)
+    assert _by_id(dry)["C1"]["status"] == "unchanged"
+    assert _parts(db, _combo(db, "ZZT 3 in 1", "ZZTH1"))["ZZTU1"].is_upgrade is True
