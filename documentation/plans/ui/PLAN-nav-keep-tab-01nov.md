@@ -1,6 +1,6 @@
 # PLAN: Record pager keeps the active tab (NAV-KEEP-TAB)
 
-Status: in progress (small fix track: FE only, no migration, no auth/RBAC change)
+Status: built, in review, awaiting crew hand-test (small fix track: FE only, no migration, no auth/RBAC change)
 
 ## Journey
 Owner ruling 1 Nov: on a detail page with a record pager ("7 / 73" with < >), pressing next or
