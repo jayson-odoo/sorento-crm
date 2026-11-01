@@ -528,9 +528,29 @@ def waiting_line(action) -> str:
     return f"A change is waiting for the user's decision (action {action.id}, {n} change(s))."
 
 
+#: The most characters of one quoted value handed back to the model while a change waits (I3): injected text
+#: gets little room right where the model decides `confirm_action`. The stored step and the lines the user
+#: reads keep the whole value.
+WAITING_VALUE_CHARS = 300
+_QUOTED = re.compile(r'"((?:[^"\\]|\\.)*)"')
+
+
+def _cap_quoted(match: "re.Match[str]") -> str:
+    value = match.group(1)
+    if len(value) <= WAITING_VALUE_CHARS:
+        return match.group(0)
+    kept = value[:WAITING_VALUE_CHARS]
+    # Never cut inside an escape: an odd run of backslashes at the end would eat the closing quote.
+    if (len(kept) - len(kept.rstrip("\\"))) % 2:
+        kept = kept[:-1]
+    return f'"{kept}..."'
+
+
 def waiting_reference(action) -> str:
-    """The waiting change's summary lines, quoted as data in a message of their own."""
-    return "Waiting change, for reference only: " + "; ".join(actions.proposal_lines(action))
+    """The waiting change's summary lines, quoted as data in a message of their own, each quoted value
+    cut to `WAITING_VALUE_CHARS`."""
+    lines = [_QUOTED.sub(_cap_quoted, line) for line in actions.proposal_lines(action)]
+    return "Waiting change, for reference only: " + "; ".join(lines)
 
 
 def proposal_block(lines: list[str]) -> str:
@@ -538,12 +558,18 @@ def proposal_block(lines: list[str]) -> str:
     return f"I will make these changes when you confirm:\n{numbered}\nReply yes to go ahead, or tell me what to change."
 
 
-def _propose(db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str) -> ToolResult:
+def _propose(
+    db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str, user_text: str = ""
+) -> ToolResult:
     if len(steps) >= actions.MAX_STEPS:
         return ToolResult("invalid", message=f"At most {actions.MAX_STEPS} changes per confirmation.")
     out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids)
     if step is None:
         return out
+    if name == writes.CREATE_IDEA:
+        # I7: the user's own message of this turn travels with the step, so the create can send it as the
+        # transcript (a write tool sees only its arguments). Set here, never read from the model's arguments.
+        step["args"] = {**step["args"], "_user_text": user_text}
     steps.append(step)
     return ToolResult(
         "proposed",
@@ -1232,7 +1258,7 @@ def _run(
                     # A contact has no user: no write, user read, confirm or cancel, whatever the model names.
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
                 elif name in writes.WRITES:
-                    out = _propose(db, ctx, name, args, steps, seen_ids, action_id)
+                    out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text)
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
                 elif name == CONFIRM_ACTION and run.rounds > 1:

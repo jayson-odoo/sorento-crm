@@ -203,8 +203,23 @@ class LiveIdea:
 
 
 def made_idea(db, w, ss, title="Old title zzt", number="IDEA-0184"):
+    """A created idea. S6 I1: the agent no longer reads its creates by id, so ss's own list serves them
+    (filtered by `search` the way ss does)."""
     idea_id = create_through(db, w, ss, title=title, number=number, idea_id=str(uuid.uuid4()))
-    return idea_id, LiveIdea(ss, idea_id, title=title, ideaNumber=number)
+    live = LiveIdea(ss, idea_id, title=title, ideaNumber=number)
+    served = ss.__dict__.setdefault("_live_ideas", [])
+    served.append(live)
+
+    def listing(request):
+        needle = (request.url.params.get("search") or "").lower()
+        rows = [
+            {**l.state, "isMine": True} for l in served
+            if needle in f"{l.state.get('title') or ''} {l.state.get('problem') or ''}".lower()
+        ]
+        return httpx.Response(200, json=rows, request=request)
+
+    ss.routes[("GET", "/embed/ideas")] = listing
+    return idea_id, live
 
 
 def edit_title(db, w, idea_id, title):
@@ -242,60 +257,19 @@ def test_AC_RV_4_search_matches_a_word_only_in_the_problem(db, ss):
     assert rows_of(out) == []
 
 
-def test_AC_RV_4_a_404_on_one_idea_skips_that_row_only(db, ss):
-    w = make_world(db)
-    gone, _ = made_idea(db, w, ss, title="Gone idea zzt", number="IDEA-0401")
-    kept, _ = made_idea(db, w, ss, title="Kept idea zzt", number="IDEA-0402")
-    ss.route("GET", f"/embed/ideas/{gone}", status=404, json_body={"error": {"code": "not_found", "message": "x"}})
-    out, _ = list_ideas(db, w)
-    assert out.status == "ok"
-    assert [r["id"] for r in rows_of(out)] == [kept]
-
-
-def test_AC_RV_4_a_row_that_is_not_mine_is_skipped(db, ss):
-    w = make_world(db)
-    theirs, live = made_idea(db, w, ss, title="Not mine zzt", number="IDEA-0411")
-    mine, _ = made_idea(db, w, ss, title="Mine zzt", number="IDEA-0412")
-    live.state["isMine"] = False
-    out, _ = list_ideas(db, w)
-    assert [r["id"] for r in rows_of(out)] == [mine]
-
-
-def test_AC_RV_4_a_500_on_the_live_read_is_the_typed_error(db, ss):
-    w = make_world(db)
-    idea_id, _ = made_idea(db, w, ss)
-    ss.route("GET", f"/embed/ideas/{idea_id}", status=500, json_body={"error": {"code": "boom", "message": "x"}})
-    out, _ = list_ideas(db, w)
-    assert out.status == "error"
-    assert not leaks(out.message, json.dumps(out.data, default=str))
-
-
-def test_AC_RV_4_test_ideas_come_first_even_when_ss_returns_a_full_list(db, ss):
-    w = make_world(db)
-    idea_id, _ = made_idea(db, w, ss)
-    ss.route(
-        "GET", "/embed/ideas",
-        json_body=[
-            {"id": str(uuid.uuid4()), "ideaNumber": f"IDEA-{n:04d}", "title": f"Board idea {n}", "isMine": True}
-            for n in range(1000, 1050)
-        ],
-    )
-    out, _ = list_ideas(db, w)
-    rows = rows_of(out)
-    assert rows[0]["id"] == idea_id, [r.get("id") for r in rows[:3]]
-
-
 def test_AC_RV_4_each_row_says_whether_it_is_a_test_idea(db, ss):
     w = make_world(db)
-    idea_id, _ = made_idea(db, w, ss)
     board_id = str(uuid.uuid4())
     ss.route(
         "GET", "/embed/ideas",
-        json_body=[{"id": board_id, "ideaNumber": "IDEA-0900", "title": "From the board", "isMine": True}],
+        json_body=[
+            {"id": board_id, "ideaNumber": "IDEA-0900", "title": "From the board", "isMine": True},
+            {"id": str(uuid.uuid4()), "ideaNumber": "IDEA-0901", "title": "A test one", "isMine": True, "isTest": True},
+        ],
     )
     out, _ = list_ideas(db, w)
     flags = {r["id"]: r.get("is_test") for r in rows_of(out)}
-    assert flags == {idea_id: True, board_id: False}
+    assert flags[board_id] is False and sorted(flags.values(), key=bool) == [False, True]
 
 
 # ------------------------------------------------------------------ AC-RV-5 a proposing turn keeps no flag
@@ -318,6 +292,7 @@ def test_AC_RV_6_intake_ref_differs_between_test_and_real_for_the_same_text(db, 
     from app.services.chatbot.agent import writes
 
     w = make_world(db)
+    monkeypatch.setattr(writes, "IDEA_IS_TEST", True)  # S6: the flag is off by default, so turn it on for the control
     _, row = store(db, w, [(CREATE, dict(FIELDS))])
     confirm(db, w, row)
     monkeypatch.setattr(writes, "IDEA_IS_TEST", False)
@@ -420,16 +395,6 @@ def test_AC_RV_9_five_distinct_items_of_4000_characters_pass_and_all_reach_ss(db
 # ------------------------------------------------------------------ AC-RV-10 only test ideas while the flag is on
 
 
-def test_AC_RV_10_a_real_idea_is_refused_with_a_line_pointing_to_the_board_and_no_patch(db, ss):
-    w = make_world(db)
-    Idea(ss, isTest=False)
-    res, step = propose(db, w, UPDATE, {"idea_id": IDEA, "title": "New title"}, seen=[IDEA])
-    assert res.status in ("denied", "invalid") and step is None
-    assert "board" in res.message.lower()
-    assert not leaks(res.message)
-    assert patches(ss) == []
-
-
 def test_AC_RV_10_a_test_idea_of_the_users_still_works(db, ss):
     w = make_world(db)
     Idea(ss, isTest=True)
@@ -455,7 +420,7 @@ from tests.chatbot.agent import test_agent_writes_purchase_request as prm  # noq
 from tests.chatbot.agent.test_agent_writes_purchase_request import sends  # noqa: E402,F401
 from tests.chatbot.agent.test_agent_writes_pr_undo import grace  # noqa: E402
 
-NOTE_TEXT = "This is a test idea"
+NOTE_TEXT = "Not given:"  # S6: the note no longer says test idea; its gap list is the stable part
 
 
 # ------------------------------------------------------------------ AC-RV-2 (changed) a deferred decision has no code-added line
@@ -490,6 +455,7 @@ def test_AC_RV_2_a_console_confirm_of_an_idea_keeps_its_full_reply(db, ss):
     outcome = confirm(db, w, row)
     assert "IDEA-0184" in outcome.reply_text and f"{CRM}/ideas/{idea_id}" in outcome.reply_text
     assert NOTE_TEXT in outcome.reply_text
+    assert "test idea" not in outcome.reply_text.lower()
 
 
 # ------------------------------------------------------------------ AC-RC-1 the model never receives the note or the link
@@ -595,27 +561,7 @@ def test_AC_RC_4_a_hundred_thousand_characters_of_scheme_repeats_finish_in_a_sec
     assert time.monotonic() - started < 1.0
 
 
-# ------------------------------------------------------------------ AC-RC-5 five newest test ideas
-
-
-def test_AC_RC_5_the_constant_is_five():
-    from app.services.chatbot.agent import writes
-
-    assert writes.MAX_TEST_IDEAS == 5
-
-
-def test_AC_RC_5_eight_test_ideas_make_five_reads_newest_first_and_more_is_three(db, ss):
-    w = make_world(db)
-    ids = [
-        create_through(db, w, ss, title=f"Idea {n} zzt", number=f"IDEA-{600 + n}", idea_id=str(uuid.uuid4()))
-        for n in range(8)
-    ]
-    ss.calls.clear()
-    out, _ = list_ideas(db, w)
-    by_id = [c for c in ss.calls if c["method"] == "GET" and c["path"] != "/embed/ideas"]
-    assert len(by_id) == 5, [c["path"] for c in by_id]
-    assert [r["id"] for r in rows_of(out)] == list(reversed(ids))[:5]
-    assert out.more == 3
+# ------------------------------------------------------------------ AC-RC-5 every row has a short problem
 
 
 def test_AC_RC_5_every_row_has_a_short_problem_including_an_untitled_idea(db, ss):
@@ -627,7 +573,8 @@ def test_AC_RC_5_every_row_has_a_short_problem_including_an_untitled_idea(db, ss
     )
     _, row = store(db, w, [(CREATE, {"problem": LONG})])
     confirm(db, w, row)
-    LiveIdea(ss, idea_id, title=None, ideaNumber="IDEA-0700", problem=LONG)
+    live = LiveIdea(ss, idea_id, title=None, ideaNumber="IDEA-0700", problem=LONG)
+    ss.route("GET", "/embed/ideas", json_body=[{**live.state, "isMine": True}])
     out, _ = list_ideas(db, w)
     (item,) = rows_of(out)
     assert item.get("problem") and len(item["problem"]) <= 120, item

@@ -254,24 +254,20 @@ and crew's condition for the bar is met. The total did not improve, though, and 
   Pushing back on the review's deadline: test ideas exist only for console trials, and a hung call already stops at the first
   failure. Older test ideas cannot be edited through the agent during the test phase.
 
-### To do when `IDEA_IS_TEST` flips (the lane that puts the agent on WhatsApp)
+### Done when `IDEA_IS_TEST` flipped (the lane that put the agent on WhatsApp)
 
 **Owner of the flip (crew ruling, 31 Oct): AGENTIC-KNOWLEDGE-P2, #2053.** It flips `writes.IDEA_IS_TEST` in the same PR that turns the WhatsApp hook on, and it owns this list. The flag stays True in this PR. Until then a WhatsApp idea routed to the agent would be created as a test idea and not show on the board, so the hook must not go live ahead of the flip. Once this lane finishes, this plan moves to `documentation/plans/_archive/chatbot/`.
 
-- Drop the second source in `crm_ideas_list`, and the test-only edit rule.
-- Decide whether a view-only operator may create an idea in another user's name. R9 allows it, and the test flag hides it today.
-- The proposal now hands full values back to the model while it waits (`waiting_reference`, history), up to 4000 characters a
-  field, which gives injected text more room right where the model decides `confirm_action`. Look at this together with the
-  pre-existing chat-confirm item below before real ideas are at stake.
-- Invisible text: format characters (Cf) are removed, but variation selectors (Mn, from U+E0100), CGJ, Hangul filler and braille blank
-  still survive, so a value can carry text the person cannot see. Close this before ideas reach the board.
-- Editing use cases replaces the whole list, and list rows carry no use cases, so "add a use case" can drop the others (the card does
-  show the new value). Give the rows their use cases, or a merge rule.
-- Look-alike quotes (U+201D, U+FF02) are not escaped in the proposal. All the text stays visible.
-- `raw_transcript` on the agent path holds the fields the model gave, not the user's own words (a write tool sees only its arguments), so ss
-  loses the original wording that the bot's capture keeps. Decide whether to carry the turn's text through to the write.
-- A re-proposed idea whose ss status has moved past `captured` replays and reads "could not be reached" (`call_create_idea`
-  requires `captured`), and any ss 4xx reads the same. Unlikely while ideas are off the board; give these their own line then.
+S6 of AGENTIC-KNOWLEDGE-P2 (`PLAN-agentic-knowledge-w1-01nov.md`, items I1 to I8) closed this list on the local branch `s6-local` (the commit that adds this note; tests `tests/chatbot/agent/test_agent_ideas_live.py`):
+
+- [x] I1: `IDEA_IS_TEST = False`; `crm_ideas_list` reads only ss's own list; the test-only edit rule and the "test idea" note are gone.
+- [x] I2: a console operator creating an idea in another user's name needs `ideation.ideas.manage`, the same rule as editing for someone else (default built, owner asked; reversible in one condition in `_idea_create_read_before`). The operator is now checked before the linked user's lookup, so a refused step makes no ss call.
+- [x] I3: the waiting proposal handed back to the model caps each quoted value at `loop.WAITING_VALUE_CHARS = 300` (with "..."); the stored step and the lines the user reads are whole.
+- [x] I4: the invisible-text strip also removes variation selectors, CGJ, Hangul fillers and the braille blank (`writes.strip_invisible`).
+- [x] I5: `crm_ideas_list` rows carry `use_cases` (up to `MAX_USE_CASES`).
+- [x] I6: the proposal's quoting escapes U+201C, U+201D and U+FF02 like the ASCII quote.
+- [x] I7: `raw_transcript` carries the user's own message of the proposing turn (capped at 4000, invisible text stripped); the loop stores it with the step (default built, owner asked).
+- [x] I8: a replay whose ss status moved past `captured` reads "This idea was already captured as idea N."; any other permanent ss 4xx reads "The Ideas workspace refused this idea." with no ss detail.
 
 ### What the console pass showed (31 Oct, 33 turns on the test copy)
 

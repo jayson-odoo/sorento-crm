@@ -231,11 +231,11 @@ def leaks(*texts) -> list[str]:
 # ------------------------------------------------------------------ constants
 
 
-def test_the_registry_names_and_the_test_flag():
+def test_the_registry_names_and_the_test_flag_is_off():
     from app.services.chatbot.agent import tools, writes
 
     assert writes.CREATE_IDEA == CREATE and writes.UPDATE_IDEA == UPDATE and writes.LIST_IDEAS == LIST
-    assert writes.IDEA_IS_TEST is True
+    assert writes.IDEA_IS_TEST is False  # S6: ideas left test mode
     assert CREATE in writes.WRITES and UPDATE in writes.WRITES and LIST in writes.USER_READS
     for name in (CREATE, UPDATE, LIST):
         entry = writes.WRITES.get(name) or writes.USER_READS.get(name)
@@ -352,14 +352,14 @@ def test_AC_R2_3_the_summary_names_up_to_three_similar_ideas(db, ss):
 
 
 @pytest.mark.parametrize("operator_case", [False, True])
-def test_AC_R2_3_the_lookup_sends_the_linked_user_and_the_test_flag(db, ss, operator_case):
+def test_AC_R2_3_the_lookup_sends_the_linked_user_and_a_real_idea_flag(db, ss, operator_case):
     w = make_world(db)
-    op = operator_with(db, BOARD_VIEW) if operator_case else None
+    op = operator_with(db, BOARD_VIEW, MANAGE) if operator_case else None  # S6 I2: creating for someone else needs manage
     res, _ = propose(db, w, CREATE, dict(FIELDS), operator=op)
     assert res.status == "proposed"
     (call,) = posts(ss, SIMILAR_PATH)
     assert call["json"]["submitter_crm_user_id"] == w.user_id
-    assert call["json"]["is_test"] is True
+    assert call["json"]["is_test"] is False
     assert call["json"]["product_id"] == PRODUCT
     assert call["headers"]["authorization"] == f"Bearer {INTAKE_KEY}"
 
@@ -410,7 +410,7 @@ def test_AC_R2_5_confirm_sends_exactly_one_create_with_the_linked_users_fields(d
     assert body["submitter_crm_user_id"] == w.user_id
     assert body["submitter_phone"] == phone_of(db, w)
     assert body["product_id"] == PRODUCT
-    assert body["is_test"] is True
+    assert body["is_test"] is False  # S6: a real idea
     assert str(uuid.UUID(body["intake_ref"])) == body["intake_ref"]
     assert call["headers"]["authorization"] == f"Bearer {INTAKE_KEY}"
     assert action_row(db, row.id).steps[0]["status"] == "done"
@@ -418,7 +418,7 @@ def test_AC_R2_5_confirm_sends_exactly_one_create_with_the_linked_users_fields(d
 
 def test_AC_R2_5_an_operator_confirming_still_creates_as_the_linked_user(db, ss):
     w = make_world(db)
-    op = operator_with(db, BOARD_VIEW)
+    op = operator_with(db, BOARD_VIEW, MANAGE)  # S6 I2
     _, row = store(db, w, [(CREATE, dict(FIELDS))], operator=op)
     confirm(db, w, row, operator=op)
     (call,) = posts(ss, CREATE_PATH)
@@ -448,7 +448,7 @@ def test_AC_R2_5_two_ideas_in_one_proposal_make_two_creates(db, ss):
     assert calls[0]["json"]["intake_ref"] != calls[1]["json"]["intake_ref"]
 
 
-def test_AC_R2_6_the_reply_names_the_number_the_link_the_gaps_and_that_it_is_a_test(db, ss):
+def test_AC_R2_6_the_reply_names_the_number_the_link_and_the_gaps_and_no_test_note(db, ss):
     w = make_world(db)
     idea_id = str(uuid.uuid4())
     ss.route(
@@ -465,7 +465,7 @@ def test_AC_R2_6_the_reply_names_the_number_the_link_the_gaps_and_that_it_is_a_t
     assert f"{CRM}/ideas/{idea_id}" in reply
     for label in ("Desired outcome", "Use cases", "Current workaround"):
         assert label in reply
-    assert "test" in reply.lower()
+    assert "test idea" not in reply.lower()  # S6: a real idea
 
 
 def test_AC_R2_6_a_create_with_no_idea_number_never_says_none(db, ss):
@@ -570,7 +570,8 @@ def create_through(db, w, ss, *, title, number, idea_id, ok=True, cancel=False):
     return idea_id
 
 
-def test_AC_R2_9_the_list_merges_ss_mine_with_this_contacts_executed_creates(db, ss):
+def test_AC_R2_9_the_list_is_ss_own_mine_list_only(db, ss):
+    """S6 I1: the second source (the contact's confirmed creates, read by id) is gone."""
     w = make_world(db)
     ss_id = str(uuid.uuid4())
     ss.route(
@@ -584,8 +585,8 @@ def test_AC_R2_9_the_list_merges_ss_mine_with_this_contacts_executed_creates(db,
     assert out.status == "ok"
     body = json.dumps(out.data, default=str)
     assert "From the board zzt" in body and ss_id in body
-    assert "Made by the agent zzt" in body and made in body
-    assert {ss_id.lower(), made.lower()} <= seen
+    assert made not in body
+    assert ss_id.lower() in seen
     (listing,) = [c for c in ss.calls if c["method"] == "GET" and c["path"] == "/embed/ideas"]
     assert listing["query"].get("mine") == "true"
 
@@ -599,49 +600,6 @@ def test_AC_R2_9_one_row_per_idea_id_when_ss_also_returns_the_test_idea(db, ss):
     )
     out, _ = list_ideas(db, w)
     assert json.dumps(out.data, default=str).count("IDEA-0555") == 1
-
-
-def test_AC_R2_9_failed_cancelled_and_other_contacts_creates_are_not_listed(db, ss):
-    w = make_world(db)
-    other = another_world(db)
-    kept = create_through(db, w, ss, title="Kept idea zzt", number="IDEA-0201", idea_id=str(uuid.uuid4()))
-    create_through(db, w, ss, title="Failed idea zzt", number="IDEA-0202", idea_id=str(uuid.uuid4()), ok=False)
-    cancelled_id = str(uuid.uuid4())
-    create_through(
-        db, w, ss, title="Cancelled idea zzt", number="IDEA-0203", idea_id=cancelled_id, cancel=True
-    )
-    foreign_id = create_through(
-        db, other, ss, title="Foreign idea zzt", number="IDEA-0204", idea_id=str(uuid.uuid4())
-    )
-    ss.route("GET", "/embed/ideas", json_body=[])
-
-    out, seen = list_ideas(db, w)
-
-    body = json.dumps(out.data, default=str)
-    assert "Kept idea zzt" in body and kept in body
-    for absent in ("Failed idea zzt", "Cancelled idea zzt", "Foreign idea zzt", cancelled_id, foreign_id):
-        assert absent not in body, absent
-    assert foreign_id.lower() not in seen and cancelled_id.lower() not in seen
-
-
-def test_AC_R2_9_another_users_steps_on_this_contact_are_not_listed(db, ss):
-    w = make_world(db)
-    old_user = seed_user(db, contact_pk=None)  # the contact's linked user before it changed
-    mine = create_through(db, w, ss, title="Current user idea zzt", number="IDEA-0301", idea_id=str(uuid.uuid4()))
-    theirs = create_through(db, w, ss, title="Former user idea zzt", number="IDEA-0302", idea_id=str(uuid.uuid4()))
-    db.execute(
-        text("UPDATE agent_actions SET user_id = :u WHERE steps::text LIKE :like"),
-        {"u": old_user, "like": f"%{theirs}%"},
-    )
-    db.commit()
-    ss.route("GET", "/embed/ideas", json_body=[])
-
-    out, seen = list_ideas(db, w)
-
-    body = json.dumps(out.data, default=str)
-    assert "Current user idea zzt" in body and mine in body
-    assert "Former user idea zzt" not in body and theirs not in body
-    assert theirs.lower() not in seen
 
 
 def test_AC_R2_9_an_ss_failure_is_a_typed_error_with_no_url_or_key(db, ss):
@@ -779,11 +737,13 @@ def test_AC_R2_11_an_operator_with_manage_still_cannot_edit_an_idea_that_is_not_
 @pytest.mark.parametrize(
     "linked, operator, expect",
     [
-        ((BOARD_VIEW,), (BOARD_VIEW,), "proposed"),
+        ((BOARD_VIEW,), (BOARD_VIEW, MANAGE), "proposed"),
+        # S6 I2: a view-only operator may no longer create in another user's name.
+        ((BOARD_VIEW,), (BOARD_VIEW,), "refused"),
         ((BOARD_VIEW,), ("inventory.stock.view",), "refused"),
         (("inventory.stock.view",), (BOARD_VIEW,), "refused"),
     ],
-    ids=["both_hold_it", "operator_lacks_it", "linked_lacks_it"],
+    ids=["both_hold_it_and_operator_manages", "operator_view_only", "operator_lacks_it", "linked_lacks_it"],
 )
 def test_AC_R2_11_a_create_needs_board_view_on_both(db, ss, linked, operator, expect):
     w = make_world(db, slugs=linked)
@@ -860,9 +820,10 @@ def test_AC_R2_13_propose_confirm_list_propose_update_confirm_through_a_turn(db,
         "POST", CREATE_PATH,
         json_body={"idea_id": made_id, "idea_number": "IDEA-0184", "status": "captured", "title": "t"},
     )
-    ss.route("GET", "/embed/ideas", json_body=[])  # ss's list omits the new test idea
+    # S6: the idea is real, so ss's own list carries it
+    ss.route("GET", "/embed/ideas", json_body=[{"id": made_id, "ideaNumber": "IDEA-0184", "title": "t", "isMine": True}])
     idea_path = f"/embed/ideas/{made_id}"
-    ss.route("GET", idea_path, json_body={**idea_body(id=made_id), "isMine": True, "isTest": True})
+    ss.route("GET", idea_path, json_body={**idea_body(id=made_id), "isMine": True, "isTest": False})
     ss.route("PATCH", idea_path, json_body=idea_body(id=made_id, title="Nearest warehouse first"))
 
     # turn 1: the model proposes the idea, nothing is created yet
@@ -880,7 +841,7 @@ def test_AC_R2_13_propose_confirm_list_propose_update_confirm_through_a_turn(db,
     assert "result_id" not in outcome.steps[0]
     assert len(posts(ss, CREATE_PATH)) == 1
 
-    # turn 2: list finds the test idea although ss's list omits it, then propose the edit
+    # turn 2: list finds the idea in ss's own list, then propose the edit
     second, _ = go(
         db, w,
         [
