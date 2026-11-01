@@ -791,6 +791,16 @@ describe('StockDocumentsPanel: the site pool ledger (R-K, AC-2.6b)', () => {
     expect(balancesOf()).toEqual(['51', '50', '305']);
   });
 
+  it('R12: on a line standing on its pool the footer states the subtotal the Stock tab prints', async () => {
+    getStockDetail.mockResolvedValue(poolsPosition());
+
+    renderPanel('pools', { poolSubtotal: '30' });
+    await screen.findByRole('table');
+
+    const footer = [...(screen.getByRole('table').querySelector('tfoot')?.querySelectorAll('td') ?? [])];
+    expect(footer.map((entry) => entry.textContent)).toContain('30');
+  });
+
   it('caps every shared balance by the five-pool net, so the ledger cannot promise past the pile', async () => {
     getStockDetail.mockResolvedValue({ ...poolsPosition(), five_pool_net: '52' });
 

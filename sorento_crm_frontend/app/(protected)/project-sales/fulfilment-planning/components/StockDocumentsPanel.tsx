@@ -117,6 +117,8 @@ export function StockDocumentsPanel({
    * listed (outside Available, as the PO qty column is).
    */
   autoCount?: StockStatus | null;
+  /** DEALER-PLANNING R12: the pools' subtotal for a line standing on its own pool. */
+  poolSubtotal?: string | null;
 }) {
   const detail = useStockDetail(productId, warehouseId ?? null, lineIds, group);
   const isGroup = Boolean(group);
@@ -767,7 +769,9 @@ export function StockDocumentsPanel({
         footer: () => {
           const closing =
             rows.length > 0 ? rows[rows.length - 1].balance : null;
-          const shown = displayedBalance(closing);
+          // A line standing on its pool: the Stock tab's subtotal is the walk's figure, not the
+          // share of the true net, and this closing figure foots to that summary cell.
+          const shown = poolSubtotal ?? displayedBalance(closing);
           return (
             <span
               className={cn(
@@ -790,6 +794,7 @@ export function StockDocumentsPanel({
     isGroup,
     rows,
     isPoolsSection,
+    poolSubtotal,
     detail.data?.five_pool_net,
     detail.data?.pool_share_pct,
   ]);

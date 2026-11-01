@@ -51,8 +51,8 @@ Two moves, two functions:
   date (a schedule matrix) or show "which order does this cover" beside the aggregate - see
   the invariant on `build`. Each line carries both `open_qty` (gross, before any placement is
   netted) and `qty` (the balance after SPO placements - a PO placement does not reduce it, R1
-  of `PLAN-loading-plan-project-spo-only.md`); a retail line has no placements to be netted
-  by, so `open_qty == qty` on it always.
+  of `PLAN-loading-plan-project-spo-only.md`). A planned retail line is netted the same way
+  (DEALER-PLANNING R15), so the two differ on it too once it is on a shipping order.
 * `send` - hands the reviewed lines to `supplier_notice_service.request_and_notify`, which is
   the S8 notice machinery (document, email, outbox row) with the wording this stage needs and
   no Loading Plan behind it.
@@ -920,8 +920,8 @@ def _open_lines(
             "order_date": r["order_date"].isoformat() if r["order_date"] else None,
             "required_date": r["required_date"].isoformat() if r["required_date"] else None,
             # The gross open qty before SPO netting (R3, `PLAN-loading-plan-project-spo-
-            # only.md`) - a retail line has no placements to be netted by, so `open_qty`
-            # equals `qty` there. `qty` stays the balance: what is still to ship.
+            # only.md`), on both channels since DEALER-PLANNING R15. `qty` stays the balance:
+            # what is still to ship.
             "open_qty": float(r["open_qty"] or 0),
             "qty": float(r["qty"] or 0),
         }

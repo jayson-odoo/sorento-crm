@@ -1138,6 +1138,11 @@ export const CellStockTable = React.forwardRef<
                                 filterText={filterText}
                                 jumpTarget={activeJump}
                                 autoCount={autoCount}
+                                poolSubtotal={
+                                  section.rows.find(
+                                    (entry) => entry.pool_subtotal_for_project != null,
+                                  )?.pool_subtotal_for_project
+                                }
                               />
                             </td>
                           </tr>,
