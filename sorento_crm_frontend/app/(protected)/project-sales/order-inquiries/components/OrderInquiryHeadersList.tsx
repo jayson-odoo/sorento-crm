@@ -76,8 +76,6 @@ const ACTION_PERMISSION = 'projects.order_inquiry.action';
 /** The send route's own cap (`HandoverResendIn`). */
 const MAX_RESEND = 50;
 
-const reserveFrom = reserveStatusFrom;
-
 function stateFrom(value: string | null): StateFilter {
   return value === 'all' || value === 'completed' ? value : 'outstanding';
 }
@@ -101,7 +99,7 @@ export function OrderInquiryHeadersList() {
   const searchParams = useSearchParams();
 
   const [reserveFilter, setReserveFilter] = useState<OrderInquiryReserveStatus | ''>(() =>
-    reserveFrom(searchParams.get('reserve')),
+    reserveStatusFrom(searchParams.get('reserve')),
   );
   // The reserve emails' button lists exactly their OIs by number (comma-joined, like raised_by).
   const [inquiryNoFilter, setInquiryNoFilter] = useState(() =>
@@ -111,7 +109,7 @@ export function OrderInquiryHeadersList() {
   // landing on one (the email link) with no explicit state shows All.
   const [stateFilter, setStateFilter] = useState<StateFilter>(() =>
     searchParams.get('state') == null &&
-    (reserveFrom(searchParams.get('reserve')) !== '' ||
+    (reserveStatusFrom(searchParams.get('reserve')) !== '' ||
       splitMulti(searchParams.get('inquiry_no')).length > 0)
       ? 'all'
       : stateFrom(searchParams.get('state')),
@@ -668,7 +666,7 @@ export function OrderInquiryHeadersList() {
                       id="oi-header-reserve"
                       value={reserveFilter}
                       onChange={(value) => {
-                        setReserveFilter(reserveFrom(value));
+                        setReserveFilter(reserveStatusFrom(value));
                         if (value) setStateFilter('all');
                       }}
                       options={filterOptions.reserve}

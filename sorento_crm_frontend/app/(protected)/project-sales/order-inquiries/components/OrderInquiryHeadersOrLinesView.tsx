@@ -41,10 +41,11 @@ export function OrderInquiryHeadersOrLinesView() {
   // this is the same rule at the one place both screens are chosen between.
   //
   // The one exception is `inquiry_no` (the reserve emails' button): the same exact OI
-  // numbers mean the same thing on both screens, so it travels both ways. The Documents
+  // numbers mean the same thing on both screens, so it travels both ways (with `reserve`). The Documents
   // state chosen with it rides on Lines as `doc_state` (Lines' own `state` is a row state)
   // and comes back as `state`.
   function setView(next: OrderInquiryTopView) {
+    if (next === view) return;
     const inquiryNo = searchParams.get('inquiry_no');
     if (!inquiryNo) {
       router.push(next === 'lines' ? `${pathname}?display=lines` : pathname);
@@ -60,6 +61,9 @@ export function OrderInquiryHeadersOrLinesView() {
       const docState = searchParams.get('doc_state');
       if (docState) carried.set('state', docState);
     }
+    // `reserve` means the same on both screens (a line's or an OI's reserve status).
+    const reserve = searchParams.get('reserve');
+    if (reserve) carried.set('reserve', reserve);
     router.push(`${pathname}?${carried.toString()}`);
   }
 

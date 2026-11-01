@@ -89,6 +89,7 @@ import { useParkedSendActions } from '../../_shared/hooks/useParkedSendActions';
 import { useReserveRowOptions } from '../../_shared/hooks/useReserveRowOptions';
 import {
   ORDER_INQUIRY_RESERVE_STATUSES,
+  reserveStatusFrom,
   orderInquiryReserveStatusLabel,
   type OrderInquiryReserveStatus,
 } from '../../_shared/lib/orderInquiryHeaderStatus';
@@ -166,12 +167,6 @@ function renderIdTrigger(
   );
 }
 
-
-function reserveFilterFrom(value: string | null): OrderInquiryReserveStatus | '' {
-  return (ORDER_INQUIRY_RESERVE_STATUSES as string[]).includes(value ?? '')
-    ? (value as OrderInquiryReserveStatus)
-    : '';
-}
 
 /** LINKAGE-UNIFY U3 (Q5): the "Dead document" filter's two options. */
 const DEAD_DOCUMENT_OPTIONS: { value: OrderInquiryDeadReason; label: string }[] = [
@@ -473,18 +468,23 @@ export function OrderInquiriesClient({
   // placed) - a different question from `ack`/`linked`/`kind` above, and the one field
   // that can actually reach `state=cancelled`, since the list hides cancelled by
   // default otherwise (S5). URL-seeded and synced the same way as its siblings.
-  // With `inquiry_no` in the URL, `state` is the Documents screen's own state (it travels
-  // here as `doc_state`), never a row state.
-  const [stateFilter, setStateFilter] = React.useState(() =>
-    searchParams.get('inquiry_no') ? '' : joinMulti(splitMulti(searchParams.get('state'))),
-  );
+  // With `inquiry_no` in the URL, a Documents state (`outstanding` / `completed` / `all`)
+  // is the other screen's, not a row state: it travels here as `doc_state` and is ignored.
+  const [stateFilter, setStateFilter] = React.useState(() => {
+    const values = splitMulti(searchParams.get('state'));
+    return joinMulti(
+      searchParams.get('inquiry_no')
+        ? values.filter((value) => !['outstanding', 'completed', 'all'].includes(value))
+        : values,
+    );
+  });
   const [inquiryNoFilter, setInquiryNoFilter] = React.useState(() =>
     joinMulti(splitMulti(searchParams.get('inquiry_no'))),
   );
   // OI-BULK-RESERVE v4 (F1): a line's own reserve status, the Documents view's four
   // statuses. URL-seeded and synced like `state`.
   const [reserveFilter, setReserveFilter] = React.useState<OrderInquiryReserveStatus | ''>(
-    () => reserveFilterFrom(searchParams.get('reserve')),
+    () => reserveStatusFrom(searchParams.get('reserve')),
   );
   // LINKAGE-UNIFY U3 (Q5): rows holding a link whose document is dead. URL-seeded and
   // synced like `state`.
@@ -651,7 +651,8 @@ export function OrderInquiriesClient({
     // visit and a reload of one read identically. `ack=all` (a deliberate "show
     // everything") and every other value travel explicit, so a reload or a shared link
     // keeps them rather than falling back to the default over the buyer's choice.
-    if (ackFilter && ackFilter !== 'to_confirm') next.set('ack', ackFilter);
+    // With an email's OI list the default is All, so a hand-picked To confirm is what travels.
+    if (ackFilter && ackFilter !== (inquiryNoFilter ? ACK_ANY : 'to_confirm')) next.set('ack', ackFilter);
     else next.delete('ack');
     if (linkUpTo) next.set('link_up_to', linkUpTo);
     else next.delete('link_up_to');
@@ -784,8 +785,9 @@ export function OrderInquiriesClient({
   // did. A re-mount is indistinguishable from a first visit from in here, so there is
   // nothing to test but "has this page decided what it shows yet".
   React.useEffect(() => {
-    // An email's OI list is a visit, not a choice of view: it must not overwrite the remembered one.
-    if (!memorySeeded || inquiryNoFilter) return;
+    // An email's OI list is a visit, not a choice of view: nothing in this mount, even after
+    // the chip is removed, may overwrite the remembered one.
+    if (!memorySeeded || arrivedWithInquiryNo.current) return;
     const blob: OrderInquiryViewFilters = {};
     if (ackFilter) blob.ack = ackFilter;
     if (view !== 'list') blob.view = view;
@@ -820,7 +822,6 @@ export function OrderInquiriesClient({
     raisedByFilter,
     linkedFilter,
     kindFilter,
-    inquiryNoFilter,
     setViewFilters,
   ]);
 
@@ -1671,7 +1672,7 @@ export function OrderInquiriesClient({
           <Label className="text-xs text-muted-foreground">Reserve</Label>
           <SearchableSelect
             value={reserveFilter}
-            onChange={(next) => setReserveFilter(reserveFilterFrom(next))}
+            onChange={(next) => setReserveFilter(reserveStatusFrom(next))}
             clearable
             options={ORDER_INQUIRY_RESERVE_STATUSES.map((status) => ({
               value: status,
