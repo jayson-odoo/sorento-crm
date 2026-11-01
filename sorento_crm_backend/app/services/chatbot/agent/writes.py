@@ -20,6 +20,7 @@ from typing import Any, Callable
 from fastapi import HTTPException
 from sqlalchemy import or_
 
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot.agent.tools import ToolResult, _check_ids, _collect_uuids, _permitted, cap_result, clean_detail
 
 logger = logging.getLogger(__name__)
@@ -155,9 +156,10 @@ def run_as_user(
     actor = AuditActor(
         actor_type="user",
         user_id=str(ctx.user_id),
-        real_user_id=str(getattr(ctx, "operator_user_id", None) or ctx.user_id),
+        real_user_id=str(getattr(ctx, "operator_user_id", None) or _principal_real_user() or ctx.user_id),
         auth_method="agent",
-        contact_id=str(ctx.contact_pk),
+        # A panel turn's key names no contact row.
+        contact_id=None if staff_principal.current() is not None else str(ctx.contact_pk),
         tool_name=tool_name,
     )
     set_company_scope(db, company_scope_resolver._scope_for_user(db, who, None))
@@ -187,6 +189,11 @@ def may_propose(db, ctx, definition: "WriteDef") -> bool:
     if getattr(ctx, "principal", "user") == "contact":
         return False
     return holds_ctx(db, ctx, definition.user_permission)
+
+
+def _principal_real_user() -> str | None:
+    principal = staff_principal.current()
+    return principal.real_user_id if principal is not None else None
 
 
 def read_before_all(db, ctx, definition: "WriteDef", args: dict) -> dict:
@@ -522,6 +529,15 @@ def propose_step(
         if definition.runs_as == "contact":
             return ToolResult("denied", message=f"{name} is not a tool you may use."), None
         return ToolResult("denied", message=f"{name} is outside this user's access."), None
+    if name == CREATE_IDEA and staff_principal.current() is not None:
+        # A panel turn runs as a test turn, so an idea would be a test idea: keep the Ideas board link instead.
+        from app.services.chatbot.lanes.ideate import PANEL_IDEAS_REPLY
+
+        return ToolResult(
+            "invalid",
+            data={"say": PANEL_IDEAS_REPLY},
+            message="No idea was created and nothing is waiting for a yes. Ideas are logged on the Ideas board: /ideas",
+        ), None
     problem = _args_problem(definition, args)
     if problem:
         return ToolResult("invalid", message=problem), None

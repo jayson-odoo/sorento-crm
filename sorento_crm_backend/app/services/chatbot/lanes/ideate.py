@@ -28,11 +28,14 @@ import mimetypes
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot import required_fields as rf
 
 logger = logging.getLogger(__name__)
 
 TOOL_NAME = "crm_ideation_turn"
+#: The words today's panel answers an idea with (`ai_assistant_service._serve_ideate_redirect`).
+PANEL_IDEAS_REPLY = "Love the idea! You can capture and track product ideas on the Ideas board - open it here: /ideas"
 
 ASK_NAME = "ideation"
 ASK_QUESTION = "What is the idea? Tell me the problem or what you would like built."
@@ -227,7 +230,13 @@ def run(
     """
     # `is_test` is always sent, true or false: the shared service keys the board filter on
     # it, and a live turn that omitted it would be one more shape to read as "live".
-    result = call_ideation_tool(**build_arguments(ctx), is_test=dry_run)
+    # AGENTIC-UNIFY audit: the intake lives on a contact's state, and a staff principal has neither,
+    # so it keeps today's panel answer until AGENTIC-IDEATE moves ideas to the agent.
+    result = (
+        {"reply_text": PANEL_IDEAS_REPLY, "status": "redirect"}
+        if staff_principal.current() is not None
+        else call_ideation_tool(**build_arguments(ctx), is_test=dry_run)
+    )
     reply = build_reply(result)
     # The core turn decided to ask for the idea: open the slot so the next short reply comes
     # back here. The reply shown stays the tool's own localised text.

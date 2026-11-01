@@ -21,6 +21,11 @@ outstanding, broken down month by month with the orders behind the numbers on re
 * **Narrow after the report is already on screen.** While the report (or its detail offer) is
   still on screen, reply with just the extra filter - "june 2026 only", "only SRTWT7445" - and
   the same report re-runs narrowed, with the header showing the new filter.
+* **Follow up on a report for a customer.** Reply with just what changes - "how about ordered",
+  "and delivered?", "what about last month", "by product". The report re-runs on the same customer,
+  on every account you picked from the list, in the same period, on the same sales basis, unless
+  your reply changes one of them. The header names what it ran on. Name another customer to switch
+  to that customer, say "all customers" to drop the customer, or say "start over" for a new report.
 * **"1" for the sales order list.** After a report with at least one month, reply "1" and the
   bot lists every matching sales order, one item per order, latest date first.
 

@@ -372,6 +372,40 @@ def _enrich_n8n_response(
     return out
 
 
+def next_assignee_for_staff(db: Session, body: dict, company_id: Optional[str]) -> dict:
+    """AGENTIC-UNIFY AC-14: the draw for a staff member's panel escalation. The same pool, the same
+    cursor and the same answer as `post_next_assignee`, with no contact in it: no phone, no segments,
+    nothing already assigned. A named person (`preferred_assignee_id`) moves no cursor, as there."""
+    if not company_id:
+        # A staff turn has no phone to derive a company from: no company means no draw, never the default's.
+        raise HTTPException(status_code=404, detail="No assignee found.")
+    routing_company = resolve_routing_company(db, company_id=company_id)
+    _scope_request_to_company(db, routing_company)
+    sla_policy_tier = _resolve_sla_policy_tier_for_next_assignee(db, body, routing_company.company_id)
+    service = AccessAgentService(db)
+    agent_id = service.get_agent_id_by_code(body.get("agent_code"))
+    if not agent_id:
+        raise HTTPException(status_code=404, detail=f"No agent found with code={body.get('agent_code')!r}")
+    resolved_team = _resolve_round_robin_team_id(service, str(agent_id).strip(), body, company_id=routing_company.company_id)
+    preferred_id = str(body.get("preferred_assignee_id") or "").strip()
+    result = (
+        service.get_member_assignee(resolved_team.team_id, preferred_id, brand_code=resolved_team.brand_code)
+        if preferred_id
+        else service.get_next_assignee(agent_id, resolved_team.team_id, None, brand_code=resolved_team.brand_code)
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="No assignee found.")
+    return _enrich_n8n_response(
+        _format_assignee_response(result),
+        is_working_hours=CalendarService(db).is_within_working_time(),
+        is_already_assigned=False,
+        sla_policy_tier=sla_policy_tier,
+        routing_company=routing_company,
+        resolved_team=resolved_team,
+        brand_matched=bool(result.get("brand_matched")),
+    )
+
+
 @router.post("")
 def post_next_assignee(
     body: dict,
