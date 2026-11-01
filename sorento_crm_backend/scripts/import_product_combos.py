@@ -310,22 +310,42 @@ def starter_doc(family: str, layers) -> dict:
 
 
 def create_templates(db, company_id: str, apply: bool, out: TextIO) -> None:
-    """Create and publish the two starters. One that exists by name is left exactly as it is."""
+    """Create and publish the two starters in the chosen company.
+
+    This script runs as its own process and never installs the company-scope listeners, so
+    nothing stamps `company_id` or filters a query here: both are done explicitly. A starter
+    already in this company is left exactly as it is. One of that name with NO company (an
+    earlier run wrote them that way) is claimed for this company, its doc and versions
+    untouched. A starter of that name in another company is not touched and not claimed.
+    """
     from app.services.dealer_kit import tag_template_service
     from scripts.tag_template_seed_docs import print_size_of
 
-    with company_scope(db, frozenset({company_id})):
-        for name, family, layers in STARTER_TEMPLATES:
-            if db.query(TagTemplate).filter(TagTemplate.name == name).first() is not None:
-                out.write(f"template exists, left alone: {name}\n")
-                continue
-            if not apply:
-                out.write(f"would create and publish template: {name}\n")
-                continue
+    for name, family, layers in STARTER_TEMPLATES:
+        with company_scope(db, None):
+            rows = db.query(TagTemplate).filter(TagTemplate.name == name).all()
+        mine = [row for row in rows if row.company_id == company_id]
+        unowned = [row for row in rows if row.company_id is None]
+        if mine:
+            out.write(f"template exists, left alone: {name}\n")
+        elif unowned:
+            if apply:
+                with company_scope(db, None):
+                    unowned[0].company_id = company_id
+                    db.commit()
+            out.write(f"{'claimed' if apply else 'would claim'} template with no company: {name}\n")
+        elif not apply:
+            out.write(f"would create and publish template: {name}\n")
+        else:
             doc = starter_doc(family, layers)
-            tag_template_service.create_and_publish(
-                db, name=name, family=family, doc=doc, print_size=print_size_of(doc)
-            )
+            with company_scope(db, frozenset({company_id})):
+                created = tag_template_service.create_and_publish(
+                    db, name=name, family=family, doc=doc, print_size=print_size_of(doc)
+                )
+                # create_and_publish builds the row with no company; stamp it here too, since
+                # this process has no auto-stamp.
+                created.company_id = company_id
+                db.commit()
             out.write(f"created and published template: {name}\n")
 
 
