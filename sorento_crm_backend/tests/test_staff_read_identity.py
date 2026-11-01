@@ -1179,12 +1179,13 @@ def test_ac27_module_guard_asks_act_as_too(env, probe, monkeypatch):
 
 
 @pytest.mark.parametrize("path", ["/api/v1/scm/low-stock-report", "/api/v1/sales/analysis"])
-def test_ac27_contact_attributed_reads_cannot_name_a_user(env, path):
+def test_ac27_contact_attributed_reads_take_a_blank_pair_but_cannot_name_a_user(env, path):
     staff = mk_user(
         env.db, "staff", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO
     )
     bare = env.client.get(path, headers=env.ident(staff))
-    assert bare.status_code in (403, 422), f"AC-27: no contact got {bare.status_code}"
+    # AGENTIC-UNIFY AC-7/AC-13: an identity read with a blank pair is the staff path now.
+    assert bare.status_code not in (403, 422), f"AC-27: an identity read with no pair got {bare.status_code}"
     rid, space = mk_contact_in(env.db, [SORENTO])
     paired = env.client.get(path, params={"contact_id": rid, "space_id": space}, headers=env.ident(staff))
     assert paired.status_code == 403, f"AC-27: a named user cannot be attributed, got {paired.status_code}"
@@ -1303,9 +1304,10 @@ def test_ac27_current_stock_list_does_not_widen_to_a_named_superadmins_grants(en
     assert other.product_code not in identity.text, "AC-27: the widening follows the grants of nobody on an identity read"
 
 
-def test_ac27_invoiced_and_unpaid_report_routes_are_unreachable_on_an_identity_read(env):
-    """The invoiced/unpaid gates need no two-user check because no identity read reaches them:
-    `top-selling` is off the list, and `report-ask` refuses a pair with the header."""
+def test_ac27_top_selling_is_off_the_list_and_report_ask_refuses_a_pair_with_the_header(env):
+    """`top-selling` is off the list, and `report-ask` refuses a pair with the header. The blank pair
+    is the staff path now (AGENTIC-UNIFY AC-7), whose invoiced and unpaid gates ask both users
+    (`test_panel_agent_side.py`)."""
     staff = mk_user(env.db, "staff", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO)
     top = env.client.get("/api/v1/order-management/top-selling", headers=env.ident(staff))
     assert top.status_code == 403 and INVALID_CODE in top.text, f"top-selling got {top.status_code}"
@@ -1317,9 +1319,15 @@ def test_ac27_invoiced_and_unpaid_report_routes_are_unreachable_on_an_identity_r
     assert ask.status_code == 403 and INVALID_CODE in ask.text, f"report-ask with a pair got {ask.status_code}"
     blank = env.client.get(
         "/api/v1/order-management/report-ask",
-        params={"contact_id": "", "space_id": ""}, headers=env.ident(staff),
+        params={"contact_id": "", "space_id": "", "date_from": "2026-10-01", "date_to": "2026-10-31"},
+        headers=env.ident(staff),
     )
-    assert blank.status_code == 422, f"report-ask with a blank pair got {blank.status_code}"
+    assert blank.status_code not in (403, 422), f"report-ask with a blank pair got {blank.status_code}"
+    plain = env.client.get(
+        "/api/v1/order-management/report-ask",
+        params={"date_from": "2026-10-01", "date_to": "2026-10-31"}, headers=env.plain(),
+    )
+    assert plain.status_code == 422, f"a plain key with no pair got {plain.status_code}"
 
 
 # =========================================================================== #

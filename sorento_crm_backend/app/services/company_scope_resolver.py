@@ -328,6 +328,13 @@ def _scope_for_user(db: Session, user_id: str, claim: Optional[str]) -> CompanyS
     return frozenset({active}) if active else UNSET
 
 
+def resolve_user_active_company(db: Session, user_id: str) -> Optional[str]:
+    """The one company ``user_id`` is working in, as a session of theirs resolves it. None when
+    they have no grant at all (fail-closed)."""
+    scope = _scope_for_user(db, user_id, None)
+    return next(iter(scope)) if isinstance(scope, frozenset) and scope else None
+
+
 def resolve_contact_company_scope(
     db: Session, contact_id: Optional[str], space_id: Optional[str]
 ) -> frozenset:

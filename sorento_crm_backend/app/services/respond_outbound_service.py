@@ -26,9 +26,21 @@ from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact
 from app.services.error_handler import AppException
-from app.services.respond_identifier import contact_for_identifier
+from app.services.respond_identifier import contact_for_identifier, is_panel_key
 
 logger = logging.getLogger(__name__)
+
+
+def assert_not_panel_thread(identifier: Optional[str]) -> None:
+    """Raise when `identifier` is a panel thread's key: nothing reaches Respond.io for one."""
+    if is_panel_key(identifier):
+        logger.error("Respond.io call BLOCKED: %r is a panel thread, not a contact.", identifier)
+        raise AppException(
+            status_code=status.HTTP_409_CONFLICT,
+            message="A panel thread cannot be sent to.",
+            detail="A panel thread's key names no contact, so nothing went to Respond.io.",
+            code="OUTBOUND_PANEL_THREAD",
+        )
 
 
 def assert_outbound_enabled(
@@ -57,7 +69,11 @@ def assert_outbound_enabled(
     Owns a short-lived Session when `db` is not supplied - the same pattern
     `_resolve_workspace_credentials` uses, since `RespondClient` methods take no
     session.
+
+    A panel thread's key is refused outright (AGENTIC-UNIFY AC-4): it is not a gap in our
+    records but a staff member with no WhatsApp at all, so the fail-open above must not reach it.
     """
+    assert_not_panel_thread(identifier)
     own_session = False
     try:
         if db is None:

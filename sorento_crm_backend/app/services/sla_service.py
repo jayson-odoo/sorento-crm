@@ -10,7 +10,7 @@ from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, Co
 from app.models.access import RespondContact
 from app.schemas.sla import (
     SLAPolicyCreate, SLAPolicyUpdate, SLAPolicyTierCreate, SLAPolicyTierUpdate,
-    ConversationSLATrackingCreate, ConversationSLATrackingUpdate, ConversationSLAEventLogCreate
+    ConversationSLANoContactCreate, ConversationSLATrackingCreate, ConversationSLATrackingUpdate, ConversationSLAEventLogCreate
 )
 from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
@@ -603,6 +603,18 @@ def compute_tracking_timings(tracking, tier) -> dict:
         "time_remaining_resolution_seconds": time_remaining_resolution_seconds,
         "resolution_due_at": resolution_due_at,
     }
+
+
+#: `source_entity_type` of a staff member's AI panel escalation. It is not a form type, so the row stays a
+#: conversation row (My Pending, the conversation scope); only the marker switches WhatsApp off.
+PANEL_ESCALATION_TYPE = "panel_escalation"
+
+
+def _is_no_contact_task(tracking) -> bool:
+    """A staff member's panel escalation. Nobody in it has a WhatsApp thread, so its people hear in the
+    app and by email, whatever their WhatsApp toggle says. A customer's row whose contact was deleted
+    also has no contact and is NOT this: its people keep their WhatsApp."""
+    return getattr(tracking, "source_entity_type", None) == PANEL_ESCALATION_TYPE
 
 
 def conversation_tracking_scope():
@@ -1780,7 +1792,7 @@ class ConversationSLATrackingService:
                 event_type="reassigned",
                 send_in_app=True,
                 send_email=True,
-                send_whatsapp=True,
+                send_whatsapp=not _is_no_contact_task(tracking),
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
@@ -1797,6 +1809,7 @@ class ConversationSLATrackingService:
                 event_type="reassigned",
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
+                send_whatsapp=not _is_no_contact_task(tracking),
             )
 
             # Old assignee - only when actor != old assignee (someone moved your task).
@@ -1827,7 +1840,7 @@ class ConversationSLATrackingService:
                     event_type="reassigned_away",
                     send_in_app=True,
                     send_email=True,
-                    send_whatsapp=True,
+                    send_whatsapp=not _is_no_contact_task(tracking),
                     email_pref_attr="notify_email_on_assignment",
                     whatsapp_pref_attr="notify_whatsapp_on_assignment",
                 )
@@ -3341,7 +3354,7 @@ class ConversationSLATrackingService:
             event_type=f"deadline_extended:{int(getattr(tracking, 'extension_count', 0) or 0)}",
             send_in_app=True,
             send_email=True,
-            send_whatsapp=True,
+            send_whatsapp=not _is_no_contact_task(tracking),
             email_pref_attr="notify_email_on_deadline_extended",
             whatsapp_pref_attr="notify_whatsapp_on_deadline_extended",
         )
@@ -3372,6 +3385,15 @@ class ConversationSLATrackingService:
             )
             .filter(
                 conversation_tracking_scope(),
+                # The runner (n8n `schedule-sla-policy-checker`) posts each item's contact to
+                # /integration/escalate. A row with no contact (a panel escalation, AGENTIC-UNIFY
+                # AC-14) answers 404 there, which ends the runner's loop and, as it never leaves
+                # this soonest-due list, would starve every customer's escalation behind it. Only the
+                # marked row is left out: a customer's row whose contact was deleted is still due.
+                or_(
+                    ConversationSLATracking.source_entity_type.is_(None),
+                    ConversationSLATracking.source_entity_type != PANEL_ESCALATION_TYPE,
+                ),
                 ConversationSLATracking.is_resolved.is_(False),
                 ConversationSLATracking.current_tier.in_([1, 2]),
                 or_(
@@ -4064,6 +4086,28 @@ class ConversationSLATrackingService:
                 self.db, contact_id=str(contact.id), phone=normalized_phone
             )
         )
+        return self._create_stamped_tracking(tracking_dict)
+
+    def create_no_contact_task(self, tracking_data: ConversationSLANoContactCreate):
+        """AGENTIC-UNIFY AC-14: a conversation SLA row with no contact, for a staff member's panel
+        escalation. Everything after the contact is the same: the assignee, the policy, the clock,
+        My Pending and the notification (in app and email, never WhatsApp, `_is_no_contact_task`).
+        The column has always been nullable; form rows already have none."""
+        tracking_dict = tracking_data.model_dump()
+        tracking_dict.pop("contact_phone_number", None)
+        tracking_dict["current_tier"] = 1
+        tracking_dict["respond_contact_id"] = None
+        tracking_dict["source_entity_type"] = PANEL_ESCALATION_TYPE
+        return self._create_stamped_tracking(tracking_dict)
+
+    def _create_stamped_tracking(self, tracking_dict: dict):
+        """The tracking row, its clock and its notifications, once the contact and company are stamped."""
+        from datetime import timedelta, datetime, timezone
+        from app.models.sla import SLAPolicy, SLAPolicyTier
+
+        import logging
+
+        logger = logging.getLogger(__name__)
 
         # Brand: the second routing axis, stamped once here and read back by every
         # escalation. A legacy suffixed team-set code carries the brand in its name;
@@ -4550,7 +4594,7 @@ class ConversationSLATrackingService:
                 event_type=f"assigned:{occ}",
                 send_in_app=True,
                 send_email=True,
-                send_whatsapp=True,
+                send_whatsapp=not _is_no_contact_task(tracking),
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
             )
@@ -4626,6 +4670,7 @@ class ConversationSLATrackingService:
                 event_type=f"assigned:{occ}",
                 email_pref_attr="notify_email_on_assignment",
                 whatsapp_pref_attr="notify_whatsapp_on_assignment",
+                send_whatsapp=not _is_no_contact_task(tracking),
                 cover_title=cover_title,
                 cover_body=cover_body,
                 tracking=tracking,
