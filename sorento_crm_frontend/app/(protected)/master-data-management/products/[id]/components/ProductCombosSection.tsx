@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { NumberInput } from '@/components/ui/number-input';
 import { Textarea } from '@/components/ui/textarea';
+import { numberFieldError } from '@/lib/number-field';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
   SearchableSelect,
@@ -71,8 +72,8 @@ function formatMoney(value: number | string | null | undefined): string {
 
 /**
  * A money box that saves on blur, and only when the figure changed. Empty saves null
- * (the price goes back to the summed one); a draft the browser cannot read as a number
- * is left alone.
+ * (the price goes back to the summed one); a draft that is not a number, or is negative,
+ * shows its message and is not saved.
  */
 function MoneyField({
   id,
@@ -88,12 +89,15 @@ function MoneyField({
   /** Names the input through its row when the visible label alone would be ambiguous. */
   ariaLabel?: string;
   value: number | string | null | undefined;
-  onSave: (next: number | null) => void;
+  /** `revert` puts the box back to the saved figure when the server refuses the write. */
+  onSave: (next: number | null, revert: () => void) => void;
   className?: string;
   labelClassName?: string;
 }) {
   const saved = toNumber(value);
   const [draft, setDraft] = useState<number | null>(saved);
+  const [touched, setTouched] = useState(false);
+  const error = numberFieldError(draft, { min: 0, optional: true });
   return (
     <div className={className}>
       <Label htmlFor={id} className={labelClassName}>
@@ -107,9 +111,11 @@ function MoneyField({
         inputMode="decimal"
         value={draft}
         onValueChange={setDraft}
+        error={touched ? error : undefined}
         onBlur={() => {
-          if (draft !== null && Number.isNaN(draft)) return;
-          if (draft !== saved) onSave(draft);
+          setTouched(true);
+          if (error) return;
+          if (draft !== saved) onSave(draft, () => setDraft(saved));
         }}
       />
     </div>
@@ -127,13 +133,13 @@ function TextField({
   id: string;
   label: string;
   value: string | null | undefined;
-  onSave: (next: string | null) => void;
+  onSave: (next: string | null, revert: () => void) => void;
   multiline?: boolean;
 }) {
   const saved = value ?? '';
   const [draft, setDraft] = useState(saved);
   const commit = () => {
-    if (draft !== saved) onSave(draft.trim() === '' ? null : draft);
+    if (draft !== saved) onSave(draft.trim() === '' ? null : draft, () => setDraft(saved));
   };
   return (
     <div className="space-y-1.5">
@@ -163,7 +169,7 @@ interface PartRowProps {
   canEdit: boolean;
   isRemoving: boolean;
   onChoiceGroup: (label: string | null) => void;
-  onWrite: (write: ProductComboPartUpdate) => void;
+  onWrite: (write: ProductComboPartUpdate, revert?: () => void) => void;
   onRemove: () => void;
 }
 
@@ -224,6 +230,23 @@ function PartRow({
         <p className="text-sm text-muted-foreground">{part.choice_group || 'Fixed part'}</p>
       )}
       {canEdit ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="justify-self-start sm:justify-self-end"
+          onClick={onRemove}
+          disabled={isRemoving}
+          aria-label={`Remove ${part.code}`}
+        >
+          {isRemoving ? (
+            <LoaderCircleIcon className="size-4 animate-spin" />
+          ) : (
+            <Trash2 className="size-4 text-destructive" />
+          )}
+        </Button>
+      ) : null}
+      {canEdit ? (
         <div className="flex flex-wrap items-end gap-3 sm:col-span-full">
           {isOption ? (
             <MoneyField
@@ -231,7 +254,7 @@ function PartRow({
               label="Sell price if picked"
               ariaLabel={`Sell price if picked for ${part.code}`}
               value={part.sell_price}
-              onSave={(next) => onWrite({ sell_price: next })}
+              onSave={(next, revert) => onWrite({ sell_price: next }, revert)}
               className="w-40 space-y-1.5"
               labelClassName="text-xs text-muted-foreground"
             />
@@ -242,7 +265,7 @@ function PartRow({
               label="Top-up"
               ariaLabel={`Top-up for ${part.code}`}
               value={part.topup_amount}
-              onSave={(next) => onWrite({ topup_amount: next })}
+              onSave={(next, revert) => onWrite({ topup_amount: next }, revert)}
               className="w-40 space-y-1.5"
               labelClassName="text-xs text-muted-foreground"
             />
@@ -268,23 +291,6 @@ function PartRow({
           ) : null}
         </div>
       )}
-      {canEdit ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="justify-self-start sm:justify-self-end"
-          onClick={onRemove}
-          disabled={isRemoving}
-          aria-label={`Remove ${part.code}`}
-        >
-          {isRemoving ? (
-            <LoaderCircleIcon className="size-4 animate-spin" />
-          ) : (
-            <Trash2 className="size-4 text-destructive" />
-          )}
-        </Button>
-      ) : null}
     </div>
   );
 }
@@ -414,8 +420,12 @@ interface ComboBlockProps {
   onDelete: () => void;
   onRemovePart: (part: ProductComboPartRow) => void;
   onChoiceGroup: (part: ProductComboPartRow, label: string | null) => void;
-  onPartWrite: (part: ProductComboPartRow, write: ProductComboPartUpdate) => void;
-  onComboWrite: (write: ProductComboUpdate) => void;
+  onPartWrite: (
+    part: ProductComboPartRow,
+    write: ProductComboPartUpdate,
+    revert?: () => void,
+  ) => void;
+  onComboWrite: (write: ProductComboUpdate, revert?: () => void) => void;
   onAddPart: (comboId: string, productId: string) => void;
   addPartError: string | null;
   isAddingPart: boolean;
@@ -470,7 +480,7 @@ function ComboBlock({
       canEdit={canEdit}
       isRemoving={removingPartId === part.id}
       onChoiceGroup={(label) => onChoiceGroup(part, label)}
-      onWrite={(write) => onPartWrite(part, write)}
+      onWrite={(write, revert) => onPartWrite(part, write, revert)}
       onRemove={() => onRemovePart(part)}
     />
   );
@@ -508,14 +518,14 @@ function ComboBlock({
             id={`${combo.id}-list-price`}
             label="List price (RM)"
             value={combo.list_price}
-            onSave={(next) => onComboWrite({ list_price: next })}
+            onSave={(next, revert) => onComboWrite({ list_price: next }, revert)}
             className="space-y-1.5"
           />
           <MoneyField
             id={`${combo.id}-sell-price`}
             label="Sell price (RM)"
             value={combo.sell_price}
-            onSave={(next) => onComboWrite({ sell_price: next })}
+            onSave={(next, revert) => onComboWrite({ sell_price: next }, revert)}
             className="space-y-1.5"
           />
           <div className="sm:col-span-2">
@@ -523,7 +533,7 @@ function ComboBlock({
               id={`${combo.id}-description`}
               label="Description"
               value={combo.description}
-              onSave={(next) => onComboWrite({ description: next })}
+              onSave={(next, revert) => onComboWrite({ description: next }, revert)}
               multiline
             />
           </div>
@@ -532,7 +542,7 @@ function ComboBlock({
               id={`${combo.id}-free-items`}
               label="Free items"
               value={combo.free_items}
-              onSave={(next) => onComboWrite({ free_items: next })}
+              onSave={(next, revert) => onComboWrite({ free_items: next }, revert)}
             />
           </div>
         </div>
@@ -697,8 +707,12 @@ export function ProductCombosSection({ productId }: { productId: string }) {
                 onChoiceGroup={(part, label) =>
                   updatePart.mutate({ partId: part.id, write: { choice_group: label } })
                 }
-                onPartWrite={(part, write) => updatePart.mutate({ partId: part.id, write })}
-                onComboWrite={(write) => updateCombo.mutate({ comboId: combo.id, write })}
+                onPartWrite={(part, write, revert) =>
+                  updatePart.mutate({ partId: part.id, write }, { onError: revert })
+                }
+                onComboWrite={(write, revert) =>
+                  updateCombo.mutate({ comboId: combo.id, write }, { onError: revert })
+                }
                 onAddPart={handleAddPart}
                 addPartError={
                   addPartError?.comboId === combo.id ? addPartError.message : null

@@ -75,7 +75,10 @@ export function useUpdateProductCombo(productId: string) {
   return useMutation({
     mutationFn: (input: { comboId: string; write: ProductComboUpdate }) =>
       updateProductCombo(input.comboId, input.write),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: combosKey(productId) }),
+    onSuccess: () => {
+      toast.success('Combo saved');
+      return queryClient.invalidateQueries({ queryKey: combosKey(productId) });
+    },
     onError: (error: Error) => toast.error(error.message || 'Failed to save the combo'),
   });
 }
@@ -85,7 +88,10 @@ export function useUpdateProductComboPart(productId: string) {
   return useMutation({
     mutationFn: (input: { partId: string; write: ProductComboPartUpdate }) =>
       updateProductComboPart(input.partId, input.write),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: combosKey(productId) }),
+    onSuccess: () => {
+      toast.success('Part saved');
+      return queryClient.invalidateQueries({ queryKey: combosKey(productId) });
+    },
     onError: (error: Error) => toast.error(error.message || 'Failed to save the part'),
   });
 }

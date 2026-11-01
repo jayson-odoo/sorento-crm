@@ -17,7 +17,7 @@
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 
 import type { ProductComboPartRow, ProductComboRow } from '../../types/productCombo.types';
 
@@ -301,6 +301,32 @@ describe('Combos card hygiene (AC-6.3, AC-6.4)', () => {
     const row = screen.getByText('ZZWHITE').closest('div.grid') as HTMLElement;
     expect(row.className).toContain('sm:grid-cols-');
     expect(screen.getByText('ZZWHITE').className).toContain('truncate');
+    // The classes this lane added: the new inputs wrap under the code at 375px, and the
+    // combo's own fields stack in one column before the sm breakpoint.
+    const priceBox = within(row).getByLabelText(/Sell price if picked/i).closest('div.flex-wrap') as HTMLElement;
+    expect(priceBox.className).toContain('sm:col-span-full');
+    const comboFields = within(screen.getByTestId('combo-block')).getByLabelText(/^List price \(RM\)/i).closest('div.grid') as HTMLElement;
+    expect(comboFields.className).toContain('sm:grid-cols-2');
+  });
+
+  it('shows a message and does not save a negative figure', () => {
+    const block = renderCard();
+    const input = within(block).getByLabelText(/^List price \(RM\)/i);
+    fireEvent.change(input, { target: { value: '-5' } });
+    fireEvent.blur(input);
+    expect(updateComboMutate).not.toHaveBeenCalled();
+    expect(within(block).getByText(/Enter a number of at least 0/i)).toBeInTheDocument();
+  });
+
+  it('puts the box back when the server refuses the write', () => {
+    const block = renderCard();
+    const input = within(block).getByLabelText(/^List price \(RM\)/i);
+    fireEvent.change(input, { target: { value: '2600' } });
+    fireEvent.blur(input);
+    const options = updateComboMutate.mock.calls[0][1] as { onError: () => void };
+    expect(typeof options.onError).toBe('function');
+    act(() => options.onError());
+    expect(within(block).getByLabelText(/^List price \(RM\)/i)).toHaveValue(2500);
   });
 
   it('shows no uuid anywhere on the card', () => {
