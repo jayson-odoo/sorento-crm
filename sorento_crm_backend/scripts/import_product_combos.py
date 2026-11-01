@@ -251,46 +251,63 @@ def process_entry(db, entry, host, parts_by_code, photos, apply: bool) -> dict:
 
 # --------------------------------------------------------------------------- templates
 
-#: (name, family, [(slug, slot, kind, x, y, w, h, size)]) in mm on A5 portrait 148 x 210.
+#: The approved mock's type, in points: name bold 14, description 10, list price 11, sell price the
+#: biggest thing on the tag (38 bold, muted brown), choices and top-ups 9.5, free items 10.
+SELL_COLOUR = "#8c7355"
+STYLES = {
+    "combo_name": {"size": 14, "weight": 700},
+    "combo_description": {"size": 10},
+    "list_price": {"size": 11},
+    "sell_price": {"size": 38, "weight": 700, "color": SELL_COLOUR, "align": "right"},
+    "combo_choices": {"size": 9.5},
+    "included_accessories": {"size": 10},
+    "combo_topups": {"size": 9.5},
+}
+
+#: (name, family, [(slug, slot, kind, x, y, w, h)]) in mm on A5 portrait 148 x 210.
 STARTER_TEMPLATES = [
     (
         "Bathroom furniture combo",
         "furniture_set",
         [
-            ("combo-image", "combo_image", "image", 6, 6, 70, 110, 0),
-            ("combo-name", "combo_name", "text", 80, 8, 62, 14, 16),
-            ("combo-description", "combo_description", "text", 80, 24, 62, 62, 9),
-            ("list-price", "list_price", "text", 80, 90, 62, 8, 10),
-            ("sell-price", "sell_price", "text", 80, 99, 62, 16, 18),
-            ("combo-choices", "combo_choices", "text", 6, 120, 136, 46, 9),
-            ("accessories", "included_accessories", "text", 6, 168, 136, 10, 9),
-            ("combo-topups", "combo_topups", "text", 6, 180, 136, 24, 9),
+            ("combo-image", "combo_image", "image", 6, 6, 70, 110),
+            ("combo-name", "combo_name", "text", 80, 8, 62, 14),
+            ("combo-description", "combo_description", "text", 80, 24, 62, 62),
+            ("list-price", "list_price", "text", 80, 90, 62, 8),
+            ("sell-price", "sell_price", "text", 80, 99, 62, 16),
+            ("combo-choices", "combo_choices", "text", 6, 120, 136, 46),
+            ("accessories", "included_accessories", "text", 6, 168, 136, 10),
+            ("combo-topups", "combo_topups", "text", 6, 180, 136, 24),
         ],
     ),
     (
         "Kitchen sink combo",
         "sink_combo",
         [
-            ("combo-image", "combo_image", "image", 6, 6, 64, 42, 0),
-            ("combo-name", "combo_name", "text", 74, 8, 68, 8, 14),
-            ("combo-description", "combo_description", "text", 74, 17, 68, 16, 9),
-            ("list-price", "list_price", "text", 74, 35, 68, 8, 10),
-            ("sell-price", "sell_price", "text", 74, 43, 68, 14, 18),
-            ("combo-choices", "combo_choices", "text", 6, 60, 136, 76, 9),
-            ("accessories", "included_accessories", "text", 6, 138, 136, 12, 9),
-            ("combo-topups", "combo_topups", "text", 6, 152, 136, 54, 9),
+            ("combo-image", "combo_image", "image", 6, 6, 64, 42),
+            ("combo-name", "combo_name", "text", 74, 8, 68, 8),
+            ("combo-description", "combo_description", "text", 74, 17, 68, 16),
+            ("list-price", "list_price", "text", 74, 35, 68, 8),
+            ("sell-price", "sell_price", "text", 74, 43, 68, 14),
+            ("combo-choices", "combo_choices", "text", 6, 60, 136, 76),
+            ("accessories", "included_accessories", "text", 6, 138, 136, 12),
+            ("combo-topups", "combo_topups", "text", 6, 152, 136, 54),
         ],
     ),
 ]
 
+#: Placeholders are empty on purpose: a combo with no price, or no free items, must print
+#: nothing - never a stray figure, `RM` or label. Prices print as the bare figure the text
+#: slot gives; a `price_badge` would print "Price TBC" for a blank price, and a label ("LP:",
+#: "SP RM", "FREE:") in front of a text slot cannot be made conditional with the layer kinds
+#: that exist, so none is drawn.
 PLACEHOLDERS = {
     "combo_name": "Combo name",
     "combo_description": "Combo description",
-    # Empty, not "0": a combo with no price must print nothing, never a made-up figure.
     "list_price": "",
     "sell_price": "",
     "combo_choices": "Choices",
-    "included_accessories": "Included accessories",
+    "included_accessories": "",
     "combo_topups": "Upgrade",
 }
 
@@ -300,12 +317,16 @@ def starter_doc(family: str, layers) -> dict:
     from scripts.tag_template_seed_docs import _Doc
 
     doc = _Doc(family, 148, 210)
-    for slug, slot, kind, x, y, w, h, size in layers:
+    for slug, slot, kind, x, y, w, h in layers:
         if kind == "image":
             doc.image(slug, x, y, w, h, slot=slot, fit="contain")
         else:
-            weight = 700 if slot in ("combo_name", "sell_price") else 400
-            doc.text(slug, x, y, w, h, PLACEHOLDERS[slot], size=size, weight=weight, slot=slot)
+            style = STYLES[slot]
+            doc.text(
+                slug, x, y, w, h, PLACEHOLDERS[slot],
+                size=style["size"], weight=style.get("weight", 400),
+                color=style.get("color", "#231f20"), align=style.get("align", "left"), slot=slot,
+            )
     return doc.build()
 
 

@@ -413,6 +413,20 @@ def test_ac_8_9_templates_flag_creates_and_publishes_the_two_starters(
         ]
         assert len(prices) == 2
         assert all(layer["props"]["text"] == "" for layer in prices)
+        by_slot = {layer["slot_binding"]: layer for layer in template.doc["layers"]}
+        # The approved mock's type: the sell price is the biggest thing on the tag.
+        sell = by_slot["sell_price"]["props"]
+        assert (sell["fontSize"], sell["fontWeight"], sell["color"]) == (38, 700, "#8c7355")
+        assert by_slot["list_price"]["props"]["fontSize"] == 11
+        assert by_slot["combo_name"]["props"]["fontSize"] == 14
+        assert by_slot["combo_name"]["props"]["fontWeight"] == 700
+        assert by_slot["combo_description"]["props"]["fontSize"] == 10
+        assert by_slot["combo_choices"]["props"]["fontSize"] == 9.5
+        assert max(l["props"].get("fontSize", 0) for l in template.doc["layers"]) == 38
+        # Prices come from the text slots (a price_badge prints "Price TBC" when blank), and
+        # free items start empty, so nothing prints when there is nothing to print.
+        assert all(layer["type"] == "text" for layer in prices)
+        assert by_slot["included_accessories"]["props"]["text"] == ""
 
 
 def test_ac_8_9_no_templates_flag_means_no_templates(db, catalogue, photos, tmp_path, storage):

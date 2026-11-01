@@ -22,6 +22,7 @@ import {
 } from './request-tags';
 import { mergeFieldCatalog, renderMergeFields } from './merge-fields';
 import {
+  layerText,
   imagesOf,
   resolveSlotText,
   slotImageAttachmentId,
@@ -587,5 +588,34 @@ describe('defaultTemplateFor with the two starter templates (AC-8.10)', () => {
   it('a combo line never falls to the first ala carte template when its family exists', () => {
     const shuffled = [STARTERS[0], STARTERS[2], STARTERS[1]];
     expect(defaultTemplateFor(comboLine, shuffled, 'SRTBF99999')?.id).toBe('t-bf');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// A blank price or blank free items print nothing (starter templates)
+// ---------------------------------------------------------------------------
+
+describe('blank prices and free items print nothing', () => {
+  const blankLayer = (slot: SlotBinding) =>
+    ({
+      id: 'l',
+      type: 'text',
+      slot_binding: slot,
+      text_override: null,
+      props: { ...defaultTextProps(), text: '' },
+    }) as unknown as TagLayer;
+
+  it('a sell price slot with no price is an empty string, no RM and no label', () => {
+    expect(layerText(blankLayer('sell_price'), lineData({ sell_price: null, show_promo_price: false }), 'print')).toBe('');
+    expect(layerText(blankLayer('list_price'), lineData({ list_price: null }), 'print')).toBe('');
+  });
+
+  it('a set price prints the bare figure only', () => {
+    expect(layerText(blankLayer('sell_price'), lineData({ sell_price: 3090, show_promo_price: true }), 'print')).toBe('3,090');
+  });
+
+  it('free items with nothing print nothing', () => {
+    expect(layerText(blankLayer('included_accessories'), lineData({ included_accessories: '' }), 'print')).toBe('');
   });
 });

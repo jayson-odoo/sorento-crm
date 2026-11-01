@@ -712,3 +712,15 @@ def test_ac_2_5_is_judged_per_group(db):
     assert combo_prices(cb, {a2.id, b1.id})[1:] == (D("40.00"), True)
     # Both groups picked with no price on either picked option: today's sum.
     assert combo_prices(cb, {a2.id, b2.id})[1:] == (None, False)
+
+
+def test_the_request_design_route_answers_200_with_the_combo_on_a_combo_line(crm):
+    """The Design card swallows any error as "No design yet"; this pins that a combo line does
+    not make the route throw, and that the combo reaches the lines it answers."""
+    client, db = crm
+    s = _fixed_combo(db)
+    request = _designing(db, s)
+    response = client.get(f"/api/v1/dealer-kit/price-tag-requests/{request.id}/design")
+    assert response.status_code == 200, response.text
+    (line,) = response.json()["lines"]
+    assert line["combo"]["name"] == "ZZT pair"
