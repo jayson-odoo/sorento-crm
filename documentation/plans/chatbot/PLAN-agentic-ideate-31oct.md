@@ -258,7 +258,7 @@ and crew's condition for the bar is met. The total did not improve, though, and 
 
 **Owner of the flip (crew ruling, 31 Oct): AGENTIC-KNOWLEDGE-P2, #2053.** It flips `writes.IDEA_IS_TEST` in the same PR that turns the WhatsApp hook on, and it owns this list. The flag stays True in this PR. Until then a WhatsApp idea routed to the agent would be created as a test idea and not show on the board, so the hook must not go live ahead of the flip. Once this lane finishes, this plan moves to `documentation/plans/_archive/chatbot/`.
 
-S6 of AGENTIC-KNOWLEDGE-P2 (`PLAN-agentic-knowledge-w1-01nov.md`, items I1 to I8) closed this list on the local branch `s6-local` (the commit that adds this note; tests `tests/chatbot/agent/test_agent_ideas_live.py`):
+S6 of AGENTIC-KNOWLEDGE-P2 (`PLAN-agentic-knowledge-w1-01nov.md`, items I1 to I8) closed this list in commit 1c850e3085 on the local branch `s6-local` ( tests `tests/chatbot/agent/test_agent_ideas_live.py`):
 
 - [x] I1: `IDEA_IS_TEST = False`; `crm_ideas_list` reads only ss's own list; the test-only edit rule and the "test idea" note are gone.
 - [x] I2: a console operator creating an idea in another user's name needs `ideation.ideas.manage`, the same rule as editing for someone else (default built, owner asked; reversible in one condition in `_idea_create_read_before`). The operator is now checked before the linked user's lookup, so a refused step makes no ss call.
