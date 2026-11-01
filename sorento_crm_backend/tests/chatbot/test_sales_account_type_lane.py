@@ -29,7 +29,11 @@ from app.models.product import Brand
 from app.services.chatbot.head import parser as parser_mod
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import MOCHA_ID, customer as seed_customer, seed_mocha
-from tests.chatbot.test_chat_state_parser_input import _entity_props, _sent_schema  # noqa: F401
+from tests.chatbot.test_chat_state_parser_input import (  # noqa: F401  (_fresh_prompt_cache is an autouse fixture)
+    _entity_props,
+    _fresh_prompt_cache,
+    _sent_schema,
+)
 from tests.chatbot.test_report_ask_lane import _e, _rank, _reply
 from tests.chatbot.test_report_unify_company_lane import _two_companies
 from tests.chatbot.test_report_unify_routing import (  # noqa: F401  (bot / console are fixtures)
@@ -218,21 +222,21 @@ def test_at20_the_question_keeps_the_typed_capitals(bot, seeded) -> None:
 
 def test_at21_two_words_in_both_ask_one_question_and_the_answer_covers_both(bot) -> None:
     ids = _seed(
-        bot, brands=("Cabana", "Sorento"),
-        ledgers=(("ZZT LEDGER ONE", "CABANA"), ("ZZT LEDGER TWO", "SORENTO")),
+        bot, brands=("Cabana", "Bravat"),
+        ledgers=(("ZZT LEDGER ONE", "CABANA"), ("ZZT LEDGER TWO", "BRAVAT")),
     )
-    ask = _sales(_word("cabana"), _word("sorento", "brand", "SORENTO"))
-    text, calls = bot.say(ask, "sales for cabana and sorento in Jan")
-    assert calls == [] and text.strip() == "Cabana, sorento: brand or account type?", (text, calls)
+    ask = _sales(_word("cabana"), _word("bravat", "brand", "BRAVAT"))
+    text, calls = bot.say(ask, "sales for cabana and bravat in Jan")
+    assert calls == [] and text.strip() == "Cabana, bravat: brand or account type?", (text, calls)
     text, calls = bot.say(_pick(2), "account type")
     args = _only_report_ask(calls)
-    assert args["account_types"] == ["CABANA", "SORENTO"] and "brand_ids" not in args, args
+    assert args["account_types"] == ["CABANA", "BRAVAT"] and "brand_ids" not in args, args
     # a fresh conversation for the brand answer
     bot.console.session_vars = {}
-    bot.say(ask, "sales for cabana and sorento in Jan")
+    bot.say(ask, "sales for cabana and bravat in Jan")
     text, calls = bot.say(_pick(1), "brand")
     args = _only_report_ask(calls)
-    assert sorted(args["brand_ids"]) == sorted([ids["CABANA"], ids["SORENTO"]]), args
+    assert sorted(args["brand_ids"]) == sorted([ids["CABANA"], ids["BRAVAT"]]), args
     assert "account_types" not in args, args
 
 

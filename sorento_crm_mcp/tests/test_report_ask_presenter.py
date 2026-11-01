@@ -144,13 +144,18 @@ def test_refused_prints_the_message_only():
         ("sales_agent", "Sales agent", "sales agents"),
         ("location", "Location", "locations"),
         ("channel", "Channel", "channels"),
-        ("month", "Month", "months"),
     ],
 )
 def test_group_label_plurals(group_by, label, plural):
     first = _report_ask(_body(group_by=group_by, group_label=label)).split("\n")[0]
     # Chat fix PR-B S6 (AC-B8): the head says how many rows exist, the period reads as dates.
     assert first.startswith(f"Top 3 of 5 {plural} by delivered sales"), first
+
+
+def test_a_month_split_opens_by_month_never_top():
+    # SALES-ACCOUNT-TYPE AT-28: a month split is a trend, not a ranking.
+    first = _report_ask(_body(group_by="month", group_label="Month")).split("\n")[0]
+    assert first == "By month, delivered sales", first
 
 
 def test_each_filter_is_its_own_line_values_joined_with_commas():
