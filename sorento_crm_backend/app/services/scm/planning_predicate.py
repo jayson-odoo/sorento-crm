@@ -37,10 +37,12 @@ planning, netting and Stock Debt reads of every project line. So the VERDICT
 may be planned AT and what the engine reads as planning supply are two questions.
 
 **Which ORDERS are admitted at all (DEALER-PLANNING PR 2, owner 1 Nov 2026).** Project class as
-ever (open or closed, the 14 Sep ruling), or an OPEN order that weighs as retail
-(`demand_class.planning_class`, so `other` too) with at least one line at an active dealer-segment
-bin. A closed retail order is history: 137,172 of them sit at dealer bins on the dev copy, and
-nobody is planning them. One predicate, `admitted_to_planning`, so the
+ever (open or closed, the 14 Sep ruling), or an order that weighs as retail
+(`demand_class.planning_class`, so `other` too) that is OPEN with at least one line at an active
+dealer-segment bin, or that ALREADY HAS a planning record. A closed retail order nobody planned is
+history: 137,172 of them sit at dealer bins on the dev copy. One that was planned is not: closing
+must not hide its decided rows, or a pending change nobody could then apply from the board. One
+predicate, `admitted_to_planning`, so the
 board, line drafts, adoption and the worklist cannot disagree about it. It is a HEADER test: every
 line of an admitted order is on the board, so its line numbers stay the ones a draft key names,
 and a retail line at a project bin is on screen with the verdict rather than missing
@@ -147,15 +149,18 @@ def admitted_to_planning():
     their FROM, and a sub-select over the same unaliased table would correlate to the row being
     aggregated and become a per-line filter. ANY line counts, a cancelled one too: the board's
     cancelled-line reads exist for an order with no live line left, and an order must not fall
-    off them because the book cancelled its last dealer line.
+    off them because the book cancelled its last dealer line. The planning record is the same
+    kind of EXISTS, in this one clause, so a read of many orders stays one query.
     """
     from sqlalchemy import and_, exists, or_
     from sqlalchemy.orm import aliased
 
     from app.models.inventory import Warehouse
     from app.models.order import SalesOrder, SalesOrderLine
+    from app.models.project_so import ProjectSalesOrder
 
     line = aliased(SalesOrderLine)
+    mirror = aliased(ProjectSalesOrder)
     location = aliased(Warehouse)
     at_dealer_location = (
         exists()
@@ -167,12 +172,12 @@ def admitted_to_planning():
         )
         .correlate(SalesOrder)
     )
+    planned = exists().where(mirror.so_id == SalesOrder.id).correlate(SalesOrder)
     return or_(
         SalesOrder.demand_class == PROJECT,
         and_(
             SalesOrder.demand_class.in_((DEFAULT_DEMAND_CLASS, OTHER)),
-            SalesOrder.status == "open",
-            at_dealer_location,
+            or_(and_(SalesOrder.status == "open", at_dealer_location), planned),
         ),
     )
 
