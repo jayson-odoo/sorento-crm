@@ -104,6 +104,7 @@ def enqueue(
     scheduled_for: Optional[datetime] = None,
     max_attempts: int = 5,
     coalesce_key: Optional[str] = None,
+    extra_to: Optional[list[str]] = None,
     attachment_filename: Optional[str] = None,
     attachment_storage_provider: Optional[str] = None,
     attachment_storage_key: Optional[str] = None,
@@ -124,8 +125,10 @@ def enqueue(
     eff_priority = _effective_priority(cfg, evt_def, priority)
 
     recipients_json = None
-    if cc or bcc:
-        recipients_json = {"to": [to], "cc": cc or [], "bcc": bcc or []}
+    if cc or bcc or extra_to:
+        # `extra_to` (DEALER-OI-ROUTE): more To addresses; `recipient_email` stays the
+        # first, which the per-recipient rate limit keys on.
+        recipients_json = {"to": [to, *(extra_to or [])], "cc": cc or [], "bcc": bcc or []}
 
     row = EmailOutbox(
         event_key=event_key,

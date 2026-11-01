@@ -586,7 +586,14 @@ def test_constants_match_the_contract():
 
     assert ks.KNOWLEDGE_SOURCE == "knowledge"
     assert ks.KNOWLEDGE_MODEL == "gemini-embedding-001"
-    assert ks.AI_AUDIENCES == ("off", "staff", "dealer", "public")
+    # DOC-ACCESS-SIMPLE replaced the four audiences (`ks.AI_AUDIENCES`) with two columns on the type:
+    # the contract is now that they exist, are NOT NULL, and default to "off" (false, []).
+    from app.models.resources import AttachmentType
+
+    cols = AttachmentType.__table__.c
+    assert not cols.ai_read_staff.nullable and not cols.ai_read_codes.nullable
+    assert "false" in str(cols.ai_read_staff.server_default.arg).lower()
+    assert "[]" in str(cols.ai_read_codes.server_default.arg)
     assert ks.READ_PERMISSION == "resource.attachments.view"
     assert ks.MAX_REQUEUE_PER_SAVE == 500
     assert ks.KNOWLEDGE_TOOL == "crm_knowledge_search"

@@ -361,6 +361,7 @@ def test_product_tag_data_keeps_every_field(api):
         "promotion_id",
         "barcode",
         "currency",
+        "combo",
         # r10 S11 (5ce3bd5d8): declared on `ProductTagData` too, so the
         # template designer's own preview (bound to a bare product, not a
         # request line) can resolve `{{product.price_tag_description}}`
@@ -729,6 +730,12 @@ def test_resolve_prices_carries_price_tag_description_on_an_open_groups_candidat
             ],
         },
     )
+    db.commit()
+    # AC-3.1: a combo line mints ONE tag now; this test starts from the per-candidate set a
+    # request in flight (or a hand split) already holds.
+    from tests._ptag_combo_seed import resplit_per_combination
+
+    resplit_per_combination(db, request)
     db.commit()
     # D6: an open group of two candidates mints two tags - ask for the one
     # whose `choices` names `candidate_chosen`.

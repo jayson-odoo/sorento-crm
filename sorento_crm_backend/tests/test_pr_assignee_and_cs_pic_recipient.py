@@ -65,7 +65,7 @@ def test_cs_pic_recipient_resolves_active_cs_tracker_assignee():
         db, {"include_assigned_cs_pic": True}, source_id="ed46d5e7-d871-5921-b065-69e87db348fd"
     )
     assert recips == [
-        {"email": "person9@example.com", "name": "Agnes", "user_id": "agnes"}
+        {"email": "person9@example.com", "name": "Agnes", "user_id": "agnes", "cc": False, "legacy": True}
     ]
 
 

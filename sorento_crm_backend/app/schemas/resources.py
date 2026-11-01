@@ -78,7 +78,9 @@ class AttachmentTypeBase(BaseModel):
     default_directory_id: Optional[str] = None
     # AGENTIC-KNOWLEDGE: who the AI may answer from files of this type, and the team the
     # reply names when the documents do not cover a question. 'off' = the AI never reads them.
-    ai_audience: Literal["off", "staff", "dealer", "public"] = "off"
+    ai_read_staff: bool = False
+    ai_read_codes: List[str] = []
+    is_direct_access: bool = False
     ai_escalate_team_id: Optional[str] = None
 
 
@@ -98,7 +100,9 @@ class AttachmentTypeUpdate(BaseModel):
     triggers_n8n_webhook: Optional[bool] = None
     is_shared: Optional[bool] = None
     default_directory_id: Optional[str] = None
-    ai_audience: Optional[Literal["off", "staff", "dealer", "public"]] = None
+    ai_read_staff: Optional[bool] = None
+    ai_read_codes: Optional[List[str]] = None
+    is_direct_access: Optional[bool] = None
     ai_escalate_team_id: Optional[str] = None
 
 
