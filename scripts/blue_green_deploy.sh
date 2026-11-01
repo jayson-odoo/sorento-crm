@@ -48,9 +48,26 @@ fi
 
 # Owner-tunable knobs live on the box, never in the workflow: see the runbook. Read before
 # the lock so DEPLOY_LOCK_PATH / DEPLOY_LOCK_WAIT_SECONDS can be set there too.
+# Exported (set -a) so a COMPOSE_FILE line there reaches every `docker compose` call below.
 if [ -f .deploy.env ]; then
+  set -a
   # shellcheck disable=SC1091
   . ./.deploy.env
+  set +a
+fi
+
+# HA mode: this node runs Patroni (compose.ha.yml replaces `db`). Patroni allows only local peer
+# auth, so admin commands run inside `db` as OS user postgres AND DB user postgres.
+# Outside HA mode every command below is exactly what it was before.
+HA_MODE=0
+case "${COMPOSE_FILE:-}" in *compose.ha.yml*) HA_MODE=1 ;; esac
+# shellcheck disable=SC2016
+if [ "$HA_MODE" = 1 ]; then
+  ALEMBIC_CMD='psql -U postgres -d "$DUMP_DB" -Atc "select count(*) from public.alembic_version"'
+  DUMP_CMD='pg_dump -U postgres -d "$DUMP_DB" -Fc'
+else
+  ALEMBIC_CMD='psql -U "$POSTGRES_USER" -d "$DUMP_DB" -Atc "select count(*) from public.alembic_version"'
+  DUMP_CMD='pg_dump -U "$POSTGRES_USER" -d "$DUMP_DB" -Fc'
 fi
 
 # DEPLOY_LOCK_PATH and its default are shared with HA-BACKUP-CHECK's restore test, which
@@ -144,8 +161,13 @@ resolve_db_name() {
 
 # Rows in public.alembic_version of the app's database (an empty answer: not reachable).
 alembic_rows() {
-  docker compose exec -T -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
-    sh -c 'psql -U "$POSTGRES_USER" -d "$DUMP_DB" -Atc "select count(*) from public.alembic_version"' 2>/dev/null || true
+  if [ "$HA_MODE" = 1 ]; then
+    docker compose exec -T -u postgres -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
+      sh -c "$ALEMBIC_CMD" 2>/dev/null || true
+  else
+    docker compose exec -T -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
+      sh -c "$ALEMBIC_CMD" 2>/dev/null || true
+  fi
 }
 
 # --- preflight ------------------------------------------------------------------
@@ -339,8 +361,10 @@ take_snapshot() {
     exit 1
   fi
 
-  if ! ( umask 077; docker compose exec -T -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
-           sh -c 'pg_dump -U "$POSTGRES_USER" -d "$DUMP_DB" -Fc' > "${file}.partial" ) \
+  local as_user=()
+  if [ "$HA_MODE" = 1 ]; then as_user=(-u postgres); fi
+  if ! ( umask 077; docker compose exec -T ${as_user[@]+"${as_user[@]}"} -e DUMP_DB="$DB_NAME" "$DB_SERVICE" \
+           sh -c "$DUMP_CMD" > "${file}.partial" ) \
      || [ "$(head -c 5 "${file}.partial")" != "PGDMP" ]; then
     rm -f "${file}.partial"
     echo "ERROR: pre-migration snapshot failed; not starting ${NEW} (no migration has run, ${ACTIVE} keeps serving)"
@@ -363,6 +387,23 @@ take_snapshot() {
 
 echo "==> Active=${ACTIVE} New=${NEW} IMAGE_TAG=${IMAGE_TAG}"
 
+# HA preflight: fail loudly, before anything is pulled, stopped or recreated, on the things that
+# depend on how the box is set up and that this script must never guess.
+if [ "$HA_MODE" = 0 ] && [ -f compose.ha.yml ]; then
+  echo "ERROR: compose.ha.yml is present but COMPOSE_FILE does not load it; a deploy would run against the plain db. Set COMPOSE_FILE=docker-compose.yml:compose.ha.yml in .deploy.env. Nothing was changed."
+  exit 1
+fi
+if [ "$HA_MODE" = 1 ]; then
+  if [ -z "${POSTGRES_DB:-}" ]; then
+    echo "ERROR: HA mode needs POSTGRES_DB set (in .deploy.env); it is unset. Nothing was changed."
+    exit 1
+  fi
+  if ! docker compose exec -T -u postgres "$DB_SERVICE" psql -U postgres -c 'select 1' >/dev/null 2>&1; then
+    echo "ERROR: HA admin connection failed: ${DB_SERVICE} did not accept psql -U postgres as OS user postgres (peer auth). Nothing was changed."
+    exit 1
+  fi
+fi
+
 echo "==> Recording Postgres state"
 record_postgres_baseline
 
@@ -372,6 +413,13 @@ if ! resolve_db_name; then
   exit 1
 fi
 echo "    database: ${DB_NAME} (from ${DB_NAME_SOURCE})"
+if [ "$HA_MODE" = 1 ]; then
+  ha_rows=$(alembic_rows)
+  if ! { is_number ha_rows && [ "$ha_rows" -ge 1 ]; }; then
+    echo "ERROR: HA admin connection cannot read public.alembic_version in '${DB_NAME}' as postgres inside ${DB_SERVICE}. Nothing was changed."
+    exit 1
+  fi
+fi
 
 # 1. Pull new images (SHA-tagged) + worker + worker_fast (both use backend image)
 echo "==> Pulling images"
@@ -551,6 +599,13 @@ echo "==> Checking Postgres stayed up"
 if ! postgres_survived; then
   echo "ERROR: deploy FAILED: Postgres went down during the deploy. ${NEW} is serving; check the app and the db logs."
   exit 1
+fi
+
+# HA mode: record the deployed tag for the role watcher, which starts workers on it.
+if [ "$HA_MODE" = 1 ]; then
+  tag_tmp=$(mktemp "${PWD}/.ha-image-tag.XXXXXX")
+  printf '%s\n' "$IMAGE_TAG" > "$tag_tmp"
+  mv "$tag_tmp" "${PWD}/.ha-image-tag"
 fi
 
 echo "==> Deploy complete. Active=${NEW}"
