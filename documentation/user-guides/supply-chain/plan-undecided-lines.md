@@ -85,9 +85,9 @@ On [Sales Orders](/scm/sales-orders), use the **Type** filter, tick the orders, 
 **Plan selected (N)**. A sales order's own page offers **Plan** when it has a line the board can
 take.
 
-A dealer order reaches the board when at least one of its lines is at a dealer location. A dealer
-order with none stays off, and so does an order with no class set; the board says which when you
-open it.
+A dealer order reaches the board when it is open and at least one of its lines is at an active
+dealer location. A closed dealer order stays off, as does a dealer order with no such line and an
+order with no class set; the board says which when you open it.
 
 ## When a line cannot be planned
 
@@ -122,7 +122,8 @@ name. Open the cell to see each line's reason.
 * **No lines in these dates** with **The selection holds N lines on other dates.** - the day
   window you are scrolled to is empty, the selection is not. Move the window.
 * **No lines to plan on these sales orders** with a sentence naming the order - the order has no
-  class set, or is a dealer order with no line at a dealer location.
+  class set, is a closed dealer order, or is a dealer order with no line at an active dealer
+  location.
 
 ## The Planned pill
 

@@ -1119,7 +1119,12 @@ class FulfilmentBoardService:
                 #: bin read never has to ask a second time.
                 "location": codes.get(str(row.warehouse_id)),
                 "agent_code": row.agent_code,
-                "project_label": row.project_label or _project_label_from_note(row.internal_note),
+                # A dealer order names no project, and its note is a note (R14).
+                "project_label": (
+                    None
+                    if planning_class(row.demand_class) == DEFAULT_DEMAND_CLASS
+                    else row.project_label or _project_label_from_note(row.internal_note)
+                ),
                 "demand_class": row.demand_class,
                 #: AutoCount prints the document's own date and the date it is wanted.
                 "doc_date": row.order_date,
@@ -1611,7 +1616,7 @@ class FulfilmentBoardService:
         if not missing:
             return []
         records = (
-            self.db.query(SalesOrder.so_number, SalesOrder.demand_class)
+            self.db.query(SalesOrder.so_number, SalesOrder.demand_class, SalesOrder.status)
             .filter(
                 SalesOrder.so_number.in_(missing),
                 SalesOrder.status.in_(["open", "closed"]),
@@ -1622,8 +1627,8 @@ class FulfilmentBoardService:
             .all()
         )
         return [
-            {"so_number": number, "reason": why_not_admitted(number, klass)}
-            for number, klass in records
+            {"so_number": number, "reason": why_not_admitted(number, klass, status)}
+            for number, klass, status in records
         ]
 
     def _demand_rows(
@@ -4302,7 +4307,9 @@ class FulfilmentBoardService:
                 f"{qty_text(_dec(getattr(fact, 'pools_net', _ZERO) if pools_net is None else pools_net))} between them, so no "
                 "pool is offered."
             )
-        available = _dec(pile.get("available"))
+        # What the walk read: a line standing on this pool has its own demand put back, so the
+        # pile's raw position (0 on 10 owed by the line itself) is not "oversold" to it.
+        available = _dec(pile.get("available")) + _dec(getattr(fact, "pool_book_back", _ZERO))
         if fact.is_project_hot_selling:
             # Ladder v4: the classification is still NAMED, because the captain reads it,
             # but it no longer changes the arithmetic - the five pools' own net bounds this

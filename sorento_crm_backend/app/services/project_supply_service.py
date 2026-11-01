@@ -6623,11 +6623,19 @@ class ProjectSupplyService:
             #
             # REVISIT when the BB group's book is cleaned up or a queue-jumping complaint
             # arrives, whichever first (PLAN-scm-cs-planning-uat.md).
+            #
+            # NEVER FOR A LINE STANDING ON ITS POOL (DEALER-PLANNING R11). The lift is about a
+            # group oversold on paper; at a pool the book is one pile shared with every other
+            # order, so a reason must not let a Reserve take stock the book owes or has reserved.
             own_group_bin = warehouse == fact.own_code or (
                 sales_agent_service.group_of_warehouse_code(warehouse) == fact.group_code
                 and fact.group_code is not None
             )
-            if own_group_bin and (getattr(entry, "amend_reason", None) or "").strip():
+            if (
+                own_group_bin
+                and not fact.stands_on_pool
+                and (getattr(entry, "amend_reason", None) or "").strip()
+            ):
                 capacity[warehouse] = max(capacity.get(warehouse, _ZERO), qty)
             if warehouse not in capacity:
                 # The location IS this line's own or its pool; it simply has nothing left for

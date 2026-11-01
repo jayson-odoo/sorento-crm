@@ -37,8 +37,10 @@ planning, netting and Stock Debt reads of every project line. So the VERDICT
 may be planned AT and what the engine reads as planning supply are two questions.
 
 **Which ORDERS are admitted at all (DEALER-PLANNING PR 2, owner 1 Nov 2026).** Project class as
-ever, or an order that weighs as retail (`demand_class.planning_class`, so `other` too) with at
-least one line at an active dealer-segment bin. One predicate, `admitted_to_planning`, so the
+ever (open or closed, the 14 Sep ruling), or an OPEN order that weighs as retail
+(`demand_class.planning_class`, so `other` too) with at least one line at an active dealer-segment
+bin. A closed retail order is history: 137,172 of them sit at dealer bins on the dev copy, and
+nobody is planning them. One predicate, `admitted_to_planning`, so the
 board, line drafts, adoption and the worklist cannot disagree about it. It is a HEADER test: every
 line of an admitted order is on the board, so its line numbers stay the ones a draft key names,
 and a retail line at a project bin is on screen with the verdict rather than missing
@@ -167,19 +169,30 @@ def admitted_to_planning():
     )
     return or_(
         SalesOrder.demand_class == PROJECT,
-        and_(SalesOrder.demand_class.in_((DEFAULT_DEMAND_CLASS, OTHER)), at_dealer_location),
+        and_(
+            SalesOrder.demand_class.in_((DEFAULT_DEMAND_CLASS, OTHER)),
+            SalesOrder.status == "open",
+            at_dealer_location,
+        ),
     )
 
 
-def why_not_admitted(so_number: Optional[str], demand_class: Optional[str]) -> str:
+def why_not_admitted(
+    so_number: Optional[str], demand_class: Optional[str], status: Optional[str] = "open"
+) -> str:
     """The true reason for an order `admitted_to_planning` left out. One sentence per reason,
     because adoption refuses with it and the board's empty state prints it."""
-    if demand_class:
+    if not demand_class:
+        return f"Sales order {so_number} has no class set, so it is not planned here."
+    if status != "open":
         return (
-            f"Sales order {so_number} is a dealer order with no line at a dealer location, so "
-            "it is not planned here."
+            f"Sales order {so_number} is a dealer order that is {status or 'not open'}, so it is "
+            "not planned here."
         )
-    return f"Sales order {so_number} has no class set, so it is not planned here."
+    return (
+        f"Sales order {so_number} is a dealer order with no line at an active dealer location, so "
+        "it is not planned here."
+    )
 
 
 __all__ = [
