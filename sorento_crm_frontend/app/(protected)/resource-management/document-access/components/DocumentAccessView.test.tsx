@@ -128,7 +128,7 @@ describe('DocumentAccessView - page and grid (DAS-FE-2)', () => {
 
     expect(await screen.findByText('No types match')).toBeInTheDocument();
     expect(screen.queryByText('Technical Specifications')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /clear|reset|add/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reset|add|create|new/i })).not.toBeInTheDocument();
   });
 
   it('the AI reads filter keeps on-types or off-types', async () => {
@@ -194,7 +194,7 @@ describe('DocumentAccessView - ticks (DAS-FE-3)', () => {
       expect(svc.updateAttachmentType).toHaveBeenCalledWith(TECH, { ai_read_codes: ['dealer', 'end_user'] }),
     );
     await waitFor(() =>
-      expect(svc.toast.success).toHaveBeenCalledWith('Technical Specifications: End User can now read 3 documents.'),
+      expect(svc.toast.success).toHaveBeenCalledWith('Technical Specifications: End User can now read 3 documents.', expect.anything()),
     );
   });
 
@@ -205,7 +205,7 @@ describe('DocumentAccessView - ticks (DAS-FE-3)', () => {
 
     await waitFor(() => expect(svc.updateAttachmentType).toHaveBeenCalledWith(TECH, { ai_read_codes: [] }));
     await waitFor(() =>
-      expect(svc.toast.success).toHaveBeenCalledWith('Technical Specifications: Dealer no longer reads 2 documents.'),
+      expect(svc.toast.success).toHaveBeenCalledWith('Technical Specifications: Dealer no longer reads 2 documents.', expect.anything()),
     );
   });
 
@@ -216,7 +216,7 @@ describe('DocumentAccessView - ticks (DAS-FE-3)', () => {
 
     await waitFor(() => expect(svc.updateAttachmentType).toHaveBeenCalledWith(TECH, { ai_read_staff: false }));
     await waitFor(() =>
-      expect(svc.toast.success).toHaveBeenCalledWith('Technical Specifications: Staff no longer reads 3 documents.'),
+      expect(svc.toast.success).toHaveBeenCalledWith('Technical Specifications: Staff no longer reads 3 documents.', expect.anything()),
     );
   });
 
@@ -227,7 +227,7 @@ describe('DocumentAccessView - ticks (DAS-FE-3)', () => {
 
     fireEvent.click(endUser);
 
-    await waitFor(() => expect(svc.toast.error).toHaveBeenCalledWith(expect.stringContaining('That access type is not active.')));
+    await waitFor(() => expect(svc.toast.error).toHaveBeenCalledWith(expect.stringContaining('That access type is not active.'), expect.anything()));
     await waitFor(() => expect(ticks('Technical Specifications')[2]).not.toBeChecked());
     expect(svc.toast.success).not.toHaveBeenCalled();
   });

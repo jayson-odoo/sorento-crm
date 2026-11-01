@@ -595,6 +595,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
         "path": "/resource-management/attachment-types",
         "title": "Attachment Types",
       },
+      {
+        "path": "/resource-management/document-access",
+        "title": "Document Access",
+      },
     ],
     "title": "Resources",
   },

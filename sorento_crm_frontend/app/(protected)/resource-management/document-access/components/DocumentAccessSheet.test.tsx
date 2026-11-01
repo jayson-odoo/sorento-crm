@@ -142,7 +142,7 @@ describe('DocumentAccessSheet (DAS-FE-5)', () => {
 
     await waitFor(() => expect(svc.updateAttachmentType).toHaveBeenCalledWith(TECH, { ai_read_codes: ['dealer', 'end_user'] }));
     await waitFor(() =>
-      expect(svc.toast.success).toHaveBeenCalledWith('Technical Specifications: End User can now read 3 documents.'),
+      expect(svc.toast.success).toHaveBeenCalledWith('Technical Specifications: End User can now read 3 documents.', expect.anything()),
     );
   });
 

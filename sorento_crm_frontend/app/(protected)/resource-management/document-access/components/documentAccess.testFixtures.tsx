@@ -4,6 +4,7 @@
  */
 import React from 'react';
 import { render } from '@testing-library/react';
+import type { DocumentAccessRow, PreviewContact, RowPreview, RowVerdict } from '../types/documentAccess.types';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 export const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
@@ -22,7 +23,7 @@ export const ACCESS_TYPES = [
   { code: 'mocha_dealer', name: 'Mocha Dealer' },
 ];
 
-function row(over: Record<string, unknown>) {
+function row(over: Partial<DocumentAccessRow> & { id: string; type_name: string }): DocumentAccessRow {
   return {
     is_shared: false,
     is_direct_access: false,
@@ -55,7 +56,7 @@ export function matrix(over: Record<string, unknown> = {}) {
   return { access_types: ACCESS_TYPES, contact: null, rows: ROWS, ...over };
 }
 
-export const CONTACT_BLOCK = {
+export const CONTACT_BLOCK: PreviewContact = {
   id: CONTACT_A,
   name: 'CONTACT A',
   runs_as: 'contact',
@@ -66,18 +67,18 @@ export const CONTACT_BLOCK = {
 };
 
 /** The matrix as seen by CONTACT A: one row of each flavour. */
-export function matrixFor(contact: Record<string, unknown> = CONTACT_BLOCK) {
-  const pv = (over: Record<string, unknown>) => ({ verdict: 'reads', reads: 0, total: 0, no_shared_code: 0, other_company: 0, ...over });
-  const previews: Record<string, unknown> = {
+export function matrixFor(contact: PreviewContact = CONTACT_BLOCK) {
+  const pv = (over: Partial<RowPreview>): RowPreview => ({ verdict: 'reads', reads: 0, total: 0, no_shared_code: 0, other_company: 0, ...over });
+  const previews: Record<string, RowPreview> = {
     [TECH]: pv({ verdict: 'not_ticked', total: 3 }),
     [DIRECT]: pv({ verdict: 'reads', reads: 5, total: 15, no_shared_code: 2, other_company: 8 }),
     [EMPTY]: pv({ verdict: 'no_documents' }),
     [ALPHA]: pv({ verdict: 'off' }),
   };
-  const blocked = contact.blocked as string | null;
+  const blocked: RowVerdict | null = contact.blocked;
   return matrix({
     contact,
-    rows: ROWS.map((r) => ({ ...r, preview: blocked ? pv({ verdict: blocked, total: r.readable_count }) : previews[r.id as string] })),
+    rows: ROWS.map((r) => ({ ...r, preview: blocked ? pv({ verdict: blocked, total: r.readable_count }) : previews[r.id] })),
   });
 }
 
