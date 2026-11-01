@@ -843,7 +843,7 @@ def test_h4b_group_or_other_writable_deploy_env_is_refused_before_any_change(box
 
 def test_h4b_compose_ha_file_present_but_not_in_compose_file_is_refused_before_any_change(box):
     _ha_box(box, compose_file=False)
-    r = _run(box, IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
+    r = _run(box, IMAGE_TAG=SHA)
     assert r.returncode != 0, r.stdout + r.stderr
     assert "compose.ha.yml" in r.stdout + r.stderr
     assert not _changed_anything(_calls(box)), _calls(box)
@@ -852,7 +852,7 @@ def test_h4b_compose_ha_file_present_but_not_in_compose_file_is_refused_before_a
 def test_h4b_failed_admin_connection_stops_the_deploy_before_any_change(box):
     _ha_box(box)
     (box["stub"] / "admin_fail").write_text("1")
-    r = _run(box, IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
+    r = _run(box, IMAGE_TAG=SHA)
     assert r.returncode != 0, r.stdout + r.stderr
     assert "admin connection" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
     assert any("exec -T -u postgres db psql -U postgres" in l for l in _calls(box)), _calls(box)
@@ -861,7 +861,7 @@ def test_h4b_failed_admin_connection_stops_the_deploy_before_any_change(box):
 
 def test_h4b_preflight_flags_compose_ha_file_that_is_not_loaded(box):
     _ha_box(box, compose_file=False)
-    r = _run(box, args=("--preflight",), IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
+    r = _run(box, args=("--preflight",), IMAGE_TAG=SHA)
     assert r.returncode != 0, r.stdout + r.stderr
     assert "compose.ha.yml" in r.stdout + r.stderr
     assert not _changed_anything(_calls(box)), _calls(box)
@@ -870,7 +870,7 @@ def test_h4b_preflight_flags_compose_ha_file_that_is_not_loaded(box):
 def test_h4b_preflight_flags_a_failing_admin_connection(box):
     _ha_box(box)
     (box["stub"] / "admin_fail").write_text("1")
-    r = _run(box, args=("--preflight",), IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
+    r = _run(box, args=("--preflight",), IMAGE_TAG=SHA)
     assert r.returncode != 0, r.stdout + r.stderr
     assert "admin connection" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
     assert not _changed_anything(_calls(box)), _calls(box)
@@ -879,7 +879,7 @@ def test_h4b_preflight_flags_a_failing_admin_connection(box):
 def test_h4b_ha_alembic_preflight_with_no_rows_stops_before_any_pull(box):
     _ha_box(box)
     (box["stub"] / "alembic_rows").write_text("0")
-    r = _run(box, IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
+    r = _run(box, IMAGE_TAG=SHA)
     assert r.returncode != 0, r.stdout + r.stderr
     assert "alembic_version" in r.stdout + r.stderr
     assert not _changed_anything(_calls(box)), _calls(box)
@@ -888,7 +888,7 @@ def test_h4b_ha_alembic_preflight_with_no_rows_stops_before_any_pull(box):
 @pytest.mark.parametrize("tag", ["abc123", "A" * 40, "0123456789abcdef0123456789abcdef0123456", "g" * 40])
 def test_h4b_ha_image_tag_must_be_a_40_hex_sha(box, tag):
     _ha_box(box)
-    r = _run(box, IMAGE_TAG=tag, POSTGRES_DB="sorento_app")
+    r = _run(box, IMAGE_TAG=tag)
     assert r.returncode != 0, r.stdout + r.stderr
     assert "IMAGE_TAG" in r.stdout + r.stderr
     assert not _changed_anything(_calls(box)), _calls(box)
@@ -896,7 +896,7 @@ def test_h4b_ha_image_tag_must_be_a_40_hex_sha(box, tag):
 
 def test_h4b_ha_snapshot_and_alembic_preflight_run_as_the_postgres_user(box):
     _ha_box(box)
-    r = _run(box, IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
+    r = _run(box, IMAGE_TAG=SHA)
     assert r.returncode == 0, r.stdout + r.stderr
     calls = _calls(box)
     for needle in ("pg_dump", "count(*) from public.alembic_version"):
@@ -918,7 +918,7 @@ def test_h4b_non_ha_snapshot_and_preflight_commands_are_unchanged(box):
 
 def test_h4b_successful_deploy_records_the_image_tag_for_the_role_watcher(box):
     _ha_box(box)
-    r = _run(box, IMAGE_TAG=SHA, POSTGRES_DB="sorento_app")
+    r = _run(box, IMAGE_TAG=SHA)
     assert r.returncode == 0, r.stdout + r.stderr
     tag = box["root"] / ".ha-image-tag"
     assert tag.exists(), list(box["root"].iterdir())
