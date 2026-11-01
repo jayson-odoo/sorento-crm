@@ -207,3 +207,194 @@ def test_the_tools_denied_when_scoped_is_the_forecast_alone():
     from app.services import contact_brand_scope
 
     assert contact_brand_scope._TOOLS_DENIED_WHEN_SCOPED == frozenset({"crm_project_forecast"})
+
+
+# ------------------------------------------------------------------ invisible characters are refused
+
+
+from tests.chatbot.agent.test_ported_writes import (  # noqa: E402,F401  (fixtures by name, then helpers)
+    CANCEL,
+    CLOSE,
+    CLOSE_SLUG,
+    ORDERS_VIEW,
+    TICKET,
+    TICKET_SLUG,
+    confirm_ticket,
+    ctx_of as panel_ctx_of,
+    grace,
+    make_complaint,
+    make_order,
+    make_world as make_writes_world,
+    no_llm,
+    panel,
+    propose,
+    propose_and_store,
+    respond_sends,
+)
+
+ZERO_WIDTH = "​"
+TAG_CHAR = "\U000e0041"
+INVISIBLE = [pytest.param(ZERO_WIDTH, id="zero_width_space"), pytest.param(TAG_CHAR, id="tag_character")]
+ORDINARY = "Café 你好 \U0001F600 thanks"
+
+
+def _refused(res, step):
+    assert step is None and res.status == "invalid", (res.status, res.message)
+    assert res.message.strip()
+
+
+def _proposal(db, field):
+    """(world, tool, args builder) for each of the four free-text fields."""
+    if field == "note":
+        w = make_writes_world(db, CLOSE_SLUG)
+        row = make_complaint(db)
+        w.seen = {row.id}
+        return w, CLOSE, lambda text: {"complaint_id": row.id, "note": text}
+    if field == "reason":
+        w = make_writes_world(db, ORDERS_VIEW)
+        row = make_order(db)
+        return w, CANCEL, lambda text: {"order_number": row.order_number, "reason": text}
+    w = make_writes_world(db, TICKET_SLUG)
+    if field == "title":
+        return w, TICKET, lambda text: {"title": text}
+    return w, TICKET, lambda text: {"title": "ZZT screen", "description": text}
+
+
+FIELDS_UNDER_TEST = ["note", "reason", "title", "description"]
+
+
+@pytest.mark.parametrize("char", INVISIBLE)
+@pytest.mark.parametrize("field", FIELDS_UNDER_TEST)
+def test_a_format_character_in_free_text_is_refused_at_proposal(db, field, char):
+    w, tool, build = _proposal(db, field)
+    res, step = propose(db, w, tool, build(f"Please{char}close it"))
+    _refused(res, step)
+
+
+@pytest.mark.parametrize("field", FIELDS_UNDER_TEST)
+def test_ordinary_text_with_accents_chinese_and_an_emoji_is_not_refused(db, field):
+    w, tool, build = _proposal(db, field)
+    res, step = propose(db, w, tool, build(ORDINARY))
+    assert res.status == "proposed", (res.status, res.message)
+    assert ORDINARY in step["summary"], step["summary"]
+
+
+# ------------------------------------------------------------------ the line the model is told after a confirm
+
+
+TICKET_LINE = "The ticket link is added to your reply automatically. Do not write it."
+IDEA_LINE = "The idea's number and link are added to your reply automatically. Do not write them."
+
+
+def _decide_on_panel(db, w, action, notes):
+    with panel(db, w):
+        return agent_loop._decide(
+            db, panel_ctx_of(db, w), agent_loop.CONFIRM_ACTION, {"action_id": str(action.id)}, str(uuid.uuid4()), notes
+        )
+
+
+def test_a_ticket_confirm_says_the_ticket_line_in_words(db, no_llm):
+    w = make_writes_world(db, TICKET_SLUG)
+    _, action = propose_and_store(db, w, TICKET, {"title": f"ZZT ticket {uuid.uuid4().hex[:8]}"})
+    notes: list[str] = []
+    out = _decide_on_panel(db, w, action, notes)
+    assert notes, "the draft link is still put in the reply by code"
+    assert out.message == TICKET_LINE, out.message
+
+
+def test_a_ticket_plus_a_parked_complaint_close_says_the_ticket_line_not_the_idea_line(
+    db, no_llm, grace, respond_sends
+):
+    from app.services.chatbot.agent import actions, writes
+
+    grace(30)
+    w = make_writes_world(db, TICKET_SLUG, CLOSE_SLUG)
+    row = make_complaint(db)
+    w.seen = {row.id}
+    ctx = panel_ctx_of(db, w)
+    steps = []
+    with panel(db, w):
+        for name, args in (
+            (TICKET, {"title": f"ZZT ticket {uuid.uuid4().hex[:8]}"}),
+            (CLOSE, {"complaint_id": row.id}),
+        ):
+            res, step = writes.propose_step(db, ctx, name, args, seen_ids={row.id.lower()})
+            assert res.status == "proposed", (name, res.status, res.message)
+            steps.append(step)
+    action = actions.store_proposal(
+        db, ctx, conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()), steps=steps
+    )
+    notes: list[str] = []
+    out = _decide_on_panel(db, w, action, notes)
+    assert out.data["status"] == "executed", out.data
+    assert out.message == TICKET_LINE, out.message
+    assert "idea" not in out.message.lower()
+
+
+def test_an_idea_confirm_through_the_real_path_says_main_s_exact_text(db, monkeypatch):
+    from tests.chatbot.agent import test_agent_writes_ideas as ideas
+
+    fake = _ideas_fake(monkeypatch, ideas)
+    w = ideas.make_world(db)
+    _, row = ideas.store(db, w, [(ideas.CREATE, ideas.FIELDS)])
+    notes: list[str] = []
+    out = agent_loop._decide(
+        db, ideas.ctx_of(db, w), agent_loop.CONFIRM_ACTION, {"action_id": str(row.id)}, str(uuid.uuid4()), notes
+    )
+    assert fake is not None
+    assert notes, "the idea's number and link are put in the reply by code"
+    assert out.message == IDEA_LINE, out.message
+
+
+def _ideas_fake(monkeypatch, ideas):
+    """The ideas suite's own ideation fake, installed the way its `ss` fixture does."""
+    import httpx
+
+    from app.config import settings
+    from tests.chatbot.agent.test_agent_writes_ideas import CRM, configure_embed_settings
+
+    configure_embed_settings(monkeypatch)
+    monkeypatch.setattr(settings, "frontend_base_url", CRM)
+    fake = ideas.FakeSS().install(monkeypatch)
+    ids = iter(str(uuid.uuid4()) for _ in range(20))
+    numbers = iter(f"IDEA-{n:04d}" for n in range(184, 300))
+    fake.route("POST", ideas.SIMILAR_PATH, json_body={"matches": []})
+    fake.routes[("POST", ideas.CREATE_PATH)] = lambda request: httpx.Response(
+        200,
+        json={"idea_id": next(ids), "idea_number": next(numbers), "status": "captured", "title": "x"},
+        request=request,
+    )
+    fake.route("GET", "/embed/ideas", json_body=[])
+    return fake
+
+
+# ------------------------------------------------------------------ not_found only for an unfiltered empty read
+
+
+def _ledger_with_found_id(name, args, pid):
+    return {
+        "r1": {"name": agent_tools.RESOLVE, "status": "ok", "args": {}, "data": {
+            "results": [{"term": "ACME", "status": "found", "matches": [{"id": pid}]}]}},
+        "f1": {"name": name, "status": "empty", "args": args, "data": None},
+    }
+
+
+@pytest.mark.parametrize("name,args", PLAIN_READS[:3], ids=[r[0] for r in PLAIN_READS[:3]])
+def test_an_empty_read_with_an_id_argument_does_not_back_a_not_found_claim(name, args):
+    pid = str(uuid.uuid4())
+    ledger = _ledger_with_found_id(name, {**args, "customer_ids": [pid]}, pid)
+    _, bad = agent_loop.verify_answer(_claim("complaints for Acme"), ledger, "complaints for Acme")
+    assert bad == ["complaints for Acme"], "an empty read narrowed by an id says nothing about the whole"
+
+
+@pytest.mark.parametrize("name,args", PLAIN_READS[:3], ids=[r[0] for r in PLAIN_READS[:3]])
+def test_an_empty_read_with_assigned_to_set_does_not_back_a_not_found_claim(name, args):
+    ledger = _entry(name, "empty", {**args, "assigned_to": "someone"})
+    _, bad = agent_loop.verify_answer(_claim("complaints for someone"), ledger, "complaints for someone")
+    assert bad == ["complaints for someone"]
+
+
+@pytest.mark.parametrize("name,args", PLAIN_READS[:3], ids=[r[0] for r in PLAIN_READS[:3]])
+def test_an_empty_read_with_neither_still_backs_it(name, args):
+    _, bad = agent_loop.verify_answer(_claim(), _entry(name, "empty", args), "any closed complaints")
+    assert bad == []
