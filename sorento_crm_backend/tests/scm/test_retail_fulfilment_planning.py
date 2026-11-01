@@ -207,7 +207,7 @@ def test_r2_a_retail_order_with_no_line_at_a_dealer_location_stays_out(api):
     assert refused.value.status_code == 409
 
 
-# --------------------------------------------------------------------------- R1, open and active
+# --------------------------------------------------------------------------- R1, any status but cancelled, active location
 
 
 def _closed(world, core):
@@ -216,34 +216,87 @@ def _closed(world, core):
 
 
 @pytest.mark.parametrize("klass", ["retail", "other"])
-def test_r1_a_closed_retail_order_is_refused_at_adoption_with_the_true_reason(api, klass):
+def test_r1_a_closed_retail_order_adopts_like_a_project_one(api, klass):
+    """Owner ruling 1 Nov 2026: whether an order is delivered does not affect planning, so a
+    closed retail or `other` order with a dealer line is admitted exactly as a project one."""
     client, world = api
     core, _lines = _retail_order(world, klass=klass)
     _closed(world, core)
 
-    with pytest.raises(AppException) as refused:
-        ProjectSOAdoptionService(world.db).adopt(str(core.id))
+    body = _adopt(client, core)
 
-    assert refused.value.status_code == 409
-    assert "closed" in refused.value.message.lower(), refused.value.message
-    assert "cancelled" not in refused.value.message.lower(), refused.value.message
+    order = (
+        world.db.query(ProjectSalesOrder)
+        .filter(ProjectSalesOrder.id == body["project_sales_order_id"])
+        .one()
+    )
+    assert order.project_id is None
 
 
-def test_r1_a_closed_retail_order_stays_off_the_board_with_the_true_reason(api):
+def test_r1_a_closed_retail_order_opens_on_the_board(api):
     client, world = api
     core, _lines = _retail_order(world)
     _closed(world, core)
 
-    board = client.get(
-        f"{BASE}/fulfilment-planning/board",
-        params={"orders": core.so_number, "granularity": "week"},
-    ).json()
+    board = _board_of(client, core)
 
-    assert core.so_number not in {row["so_number"] for row in board["contributions"]}
-    skipped = {row["so_number"]: row["reason"] for row in board.get("unplanned_orders", [])}
-    assert core.so_number in skipped, board.keys()
-    assert "closed" in skipped[core.so_number].lower()
-    assert "cancelled" not in skipped[core.so_number].lower()
+    assert core.so_number in {row["so_number"] for row in board["contributions"]}, board.get(
+        "unplanned_orders"
+    )
+    assert core.so_number not in {row["so_number"] for row in board.get("unplanned_orders", [])}
+
+
+def _settle(world, core, lines):
+    """The shape the import writes for a settled order: lines delivered and `closed`."""
+    for line in lines:
+        line.qty_delivered = line.qty_ordered
+        line.line_status = "closed"
+    _closed(world, core)
+
+
+def test_r1_a_closed_fully_delivered_retail_order_plans_and_confirms(api):
+    """The shape of the real case: one line at the dealer pool, ordered 1, delivered 1, line
+    and header closed, stock at the pool, no other demand. Planning can come after delivery."""
+    client, world = api
+    core, lines = _retail_order(world, lines=(("dealer", "1"),))
+    world.pool_wh.pool_warehouse_id = world.pool_wh.id
+    _stock(world.db, world.product, world.pool_wh, on_hand=10)
+    _settle(world, core, lines)
+
+    order_id = _adopt(client, core)["project_sales_order_id"]
+    board = _board_of(client, core)
+    key = next(r for r in board["contributions"] if r["so_number"] == core.so_number)["key"]
+    sheet = client.get(f"{BASE}/sales-orders/{order_id}/supply").json()
+    components = [c for line in sheet["lines"] for c in line["components"]]
+    totals = {k: sum(Decimal(str(c["qty"])) for c in components if c["kind"] == k) for k in {c["kind"] for c in components}}
+    assert totals == {"reserve": Decimal("1")}, sheet
+    assert all(c["source_location"] == world.pool_wh.warehouse_code for c in components)
+
+    draft = client.put(
+        f"{BASE}/fulfilment-planning/lines/{key}/draft",
+        json={"decision": {"verdict": "amended", "buy_qty": "0", "reserve": [
+            {"warehouse_id": str(world.pool_wh.id), "qty": "1"}], "borrow": []}},
+    )
+    assert draft.status_code == 200, draft.text
+    response = client.post(
+        f"{BASE}/sales-orders/{order_id}/confirm",
+        json={"lines": [
+            _line_payload(
+                line["project_line_id"],
+                reserve=[{"warehouse_id": str(world.pool_wh.id), "qty": "1"}],
+            )
+            for line in sheet["lines"]
+        ]},
+    )
+    assert response.status_code == 200, response.text
+    world.db.expire_all()
+    bought = (
+        world.db.query(OrderInquiryRow)
+        .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+        .filter(OrderInquiry.project_sales_order_id == order_id)
+        .all()
+    )
+    assert bought == []
 
 
 def test_r1_a_closed_project_order_still_adopts_and_opens_on_the_board(api):
@@ -277,7 +330,7 @@ def test_r1_plannable_lines_reads_the_same_admission(api):
         [{"id": str(core.id)} for core in (open_retail, closed_retail, closed_project)]
     )
 
-    assert [row["plannable_lines"] for row in rows] == [1, 0, 1]
+    assert [row["plannable_lines"] for row in rows] == [1, 1, 1]
 
 
 def test_r1_a_retail_order_at_a_retired_dealer_location_stays_out(api):
@@ -805,3 +858,116 @@ def test_r16_a_database_without_the_role_is_not_an_error():
         assert db.execute(
             text("select count(*) from user_roles where slug = 'customer_service'")
         ).scalar() == 0
+
+
+# --------------------------------------------------------------------------- R9, closed lines
+
+
+def _closed_line_at_the_pool(klass):
+    """Ordered 10, delivered 10, closed, 10 on hand at the dealer pool, nobody else."""
+    from .test_own_pool_planning import _line, _pool, _sheet
+    from .test_project_supply_service_ladder import _world
+
+    with blank_session() as db:
+        world = _world(db)
+        pool = _pool(db, 10, world[3])
+        order, _l, core_so, core_line = _line(db, world, pool, 10, klass=klass)
+        core_line.qty_delivered = Decimal("10")
+        core_line.line_status = "closed"
+        core_so.status = "closed"
+        db.commit()
+        return _sheet(db, order)
+
+
+def test_r9_a_closed_retail_line_holds_no_share_and_a_closed_project_line_does():
+    retail = _closed_line_at_the_pool("retail")
+    project = _closed_line_at_the_pool("project")
+
+    assert retail == {"reserve": Decimal("10")}, retail
+    assert project == {"reserve": Decimal("5"), "buy": Decimal("5")}, project
+
+
+# --------------------------------------------------------------------------- R1, the true reason
+
+
+def test_r1_a_closed_retail_order_with_no_dealer_line_stays_out_for_that_reason(api):
+    client, world = api
+    core, _lines = _retail_order(world, lines=(("project", "10"),))
+    _closed(world, core)
+
+    with pytest.raises(AppException) as refused:
+        ProjectSOAdoptionService(world.db).adopt(str(core.id))
+    board = _board_of(client, core)
+    skipped = {row["so_number"]: row["reason"] for row in board.get("unplanned_orders", [])}
+
+    assert refused.value.status_code == 409
+    for reason in (refused.value.message, skipped.get(core.so_number, "")):
+        assert "dealer" in reason.lower() and "location" in reason.lower(), reason
+        assert "closed" not in reason.lower(), reason
+    assert core.so_number in skipped, board.keys()
+    assert core.so_number not in {row["so_number"] for row in board["contributions"]}
+
+
+def test_r3_an_open_retail_order_never_reads_as_closed(api):
+    client, world = api
+    core, _lines = _retail_order(world, lines=(("project", "10"),))
+
+    with pytest.raises(AppException) as refused:
+        ProjectSOAdoptionService(world.db).adopt(str(core.id))
+    board = _board_of(client, core)
+    skipped = {row["so_number"]: row["reason"] for row in board.get("unplanned_orders", [])}
+
+    assert refused.value.status_code == 409
+    assert "closed" not in refused.value.message.lower(), refused.value.message
+    assert core.so_number in skipped, board.keys()
+    assert "closed" not in skipped[core.so_number].lower(), skipped[core.so_number]
+
+
+def test_r1_a_cancelled_retail_order_stays_refused(api):
+    client, world = api
+    core, _lines = _retail_order(world)
+    core.status = "cancelled"
+    world.db.commit()
+
+    response = client.post(f"{BASE}/fulfilment-planning/adopt", json={"sales_order_id": str(core.id)})
+    board = _board_of(client, core)
+
+    assert response.status_code == 409, response.text
+    assert core.so_number not in {row["so_number"] for row in board["contributions"]}
+
+
+def test_r1_a_closed_order_with_no_class_stays_off_with_the_true_reason(api):
+    client, world = api
+    core, _lines = _retail_order(world, klass=None)
+    _closed(world, core)
+
+    with pytest.raises(AppException) as refused:
+        ProjectSOAdoptionService(world.db).adopt(str(core.id))
+    board = _board_of(client, core)
+    skipped = {row["so_number"]: row["reason"] for row in board.get("unplanned_orders", [])}
+
+    assert refused.value.status_code == 409
+    assert "class" in refused.value.message.lower(), refused.value.message
+    assert core.so_number not in {row["so_number"] for row in board["contributions"]}
+    assert "class" in skipped.get(core.so_number, "").lower(), skipped
+
+
+def test_r6_a_closed_retail_order_does_not_flood_the_planning_worklist(api):
+    """The worklist stays open orders with quantity owed; a settled one is reachable from its
+    own page, not from the list."""
+    client, world = api
+    core, lines = _retail_order(world, lines=(("dealer", "1"),))
+    _settle(world, core, lines)
+
+    listed = _numbers(_listed(client, demand_class=["retail", "other", "project"]))
+
+    assert core.so_number not in listed
+
+
+def test_r6_an_open_retail_order_with_quantity_owed_is_still_listed(api):
+    client, world = api
+    core, _lines = _retail_order(world, lines=(("dealer", "1"),))
+
+    listed = _numbers(_listed(client, demand_class=["retail", "other", "project"]))
+
+    assert core.so_number in listed
