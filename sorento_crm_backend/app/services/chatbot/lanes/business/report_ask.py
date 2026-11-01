@@ -981,42 +981,37 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
 
 
 def as_kind_answer(verdict: dict[str, Any], slot: Any) -> tuple[dict[str, Any], bool]:
-    """Engine seam beside the company pick, the word question open. `(verdict, True)` when the reply is its answer:
-    the parser's declared pick of an offered option (whatever else it carries, as the company pick; a period of its
-    own is applied by `_settle`), or a reply that repeats one of the asked words with the parser's `kind_said`
-    ("cabana account") and is a NEW ask only by what it types itself: dates other than the held period, typed
-    `by_words`, a `top_n` / `rank_direction` / `rank_by`, another subject (`domain_in_message` with a non-sales status
-    or domain), or an entity beyond the held words. A `group_by` without typed words is a guess (the company seam's
-    `_typed` rule) and is dropped; a stray `domain_hint` or an echoed period is still the answer. Parser fields only."""
+    """Engine seam beside the company pick, the word question open. `(verdict, True)` when the reply settles the kind:
+    the parser's declared pick of an offered option, or a repeat of one of the held words with the parser's
+    `kind_said` ("cabana account"). Whatever else such a reply says edits the held ask (`kind_edits`). The only exits to
+    a new ask: `domain_in_message` true with a non-sales read, or an entity beyond the held words. An untyped
+    `group_by` is a guess and is dropped (the company seam's `_typed` rule). Parser fields only."""
     from app.services.chatbot import contracts
 
     if not isinstance(slot, dict) or slot.get("ask") != ASK_NAME or slot.get("asking") != "kind":
         return verdict, False
     options = [o[0] for o in slot.get("options") or [] if isinstance(o, (list, tuple)) and o]
-    answer = verdict.get("open_question_answer")
-    if isinstance(answer, dict) and answer.get("mode") in rf.ANSWER_MODES:
-        picked = [p for p in jsc.array(answer.get("picked")) if isinstance(p, int) and not isinstance(p, bool)]
-        return verdict, answer.get("mode") == "pick" and bool(picked) and 1 <= picked[0] <= len(options)
     status = jsc.js_string(verdict.get("order_status") or "").strip()
     domain = verdict.get("domain_hint")
-    other_subject = verdict.get("domain_in_message") is True and (
+    if verdict.get("domain_in_message") is True and (
         (status and status not in (*SALES_STATUSES, ASK_NAME)) or (domain and domain not in contracts.ORDER_OR_SALES_DOMAINS)
-    )
-    own_period = period_from(verdict.get("date_filter_start"), verdict.get("date_filter_end"))
-    held_period = _dict(_dict(_dict(slot.get("values")).get("period")).get("value"))
-    new_period = own_period is not None and (
-        own_period.value.get("from") != held_period.get("from") or own_period.value.get("to") != held_period.get("to")
-    )
+    ):
+        return verdict, False
+    current = [e for e in jsc.array(verdict.get("entities")) if isinstance(e, dict) and e.get("current_message") is not False]
+    answer = verdict.get("open_question_answer")
     typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
         verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
     )
-    if other_subject or new_period or typed:
-        return verdict, False
+    untyped = {} if typed else {"group_by": None}
+    if isinstance(answer, dict) and answer.get("mode") in rf.ANSWER_MODES:
+        picked = [p for p in jsc.array(answer.get("picked")) if isinstance(p, int) and not isinstance(p, bool)]
+        if answer.get("mode") != "pick" or not picked or not 1 <= picked[0] <= len(options):
+            return verdict, False
+        return {**verdict, **untyped}, True
     asked = {
         " ".join(jsc.js_string(w).split()).casefold()
         for w in (*_dict(slot.get("extras")).get("kind_words", ()), *_dict(slot.get("extras")).get("kind_match", ()))
     }
-    current = [e for e in jsc.array(verdict.get("entities")) if isinstance(e, dict) and e.get("current_message") is not False]
     said = [
         e for e in current
         if kind_was_said(e.get("kind_said")) and jsc.js_string(e.get("hint") or "").strip().lower() in options
@@ -1028,7 +1023,45 @@ def as_kind_answer(verdict: dict[str, Any], slot: Any) -> tuple[dict[str, Any], 
     position = options.index(next(iter(hints))) + 1
     rest = [e for e in jsc.array(verdict.get("entities")) if not any(e is s for s in said)]
     pick = {"mode": "pick", "picked": [position], "items": [], "qty_for_all": None}
-    return {**verdict, "entities": rest, "group_by": None, "open_question_answer": pick}, True
+    return {**verdict, **untyped, "entities": rest, "open_question_answer": pick}, True
+
+
+def kind_edits(
+    parse_output: dict[str, Any], slot: dict[str, Any], *, dealer: bool, companies: Any
+) -> tuple[dict[str, Any] | None, str | None]:
+    """A reply that settled the word question edits the held ask with what else it says: the period, measure, basis and
+    channel (`_reply_wins`), a count and direction, a typed axis (`_swap_axis`), a named company among the contact's own.
+    Returns `(slot with the edits, None)` or `(None, the line to say)`."""
+    extras = _dict(slot.get("extras"))
+    slot, args = _reply_wins(parse_output, slot, _dict(extras.get("args")))
+    values = dict(_dict(slot.get("values")))
+    top_n = extras.get("top_n")
+    got = top_n_from(parse_output.get("top_n"))
+    if got.status == "ok":
+        top_n = got.value
+        values["top_n"] = {"value": got.value, "label": got.label}
+    if parse_output.get("rank_direction") in ("top", "bottom"):
+        args["sort"] = "asc" if parse_output["rank_direction"] == "bottom" else "desc"
+    typed = bool(jsc.js_string(parse_output.get("by_words") or "").strip()) or any(
+        parse_output.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
+    )
+    swapped = _swap_axis({**parse_output, "ranking_refine": None}, {**extras, "args": args}) if typed else None
+    if swapped is not None:
+        if dealer and _dealer_outside(parse_output, swapped["args"].get("group_by")):
+            return None, DEALER_REFUSAL
+        old_axis = args.get("group_by")
+        args = swapped["args"]
+        if args.get("group_by") != old_axis and old_axis in (None, *TREND_AXES):
+            values = _settled_by_its_axis(values, old_axis)  # the new axis owes its own count and metric
+    said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
+    own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) == 3]
+    if said and not dealer:
+        named = next((c for c in own if said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
+        if named is None:
+            return None, COMPANY_FORBIDDEN_LINE
+        args["company"] = str(named[0])
+        values["company"] = {"value": str(named[0]), "label": str(named[1])}
+    return {**slot, "values": values, "extras": {**extras, "args": args, "top_n": top_n}}, None
 
 
 def restates_the_ask(verdict: dict[str, Any]) -> bool:
@@ -1426,7 +1459,7 @@ def _account_plan(
         decided.append((how, hint, word, kind))
     own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) >= 3]
     ids = [str(c[0]) for c in own]
-    said_company = " ".join(jsc.js_string(parse_output.get("sales_company")).split()).casefold()
+    said_company = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
     if said_company:  # a named company narrows the book to that company
         ids = [str(c[0]) for c in own if said_company in (str(c[1]).casefold(), str(c[2]).casefold())] or ids
     elif held_company and str(held_company) in ids:
@@ -1476,10 +1509,6 @@ def _account_plan(
             account.append(kind)
     plan["account_types"] = [*account, *[n for n in numbers if n not in account]]
     return plan
-
-
-def numbers_named(plan: dict[str, Any]) -> bool:
-    return bool(plan["account_types"])
 
 
 def _brand_words(words: dict[str, Any], plan: dict[str, Any]) -> list[Any]:
@@ -1569,7 +1598,7 @@ def _without_carried_products(parse_output: dict[str, Any], entities: Any) -> li
 
 def _fresh_args(
     db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True,
-    companies: Any = (), ask_kind: bool = False,
+    companies: Any = (), ask_kind: bool = False, held_company: Any = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The route params a fresh ask names (every one but the period and top_n), or the one
     line to say instead of running. `dealer`: the turn's contact is customer-scoped."""
@@ -1596,7 +1625,10 @@ def _fresh_args(
     if parse_output.get("self_reference") is True:
         args["mine"] = True
 
-    plan = _account_plan(db, parse_output, companies, ask=ask_kind) if not dealer else _account_plan(None, {})
+    plan = (
+        _account_plan(db, parse_output, companies, ask=ask_kind, held_company=held_company)
+        if not dealer else _account_plan(None, {})
+    )
     words = _dict(parse_output.get("report_ask_words"))
     read = {**parse_output, "report_ask_words": {**words, "brand": _brand_words(words, plan)}}
     filters, line = _word_filters(db, read, agent_filter=agent_filter, lenient=True)
@@ -1606,7 +1638,7 @@ def _fresh_args(
     args.update(filters)
     if plan["account_types"]:
         args["account_types"] = plan["account_types"]
-    if plan["covered"] and numbers_named(plan):
+    if plan["covered"]:
         args["_covered"] = True  # a word the number made redundant was still a named subject; popped by `_settle`
     if plan["ask"]:
         asked, line = _kind_ask(db, parse_output, plan, args)
@@ -1891,6 +1923,9 @@ def _settle(
         return _scope_answer(db, parse_output, slot), None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME:
         extras = _dict(slot.get("extras"))
+        if (dealer or not agent_filter) and extras.get("agent_options") and "sales_agent" not in _dict(slot.get("values")):
+            # A contact the route refuses the agent dimension (linked to a customer between turns): no list is printed.
+            return None, DEALER_REFUSAL
         args = _dict(extras.get("args"))
         held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
         held = _company_held(extras, _dict(slot.get("values")), args, held)
@@ -1911,12 +1946,15 @@ def _settle(
         if asked_field is not None and asked_field.name != "basis" and rf.is_parser_only(asked_field, extras):
             # The company and the sales agent pick: the parser's declared pick only, never the reply's text.
             answer = _dict(parse_output.get("required_ask_answer"))
-            own_period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end"))
-            if asked_field.name == "kind" and own_period is not None:
-                # The word question's answer that names its own period runs on that period.
-                slot = {**slot, "values": {
-                    **_dict(slot.get("values")), "period": {"value": own_period.value, "label": own_period.label},
-                }}
+            if asked_field.name == "kind":
+                # What else the reply says edits the held ask (`kind_edits`); the held values are recomputed from it.
+                slot, line = kind_edits(parse_output, slot, dealer=dealer, companies=companies)
+                if slot is None:
+                    return None, line
+                extras = _dict(slot.get("extras"))
+                args = _dict(extras.get("args"))
+                held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
+                held = _company_held(extras, _dict(slot.get("values")), args, held)
             return rf.collect(
                 db, SALES_RANKING_ASK, slot=slot, reply=rf.picked_option(slot, answer),
                 cancel=answer.get("mode") == "cancel", given=held,
@@ -2374,7 +2412,9 @@ def _drill(
         return None, NO_RANKING_LINE
 
     # The message's own reading, exactly as a fresh ask reads it (axis, filters, choices).
-    own, line = _fresh_args(db, parse_output, entities, dealer=dealer, companies=companies, ask_kind=True)
+    own, line = _fresh_args(
+        db, parse_output, entities, dealer=dealer, companies=companies, ask_kind=True, held_company=frame.get("company")
+    )
     if own is None:
         return None, line
     kind_ask = own.pop("_kind_ask", None)
