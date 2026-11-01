@@ -154,22 +154,31 @@ def ctx_of(db, w, operator=None):
     return dataclasses.replace(ctx, operator_user_id=operator) if operator else ctx
 
 
-def propose(db, w, name, args, *, seen=(), operator=None):
+def _loop_args(name, live):
+    """What the loop stores with an idea create. `live=True` is a live (WhatsApp) turn: a real idea. Left out, the
+    step has no `_is_test` and is a test idea (fail safe)."""
+    return {"_is_test": False} if live and name == CREATE else None
+
+
+def propose(db, w, name, args, *, seen=(), operator=None, live=False):
     from app.services.chatbot.agent import writes
 
     return writes.propose_step(
-        db, ctx_of(db, w, operator), name, args, seen_ids={str(s).lower() for s in seen}
+        db, ctx_of(db, w, operator), name, args, seen_ids={str(s).lower() for s in seen},
+        loop_args=_loop_args(name, live),
     )
 
 
-def store(db, w, calls, *, seen=(), operator=None):
+def store(db, w, calls, *, seen=(), operator=None, live=False):
     """propose_step for each (name, args), then one stored proposal. Returns (steps, action row)."""
     from app.services.chatbot.agent import actions, writes
 
     ctx = ctx_of(db, w, operator)
     steps = []
     for name, args in calls:
-        res, step = writes.propose_step(db, ctx, name, args, seen_ids={str(s).lower() for s in seen})
+        res, step = writes.propose_step(
+            db, ctx, name, args, seen_ids={str(s).lower() for s in seen}, loop_args=_loop_args(name, live)
+        )
         assert res.status == "proposed", f"{name}: {res.status} {res.message}"
         steps.append(step)
     row = actions.store_proposal(
@@ -355,7 +364,7 @@ def test_AC_R2_3_the_summary_names_up_to_three_similar_ideas(db, ss):
 def test_AC_R2_3_the_lookup_sends_the_linked_user_and_a_real_idea_flag(db, ss, operator_case):
     w = make_world(db)
     op = operator_with(db, BOARD_VIEW, MANAGE) if operator_case else None  # S6 I2: creating for someone else needs manage
-    res, _ = propose(db, w, CREATE, dict(FIELDS), operator=op)
+    res, _ = propose(db, w, CREATE, dict(FIELDS), operator=op, live=True)
     assert res.status == "proposed"
     (call,) = posts(ss, SIMILAR_PATH)
     assert call["json"]["submitter_crm_user_id"] == w.user_id
@@ -394,7 +403,7 @@ def test_AC_R2_4_a_failing_lookup_still_proposes_with_no_similar_line(db, ss, fa
 
 def test_AC_R2_5_confirm_sends_exactly_one_create_with_the_linked_users_fields(db, ss):
     w = make_world(db)
-    _, row = store(db, w, [(CREATE, dict(FIELDS))])
+    _, row = store(db, w, [(CREATE, dict(FIELDS))], live=True)
     assert posts(ss, CREATE_PATH) == []
 
     outcome = confirm(db, w, row)
@@ -455,7 +464,7 @@ def test_AC_R2_6_the_reply_names_the_number_the_link_and_the_gaps_and_no_test_no
         "POST", CREATE_PATH,
         json_body={"idea_id": idea_id, "idea_number": "IDEA-0184", "status": "captured", "title": "t"},
     )
-    _, row = store(db, w, [(CREATE, {"problem": PROBLEM})])  # only the required field given
+    _, row = store(db, w, [(CREATE, {"problem": PROBLEM})], live=True)  # only the required field given
     outcome = confirm(db, w, row)
     assert outcome.steps[0]["status"] == "done"
     assert action_row(db, row.id).steps[0]["result_id"] == idea_id

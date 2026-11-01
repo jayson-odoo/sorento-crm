@@ -292,11 +292,10 @@ def test_AC_RV_6_intake_ref_differs_between_test_and_real_for_the_same_text(db, 
     from app.services.chatbot.agent import writes
 
     w = make_world(db)
-    monkeypatch.setattr(writes, "IDEA_IS_TEST", True)  # S6: the flag is off by default, so turn it on for the control
+    # S6: the step's origin decides (no value = a test idea; a live turn stores `_is_test: False`)
     _, row = store(db, w, [(CREATE, dict(FIELDS))])
     confirm(db, w, row)
-    monkeypatch.setattr(writes, "IDEA_IS_TEST", False)
-    _, row = store(db, w, [(CREATE, dict(FIELDS))])
+    _, row = store(db, w, [(CREATE, dict(FIELDS))], live=True)
     confirm(db, w, row)
     first, second = posts(ss, CREATE_PATH)
     assert first["json"]["is_test"] is True and second["json"]["is_test"] is False
@@ -451,7 +450,7 @@ def test_AC_RV_2_a_console_confirm_of_an_idea_keeps_its_full_reply(db, ss):
         "POST", CREATE_PATH,
         json_body={"idea_id": idea_id, "idea_number": "IDEA-0184", "status": "captured", "title": "t"},
     )
-    _, row = store(db, w, [(CREATE, {"problem": PROBLEM})])
+    _, row = store(db, w, [(CREATE, {"problem": PROBLEM})], live=True)
     outcome = confirm(db, w, row)
     assert "IDEA-0184" in outcome.reply_text and f"{CRM}/ideas/{idea_id}" in outcome.reply_text
     assert NOTE_TEXT in outcome.reply_text

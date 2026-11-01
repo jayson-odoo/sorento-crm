@@ -44,7 +44,7 @@ def test_ac_w28_the_test_flag_is_off():
 
 def test_ac_w28_a_confirmed_create_is_sent_as_a_real_idea(db, ss):
     w = make_world(db)
-    _, row = store(db, w, [(CREATE, dict(FIELDS))])
+    _, row = store(db, w, [(CREATE, dict(FIELDS))], live=True)
 
     confirm(db, w, row)
 
@@ -55,7 +55,7 @@ def test_ac_w28_a_confirmed_create_is_sent_as_a_real_idea(db, ss):
 def test_ac_w28_the_similar_lookup_asks_about_real_ideas(db, ss):
     w = make_world(db)
 
-    res, _ = propose(db, w, CREATE, dict(FIELDS))
+    res, _ = propose(db, w, CREATE, dict(FIELDS), live=True)
 
     assert res.status == "proposed"
     (call,) = posts(ss, SIMILAR_PATH)
@@ -66,7 +66,7 @@ def test_ac_w28_the_note_does_not_call_the_idea_a_test(db, ss):
     w = make_world(db)
     idea_id = str(uuid.uuid4())
     ss.route("POST", CREATE_PATH, json_body={"idea_id": idea_id, "idea_number": "IDEA-0184", "status": "captured", "title": "t"})
-    _, row = store(db, w, [(CREATE, {"problem": PROBLEM})])
+    _, row = store(db, w, [(CREATE, {"problem": PROBLEM})], live=True)
 
     outcome = confirm(db, w, row)
 
@@ -75,6 +75,18 @@ def test_ac_w28_the_note_does_not_call_the_idea_a_test(db, ss):
     assert "IDEA-0184" in outcome.reply_text and f"{CRM}/ideas/{idea_id}" in outcome.reply_text, "positive control"
     assert "test idea" not in low
     assert "not on the board" not in low
+
+
+def test_ac_w28_a_stored_step_with_no_origin_is_a_test_idea(db, ss):
+    """Fail safe: a step without `_is_test` (stored before the turn's origin was carried) stays off the board."""
+    w = make_world(db)
+    _, row = store(db, w, [(CREATE, {"problem": PROBLEM})])
+
+    outcome = confirm(db, w, row)
+
+    (call,) = posts(ss, CREATE_PATH)
+    assert call["json"]["is_test"] is True
+    assert "test idea" in outcome.reply_text.lower()
 
 
 def test_ac_w28_control_with_the_flag_on_the_old_behaviour_is_still_reachable(db, ss, monkeypatch):
