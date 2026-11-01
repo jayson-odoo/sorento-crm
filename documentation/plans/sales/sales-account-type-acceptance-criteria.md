@@ -45,9 +45,8 @@ The route is `GET /api/v1/order-management/report-ask`. The param is `account_ty
 - **AT-16 [T]** Tie-out on seeded rows with the AutoCount report's figures, one agent, January 2026, types on every ledger: account 1 RM
   282,203.77 (281,810.77 on `[A/C I]` ledgers + 393.00 on an untagged ledger typed SORENTO), account 3 RM 315,483.59 (27,717.93 + 287,765.66 across
   two agent codes), account 4 RM 96,416.80 (6,561.00 + 89,855.80), total RM 694,104.16. Brand CABANA on account 3: RM 76,877.71.
-- **AT-17 [BE]** Master ingest: a pushed `market_segment_code` sets `autocount_debtor_type` on the customer and on every other ledger of that
-  company with the same debtor code, as the agent does, and not on another company's ledger with that code. A later push with a
-  different type moves all of them. A push with no type leaves them unchanged.
+- **AT-17** Dropped. A same-code fan-out for the type has no problem to solve: no company has two ledgers with one debtor code on the
+  28 Oct copy (`account-type-check-4-output.txt`).
 - **AT-18 [BE]** Held for the owner's mock OK: on the reports metadata for the six Sales & outstanding definitions, the new param and column
   are `hidden`. The Sales by debtor type and Top selling items reports are unchanged.
 - **AT-19 [T]** The MCP tool lists `account_types`, its text names `group_by` `account_type`, and the presenter prints "Account type: 4",

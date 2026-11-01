@@ -36,6 +36,8 @@ The CRM cannot answer the first reading, and a bot asked for "account 4" reads i
   A/C I 839, A/C IV 11, and no 2026 documents, so every tie-out is Sorento.
 - **Tag quality.** The check found four ledgers of 6,874 with a tag the pattern `\[(A/C [IVX]+)\]\s*$` misses: `[A/C]`, `[A/C1]`,
   `(A/C 2)`, and one tag not at the end of the name.
+- **No same-code ledgers.** No company has two ledgers with one debtor code on the copy, so a pushed type reaches its one ledger;
+  the agent's same-code fan-out (`master_ingest_service.py:1252`) has no twin here. The check compared codes exactly, not by case.
 - **Brands.** SORENTO, BRAVAT and CABANA are Sorento brands, so a bare word stays the brand. Production parser prompt on the copy:
   v70, md5 `0e52eb27f27a6bd51d754ae34c43f4f0`.
 
@@ -87,10 +89,8 @@ Rules:
 4. One filter and one split in the shared report ask, on all six bases: invoiced, delivered, ordered, undelivered, pending
    delivery, unpaid. The bot, the AI panel (MCP) and Sales & outstanding all read it. Label "Account type" (the label "Debtor type"
    is already the CRM's own project / cash concept, `app/models/order.py:184-190`).
-5. A pushed type reaches every same-code ledger of the company, as the agent does (`master_ingest_service.py:1252`); back-created
-   rows otherwise stay blank.
-6. A month alone is that month of this year. A month or year split never prints "Top N".
-7. Nothing loaded: "Account types are not loaded from AutoCount yet", never RM 0. An unknown number says so and lists the numbers and
+5. A month alone is that month of this year. A month or year split never prints "Top N".
+6. Nothing loaded: "Account types are not loaded from AutoCount yet", never RM 0. An unknown number says so and lists the numbers and
    any type with no number. Rows add up to all sales. "top accounts" stays customers.
 
 Known limits on "tally 100%": the CRM's agent total itself differs from the PDF on two agent-months, whatever the account reads
@@ -103,8 +103,8 @@ Test data: an UPDATE from the tag on this lane's own test copy only, never a sha
 
 - **Partner lane, shared service (crew's SS-DEBTOR-TYPE):** `DebtorType -> market_segment_code` on the customer task (mapping row,
   `SINK_FIELDS`, backfill like module Alembic 0029); each customer re-stages once. No CRM migration. It also reports DebtorType x tag.
-- **PR 1, CRM, no prompt:** param `account_types` and axis `account_type` on the six datasets, route, MCP catalog, replies, same-code
-  fan-out. The screen part follows the owner's OK on the mock.
+- **PR 1, CRM, no prompt:** param `account_types` and axis `account_type` on the six datasets, route, MCP catalog, replies. The screen
+  part follows the owner's OK on the mock.
 - **PR 2, CRM, prompt gate:** parser's reading of the numbered account, the period fix, user guide. Prompt gate with v70 as the fixed
   baseline; only the owner moves the production label.
 
