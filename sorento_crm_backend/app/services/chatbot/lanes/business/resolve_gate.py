@@ -1931,8 +1931,8 @@ def _run_probe(
     reason: a transient MCP failure must arrive as "we did not measure", never as an empty
     answer set, or every line renders a confident miss on evidence nobody gathered.
     `probe-incoming` has no such setting and its failure ends the turn in n8n - the port
-    logs and returns None instead, which the incoming annotator renders as today's
-    "None of these have incoming stock right now."
+    logs and returns None instead, which the incoming annotator reads as not measured: the
+    roster stays as the gate wrote it, with no stamps.
     """
     semantic_input = _semantic_input(
         ctx, aggregate=aggregate, default_start=default_start, space_id=space_id

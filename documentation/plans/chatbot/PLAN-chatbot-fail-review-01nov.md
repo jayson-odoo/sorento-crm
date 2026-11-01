@@ -1,12 +1,23 @@
 # PLAN: chatbot failure review (1 Nov 2026)
 
-**Status:** Build, small fix track, one PR (#2061). Owner GO 1 Nov: S5 then S3, size S each, red-first, every
-unverified claim proven or dropped. Phase 1 cause table filed; it holds production counts, so it stays outside the repo
-(`crew/state/eval/fail-review-1nov/cause-table.md`). UAC: `chatbot-fail-review-acceptance-criteria.md`. Reply templates
-mapped to code: `chatbot-fail-review-template-map.md`.
+**Status:** Review READY at 1e4c52a83f, small fix track, one PR (#2061), waiting for CI and the owner's hand test. Scope
+is S5 and S3 only (owner, 1 Nov). Phase 1 cause table: `crew/state/eval/fail-review-1nov/cause-table.md`, outside the repo
+because it holds production counts. UAC: `chatbot-fail-review-acceptance-criteria.md`. Reply templates mapped to code:
+`chatbot-fail-review-template-map.md`.
 
-Held by the owner, not in this PR: stalled API and lost message (S4), long lists (S2), stale ask re-fire (Q4). Dropped by
-the owner: glued code + quantity (H1a). Left as it is: invoice asks.
+## Dropped, with the reason
+
+- S4 lost message and the n8n error arm: owner, "i want to discon n8n ady". Not fixed.
+- "Enquiry resolved" notices to staff: owner, "need to send to staff contact". Stays as it is.
+- H1a glued code and quantity: owner, skip. Invoice asks: owner, "we cannot handle yet".
+- S2 long lists: no proof without a live model call. The 85-90 line limit is inference from one measured speed.
+- S1 residual: `test_fail_triage_escalation.py:1074` pins a company with no team links as the honest failure, on purpose.
+- "Thankyou" re-fires the last ask: reproduced through the real engine when the parser carries the domain with no entity
+  ("How many units of X?", the whole previous reply). Not fixed here. The engine re-runs a carried ask, which is also how a
+  real "check again" works, and only the parser can tell the two apart, so the fix is a prompt line with a gate and an
+  owner publish. The cause table's `turn/task.py:681` was wrong: a trial fix there changed no reply.
+- Open, not this lane: a failed promotion read can still say "no promotion" (`lanes/business/__init__.py:1780`,
+  `lanes/business/fetch.py:291,295`). Found in review, unchanged by this PR.
 
 ## Goal
 
@@ -48,9 +59,11 @@ gate. Red-first and kill proof per fix.
   could not fetch". Path: `turn_runtime.envelope_of` keeps `error`, `turn/fetch.envelope_missed` says not a miss,
   `engine` calls `answer_bridge.apply_crossdomain_hit`, which read only the reply text and the empty figures. Review
   round 1 found three more ways: a CRM connection failure behind MCP (no failing status, so rendered as empty), a failed
-  PO rung ("nothing on order"), a plain-text answer on a multi-ask line ("Stock: 0").
+  PO rung ("nothing on order"), a plain-text answer on a multi-ask line ("Stock: 0"). Round 2 found failed probes stamping
+  "- no incoming" on roster and related-products lines; `pickers.probe_rows` now reads an error envelope as not measured.
 - S3: a timeout or dropped connection retries up to `CHATBOT_LLM_RETRIES` (default 3), inside `CALL_DEADLINE_SECONDS`.
   The budget is the real ceiling: the 20 s attempt and 35 s budget fit one timeout retry and at most four connection
-  retries. The clarifier keeps one attempt's time, so a parser retry stays inside the turn's budget.
+  retries. The clarifier and the chat report extractor keep one attempt's time, so a parser retry stays inside the turn's
+  budget.
 - My earlier cite for S5, `answer_bridge.py:1935-1937`, was the wrong path; that is the miss arm. Crew's independent
   read and the engine test both land on `apply_crossdomain_hit`.
