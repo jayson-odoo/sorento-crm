@@ -320,6 +320,10 @@ def call_clarifier(config: ClarifierConfig, user_prompt: str) -> str:
             messages,
             temperature=0.0,
             max_tokens=CLARIFIER_MAX_TOKENS,
+            # One attempt's time, no second try after a hang: a turn can make a parser call
+            # and this one, the queue cap (`dispatch.max_queue_wait_seconds`) counts one 35 s
+            # model call, and a clarifier that fails has an honest canned reply to send.
+            deadline_seconds=llm_call.ATTEMPT_TIMEOUT_SECONDS,
             # One cache bucket per prompt version, as the parser's (GEMINI-EXPLICIT-CACHE:
             # on Gemini this also puts the system prompt in an explicit context cache).
             prompt_cache_key=f"{PROMPT_KEY}:v{config.prompt_version or 'fallback'}",

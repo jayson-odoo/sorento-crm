@@ -895,6 +895,14 @@ def _field_render_value(f: Any) -> Any:
     return v if v is not None else jsc.get(f, "value")
 
 
+def _has_render_envelope(env: Any) -> bool:
+    return (
+        isinstance(jsc.get(env, "answers"), list)
+        or isinstance(jsc.get(env, "items"), list)
+        or isinstance(jsc.get(env, "has_result"), bool)
+    )
+
+
 def crossdomain_render(
     probe_result: dict[str, Any] | None,
     *,
@@ -913,12 +921,7 @@ def crossdomain_render(
     env: Any = probe_result if jsc.truthy(probe_result) else {}
     if jsc.truthy(env) and isinstance(jsc.get(env, "output"), dict):
         env = env["output"]
-    has_envelope = (
-        isinstance(jsc.get(env, "answers"), list)
-        or isinstance(jsc.get(env, "items"), list)
-        or isinstance(jsc.get(env, "has_result"), bool)
-    )
-    if not has_envelope or jsc.truthy(jsc.get(env, "error")):
+    if not _has_render_envelope(env) or jsc.truthy(jsc.get(env, "error")):
         out["_xdBlock"] = {
             "block": "",
             "any": False,
@@ -1526,6 +1529,16 @@ def _apply_crossdomain_rung(
         probe_result = services.mcp_probe(args["tool"], args)
     except Exception:  # noqa: BLE001 - degrades to the existing nothing_note, never a dead turn
         logger.warning("chatbot: cross-domain %s rung probe did not run", rung, exc_info=True)
+        return
+    # The same reading as the first probe (`crossdomain_render`): only an answer may say
+    # "nothing on order". Stock and incoming were read, so the existing note still stands.
+    env = probe_result if isinstance(probe_result, dict) else {}
+    if jsc.truthy(jsc.get(env, "output")) and isinstance(jsc.get(env, "output"), dict):
+        env = env["output"]
+    if not _has_render_envelope(env) or jsc.truthy(jsc.get(env, "error")):
+        logger.warning("chatbot: cross-domain %s rung probe did not answer", rung)
+        if trace is not None:
+            trace.add("crossdomain", {"rung": rung, "skipped": "probe_failed"})
         return
     lines_by_code = _crossdomain_rung_rows(
         probe_result if isinstance(probe_result, dict) else {}, missing=missing

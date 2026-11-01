@@ -51,7 +51,8 @@ logger = logging.getLogger(__name__)
 # busy"). No caller sends it; kept only as the banned text the tests check replies against.
 RATE_LIMITED_REPLY = "Sorry, I am busy right now, please send that again in a minute."
 
-#: The wait before each retry, in seconds: four attempts in all.
+#: The wait before each retry after a rate limit or an outage, in seconds. A dropped
+#: connection walks the same list and then stays on its last value.
 BACKOFF_SECONDS = (2.0, 5.0, 10.0)
 #: No single wait is longer than this, whatever the server asks for.
 MAX_WAIT_SECONDS = 15.0
@@ -135,7 +136,8 @@ def _quota_exhausted(exc: BaseException) -> bool:
 
 def is_transient(exc: BaseException) -> bool:
     """A provider-side blip the SDK used to retry on its own before its retries were
-    turned off: a 5xx, Anthropic's 529 "overloaded", or a dropped connection."""
+    turned off: a 5xx or Anthropic's 529 "overloaded". A dropped connection is
+    `is_dropped_connection`, counted against `CHATBOT_LLM_RETRIES`."""
     status = getattr(exc, "status_code", None)
     if status is None:
         status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -160,11 +162,7 @@ def is_dropped_connection(exc: BaseException) -> bool:
 
 
 def _retries() -> int:
-    """`CHATBOT_LLM_RETRIES`. A bad value reads as off, never as a failed turn."""
-    try:
-        return max(0, int(getattr(settings, "chatbot_llm_retries", 0)))
-    except (TypeError, ValueError):
-        return 0
+    return max(0, settings.chatbot_llm_retries)
 
 
 def _server_wait(exc: BaseException) -> float | None:

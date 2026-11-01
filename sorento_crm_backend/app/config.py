@@ -202,10 +202,10 @@ class Settings(BaseSettings):
     # target). CHATBOT_MCP_TIMEOUT_SECONDS.
     chatbot_mcp_timeout_seconds: int = 10
     # How many times one model call is tried again after a timeout or a dropped connection
-    # (owner, 1 Nov 2026), always inside `llm_call.CALL_DEADLINE_SECONDS`. 3 is what every
-    # other transient error already gets. Today's 20 s attempt and 35 s budget fit only one
-    # timeout retry, however high this is set; a dropped connection fails fast and can use
-    # them all. 0 turns it off. CHATBOT_LLM_RETRIES.
+    # (owner, 1 Nov 2026), always inside `llm_call.CALL_DEADLINE_SECONDS`. 3 is what a 5xx
+    # already gets. The budget is the real ceiling: today's 20 s attempt and 35 s budget fit
+    # ONE timeout retry and at most FOUR connection retries (waits of 2, 5, 10, 10 s), so a
+    # higher value changes nothing unless those change too. 0 turns it off. CHATBOT_LLM_RETRIES.
     chatbot_llm_retries: int = 3
 
     # External API Access

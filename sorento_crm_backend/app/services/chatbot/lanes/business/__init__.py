@@ -2470,6 +2470,12 @@ def run_fetch(
     _tool_started = time.perf_counter()
     try:
         raw = fetch_mod.call_tool(tool_name, args, mcp=_McpSeam(services.mcp_call))
+        parsed = fetch_mod.parse_mcp_content(raw)
+        if isinstance(parsed, str):
+            # Plain text is no envelope: the MCP server hands back a 2xx body it cannot parse
+            # unchanged (`presenters.present_response`). Read as an answer it has no rows, and
+            # would be told to the customer as a real empty result ("No stock and no incoming").
+            raise RuntimeError("answered with no readable result")
     except fetch_mod.ToolNotAllowed as refused:
         # H58: the top hit was a WRITE tool and nothing was called. Recorded with its own
         # outcome rather than as a tool failure, because the two need different reading:
@@ -2491,13 +2497,6 @@ def run_fetch(
             f"MCP tool {tool_name} failed: {exc}", outcome=_fetch_failure_outcome(tool_name, exc)
         )
 
-    parsed = fetch_mod.parse_mcp_content(raw)
-    if isinstance(parsed, str):
-        # Plain text is no envelope: the MCP server hands back a 2xx body it cannot parse
-        # unchanged (`presenters.present_response`). Read as an answer it has no rows, and
-        # would be told to the customer as a real empty result ("No stock and no incoming").
-        logger.warning("chatbot: MCP tool %s answered with no readable result", tool_name)
-        return _error_fragment(f"MCP tool {tool_name} answered with no readable result")
     envelope = brand_guard.guard_result(
         tool_name, parsed, semantic_input.get("scope_brand_ids"), db
     )
