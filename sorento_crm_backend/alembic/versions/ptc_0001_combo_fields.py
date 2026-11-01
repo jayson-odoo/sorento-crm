@@ -1,7 +1,7 @@
 """PRICETAG-COMBO: combo description, free items, prices, top-ups and upgrade marker
 
 Revision ID: ptc_0001_combo_fields
-Revises: oisn_0002_full_table
+Revises: dp_0001_cs_planning_access
 Create Date: 2026-11-01 00:00:00.000000
 
 Additive only. `product_combos` gains description, free_items, list_price, sell_price;
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "ptc_0001_combo_fields"
-down_revision = "oisn_0002_full_table"
+down_revision = "dp_0001_cs_planning_access"
 branch_labels = None
 depends_on = None
 
