@@ -324,6 +324,7 @@ function DataGridTableHeadRowCell<TData>({
           ? { ...(isPinned ? getPinningStyles(column) : null), ...dndStyle }
           : { ...dndStyle, ...(isPinned ? getPinningStyles(column) : null) }),
       }}
+      {...header.column.columnDef.meta?.headerAttributes}
       data-pinned={isPinned || undefined}
       data-last-col={isLastLeftPinned ? 'left' : isFirstRightPinned ? 'right' : undefined}
       className={cn(

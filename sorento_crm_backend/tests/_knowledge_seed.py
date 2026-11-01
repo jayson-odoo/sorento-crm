@@ -62,19 +62,49 @@ def seed_team(db, name: str) -> str:
     return str(row.id)
 
 
+#: DOC-ACCESS-SIMPLE: the old four audiences as ticks, so a test written as "a dealer type" keeps its
+#: intent. `dealer` = every code except end_user that the tests use, `public` = all of them; both keep
+#: Staff ticked (every non-off audience did). Tests of the new rule pass `staff=` / `codes=` directly.
+AUDIENCE_TICKS = {
+    "off": (False, []),
+    "staff": (True, []),
+    "dealer": (True, ["dealer", "sorento_dealer"]),
+    "public": (True, ["dealer", "end_user", "sorento_dealer", "public"]),
+}
+
+
+def seed_access_codes(db, codes, *, inactive=()) -> None:
+    """Catalogue rows for `codes` (sort order = list order) and for `inactive` (is_active false)."""
+    from app.models.access import ContactAccessType
+
+    existing = {str(r[0]) for r in db.query(ContactAccessType.code).all()}
+    for i, code in enumerate(list(codes) + list(inactive)):
+        if code in existing:
+            continue
+        db.add(ContactAccessType(code=code, name=code.replace("_", " ").title(), is_active=code not in inactive, sort_order=i))
+    db.flush()
+
+
 def seed_type(
     db,
     name: str = "Employee Handbook",
     *,
-    audience: str = "staff",
+    audience: str | None = None,
+    staff: bool | None = None,
+    codes=None,
     team_id: str | None = None,
     extensions: str = "pdf,docx,xlsx",
 ) -> AttachmentType:
+    """A type with its AI ticks. `staff` / `codes` set them directly; `audience` (legacy name) maps through
+    AUDIENCE_TICKS. Neither given means Staff ticked, as the old default `audience="staff"`."""
+    if staff is None and codes is None:
+        staff, codes = AUDIENCE_TICKS[audience or "staff"]
     row = AttachmentType(
         id=str(uuid.uuid4()),
         type_name=unique_code(name),
         allowed_extensions=extensions,
-        ai_audience=audience,
+        ai_read_staff=bool(staff),
+        ai_read_codes=list(codes or []),
         ai_escalate_team_id=team_id,
     )
     db.add(row)

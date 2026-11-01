@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Document Access mock v1</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* tokens copied from sorento_crm_frontend/css/config.reui.css (light), same set as CONTACT-BULK-ACCESS mock */
+:root{--background:#fff;--foreground:#09090b;--card:#fff;--primary:#3b82f6;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--input:#e4e4e7;--success:#15803d;--warning:#a16207;--destructive:#dc2626;--radius:.5rem;--hl:#eff6ff;--hlb:#bfdbfe}
+*{box-sizing:border-box}
+body{margin:0;background:#fafafa;color:var(--foreground);font:14px/1.5 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.mocknav{position:sticky;top:0;z-index:70;background:#18181b;display:flex;gap:4px;padding:8px 16px;overflow-x:auto;font-size:13px;align-items:center}
+.mocknav span{color:#71717a;padding:6px 8px 6px 0;white-space:nowrap}
+.mocknav button{background:transparent;border:0;color:#a1a1aa;font:inherit;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.mocknav button.on{background:#3f3f46;color:#fff}
+.mocknav label{color:#a1a1aa;margin-left:auto;white-space:nowrap;display:flex;gap:6px;align-items:center}
+.shell{display:flex;max-width:1440px;margin:0 auto}
+.side{width:220px;flex:none;padding:20px 12px;border-right:1px solid var(--border);background:#fff;min-height:calc(100vh - 44px);font-size:13px}
+.side .h{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted-fg);margin:0 8px 6px}
+.side a{display:block;padding:6px 8px;border-radius:6px;color:var(--foreground);text-decoration:none}
+.side a.on{background:var(--muted);font-weight:500}
+.container{flex:1;min-width:0;padding:20px 16px 120px}
+.crumb{font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg)}
+h1{font-size:20px;font-weight:600;margin:4px 0 16px}
+.card{border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border)}
+.input{height:32px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;font:inherit;font-size:13px;background:#fff;min-width:0}
+select.input{padding-right:6px;cursor:pointer}
+select.input.set{border-color:#93c5fd;background:var(--hl);color:#1d4ed8}
+.grow{flex:1}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:13px}
+th{font-weight:500;color:var(--muted-fg);text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);background:#fafafa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td{padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+th.c,td.c{text-align:center}
+th.c2{white-space:normal;line-height:1.25;vertical-align:bottom}
+#grid td:first-child,#grid th:first-child{position:sticky;left:0;z-index:1;background:#fff}#grid th:first-child{background:#fafafa}
+th.hl{background:var(--hl);color:#1d4ed8}
+td.hl{background:#f8fbff}
+tr.row{cursor:pointer}tr.row:hover td{background:#fafafa}tr.row:hover td.hl{background:#eef5ff}
+.tname{font-weight:500}
+.sub{font-size:12px;color:var(--muted-fg)}
+.tick{display:inline-flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;user-select:none}
+.box{width:16px;height:16px;border:1px solid #d4d4d8;border-radius:4px;background:#fff;display:inline-flex;align-items:center;justify-content:center}
+.box.on{background:var(--primary);border-color:var(--primary)}
+.box.on:after{content:"";width:8px;height:4px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:rotate(-45deg) translate(1px,-1px)}
+.reach{font-size:11px;color:var(--warning);line-height:1}
+.pill{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;background:var(--muted);margin-right:4px;white-space:nowrap}
+.pill.ok{background:#dcfce7;color:#166534}.pill.no{background:var(--muted);color:var(--muted-fg)}
+.pill.warn{background:#fef3c7;color:#92400e}.pill.err{background:#fee2e2;color:#991b1b}.pill.info{background:#e0f2fe;color:#075985}
+.badge{display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:6px;font-size:11.5px;font-weight:500;border:1px solid var(--border);background:#fff;margin:1px 3px 1px 0;white-space:nowrap}
+.badge.hl{border-color:var(--hlb);background:var(--hl);color:#1d4ed8}
+.who{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);background:#fcfdff;font-size:13px}
+.who .k{color:var(--muted-fg);margin-right:6px}
+.foot{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;font-size:13px;color:var(--muted-fg)}
+/* sheet */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:40;display:none}
+.overlay.on{display:block}
+.sheet{position:fixed;top:44px;right:0;bottom:0;width:min(760px,100vw);background:#fff;z-index:45;box-shadow:-10px 0 30px rgba(0,0,0,.15);display:none;flex-direction:column}
+.sheet.on{display:flex}
+.sh{padding:18px 20px 10px;border-bottom:1px solid var(--border)}
+.sh h2{margin:0;font-size:17px;font-weight:600;display:flex;gap:8px;align-items:center}
+.sb{padding:14px 20px;overflow:auto;flex:1}
+.sec{margin-bottom:20px}
+.sec h3{font-size:14px;font-weight:600;margin:0 0 8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:1px solid var(--input);border-radius:var(--radius);font-size:13px;cursor:pointer;background:#fff;user-select:none}
+.chip.on{border-color:#93c5fd;background:var(--hl);color:#1d4ed8}
+.chip.hl{box-shadow:0 0 0 2px #93c5fd inset}
+.sw{width:32px;height:18px;border-radius:99px;background:#d4d4d8;position:relative;display:inline-block;vertical-align:middle;cursor:pointer}
+.sw.on{background:var(--primary)}.sw:after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .15s}.sw.on:after{left:16px}
+.kv{display:grid;grid-template-columns:150px minmax(0,1fr);gap:6px 12px;font-size:13px}.kv .k{color:var(--muted-fg)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid var(--input);background:#fff;font:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted-fg)}
+/* toast (sonner look) */
+.toast{position:fixed;bottom:20px;right:20px;z-index:80;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);padding:12px 14px;font-size:13px;max-width:360px;display:none}
+.toast.on{display:block}
+/* phone */
+.phone{width:375px;margin:0 auto;border:10px solid #18181b;border-radius:36px;background:#fafafa;overflow:hidden;min-height:700px}
+.phone .ph{padding:14px 16px 10px;background:#fff;border-bottom:1px solid var(--border)}
+.pcard{background:#fff;border:1px solid var(--border);border-radius:12px;margin:10px 16px;padding:12px}
+.pcard .top{display:flex;justify-content:space-between;gap:8px;align-items:flex-start;margin-bottom:8px}
+.pcard .chips .chip{height:28px;padding:0 8px;font-size:12.5px}
+/* component map */
+[data-c]:not(.sheet):not(.toast){position:relative}
+body.map [data-c]{outline:1px dashed #f59e0b;outline-offset:2px}
+body.map [data-c]:hover:after{content:attr(data-c);position:absolute;left:0;top:100%;z-index:90;background:#18181b;color:#fde68a;font-size:11px;padding:3px 6px;border-radius:4px;white-space:nowrap;pointer-events:none}
+.notes{max-width:1100px;margin:0 auto;padding:24px 16px 80px;font-size:13.5px}
+.notes h2{font-size:16px;margin:24px 0 8px}
+.notes table{table-layout:auto;background:#fff}.notes td{white-space:normal;vertical-align:top}
+code{overflow-wrap:anywhere;font-size:12px;background:var(--muted);padding:1px 4px;border-radius:4px}
+.view{display:none}.view.on{display:block}
+@media (max-width:900px){.side{display:none}}
+@media (max-width:640px){.kv{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="mocknav">
+  <span>DOC-ACCESS-SIMPLE mock v1</span>
+  <button data-go="page" class="on">1 Page</button>
+  <button data-go="a">2 Preview as CONTACT A</button>
+  <button data-go="c">3 Preview as CONTACT C (company)</button>
+  <button data-go="sheet">4 Type sheet: Direct Access</button>
+  <button data-go="phone">5 Phone 375</button>
+  <button data-go="notes">6 Rule + reuse map</button>
+  <label><input type="checkbox" id="mapToggle"> Show components</label>
+</div>
+
+<!-- ========== DESKTOP PAGE ========== -->
+<div class="view on" id="v-desk">
+<div class="shell">
+  <nav class="side" data-c="Sidebar: config/menu.config.tsx:859-878 (Resource Management children; new entry after Attachment Types)">
+    <div class="h">Resource Management</div>
+    <a>Files</a><a>Trash</a><a>Attachment Types</a><a class="on">Document Access</a>
+  </nav>
+  <main class="container">
+    <div data-c="PageHeader: components/common/PageHeader.tsx:133 (no CTA: nothing to add on this page)">
+      <div class="crumb">Resource Management</div>
+      <h1>Document Access</h1>
+    </div>
+    <div class="card" data-c="Card + DataGrid: components/ui/card.tsx:155, components/ui/data-grid.tsx:456 (tableLayout fixed, columnsResizable)">
+      <div class="toolbar" data-c="DataGrid toolbar: components/ui/data-grid-list-toolbar.tsx">
+        <input class="input" style="width:220px" placeholder="Search types" id="q" data-c="DataGrid search input (same as AttachmentTypesList.tsx)">
+        <select class="input" id="fAi" data-c="SearchableSelect clearable: components/common/SearchableSelect.tsx:167">
+          <option value="">AI reads: any</option><option value="on">AI reads: on</option><option value="off">AI reads: off</option>
+        </select>
+        <div class="grow"></div>
+        <select class="input" id="preview" style="width:300px" data-c="SearchableSelect clearable, server search over contacts (services/contactService list endpoint)">
+          <option value="">Preview as: nobody</option>
+        </select>
+      </div>
+      <div class="who" id="who" style="display:none" data-c="Read-only strip: Badge components/ui/badge.tsx:229 (status pills)"></div>
+      <div class="tablewrap">
+        <table id="grid">
+          <colgroup id="cols"></colgroup>
+          <thead><tr id="head"></tr></thead>
+          <tbody id="body"></tbody>
+        </table>
+      </div>
+      <div class="foot" data-c="DataGrid pagination: components/ui/data-grid-pagination.tsx"><span id="count"></span><span>Rows per page 25</span></div>
+    </div>
+  </main>
+</div>
+</div>
+
+<!-- ========== PHONE ========== -->
+<div class="view" id="v-phone" style="padding:20px 0 80px">
+  <div class="phone">
+    <div class="ph">
+      <div class="crumb">Resource Management</div>
+      <div style="font-size:18px;font-weight:600;margin:2px 0 10px">Document Access</div>
+      <select class="input" style="width:100%" id="previewP"></select>
+    </div>
+    <div id="pwho" style="padding:8px 16px 0;font-size:12.5px"></div>
+    <div id="pbody" data-c="DataGrid list mode at < 640px (cards), same cells as the desktop row"></div>
+  </div>
+</div>
+
+<!-- ========== NOTES ========== -->
+<div class="view" id="v-notes">
+<div class="notes">
+  <h2>The rule (one sentence)</h2>
+  <p><b>A WhatsApp contact reads a document when one of the contact's access types is ticked on the document's type AND is in the document's access levels, and the document is in one of the contact's companies or is shared.</b>
+  Staff (and a contact linked to an active CRM user) read every document of a type with <b>Staff</b> ticked, if they may view Resources. A contact with no access type reads nothing (owner W-Q5 (a)). Sending a file (Direct access, per-contact Document types) is not changed.</p>
+
+  <h2>What changes from today</h2>
+  <table><tr><th>Today</th><th>After</th></tr>
+  <tr><td>Type: <b>AI can read</b> Off / Staff only / Dealers / Everyone, in the Attachment Type dialog (<code>AttachmentTypeFormDialog.tsx:428-441</code>), not visible in the list.</td><td>One tick per access type + Staff, all types on one page. The dialog loses the "AI can read" field; "Escalate to" stays there.</td></tr>
+  <tr><td>"Dealers" = every code except <code>end_user</code> (<code>knowledge_service.py:695</code>), so Sorento / Mocha / Cabana Office count as dealers.</td><td>Exactly the ticked access types. Existing settings are carried over tick for tick (card Q2), so nothing changes on deploy.</td></tr>
+  <tr><td>A document's access levels narrow the type silently.</td><td>Each ticked cell shows how many of the type's documents carry that access type (amber <i>12/15</i>); the sheet lists every document with its levels, editable in place.</td></tr>
+  <tr><td>No way to see what a contact reads; company scope invisible.</td><td><b>Preview as</b> a contact: every row says what that contact reads and why not (access type not ticked, no shared access type, other company, no access type, no company, runs as staff).</td></tr>
+  </table>
+
+  <h2>Element to existing component</h2>
+  <table>
+  <tr><th>Element</th><th>Reuses</th></tr>
+  <tr><td>Sidebar entry "Document Access"</td><td><code>sorento_crm_frontend/config/menu.config.tsx:859-878</code> (Resource Management children, <code>permission: resource.attachment_types.view</code>)</td></tr>
+  <tr><td>Page title</td><td><code>components/common/PageHeader.tsx:133</code></td></tr>
+  <tr><td>Matrix</td><td><code>components/ui/data-grid.tsx:456</code> in <code>components/ui/card.tsx:155</code>, fixed layout, resizable columns; columns from the active access types (<code>contact-access-types/components/ContactAccessTypesAdmin.tsx:45</code> catalogue)</td></tr>
+  <tr><td>Tick cell</td><td>Checkbox in a DataGrid cell, as the row-select checkbox (<code>components/ui/data-grid-table.tsx</code>)</td></tr>
+  <tr><td>Search, "AI reads" filter, "Preview as"</td><td><code>components/ui/data-grid-list-toolbar.tsx</code>, <code>components/common/SearchableSelect.tsx:167</code> (clearable)</td></tr>
+  <tr><td>Preview strip and verdict pills</td><td><code>components/ui/badge.tsx:229</code> (status pill via Badge, Apple Alignment)</td></tr>
+  <tr><td>Type sheet</td><td><code>components/ui/sheet.tsx:219</code></td></tr>
+  <tr><td>Access type chips in the sheet</td><td>Checkbox chips of <code>user-management/contacts/[id]/components/ContactEditDialog.tsx:302-345</code></td></tr>
+  <tr><td>Document access levels (editable per row)</td><td><code>resource-management/attachments/components/AccessLevelsMultiSelect.tsx:30</code></td></tr>
+  <tr><td>Direct access switch</td><td><code>components/ui/switch.tsx:185</code></td></tr>
+  <tr><td>Saved toast</td><td>Sonner toast as every mutation hook (<code>useUpdateMutation</code> pattern)</td></tr>
+  <tr><td>Phone layout</td><td>DataGrid list mode (cards) below 640px</td></tr>
+  </table>
+
+  <h2>Data in this mock</h2>
+  <p>Types, file counts, access levels, companies and access types are the dev copy (sorento_dev_1028, 28 Oct prod clone, read only). Only PDF and DOCX files count as documents (the AI reads those). Contacts are masked (CONTACT A to E, STAFF USER F); each one is a real shape from the copy: A = 129 contacts, B = 80, C = 19, D = 4, E = 3, F = 14. The ticks are an example: on the copy every type is Off today.</p>
+</div>
+</div>
+
+<!-- sheet -->
+<div class="overlay" id="ov"></div>
+<aside class="sheet" id="sheet" data-c="Sheet: components/ui/sheet.tsx:219">
+  <div class="sh">
+    <h2><span id="sTitle">Direct Access</span> <span class="badge" id="sShared">Shared</span><button class="btn ghost" style="margin-left:auto" id="sClose" aria-label="Close">Close</button></h2>
+    <div class="sub" id="sMeta"></div>
+  </div>
+  <div class="sb">
+    <div class="sec">
+      <h3>Who can read</h3>
+      <div class="chips" id="sChips" data-c="Checkbox chips: ContactEditDialog.tsx:302-345 pattern"></div>
+    </div>
+    <div class="sec">
+      <h3 id="sDocsH">Documents</h3>
+      <div class="tablewrap"><table id="sDocs" data-c="DataGrid (compact), access levels cell = AccessLevelsMultiSelect.tsx:30"></table></div>
+    </div>
+    <div class="sec">
+      <h3>Sent as a file</h3>
+      <div class="kv">
+        <div class="k">Direct access</div><div><span class="sw on" id="sDirect" data-c="Switch: components/ui/switch.tsx:185"></span></div>
+        <div class="k">Granted to contacts</div><div id="sGrants"></div>
+      </div>
+    </div>
+  </div>
+</aside>
+<div class="toast" id="toast" data-c="Sonner toast (mutation hook success)"></div>
+
+<script>
+const CODES=[["sorento_office","Sorento Office"],["dealer","Sorento Dealer"],["mocha_dealer","Mocha Dealer"],["mocha_office","Mocha Office"],["cabana_office","Cabana Office"],["cabana_dealer","Cabana Dealer"],["end_user","End User"]];
+const NAME=Object.fromEntries(CODES);NAME.nl_dealer="NL Dealer (inactive)";
+const ALL=CODES.map(c=>c[0]);
+const DEALERS=["dealer","mocha_dealer","cabana_dealer"];
+// [name, files, shared, direct, grants, staff, codes]  (dev copy; ticks = example)
+const TYPES=[
+ ["Certification",121,false,false,3,true,DEALERS],
+ ["Chatbot Media",669,false,false,0,false,[]],
+ ["Combo Image",0,false,false,0,false,[]],
+ ["Complaint Document",0,false,false,0,false,[]],
+ ["Container Status",2,false,false,5,false,[]],
+ ["Direct Access",15,true,true,1,true,ALL],
+ ["[DONT USE THIS] SPO Allocations",30,false,false,0,false,[]],
+ ["GRN",0,false,false,0,false,[]],
+ ["Installation Guide",0,true,false,1,true,ALL],
+ ["Marketing Forms",24,false,false,0,true,[]],
+ ["Packing List",473,false,false,1,false,[]],
+ ["Portal Submission",1130,false,false,0,false,[]],
+ ["Product Photos",3412,false,false,1,false,[]],
+ ["Product Videos",15,false,false,1,false,[]],
+ ["Proforma Invoice",8,false,false,0,false,[]],
+ ["Project Document",11,false,false,0,true,[]],
+ ["Promotion",335,true,false,1,true,ALL],
+ ["Response Attachment",21,false,false,0,false,[]],
+ ["Sales Order Line Attachment",4,false,false,0,false,[]],
+ ["Shipment Line",0,false,false,0,false,[]],
+ ["Stock_List",2,false,false,0,false,[]],
+ ["Technical Specifications",1120,false,false,1,true,DEALERS],
+].map(([name,files,shared,direct,grants,staff,codes])=>({name,files,shared,direct,grants,staff,codes:[...codes]}));
+// readable documents (PDF/DOCX) grouped by access levels + company; "" = shared (company NULL)
+const A7="cabana_dealer,cabana_office,dealer,end_user,mocha_dealer,mocha_office,sorento_office";
+const G=[["Certification",A7,"",88],["Certification","cabana_office,mocha_office,sorento_office","",16],["Certification",A7,"Sorento",12],["Certification","cabana_dealer,cabana_office,dealer,end_user,mocha_dealer,nl_dealer,sorento_office","",4],["Certification","dealer,end_user","",1],
+["Direct Access",A7,"Sorento",8],["Direct Access",A7,"",3],["Direct Access","mocha_dealer,mocha_office","",2],["Direct Access","dealer,sorento_office","",1],["Direct Access","cabana_dealer,cabana_office","",1],
+["Marketing Forms","cabana_office,mocha_office,sorento_office","Sorento",22],["Marketing Forms","cabana_dealer,cabana_office,dealer,mocha_dealer,mocha_office,sorento_office","Sorento",2],
+["Portal Submission","dealer,end_user","",28],["Project Document","dealer,end_user","",10],["Project Document",A7,"Mocha",1],
+["Promotion","end_user","Sorento",53],["Promotion","end_user","",52],["Promotion","sorento_office","",46],["Promotion","dealer","",38],["Promotion","sorento_office","Sorento",37],["Promotion","dealer","Sorento",34],["Promotion","cabana_office","Sorento",20],["Promotion","cabana_dealer","Sorento",19],["Promotion","cabana_dealer","",12],["Promotion","cabana_office","",12],["Promotion","mocha_dealer,mocha_office","",9],["Promotion",A7,"",2],["Promotion",A7,"Sorento",1],
+["Technical Specifications",A7,"Sorento",74],["Technical Specifications",A7,"",6],["Technical Specifications",A7,"Mocha",2]].map(([t,lv,co,n])=>({t,lv:lv.split(","),co,n}));
+// Direct Access documents by name (dev copy)
+const DA=[["@ CABANA CATALOG 2025 (RESEARCHABLE).pdf",A7,"Sorento"],["Cabana Pricetag Template.pdf","cabana_dealer,cabana_office",""],["Iborn Pricetag Template.pdf","mocha_dealer,mocha_office",""],["Mocha Catalogue FA 300924.pdf",A7,""],["Mocha Pricetag Template.pdf","mocha_dealer,mocha_office",""],["NL SERIES CATALOG 2025 (UPDATE_09012025).pdf",A7,"Sorento"],["SORENTO CATALOGUE 2024 (SEARCHABLE)_compressed.pdf",A7,"Sorento"],["Sorento Lite_DIY CATALOG UPDATE_22062026.pdf",A7,"Sorento"],["Sorento Pricetag Template.pdf","dealer,sorento_office",""],["Warranty Policy_Cabana.pdf",A7,"Sorento"],["Warranty Policy_Mocha.pdf",A7,""],["Warranty Policy_Sorento.pdf",A7,"Sorento"],["warranty poster_cabana.pdf",A7,"Sorento"],["warranty_poster Mocha.pdf",A7,""],["warranty_poster_sorento.pdf",A7,"Sorento"]].map(([f,lv,co])=>({f,lv:lv.split(","),co,n:1}));
+const CONTACTS={
+ A:{label:"CONTACT A",codes:["dealer","cabana_dealer","end_user"],comps:["Sorento"],user:false,agent:false},
+ B:{label:"CONTACT B",codes:["end_user"],comps:["Sorento"],user:false,agent:false},
+ C:{label:"CONTACT C",codes:["mocha_dealer","end_user"],comps:["Mocha"],user:false,agent:false},
+ D:{label:"CONTACT D",codes:["sorento_office"],comps:["Mocha","Sorento"],user:false,agent:false},
+ E:{label:"CONTACT E",codes:[],comps:[],user:false,agent:false},
+ F:{label:"STAFF USER F",codes:ALL,comps:["Mocha","Sorento"],user:true,agent:false},
+};
+let previewKey="",openType="Direct Access";
+const $=s=>document.querySelector(s);
+const docsOf=t=>t==="Direct Access"?DA:G.filter(g=>g.t===t);
+const readable=t=>docsOf(t).reduce((s,g)=>s+g.n,0);
+const reach=(t,code)=>docsOf(t).filter(g=>g.lv.includes(code)).reduce((s,g)=>s+g.n,0);
+const fmt=n=>n.toLocaleString("en-US");
+function docVerdict(type,ct,g){
+  if(ct.user) return type.staff?["ok","Reads"]:["no","Staff not ticked"];
+  const k=ct.codes.filter(c=>type.codes.includes(c));
+  if(!g.lv.some(c=>k.includes(c))) return ["no","No shared access type"];
+  if(g.co&&!ct.comps.includes(g.co)) return ["warn","Other company: "+g.co];
+  return ["ok","Reads"];
+}
+function rowVerdict(type,ct){
+  const total=readable(type.name);
+  if(ct.user){ if(!type.staff) return ["no",type.codes.length?"Contacts only":"Off"]; return total?["ok","Reads "+fmt(total)+" of "+fmt(total)+" (as staff)"]:["no","No documents"]; }
+  if(!ct.codes.length) return ["err","No access type"];
+  if(!ct.comps.length) return ["err","No company"];
+  if(!type.codes.length) return ["no",type.staff?"Staff only":"Off"];
+  const k=ct.codes.filter(c=>type.codes.includes(c));
+  if(!k.length) return ["no","Not ticked for "+ct.codes.map(c=>NAME[c]).join(", ")];
+  if(!total) return ["no","No documents"];
+  let r=0,nc=0,oc=0;
+  for(const g of docsOf(type.name)){const v=docVerdict(type,ct,g)[1]; if(v==="Reads")r+=g.n; else if(v.startsWith("Other"))oc+=g.n; else nc+=g.n;}
+  const why=[nc?fmt(nc)+" no shared access type":"",oc?fmt(oc)+" other company":""].filter(Boolean).join(", ");
+  return [r?(why?"warn":"ok"):"err","Reads "+fmt(r)+" of "+fmt(total)+(why?" · "+why:"")];
+}
+function render(){
+  const ct=CONTACTS[previewKey];
+  const q=$("#q").value.toLowerCase(),f=$("#fAi").value;
+  const rows=TYPES.filter(t=>t.name.toLowerCase().includes(q)&&(!f||(f==="on")===(t.staff||t.codes.length>0))).sort((a,b)=>readable(b.name)-readable(a.name)||a.name.localeCompare(b.name));
+  const hl=c=>ct&&!ct.user&&ct.codes.includes(c);
+  $("#cols").innerHTML=`<col style="width:220px"><col style="width:110px">`+(ct?`<col style="width:250px">`:"")+`<col style="width:70px">`+CODES.map(()=>`<col style="width:84px">`).join("")+`<col style="width:140px">`;
+  $("#head").innerHTML=`<th>Type</th><th>Documents</th>`+(ct?`<th class="hl">${ct.label} reads</th>`:"")+`<th class="c c2"><br>Staff</th>`+CODES.map(([c,n])=>`<th class="c c2 ${hl(c)?"hl":""}" title="${n}">${n.replace(" ","<br>")}</th>`).join("")+`<th>Sent as a file</th>`;
+  $("#body").innerHTML=rows.map(t=>{
+    const tot=readable(t.name);
+    const cells=CODES.map(([c])=>{const on=t.codes.includes(c);const r=reach(t.name,c);
+      return `<td class="c ${hl(c)?"hl":""}"><span class="tick" data-t="${t.name}" data-code="${c}"><span class="box ${on?"on":""}"></span>${on&&tot&&r<tot?`<span class="reach" title="${fmt(r)} of ${fmt(tot)} documents carry ${NAME[c]}">${fmt(r)}/${fmt(tot)}</span>`:""}</span></td>`}).join("");
+    const sent=[t.direct?`<span class="pill info">Direct access</span>`:"",t.grants?`<div class="sub">Granted to ${t.grants}</div>`:""].join("")||`<span class="sub">-</span>`;
+    const pv=ct?(()=>{const [cls,txt]=rowVerdict(t,ct);return `<td class="hl" title="${txt}"><span class="pill ${cls}" style="white-space:normal;height:auto;min-height:22px;padding:2px 8px">${txt}</span></td>`})():"";
+    return `<tr class="row" data-open="${t.name}"><td><div class="tname" title="${t.name}">${t.name}</div><div class="sub">${t.shared?"Shared · ":""}${fmt(t.files)} files</div></td><td>${tot?fmt(tot)+" readable":`<span class="sub">none readable</span>`}</td>${pv}<td class="c"><span class="tick" data-t="${t.name}" data-code="staff"><span class="box ${t.staff?"on":""}"></span></span></td>${cells}<td style="white-space:normal">${sent}</td></tr>`;
+  }).join("");
+  $("#count").textContent=`${rows.length} of ${TYPES.length} types`;
+  // who strip
+  const w=$("#who");
+  if(ct){w.style.display="flex";w.innerHTML=whoHtml(ct);}else w.style.display="none";
+  $("#preview").classList.toggle("set",!!ct);
+  renderPhone();renderSheet();
+}
+function whoHtml(ct){
+  return `<span><span class="k">Runs as</span>${ct.user?`<span class="pill info">Staff user (linked)</span>`:`<span class="pill">Contact</span>`}</span>
+  <span><span class="k">Agent on WhatsApp</span>${ct.agent?`<span class="pill ok">On</span>`:`<span class="pill warn">Off</span>`}</span>
+  <span><span class="k">Access types</span>${ct.codes.length?ct.codes.map(c=>`<span class="badge hl">${NAME[c]}</span>`).join(""):`<span class="pill err">None</span>`}</span>
+  <span><span class="k">Companies</span>${ct.comps.length?ct.comps.map(c=>`<span class="badge">${c}</span>`).join(""):`<span class="pill err">None</span>`}</span>`;
+}
+function renderSheet(){
+  const t=TYPES.find(x=>x.name===openType);if(!t)return;
+  const ct=CONTACTS[previewKey];
+  $("#sTitle").textContent=t.name;$("#sShared").style.display=t.shared?"":"none";
+  $("#sMeta").textContent=`${fmt(t.files)} files · ${fmt(readable(t.name))} readable`;
+  $("#sChips").innerHTML=[["staff","Staff"],...CODES].map(([c,n])=>{const on=c==="staff"?t.staff:t.codes.includes(c);const h=ct&&!ct.user&&ct.codes.includes(c);
+    return `<span class="chip ${on?"on":""} ${h?"hl":""}" data-t="${t.name}" data-code="${c}"><span class="box ${on?"on":""}"></span>${n}</span>`}).join("");
+  const docs=docsOf(t.name);const named=t.name==="Direct Access";
+  $("#sDocsH").textContent=`Documents (${fmt(readable(t.name))})`;
+  const lvHtml=lv=>{const act=lv.filter(c=>ALL.includes(c));return act.length===ALL.length?`<span class="badge">All access types</span>`:act.map(c=>`<span class="badge ${ct&&!ct.user&&ct.codes.includes(c)?"hl":""}">${NAME[c]}</span>`).join("")};
+  $("#sDocs").innerHTML=`<colgroup><col style="width:${named?"38%":"14%"}"><col><col style="width:90px">${ct?`<col style="width:190px">`:""}</colgroup><thead><tr><th>${named?"File":"Documents"}</th><th>Access levels</th><th>Company</th>${ct?`<th class="hl">${ct.label}</th>`:""}</tr></thead><tbody>`+
+    docs.map(g=>{const v=ct?docVerdict(t,ct,g):null;const blocked=ct&&!ct.user&&(!ct.codes.length||!ct.comps.length);
+      return `<tr><td title="${g.f||""}">${named?g.f:fmt(g.n)}</td><td style="white-space:normal">${lvHtml(g.lv)}</td><td>${g.co||`<span class="sub">Shared</span>`}</td>${ct?`<td class="hl"><span class="pill ${blocked?"err":v[0]}">${blocked?(ct.codes.length?"No company":"No access type"):v[1]}</span></td>`:""}</tr>`}).join("")+`</tbody>`;
+  $("#sDirect").classList.toggle("on",t.direct);
+  $("#sGrants").innerHTML=t.grants?`${t.grants} contact${t.grants>1?"s":""}`:`<span class="sub">None</span>`;
+}
+function renderPhone(){
+  const ct=CONTACTS[previewKey];
+  $("#pwho").innerHTML=ct?`<div class="who" style="padding:8px 0;background:none;border:0;gap:6px 12px">${whoHtml(ct)}</div>`:"";
+  $("#pbody").innerHTML=TYPES.filter(t=>t.staff||t.codes.length||t.name==="Packing List").map(t=>{
+    const pv=ct?(()=>{const [c,x]=rowVerdict(t,ct);return `<span class="pill ${c}" style="white-space:normal;height:auto;padding:2px 8px">${x}</span>`})():"";
+    return `<div class="pcard"><div class="top"><div><div class="tname">${t.name}</div><div class="sub">${fmt(readable(t.name))} readable · ${fmt(t.files)} files</div></div>${t.direct?`<span class="pill info">Direct access</span>`:""}</div>
+    <div class="chips">${[["staff","Staff"],...CODES].map(([c,n])=>{const on=c==="staff"?t.staff:t.codes.includes(c);return `<span class="chip ${on?"on":""} ${ct&&!ct.user&&ct.codes.includes(c)?"hl":""}" data-t="${t.name}" data-code="${c}">${n}</span>`}).join("")}</div>
+    ${pv?`<div style="margin-top:8px">${pv}</div>`:""}</div>`}).join("")+`<div class="sub" style="padding:4px 16px 16px">Types that are Off are listed after these (filter "AI reads").</div>`;
+}
+function toggle(name,code){
+  const t=TYPES.find(x=>x.name===name);let on;
+  if(code==="staff"){t.staff=!t.staff;on=t.staff;}
+  else{const i=t.codes.indexOf(code);if(i>=0)t.codes.splice(i,1);else t.codes.push(code);on=i<0;}
+  const n=code==="staff"?readable(name):reach(name,code);
+  const who=code==="staff"?"Staff":NAME[code];
+  toast(`<b>${name}</b>: ${who} ${on?"can now read":"no longer reads"} ${fmt(n)} document${n===1?"":"s"}.`);
+  render();
+}
+let tt;function toast(h){const e=$("#toast");e.innerHTML=h;e.classList.add("on");clearTimeout(tt);tt=setTimeout(()=>e.classList.remove("on"),3500);}
+document.addEventListener("click",e=>{
+  const tk=e.target.closest("[data-code]");
+  if(tk){e.stopPropagation();toggle(tk.dataset.t,tk.dataset.code);return;}
+  const r=e.target.closest("tr[data-open]");
+  if(r){openType=r.dataset.open;openSheet(true);}
+});
+function openSheet(on){$("#sheet").classList.toggle("on",on);$("#ov").classList.toggle("on",on);renderSheet();}
+$("#ov").onclick=()=>openSheet(false);$("#sClose").onclick=()=>openSheet(false);
+const opts=`<option value="">Preview as: nobody</option>`+Object.entries(CONTACTS).map(([k,c])=>`<option value="${k}">${c.label} · ${c.codes.length?c.codes.map(x=>NAME[x]).join(", "):"no access type"}</option>`).join("");
+$("#preview").innerHTML=opts;$("#previewP").innerHTML=opts;
+$("#preview").onchange=e=>{previewKey=e.target.value;$("#previewP").value=previewKey;render();};
+$("#previewP").onchange=e=>{previewKey=e.target.value;$("#preview").value=previewKey;render();};
+$("#q").oninput=render;$("#fAi").onchange=render;
+$("#mapToggle").onchange=e=>document.body.classList.toggle("map",e.target.checked);
+function go(k){
+  document.querySelectorAll(".mocknav button").forEach(b=>b.classList.toggle("on",b.dataset.go===k));
+  $("#v-desk").classList.toggle("on",["page","a","c","sheet"].includes(k));
+  $("#v-phone").classList.toggle("on",k==="phone");$("#v-notes").classList.toggle("on",k==="notes");
+  previewKey=k==="a"?"A":k==="c"||k==="sheet"?"C":k==="phone"?"A":"";
+  $("#preview").value=previewKey;$("#previewP").value=previewKey;
+  openType="Direct Access";render();openSheet(k==="sheet");
+}
+document.querySelectorAll(".mocknav button").forEach(b=>b.onclick=()=>go(b.dataset.go));
+render();
+</script>
+</body>
+</html>
