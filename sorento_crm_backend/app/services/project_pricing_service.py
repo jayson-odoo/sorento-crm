@@ -197,8 +197,9 @@ def resolve_floor(
     # The SERIES wins where it has an opinion (AC-C3). A scope quoted from a series is a
     # commercial deal already struck: the price was agreed and the margin with it, so a
     # generic `price_floor_rules` entry must not quietly override the number in the
-    # contract. Where the series is silent - product not named, or missing either half of
-    # the answer - it falls through and the rules apply exactly as they always did (AC-C4).
+    # contract. Where the series is silent - product not named, or no selling price - it falls
+    # through and the rules apply exactly as they always did. A price with no max discount is
+    # NOT silence: it allows no discount (owner ruling Q2, 1 Nov 2026).
     if series_id is not None:
         pricing_for = (
             series_pricing
@@ -924,7 +925,8 @@ def resolve_set_floor(
 ) -> Optional[ResolvedFloor]:
     """The floor for one SET line, or None.
 
-    The series row wins when it states both numbers. Otherwise ONLY the company default
+    The series row wins when it states a selling price (no max discount = no discount, owner
+    ruling Q2). Otherwise ONLY the company default
     (system) rule applies, against the set list price: a set is not a product and has no
     category, so product and category rules never reach it (owner answer Q4 b).
     """
