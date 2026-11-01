@@ -3,7 +3,8 @@
 Counts run under the session's company scope (the route widens it for `company_scope=grants`). The
 preview decides a document with `knowledge_service.contact_readable_clause`, the predicate
 `search_for_contact` uses, and the contact side (codes, agent switch, ambiguity, linked user) with the
-helpers in `chatbot/agent/access.py`, so the page cannot disagree with the bot.
+helpers in `chatbot/agent/access.py` (reached through `app/modules/chatbot/contact_access.py`), so the
+page cannot disagree with the bot.
 """
 from __future__ import annotations
 
@@ -39,7 +40,12 @@ def _allowed_company_ids(db: Session, user_id: Optional[str]) -> Optional[set]:
 def _contact_block(db: Session, contact_id: str, catalogue_codes: list, user_id: Optional[str] = None) -> dict:
     from app.models.access import RespondContact
     from app.models.company import Company, RespondContactCompany
-    from app.services.chatbot.agent.access import _active_access_codes, _row_count, agent_switch_on, linked_active_user
+    from app.modules.chatbot.contact_access import (
+        active_access_codes,
+        agent_switch_on,
+        contact_row_count,
+        linked_active_user,
+    )
 
     allowed = _allowed_company_ids(db, user_id)  # the caller's scope, read before it is lifted below
     with company_scope(db, None):  # a contact row must not read as missing because of the caller's scope
@@ -55,8 +61,8 @@ def _contact_block(db: Session, contact_id: str, catalogue_codes: list, user_id:
         )
         agent_on = agent_switch_on(db, contact)
         staff = linked_active_user(db, str(contact.id)) is not None
-        ambiguous = (not staff) and bool(contact.respond_io_id) and _row_count(db, contact.respond_io_id) > 1
-    held = _active_access_codes(db, str(contact.id))
+        ambiguous = (not staff) and bool(contact.respond_io_id) and contact_row_count(db, contact.respond_io_id) > 1
+    held = active_access_codes(db, str(contact.id))
     codes = [c for c in catalogue_codes if c in held]
     blocked = None
     if not staff:

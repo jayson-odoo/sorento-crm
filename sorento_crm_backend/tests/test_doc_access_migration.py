@@ -86,13 +86,16 @@ def test_migration_adds_ai_read_columns(db):
     assert "ai_audience" in cols, "ai_audience stays in the table, unread"
 
 
-def test_migration_is_the_single_alembic_head():
+def test_migration_is_in_the_graph_and_alembic_has_one_head():
+    """Not pinned AS the head: the next migration stacks on top of this one and must not turn it red."""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     cfg = Config(str(BACKEND / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND / "alembic"))
-    assert ScriptDirectory.from_config(cfg).get_heads() == ["das_0001_ai_read_ticks"]
+    script = ScriptDirectory.from_config(cfg)
+    assert script.get_revision("das_0001_ai_read_ticks") is not None
+    assert len(script.get_heads()) == 1, script.get_heads()
 
 
 # ---------------------------------------------------------------- DAS-BE-2
@@ -135,7 +138,7 @@ def test_carryover_reader_sets_unchanged(db):
     from app.models.base import company_scope
     from app.models.resources import Attachment, AttachmentType
     from app.services import knowledge_service as ks
-    from app.services.chatbot.agent.access import _active_access_codes
+    from app.modules.chatbot.contact_access import active_access_codes
 
     active = ["end_user", "dealer", "sorento_dealer", "mocha_dealer", "sorento_office"]
     seed_access_codes(db, active, inactive=["nl_dealer"])
@@ -172,7 +175,7 @@ def test_carryover_reader_sets_unchanged(db):
         pk: {str(r[0]) for r in db.execute(text("SELECT company_id FROM respond_contact_companies WHERE respond_contact_id = :c"), {"c": pk})}
         for pk in contacts.values()
     }
-    codes_of = {pk: sorted(_active_access_codes(db, pk)) for pk in contacts.values()}
+    codes_of = {pk: sorted(active_access_codes(db, pk)) for pk in contacts.values()}
     assert "nl_dealer" not in codes_of[contacts["both_companies"]]
 
     def company_ok(pk, att_company):

@@ -143,10 +143,12 @@ def test_ac_0_1_the_revision_id_fits_and_alembic_has_one_head():
     )
     assert len(revision) <= 32, revision
 
+    # The combo migration is in the graph and the repo has one head. It is not pinned AS the head:
+    # every later migration stacks on top of it (#2073's das_0001 did, and turned this red).
     script = ScriptDirectory.from_config(Config(str(BACKEND / "alembic.ini")))
+    assert script.get_revision(revision) is not None, revision
     heads = script.get_heads()
     assert len(heads) == 1, heads
-    assert heads == [revision], "the combo migration is the single head of this lane"
 
 
 # --------------------------------------------------------------------------- AC-1.1

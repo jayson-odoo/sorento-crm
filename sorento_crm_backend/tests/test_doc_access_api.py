@@ -391,7 +391,7 @@ def test_preview_requires_contacts_view(api):
 def test_preview_reads_matches_search_for_contact(api):
     """Parity: the preview's `reads` equals the distinct documents search_for_contact can return."""
     from app.services import knowledge_service as ks
-    from app.services.chatbot.agent.access import _active_access_codes
+    from app.modules.chatbot.contact_access import active_access_codes
 
     db, mocha, contact, types = _preview_world(api)
     t = types["reads"]
@@ -411,7 +411,7 @@ def test_preview_reads_matches_search_for_contact(api):
 
     with company_scope(db, frozenset({SORENTO_COMPANY_ID, mocha})):
         out = ks.search_for_contact(
-            db, access_codes=_active_access_codes(db, contact["pk"]), query="q", embed=query_embed, top_k=ks.MAX_TOP_K
+            db, access_codes=active_access_codes(db, contact["pk"]), query="q", embed=query_embed, top_k=ks.MAX_TOP_K
         )
     returned = {p["text"] for p in out["passages"]}
     assert returned == {"passage of p1.pdf", "passage of p2.pdf", "passage of p3.pdf"}
