@@ -123,7 +123,8 @@ only non-zero counts in this order: `1 partial`, `1 rejected`. "line" is singula
 - **AC-RF-52** Upgrade is idempotent. Downgrade restores `oisn_0001`'s values only on a row still holding
   this revision's values.
 - **AC-RF-54** The reserved template's `description` no longer mentions the balance: upgrade sets it, downgrade restores
-  it, and an admin-edited description is left alone both ways.
+  it, and an admin-edited description is left alone both ways. The same words go from the trigger's description in
+  `automation_triggers.py`.
 - **AC-RF-53** The revision id is at most 32 characters. The file never contains either full template code as
   one token (built from two halves, as `oisn_0001` does: other OI tests scan for that token).
 
@@ -158,6 +159,23 @@ written by the list) and a request id (written by the one-OI email link, includi
   there is no OI detail return from Lines to cover.)
 - **AC-RF-88** With no `inquiry_no`, the toggle stays as it is: a clean URL, since the two screens' other filters mean different
   things.
+
+- **AC-RF-89** "Select all N" then Confirm on Lines with the chip on acknowledges exactly the rows of those OIs, with no 422
+  (`AcknowledgeFilter` forbids unknown keys).
+- **AC-RF-90** A chip session never changes the remembered Lines view, before or after the chip is removed: the next plain
+  Lines visit opens as it did before. After removing the chip in that session, the list shows the whole book with `ack` All.
+- **AC-RF-91** Narrowing by hand with the chip on survives a reload and a return from an SO line page: a real row state and a
+  hand-picked To confirm stay. Only a Documents state value (`outstanding`, `completed`, `all`) is ignored as a row state.
+- **AC-RF-92** Pressing the view button already active does nothing: no URL change, `doc_state` intact.
+- **AC-RF-93** With `inquiry_no` in the URL, `reserve` is also kept across the toggle both ways. It means the same on both
+  screens. Without `inquiry_no`, the toggle stays clean (AC-RF-88).
+
+Rulings from the fix-round review (lead, 1 Nov):
+- **Unlink all stays company-wide with the chip on.** Its dialog says "across the whole company", and location and agent filters
+  already behave this way, so it is out of scope for a filter that came from an email. It is the only Lines action the chip does not narrow.
+- A hand-changed line filter on a detail page opened from `reserve=needs_reserve` goes back to "Request to reserve" on reload
+  or tab return, because AC-RF-81 keeps that param for prev/next. Accepted: the walk matters more.
+- The Lines `inquiry_no` has no per-value length check, unlike Documents: a bound parameter behind the view permission, no harm.
 
 A one-OI email link names no list, so there is nothing to walk unless that OI is on the user's default list page: prev/next
 stays hidden there, as it does for any deep link (`hooks/useListPager.ts`), and changing the line filter does not change that.
