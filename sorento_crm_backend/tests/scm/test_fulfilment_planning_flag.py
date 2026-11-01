@@ -480,7 +480,7 @@ def test_a_line_at_a_flagged_off_bin_is_unplannable_with_the_verdict():
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         group, _sites = _group_sites(db)
-        off = _warehouse(db, f"ZZTOFF-{group}", fulfilment_planning=False)
+        off = _warehouse(db, f"ZZTOFF-{group}", segment="project", fulfilment_planning=False)
         _stock(db, product, off, on_hand=1000)
         db.commit()
 
@@ -506,7 +506,7 @@ def test_confirming_a_line_at_a_flagged_off_bin_is_refused():
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
         group, _sites = _group_sites(db)
-        off = _warehouse(db, f"ZZTOFC-{group}", fulfilment_planning=False)
+        off = _warehouse(db, f"ZZTOFC-{group}", segment="project", fulfilment_planning=False)
         _stock(db, product, off, on_hand=1000)
         db.commit()
 
