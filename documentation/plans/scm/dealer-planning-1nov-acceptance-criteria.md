@@ -11,7 +11,8 @@ Plan: `PLAN-dealer-planning-1nov.md`.
 - **AC-5** A consignment line at its own flagged-off bin behaves exactly as today: never the verdict, proposal is a borrow at its own bin, no Buy, no purchasing row.
 - **AC-6** BRW stays flagged off and out of planning reads: no project line's proposal, netting or Stock Debt figure changes because of this PR.
 - **AC-7** A BRW line goes through decide, confirm and OI preview without a refusal.
-- **AC-7a** A line at its own pool does not net its own demand against that pool, and every other line's demand there stays netted. 10 on hand and 10 ordered is Reserve 5 + Buy 5 at the 50% default, never Buy 10.
+- **AC-7a** A line at its own pool does not net its own demand against that pool, and every other line's demand there stays netted. 10 on hand and 10 ordered is Reserve 5 + Buy 5 at the 50% default, never Buy 10. The answer is the same on the line's sheet, on the board alone, and on the board with other lines of the product.
+- **AC-7b** What goes back is what the pool's book counted: a closed, non-transferable or covered line, or a line at a retired pool, adds nothing. Another line never reads this line's add-back.
 - **AC-8** A line still unplannable shows its real reason: flagged-off bin reads "Outside fulfilment planning", no location reads "Needs a location". Same in the Verdict pill, the Suggested column, its sort text and the row's disabled-checkbox reason.
 
 ## Retail orders, only if crew decides to widen (not in PR 1)

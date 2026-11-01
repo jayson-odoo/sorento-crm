@@ -1,6 +1,6 @@
 # PLAN: Dealer sales orders plannable on Fulfilment Planning
 
-**Status:** PR 1 (#2062) built, browser pass done, hand test next. PR 2 and PR 3 wait on the owner's answers to the behaviour card. Tracks: PR 1 S, PR 2 M unless the permission question makes it L, PR 3 M.
+**Status:** PR 1 (#2062) repaired after review, re-review and browser pass on the final head next. PR 2 and PR 3 answered, start after #2062 merges. Tracks: PR 1 S, PR 2 M, PR 3 M.
 
 UAC: `dealer-planning-1nov-acceptance-criteria.md` (beside this file).
 
@@ -40,7 +40,7 @@ Retail is what dealer agents sell: 1,559 open dealer-segment SOs have a retail a
 ## PR 1
 
 1. Exemption in `outside_fulfilment_planning`, using `pool_predicate.is_site_pool`.
-2. **Own-pool netting (found while tracing, proved by running it).** A line at a pool is inside that pool's book, so 10 on hand and 10 ordered read net 0 and proposed Buy 10. `_stands_on_its_own_pool` in `project_supply_service.py` puts the line's owed quantity back, the arithmetic `_group_offer` does for a group (captain's rule, 26 Aug 2026). It is applied in `_apply_group_nets` and `_unit_fact`, so the walk, the board and the confirm check read one figure. A line at a project bin that draws the pool is untouched.
+2. **Own-pool netting (found while tracing, proved by running it, repaired after review).** A line at a pool is inside that pool's book, so 10 on hand and 10 ordered read net 0 and proposed Buy 10. `_add_back_own_pool_demand` in `project_supply_service.py` puts back what the pool's book counted for the line, read with the book's own predicate, so a closed, non-transferable or covered line adds nothing. The add-back is that line's alone: the walk's shared net and share ledgers hold the true figures, and it joins them only for the line that earned it. A line at a project bin that draws the pool is untouched.
 3. Real reason in the frontend. A flagged-off bin reads "Outside fulfilment planning", the reason the server already sends. A line with no location keeps "Needs a location". The cell count and the filter read "not plannable", because they cover both.
 4. Regression: consignment borrow unchanged.
 5. Guide: `documentation/user-guides/supply-chain/plan-undecided-lines.md`.
@@ -56,9 +56,12 @@ Results for a line of 10 at its own pool, 50% default share, due within the wind
 
 ### Known limits, left on purpose
 
-- **The dealer share still caps a project-class line at BRW.** It is the written rule for a project line (`available_for_project`), and only project-class lines reach the board in this PR. Retail lines are the ones it makes no sense for, so that decision belongs to the retail PR.
-- **Two dates of one product on one order at its own pool** read cautiously: the walk's ledger is seeded once per product, so the later date can propose more Buy than strictly needed. A planner can amend it.
-- **Own-arrival credit stays 0 at a pool**, because `_on_hand_at` reads the group list, which is empty for a pool. The line falls through to the pool share. Named by the trace at `project_supply_service.py:3852`, not separately tested.
+- **The dealer share still caps a project-class line at BRW**, the written rule for a project line (`available_for_project`). The owner confirmed this on 1 Nov (card Q1). Retail lines at their own location are exempt in PR 2.
+- **A planner can still amend to more than the suggestion.** Reserve at the line's own location is bounded by free stock, not the share (`boardAmend.ts:906`), and confirm accepts it. A person decided it, so it stays.
+- **The stock pop-up can disagree with the suggestion on a line at a pool.** The location row prints Available, and the payload's "available for project" reads the raw net (`project_fulfilment_board_service.py:5290`, `project_supply_service.py` cell rows). The suggestion and its proof are right. PR 2 revisits this with the Q1 exemption.
+- **Another pool lends a line at a pool nothing while the pools as a whole are short.** The add-back is what the line stands on, not a claim on another pool's stock.
+- **Own-arrival credit stays 0 at a pool**, because `_on_hand_at` reads the group list, which is empty for a pool. The line falls through to the pool share. Not separately tested.
+- **An unset-segment bin that is nobody's pool** plans without seeing its own stock: it takes a pool share or a Buy. Dev copy has no open project-class line at one.
 
 ## PR 2 (owner ruling, 1 Nov 2026)
 
@@ -68,7 +71,14 @@ Retail orders at dealer-segment locations work end to end in Fulfilment Planning
 
 The order inquiry handover email routes by sales order class: retail to dealer purchasing, project unchanged. To and Cc are explicit, and the owner edits them in System Management > Automation. The owner creates the retail automation row himself after release; no seed carries recipients.
 
+## Answers from the owner and crew, 1 Nov (card)
+
+- Q1 (a): no dealer share on a retail line at its own dealer location. Other locations and project-class lines at BRW keep it.
+- Q2 (a): the Customer Service role gets `projects.projects.view`, `projects.projects.edit` and `scm.dashboard.view` in an additive migration, so production gets it on release. Pipeline and forecasts become visible to the role, accepted. Security review runs.
+- Q3 (a): "other" counts as retail. No class stays off the board with a true reason.
+- Q4 (a): retail email To dealer purchasing, Cc project purchasing and the raiser. The undo email follows the same class rule.
+- Q5 (a): Type filter on the Fulfilment Planning list only, multi-select.
+
 ## Open
 
-- PR 2 and PR 3 behaviour card: filed with crew 1 Nov, waiting on answers.
-- Branches, agreed with crew: `crew/dealer-planning-retail` and `crew/dealer-planning-oi-route`, cut from main after #2062 merges.
+- Branches, agreed with crew: `crew/dealer-planning-retail` and `crew/dealer-planning-oi-route`, cut from main after #2062 merges. Red tests prepared locally until then.
