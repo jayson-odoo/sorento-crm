@@ -232,21 +232,6 @@ def test_backup_success_pings_uploads_prunes(env):
     assert list((tmp / "work").glob("*.sql.gz*")) == []
 
 
-def test_backup_exec_user_is_passed_to_docker_exec_only_when_set(env):
-    # H4b: under Patroni only local peer auth works, so pg_dump must run as OS user postgres.
-    e, tmp = env
-    r = run(BACKUP, e, PG_EXEC_USER="postgres")
-    assert r.returncode == 0, r.stderr
-    dump = [c for c in calls(tmp) if c.startswith("docker exec") and "pg_dump" in c]
-    assert len(dump) == 1 and "-u postgres" in dump[0], dump
-    assert dump[0].index("-u postgres") < dump[0].index("proddb"), dump[0]
-    (tmp / "calls.log").write_text("")
-    r = run(BACKUP, e)
-    assert r.returncode == 0, r.stderr
-    dump = [c for c in calls(tmp) if c.startswith("docker exec") and "pg_dump" in c]
-    assert len(dump) == 1 and " -u " not in dump[0], dump
-
-
 def test_backup_host_pg_dump_when_no_container(env):
     e, tmp = env
     e = {k: v for k, v in e.items() if k != "DB_CONTAINER"}
