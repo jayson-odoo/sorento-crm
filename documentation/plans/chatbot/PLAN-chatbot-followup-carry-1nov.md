@@ -1,6 +1,6 @@
 # PLAN: a follow-up keeps the customer the user picked (CHATBOT-FOLLOWUP-CARRY, 1 Nov 2026)
 
-**Status: reviewer round 1 fixed, re-review and console pass pending. Small fix track (no migration, no auth/RBAC change, no new ingest surface). Size S.**
+**Status: review rounds 1 and 2 fixed, regression, re-review and console pass pending. Small fix track (no migration, no auth/RBAC change, no new ingest surface). Size S.**
 UAC: `chatbot-followup-carry-acceptance-criteria.md`.
 
 ## Owner ruling (1 Nov ~16:25, "follow up yes")
@@ -54,19 +54,23 @@ ids the report actually ran on, never from re-reading an entity or a name.
 ## Fix
 
 1. `with_held` (`_follows_up`): the stamp also turns on for `modify` naming no customer, and for `replace_combine` naming no
-   customer while a customer is held. A ranking frame stays off (its own rules) unless it is filtered to a customer and not stale.
+   customer while a customer is held. A ranking frame stays off (its own rules) unless it is filtered to a customer. A `stale` frame
+   counts: a turn that said a line and ran nothing is not on the owner's list of what replaces a customer.
 2. **The stamp is the only source of a held customer**, in `_settle`, even when the frame is the source of the period and filters.
    An open ask the message replaced is newer than a ranking still on screen, so an older customer cannot come back through the frame.
 3. `_customer_stays`: the customer goes when the message named a customer, `self_reference` is true, a pick answered this turn
    (`ranking_pick`), the parser widened customers to all (`broaden_axis`, or `ranking_drill` global: "global when it says so"), or
    the axis is customer. `_widened` learns `customer`.
-4. "all customers" flagged as a refine is a new ask on the axis on screen, so it asks what it owes. Before this it would have run a
-   company total on the held basis with nothing asked.
-5. `_refine`: a customer named replaces the held one, and "my ..." takes the contact's own accounts, not the customer held.
+4. `_refine` is every way in for a refine, flagged by the parser or set inside `_settle`. It drops the customer on "all customers"
+   and keeps the rest (R0), and once the customer is gone it asks the company, as a fresh ask does (`_owes_company`,
+   `_company_question_fields`, one copy). A first attempt rewrote this into a fresh ask: it missed two blocks that set the refine
+   again and lost the direction, location and comparison.
+5. `_refine`: a customer of its own (named, or a pick) replaces the held one and drops a company held for it. "my ..." takes the
+   contact's own accounts, not the customer held; "my sales to <customer>" keeps that customer.
 6. `company` stays only when the message has no subject of its own: a customer named may be in the other company.
 7. The basis and any measure on screen stay **for a customer that stays** (`_HELD_CUSTOMER_KEYS`), so "what about last month" does
    not ask the basis again. Decided from S6c (`_settle`), the engine's R8 note and `_refine`, which all keep them; the reply's
-   header names the basis, so it is not a silent default. A company total, a customer axis and a stale frame still ask.
+   header names the basis, so it is not a silent default. A company total and a customer axis still ask.
 8. `lanes/business/__init__.py`: a sales analysis over a customer that stays skips the company total's own basis question. That
    question carries no customer (`sales_basis_ask.CARRIED`), and this is not a company total.
 
@@ -75,6 +79,8 @@ ids the report actually ran on, never from re-reading an entity or a name.
 - A follow-up over a ranking with no refine flag runs a total on the held customer and period, not the ranking again: that is the
   parser's reading (`ranking_refine` null, no axis, the sales label), and the ruling is about the customer and the period.
 - "by customer" over a customer's total drops the customer: the axis's own filter is never held, as for every other axis.
+- A named customer's one-row ranking on a customer axis, then "how about ordered": no customer held, as the customer is that ranking's
+  ranked side. Read in review, not measured live.
 - A count with no axis over a held total ("top 5" with no grain, on the sales ranking label) still gets the catalogue line, as on main:
   there is no total to hold a count (AC-OR9), and the stamp is off. Not measured live.
 - `warehouse_codes`, `spec` and `customer_agent_ids` are still not held. Not measured in this lane; the ruling is about the customer.

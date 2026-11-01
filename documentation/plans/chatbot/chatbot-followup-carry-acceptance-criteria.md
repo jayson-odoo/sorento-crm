@@ -10,8 +10,9 @@ the sales basis, and sees the report on every picked ledger.
 - **AC-5.** "by product": same ledgers, same period, the product axis.
 - **AC-6.** A ranking held for a customer: "how about ordered" stays on that customer and period.
 - **AC-7.** A new customer named replaces the held one, and only that customer's ids run, whatever the parser's refine flag says.
-- **AC-8.** "all customers" drops the customer. It runs on nothing held, and asks what a company total owes: the basis if none is
-  named, and the company when there is no other subject.
+- **AC-8.** "all customers" drops the customer, and never runs a company figure unasked: the company is asked when there is no other
+  subject. A fresh read also asks the basis if none is named. A parser refine keeps the rest of what is on screen (R0).
 - **AC-9.** A topic reset ("start over ...") drops the customer and the period.
 - **AC-10.** A code or name never brings in another row: the ids on the follow-up are exactly the ids of the report before it.
 - **AC-11.** A customer dropped stays dropped: a ranking still on screen for an older customer never brings it back.
+- **AC-12.** A turn that failed between the report and the follow-up changes nothing: the customer stays.
