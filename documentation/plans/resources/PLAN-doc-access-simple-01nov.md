@@ -1,7 +1,8 @@
 # PLAN: DOC-ACCESS-SIMPLE - one place to set who can read a document type, with a "who can read this?" preview
 
-Status: MOCK v1 + CARD v1 FILED 1 Nov (Waiting:owner). Nothing built. Track: full (re-sized L on the card: one
-migration + one new screen + an access-control rule change; security-reviewer required).
+Status: BUILD 1 Nov. Mock v1 approved (owner 20:37 "Ok"), card Q1-Q5 all (a) (owner 20:4x "Doc all a"). UAC:
+`doc-access-simple-acceptance-criteria.md`. Next: tester red tests. Track: full (L: one migration + one new screen +
+an access-control rule change; security-reviewer required).
 
 Lane: `crew/doc-access-simple`. Follows `PLAN-agentic-knowledge-w1-01nov.md` section "Access control lane" (:151-158)
 and owner ruling W-Q5 (a) (`PLAN-agentic-knowledge-p2-31oct.md:129-135`): no per-contact type grant for AI reads;
@@ -80,9 +81,7 @@ Rule after the change (one sentence): **a contact reads a file when one of the c
 the file's type AND is in the file's access levels, and the file is in one of the contact's companies or shared.**
 Staff: the Staff tick + `resource.attachments.view`. Sending files is unchanged.
 
-Data: `attachment_types.ai_readers` JSONB (list of codes, plus `staff`) replaces `ai_audience`; backfill keeps
-today's behaviour exactly (off -> [], staff -> [staff], dealer -> staff + every active code except end_user,
-public -> staff + every active code). Details after the owner approves the mock.
+Data: two columns replace `ai_audience` (see Design); backfill keeps today's behaviour exactly.
 
 ## Behaviour card v1 (filed 1 Nov with mock v1)
 
@@ -148,6 +147,96 @@ public -> staff + every active code). Details after the owner approves the mock.
   the same ticks. **Rec (a)**: W-Q5 kept sending separate, and (b) changes what dealers receive today; it can be
   its own lane.
 
-## Open (owner)
+## Owner answers (1 Nov)
 
-Mock v1 + card v1 in the crew ask. Build starts only after the owner approves the mock and answers Q1-Q5.
+Mock v1 approved 20:37 ("Ok"). Q1-Q5 all (a), confirmed 20:4x ("Doc all a"). Q2 note from crew: the carry-over must
+be proven no-change by a before/after reader count test on a dev-copy migration (DAS-BE-3).
+
+## Design
+
+### Data (migration `das_0001_ai_read_ticks`, chained onto main's head)
+
+- `attachment_types.ai_read_staff BOOLEAN NOT NULL DEFAULT false` and `ai_read_codes JSONB NOT NULL DEFAULT '[]'`.
+  Two columns, not one list holding a `staff` marker: access codes are admin-created
+  (`contact_access_type_service.py:224-240`), so a code named `staff` could collide.
+- Backfill in the migration, from `ai_audience` and the ACTIVE catalogue at migration time (sort order): off -> (f,
+  []); staff -> (t, []); dealer -> (t, active codes minus `end_user`); public -> (t, all active codes). Equal to
+  today's rule because the contact side is already filtered to active codes (`agent/access.py:171-188`).
+- `ai_audience` stays in the table and is no longer read or written (expand/contract; dropping it would break main's
+  code on the shared dev DB). Drop: backlog item.
+- The migration module exposes its backfill as a function so the carry-over test and the dev-copy script call the
+  same code the migration runs.
+
+### Rule (BE `services/knowledge_service.py`)
+
+- One predicate function `contact_readable_clause(codes)`: OR over the contact's active codes c of
+  `ai_read_codes ? c AND access_levels ? c` (the SAME code on the type and the file; at most ~8 codes). Used by
+  `search_for_contact` and by the preview counts, never copied.
+- `ai_on(type)` / its SQL form: `ai_read_staff OR jsonb_array_length(ai_read_codes) > 0`. Used by `queue_read`
+  (:495-507), `read_block_reason` (:510-), `update_type` (`resources_service.py:566-595`, the off -> on re-queue).
+- Staff `search()` and its hand-off team query: `ai_read_staff IS TRUE` replaces `ai_audience IN READABLE_AUDIENCES`
+  (:659, :664). Permission check unchanged.
+- Readable document = not deleted and filename extension pdf or docx, the reader's own test (:341-342), as one
+  helper.
+
+### API (BE `api/v1/resources/`)
+
+- `PUT /attachment-types/{id}` (existing, `resource.attachment_types.edit`): accepts `ai_read_staff`,
+  `ai_read_codes`, `is_direct_access`. Codes validated against the active catalogue (400 naming the bad code),
+  de-duplicated, stored in catalogue order. Response adds the three fields, drops `ai_audience`.
+- `GET /document-access` (`resource.attachment_types.view`; with `contact_id` also `user_management.contacts.view`):
+  rows for every type + `access_types` + `contact` (shape in DAS-BE-9/10). Not a DataGrid list endpoint: the type
+  catalogue is small (22 rows on the dev copy) and the page needs every row for the matrix, so no list-query
+  registration. Counts under `company_scope=grants` (`widen_if_requested`, `company_scope_resolver.py:556`).
+- `GET /document-access/{type_id}/documents` (same permissions): the sheet's paginated document list.
+- New service `services/document_access_service.py` holds the matrix + preview; it calls the knowledge predicate
+  and the agent access helpers (`_active_access_codes`, the agent switch and ambiguity checks from
+  `agent/access.py:75-112`; extract a small shared helper for the switch check rather than copy it).
+
+### FE (`FE/resource-management/document-access/`)
+
+- `page.tsx` + `components/DocumentAccessGrid.tsx` (DataGrid), `components/DocumentAccessSheet.tsx` (Sheet),
+  `hooks/useDocumentAccessQuery.ts`, `services/documentAccessService.ts` (contract at the top). Ticks and the Direct
+  access switch save through the existing attachment-type update service/hook; document levels through the existing
+  attachment update. Contact picker: the existing contacts list service with server search.
+- `config/menu.config.tsx`: entry after Attachment Types in both menus (:875, :2389).
+- `AttachmentTypeFormDialog.tsx`: remove the "AI can read" field (:428-441) and `ai_audience` from its schema/types.
+
+### Slices (one lane, one PR; the tester writes all red tests first, then ONE coder)
+
+- S1 BE: migration + model + schemas + rule + carry-over (DAS-BE-1..8).
+- S2 BE: document-access endpoints + service + preview parity (DAS-BE-9..12).
+- S3 FE: page, sheet, menu, dialog field removal (DAS-FE-1..8).
+- S4 docs: guide pages (DAS-DOC-1).
+
+Tickets: the slices above are the queue; no separate GitHub issues (one lane = one PR, crew tracks the lane).
+Phase 1 (FE against mocks) is the approved Lavish mock: the crew contract for L lanes puts the red tests before
+any code, so the FE is built in Phase 2 against the tester's vitest. Recorded for the PR description.
+
+### Test list (captain's, one line per AC)
+
+- DAS-BE-1 `test_migration_adds_ai_read_columns`: columns exist with the defaults; revision id <= 32 chars.
+- DAS-BE-2 `test_backfill_maps_each_audience`: four seeded types map exactly as listed, inactive code excluded,
+  catalogue order.
+- DAS-BE-3 `test_carryover_reader_sets_unchanged`: old-rule pairs (test-local SQL of today's rule) == new-rule pairs
+  after the backfill function; staff per type unchanged. Plus the dev-copy script run (captain, evidence).
+- DAS-BE-4 `test_contact_needs_same_code_on_type_and_file`, `test_office_code_reads_only_when_ticked`,
+  `test_brand_code_reads_brand_file`.
+- DAS-BE-5 `test_no_code_reads_nothing`, `test_codes_not_ticked_read_nothing`.
+- DAS-BE-6 `test_staff_reads_only_staff_ticked_types`, `test_handoff_teams_only_staff_ticked`.
+- DAS-BE-7 `test_first_tick_queues_files`, `test_last_untick_queues_nothing`, `test_read_block_reason_off_type`.
+- DAS-BE-8 `test_put_ai_ticks_saves_and_returns`, `test_put_unknown_or_inactive_code_400`,
+  `test_put_dedupes_and_orders`, `test_put_direct_access`, `test_put_requires_edit_permission`,
+  `test_response_has_no_ai_audience`.
+- DAS-BE-9 `test_matrix_rows_counts_and_reach`, `test_matrix_requires_view_permission`,
+  `test_matrix_counts_only_granted_companies`.
+- DAS-BE-10 `test_preview_contact_block`, `test_preview_verdicts_each_kind`, `test_preview_requires_contacts_view`,
+  `test_preview_reads_matches_search_for_contact` (parity).
+- DAS-BE-11 `test_documents_list_verdicts_and_pagination`, `test_documents_unknown_type_404`.
+- DAS-BE-12 run the two global guard files.
+- DAS-FE-1 vitest: menu entry present with the permission.
+- DAS-FE-2..5 vitest on `DocumentAccessGrid` / `DocumentAccessSheet` with a mocked service: columns from
+  `access_types`, amber reach, tick calls update with the new list + toast text, error reverts, read-only without
+  edit, preview pill text per verdict, strip, column highlight, sheet sections, Direct access switch.
+- DAS-FE-6 update `AttachmentTypeFormDialog.ai.test.tsx`: no "AI can read" field, payload has no `ai_audience`.
+- DAS-FE-7/8 browser pass (agent-browser 1280 + 375), plus a vitest that no rendered text matches a UUID.
