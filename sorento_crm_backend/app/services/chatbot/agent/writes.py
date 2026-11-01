@@ -480,7 +480,9 @@ def _args_problem(definition: WriteDef, args: Any) -> str | None:
     return None
 
 
-def propose_step(db, ctx, name: str, args: Any, *, seen_ids: set[str]) -> tuple[ToolResult, dict | None]:
+def propose_step(
+    db, ctx, name: str, args: Any, *, seen_ids: set[str], loop_args: dict | None = None
+) -> tuple[ToolResult, dict | None]:
     """Check a write call and read the record as it is now. Never writes. Success returns the
     "proposed" result and the step to store; any failure returns a typed result and no step."""
     definition = WRITES.get(name) if isinstance(name, str) else None
@@ -494,6 +496,9 @@ def propose_step(db, ctx, name: str, args: Any, *, seen_ids: set[str]) -> tuple[
     bad_id = _check_ids(args, seen_ids)
     if bad_id is not None:
         return bad_id, None
+    # Values the loop sets (never the model, which `_args_problem` already refused to accept): they travel
+    # with the step and are read by the lookup and the execute.
+    args = {**args, **(loop_args or {})}
     try:
         before = read_before_all(db, ctx, definition, args)
     except Exception as exc:  # noqa: BLE001
@@ -1753,6 +1758,21 @@ RAW_TRANSCRIPT_CHARS = 4000
 _INVISIBLE = re.compile("[\ufe00-\ufe0f\U000e0100-\U000e01ef\u034f\u115f\u1160\u3164\uffa0\u2800]")
 
 
+_IDEA_NUMBER = re.compile(r"(?:IDEA-)?\d{1,12}")
+
+
+def idea_number(value: Any) -> str | None:
+    """An idea number from ss as it may appear in a reply: an int, or digits with the optional `IDEA-` prefix
+    ss sends (`IDEA-0184`). Anything else is None, so ss text can never reach the customer through it."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return str(value)
+    if isinstance(value, str) and _IDEA_NUMBER.fullmatch(value):
+        return value
+    return None
+
+
 def strip_invisible(value: str) -> str:
     """Format characters and the look-blank characters removed, so what is read is what is sent."""
     return _INVISIBLE.sub("", "".join(c for c in value if unicodedata.category(c) != "Cf"))
@@ -1770,6 +1790,14 @@ _IDEA_PROPS = {
     "use_cases": {"type": "array", "items": {"type": "string"}},
     "current_workaround": {"type": "string", "maxLength": MAX_NOTE_CHARS},
 }
+
+
+def _idea_is_test(args: dict) -> bool:
+    """Is this create a test idea? The turn decides (the loop stores `_is_test` with the step, never the
+    model): a console turn is a test turn and makes a test idea, a live (WhatsApp) turn a real one. A step
+    that carries no value (a caller outside the loop) follows the global default `IDEA_IS_TEST`."""
+    value = args.get("_is_test")
+    return value if isinstance(value, bool) else IDEA_IS_TEST
 
 
 def _idea_given(args: dict) -> dict:
@@ -1856,11 +1884,11 @@ def _idea_create_read_before(db, user: dict, args: dict) -> dict:
                     "text": _idea_text(given),
                     "submitter_crm_user_id": user["linked_user_id"],
                     "submitter_phone": _idea_contact(db, user).phone_number,
-                    "is_test": IDEA_IS_TEST,
+                    "is_test": _idea_is_test(args),
                 },
             )
             similar = [
-                {"number": str(m.get("idea_number") or ""), "title": str(m.get("title") or "")}
+                {"number": idea_number(m.get("idea_number")) or "", "title": str(m.get("title") or "")}
                 for m in found.get("matches") or []
                 if isinstance(m, dict) and _valid_uuid(m.get("idea_id"))
             ][:MAX_SIMILAR_IDEAS]
@@ -1869,10 +1897,15 @@ def _idea_create_read_before(db, user: dict, args: dict) -> dict:
     return {"_show": {"similar": similar}}
 
 
+#: The backslash and every double quote or look-alike (ASCII, curly, low and reversed, double prime, guillemets,
+#: CJK double prime marks, fullwidth), escaped in a quoted proposal value.
+_QUOTE_LIKE = re.compile('(["\\\\\u201c\u201d\u201e\u201f\u2033\u00ab\u00bb\u301d\u301e\u301f\uff02])')
+
+
 def _q(value: Any) -> str:
     """A value quoted for the proposal line, with backslash and every double quote (ASCII and the look-alikes
-    U+201C, U+201D, U+FF02) escaped so it cannot read as another field."""
-    escaped = re.sub(r'(["\\\u201c\u201d\uff02])', r"\\\1", _line(value))
+    U+201C, U+201D, U+FF02 and the rest of `_QUOTE_LIKE`) escaped so it cannot read as another field."""
+    escaped = re.sub(_QUOTE_LIKE, r"\\\1", _line(value))
     return '"' + escaped + '"'
 
 
@@ -1909,6 +1942,7 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
     text = _idea_text(given)
     # I7: the user's own message of the proposing turn (the loop stored it with the step), else the fields given.
     own = strip_invisible(str(args.get("_user_text") or ""))[:RAW_TRANSCRIPT_CHARS].strip()
+    is_test = _idea_is_test(args)
     try:
         config = _resolve_ideation_config(db)
         if not config.is_ready:
@@ -1925,8 +1959,8 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
             source_text=own or text,
             # Derived, not minted: a step keeps no private value between proposal and confirm, and the same
             # idea proposed again must land on the same idea.
-            intake_ref=str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user['linked_user_id']}\n{IDEA_IS_TEST}\n{text}")),
-            is_test=IDEA_IS_TEST,
+            intake_ref=str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user['linked_user_id']}\n{is_test}\n{text}")),
+            is_test=is_test,
         )
         result = _post_json(config.base_url, config.api_key, _CREATE_PATH, payload, "create idea")
     except IdeationServiceError as exc:
@@ -1945,18 +1979,18 @@ def _idea_create_execute(db, user: dict, args: dict) -> dict:
         raise AppException(status_code=502, message=IDEA_NOT_CREATED, code="IDEATION_UNREACHABLE")
     if result.get("status") != "captured":
         # A replay of an idea that has since moved on (I8): it exists, so say so.
-        number = result.get("idea_number")
+        number = idea_number(result.get("idea_number"))
         raise AppException(
             status_code=409,
             message=IDEA_ALREADY_CAPTURED.format(number=number) if number else "This idea was already captured.",
             code="IDEA_ALREADY_CAPTURED",
         )
     link = _idea_link(result.get("idea_id"))
-    number = result.get("idea_number")
+    number = idea_number(result.get("idea_number"))
     missing = ", ".join(_missing_list(payload))
     number = number or None  # ss may send none: the note then names no number
     note = (f"Idea {number}" if number else "The idea") + (f": {link}" if link else "") + f". Not given: {missing}."
-    if IDEA_IS_TEST:
+    if is_test:
         note += " This is a test idea, so it is not on the board."
     return {
         "id": str(result["idea_id"]),

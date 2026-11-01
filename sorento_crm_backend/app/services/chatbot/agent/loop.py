@@ -559,17 +559,18 @@ def proposal_block(lines: list[str]) -> str:
 
 
 def _propose(
-    db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str, user_text: str = ""
+    db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str, user_text: str = "",
+    is_test: bool = True,
 ) -> ToolResult:
     if len(steps) >= actions.MAX_STEPS:
         return ToolResult("invalid", message=f"At most {actions.MAX_STEPS} changes per confirmation.")
-    out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids)
+    # An idea create carries what only the loop knows: the user's own message of this turn (I7: the transcript,
+    # as a write tool sees only its arguments) and whether the turn is a test turn (a console turn makes a test
+    # idea, a live one a real idea). Set here, never from the model's arguments.
+    loop_args = {"_user_text": user_text, "_is_test": is_test} if name == writes.CREATE_IDEA else None
+    out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids, loop_args=loop_args)
     if step is None:
         return out
-    if name == writes.CREATE_IDEA:
-        # I7: the user's own message of this turn travels with the step, so the create can send it as the
-        # transcript (a write tool sees only its arguments). Set here, never read from the model's arguments.
-        step["args"] = {**step["args"], "_user_text": user_text}
     steps.append(step)
     return ToolResult(
         "proposed",
@@ -1258,7 +1259,7 @@ def _run(
                     # A contact has no user: no write, user read, confirm or cancel, whatever the model names.
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
                 elif name in writes.WRITES:
-                    out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text)
+                    out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text, is_test)
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
                 elif name == CONFIRM_ACTION and run.rounds > 1:
