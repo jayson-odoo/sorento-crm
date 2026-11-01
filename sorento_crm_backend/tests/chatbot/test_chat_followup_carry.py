@@ -366,5 +366,20 @@ def test_u7_guard_every_other_ranking_keeps_its_own_rules(frame):
     assert _stamp(_verdict("reuse"), _focus(frame)) is None
 
 
+def test_u9_guard_a_company_total_with_no_customer_keeps_asking_its_basis():
+    """SALES-TOTAL-ASK (owner, 27 Oct): the basis hold is for a held customer only."""
+    held = _stamp(_verdict("reuse"), _focus({k: v for k, v in TOTAL.items() if k != "customer_ids"}))
+    assert held and "basis" not in held and held["date_from"] == "2026-10-01", held
+
+
+@pytest.mark.parametrize(
+    "over",
+    [{"entities": [NAMED]}, {"broaden_axis": "customer", "broaden_to": "all"}, {"self_reference": True}],
+    ids=["a-customer-named", "all-customers", "my-sales"],
+)
+def test_u10_guard_when_the_customer_goes_the_basis_is_not_held_for_it(over):
+    assert "basis" not in (_stamp({**_verdict("reuse"), **over}, _focus(TOTAL)) or {})
+
+
 def test_u8_guard_a_held_customer_never_crosses_out_of_a_sales_answer():
     assert _stamp(_verdict("reuse"), _focus(TOTAL, domains=("order",))) is None
