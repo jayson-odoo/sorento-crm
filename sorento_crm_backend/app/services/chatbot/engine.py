@@ -1353,7 +1353,12 @@ def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | N
         return None
     from app.models.ai_prompt import AIPromptVersion
 
-    row = db.query(AIPromptVersion.config_json).filter(AIPromptVersion.id == parser_pin).first()
+    try:
+        with db.begin_nested():
+            row = db.query(AIPromptVersion.config_json).filter(AIPromptVersion.id == parser_pin).first()
+    except Exception:  # noqa: BLE001 - a pin that cannot be read pins nothing; the label's span prompt runs
+        logger.warning("chatbot: paired span prompt lookup failed", exc_info=True)
+        return None
     paired = (row[0] or {}).get("span_prompt_version_id") if row and isinstance(row[0], dict) else None
     return str(paired) if paired else None
 
@@ -1384,7 +1389,8 @@ def _span_prep(
         config = None
         try:
             with db.begin_nested():
-                config = span_extract.resolve_config(db, llm_choice=llm_choice, override_version_id=span_override)
+                pin = {"override_version_id": span_override} if span_override else {}
+                config = span_extract.resolve_config(db, llm_choice=llm_choice, **pin)
         except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
             logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
         lookup_lists.warm([*rows, *spec_keys], embed)
@@ -5318,7 +5324,7 @@ def _run_stages_body(  # noqa: PLR0915
                 db, user_turn.own_text, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
                 lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
                 group_categories=parser_config.category_pick, row_ids=parser_config.row_ids,
-                span_override=_guarded(db, lambda: _span_override(db, envelope, dry_run=dry_run), None),
+                span_override=_span_override(db, envelope, dry_run=dry_run),
             )
             lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
         elif parser_config.lookup_lists:
