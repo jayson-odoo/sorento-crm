@@ -30,6 +30,15 @@ Options and price:
 - OR choices exist (`product_combo_parts.choice_group`). Free items and top-ups have no column anywhere.
 - A combo has no price (owner ruling 14 Sep, `PLAN-price-tag-combos.md`): the tag sums host + parts through the promotion engine (`tag_data_service.py:846-866`). The flyer prints a combo price.
 
+Measured on the 28 Oct prod copy, extracted by crew (figures stay private; counts only here):
+- 7 combos, none with a picture; 13 parts; 11 of 208 request lines carry a combo. The picture path has never fired on this copy.
+- 9 templates: 8 `ala_carte`, 1 `shower`. No `sink_combo` or `furniture_set` template exists, so a combo line falls to the first `ala_carte` (`lib/dealer-kit/request-tags.ts:84-96`). One template binds the product description.
+- The tag's summed price matches the flyer's printed price on 0 of 75 bathroom combos and 5 of 155 sink + tap pairs. Printed list price matches the sum of part list prices on 0 of 75.
+- The flyer promotion ended 31 May 2026. Of 18 bathroom hosts with an active end-user offer today, 16 differ from the flyer's figure; 37 have no active offer. Flyer prices are not current.
+- Promotions store a package price on whichever code marketing chose: host, tap, basin or waste, and parts at RM 0. `_offer_worth_showing` (`app/services/dealer_kit/pricing.py:633-636`) drops a 0 or at-or-above-list offer and `_offer_or_list` (`tag_data_service.py:501-510`) then charges the list price, so a free part in a combo promotion adds its list price to the tag.
+- 257 of 273 flyer codes exist as products. 5 hosts and 29 further combos reference a missing code. 264 of 314 free item mentions have no printed code.
+- 23 of 135 flyer hosts carry more than one combo, and one offer per host cannot price them apart.
+
 ## Proposal (to be confirmed by the card)
 
 Additive only. Existing templates and approved tags print exactly as before.
