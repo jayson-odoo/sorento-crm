@@ -854,3 +854,131 @@ def test_s3_a_turn_decides_only_the_change_it_is_waiting_on(db):
     assert db.query(StockInquiry).filter(StockInquiry.contact_id == contact["pk"]).count() == 0
     db.refresh(live)
     assert live.status == "proposed"
+
+
+# ================================================================ review round 1 (kill-test survivors)
+
+
+def test_r1_a_console_turn_stores_its_dealer_proposal_as_a_test(db):
+    from app.services.chatbot.agent import actions
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    contact = _dealer(db)
+    code = _product(db)
+    provider = _scripted(_asks({"id": "p1", "name": SI_CREATE, "arguments": {"product_code": code, "quantity": "4"}}),
+                         _says("ok"))
+
+    run_agent_turn(db, contact_respond_id=contact["respond_id"], text="4 pcs", provider=provider, mcp_call=_forbidden,
+                   catalog={}, is_test=True, operator_user_id=seed_user(db, contact_pk=None, slugs=()))
+
+    stored = actions.pending_action(db, contact["respond_id"], user_id="", test=True)
+    assert stored is not None and stored.steps[0]["args"]["_is_test"] is True
+    assert actions.pending_action(db, contact["respond_id"], user_id="", test=False) is None
+
+
+def test_r1_a_whatsapp_turn_stores_its_dealer_proposal_as_live(db):
+    from app.services.chatbot.agent import actions
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    contact = _dealer(db)
+    provider = _scripted(_asks({"id": "p1", "name": SI_CREATE, "arguments": {"product_code": _product(db), "quantity": "4"}}),
+                         _says("ok"))
+
+    run_agent_turn(db, contact_respond_id=contact["respond_id"], text="4 pcs", provider=provider, mcp_call=_forbidden,
+                   catalog={}, is_test=False)
+
+    stored = actions.pending_action(db, contact["respond_id"], user_id="", test=False)
+    assert stored is not None and stored.steps[0]["args"]["_is_test"] is False
+
+
+def test_r1_a_console_note_add_and_remove_write_nothing(db):
+    from app.models.entity_conversation import EntityConversationMessage
+
+    contact = _dealer(db)
+    rid = _submitted_si(db, contact["pk"])
+    cid = _note(db, rid, contact_pk=contact["pk"])
+    ctx = _ctx(db, contact)
+    staff = seed_user(db, contact_pk=None, slugs=())
+
+    _o, add = _propose(db, ctx, NOTE_ADD, {"kind": "stock_inquiry", "submission_id": rid, "text": "x"}, [rid], is_test=True)
+    assert "Test turn: nothing was sent." in _store_and_confirm(db, ctx, add, operator=staff).reply_text
+    _o, rm = _propose(db, ctx, NOTE_REMOVE, {"kind": "stock_inquiry", "submission_id": rid, "comment_id": cid}, [rid, cid],
+                      is_test=True)
+    assert "Test turn: nothing was sent." in _store_and_confirm(db, ctx, rm, operator=staff).reply_text
+
+    rows = db.query(EntityConversationMessage).filter(EntityConversationMessage.entity_id == rid).all()
+    assert [r.id for r in rows] == [cid]
+
+
+@pytest.mark.parametrize("cols", [{"last_responded_at": "now"}, {"last_responded_by": "staff"}], ids=["responded-at", "responded-by"])
+def test_r1_a_response_stamp_refuses_the_withdraw(db, cols):
+    contact = _dealer(db)
+    value = {"now": datetime.utcnow(), "staff": None}
+    if "last_responded_by" in cols:
+        cols = {"last_responded_by": seed_user(db, contact_pk=None, slugs=())}
+    else:
+        cols = {"last_responded_at": value["now"]}
+    rid = _submitted_si(db, contact["pk"], **cols)
+
+    out, step = _propose(db, _ctx(db, contact), SI_WITHDRAW, {"submission_id": rid}, [rid])
+
+    assert step is None and REFUSED in (out.message or "")
+
+
+@pytest.mark.parametrize("touch", ["file", "stage_comment", "takeover"])
+def test_r1_files_or_staff_activity_on_the_stage_refuse_the_withdraw(db, touch):
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+    from app.models.sla import SlaTakeoverRequest
+    from app.models.ticket_comment import ConversationTicketComment
+    from tests._void_harness import new_policy, new_tracker
+
+    contact = _dealer(db)
+    rid = _submitted_si(db, contact["pk"])
+    staff = seed_user(db, contact_pk=None, slugs=())
+    if touch == "file":
+        att = str(uuid.uuid4())
+        db.add(Attachment(id=att, original_filename="a.pdf", stored_filename="a.pdf", file_path="zzt/a.pdf"))
+        db.flush()
+        db.add(EntityAttachmentLink(id=str(uuid.uuid4()), entity_type="stock_inquiry", entity_id=rid, attachment_id=att))
+    else:
+        tid = new_tracker(db, source_entity_type="stock_inquiry", source_entity_id=rid, policy_id=new_policy(db))
+        if touch == "stage_comment":
+            db.add(ConversationTicketComment(id=str(uuid.uuid4()), tracking_id=tid, body="on it", author_id=staff))
+        else:
+            db.add(SlaTakeoverRequest(id=str(uuid.uuid4()), tracking_id=tid, initiator_id=staff, team_id=str(uuid.uuid4()),
+                                      commit_at=datetime.utcnow() + timedelta(minutes=5)))
+    db.flush()
+
+    out, step = _propose(db, _ctx(db, contact), SI_WITHDRAW, {"submission_id": rid}, [rid])
+
+    assert step is None and REFUSED in (out.message or "")
+
+
+def test_r1_the_withdraw_removes_the_view_link(db):
+    from app.models.procurement import ViewToken
+
+    contact = _dealer(db)
+    ctx = _ctx(db, contact)
+    rid = _submitted_si(db, contact["pk"])
+    db.add(ViewToken(id=str(uuid.uuid4()), entity_type="stock_inquiry", entity_id=rid, token=unique_code("vt")))
+    db.flush()
+    _o, step = _propose(db, ctx, SI_WITHDRAW, {"submission_id": rid}, [rid])
+
+    assert _store_and_confirm(db, ctx, step).status == "executed"
+    assert db.query(ViewToken).filter(ViewToken.entity_id == rid).count() == 0
+
+
+def test_r1_an_inactive_product_is_refused(db):
+    from app.models.base import company_scope
+    from app.models.product import Product
+
+    contact = _dealer(db)
+    code = _product(db)
+    with company_scope(db, frozenset({SRT})):
+        db.query(Product).filter(Product.product_code == code).update({"is_active": False})
+    db.flush()
+
+    out, step = _propose(db, _ctx(db, contact), SI_CREATE, {"product_code": code, "quantity": "4"})
+
+    assert step is None and out.status == "invalid"

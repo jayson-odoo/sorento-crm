@@ -447,7 +447,8 @@ def _withdraw_target(db, token, args: dict, *, lock: bool = False) -> tuple[Any,
     from app.models.entity_conversation import EntityConversationMessage as Msg
     from app.models.portal import PortalFormRevision
     from app.models.procurement import StockInquiry
-    from app.models.sla import ConversationSLATracking, SlaFormAction
+    from app.models.sla import ConversationSLATracking, SlaFormAction, SlaTakeoverRequest
+    from app.models.ticket_comment import ConversationTicketComment
     from app.services import submission_status
     from app.services.error_handler import handle_conflict, handle_not_found
     from app.services.form_comment_service import FORM_COMMENT_SCOPE
@@ -491,6 +492,15 @@ def _withdraw_target(db, token, args: dict, *, lock: bool = False) -> tuple[Any,
         ),
         None,
     )
+    stage_ids = [str(t.id) for t in trackers]
+    if ticket is None and stage_ids:
+        # A staff comment or a takeover request on the stage is staff activity too (they would cascade away).
+        busy = (
+            db.query(ConversationTicketComment.id).filter(ConversationTicketComment.tracking_id.in_(stage_ids)).first()
+            or db.query(SlaTakeoverRequest.id).filter(SlaTakeoverRequest.tracking_id.in_(stage_ids)).first()
+        )
+        if busy is not None:
+            ticket = busy
     action = (
         db.query(SlaFormAction.id)
         .filter(SlaFormAction.source_entity_type == STOCK_INQUIRY, SlaFormAction.source_entity_id == sid)
@@ -539,6 +549,7 @@ def _withdraw_execute(db, token, args: dict, confirmed: dict) -> dict:
     from app.models.entity_conversation import EntityConversationMessage as Msg
     from app.models.notification import Notification
     from app.models.portal import PortalFormRevision
+    from app.models.procurement import ViewToken
     from app.services.form_comment_service import FORM_COMMENT_SCOPE
 
     if args.get("_is_test"):
@@ -564,6 +575,10 @@ def _withdraw_execute(db, token, args: dict, confirmed: dict) -> dict:
         Msg.scope == FORM_COMMENT_SCOPE, Msg.entity_type == STOCK_INQUIRY, Msg.entity_id == sid,
         Msg.author_contact_id == token.contact_id,
     ).delete(synchronize_session=False)
+    # The public view link the submit minted for this row.
+    db.query(ViewToken).filter(ViewToken.entity_type == STOCK_INQUIRY, ViewToken.entity_id == sid).delete(
+        synchronize_session=False
+    )
     db.delete(row)
     db.commit()
     return {"id": sid, "after": {"state": "withdrawn"}}

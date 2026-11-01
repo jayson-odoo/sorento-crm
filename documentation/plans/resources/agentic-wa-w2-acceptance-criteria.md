@@ -41,9 +41,12 @@ Linked staff contacts are unchanged in slice 1 (they keep their CRM writes and /
 ## Undo
 
 - AC-14 `crm_my_request_note_remove` deletes the contact's own note; a staff member's note is refused.
-- AC-15 `crm_stock_inquiry_withdraw` hard-deletes the contact's own inquiry, its revision row and its in-app
-  notifications, when ALL hold: first submission (one history row), at most 10 minutes since it was submitted,
-  still `pending_project_sales`, no purchasing response or responder, no staff comment, no SLA ticket, no files.
+- AC-15 `crm_stock_inquiry_withdraw` hard-deletes the contact's own inquiry when ALL hold: first submission (one
+  history row), at most 10 minutes since it was submitted, still `pending_project_sales`, no purchasing response,
+  responder or response time, no comment by anyone else, no form action, no files, and any SLA stage the submit
+  opened is untouched (nobody responded to, took, escalated, resolved or voided it, commented on it, or asked to
+  take it over). Deleted with it: its revision row, its in-app notifications, the contact's own notes, its
+  untouched SLA stages (their events cascade) and its public view link.
 - AC-16 Outside AC-15 the proposal is refused with "It is with the team now, so I can't withdraw it. I can add a
   note to it instead." Another contact's inquiry is refused as not found.
 
@@ -51,6 +54,9 @@ Linked staff contacts are unchanged in slice 1 (they keep their CRM writes and /
 
 - AC-17 A console turn proposes as live does, and its confirm writes nothing (no inquiry, no comment, no delete);
   the step note says "Test turn: nothing was sent."
+- AC-17b A contact's live proposal is confirmed or cancelled only from its own WhatsApp turn; the console (route or
+  console turn) is refused. A console test proposal is decided only from the console. Neither expires nor answers
+  the other, and a turn decides only the proposal it is waiting on (security review rounds 1-2).
 
 ## Read
 
