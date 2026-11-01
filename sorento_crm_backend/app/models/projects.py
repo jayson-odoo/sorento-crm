@@ -968,12 +968,13 @@ class ProjectSeriesProduct(Base):
     #: ``6`` means 6%. The sheet's DISTRIBUTORS column, which writes it as ``6 % MAX`` in one
     #: tab and ``0.06`` in another; both normalise to ``6`` on the way in.
     max_discount_pct = Column(Numeric(5, 2), nullable=True)
+    #: A row that takes a product OUT of the series (owner ruling Q1, 1 Nov 2026): the brand /
+    #: category scope would list it, the admin removed it. Not listed, not standard, not
+    #: priced, until it is added back (which clears the flag).
+    excluded = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
-    #: **NULL is silence, never zero.** Of the client's 151 codes, 95 carry a price and 56 a
-    #: discount, and the whole `shower` tab carries neither. A line whose series gives no
-    #: discount therefore falls through to ``price_floor_rules`` rather than acquiring a hard
-    #: floor at the selling price, which would put 56 products in breach the moment anybody
-    #: discounted a cent. See PLAN-series-catalogue-and-pricing-pages.md.
+    #: A price with no max discount means NO discount (owner ruling Q2, 1 Nov 2026): the floor
+    #: is the selling price itself. See ``series_floor``.
 
 
 class ProjectSeriesSet(Base):
