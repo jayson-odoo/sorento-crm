@@ -251,6 +251,127 @@ class TestReachesTheBrain:
 
 
 # --------------------------------------------------------------------------- #
+# Round 4: Jev is told about the record open on the page
+# --------------------------------------------------------------------------- #
+
+AGENT_DICT = {"when": "several reads combined, why, analysis"}
+PUBLISHED_INSTRUCTIONS = "Pick the side that should answer this message."
+
+
+def publish_criteria(session_factory, agent) -> dict:
+    """Republish the production router prompt with `criteria["agent"]` = `agent`; returns the criteria."""
+    from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+
+    criteria = {"chat": "single lookups the bot intents answer", "agent": agent}
+    db = session_factory()
+    version = (
+        db.query(AIPromptVersion)
+        .join(AIPromptLabel, AIPromptLabel.version_id == AIPromptVersion.id)
+        .filter(AIPromptLabel.name == "chatbot_router", AIPromptLabel.label == "production")
+        .one()
+    )
+    version.template = json.dumps({"instructions": PUBLISHED_INSTRUCTIONS, "criteria": criteria})
+    db.commit()
+    return criteria
+
+
+def canon(value) -> str:
+    return json.dumps(value, sort_keys=True)
+
+
+class TestJevIsToldTheOpenRecord:
+    def test_a_readable_record_adds_one_open_record_sentence_under_agent(
+        self, session_factory, monkeypatch, staff, grants, world, jev, inquiry
+    ):
+        published = publish_criteria(session_factory, dict(AGENT_DICT))
+        grants.add(VIEW)
+
+        run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(inquiry))
+
+        call = jev.calls[0]
+        sent = call["criteria"]
+        sentence = sent["agent"].get("open_record")
+        assert isinstance(sentence, str) and sentence.strip() and "current_page" in sentence
+        assert {k: v for k, v in sent["agent"].items() if k != "open_record"} == published["agent"]
+        assert sent["chat"] == published["chat"]
+        assert set(sent) == set(published)
+        assert call["instructions"] == PUBLISHED_INSTRUCTIONS
+
+    def test_a_page_with_no_entity_sends_the_published_criteria_byte_for_byte(
+        self, session_factory, monkeypatch, staff, grants, world, jev
+    ):
+        published = publish_criteria(session_factory, dict(AGENT_DICT))
+        grants.add(VIEW)
+
+        run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(None))
+
+        assert canon(jev.calls[0]["criteria"]) == canon(published)
+        assert jev.calls[0]["instructions"] == PUBLISHED_INSTRUCTIONS
+
+    def test_a_denied_record_gets_no_line_and_the_same_page_with_the_slug_does(
+        self, session_factory, monkeypatch, staff, grants, world, jev, inquiry
+    ):
+        published = publish_criteria(session_factory, dict(AGENT_DICT))
+
+        run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(inquiry))
+        assert "record_ref" not in jev.calls[0]["state"]["current_page"], "fixture: the record must be denied"
+        assert canon(jev.calls[0]["criteria"]) == canon(published)
+
+        grants.add(VIEW)
+        run_chat(session_factory, monkeypatch, new_thread(session_factory, staff), world, jev, snapshot(inquiry))
+        assert "open_record" in jev.calls[-1]["criteria"]["agent"], "positive control"
+
+    def test_no_snapshot_sends_the_published_criteria(
+        self, session_factory, monkeypatch, staff, grants, world, jev
+    ):
+        published = publish_criteria(session_factory, dict(AGENT_DICT))
+        grants.add(VIEW)
+
+        run_chat(session_factory, monkeypatch, staff, world, jev, None)
+
+        assert canon(jev.calls[0]["criteria"]) == canon(published)
+        assert jev.calls[0]["instructions"] == PUBLISHED_INSTRUCTIONS
+
+    def test_a_contact_turn_without_a_principal_sends_the_published_criteria(self, session_factory, jev):
+        from app.services.chatbot.router import decide_route
+        from tests.chatbot.agent._seed import seed_agent_contact
+
+        published = publish_criteria(session_factory, dict(AGENT_DICT))
+        db = session_factory()
+        contact = seed_agent_contact(db)
+        db.commit()
+
+        decide_route(db, contact_respond_id=contact["respond_id"], text="why did sales drop", session_vars=None, has_media=False)
+
+        assert canon(jev.calls[0]["criteria"]) == canon(published)
+        assert "current_page" not in jev.calls[0]["state"]
+
+    def test_the_published_prompt_is_not_mutated_by_a_call_with_a_page(
+        self, session_factory, monkeypatch, staff, grants, world, jev, inquiry
+    ):
+        published = publish_criteria(session_factory, dict(AGENT_DICT))
+        grants.add(VIEW)
+
+        run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(inquiry))
+        assert "open_record" in jev.calls[0]["criteria"]["agent"], "fixture: the first call carries the line"
+        run_chat(session_factory, monkeypatch, new_thread(session_factory, staff), world, jev, snapshot(None))
+
+        assert canon(jev.calls[1]["criteria"]) == canon(published)
+
+    def test_an_agent_criterion_that_is_not_a_dict_is_sent_unchanged(
+        self, session_factory, monkeypatch, staff, grants, world, jev, inquiry
+    ):
+        published = publish_criteria(session_factory, "several reads combined, why, analysis")
+        grants.add(VIEW)
+
+        run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(inquiry))
+
+        assert jev.calls, "decide_route must not raise"
+        assert canon(jev.calls[0]["criteria"]) == canon(published)
+        assert jev.calls[0]["state"]["current_page"]["record_ref"] == inquiry.ref
+
+
+# --------------------------------------------------------------------------- #
 # AC-19: outside text is contained
 # --------------------------------------------------------------------------- #
 
