@@ -7,6 +7,7 @@ VERDICT moves and the flag does not. These tests hold both halves.
 """
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ import pytest
 
 from app.models.project_so import OrderInquiryRow
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
+from app.services.project_fulfilment_board_service import FulfilmentBoardService
 from app.services.project_supply_service import ProjectSupplyService, SupplyLinesRefused
 from app.services.scm.planning_predicate import (
     OUTSIDE_FULFILMENT_PLANNING,
@@ -85,7 +87,7 @@ def _dealer_pool(db, on_hand=100, product=None):
 def test_a_line_at_a_dealer_pool_is_plannable_and_gets_a_proposal():
     """AC-1: no verdict, and the ladder is walked rather than skipped."""
     with blank_session() as db:
-        company_id, _eling, project, product = _world(db)
+        company_id, _actor, project, product = _world(db)
         pool = _dealer_pool(db, product=product)
         order, _line, _core_so, _core_line = _seed_line(
             db, company_id, project, product, pool, qty_ordered="40",
@@ -95,13 +97,13 @@ def test_a_line_at_a_dealer_pool_is_plannable_and_gets_a_proposal():
         components = _components(service.proposal_for(order))
 
     assert fact.unplannable_reason is None
-    assert components, "the ladder must propose something for a line it can now plan"
+    assert [(c["kind"], Decimal(str(c["qty"]))) for c in components] == [("reserve", Decimal("40"))]
 
 
 def test_a_line_at_a_dealer_pool_draws_on_that_pool_before_buying():
     """AC-7: 100 on hand at the line's own pool, 40 wanted. Nothing needs to be bought."""
     with blank_session() as db:
-        company_id, _eling, project, product = _world(db)
+        company_id, _actor, project, product = _world(db)
         pool = _dealer_pool(db, product=product)
         order, _line, _core_so, _core_line = _seed_line(
             db, company_id, project, product, pool, qty_ordered="40",
@@ -116,7 +118,7 @@ def test_confirming_a_line_at_a_dealer_pool_is_accepted():
     """AC-7: the refusal `test_confirming_a_line_at_a_flagged_off_bin_is_refused` holds for a
     project bin does not reach a dealer one."""
     with blank_session() as db:
-        company_id, eling, project, product = _world(db)
+        company_id, actor, project, product = _world(db)
         pool = _dealer_pool(db, on_hand=0)
         order, line, _core_so, _core_line = _seed_line(
             db, company_id, project, product, pool, qty_ordered="40",
@@ -126,14 +128,14 @@ def test_confirming_a_line_at_a_dealer_pool_is_accepted():
             ConfirmSupplyBody(
                 lines=[ConfirmLine(project_line_id=str(line.id), buy_qty=Decimal("40"))]
             ),
-            actor_user_id=eling,
+            actor_user_id=actor,
         )
 
 
 def test_confirming_a_line_at_a_flagged_off_project_bin_is_still_refused():
     """AC-3."""
     with blank_session() as db:
-        company_id, eling, project, product = _world(db)
+        company_id, actor, project, product = _world(db)
         off = _warehouse(db, f"ZZP{_uid()[:6]}-BB", segment="project", fulfilment_planning=False)
         db.commit()
         order, line, _core_so, _core_line = _seed_line(
@@ -145,7 +147,7 @@ def test_confirming_a_line_at_a_flagged_off_project_bin_is_still_refused():
                 ConfirmSupplyBody(
                     lines=[ConfirmLine(project_line_id=str(line.id), buy_qty=Decimal("40"))]
                 ),
-                actor_user_id=eling,
+                actor_user_id=actor,
             )
         reasons = [row["reason"] for row in excinfo.value.detail["failing_lines"]]
 
@@ -155,7 +157,7 @@ def test_confirming_a_line_at_a_flagged_off_project_bin_is_still_refused():
 def test_the_dealer_pool_stays_out_of_the_planning_reads():
     """AC-6: a project line's netting and proposal do not start reading the pool."""
     with blank_session() as db:
-        _company_id, _eling, _project, product = _world(db)
+        _company_id, _actor, _project, product = _world(db)
         pool = _dealer_pool(db, product=product)
         planning = ProjectSupplyService(db)._planning_warehouses()
         pool_id = str(pool.id)
@@ -186,9 +188,16 @@ def test_a_consignment_at_a_flagged_off_dealer_bin_still_borrows_at_its_own_bin(
 # case below is the 50% default share (`available_for_project`).
 
 
+def _totals(components):
+    return {
+        kind: sum(Decimal(str(c["qty"])) for c in components if c["kind"] == kind)
+        for kind in {c["kind"] for c in components}
+    }
+
+
 def _proposal_at_own_pool(*, qty, on_hand, other=0):
     with blank_session() as db:
-        company_id, _eling, project, product = _world(db)
+        company_id, _actor, project, product = _world(db)
         pool = _dealer_pool(db, on_hand=on_hand, product=product)
         if other:
             _seed_line(
@@ -198,10 +207,7 @@ def _proposal_at_own_pool(*, qty, on_hand, other=0):
             db, company_id, project, product, pool, qty_ordered=str(qty),
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
-    return {
-        kind: sum(Decimal(str(c["qty"])) for c in components if c["kind"] == kind)
-        for kind in {c["kind"] for c in components}
-    }
+    return _totals(components)
 
 
 def test_its_own_demand_is_not_netted_against_its_own_pool():
@@ -225,12 +231,11 @@ def test_every_other_lines_demand_at_the_pool_stays_netted():
     }
 
 
-def test_two_lines_of_one_unit_both_get_their_own_demand_back():
-    """One order, one product, one date: the walk reads them as one unit. 40 on hand, 10 and
-    10 ordered, nobody else: Available is 40, share 20, so nothing is bought."""
+def _one_unit_of_two(*, on_hand):
+    """One order, one product, one date, so the walk reads the two lines as one unit."""
     with blank_session() as db:
-        company_id, _eling, project, product = _world(db)
-        pool = _dealer_pool(db, on_hand=40, product=product)
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=on_hand, product=product)
         order, _line, core_so, _core = _seed_line(
             db, company_id, project, product, pool, qty_ordered="10",
         )
@@ -240,16 +245,24 @@ def test_two_lines_of_one_unit_both_get_their_own_demand_back():
         _project_line(db, order, line_no=20, product=product, core_line=second)
         db.commit()
         proposal = ProjectSupplyService(db).proposal_for(order)
-        kinds = [c["kind"] for line in proposal["lines"] for c in line["components"]]
+    return _totals([c for line in proposal["lines"] for c in line["components"]])
 
-    assert "buy" not in kinds, proposal["lines"]
+
+def test_two_lines_of_one_unit_both_get_their_own_demand_back():
+    """40 on hand, 10 and 10 ordered, nobody else: Available is 40, share 20."""
+    assert _one_unit_of_two(on_hand=40) == {"reserve": Decimal("20")}
+
+
+def test_two_lines_of_one_unit_share_what_they_stand_on():
+    """20 on hand, all owed to these two: each gets half of its own, and half stays back."""
+    assert _one_unit_of_two(on_hand=20) == {"reserve": Decimal("10"), "buy": Decimal("10")}
 
 
 def test_a_line_at_a_project_bin_drawing_the_pool_gets_nothing_added_back():
     """AC-6. Its demand is booked at its own bin, not the pool's, so there is nothing to
     un-net: 10 at the pool still lends 5, as it does today."""
     with blank_session() as db:
-        company_id, _eling, project, product = _world(db)
+        company_id, _actor, project, product = _world(db)
         pool = _dealer_pool(db, on_hand=10, product=product)
         own = _warehouse(
             db, f"ZZP{_uid()[:6]}-BB", segment="project", pool_warehouse_id=pool.id,
@@ -268,7 +281,7 @@ def test_a_line_at_a_project_bin_drawing_the_pool_gets_nothing_added_back():
 def test_confirming_the_engines_own_proposal_at_the_pool_raises_the_order_row():
     """AC-7: Reserve at the pool, Buy for the rest, and the Buy reaches purchasing."""
     with blank_session() as db:
-        company_id, eling, project, product = _world(db)
+        company_id, actor, project, product = _world(db)
         pool = _dealer_pool(db, on_hand=10, product=product)
         order, line, _core_so, _core_line = _seed_line(
             db, company_id, project, product, pool, qty_ordered="10",
@@ -284,7 +297,7 @@ def test_confirming_the_engines_own_proposal_at_the_pool_raises_the_order_row():
                     )
                 ]
             ),
-            actor_user_id=eling,
+            actor_user_id=actor,
         )
         db.commit()
         rows = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).all()
@@ -313,3 +326,191 @@ def test_the_board_plans_a_line_at_a_dealer_pool_with_the_same_answer():
     assert [
         (s["kind"], Decimal(s["qty"]), s.get("location")) for s in row["sources"]
     ] == [("reserve", Decimal("5"), code), ("buy", Decimal("5"), None)]
+
+
+# --------------------------------------------------------------------------- one walk, many lines
+#
+# The board walks every selected line against ledgers that outlive each line, so a line's own
+# demand may be added back for THAT line only. A ledger holding one line's add-back promises
+# stock to the next line, and a ledger seeded without it refuses the line that earned it.
+
+
+def _board_row(board, core):
+    return next(
+        row
+        for cell in board["cells"]
+        for row in cell["contributions"]
+        if row["so_number"] == core.so_number
+    )
+
+
+def _board(db, *cores):
+    return FulfilmentBoardService(db).build(
+        [core.so_number for core in cores], granularity="week", as_of=date.today(),
+    )
+
+
+def _project_bin(db, pool):
+    own = _warehouse(
+        db, f"ZZP{_uid()[:6]}-BB", segment="project", pool_warehouse_id=pool.id,
+        fulfilment_planning=True,
+    )
+    db.commit()
+    return own
+
+
+def _sources(row):
+    return _totals(row["sources"])
+
+
+def test_a_line_at_the_pool_keeps_its_answer_when_a_project_line_walks_first():
+    """AC-7a. The project line's earlier date seeds the ledgers, and must not cost the line at
+    the pool the demand it stands on."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=10, product=product)
+        own = _project_bin(db, pool)
+        _order, _line, at_pool, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        _order, _line, at_bin, _core = _seed_line(
+            db, company_id, project, product, own, qty_ordered="5",
+            required_date=REQUIRED_DATE - timedelta(days=14),
+        )
+        board = _board(db, at_pool, at_bin)
+        at_pool_row, at_bin_row = _board_row(board, at_pool), _board_row(board, at_bin)
+
+    assert _sources(at_pool_row) == {"reserve": Decimal("5"), "buy": Decimal("5")}
+    assert _sources(at_bin_row) == {"buy": Decimal("5")}
+
+
+def test_a_project_line_is_not_promised_a_line_at_the_pools_add_back():
+    """AC-6. 30 at another pool against 100 owed at this one is a net of -70. The line at the
+    pool walks first and buys whole, and the project line behind it must still read -70: it
+    was offered Reserve 5, and confirming that wrote a decision 5 short with no inquiry row."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=0, product=product)
+        _dealer_pool(db, on_hand=30, product=product)
+        own = _project_bin(db, pool)
+        today = date.today()
+        _order, _line, at_pool, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="100",
+            required_date=today + timedelta(days=40),
+        )
+        _order, _line, at_bin, _core = _seed_line(
+            db, company_id, project, product, own, qty_ordered="5",
+            required_date=today + timedelta(days=47),
+        )
+        at_bin_row = _board_row(_board(db, at_pool, at_bin), at_bin)
+
+    assert _sources(at_bin_row) == {"buy": Decimal("5")}
+
+
+def test_two_orders_at_the_pool_read_the_same_on_the_board_as_on_their_sheets():
+    """20 on hand, 10 and 10 owed by two orders. Each gets half of its own, on every read."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=20, product=product)
+        order_x, _line, core_x, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        _order, _line, core_y, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10", line_no=20,
+        )
+        sheet = _totals(_components(ProjectSupplyService(db).proposal_for(order_x)))
+        board = _board(db, core_x, core_y)
+        row_x, row_y = _board_row(board, core_x), _board_row(board, core_y)
+
+    half = {"reserve": Decimal("5"), "buy": Decimal("5")}
+    assert (sheet, _sources(row_x), _sources(row_y)) == (half, half, half)
+
+
+# --------------------------------------------------------------------------- what the book counted
+#
+# 10 on hand, all owed to another line, so the pool's net is 0. A line the pool's book never
+# counted has nothing to add back, whatever it says it owes.
+
+
+def _line_the_book_may_not_count(mutate):
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=10, product=product)
+        _seed_line(db, company_id, project, product, pool, qty_ordered="10", line_no=20)
+        order, _line, core_so, core_line = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        mutate(core_so, core_line)
+        db.commit()
+        return _totals(_components(ProjectSupplyService(db).proposal_for(order)))
+
+
+def test_a_closed_order_adds_nothing_back():
+    got = _line_the_book_may_not_count(lambda so, _line: setattr(so, "status", "closed"))
+    assert "reserve" not in got, got
+
+
+def test_a_non_transferable_order_adds_nothing_back():
+    got = _line_the_book_may_not_count(lambda so, _line: setattr(so, "is_transferable", False))
+    assert "reserve" not in got, got
+
+
+def test_a_covered_line_adds_nothing_back():
+    got = _line_the_book_may_not_count(
+        lambda _so, line: setattr(line, "purchasing_status", "covered")
+    )
+    assert "reserve" not in got, got
+
+
+def test_what_goes_back_is_the_required_quantity_not_the_ordered_one():
+    """Required 4 of ordered 10, another line owes 6, 10 on hand. Available is 4, share 2."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=10, product=product)
+        _seed_line(db, company_id, project, product, pool, qty_ordered="6", line_no=20)
+        order, _line, _core_so, core_line = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        core_line.qty_required = Decimal("4")
+        db.commit()
+        got = _totals(_components(ProjectSupplyService(db).proposal_for(order)))
+
+    assert got["reserve"] == Decimal("2"), got
+
+
+def test_a_part_delivered_line_adds_back_what_it_still_owes():
+    """10 ordered, 3 delivered, 10 on hand: the book counted 7, so the net goes from 3 to 10."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=10, product=product)
+        order, _line, _core_so, core_line = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        core_line.qty_delivered = Decimal("3")
+        db.commit()
+        service = ProjectSupplyService(db)
+        fact = next(iter(service._facts_for(order, service.lines_of(str(order.id))).values()))
+        net, available = fact.pools_net, fact.pool_available
+
+    assert (net, available) == (Decimal("10"), Decimal("10"))
+
+
+def test_a_retired_pool_adds_nothing_back():
+    """A line at an inactive pool is not in anybody's pool book, and the pool rung cannot draw it."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        _dealer_pool(db, on_hand=10, product=product)
+        other = _dealer_pool(db, on_hand=0, product=product)
+        _seed_line(db, company_id, project, product, other, qty_ordered="10", line_no=20)
+        retired = _warehouse(
+            db, f"ZZD{_uid()[:6]}", segment="dealer", active=False, fulfilment_planning=False,
+        )
+        db.flush()
+        retired.pool_warehouse_id = retired.id
+        db.commit()
+        order, _line, _core_so, _core = _seed_line(
+            db, company_id, project, product, retired, qty_ordered="10",
+        )
+        got = _totals(_components(ProjectSupplyService(db).proposal_for(order)))
+
+    assert "reserve" not in got, got

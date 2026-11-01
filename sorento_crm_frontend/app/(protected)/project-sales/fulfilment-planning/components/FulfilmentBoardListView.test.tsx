@@ -427,6 +427,17 @@ describe('FulfilmentBoardListView: a line at a bin outside fulfilment planning',
 
     expect(await screen.findAllByText('Outside fulfilment planning')).toHaveLength(2);
     expect(screen.queryByText('Needs a location')).not.toBeInTheDocument();
+    // The row's checkbox will not tick, and its title says why with the same words.
+    expect(
+      screen.getAllByTitle(
+        'BRW-SMC is outside fulfilment planning, so this line cannot be decided here.',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.queryByTitle(
+        'This line cannot be decided here: its sales order states no fulfilment location.',
+      ),
+    ).not.toBeInTheDocument();
   });
 });
 

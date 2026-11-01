@@ -699,6 +699,8 @@ def test_a_decided_line_survives_its_bin_being_flagged_off_and_confirms_again():
         company_id, eling, project, product = _world(db)
         group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
+        # A project bin: a dealer-segment one never earns the verdict this test is about.
+        own.segment = "project"
         _stock(db, product, own, on_hand=1000)
         db.commit()
 
