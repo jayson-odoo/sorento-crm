@@ -7,7 +7,7 @@ from the ledger tags.
 
 A sales manager holds AutoCount's "Sorento sales report by account" and asks for one agent's sales on one numbered account, "account
 type 4". They get that account's sales, shown the way they asked. They can split the same sales by account type, or combine an account
-with a brand. A bare brand word stays the item brand. If the types have not reached the CRM, they are told so instead of seeing RM 0.
+with a brand. If a word is both a brand and an account type, the bot asks which. If the types have not reached the CRM, they are told so instead of seeing RM 0.
 The AI panel and the Sales & outstanding screen read the same figures.
 
 Decisions the user makes: only what they ask. Nothing about the account is configured.
@@ -47,14 +47,37 @@ The route is `GET /api/v1/order-management/report-ask`. The param is `account_ty
   two agent codes), account 4 RM 96,416.80 (6,561.00 + 89,855.80), total RM 694,104.16. Brand CABANA on account 3: RM 76,877.71.
 - **AT-17** Dropped. A same-code fan-out for the type has no problem to solve: no company has two ledgers with one debtor code on the
   28 Oct copy (`account-type-check-4-output.txt`).
-- **AT-18 [BE]** Held for the owner's mock OK: on the reports metadata for the six Sales & outstanding definitions, the new param and column
-  are `hidden`. The Sales by debtor type and Top selling items reports are unchanged.
+- **AT-18 [BE]** Screen, approved on mock v4 (owner, 1 Nov 15:34): on the reports metadata for the six Sales & outstanding definitions, the
+  param and column `account_type` are visible, label "Account type". The param's options are the stored types of the caller's company, never a
+  fixed list and never another company's. Running a definition with `account_type` = CABANA gives the same amount as the route's
+  `account_types=CABANA`. The Sales by debtor type and Top selling items reports are unchanged.
 - **AT-19 [T]** The MCP tool lists `account_types`, its text names `group_by` `account_type`, and the presenter prints "Account type: 4",
   the plural "account types" and the refused message verbatim.
 
-## Later
+- **AT-31 [UX]** Browser, by sidebar clicks from `/`, at 1280 and 375, on the lane's test copy with test types: Sales & outstanding shows the Account type
+  filter on all six tabs; choosing CABANA with the agent narrows the table; Configure summary can split by Account type; nothing is clipped.
 
-Screen part (after the owner OKs the mock): the param and column stop being hidden; 375 and 1280 browser pass.
+## PR 2: the bot (ACs fixed here before its code; tests come from these)
 
-PR 2: the parser's reading of "account type 4", "account 4" and "A/C IV"; a bare brand word stays the brand; the period rule; user
-guide. Its ACs land here before its code.
+All on sales and outstanding asks, through the parser, with no regex or word list on the user's words. Prompt gate with v70 as the fixed
+baseline. "Stored types" are the types the customers of the asker's company carry; "brands" are the Known brands line.
+
+- **AT-20 [T]** "AGENT sales for cabana in Jan", with CABANA both a brand and a stored type: the bot asks "Cabana: brand or account type?" and
+  runs nothing yet.
+- **AT-21 [T]** Answering "account type" runs the held ask with the account filter; answering "brand" runs it with the brand filter. The agent,
+  period and axis are not asked again.
+- **AT-22 [T]** The overlap comes from data: a seeded made-up word that is both a brand and a stored type asks; CABANA asks nothing when no
+  customer carries it (it reads as the brand, as today).
+- **AT-23 [T]** "cabana brand" and "cabana account" (and "CABANA debtor type") ask nothing and run that filter.
+- **AT-24 [T]** A word that is only a stored type ("ceramic" with no such brand) runs the account filter with no question. A full customer name
+  containing the word stays the customer.
+- **AT-25 [T]** "account type 4", "account 4" and "A/C IV" run `account_types`; the reply reads "Account type: 4" as asked, and no reply prints a
+  number's type.
+- **AT-26 [T]** A word and a number: "cabana ... account 4", where CABANA is 4's type, asks nothing and runs the account filter alone, no brand
+  filter. "cabana on account type 3", where it is not, asks nothing and runs brand CABANA on account 3.
+- **AT-27 [T]** Unchanged readings: "cabana stock" stays the brand with no question; "project sales" stays the channel; "sample" stays the category;
+  "top accounts" stays customers.
+- **AT-28 [T]** "sales for cabana in Jan" means 1 Jan to 31 Jan of this year, one total, on a fresh conversation. A month or year split never prints
+  "Top N".
+- **AT-29 [T]** The owner's examples tie on seeded figures: AT-16's agent gives RM 96,416.80 on account, RM 153,888.62 on brand.
+- **AT-30 [T]** The AI panel's agent can pass an account type word or number through `crm_report_ask` and reads the same reply.

@@ -1,6 +1,6 @@
 # SALES-ACCOUNT-TYPE: sales by the customer's account type
 
-**Status:** Build, PR 1 tests. Size M. Card decided by the owner: debtor type, number derived. Screen waits for the mock OK.
+**Status:** Build, PR 1 tests. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
 
 Lane brief: crew `SALES-ACCOUNT-TYPE`. Branch `crew/sales-account-type`. UAC: `sales-account-type-acceptance-criteria.md`.
 Agent codes are masked (AGENT A, AGENT B) because this repo is public. The real codes are in the crew card.
@@ -72,16 +72,21 @@ Brand CABANA across accounts: A/C III 76,877.71 + A/C IV 77,010.91 = 153,888.62,
 
 ## 4. Behaviour card (decided)
 
-Mock v3: `documentation/mockups/SALES-ACCOUNT-TYPE/index.html`.
+Mock v4: `documentation/mockups/SALES-ACCOUNT-TYPE/index.html`.
 
 Owner, 1 Nov: "don't need customzie this logic, just allow the user to ask by brand, we are not hard setting caban is account 4",
 "for account type, when cabana, still go to cabana, i will ask the user to say it is account type 4", and on card v2: "i dont need
 the definition of Account 4 = cabana, I just need to be able to search by account 4 just like b". On test data: "yeah can fill test
-account types on test copy".
+account types on test copy". Then at 15:30, replacing the earlier "cabana stays the brand": "when they ask for sales for Sorrento, we can
+clarify, is it brand or is it the [debtor] type? Same goes for Cabana, all those. If [AutoCount] have that, then we need to be able to
+understand and clarify."
 
 Rules:
 
-1. A bare brand word (cabana, sorento, bravat) stays the item brand, as today, with no question.
+1. On a sales or outstanding ask, a word that is both a brand and a stored account type asks "brand or account type?", and the answer
+   resumes the same ask. The overlap comes from the data, the stored types against the brand list, never a word list; on Sorento today
+   it is SORENTO, BRAVAT and CABANA. "cabana brand" and "cabana account" say which, so no question. A word that is only a stored type
+   (CERAMIC on Sorento) reads as the account type. Asks that are not sales ("cabana stock") stay the brand.
 2. "account type 4", "account 4" and "A/C IV" find the customers of that account by their AutoCount debtor type. For each company,
    the number's type is the one most ledgers tagged `[A/C IV]` carry, read from the data. No code or row states that 4 is CABANA,
    and no table holds it.
@@ -90,7 +95,11 @@ Rules:
    delivery, unpaid. The bot, the AI panel (MCP) and Sales & outstanding all read it. Label "Account type" (the label "Debtor type"
    is already the CRM's own project / cash concept, `app/models/order.py:184-190`).
 5. A month alone is that month of this year. A month or year split never prints "Top N".
-6. Nothing loaded: "Account types are not loaded from AutoCount yet", never RM 0. An unknown number says so and lists the numbers and
+6. A word and a number in one message need no question: if the word is the number's type they name one account, so the account filter
+   alone (the owner's "ymh, cabana, invoiced, by month, for account 4" ties to the report, January RM 96,416.80); if it differs, the word can
+   only be the brand ("cabana on account type 3", RM 76,877.71). "project" stays the channel and "sample" the category, as today, unless the
+   message says account type.
+7. Nothing loaded: "Account types are not loaded from AutoCount yet", never RM 0. An unknown number says so and lists the numbers and
    any type with no number. Rows add up to all sales. "top accounts" stays customers.
 
 Known limits on "tally 100%": the CRM's agent total itself differs from the PDF on two agent-months, whatever the account reads
@@ -103,9 +112,10 @@ Test data: an UPDATE from the tag on this lane's own test copy only, never a sha
 
 - **Partner lane, shared service (crew's SS-DEBTOR-TYPE):** `DebtorType -> market_segment_code` on the customer task (mapping row,
   `SINK_FIELDS`, backfill like module Alembic 0029); each customer re-stages once. No CRM migration. It also reports DebtorType x tag.
-- **PR 1, CRM, no prompt:** param `account_types` and axis `account_type` on the six datasets, route, MCP catalog, replies. The screen
-  part follows the owner's OK on the mock.
-- **PR 2, CRM, prompt gate:** parser's reading of the numbered account, the period fix, user guide. Prompt gate with v70 as the fixed
+- **PR 1, CRM, no prompt:** param `account_types` and axis `account_type` on the six datasets, route, MCP catalog, replies, and the screen's
+  filter and column (drawn by the report kernel, no frontend code expected).
+- **PR 2, CRM, prompt gate:** parser's reading of the numbered account, the brand-or-account-type question from the data, the period
+  fix, user guide. Prompt gate with v70 as the fixed
   baseline; only the owner moves the production label.
 
 The "in Jan" cause is not reproduced yet. `TEMPLATE` already states the month rule (`head/parser_template.py:37`). First Build step
