@@ -53,8 +53,15 @@ Plan: `PLAN-agentic-knowledge-w1-01nov.md`. Each AC names its test.
 - AC-W27: a barred contact is not armed, nothing is written, and the reply carries "Please refer to your salesman."
   and no marketing offer.
 
-## Ideas leave test mode (S6, after #2038 merges)
+## Ideas leave test mode (S6, #2038 merged)
 
-- AC-W28: `writes.IDEA_IS_TEST` is False; an agent-created idea is a real idea.
-- AC-W29: `crm_ideas_list` reads only the shared service's list (no second source); the test-only edit rule is gone.
-- AC-W30: the IDEATE to-do items are each closed or recorded with an owner decision in the PR body.
+- AC-W28: `writes.IDEA_IS_TEST` is False; an agent-created idea is created with `is_test` False and its note does
+  not say "test idea".
+- AC-W29: `crm_ideas_list` reads only ss's list (no read-by-id of the contact's creates); an edit of a non-test idea
+  of the user's own is allowed (no test-only rule).
+- AC-W30: a console operator creating for another user without `ideation.ideas.manage` is denied (I2).
+- AC-W31: the waiting proposal's values reach the model capped at 300 chars per field; the stored step is whole (I3).
+- AC-W32: each listed invisible character is stripped from idea values (I4).
+- AC-W33: list rows carry use cases (I5); look-alike quotes are escaped in the proposal (I6).
+- AC-W34: the create sends the user's own message text as `raw_transcript` (I7).
+- AC-W35: an already-captured replay and an ss 4xx each get their own line, never "could not be reached" (I8).

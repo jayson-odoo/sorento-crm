@@ -102,27 +102,28 @@ contact's escalation switch. No switch, no change to the bot's barred checks or 
   local agent tool `crm_knowledge_handoff` (no arguments), contact principal only, chosen by the model (no word
   list); the loop makes sure the final reply carries the tool's `say` text (code-added).
 
-### S6 - ideas leave test mode (crew ruling 1 Nov, from AGENTIC-IDEATE #2038)
+### S6 - ideas leave test mode (crew ruling 1 Nov, from AGENTIC-IDEATE #2038, merged)
 
-The owner ruled agent ideas stay TEST only until the agent reaches WhatsApp; this lane is that trigger. Depends on
-#2038 merging first (the flag and the list live on its branch): merge main, then
-- flip `agent/writes.py` `IDEA_IS_TEST` to False;
-- do the to-do list in `documentation/plans/chatbot/PLAN-agentic-ideate-31oct.md` "To do when `IDEA_IS_TEST`
-  flips": drop the second source in `crm_ideas_list` and the test-only edit rule; decide the view-only operator
-  create; bound the values handed back to the model while waiting; strip the remaining invisible characters (Mn
-  from U+E0100, CGJ, Hangul filler, braille blank); use-case edit merge rule; escape look-alike quotes; carry the
-  turn's own text to `raw_transcript`; give the ss non-`captured` replay and 4xx their own lines.
-- Note: idea writes stay user-principal only (a contact principal has no writes in W1), so on WhatsApp only linked
-  staff contacts create ideas.
-
-### S5 - eval and evidence
-
-- Kill tests per slice (reviewer runs them). Zero-leak run: a contact principal over staff-audience chunks -> 0.
-- Gold set seeds (the real question shapes from the crew data) stay in the crew folder; the scorer is the P1 scorer
-  pattern. The gold eval needs real documents + Gemini embeddings, so it runs on the crew machine, not in this
-  cloud sandbox (stated in the PR).
-- Console pass: the console already routes through the same router and agent, so an unlinked pilot contact is
-  testable there with no WhatsApp send.
+The owner ruled agent ideas stay TEST only until the agent reaches WhatsApp; this lane is that trigger. Idea writes
+stay user-principal only (a contact principal has no writes), so on WhatsApp only linked staff contacts create ideas.
+The IDEATE to-do list (`documentation/plans/chatbot/PLAN-agentic-ideate-31oct.md` "To do when `IDEA_IS_TEST`
+flips"), item by item (I1-I8):
+- I1: `writes.IDEA_IS_TEST = False`; `_ideas_list` drops the second source (the contact's confirmed creates read by
+  id) and reads only ss's own list; `_idea_update_read_before` drops the test-only edit rule; the create note no
+  longer says "test idea".
+- I2 (owner decision, default built): a console operator creating an idea in ANOTHER user's name needs
+  `ideation.ideas.manage`, the same rule as editing for someone else. Reversible in one condition.
+- I3: values handed back to the model while a proposal waits (`loop.waiting_reference`, the proposal in history)
+  are capped per field (`WAITING_VALUE_CHARS = 300`, with "..." when cut); the stored step keeps the full value.
+- I4: the invisible-text strip removes, besides Cf: variation selectors U+FE00-U+FE0F and U+E0100-U+E01EF, CGJ
+  U+034F, Hangul fillers U+115F, U+1160, U+3164, U+FFA0, and braille blank U+2800.
+- I5: `crm_ideas_list` rows carry `use_cases` (capped at `MAX_USE_CASES`), so an edit can send the whole list.
+- I6: the proposal's quoting escapes look-alike quotes U+201C, U+201D and U+FF02 like the ASCII quote.
+- I7 (owner decision, default built): `raw_transcript` carries the user's own message of the proposing turn
+  (the loop's `text`, capped at 4000 chars, invisible text stripped) instead of the model's fields.
+- I8: a re-proposed idea whose ss status moved past `captured` reads "This idea was already captured as idea N."
+  (no "could not be reached"); any other ss 4xx reads "The Ideas workspace refused this idea." with no ss detail.
+Tests first (tester), then the coder; the two decisions go to the owner as one crew-ask.
 
 ## W2 - dealer writes (next lane, after AGENT-CONFIRM-GATE #2055), least risk first
 
