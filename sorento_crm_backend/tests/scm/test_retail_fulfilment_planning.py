@@ -333,6 +333,20 @@ def test_r1_plannable_lines_reads_the_same_admission(api):
     assert [row["plannable_lines"] for row in rows] == [1, 1, 1]
 
 
+def test_r6_a_cancelled_retail_order_reads_no_plannable_lines(api):
+    """A cancelled header is refused even when its line is not cancelled."""
+    from app.services.scm.sales_order_service import SalesOrderService
+
+    client, world = api
+    core, _lines = _retail_order(world)
+    core.status = "cancelled"
+    world.db.commit()
+
+    rows = SalesOrderService(world.db).with_planning_state([{"id": str(core.id)}])
+
+    assert [row["plannable_lines"] for row in rows] == [0]
+
+
 def test_r1_a_retail_order_at_a_retired_dealer_location_stays_out(api):
     """R1 says ACTIVE: a retired dealer bin holds stock nobody can pick."""
     client, world = api

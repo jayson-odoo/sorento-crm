@@ -354,7 +354,7 @@ class ProjectSOAdoptionService:
                     "sales_order_no_class"
                     if not core.demand_class
                     else "sales_order_not_open"
-                    if core.status != "open"
+                    if core.status not in _PLANNABLE_STATUSES
                     else "sales_order_not_project_class"
                 ),
             )

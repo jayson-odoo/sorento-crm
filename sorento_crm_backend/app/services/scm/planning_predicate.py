@@ -38,10 +38,11 @@ may be planned AT and what the engine reads as planning supply are two questions
 
 **Which ORDERS are admitted at all (DEALER-PLANNING PR 2, owner 1 Nov 2026).** Project class as
 ever (open or closed, the 14 Sep ruling), or an order that weighs as retail
-(`demand_class.planning_class`, so `other` too) that is OPEN with at least one line at an active
-dealer-segment bin, or that ALREADY HAS a planning record. A closed retail order nobody planned is
-history: 137,172 of them sit at dealer bins on the dev copy. One that was planned is not: closing
-must not hide its decided rows, or a pending change nobody could then apply from the board. One
+(`demand_class.planning_class`, so `other` too) that is OPEN or CLOSED with at least one line at
+an active dealer-segment bin, or that ALREADY HAS a planning record. The same rule as a project
+order, no filter and no date window (owner ruling, 1 Nov 2026): a fully delivered order is
+admitted and its delivered quantity stays plannable. Cancelled stays out unless it has a
+planning record: the status test is what keeps a cancelled order from reading plannable. One
 predicate, `admitted_to_planning`, so the
 board, line drafts, adoption and the worklist cannot disagree about it. It is a HEADER test: every
 line of an admitted order is on the board, so its line numbers stay the ones a draft key names,
@@ -177,7 +178,7 @@ def admitted_to_planning():
         SalesOrder.demand_class == PROJECT,
         and_(
             SalesOrder.demand_class.in_((DEFAULT_DEMAND_CLASS, OTHER)),
-            or_(and_(SalesOrder.status == "open", at_dealer_location), planned),
+            or_(and_(SalesOrder.status.in_(("open", "closed")), at_dealer_location), planned),
         ),
     )
 
@@ -189,10 +190,9 @@ def why_not_admitted(
     because adoption refuses with it and the board's empty state prints it."""
     if not demand_class:
         return f"Sales order {so_number} has no class set, so it is not planned here."
-    if status != "open":
+    if status not in ("open", "closed"):
         return (
-            f"Sales order {so_number} is a dealer order that is {status or 'not open'}, so it is "
-            "not planned here."
+            f"Sales order {so_number} is {status or 'in no state'}, so there is nothing to plan."
         )
     return (
         f"Sales order {so_number} is a dealer order with no line at an active dealer location, so "
