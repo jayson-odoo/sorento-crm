@@ -25,22 +25,22 @@ The route is `GET /api/v1/order-management/report-ask`. The param is `account_ty
   counts under 4; a ledger tagged `[A/C IV]` but typed SORENTO does not.
 - **AT-4 [BE]** The agent code's suffix never decides the account: a customer typed CABANA under an agent code ending `III` counts
   under 4.
-- **AT-5 [BE]** `4`, `IV`, `iv`, `A/C IV`, `a/c iv`, `CABANA` and `cabana` give the same figures.
+- **AT-5 [BE]** `4`, `IV`, `iv`, `A/C IV`, `a/c iv`, `CABANA` and `cabana` give the same figures. An odd value (`²`, `①`, 5,000 digits) is an unknown value, never a 500, on the route and on the screen run.
 - **AT-6 [BE]** The number's type is derived per company: the type most ledgers with that tag carry. One stray ledger does not move it.
   A seeded made-up type (`ZZT TYPE`) on the `[A/C IV]` ledgers makes 4 mean `ZZT TYPE`, proving nothing is hard-coded. Ties go to the first
-  type by name.
+  type by name. A type answers to one number only, the one most of its ledgers carry: one `[A/C V]` ledger typed SORENTO does not make 5 mean SORENTO, so 5 is unknown and not listed.
 - **AT-7 [BE]** The filter echo reads the account as asked: `account_types=4` gives key `account_type`, label "Account type", values
   `["4"]`, and neither the echo nor any other field of the response states the type behind it.
-- **AT-8 [BE]** On all six bases `group_by=account_type` returns one row per stored type plus the `(blank)` row for customers with no type,
+- **AT-8 [BE]** On all six bases `group_by=account_type` returns one row per stored type plus the `(blank)` row for customers with no type and for lines with no customer,
   `group_label` "Account type", and the rows add up to the unfiltered total.
 - **AT-9 [BE]** The filter ANDs with the others: brand CABANA on account 3 returns only those lines.
 - **AT-10 [BE]** Nothing loaded. When no customer in the caller's companies has a type, a filter or a split returns `status: refused`,
   message "Account types are not loaded from AutoCount yet", no rows, even though sales exist. The printed reply is the message alone, no RM figure.
 - **AT-11 [BE]** Unknown. `account_types=9` returns `status: refused`, message "No account type 9. Account types: 1, 3, 4, PROJECT.": the
   numbers in order, then any stored type no number leads to, by name. No rows; the printed reply is the message alone.
-- **AT-12 [BE]** `account_types=` is 422 `empty_filter`; more than 50 values is 422 `too_many_values`.
+- **AT-12 [BE]** `account_types=` is 422 `empty_filter`; more than 50 values is 422 `too_many_values`; a value over 50 characters is 422 `value_too_long`.
 - **AT-13 [BE]** A customer-scoped contact (dealer) naming the filter or the split is 403 `report_dimension_not_allowed`.
-- **AT-14 [BE]** Another company's types and numbers are neither listed nor matched, and figures never cross companies.
+- **AT-14 [BE]** Another company's types and numbers are neither listed nor matched, and figures never cross companies: not on the screen run for a user granted one company, and not with `company=` naming one of a contact's two companies, where the number and the list are that company's own. A brand-scoped contact's figure stays inside its brands with the filter on.
 - **AT-15 [BE]** `dataset=chat` with `account_types` is 422 `unknown_param`.
 - **AT-16 [T]** Tie-out on seeded rows with the AutoCount report's figures, one agent, January 2026, types on every ledger: account 1 RM
   282,203.77 (281,810.77 on `[A/C I]` ledgers + 393.00 on an untagged ledger typed SORENTO), account 3 RM 315,483.59 (27,717.93 + 287,765.66 across
@@ -50,7 +50,7 @@ The route is `GET /api/v1/order-management/report-ask`. The param is `account_ty
 - **AT-18 [BE]** Screen, approved on mock v4 (owner, 1 Nov 15:34): on the reports metadata for the six Sales & outstanding definitions, the
   param and column `account_type` are visible, label "Account type". The param's options are the stored types of the caller's company, never a
   fixed list and never another company's. Running a definition with `account_type` = CABANA gives the same amount as the route's
-  `account_types=CABANA`. The Sales by debtor type and Top selling items reports are unchanged.
+  `account_types=CABANA`. The Sales by debtor type and Top selling items reports have no `account_type` and keep a visible `debtor_type`.
 - **AT-19 [T]** The MCP tool lists `account_types`, its text names `group_by` `account_type`, and the presenter prints "Account type: 4",
   the plural "account types" and the refused message verbatim.
 

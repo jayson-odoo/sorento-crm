@@ -1,6 +1,6 @@
 # SALES-ACCOUNT-TYPE: sales by the customer's account type
 
-**Status:** Build, PR 1 tests. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
+**Status:** Build, PR 1 review fix round. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
 
 Lane brief: crew `SALES-ACCOUNT-TYPE`. Branch `crew/sales-account-type`. UAC: `sales-account-type-acceptance-criteria.md`.
 Agent codes are masked (AGENT A, AGENT B) because this repo is public. The real codes are in the crew card.
@@ -88,7 +88,7 @@ Rules:
    it is SORENTO, BRAVAT and CABANA. "cabana brand" and "cabana account" say which, so no question. A word that is only a stored type
    (CERAMIC on Sorento) reads as the account type. Asks that are not sales ("cabana stock") stay the brand.
 2. "account type 4", "account 4" and "A/C IV" find the customers of that account by their AutoCount debtor type. For each company,
-   the number's type is the one most ledgers tagged `[A/C IV]` carry, read from the data. No code or row states that 4 is CABANA,
+   the number's type is the one most ledgers tagged `[A/C IV]` carry, read from the data. A type answers to one number only, the one most of its ledgers carry, so a lone `[A/C V]` ledger does not make 5 mean that whole type. No code or row states that 4 is CABANA,
    and no table holds it.
 3. The reply shows the account the way it was asked ("Account type: 4"), never a definition such as "Account type 4: CABANA".
 4. One filter and one split in the shared report ask, on all six bases: invoiced, delivered, ordered, undelivered, pending
@@ -114,6 +114,7 @@ Test data: an UPDATE from the tag on this lane's own test copy only, never a sha
   `SINK_FIELDS`, backfill like module Alembic 0029); each customer re-stages once. No CRM migration. It also reports DebtorType x tag.
 - **PR 1, CRM, no prompt:** param `account_types` and axis `account_type` on the six datasets, route, MCP catalog, replies, and the screen's
   filter and column (drawn by the report kernel, no frontend code expected).
+- **Rollout:** merge PR 1 after the partner lane is live, or the Account type dropdown is empty and the split is one blank row, with no message on the screen.
 - **PR 2, CRM, prompt gate:** parser's reading of the numbered account, the brand-or-account-type question from the data, the period
   fix, user guide. Prompt gate with v70 as the fixed
   baseline; only the owner moves the production label.
