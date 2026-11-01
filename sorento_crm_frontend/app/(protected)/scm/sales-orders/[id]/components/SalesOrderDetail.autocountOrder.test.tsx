@@ -326,7 +326,11 @@ describe('AC-S2-4: Source column', () => {
 describe('AC-S2-6: header primary is Plan, gated on projects.projects.view', () => {
   it('with the permission: a Plan link to the fulfilment board, on this one order', () => {
     hasPermission = true;
-    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    useSalesOrder.mockReturnValue({
+      data: so({ plannable_lines: 1 }),
+      isLoading: false,
+      isError: false,
+    });
     renderDetail();
 
     const link = screen.getByRole('link', { name: /Plan/ });
@@ -367,7 +371,7 @@ describe('AC-S2-6b: Plan additionally requires demand_class === project', () => 
   it('AC-S2-6b-2: permission + project demand_class -> Plan link present', () => {
     hasPermission = true;
     useSalesOrder.mockReturnValue({
-      data: so({ demand_class: 'project' }),
+      data: so({ demand_class: 'project', plannable_lines: 1 }),
       isLoading: false,
       isError: false,
     });

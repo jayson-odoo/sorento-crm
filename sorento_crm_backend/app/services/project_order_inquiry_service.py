@@ -124,7 +124,7 @@ from app.services.oi_auto_confirm_backfill import (
     live_cover_stmt,
 )
 from app.services.scm import goods_chain, order_link_service, priority, spo_supply
-from app.services.scm.demand_class import PROJECT, email_class
+from app.services.scm.demand_class import PROJECT as PROJECT_DEMAND_CLASS, email_class
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 from app.services.scm.pool_predicate import is_project_reserve, is_site_pool
 from app.services.scm.supply_assignment import (
@@ -13836,8 +13836,8 @@ class ProjectOrderInquiryService:
             sales_orders.order_date` for the score a row is RANKED by - the two have
             drifted apart, and pointing this cascade's `order_date` at the same core
             column is a named follow-up, out of scope for that lane.
-          * `demand_class`       <- always `"project"`: every row this cascade sees came
-            off a project order inquiry.
+          * `demand_class`       <- the core order's own class (`_demand_classes_for_pso`,
+            DEALER-PLANNING R13); a record with no core order is project work.
           * `payment_terms_days` <- the resolved customer's terms
             (`_customer_ids_for_pso` + `priority.payment_terms_by_customer`) when a
             customer is reachable, `None` otherwise - an unknown is ABSENT, not a
@@ -13885,6 +13885,7 @@ class ProjectOrderInquiryService:
             pso_ids.add(order.id)
 
         customer_ids = self._customer_ids_for_pso(pso_ids)
+        demand_classes = self._demand_classes_for_pso(pso_ids)
         terms_by_customer = priority.payment_terms_by_customer(
             self.db, [cid for cid in customer_ids.values() if cid]
         )
@@ -13936,7 +13937,9 @@ class ProjectOrderInquiryService:
                         "payment_terms_days": (
                             terms_by_customer.get(customer_id) if customer_id else None
                         ),
-                        "demand_class": "project",
+                        "demand_class": (
+                            demand_classes.get(pso_id) if pso_id else None
+                        ) or PROJECT_DEMAND_CLASS,
                     }
                 )
             factors_by_row = priority.factors_for_demand_rows(
@@ -13946,6 +13949,19 @@ class ProjectOrderInquiryService:
             ranked.extend(sorted(group_rows, key=lambda r: _sort_key(r, scores)))
 
         return ranked
+
+    def _demand_classes_for_pso(self, pso_ids: set) -> Dict[str, Optional[str]]:
+        """The core order's class per project sales order (DEALER-PLANNING R13). A record with
+        no core order is absent, and reads as project work."""
+        if not pso_ids:
+            return {}
+        rows = (
+            self.db.query(ProjectSalesOrder.id, SalesOrder.demand_class)
+            .join(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+            .filter(ProjectSalesOrder.id.in_(list(pso_ids)))
+            .all()
+        )
+        return {pso_id: klass for pso_id, klass in rows}
 
     def _customer_ids_for_pso(self, pso_ids: set) -> Dict[str, Optional[str]]:
         """Customer id per project sales order, the same resolution
@@ -15072,7 +15088,7 @@ def handover_class_groups(items: Sequence[Dict[str, Any]]) -> List[List[Dict[str
     order each class first appears; one group when the write touched one class."""
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for item in items:
-        groups.setdefault(item.get("sales_order_class") or PROJECT, []).append(item)
+        groups.setdefault(item.get("sales_order_class") or PROJECT_DEMAND_CLASS, []).append(item)
     return list(groups.values())
 
 
@@ -15107,7 +15123,7 @@ def build_handover_email(
     context, source_id = built
     # DEALER-OI-ROUTE: the class the automation rows' conditions read. Every caller hands
     # one class's lines (`handover_class_groups`; a resend is one OI, so one order).
-    context["sales_order_class"] = items[0].get("sales_order_class") or PROJECT
+    context["sales_order_class"] = items[0].get("sales_order_class") or PROJECT_DEMAND_CLASS
     inquiry_ids = list(
         dict.fromkeys(item["order_inquiry_id"] for item in items if item.get("order_inquiry_id"))
     )
@@ -15149,7 +15165,7 @@ def _build_undo_context(
         "actor": item.get("actor"),
         "today": date.today().strftime("%d/%m/%Y"),
         # DEALER-OI-ROUTE: the class the automation rows' conditions read.
-        "sales_order_class": item.get("sales_order_class") or PROJECT,
+        "sales_order_class": item.get("sales_order_class") or PROJECT_DEMAND_CLASS,
     }
     return context, item["decision_id"]
 

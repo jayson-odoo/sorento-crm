@@ -58,7 +58,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import and_, case, func, or_
+from sqlalchemy import and_, case, func, not_, or_
 from sqlalchemy.orm import Session, aliased
 
 from app.models.inventory import Warehouse
@@ -99,11 +99,14 @@ from app.services.scm import priority
 from app.services.scm import sales_agent_service
 from app.services.scm import spo_supply
 from app.services.scm import supply_assignment
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS, planning_class
 from app.services.scm.supply_origin import buy_origin_by_product
 from app.services.scm.planning_predicate import (
     OUTSIDE_FULFILMENT_PLANNING,
+    admitted_to_planning,
     outside_fulfilment_planning,
     planned_at_own_bin,
+    why_not_admitted,
 )
 from app.services.scm.demand import (
     demand_qty,
@@ -418,6 +421,9 @@ def _remark_facts(order: SalesOrder, line: Any) -> Dict[str, Any]:
 
 
 def _project_label(order: SalesOrder) -> Optional[str]:
+    # A dealer order names no project, and its note is a note (DEALER-PLANNING R14).
+    if planning_class(order.demand_class) == DEFAULT_DEMAND_CLASS:
+        return None
     # PLAN-so-project-label.md: the column, once a rule has ever written it, before the
     # note-reading fallback below - so the board keeps reading exactly what it always has
     # for the vast majority of orders the migration's backfill has not reached yet.
@@ -703,6 +709,7 @@ class FulfilmentBoardService:
             str(i) for i in (exclude_covered_line_ids or [])
         }
         self._locations_by_row = {}
+        self._row_facts: Dict[str, Any] = {}
         self._buy_origin: Dict[str, Optional[str]] = {}
         self._split_edited: set = set()
         if granularity not in GRANULARITIES:
@@ -950,6 +957,7 @@ class FulfilmentBoardService:
                 [self._contribution(row) for row in rows]
                 + [self._contribution(row) for row in cancelled_rows]
             ),
+            "unplanned_orders": self._unplanned_orders(numbers, rows),
             "orders": self._standings(
                 rows, adopted_by_so, pending_by_so, undo_by_so, decision_headers_by_so
             ),
@@ -1111,7 +1119,12 @@ class FulfilmentBoardService:
                 #: bin read never has to ask a second time.
                 "location": codes.get(str(row.warehouse_id)),
                 "agent_code": row.agent_code,
-                "project_label": row.project_label or _project_label_from_note(row.internal_note),
+                # A dealer order names no project, and its note is a note (R14).
+                "project_label": (
+                    None
+                    if planning_class(row.demand_class) == DEFAULT_DEMAND_CLASS
+                    else row.project_label or _project_label_from_note(row.internal_note)
+                ),
                 "demand_class": row.demand_class,
                 #: AutoCount prints the document's own date and the date it is wanted.
                 "doc_date": row.order_date,
@@ -1592,6 +1605,32 @@ class FulfilmentBoardService:
 
     # ------------------------------------------------------------ the demand
 
+    def _unplanned_orders(
+        self, numbers: Sequence[str], rows: Sequence["_Row"]
+    ) -> List[Dict[str, str]]:
+        """The selected orders the board left out because they are not admitted, each with
+        the true reason. Read only when a selected order carries no row at all, so an
+        ordinary board costs no statement for it."""
+        carried = {row.so_number for row in rows}
+        missing = [number for number in numbers if number not in carried]
+        if not missing:
+            return []
+        records = (
+            self.db.query(SalesOrder.so_number, SalesOrder.demand_class, SalesOrder.status)
+            .filter(
+                SalesOrder.so_number.in_(missing),
+                SalesOrder.status.in_(["open", "closed"]),
+                # NULL first: a clause over a NULL class is NULL, and so is its negation.
+                or_(SalesOrder.demand_class.is_(None), not_(admitted_to_planning())),
+            )
+            .order_by(SalesOrder.so_number)
+            .all()
+        )
+        return [
+            {"so_number": number, "reason": why_not_admitted(number, klass, status)}
+            for number, klass, status in records
+        ]
+
     def _demand_rows(
         self,
         so_numbers: Sequence[str],
@@ -1629,7 +1668,7 @@ class FulfilmentBoardService:
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status.in_(["open", "closed"]),
-                SalesOrder.demand_class == "project",
+                admitted_to_planning(),
                 is_undecided_demand(),
             )
             .all()
@@ -1706,7 +1745,9 @@ class FulfilmentBoardService:
                 # from the one predicate rather than from two lookups that could disagree.
                 # ACTIVE and flagged off - an inactive bin keeps whatever verdict it carried
                 # before the flag existed (`outside_fulfilment_planning`).
-                outside_planning=outside_fulfilment_planning(warehouse, order.doc_type),
+                outside_planning=outside_fulfilment_planning(
+                    warehouse, order.doc_type, order.demand_class
+                ),
                 priority=line.priority,
                 demand_class=order.demand_class,
                 so_doc_type=order.doc_type,
@@ -1823,7 +1864,7 @@ class FulfilmentBoardService:
                 # this read exists for - the one ordinary demand cannot see - vanished on
                 # exactly the completed orders this lane put on screen.
                 SalesOrder.status.in_(["open", "closed"]),
-                SalesOrder.demand_class == "project",
+                admitted_to_planning(),
                 (SalesOrderLine.line_status != "open") | (demand_qty() <= 0),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
                 PlanningChangeBatch.applied_at.is_(None),
@@ -1930,7 +1971,7 @@ class FulfilmentBoardService:
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
                 SalesOrder.status.in_(["open", "closed"]),
-                SalesOrder.demand_class == "project",
+                admitted_to_planning(),
                 SalesOrderLine.line_status == "cancelled",
                 or_(
                     SalesOrderLine.cancelled_at.isnot(None),
@@ -2888,6 +2929,8 @@ class FulfilmentBoardService:
             ],
             exclude_line_ids=list(self._exclude_covered_line_ids) or None,
         )
+        # The cell tables state what these facts say about a line at its own pool (R12).
+        self._row_facts = facts
 
         # S4 (`PLAN-local-supplier-oi-routing.md`): moved onto `ProjectSupplyService` as
         # `open_po_balance`, the ONE implementation both this board and a donor's own
@@ -4264,7 +4307,9 @@ class FulfilmentBoardService:
                 f"{qty_text(_dec(getattr(fact, 'pools_net', _ZERO) if pools_net is None else pools_net))} between them, so no "
                 "pool is offered."
             )
-        available = _dec(pile.get("available"))
+        # What the walk read: a line standing on this pool has its own demand put back, so the
+        # pile's raw position (0 on 10 owed by the line itself) is not "oversold" to it.
+        available = _dec(pile.get("available")) + _dec(getattr(fact, "pool_book_back", _ZERO))
         if fact.is_project_hot_selling:
             # Ladder v4: the classification is still NAMED, because the captain reads it,
             # but it no longer changes the arithmetic - the five pools' own net bounds this
@@ -4750,6 +4795,7 @@ class FulfilmentBoardService:
             self._locations_by_row[row.key] = self._locations_for(
                 members, by_location, group_codes, own_demand=self._own_demand(row)
             )
+            self._state_own_pool(self._locations_by_row[row.key], row)
         # The cell's own table is the FIRST contributing line's, which is the highest ranked
         # (members are sorted) and, on the overwhelming majority of cells, the only one. The
         # drawer switches it to whichever line the planner expands.
@@ -4986,8 +5032,7 @@ class FulfilmentBoardService:
                 )
         return out
 
-    @staticmethod
-    def _own_demand(row: _Row) -> Dict[Tuple[str, str], Decimal]:
+    def _own_demand(self, row: _Row) -> Dict[Tuple[str, str], Decimal]:
         """THE ASKING LINE's own open quantity, at its own (product, location) (R1).
 
         Netted back out of the SO qty its table prints, so the table answers "what is here
@@ -5002,10 +5047,34 @@ class FulfilmentBoardService:
         code `B2155-NL-BLUE` on the live book and land in ONE cell, and their demand is not
         each other's - netting by location would take the second product's lines out of the
         first product's SO qty and print stock nobody has.
+
+        A LINE AT ITS OWN POOL gets back what the pool's book counted for it (R8), the figure
+        the walk read, so the row it stands on prints the walk's Available and net.
         """
         if not row.warehouse_id or not row.product_id:
             return {}
-        return {(str(row.product_id), str(row.warehouse_id)): _dec(row.qty)}
+        fact = self._row_facts.get(row.key)
+        own = fact.pool_book_back if fact is not None and fact.stands_on_pool else _dec(row.qty)
+        return {(str(row.product_id), str(row.warehouse_id)): own}
+
+    def _state_own_pool(self, locations: List[Dict[str, Any]], row: _Row) -> None:
+        """R12: on a line standing on its own pool, the row it stands on and the pools' subtotal
+        state what the walk reads, for its class: the share for a project line, Available for a
+        retail one (`ProjectSupplyService.own_pool_figures`).
+
+        That row's own Where tag says `own`, so the client reads these fields rather than its
+        `site_pool` rule. Every other table keeps AC-2.6b: the subtotal is the share of the net.
+        """
+        fact = self._row_facts.get(row.key)
+        if fact is None or not fact.stands_on_pool:
+            return
+        own_figure, subtotal = self.supply.own_pool_figures(fact)
+        for entry in locations:
+            if entry.get("warehouse_id") == str(fact.pool.id):
+                entry["available_for_project"] = qty_text(own_figure)
+                entry["stands_on_pool"] = True
+                entry["own_pool_no_share"] = fact.own_pool_no_share
+                entry["pool_subtotal_for_project"] = qty_text(subtotal)
 
     def _location(
         self,
@@ -5227,10 +5296,13 @@ class FulfilmentBoardService:
                     position.net + self._mine_in(position, own_demand, product_id)
                 ),
                 "net_of": POOLS_SET,
-                # N1 (fix round 5): the figure `_is_pool_share_split` and `stock-detail`
-                # actually bound a pool-share composition by - never the displayed net
-                # above, which has this line's own demand added back in.
-                "net_raw": qty_text(position.net),
+                # N1 (fix round 5): the figure `_is_pool_share_split` bounds a pool-share
+                # composition by, `fact.pools_net`: the true net, plus what the pool's book
+                # counted for a line standing on it (DEALER-PLANNING R12, so the client does
+                # not refuse what confirm allows).
+                "net_raw": qty_text(
+                    position.net + self._mine_in(position, own_demand, product_id)
+                ),
             }
         group = netting.group_of(warehouse_id)
         if not group:
