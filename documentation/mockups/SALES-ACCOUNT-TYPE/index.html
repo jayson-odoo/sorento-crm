@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sales by account type mock</title>
-<!-- SALES-ACCOUNT-TYPE v2 (1 Nov 2026, owner feedback on v1: no brand-or-account question, no CABANA = account 4 link). Annotated static mock, not shipped code. Plan: documentation/plans/sales/PLAN-sales-account-type-1nov.md.
-     Figures are sorento_prod_1028 read-only, tied to the AutoCount "Sorento sales report by account". Agent codes and totals only: no customer names. -->
+<!-- SALES-ACCOUNT-TYPE v2 (1 Nov 2026, owner feedback on v1: a bare brand word stays the brand, no question; users say "account type 4"). Annotated static mock, not shipped code. Plan: documentation/plans/sales/PLAN-sales-account-type-1nov.md.
+     Figures are sorento_prod_1028 read-only, tied to the AutoCount "Sorento sales report by account". Agent codes are masked (AGENT A, AGENT B) because this repo is public; totals are real. -->
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7eb;--line-soft:#f1f2f4;--primary:#1b84ff;--primary-soft:#e9f3ff;--callout:#e11d74;--radius:8px;--font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
 *{box-sizing:border-box}
@@ -46,7 +46,7 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <h1>Sales by account type (v2)</h1>
 <p class="sub">Account type is the customer's AutoCount debtor type. It joins the filters and the summary on Sales &amp; outstanding, on the same figures the bot reads. The blue field is the only new control. Qty stays as it is today and is left out here because the tie-out checked RM only.</p>
 
-<h2 class="frame-title">1. Filter on: YMH, CABANA account, by month (1280)</h2>
+<h2 class="frame-title">1. Filter on: AGENT A, CABANA account, by month (1280)</h2>
 <div class="layout"><div class="scroll"><div class="frame w1280">
 <div class="phrow"><div class="ph"><h1>Sales &amp; outstanding</h1><div class="crumbs">Sales / Sales &amp; outstanding</div></div></div>
 <div class="tabs"><span class="on">Invoiced</span><span>Delivered</span><span>Ordered</span><span>Undelivered orders</span><span>Pending delivery</span><span>Unpaid invoices</span></div>
@@ -56,7 +56,7 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <div class="f new"><label>Account type</label><div class="sel">CABANA</div></div>
 <div class="f"><label>Brand</label><div class="sel">All</div></div>
 <div class="f"><label>Category</label><div class="sel">All</div></div>
-<div class="f"><label>Sales agent</label><div class="sel">YMH I, YMH III, YMH IV</div></div>
+<div class="f"><label>Sales agent</label><div class="sel">AGENT A I, AGENT A III, AGENT A IV</div></div>
 <div class="f"><label>Specification</label><div class="sel">All</div></div>
 </div>
 <p class="caption">Invoiced sales</p>
@@ -78,10 +78,10 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <li><span class="co">1</span><div><b>Account type filter</b>A multi-select like Brand. Its options are the types the customers carry, never a fixed list.<span class="ref">sorento_crm_frontend/components/reports/ReportFilterBar.tsx, drawn from a new SelectParam beside brand in reports/datasets/billing_document_lines.py:231</span></div></li>
 <li><span class="co">2</span><div><b>Same tabs on every basis</b>The filter appears on all six tabs.<span class="ref">sales/sales-and-outstanding/SalesAndOutstandingView.tsx:17-29</span></div></li>
 <li><span class="co">3</span><div><b>Summary table</b>The existing pivot, unchanged.<span class="ref">components/reports/ReportPivotTable.tsx</span></div></li>
-<li><span class="co">4</span><div><b>Tie-out</b>January to August match the AutoCount PDF's YMH CABANA column to the cent. The PDF stops on 4 Sep, so September and October are the 28 Oct copy's own figures.</div></li>
+<li><span class="co">4</span><div><b>Tie-out</b>January to August match the AutoCount PDF's CABANA column for this agent to the cent. The PDF stops on 4 Sep, so September and October are the 28 Oct copy's own figures.</div></li>
 </ol></div></div>
 
-<h2 class="frame-title">2. Split: YMH, January, by account type (1280)</h2>
+<h2 class="frame-title">2. Split: AGENT A, January, by account type (1280)</h2>
 <div class="layout"><div class="scroll"><div class="frame w1280">
 <div class="tabs"><span class="on">Invoiced</span><span>Delivered</span><span>Ordered</span><span>Undelivered orders</span><span>Pending delivery</span><span>Unpaid invoices</span></div>
 <div class="fbar">
@@ -90,7 +90,7 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <div class="f new"><label>Account type</label><div class="sel">All</div></div>
 <div class="f"><label>Brand</label><div class="sel">All</div></div>
 <div class="f"><label>Category</label><div class="sel">All</div></div>
-<div class="f"><label>Sales agent</label><div class="sel">YMH I, YMH III, YMH IV</div></div>
+<div class="f"><label>Sales agent</label><div class="sel">AGENT A I, AGENT A III, AGENT A IV</div></div>
 <div class="f"><label>Specification</label><div class="sel">All</div></div>
 </div>
 <div class="grid" style="max-width:520px"><table><thead><tr><th>Account type</th><th class="num">RM</th></tr></thead><tbody>
@@ -110,7 +110,7 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <div class="tabs"><span class="on">Invoiced</span><span>Delivered</span><span>Ordered</span></div>
 <div class="fbar">
 <div class="f new"><label>Account type</label><div class="sel">CABANA</div></div>
-<div class="f"><label>Sales agent</label><div class="sel">YMH I, YMH III, YMH IV</div></div>
+<div class="f"><label>Sales agent</label><div class="sel">AGENT A I, AGENT A III, AGENT A IV</div></div>
 </div>
 <div class="grid"><table><thead><tr><th>Month</th><th class="num">RM</th></tr></thead><tbody>
 <tr><td>Jan 2026</td><td class="num">96,416.80</td></tr>
@@ -122,38 +122,49 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <div class="frame" style="flex:1 1 560px;max-width:760px">
 <p class="caption">4. The bot</p>
 <div class="chat">
-<div class="case">A bare brand word stays the item brand, as today. No question.</div>
-<div class="u">YMH sales for cabana in Jan</div>
-<div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
+<div class="case">A bare brand word stays the item brand. No question.</div>
+<div class="u">AGENT A sales for cabana in Jan</div>
+<div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
 Brand: CABANA
 RM 153,888.62</div>
-<div class="case">Asked by account, naming the account type</div>
-<div class="u">YMH sales for cabana account in Jan</div>
-<div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
-Account type: CABANA
+<div class="case">"account type 4", option (b): the customers' AutoCount debtor type (recommended)</div>
+<div class="u">AGENT A sales for account type 4 in Jan</div>
+<div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
+Account type 4: CABANA
 RM 96,416.80</div>
-<div class="case">Open question, "account 4", option (a): the reply lists the types, the answer resumes the ask</div>
-<div class="u">YMH sales for account 4 in Jan</div>
-<div class="b">Which account type: BRAVAT, CABANA, CERAMIC, PROJECT, SAMPLE or SORENTO?</div>
-<div class="u">cabana</div>
-<div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
-Account type: CABANA
+<div class="case">Same ask, option (a): the [A/C IV] ledger tag</div>
+<div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
+Account type: A/C IV
 RM 96,416.80</div>
-<div class="case">Open question, "account 4", option (b): the reply lists the types, the user asks again</div>
-<div class="u">YMH sales for account 4 in Jan</div>
-<div class="b">I have no account type called account 4. Account types: BRAVAT, CABANA, CERAMIC, PROJECT, SAMPLE, SORENTO.</div>
-<div class="case">Split by account type</div>
-<div class="u">YMH January by account type</div>
-<div class="b">YMH invoiced sales by account type, 1 Jan - 31 Jan 2026
+<div class="case">Where they differ: AGENT B, May. The report says RM 171,921.52.</div>
+<div class="u">AGENT B sales for account type 4 in May</div>
+<div class="b">Option (b), expected once real types arrive: RM 171,921.52
+Option (a), measured: RM 176,360.68</div>
+<div class="case">Split, option (b)</div>
+<div class="u">AGENT A January by account type</div>
+<div class="b">AGENT A invoiced sales by account type, 1 Jan - 31 Jan 2026
 CERAMIC RM 315,483.59
 SORENTO RM 282,203.77
 CABANA RM 96,416.80
 Total RM 694,104.16</div>
-<div class="case">A brand on an account</div>
-<div class="u">cabana brand on the ceramic account for YMH in Jan</div>
-<div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
-Brand: CABANA, account type: CERAMIC
+<div class="case">Split, option (a): the RM 393 ledger has no tag, so it gets its own row and the total still matches</div>
+<div class="b">AGENT A invoiced sales by account type, 1 Jan - 31 Jan 2026
+A/C III RM 315,483.59
+A/C I RM 281,810.77
+A/C IV RM 96,416.80
+No account tag RM 393.00
+Total RM 694,104.16</div>
+<div class="case">A brand on an account (either option)</div>
+<div class="u">cabana on account type 3 for AGENT A in Jan</div>
+<div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
+Brand: CABANA, account type 3
 RM 76,877.71</div>
+<div class="case">"cabana" and "account 4" together: cabana is the brand, so this is the brand within the account</div>
+<div class="u">total sales 2026 for sales agent AGENT A, cabana, invoiced, breakdown by month, for account 4</div>
+<div class="b">AGENT A invoiced sales by month, 1 Jan - 31 Dec 2026
+Brand: CABANA, account type 4
+Jan 2026 RM 77,010.91
+... one line per month ...</div>
 </div>
-<p class="sub" style="margin:14px 0 0">The account type names are the AutoCount report's columns. The real list is whatever the customers carry once the shared service sends it.</p></div></div>
+<p class="sub" style="margin:14px 0 0">The screen frames above follow option (b). Under option (a) the filter's options read A/C I to A/C V, and the split gets a No account tag row.</p></div></div>
 </div></body></html>
