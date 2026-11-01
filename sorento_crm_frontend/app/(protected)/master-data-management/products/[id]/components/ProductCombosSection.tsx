@@ -129,12 +129,15 @@ function TextField({
   value,
   onSave,
   multiline,
+  maxLength,
 }: {
   id: string;
   label: string;
   value: string | null | undefined;
   onSave: (next: string | null, revert: () => void) => void;
   multiline?: boolean;
+  /** The server refuses longer text, so the box stops it instead of reverting a long paste. */
+  maxLength?: number;
 }) {
   const saved = value ?? '';
   const [draft, setDraft] = useState(saved);
@@ -145,9 +148,9 @@ function TextField({
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
       {multiline ? (
-        <Textarea id={id} rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
+        <Textarea id={id} rows={3} maxLength={maxLength} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
       ) : (
-        <Input id={id} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
+        <Input id={id} maxLength={maxLength} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
       )}
     </div>
   );
@@ -535,6 +538,7 @@ function ComboBlock({
               value={combo.description}
               onSave={(next, revert) => onComboWrite({ description: next }, revert)}
               multiline
+              maxLength={5000}
             />
           </div>
           <div className="sm:col-span-2">
@@ -543,6 +547,7 @@ function ComboBlock({
               label="Free items"
               value={combo.free_items}
               onSave={(next, revert) => onComboWrite({ free_items: next }, revert)}
+              maxLength={2000}
             />
           </div>
         </div>

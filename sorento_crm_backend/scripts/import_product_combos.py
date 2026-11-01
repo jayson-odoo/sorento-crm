@@ -399,19 +399,19 @@ def main(argv: Optional[Sequence[str]] = None, db=None, out: Optional[TextIO] = 
                             {"id": str(entry.get("id") or ""), "status": "failed", "dropped_parts": "",
                              "guess": entry.get("guess") or "", "notes": str(exc)[:300]}
                         )
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            report = Path(args.report) if args.report else Path(args.file).with_name(
+                f"{Path(args.file).stem}-report-{'apply' if args.apply else 'dryrun'}-{stamp}.csv"
+            )
+            # The report first: a template failure must not lose it.
+            write_report(report, rows)
+            if args.templates:
+                create_templates(db, company_id, args.apply, out)
+            if not args.apply:
+                db.rollback()
         finally:
             clear_actor(db)
 
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        report = Path(args.report) if args.report else Path(args.file).with_name(
-            f"{Path(args.file).stem}-report-{'apply' if args.apply else 'dryrun'}-{stamp}.csv"
-        )
-        # The report first: a template failure must not lose it.
-        write_report(report, rows)
-        if args.templates:
-            create_templates(db, company_id, args.apply, out)
-        if not args.apply:
-            db.rollback()
         for status in sorted({row["status"] for row in rows}):
             out.write(f"{status}: {sum(1 for row in rows if row['status'] == status)}\n")
         guesses = sum(1 for row in rows if row["guess"])
