@@ -178,6 +178,12 @@ Rulings:
 
 Live through the panel's route at 3176de279c, on Sales Orders: his three messages went to the agent at 0.94, 0.82 and 0.94; both how-to questions answered from `user_guides_read`, with no task created. A real panel question set is still owed before default.
 
+## Round 7: the panel keeps Jev's pick
+
+Owner, 1 Nov, on the low confidence question: "I think we should trust Jeff, right? Thats the point of us using Jeff." Crew reads this as (c) on the panel: no 0.7 floor, Jev's own pick stands. AC-3 changes for the panel. The console stays on the floor: it is the WhatsApp test bench. The floor on WhatsApp is the owner's separate decision.
+
+One rule stays apart: when the agent asked the user something, a reply stays on the agent unless Jev is sure it is a new chat question (`router._agent_asked_back`). That "sure" still reads the floor, because a short answer such as "invoiced" scores low, and it must stay on the agent. Known result: 'please pass this to the sales team' at 0.04 goes to the agent, which has no escalate tool.
+
 Accepted for hand test: `*Co B:*` under `3. Carol` sits inside that item, since it has no blank line before it (`tail/member_offer.py:255-262`). It needs more than one routing company, and the principal has one.
 
 ## Still to count or prove

@@ -13,7 +13,7 @@ Contract: `CARD-agentic-unify-v2-31oct.md`, `PLAN-agentic-unify-panel-31oct.md` 
 
 ## One brain, as the staff member
 
-- **AC-3** Jev says chat: the same `run_turn`, parser and lanes as WhatsApp answer. Jev says agent, or a proposal waits: the same agent loop answers. Low confidence or over the cap goes to chat.
+- **AC-3** Jev says chat: the same `run_turn`, parser and lanes as WhatsApp answer. Jev says agent, or a proposal waits: the same agent loop answers. Jev's own pick stands whatever its confidence (owner, 1 Nov: no floor on the panel). Over the cap goes to chat.
 - **AC-4** The principal needs no `respond_contacts` row, and none is created. Its key is `panel-<conversation id>`, with no colon. A test pins that this key can never be sent to through the outbound path.
 - **AC-5** The principal answers the brain's questions: company = the user's active company; brand = all; tier = office; customers = staff; AI allowed = the permission passed. Tools and fields follow the user's permissions, never a contact's grants.
 - **AC-6** Lane and agent reads through MCP carry the staff identity from #2048, with a blank contact pair. In-process lane reads check the user's permission at the principal: every such read is listed in the plan with its slug, and a staff member lacking it gets no data.
