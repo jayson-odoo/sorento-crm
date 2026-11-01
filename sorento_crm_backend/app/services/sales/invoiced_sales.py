@@ -326,8 +326,11 @@ def document_sales_type() -> Any:
     per LINE, and each run reads the document's own lines: an invoice of n lines cost n x n
     (INVOICED-CHANNEL-PERF round 3). Joined as `LEFT JOIN LATERAL (...) ON true`, the planner
     memoizes it per document (`Memoize` keyed on the document's columns). `OFFSET 0` keeps the
-    planner from folding it back into the line's select list; with no FROM it is one row, so a
-    query that does not read `value` drops the join."""
+    planner from folding it into the documents scan, where it ran for EVERY document of the
+    period before the detail's sort and row cap (seeded month: 1.4 s, against 0.25 s computed
+    only for the documents of the rows fetched). It is one row (no FROM), so it
+    never changes a line count; a query that does not read `value` never computes it (the
+    planner drops the join or keeps it with its output unread)."""
     return sa.select(sales_type().label("value")).offset(0).lateral("doc_sales_type")
 
 

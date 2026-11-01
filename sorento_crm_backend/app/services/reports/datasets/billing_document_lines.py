@@ -46,7 +46,7 @@ def _base(ctx: Any) -> sa.Select:
         .outerjoin(Product, Product.id == BillingDocumentLine.product_id)
         .outerjoin(Brand, Brand.id == Product.brand_id)
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
-        # The sales type once per document, not per line (unused, the planner drops it).
+        # The sales type once per document, not per line (unread, it is never computed).
         .outerjoin(_DOC_TYPE, sa.true())
         .where(inv.posted())
     )

@@ -70,7 +70,11 @@ class _Explain(Executable, ClauseElement):
 
 @compiles(_Explain, "postgresql")
 def _compile_explain(element: _Explain, compiler: Any, **kw: Any) -> str:
-    return "EXPLAIN (ANALYZE, FORMAT JSON) " + compiler.process(element.stmt, **kw)
+    sql = "EXPLAIN (ANALYZE, FORMAT JSON) " + compiler.process(element.stmt, **kw)
+    # The one result column is the plan, not the inner select's first column: without this the
+    # result is typed by that column (a UUID column turns the plan into a string).
+    compiler._result_columns.clear()
+    return sql
 
 
 def _nodes(plan: Dict[str, Any]):
@@ -278,23 +282,19 @@ def test_the_line_datasets_channel_filter_keeps_the_same_lines(db):
                              .where(channel_condition(None, [value]))).scalars())
         assert old == new, value
     # The order bases' words still read as the type they mean.
-    assert set(db.execute(line_base(None).add_columns(BillingDocumentLine.id)
-                          .where(channel_condition(None, ["retail"])))
-               .scalars()) == set(db.execute(line_base(None).add_columns(BillingDocumentLine.id)
-                                             .where(channel_condition(None, ["dealer"]))).scalars())
+    retail = set(db.execute(line_base(None).add_columns(BillingDocumentLine.id)
+                            .where(channel_condition(None, ["retail"]))).scalars())
+    dealer = set(db.execute(line_base(None).add_columns(BillingDocumentLine.id)
+                            .where(channel_condition(None, ["dealer"]))).scalars())
+    assert retail and retail == dealer
 
 
-def _sales_type_runs(db, stmt) -> int:
-    """How many times the executed plan computed the per-document sales type: the loops of the
-    LATERAL's subquery under its `Memoize` (0 when the plan has no such Memoize)."""
+def _subplan_loops(db, stmt) -> List[int]:
+    """The `Actual Loops` of every SubPlan and InitPlan the executed plan holds (the sales type is
+    nothing but those), over one process so the counts are exact."""
+    db.execute(sa.text("SET LOCAL max_parallel_workers_per_gather = 0"))
     (plan,) = db.execute(_Explain(stmt)).scalar_one()
-    runs = 0
-    for node in _nodes(plan["Plan"]):
-        # The LATERAL's own Memoize: its child computes a value, it scans no table. Other
-        # Memoize nodes (a customer or product lookup) are the planner's ordinary index caches.
-        if node.get("Node Type") == "Memoize" and "Relation Name" not in node["Plans"][0]:
-            runs += node["Plans"][0].get("Actual Loops", 0)
-    return runs
+    return [n.get("Actual Loops", 0) for n in _nodes(plan["Plan"]) if "Subplan Name" in n]
 
 
 def _many_line_invoices(db, documents: int, lines_each: int) -> None:
@@ -308,22 +308,33 @@ def _many_line_invoices(db, documents: int, lines_each: int) -> None:
         db.execute(sa.text(f"ANALYZE {table}"))
 
 
-def test_a_many_line_invoice_computes_its_channel_once_not_once_per_line(db):
-    """Three invoices of 120 lines: the sales type runs once per document (3), not per line (360).
-    Per line, each run read the document's own lines, so an n-line invoice cost n x n."""
+@pytest.mark.parametrize("read", ["column", "filter", "group"])
+def test_a_many_line_invoice_computes_its_channel_once_not_once_per_line(db, read):
+    """Three invoices of 120 lines: every piece of the sales type runs at most once per document
+    (3), never once per line (360). Per line, each run read the document's own lines, so an
+    n-line invoice cost n x n. The Channel column, the Channel filter (Top selling items always
+    sends it, every type ticked) and a summary grouped by Channel each read it."""
+    from app.services.reports.datasets.billing_document_lines import channel_condition
+
     _many_line_invoices(db, 3, 120)
-    # A parallel plan gives each worker its own cache (3 documents x 3 processes): still per
-    # document, but not a fixed number. One process keeps the count exact.
-    db.execute(sa.text("SET LOCAL max_parallel_workers_per_gather = 0"))
-    stmt = line_base(None).add_columns(BillingDocumentLine.id, _line_channel().label("channel"))
-    assert _sales_type_runs(db, stmt) == 3
+    base = line_base(None)
+    if read == "column":
+        stmt = base.add_columns(BillingDocumentLine.id, _line_channel().label("channel"))
+    elif read == "filter":
+        stmt = base.add_columns(BillingDocumentLine.id).where(
+            channel_condition(None, [value for value, _label in inv.SALES_TYPES])
+        )
+    else:
+        stmt = base.add_columns(_line_channel().label("channel"), sa.func.count()).group_by(sa.text("1"))
+    loops = _subplan_loops(db, stmt)
+    assert loops, "the plan computes no sales type at all"
+    assert max(loops) <= 3, loops
 
 
-def test_a_line_query_that_does_not_read_channel_drops_the_lateral(db):
-    """The LATERAL is one row by construction (a SELECT with no FROM), so a query that does not
-    read it (the pivot, the row count, the totals) never computes it."""
-    _many_line_invoices(db, 2, 5)
-    stmt = line_base(None).add_columns(sa.func.count())
-    (plan,) = db.execute(_Explain(stmt)).scalar_one()
-    assert not any(n.get("Alias") == "doc_sales_type" for n in _nodes(plan["Plan"]))
-    assert not any(n.get("Node Type") == "Memoize" for n in _nodes(plan["Plan"]))
+def test_a_line_query_that_does_not_read_channel_never_computes_it(db):
+    """A query that does not read Channel (the pivot by month, the row count, the totals) never
+    runs the sales type: the planner may keep the LATERAL join, but with its output unread it
+    computes nothing."""
+    _many_line_invoices(db, 3, 120)
+    stmt = line_base(None).add_columns(BillingDocumentLine.id, sa.func.count().over())
+    assert all(n == 0 for n in _subplan_loops(db, stmt))
