@@ -1,4 +1,5 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { toast } from '@/lib/toast';
 import { updateAttachmentType } from '../../attachment-types/services/attachmentTypeService';
 import { updateAttachment } from '../../attachments/services/attachmentService';
@@ -9,18 +10,18 @@ const KEY = 'document-access';
 
 export function useDocumentAccessQuery(contactId?: string) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [KEY, 'matrix', contactId ?? null],
     queryFn: () => getDocumentAccess({ contactId }),
-    placeholderData: keepPreviousData,
   });
 }
 
 export function useDocumentAccessDocuments(typeId: string | null, contactId: string | undefined, page: number, limit: number) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [KEY, 'documents', typeId, contactId ?? null, page, limit],
     queryFn: () => getDocumentAccessDocuments(typeId as string, { contactId, page, limit }),
     enabled: Boolean(typeId),
-    placeholderData: keepPreviousData,
   });
 }
 
