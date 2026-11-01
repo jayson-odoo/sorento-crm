@@ -464,7 +464,8 @@ def test_AC10_an_already_closed_complaint_is_refused(db):
     w.seen = {row.id}
     res, step = propose(db, w, CLOSE, {"complaint_id": row.id})
     assert refused(res, step), (res.status, res.message)
-    assert "closed" in res.message.lower(), res.message
+    assert "already closed" in res.message.lower(), res.message
+    assert "must be approved" not in res.message, res.message
 
 
 def test_AC10_a_complaint_held_by_another_user_is_refused(db, monkeypatch):
@@ -578,6 +579,43 @@ def test_AC11_a_revision_bumped_after_the_card_is_refused(db, grace, respond_sen
     out = confirm(db, w, action)
 
     assert out.status == "rejected", out.steps
+    assert complaint_now(db, row.id).status == "approved"
+    assert respond_sends == []
+
+
+def test_AC11_the_execute_itself_refuses_a_stale_revision_apart_from_the_recheck(db, grace, respond_sends):
+    """The route has the revision fence, so this write must too: `execute` called directly with the revision the
+    user confirmed gone stale is refused, whatever `_recheck` would have said."""
+    from app.services.chatbot.agent import writes
+    from app.services.error_handler import AppException
+
+    from app.models.portal import PortalRevisionConfig
+
+    w = make_world(db, CLOSE_SLUG)
+    row = make_complaint(db)
+    stale = int(row.revision_no or 0)
+    changed = complaint_now(db, row.id)
+    changed.revision_no = stale + 1
+    # The fence is a no-op until the complaint type has an enabled revision config (a missing row means off).
+    config = db.query(PortalRevisionConfig).filter(PortalRevisionConfig.source_entity_type == "complaint").first()
+    if config is None:
+        config = PortalRevisionConfig(
+            id=str(uuid.uuid4()), source_entity_type="complaint", is_enabled=True, max_revisions=3, allowed_statuses=[]
+        )
+        db.add(config)
+    was_enabled, config.is_enabled = config.is_enabled, True
+    db.commit()
+
+    def call(user):
+        return writes.WRITES[CLOSE].execute(db, user, {"complaint_id": row.id}, {"revision_no": stale})
+
+    try:
+        with pytest.raises(AppException) as err:
+            writes.run_as_user(db, ctx_of(db, w), call)
+    finally:
+        config.is_enabled = was_enabled
+        db.commit()
+    assert err.value.status_code == 409, err.value.status_code
     assert complaint_now(db, row.id).status == "approved"
     assert respond_sends == []
 
