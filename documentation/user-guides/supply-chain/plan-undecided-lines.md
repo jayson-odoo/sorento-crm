@@ -62,9 +62,10 @@ cancelled or marked no purchase needed.
 A project sales order line at a dealer location such as **BRW** or **MWH** can be planned like any
 other line.
 
-* The location's stock counts for that line, after every other line already owed at that location.
-  The share a dealer location keeps back for dealers still applies, so the suggestion can be a
-  **Reserve** for part of the line and a **Buy** for the rest.
+* The suggestion reads the location's stock after every line owed there, this one included, and the
+  share a dealer location keeps back for dealers still applies. So it can be a **Reserve** for part
+  of the line and a **Buy** for the rest, and a line whose location holds only enough for itself
+  suggests a **Buy**.
 * A **Buy** on the line goes to purchasing in the order inquiry the usual way.
 * Dealer (retail) sales orders do not reach this board yet.
 
