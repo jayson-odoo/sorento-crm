@@ -68,6 +68,9 @@ stock next. Reorder the list, remove a rung, or pick **Add a rung...** to add an
 (The same ladder for the stock/inventory domain can also be edited from **Settings > Chatbot >
 Cross-domain ladder** - it's the same list, just a shortcut to it.)
 
+The ladder only climbs from an answer. If the stock lookup itself fails, the bot says it could not
+check and asks the contact to try again: it never says "no stock" when nobody could read the stock.
+
 ### Prompt block
 
 Read-only. Shows the paragraph this domain renders into the bot's own instructions, exactly as
