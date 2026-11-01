@@ -137,7 +137,12 @@ def decide_route(
     if _agent_asked_back(db, contact_respond_id) and not (answer.choice == "chat" and not low):
         side, reason = "agent", "agent_asked"
     else:
-        side, reason = ("chat", "low_confidence") if low else (answer.choice, "classified")
+        # The panel trusts Jev's pick (owner ruling 1 Nov); the floor stays for the console and WhatsApp.
+        side, reason = (
+            (answer.choice, "classified")
+            if staff_principal.current() is not None or not low
+            else ("chat", "low_confidence")
+        )
     return RouteDecision(
         side,
         reason,
