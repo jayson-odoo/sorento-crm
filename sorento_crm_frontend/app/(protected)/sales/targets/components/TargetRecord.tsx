@@ -34,7 +34,7 @@ import {
 } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { useUrlTab } from '@/hooks/useUrlTab';
+import { useUrlTab, withTab } from '@/hooks/useUrlTab';
 import { formatDateInMalaysia, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import { numberFieldError } from '@/lib/number-field';
 import {
@@ -787,8 +787,8 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
                     total={ids.length}
                     hasPrevious={index > 0}
                     hasNext={index >= 0 && index < ids.length - 1}
-                    onPrevious={() => router.push(`/sales/targets/${ids[index - 1]}`)}
-                    onNext={() => router.push(`/sales/targets/${ids[index + 1]}`)}
+                    onPrevious={() => router.push(withTab(`/sales/targets/${ids[index - 1]}`, tab, 'details'))}
+                    onNext={() => router.push(withTab(`/sales/targets/${ids[index + 1]}`, tab, 'details'))}
                     ariaLabel="target"
                   />
                 }
