@@ -1380,7 +1380,8 @@ def _is_brand(db: Any, word: str, typed: str = "") -> bool:
     bound = _bound_by_id(db, "brand", word)
     if bound is not None and bound[0]:
         return True
-    return bool(_resolve_word(db, "brand", typed or word)[0])
+    # Only an id that binds nothing falls back to the typed word; a plain word is resolved as it stands.
+    return bool(_resolve_word(db, "brand", (typed or word) if bound is not None else word)[0])
 
 
 def _account_plan(
