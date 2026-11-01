@@ -35,9 +35,9 @@ The route is `GET /api/v1/order-management/report-ask`. The param is `account_ty
   `group_label` "Account type", and the rows add up to the unfiltered total.
 - **AT-9 [BE]** The filter ANDs with the others: brand CABANA on account 3 returns only those lines.
 - **AT-10 [BE]** Nothing loaded. When no customer in the caller's companies has a type, a filter or a split returns `status: refused`,
-  message "Account types are not loaded from AutoCount yet", no rows and no total, even though sales exist.
+  message "Account types are not loaded from AutoCount yet", no rows, even though sales exist. The printed reply is the message alone, no RM figure.
 - **AT-11 [BE]** Unknown. `account_types=9` returns `status: refused`, message "No account type 9. Account types: 1, 3, 4, PROJECT.": the
-  numbers in order, then any stored type no number leads to, by name. No rows and no total.
+  numbers in order, then any stored type no number leads to, by name. No rows; the printed reply is the message alone.
 - **AT-12 [BE]** `account_types=` is 422 `empty_filter`; more than 50 values is 422 `too_many_values`.
 - **AT-13 [BE]** A customer-scoped contact (dealer) naming the filter or the split is 403 `report_dimension_not_allowed`.
 - **AT-14 [BE]** Another company's types and numbers are neither listed nor matched, and figures never cross companies.
