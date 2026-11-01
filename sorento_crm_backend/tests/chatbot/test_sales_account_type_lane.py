@@ -1481,3 +1481,65 @@ def test_at21_a_product_lookup_under_the_question_stays_a_lookup(bot, seeded) ->
     text, calls = bot.say(verdict, PRODUCT_CODE.lower())
     assert not any(n == "crm_report_ask" for n, _a in calls), calls
     assert BASIS_Q not in text and "Invoiced, delivered" not in text, text
+
+
+# ============================================================================================= round 7
+def _refine_bare(**over: Any) -> dict[str, Any]:
+    return _rank(_word(), group_by=None, top_n=None, ranking_refine=True, **{**JAN, **over})
+
+
+@pytest.mark.parametrize("answer", ["pick", "repeat"])
+def test_at34_a_brand_answer_keeps_a_held_account_filter(bot, seeded, answer) -> None:
+    text, calls = bot.say(_sales(_acct("3")), "account 3 sales in Jan")
+    assert _only_report_ask(calls)["account_types"] == ["3"]
+    text, calls = bot.say(_refine_bare(), "and for cabana")
+    assert calls == [] and text.strip() == QUESTION, (text, calls)
+    if answer == "pick":
+        reply = _pick(1)
+    else:
+        reply = _reply(domain_hint=None, intent_hint=None, entities=[_word(kind_said="brand")])
+    text, calls = bot.say(reply, "brand")
+    args = _only_report_ask(calls)
+    assert args["brand_ids"] == [seeded["CABANA"]] and args["account_types"] == ["3"], args
+
+
+def test_at34_an_account_answer_keeps_a_held_brand(bot) -> None:
+    ids = _seed(bot, brands=("Cabana", "Bravat"), ledgers=BOOK)
+    text, calls = bot.say(_sales(_word("bravat", "brand", "BRAVAT")), "bravat sales in Jan")
+    assert _only_report_ask(calls)["brand_ids"] == [ids["BRAVAT"]]
+    text, calls = bot.say(_refine_bare(), "and for cabana")
+    assert calls == [] and text.strip() == QUESTION, (text, calls)
+    text, calls = bot.say(_pick(2), "account type")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["CABANA"] and args["brand_ids"] == [ids["BRAVAT"]], args
+
+
+def test_at21_a_second_filter_of_the_first_message_survives_a_brand_beside_the_account_answer(bot) -> None:
+    ids = _seed(bot, brands=("Cabana", "Bravat"), ledgers=BOOK)
+    text, calls = bot.say(_sales(_word("bravat", "brand", "BRAVAT"), _word()), "bravat and cabana sales in Jan")
+    assert calls == [] and text.strip() == QUESTION, (text, calls)
+    text, calls = bot.say(_pick(2), "account type")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["CABANA"] and args["brand_ids"] == [ids["BRAVAT"]], args
+
+
+def test_at21_a_second_filter_of_the_first_message_survives_a_type_beside_the_brand_answer(bot, seeded) -> None:
+    text, calls = bot.say(
+        _sales(_word("ceramic", "account_type", None, None), _word()), "ceramic and cabana sales in Jan"
+    )
+    assert calls == [] and text.strip() == QUESTION, (text, calls)
+    text, calls = bot.say(_pick(1), "brand")
+    args = _only_report_ask(calls)
+    assert args["brand_ids"] == [seeded["CABANA"]] and args["account_types"] == ["CERAMIC"], args
+
+
+def test_at35_a_company_picked_at_the_question_narrows_the_book(bot, seeded) -> None:
+    sorento, mocha, _ = _disagreeing_books(bot)
+    text, calls = bot.say(_sales(_acct("4")), "account 4 sales in Jan")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+    text, calls = bot.say(_pick(1), sorento)
+    assert _only_report_ask(calls)["company"] == DEFAULT_COMPANY_ID
+    refine = _rank(_word(), _acct("4"), group_by=None, top_n=None, ranking_refine=True, **JAN)
+    text, calls = bot.say(refine, "and cabana")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["4"] and "brand_ids" not in args, args
