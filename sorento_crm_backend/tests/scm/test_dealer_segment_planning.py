@@ -862,6 +862,36 @@ def test_a_line_cannot_reserve_stock_the_book_already_holds_for_another_order():
     assert short == Decimal("10")
 
 
+def test_a_line_cannot_reserve_what_the_book_has_reserved():
+    """10 on hand, 8 of it already reserved: 2 are free, however much the line owes."""
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=0, product=product)
+        _stock(db, product, pool, on_hand=10, reserved=8)
+        db.commit()
+        order, line, _core_so, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        short = _confirm_reserve(db, order, line, pool, actor, "10")
+
+    assert short == Decimal("8")
+
+
+def test_another_pool_gives_a_line_at_the_pool_only_the_true_net():
+    """Nothing here, 40 at another pool, a line of 30 here: a true net of 10. The add-back is
+    what the line stands on, and it stands on nothing at the other pool."""
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=0, product=product)
+        other = _dealer_pool(db, on_hand=40, product=product)
+        order, line, _core_so, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="30",
+        )
+        short = _confirm_reserve(db, order, line, other, actor, "30")
+
+    assert short == Decimal("20")
+
+
 def test_two_orders_pressed_separately_cannot_reserve_the_same_stock():
     """10 on hand, two orders of 10. The second press must not take what the first holds."""
     with blank_session() as db:
