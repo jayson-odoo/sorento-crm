@@ -287,6 +287,18 @@ def baseline(published):
     return router._with_agent_tools(copy.deepcopy(published))
 
 
+def without_keys(criteria: dict, *keys: str) -> dict:
+    """The criteria with the named `agent` keys removed (what a page adds on top of the baseline)."""
+    agent = {k: v for k, v in criteria["agent"].items() if k not in keys}
+    return {**criteria, "agent": agent}
+
+
+def open_page_of(criteria: dict) -> str:
+    sentence = criteria["agent"].get("open_page")
+    assert isinstance(sentence, str) and sentence.strip(), "criteria['agent']['open_page'] is missing or blank"
+    return sentence
+
+
 class TestJevIsToldTheOpenRecord:
     def test_a_readable_record_adds_one_open_record_sentence_under_agent(
         self, session_factory, monkeypatch, staff, grants, world, jev, inquiry
@@ -300,11 +312,11 @@ class TestJevIsToldTheOpenRecord:
         sent = call["criteria"]
         sentence = sent["agent"].get("open_record")
         assert isinstance(sentence, str) and sentence.strip() and "current_page" in sentence
-        without = {**sent, "agent": {k: v for k, v in sent["agent"].items() if k != "open_record"}}
-        assert canon(without) == canon(baseline(published))
+        open_page_of(sent)
+        assert canon(without_keys(sent, "open_record", "open_page")) == canon(baseline(published))
         assert call["instructions"] == PUBLISHED_INSTRUCTIONS
 
-    def test_a_page_with_no_entity_sends_the_published_criteria_byte_for_byte(
+    def test_a_page_with_no_entity_adds_open_page_and_nothing_else(
         self, session_factory, monkeypatch, staff, grants, world, jev
     ):
         published = publish_criteria(session_factory, dict(AGENT_DICT))
@@ -312,8 +324,35 @@ class TestJevIsToldTheOpenRecord:
 
         run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(None))
 
-        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published))
+        sent = jev.calls[0]["criteria"]
+        open_page_of(sent)
+        assert "open_record" not in sent["agent"]
+        assert canon(without_keys(sent, "open_page")) == canon(baseline(published))
         assert jev.calls[0]["instructions"] == PUBLISHED_INSTRUCTIONS
+
+    def test_a_page_with_a_readable_record_has_both_open_page_and_open_record(
+        self, session_factory, monkeypatch, staff, grants, world, jev, inquiry
+    ):
+        publish_criteria(session_factory, dict(AGENT_DICT))
+        grants.add(VIEW)
+
+        run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(inquiry))
+
+        sent = jev.calls[0]["criteria"]
+        open_page_of(sent)
+        assert isinstance(sent["agent"].get("open_record"), str) and sent["agent"]["open_record"].strip()
+
+    def test_open_page_names_current_page_and_how_to_use_the_crm(
+        self, session_factory, monkeypatch, staff, grants, world, jev
+    ):
+        publish_criteria(session_factory, dict(AGENT_DICT))
+        grants.add(VIEW)
+
+        run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(None))
+
+        sentence = open_page_of(jev.calls[0]["criteria"])
+        assert "current_page" in sentence
+        assert "how" in sentence.lower() and "crm" in sentence.lower()
 
     def test_a_denied_record_gets_no_line_and_the_same_page_with_the_slug_does(
         self, session_factory, monkeypatch, staff, grants, world, jev, inquiry
@@ -322,7 +361,10 @@ class TestJevIsToldTheOpenRecord:
 
         run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(inquiry))
         assert "record_ref" not in jev.calls[0]["state"]["current_page"], "fixture: the record must be denied"
-        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published))
+        sent = jev.calls[0]["criteria"]
+        open_page_of(sent)
+        assert "open_record" not in sent["agent"]
+        assert canon(without_keys(sent, "open_page")) == canon(baseline(published))
 
         grants.add(VIEW)
         run_chat(session_factory, monkeypatch, new_thread(session_factory, staff), world, jev, snapshot(inquiry))
@@ -361,7 +403,7 @@ class TestJevIsToldTheOpenRecord:
 
         run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(inquiry))
         assert "open_record" in jev.calls[0]["criteria"]["agent"], "fixture: the first call carries the line"
-        run_chat(session_factory, monkeypatch, new_thread(session_factory, staff), world, jev, snapshot(None))
+        run_chat(session_factory, monkeypatch, new_thread(session_factory, staff), world, jev, None)
 
         assert canon(jev.calls[1]["criteria"]) == canon(baseline(published))
 

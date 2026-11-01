@@ -860,3 +860,29 @@ class TestOutboundGuardOnEveryContactCall:
             send()
 
         assert posted == [], f"{call} on a panel key reached Respond: {posted}"
+
+
+# --------------------------------------------------------------------------- #
+# Round 6: a panel turn never asks for a portal link (the panel has no contact to send one to)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_panel_portal_link_ask_never_calls_the_tool_and_closes_done_with_a_reply(
+    session_factory, monkeypatch, staff, grants, world
+):
+    """The contact-turn control is `test_carried_miss.py::test_portal_link_with_a_carried_unresolved_order_sends_the_link`
+    (and `test_dev_failures_portal_form.py::test_run_fetch_deep_links...`): a contact's portal link ask still calls
+    `crm_portal_link_get`, so it is not duplicated here."""
+    grants.add(USE)
+    world.parser_output = _parser_output(
+        domain_hint="portal_link", intent_hint="get_portal_link", entities=[], user_goal="portal link"
+    )
+
+    result = run_panel(session_factory, monkeypatch, staff, "send me the complaint form link")
+
+    assert [c for c in world.mcp if c["name"] == "crm_portal_link_get"] == [], "no portal link call on the panel"
+    row = turn_row(session_factory, result.turn_id)
+    assert row is not None and row.status == "done", getattr(row, "status", None)
+    reply = result.reply_text or ""
+    assert reply.strip(), "the turn must answer"
+    assert "could not fetch" not in reply.lower()
