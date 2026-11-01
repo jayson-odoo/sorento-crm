@@ -527,6 +527,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
               .filter((p) => p.product_id)
               .map((p) => p.product_id as string),
             candidate_product_ids: [],
+            combo_id: l.combo_id ?? null,
             promotion_id: override?.locked ? override.promotion_id : undefined,
           };
         }),
