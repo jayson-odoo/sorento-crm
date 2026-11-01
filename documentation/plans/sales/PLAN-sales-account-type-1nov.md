@@ -46,12 +46,12 @@ The CRM cannot answer the first reading, and a bot asked for "account 4" reads i
 The PDF is "Sorento sales report by account", 01/01/26 to 04/09/26. Its file is an Excel export, so a hand adjustment cannot be
 ruled out. Compared per agent and month: 78 agent-months across 10 agents. Four other PDF rows were not mapped to agent codes.
 
-| Number | PDF column | Cells that tie | PDF RM | Tag RM | Gap RM | Gap % |
-| --- | --- | --- | --- | --- | --- | --- |
-| A/C I | SORENTO | 58 of 78 | 20,130,863.38 | 20,115,768.01 | 15,095.37 | 0.07 |
-| A/C II | BRAVAT | 78 of 78 | 53,261.33 | 53,261.33 | 0.00 | 0.00 |
-| A/C III | CERAMIC | 75 of 78 | 20,051,403.22 | 20,056,934.98 | -5,531.76 | 0.03 |
-| A/C IV | CABANA | 71 of 78 | 5,200,588.98 | 5,214,345.49 | -13,756.51 | 0.26 |
+| Number | PDF column | Cells that tie | Gap % |
+| --- | --- | --- | --- |
+| A/C I | SORENTO | 58 of 78 | 0.07 |
+| A/C II | BRAVAT | 78 of 78 | 0.00 |
+| A/C III | CERAMIC | 75 of 78 | 0.03 |
+| A/C IV | CABANA | 71 of 78 | 0.26 |
 
 The gaps have two causes:
 
@@ -96,7 +96,7 @@ Rules:
    is already the CRM's own project / cash concept, `app/models/order.py:184-190`).
 5. A month alone is that month of this year. A month or year split never prints "Top N".
 6. A word and a number in one message need no question: if the word is the number's type they name one account, so the account filter
-   alone (the owner's "ymh, cabana, invoiced, by month, for account 4" ties to the report, January RM 96,416.80); if it differs, the word can
+   alone (the owner's "AGENT A, cabana, invoiced, by month, for account 4" ties to the report, January RM 96,416.80); if it differs, the word can
    only be the brand ("cabana on account type 3", RM 76,877.71). "project" stays the channel and "sample" the category, as today, unless the
    message says account type.
 7. Nothing loaded: "Account types are not loaded from AutoCount yet", never RM 0. An unknown number says so and lists the numbers and
