@@ -10,6 +10,14 @@ UAC: `agentic-unify-tools-acceptance-criteria.md`. Behaviour: `CARD-agentic-unif
 - PR decide and opportunity: `CHAT/agent/writes.py:734, 1531`. Withdraw: `CHAT/agent/actions.py:358`, generic on `after.pending_action_id`.
 - All twelve reads have routes on `STAFF_READ_ROUTES`, measured by resolving each catalog entry against `app.routes`. So no backend route work and no identity work.
 
+## Ruling after the security review, 2 Nov: panel only
+
+Security reviewer FAIL at f057a34f25, checked by the lead. On console and WhatsApp turns the route runs as the shared key, so the agent's one slug was the only guard, and it missed per-route rules: a different slug on unfiltered event logs, a buyer's phone following the act-as user, the forecast falling to the default company, order totals skipping the sales reveal. Crew ruled **(a) panel only**: these tools are offered only on a staff-principal turn, where the route runs as the user and its rules hold. One condition instead of about seven gates, and it can never reach WhatsApp.
+
+**Deferred from card Q2: "WhatsApp staff gain them too".** Trigger for later: run these reads as the linked user on non-panel turns, audited tool by tool. Crew tells the owner in the morning summary; the owner may overrule.
+
+This supersedes below: fact 1's `own_permission` condition (no panel check needed), the operator check, fact 9's project brand denial, and the `combine` and brand refusal on the finds, all removed. Fact 2's labels hold on panel turns only. The `left_out` prompt line must not name these tools on other turns, because it would tell a slug holder "outside access".
+
 ## ARCHITECTURE
 
 - **Layer.** Reads are rows in `REGISTRY` (`CHAT/agent/tools.py:69`), the one table of MCP reads, dispatched by `_dispatch_inner` (`:961`). Writes are `WriteDef`s in `WRITES` (`CHAT/agent/writes.py:283`), the one write path. No new registry, no new lane, no parser domain, no router text, no MCP tool.
@@ -36,7 +44,6 @@ UAC: `agentic-unify-tools-acceptance-criteria.md`. Behaviour: `CARD-agentic-unif
 | `CHAT/router.py` | `agent_tool_labels` adds `PORTED_READS` |
 | `CHAT/agent/writes.py` | Three `WriteDef`s with `read_before`, `summary`, `execute`, `changes`. Two `UserRead`s, `crm_complaints_find` and `crm_projects_find`, with `combine` |
 | `CHAT/contracts.py` | `crm_order_analytics` and `crm_find` in `UNDOMAINED_CHATBOT_TOOLS` |
-| `app/services/contact_brand_scope.py` | Three project tools in `_TOOLS_DENIED_WHEN_SCOPED` |
 | `documentation/user-guides/_shared/ai-assistant-side-panel.md` | From #2060. Drop "Not on this path yet"; add the new questions and the three changes. Same PR, per the guide rule |
 
 Merge with #2053: it rewrites `agent_tool_labels(db, user)` and adds `CONTACT_TOOLS`, an allow-list, so ported reads stay off contact principals with no change here. Whichever lands second carries the labels through its per-user filter: a contact with no linked user gets none. Test pinned once both are in.
