@@ -58,6 +58,7 @@ import {
 } from '../hooks/useEmailOutbox';
 import type { EmailOutboxRow } from '../types/emailOutbox.types';
 import EmailOutboxAttachments from './EmailOutboxAttachments';
+import EmailOutboxRecipients from './EmailOutboxRecipients';
 
 export default function EmailOutboxList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -373,10 +374,7 @@ export default function EmailOutboxList() {
                     </Badge>
                   </div>
                 </div>
-                <div>
-                  <div className="text-muted-foreground">Recipient</div>
-                  <div className="font-mono">{detail.recipient_email}</div>
-                </div>
+                <EmailOutboxRecipients row={detail} />
                 <div>
                   <div className="text-muted-foreground">Priority</div>
                   <div>{detail.priority}</div>

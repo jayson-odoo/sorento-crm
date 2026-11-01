@@ -124,7 +124,7 @@ from app.services.oi_auto_confirm_backfill import (
     live_cover_stmt,
 )
 from app.services.scm import goods_chain, order_link_service, priority, spo_supply
-from app.services.scm.demand_class import PROJECT as PROJECT_DEMAND_CLASS
+from app.services.scm.demand_class import PROJECT as PROJECT_DEMAND_CLASS, email_class
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 from app.services.scm.pool_predicate import is_project_reserve, is_site_pool
 from app.services.scm.supply_assignment import (
@@ -5148,6 +5148,8 @@ class ProjectOrderInquiryService:
             "so_number": facts.get("so_number"),
             "customer": facts.get("customer"),
             "project": facts.get("project"),
+            #: DEALER-OI-ROUTE: a stand-in row with no header reads its class from here.
+            "sales_order_class": email_class(facts.get("demand_class")),
             "line": {
                 "so_date": _handover_fmt_date(facts.get("so_date")),
                 "so_number": facts.get("so_number"),
@@ -5205,6 +5207,9 @@ class ProjectOrderInquiryService:
     def _fill_from_template(item: Dict[str, Any], template: Mapping[str, Any]) -> None:
         """The order's facts as the line's own item carried them, where the stand-in's
         header could not be read (a saved line queued before any header existed)."""
+        if not item.get("pso_id") and template.get("sales_order_class"):
+            # No header: `handover_item` read no order, so its class is the default.
+            item["sales_order_class"] = template["sales_order_class"]
         for key in ("pso_id", "so_number", "customer", "project"):
             if not item.get(key):
                 item[key] = template.get(key)
@@ -5649,6 +5654,8 @@ class ProjectOrderInquiryService:
                 core_line.section_heading if core_line is not None else None,
             ),
             "remark_type": facts.get("remark_type"),
+            #: DEALER-OI-ROUTE: which class's email this line rides (`email_class`).
+            "sales_order_class": email_class(facts.get("demand_class")),
         }
 
     def _handover_order_facts(self, pso_id: Optional[str]) -> Dict[str, Any]:
@@ -5676,6 +5683,7 @@ class ProjectOrderInquiryService:
                 SalesOrder.order_date,
                 SalesOrder.internal_note,
                 SalesOrder.ship_info,
+                SalesOrder.demand_class,
             )
             .outerjoin(Project, Project.id == ProjectSalesOrder.project_id)
             .outerjoin(
@@ -5706,8 +5714,11 @@ class ProjectOrderInquiryService:
                 order_date,
                 internal_note,
                 ship_info,
+                demand_class,
             ) = row
             facts = {
+                # DEALER-OI-ROUTE: the core SO's class; the email routes by `email_class`.
+                "demand_class": demand_class,
                 # FULFIL-SO-REMARK: what the per-SO remark default is decided from.
                 "note": internal_note,
                 "remark_type": so_remark_rules.remark_type(ship_info),
@@ -5787,6 +5798,8 @@ class ProjectOrderInquiryService:
             {
                 "decision_id": str(decision_id),
                 "so_number": so_number,
+                #: DEALER-OI-ROUTE: the undo email routes by the same class rule.
+                "sales_order_class": email_class(facts.get("demand_class")),
                 "customer": facts.get("customer"),
                 "project": facts.get("project"),
                 "revision_no": revision_no,
@@ -15075,6 +15088,15 @@ def _lines_by_inquiry(
     return out
 
 
+def handover_class_groups(items: Sequence[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    """The queued handover lines split by sales order class (DEALER-OI-ROUTE), in the
+    order each class first appears; one group when the write touched one class."""
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for item in items:
+        groups.setdefault(item.get("sales_order_class") or PROJECT_DEMAND_CLASS, []).append(item)
+    return list(groups.values())
+
+
 def build_handover_email(
     db: Session, items: Sequence[Dict[str, Any]], *, store_excel: bool = True
 ) -> Optional[Tuple[Dict[str, Any], str]]:
@@ -15104,6 +15126,9 @@ def build_handover_email(
     if built is None:
         return None
     context, source_id = built
+    # DEALER-OI-ROUTE: the class the automation rows' conditions read. Every caller hands
+    # one class's lines (`handover_class_groups`; a resend is one OI, so one order).
+    context["sales_order_class"] = items[0].get("sales_order_class") or PROJECT_DEMAND_CLASS
     inquiry_ids = list(
         dict.fromkeys(item["order_inquiry_id"] for item in items if item.get("order_inquiry_id"))
     )
@@ -15144,6 +15169,8 @@ def _build_undo_context(
         },
         "actor": item.get("actor"),
         "today": date.today().strftime("%d/%m/%Y"),
+        # DEALER-OI-ROUTE: the class the automation rows' conditions read.
+        "sales_order_class": item.get("sales_order_class") or PROJECT_DEMAND_CLASS,
     }
     return context, item["decision_id"]
 
@@ -15384,21 +15411,27 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             # The workbook is stored only when an enabled automation will send it (S2).
             from app.services import park_send
 
-            built = build_handover_email(
-                fresh,
-                concluded,
-                store_excel=park_send.first_automation(fresh, "order_inquiry_handover")
-                is not None,
-            )
-            if built is None:
-                return
-            context, source_id = built
-            AutomationService(fresh).dispatch_event(
-                "order_inquiry_handover",
-                context=context,
-                source_kind="order_inquiry_handover",
-                source_id=source_id,
-            )
+            store_excel = park_send.first_automation(fresh, "order_inquiry_handover") is not None
+            # DEALER-OI-ROUTE: one email per sales order class, so retail and project
+            # lines confirmed in one write reach their own purchasing team. Each class is
+            # best-effort on its own: one failing never stops the other's email.
+            for group in handover_class_groups(concluded):
+                try:
+                    built = build_handover_email(fresh, group, store_excel=store_excel)
+                    if built is None:
+                        continue
+                    context, source_id = built
+                    AutomationService(fresh).dispatch_event(
+                        "order_inquiry_handover",
+                        context=context,
+                        source_kind="order_inquiry_handover",
+                        source_id=source_id,
+                    )
+                except Exception:  # noqa: BLE001 - a post-commit side effect never raises
+                    fresh.rollback()
+                    logger.exception(
+                        "Automation dispatch(order_inquiry_handover) failed for one class"
+                    )
         except Exception:  # noqa: BLE001 - a post-commit side effect never raises
             fresh.rollback()
             logger.exception("Automation dispatch(order_inquiry_handover) failed to queue")
