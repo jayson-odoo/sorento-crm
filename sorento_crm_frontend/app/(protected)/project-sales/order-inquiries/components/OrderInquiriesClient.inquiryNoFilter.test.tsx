@@ -213,6 +213,7 @@ vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
   return { ...actual, SearchableMultiSelect: (props: Props) => <Stub {...props} /> };
 });
 
+import { upsertUserListColumnConfig } from '@/lib/listing-column-preferences/listColumnPreferencesService';
 import { OrderInquiriesClient } from './OrderInquiriesClient';
 
 
@@ -352,5 +353,62 @@ describe('AC-RF-87 a filter change keeps inquiry_no (sort and page ride the same
     await waitFor(() => expect(lastList().query).toBe('CKS'));
     expect(sent(lastList().inquiry_no)).toBe(NUMBERS);
     expect(new URLSearchParams(nav.state.search).get('inquiry_no')).toBe(NUMBERS);
+  });
+});
+
+describe('AC-RF-90 a chip session never changes the remembered Lines view', () => {
+  it('leaves the stored view identical to its seed, before and after the chip is removed', async () => {
+    const seedFilters = { ack: 'to_confirm', location: 'ZZT-WH-A', supplier_id: 'sup-1' };
+    getUserListColumnConfig.mockResolvedValue({
+      listing_key: 'projects.projects.view::order-inquiry-worklist',
+      config: { version: 1, sorting: null, filtersVersion: 1, filters: seedFilters },
+    });
+    arriveWith(`inquiry_no=${NUMBERS}`);
+    renderClient();
+    fireEvent.click(await screen.findByRole('button', { name: CLEAR_CHIP }));
+    await waitFor(() => expect(sent(lastList().inquiry_no)).toBeUndefined());
+    expect(sent(lastList().ack), 'ack All sends no ack filter').toBeUndefined();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    for (const [, payload] of (upsertUserListColumnConfig as unknown as { mock: { calls: unknown[][] } }).mock.calls) {
+      expect(
+        JSON.stringify((payload as { filters?: unknown }).filters),
+        'the stored view written back',
+      ).toBe(JSON.stringify(seedFilters));
+    }
+  });
+});
+
+describe('AC-RF-91 narrowing by hand with the chip on survives a reload', () => {
+  it('a real row state stays in the request and the URL', async () => {
+    arriveWith(`inquiry_no=${NUMBERS}&state=cancelled`);
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() => expect(sent(lastList().inquiry_no)).toBe(NUMBERS));
+    expect(sent(lastList().state)).toBe('cancelled');
+    expect(new URLSearchParams(nav.state.search).get('state')).toBe('cancelled');
+  });
+
+  it('ack=to_confirm in the URL stays To confirm', async () => {
+    arriveWith(`inquiry_no=${NUMBERS}&ack=to_confirm`);
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() => expect(sent(lastList().inquiry_no)).toBe(NUMBERS));
+    expect(sent(lastList().ack)).toBe('to_confirm');
+  });
+
+  it('a hand-picked To confirm is written to the URL and holds on a remount', async () => {
+    arriveWith(`inquiry_no=${NUMBERS}`);
+    const first = renderClient();
+    await screen.findByText('SO385126');
+    fireEvent.click(await screen.findByTestId('order-inquiry-strip-to-confirm'));
+    await waitFor(() => expect(sent(lastList().ack)).toBe('to_confirm'));
+    expect(new URLSearchParams(nav.state.search).get('ack'), 'ack in the URL').toBe('to_confirm');
+    first.unmount();
+    listOrderInquiryWorklist.mockClear();
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() => expect(listOrderInquiryWorklist).toHaveBeenCalled());
+    expect(sent(lastList().ack), 'ack after the remount').toBe('to_confirm');
+    expect(sent(lastList().inquiry_no)).toBe(NUMBERS);
   });
 });

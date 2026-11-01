@@ -303,3 +303,51 @@ describe('AC-RF-88 with no inquiry_no the toggle stays clean', () => {
     expect(nav.pushed.at(-1)).toBe('/project-sales/order-inquiries');
   });
 });
+
+describe('AC-RF-92 pressing the view button already active does nothing', () => {
+  it('Lines, while on Lines, pushes nothing and keeps doc_state', async () => {
+    nav.state.search = `display=lines&inquiry_no=${NUMBERS}&doc_state=outstanding&state=cancelled`;
+    renderView();
+    await screen.findByText('SO385126');
+    nav.pushed.length = 0;
+    fireEvent.click(screen.getByRole('button', { name: /^lines$/i }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(nav.pushed, 'pushed URLs').toEqual([]);
+    expect(query().get('doc_state')).toBe('outstanding');
+  });
+
+  it('Documents, while on Documents, pushes nothing', async () => {
+    nav.state.search = `inquiry_no=${NUMBERS}&state=outstanding`;
+    renderView();
+    await screen.findByText('OI-2610-001');
+    nav.pushed.length = 0;
+    fireEvent.click(screen.getByRole('button', { name: /^documents$/i }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(nav.pushed, 'pushed URLs').toEqual([]);
+    expect(query().get('state')).toBe('outstanding');
+  });
+});
+
+describe('AC-RF-93 reserve travels with inquiry_no', () => {
+  it('keeps reserve both ways when inquiry_no is present', async () => {
+    nav.state.search = `inquiry_no=${NUMBERS}&reserve=needs_reserve`;
+    renderView();
+    await screen.findByText('OI-2610-001');
+    fireEvent.click(screen.getByRole('button', { name: /^lines$/i }));
+    const toLines = new URLSearchParams(String(nav.pushed.at(-1)).split('?')[1] ?? '');
+    expect(toLines.get('reserve'), 'reserve on the way to Lines').toBe('needs_reserve');
+    await screen.findByText('SO385126');
+    fireEvent.click(screen.getByRole('button', { name: /^documents$/i }));
+    const back = new URLSearchParams(String(nav.pushed.at(-1)).split('?')[1] ?? '');
+    expect(back.get('reserve'), 'reserve on the way back').toBe('needs_reserve');
+    expect(back.get('inquiry_no')).toBe(NUMBERS);
+  });
+
+  it('without inquiry_no, reserve still resets (AC-RF-88)', async () => {
+    nav.state.search = 'reserve=needs_reserve';
+    renderView();
+    await screen.findByText('OI-2610-001');
+    fireEvent.click(screen.getByRole('button', { name: /^lines$/i }));
+    expect(nav.pushed.at(-1)).toBe('/project-sales/order-inquiries?display=lines');
+  });
+});

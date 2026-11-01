@@ -36,6 +36,7 @@ from app.models.project_so import (
     OrderInquiryReleasedLink,
     OrderInquiryReserveRequest,
     OrderInquiryReserveRequestRow,
+    OrderInquiryRow,
     ProjectSalesOrder,
 )
 from app.services.company_scope import company_scope
@@ -1350,3 +1351,29 @@ def test_ac_rf_86_async_export_request_carries_inquiry_no():
 
     payload = OrderInquiryWorklistExportRequest(inquiry_no="OI-2610-910,OI-2610-9100")
     assert payload.model_dump(exclude_none=True).get("inquiry_no") == "OI-2610-910,OI-2610-9100"
+
+
+def test_ac_rf_89_select_all_acknowledge_with_inquiry_no_acts_on_exactly_those_oi_rows(sn):
+    client, world = sn
+    one, two = _lines_world(world)
+
+    def acknowledged(inquiry):
+        world.db.expire_all()
+        rows = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.inquiry_id == inquiry.id).all()
+        assert rows, "fixture check: the OI has rows"
+        return {row.id for row in rows if row.acknowledged_at is not None}, {row.id for row in rows}
+
+    response = client.post(f"{LIST}/acknowledge", json={"filter": {"inquiry_no": "OI-2610-910"}})
+    assert response.status_code in (200, 201), response.text
+    assert response.json()["acknowledged"] == 2, response.text
+    done, every = acknowledged(one)
+    assert done == every, "the chip's OI is acknowledged"
+    done_other, _ = acknowledged(two)
+    assert done_other == set(), "the other OI (910 is a prefix of 9100) is untouched"
+
+
+def test_ac_rf_54_reserved_trigger_description_no_longer_mentions_the_balance():
+    from app.services import automation_triggers
+
+    spec = next(s for s in automation_triggers.list_specs() if s.type == RESERVED_TRIGGER)
+    assert "balance" not in spec.description.lower(), spec.description
