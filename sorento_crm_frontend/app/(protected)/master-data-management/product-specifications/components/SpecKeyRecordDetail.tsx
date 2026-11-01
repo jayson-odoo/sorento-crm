@@ -16,7 +16,7 @@ import RecordNavigation from '@/components/common/RecordNavigation';
 import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
 import { getProductClassLabels } from '../../product-categories/services/categoryService';
 import { useSpecKeyActions } from '../actions';
-import { useUrlTab } from '@/hooks/useUrlTab';
+import { useUrlTab, withTab } from '@/hooks/useUrlTab';
 import { useSpecCoverageQuery } from '../hooks/useSpecCoverageQuery';
 import { useSpecKeyRecord } from '../hooks/useSpecKeyRecord';
 import { selectSpecKey, useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
@@ -84,7 +84,7 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
       sorting: [{ id: 'label', desc: false }],
       searchQuery,
     });
-    router.push(`${LIST_PATH}/${target.spec_key}${search ? `?${search}` : ''}`);
+    router.push(withTab(`${LIST_PATH}/${target.spec_key}${search ? `?${search}` : ''}`, tab, 'details'));
   };
 
   const pagerNode =

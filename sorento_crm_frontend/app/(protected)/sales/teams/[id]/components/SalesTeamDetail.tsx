@@ -19,7 +19,7 @@ import type { RecordAction } from '@/components/common/recordActions';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { useUrlTab } from '@/hooks/useUrlTab';
+import { useUrlTab, withTab } from '@/hooks/useUrlTab';
 import { formatDateInMalaysia, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import {
   useSalesTeam,
@@ -317,8 +317,8 @@ export function SalesTeamDetail({ id }: { id: string }) {
                     total={teams.length}
                     hasPrevious={index > 0}
                     hasNext={index >= 0 && index < teams.length - 1}
-                    onPrevious={() => router.push(`/sales/teams/${teams[index - 1].id}`)}
-                    onNext={() => router.push(`/sales/teams/${teams[index + 1].id}`)}
+                    onPrevious={() => router.push(withTab(`/sales/teams/${teams[index - 1].id}`, tab, 'details'))}
+                    onNext={() => router.push(withTab(`/sales/teams/${teams[index + 1].id}`, tab, 'details'))}
                     ariaLabel="sales team"
                   />
                 }

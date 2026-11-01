@@ -61,6 +61,11 @@ export function useUrlTab<T extends string>({
   // back/forward) the URL answers again; until then this mirror does.
   const [picked, setPicked] = useState<{ tab: string; key: string } | null>(null);
 
+  // Once the URL has moved on, the mirror has done its job: drop it, so a later return to
+  // the search string it was picked on (a same-record link, a back entry without a remount)
+  // reads the URL rather than resurrecting the old pick.
+  if (picked && picked.key !== searchKey) setPicked(null);
+
   const fromUrl = searchParams?.get(TAB_PARAM) ?? null;
   const requested = picked && picked.key === searchKey ? picked.tab : fromUrl;
   const known = (value: string | null): value is T =>

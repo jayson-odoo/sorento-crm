@@ -38,7 +38,7 @@ import { FileDropzone } from '@/components/common/FileDropzone';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import type { RecordAction } from '@/components/common/recordActions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
-import { useUrlTab } from '@/hooks/useUrlTab';
+import { useUrlTab, withTab } from '@/hooks/useUrlTab';
 import {
   IDEAS_KEY,
   useIdeaMutations,
@@ -517,9 +517,9 @@ export function IdeaDetail({ id }: { id: string }) {
                     hasPrevious={index > 0}
                     hasNext={index >= 0 && index < rows.length - 1}
                     onPrevious={() =>
-                      router.push(`/ideas/${rows[index - 1].id}`)
+                      router.push(withTab(`/ideas/${rows[index - 1].id}`, tab, 'details'))
                     }
-                    onNext={() => router.push(`/ideas/${rows[index + 1].id}`)}
+                    onNext={() => router.push(withTab(`/ideas/${rows[index + 1].id}`, tab, 'details'))}
                     ariaLabel="idea"
                   />
                 }

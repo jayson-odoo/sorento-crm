@@ -848,6 +848,10 @@ export default function AttachmentDetailModal({
   );
   // The Linkages strip's tab, here rather than in `LinkagesTabs` so prev/next keeps it.
   const [linkagesTab, setLinkagesTab] = useState('products');
+  // A fresh open starts on Products; prev/next inside an open modal keeps the tab.
+  useEffect(() => {
+    if (open) setLinkagesTab('products');
+  }, [open]);
 
   const {
     data: accessTypeOptions = [],

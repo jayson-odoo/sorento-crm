@@ -128,3 +128,16 @@ describe('withTab (pagers that build their own step href)', () => {
     expect(withTab('/x/2', null)).toBe('/x/2');
   });
 });
+
+describe('useUrlTab mirror (review S1)', () => {
+  it('a return to the search string a tab was picked on reads the URL, not the stale pick', () => {
+    const { result, rerender } = renderHook(() => useUrlTab({ tabs: TABS, defaultTab: 'general' }));
+    act(() => result.current[1]('lines'));
+    search = 'tab=lines';
+    rerender();
+    expect(result.current[0]).toBe('lines');
+    search = '';
+    rerender();
+    expect(result.current[0]).toBe('general');
+  });
+});

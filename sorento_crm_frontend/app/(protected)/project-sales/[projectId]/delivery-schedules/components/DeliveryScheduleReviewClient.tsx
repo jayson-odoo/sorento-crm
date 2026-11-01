@@ -1,6 +1,6 @@
 'use client';
 
-import { useUrlTab } from '@/hooks/useUrlTab';
+import { useUrlTab, withTab } from '@/hooks/useUrlTab';
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -135,9 +135,12 @@ export function DeliveryScheduleReviewClient({
   });
   const goToSchedule = (row: { latest_version_id: string | null } | undefined) => {
     if (row?.latest_version_id) {
-      const tabQs = activeTab === 'schedule' ? '' : `?tab=${activeTab}`;
       router.push(
-        `/project-sales/${projectId}/delivery-schedules/${row.latest_version_id}${tabQs}`,
+        withTab(
+          `/project-sales/${projectId}/delivery-schedules/${row.latest_version_id}`,
+          activeTab,
+          'schedule',
+        ),
       );
     }
   };
