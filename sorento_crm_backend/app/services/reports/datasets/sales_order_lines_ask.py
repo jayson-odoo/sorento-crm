@@ -159,7 +159,7 @@ def _definition(basis: str) -> reg.ReportDefinition:
             lambda c: sa.func.coalesce(SalesAgent.sales_agent, NO_AGENT),
             size=140,
         ),
-        reg.Column("account_type", "Account type", "text", "dimension", lambda c: Customer.autocount_debtor_type, size=140, hidden=True),
+        reg.Column("account_type", "Account type", "text", "dimension", lambda c: Customer.autocount_debtor_type, size=140),
         reg.Column("location", "Location", "text", "dimension", lambda c: Warehouse.warehouse_code, size=120),
         reg.Column(
             "channel", "Channel", "text", "dimension", lambda c: channel_label(SalesOrder.demand_class), size=120
@@ -223,6 +223,7 @@ def _definition(basis: str) -> reg.ReportDefinition:
                 default=reg.all_dates_period if basis == "outstanding" else reg.current_year_period,
             ),
             reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
+            reg.SelectParam("account_type", "Account type", True, (), ap.account_type_options, ap.account_type_condition),
             reg.SelectParam("product", "Product", True, (), _no_options, product_condition, hidden=True),
             reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),
             reg.SelectParam("category", "Category", True, (), ap.category_options, category_condition),
@@ -231,7 +232,6 @@ def _definition(basis: str) -> reg.ReportDefinition:
             reg.SelectParam("location", "Location", True, (), _no_options, location_condition, hidden=True),
             reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition, hidden=True),
             reg.SelectParam("spec", "Specification", True, (), ap.spec_options, ap.spec_condition),
-            reg.SelectParam("account_type", "Account type", True, (), ap.account_type_options, ap.account_type_condition, hidden=True),
         ),
         detail=reg.DetailLayout(
             title="Sales order lines",
