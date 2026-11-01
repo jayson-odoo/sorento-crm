@@ -1,6 +1,6 @@
 # PLAN: price tag combos carry their own picture, description and options, pullable into templates
 
-Status: approved by the owner 1 Nov 2026 (card "1a 2a 3a 4a 5b", mock approved), in build. Track: full (size L, migration).
+Status: approved by the owner 1 Nov 2026 (card "1a 2a 3a 4a 5b", mock approved); built and browser passed, PR #2069 awaits the owner's hand test. Production import is a separate owner go. Track: full (size L, migration).
 Lane: PRICETAG-COMBO, branch `crew/pricetag-combo`, one PR for the feature, seed data stays outside this repo.
 UAC: `price-tag-combo-template-fields-acceptance-criteria.md` beside this file.
 
