@@ -1,7 +1,7 @@
 """Customer Service reaches Fulfilment Planning (DEALER-PLANNING R16, owner Q2 (a), 1 Nov 2026)
 
 Revision ID: dp_0001_cs_planning_access
-Revises: akn_0001_knowledge
+Revises: oisn_0002_full_table
 Create Date: 2026-11-01 15:00:00.000000
 
 Dealer CS plans dealer sales orders on Fulfilment Planning, whose list and board read
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "dp_0001_cs_planning_access"
-down_revision = "akn_0001_knowledge"
+down_revision = "oisn_0002_full_table"
 branch_labels = None
 depends_on = None
 
