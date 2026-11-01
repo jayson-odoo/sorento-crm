@@ -11,7 +11,7 @@ Crew console pass on the first cut (1 Nov 2026) found three gaps, fixed here:
   version that does, with one supplier line right after the marker;
 * the Chatbot Console pins only a parser version. The parser version records the span version it was published with
   (`config_json.span_prompt_version_id`); a dry run that pins this parser runs that span prompt too
-  (`engine._paired_span_override`). A live turn never reads the pairing.
+  (`engine._span_override`). A live turn never reads the pairing.
 
 No label moves: the owner promotes after the chatbot eval, the parser label and the span label each one move on the
 Prompts page. Idempotent: a version already carrying the exact text publishes nothing. Downgrade removes only the
