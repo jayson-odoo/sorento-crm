@@ -441,7 +441,7 @@ def test_at_15_the_chat_dataset_does_not_take_account_types(client, db):
 # ================================================================ AT-16
 
 
-def test_at_16_the_tie_out_against_the_autocount_report_figures_to_the_cent(client, db):
+def test_at_16_the_tie_out_on_invented_figures_to_the_cent(client, db):
     codes = [seed_agent(db, code=unique_code("ZZT AGENT")) for _ in range(3)]
     a1, a2, a3 = codes
     noise_agent = seed_agent(db, code=unique_code("ZZT NOISE"))
@@ -460,30 +460,30 @@ def test_at_16_the_tie_out_against_the_autocount_report_figures_to_the_cent(clie
         doc(db, "invoice", net, JAN15, customer=ledger, agent_row=agent_row,
             lines=lines or [doc_line(prod=plain)])
 
-    inv(l_one, "281810.77", a1)
-    inv(l_one_untagged, "393.00", a1)
-    inv(l_three, "27717.93", a1, [doc_line(prod=p_cer)])
-    # the 287,765.66 document holds a CABANA brand line and a CERAMIC brand line
-    inv(l_three, "287765.66", a2, [doc_line(prod=p_cab, net="76877.71"), doc_line(prod=p_cer, net="210887.95")])
-    inv(l_four, "6561.00", a1, [doc_line(prod=p_cab)])
-    inv(l_four, "89855.80", a3, [doc_line(prod=p_cab)])
+    inv(l_one, "199700.00", a1)
+    inv(l_one_untagged, "400.00", a1)
+    inv(l_three, "30000.00", a1, [doc_line(prod=p_cer)])
+    # the 270,300.00 document holds a CABANA brand line and a CERAMIC brand line
+    inv(l_three, "270300.00", a2, [doc_line(prod=p_cab, net="70000.00"), doc_line(prod=p_cer, net="200300.00")])
+    inv(l_four, "6000.00", a1, [doc_line(prod=p_cab)])
+    inv(l_four, "94400.00", a3, [doc_line(prod=p_cab)])
     inv(l_one, "1.00", noise_agent)  # another agent's sale: outside the ask
     db.commit()
 
     contact = _staff(db)
     mine = {"period": JAN, "sales_agent_ids": [a.id for a in codes]}
-    assert _amount(client, contact, account_types="1", **mine) == D("282203.77")
-    assert _amount(client, contact, account_types="3", **mine) == D("315483.59")
-    assert _amount(client, contact, account_types="4", **mine) == D("96416.80")
-    assert _amount(client, contact, **mine) == D("694104.16")
+    assert _amount(client, contact, account_types="1", **mine) == D("200100.00")
+    assert _amount(client, contact, account_types="3", **mine) == D("300300.00")
+    assert _amount(client, contact, account_types="4", **mine) == D("100400.00")
+    assert _amount(client, contact, **mine) == D("600800.00")
 
     split = _ok(client, contact, group_by="account_type", top_n=10, **mine)
     got = {r["name"]: money(r["amount"]) for r in split["rows"]}
-    assert got == {"SORENTO": D("282203.77"), "CERAMIC": D("315483.59"), "CABANA": D("96416.80")}, split["rows"]
-    assert sum(got.values()) == D("694104.16")
+    assert got == {"SORENTO": D("200100.00"), "CERAMIC": D("300300.00"), "CABANA": D("100400.00")}, split["rows"]
+    assert sum(got.values()) == D("600800.00")
 
-    assert _amount(client, contact, account_types="3", brand_ids=[brand_cab.id], **mine) == D("76877.71")
-    assert _amount(client, contact, account_types="3", **mine) == D("315483.59")
+    assert _amount(client, contact, account_types="3", brand_ids=[brand_cab.id], **mine) == D("70000.00")
+    assert _amount(client, contact, account_types="3", **mine) == D("300300.00")
 
 
 # ================================================================ AT-18
