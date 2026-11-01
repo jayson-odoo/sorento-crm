@@ -233,7 +233,8 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       trigger_config: daysBeforeSchema ? { days_before: daysBefore } : {},
       action_type: 'send_email',
       email_template_id: emailTemplateId,
-      recipient_config: recipientConfig,
+      // Card Q2 (b): saved through the To/Cc picker, so To and Cc mean what the boxes say.
+      recipient_config: { ...recipientConfig, explicit_to_cc: true },
       group_matches: supportsGrouping ? groupMatches : true,
       // Only send a condition tree for triggers that expose facts; null = match all.
       conditions_json: factSources.length > 0 ? conditionsJson : null,

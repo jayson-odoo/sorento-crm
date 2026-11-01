@@ -37,8 +37,11 @@ def resolve_recipients(
         nothing)
     - include_requester / include_raiser: bool (people read off the context)
 
-    Every To address is resolved before any Cc one, so an address named on both is To.
-    `order_for_email` puts the list in send order and says how many are To.
+    With ``explicit_to_cc`` (set by the To/Cc picker on save) every To address is
+    resolved before any Cc one, so an address named on both is To. Without it (card Q2 (b),
+    a row nobody has re-saved since Cc existed) the list resolves in its old order and every
+    entry is marked ``legacy``, so `order_for_email` sends it as before: first address To,
+    the rest Cc. `order_for_email` puts the list in send order and says how many are To.
     """
     config = config or {}
     out: dict[str, dict[str, Any]] = {}
@@ -82,75 +85,97 @@ def resolve_recipients(
         for u in rows:
             add(getattr(u, "email", None), getattr(u, "name", None), str(getattr(u, "id")))
 
-    # ---- To ----
-    add_users(list(config.get("user_ids") or []))
-    add_roles(list(config.get("role_ids") or []))
+    def to_lists() -> None:
+        add_users(list(config.get("user_ids") or []))
+        add_roles(list(config.get("role_ids") or []))
 
-    if config.get("include_assigned_cs_pic") and source_id:
-        from app.models.sla import ConversationSLATracking
-        from app.services.sla_scope import open_tracker_scope
+    def cs_pic() -> None:
+        if config.get("include_assigned_cs_pic") and source_id:
+            from app.models.sla import ConversationSLATracking
+            from app.services.sla_scope import open_tracker_scope
 
-        tracker = (
-            db.query(ConversationSLATracking)
-            .filter(
-                ConversationSLATracking.source_entity_id == str(source_id),
-                ConversationSLATracking.team_set_code == "customer_service",
-                *open_tracker_scope(),
-            )
-            .order_by(ConversationSLATracking.initiated_at.desc())
-            .first()
-        )
-        if tracker is not None and tracker.assigned_to_id:
-            pic = (
-                db.query(User)
-                .filter(User.id == tracker.assigned_to_id, User.is_trashed.is_(False))
+            tracker = (
+                db.query(ConversationSLATracking)
+                .filter(
+                    ConversationSLATracking.source_entity_id == str(source_id),
+                    ConversationSLATracking.team_set_code == "customer_service",
+                    *open_tracker_scope(),
+                )
+                .order_by(ConversationSLATracking.initiated_at.desc())
                 .first()
             )
-            if pic is not None:
-                add(getattr(pic, "email", None), getattr(pic, "name", None), str(getattr(pic, "id")))
+            if tracker is not None and tracker.assigned_to_id:
+                pic = (
+                    db.query(User)
+                    .filter(User.id == tracker.assigned_to_id, User.is_trashed.is_(False))
+                    .first()
+                )
+                if pic is not None:
+                    add(getattr(pic, "email", None), getattr(pic, "name", None), str(getattr(pic, "id")))
 
-    if config.get("include_promotion_owner") and promotion_context:
-        owner_id = (promotion_context.get("promotion") or {}).get("created_by")
-        if owner_id:
-            owner = db.query(User).filter(User.id == owner_id, User.is_trashed.is_(False)).first()
-            if owner is not None:
-                add(getattr(owner, "email", None), getattr(owner, "name", None), str(getattr(owner, "id")))
+    def owner() -> None:
+        if config.get("include_promotion_owner") and promotion_context:
+            owner_id = (promotion_context.get("promotion") or {}).get("created_by")
+            if owner_id:
+                owner = db.query(User).filter(User.id == owner_id, User.is_trashed.is_(False)).first()
+                if owner is not None:
+                    add(getattr(owner, "email", None), getattr(owner, "name", None), str(getattr(owner, "id")))
 
-    for raw in config.get("extra_emails") or []:
-        add(str(raw))
+    def extra() -> None:
+        for raw in config.get("extra_emails") or []:
+            add(str(raw))
 
-    # ---- Cc ----
+    def cc_lists() -> None:
+        add_users(list(config.get("cc_user_ids") or []))
+        add_roles(list(config.get("cc_role_ids") or []))
+        for raw in config.get("cc_emails") or []:
+            add(str(raw))
+
+    def actor() -> None:
+        if config.get("include_actor") and promotion_context:
+            actor = promotion_context.get("actor") or {}
+            if actor.get("email"):
+                add(actor.get("email"), actor.get("name"))
+
+    def requester() -> None:
+        # PLAN-oi-request-cs-reserve.md 3.6 (AC-RS-16): Cc the person who REQUESTED the
+        # reserve and/or the person who RAISED the order inquiry - two more of the same
+        # "read a person off the context" shape `include_actor` already is, added in this
+        # order so `include_requester` resolves before `include_raiser` (the reserved
+        # mail's own To/Cc order: with no To configured, the first of them is To).
+        if config.get("include_requester") and promotion_context:
+            requester = promotion_context.get("requester") or {}
+            if requester.get("email"):
+                add(requester.get("email"), requester.get("name"))
+            # OI-STAGED-NOTIFY: a bulk (park, send all) email names every requester in it.
+            for person in promotion_context.get("requesters") or []:
+                add((person or {}).get("email"), (person or {}).get("name"))
+
+    def raiser() -> None:
+        if config.get("include_raiser") and promotion_context:
+            raiser = promotion_context.get("raiser") or {}
+            if raiser.get("email"):
+                add(raiser.get("email"), raiser.get("name"))
+            for person in promotion_context.get("raisers") or []:
+                add((person or {}).get("email"), (person or {}).get("name"))
+
+    if config.get("explicit_to_cc"):
+        # Every To address before any Cc one, so an address named on both is To.
+        for step in (to_lists, cs_pic, owner, extra):
+            step()
+        cc = True
+        for step in (cc_lists, actor, requester, raiser):
+            step()
+        return list(out.values())
+
+    # Card Q2 (b): a row nobody has re-saved in the To/Cc picker resolves in today's order
+    # and sends as today, first address To and everyone else Cc (`order_for_email`).
+    for step in (to_lists, cs_pic, actor, owner, requester, raiser, extra):
+        step()
     cc = True
-    add_users(list(config.get("cc_user_ids") or []))
-    add_roles(list(config.get("cc_role_ids") or []))
-    for raw in config.get("cc_emails") or []:
-        add(str(raw))
-
-    if config.get("include_actor") and promotion_context:
-        actor = promotion_context.get("actor") or {}
-        if actor.get("email"):
-            add(actor.get("email"), actor.get("name"))
-
-    # PLAN-oi-request-cs-reserve.md 3.6 (AC-RS-16): Cc the person who REQUESTED the
-    # reserve and/or the person who RAISED the order inquiry - two more of the same
-    # "read a person off the context" shape `include_actor` already is, added in this
-    # order so `include_requester` resolves before `include_raiser` (the reserved
-    # mail's own To/Cc order: with no To configured, the first of them is To).
-    if config.get("include_requester") and promotion_context:
-        requester = promotion_context.get("requester") or {}
-        if requester.get("email"):
-            add(requester.get("email"), requester.get("name"))
-        # OI-STAGED-NOTIFY: a bulk (park, send all) email names every requester in it.
-        for person in promotion_context.get("requesters") or []:
-            add((person or {}).get("email"), (person or {}).get("name"))
-
-    if config.get("include_raiser") and promotion_context:
-        raiser = promotion_context.get("raiser") or {}
-        if raiser.get("email"):
-            add(raiser.get("email"), raiser.get("name"))
-        for person in promotion_context.get("raisers") or []:
-            add((person or {}).get("email"), (person or {}).get("name"))
-
+    cc_lists()
+    for entry in out.values():
+        entry["legacy"] = True
     return list(out.values())
 
 
@@ -166,10 +191,20 @@ def order_for_email(
     def is_actor(r: dict[str, Any]) -> bool:
         return bool(actor) and (r.get("email") or "").strip().lower() == actor
 
+    if any(r.get("legacy") for r in recipients):
+        # Card Q2 (b): a row not yet re-saved in the To/Cc picker sends as it always did:
+        # the first address that is not the actor's To, everyone else Cc, the actor last.
+        ordered = [r for r in recipients if not is_actor(r)] + [
+            r for r in recipients if is_actor(r)
+        ]
+        ordered = [{**r, "cc": index > 0} for index, r in enumerate(ordered)]
+        return ordered, (1 if ordered else 0)
+
     to = [r for r in recipients if not r.get("cc") and not is_actor(r)]
     cc = [r for r in recipients if r.get("cc") and not is_actor(r)]
     ordered = to + cc + [r for r in recipients if is_actor(r)]
-    return ordered, to_count(ordered)
+    # The actor is never counted as To, even when also configured under To.
+    return ordered, (max(len(to), 1) if ordered else 0)
 
 
 def to_count(ordered: list[dict[str, Any]]) -> int:

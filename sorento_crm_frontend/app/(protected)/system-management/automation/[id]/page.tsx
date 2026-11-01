@@ -36,6 +36,10 @@ export default function AutomationDetailPage() {
     (automation?.recipient_config?.cc_user_ids?.length ?? 0) +
     (automation?.recipient_config?.cc_role_ids?.length ?? 0) +
     (automation?.recipient_config?.cc_emails?.length ?? 0) +
+    (automation?.recipient_config?.include_actor ? 1 : 0) +
+    (automation?.recipient_config?.include_raiser ? 1 : 0) +
+    (automation?.recipient_config?.include_requester ? 1 : 0) +
+    (automation?.recipient_config?.include_assigned_cs_pic ? 1 : 0) +
     (automation?.recipient_config?.include_promotion_owner ? 1 : 0);
 
   return (
@@ -142,6 +146,18 @@ export default function AutomationDetailPage() {
                   <Row label="Cc users" value={automation.recipient_config.cc_user_ids?.length || <Empty />} />
                   <Row label="Cc roles" value={automation.recipient_config.cc_role_ids?.length || <Empty />} />
                   <EmailsRow label="Cc emails" emails={automation.recipient_config.cc_emails ?? []} />
+                  <Row
+                    label="Cc the person who raised it"
+                    value={automation.recipient_config.include_actor ? 'Yes' : <Empty />}
+                  />
+                  <Row
+                    label="Cc the person who raised the inquiry"
+                    value={automation.recipient_config.include_raiser ? 'Yes' : <Empty />}
+                  />
+                  <Row
+                    label="Cc the person who requested"
+                    value={automation.recipient_config.include_requester ? 'Yes' : <Empty />}
+                  />
                 </>
               ) : (
                 <Empty hint="No recipients configured. Edit the automation to add some." />

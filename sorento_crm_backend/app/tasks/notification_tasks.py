@@ -240,7 +240,6 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
             db.rollback()
 
 
-
 def _split_to_cc(data: dict) -> tuple[list[str], list[str]]:
     """`(to, cc)` for a one-email-to-all notification. `to_count` (DEALER-OI-ROUTE, set by
     `AutomationService._send_per_match` one_email) says how many leading addresses are To;
@@ -252,6 +251,7 @@ def _split_to_cc(data: dict) -> tuple[list[str], list[str]]:
         n = 1
     n = max(1, min(n, len(recipients)))
     return recipients[:n], recipients[n:]
+
 
 def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: NotificationDelivery, event_key: str) -> None:
     """Hand the email off to email_outbox_service. Marks delivery as 'queued'."""

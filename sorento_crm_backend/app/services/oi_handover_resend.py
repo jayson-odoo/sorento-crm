@@ -47,34 +47,32 @@ def handover_automation(
 ) -> Optional[Automation]:
     """The handover automation for an OI of this sales order class (DEALER-OI-ROUTE): the
     oldest ENABLED row whose conditions pass for the class (a row with none passes for
-    every class). When no row is enabled at all, the oldest row of the trigger (an explicit
-    send a switched-off automation must not swallow). When rows are enabled but none is for
-    this class, `None`: the OI is skipped rather than sent to the other class's people."""
+    every class). When no row is enabled at all, the oldest switched-off row whose
+    conditions pass (an explicit send a switched-off automation must not swallow). Never
+    another class's row: `None` skips the OI rather than send it to the wrong people."""
     from app.rule_engine.evaluator import evaluate
     from app.rule_engine.registry import resolve_facts
     from app.services.automation_triggers import context_fact_sources
 
-    enabled = (
+    rows = (
         db.query(Automation)
-        .filter(Automation.trigger_type == TRIGGER_TYPE, Automation.enabled.is_(True))
+        .filter(Automation.trigger_type == TRIGGER_TYPE)
         .order_by(Automation.created_at.asc())
         .all()
     )
     sources = context_fact_sources(TRIGGER_TYPE, {"sales_order_class": sales_order_class})
-    for automation in enabled:
+
+    def passes(automation: Automation) -> bool:
         tree = automation.conditions_json
         if not tree or sales_order_class is None or not sources:
+            return True
+        return bool(evaluate(tree, resolve_facts(db, sources)))
+
+    enabled = [row for row in rows if row.enabled]
+    for automation in enabled if enabled else rows:
+        if passes(automation):
             return automation
-        if evaluate(tree, resolve_facts(db, sources)):
-            return automation
-    if enabled:
-        return None
-    return (
-        db.query(Automation)
-        .filter(Automation.trigger_type == TRIGGER_TYPE)
-        .order_by(Automation.created_at.asc())
-        .first()
-    )
+    return None
 
 
 class OrderInquiryHandoverResend:

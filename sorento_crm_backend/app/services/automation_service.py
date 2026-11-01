@@ -410,6 +410,7 @@ class AutomationService:
                 "cc_user_ids": [],
                 "cc_role_ids": [],
                 "cc_emails": [],
+                "explicit_to_cc": False,
             }
         if hasattr(config, "model_dump"):
             data = config.model_dump()
@@ -440,6 +441,9 @@ class AutomationService:
             "cc_user_ids": [str(x) for x in (data.get("cc_user_ids") or [])],
             "cc_role_ids": [str(x) for x in (data.get("cc_role_ids") or [])],
             "cc_emails": [str(x).strip() for x in (data.get("cc_emails") or []) if str(x).strip()],
+            # Card Q2 (b): True once saved through the To/Cc picker; until then the row
+            # sends as before (first address To, the rest Cc).
+            "explicit_to_cc": bool(data.get("explicit_to_cc", False)),
         }
 
     def _execute(

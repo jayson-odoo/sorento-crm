@@ -368,6 +368,7 @@ def test_resolve_marks_cc_entries():
                 "cc_emails": ["cc-external@test.local"],
                 "extra_emails": ["to-external@test.local"],
                 "include_actor": True,
+                "explicit_to_cc": True,
             },
             promotion_context={"actor": {"name": "Raiser", "email": "raiser@test.local"}},
         )
@@ -392,7 +393,7 @@ def test_cc_role_resolves_to_cc():
         db.flush()
         db.add(UserRoleAssignment(user_id=str(member.id), role_id=str(role.id)))
         db.flush()
-        out = resolve_recipients(db, {"cc_role_ids": [str(role.id)]})
+        out = resolve_recipients(db, {"cc_role_ids": [str(role.id)], "explicit_to_cc": True})
         assert [(r["email"], r["cc"]) for r in out] == [(member.email, True)]
 
 
@@ -427,6 +428,7 @@ def test_one_email_puts_every_to_on_to_and_cc_after(monkeypatch):
                 "cc_user_ids": [str(cc_c.id)],
                 "include_actor": True,
                 "one_email": True,
+                "explicit_to_cc": True,
             },
         )
         db.commit()
@@ -444,8 +446,9 @@ def test_one_email_puts_every_to_on_to_and_cc_after(monkeypatch):
         assert data["to_count"] == 2
 
 
-def test_legacy_config_lists_everyone_on_to(monkeypatch):
-    """Card Q2 (a): a row saved before Cc existed reads its whole list as To."""
+def test_legacy_config_sends_as_before(monkeypatch):
+    """Card Q2 (b), crew ruling: a row not re-saved in the To/Cc picker keeps "first address
+    To, the rest Cc", so tomorrow's emails go exactly where today's do."""
     from app.services.automation_service import AutomationService
 
     _silence_mail(monkeypatch)
@@ -456,7 +459,7 @@ def test_legacy_config_lists_everyone_on_to(monkeypatch):
         _automation(
             db, template, creator, name="legacy",
             recipient_config={"user_ids": [str(a.id), str(b.id)], "include_actor": True,
-                              "one_email": True},
+                              "extra_emails": ["ext@test.local"], "one_email": True},
         )
         db.commit()
         result = AutomationService(db).dispatch_event(
@@ -466,8 +469,27 @@ def test_legacy_config_lists_everyone_on_to(monkeypatch):
             source_id=str(uuid.uuid4()),
         )
         data = _one_notification(db, result)
-        assert data["to_count"] == 2
-        assert data["recipient_emails"][-1] == "r@test.local"
+        assert data["to_count"] == 1
+        emails = [e.lower() for e in data["recipient_emails"]]
+        assert set(emails[:2]) == {a.email.lower(), b.email.lower()}
+        assert emails[2:] == ["ext@test.local", "r@test.local"]
+
+
+def test_legacy_reserve_order_is_unchanged():
+    """The reserved mail sets no To: its requester resolves before the raiser and any
+    external address, as before, so the requester stays To."""
+    from app.services.automation_recipients import order_for_email, resolve_recipients
+
+    with blank_session() as db:
+        out = resolve_recipients(
+            db,
+            {"include_requester": True, "include_raiser": True, "extra_emails": ["ext@x.test"]},
+            promotion_context={"requester": {"email": "req@x.test"},
+                               "raiser": {"email": "rai@x.test"}},
+        )
+        ordered, n = order_for_email(out, None)
+        assert [r["email"] for r in ordered] == ["req@x.test", "rai@x.test", "ext@x.test"]
+        assert n == 1
 
 
 def test_only_cc_configured_still_has_a_to(monkeypatch):
@@ -479,7 +501,8 @@ def test_only_cc_configured_still_has_a_to(monkeypatch):
         c = _user(db, "c")
         template = _template(db)
         _automation(db, template, creator, name="cc-only",
-                    recipient_config={"cc_user_ids": [str(c.id)], "one_email": True})
+                    recipient_config={"cc_user_ids": [str(c.id)], "one_email": True,
+                                      "explicit_to_cc": True})
         db.commit()
         result = AutomationService(db).dispatch_event(
             HANDOVER, context={"handover": {}}, source_kind=HANDOVER,
@@ -564,13 +587,17 @@ def test_normalize_keeps_cc_keys():
     from app.services.automation_service import AutomationService
 
     out = AutomationService._normalize_recipient_config(
-        {"cc_user_ids": ["u1"], "cc_role_ids": ["r1"], "cc_emails": [" c@x.test ", ""]}
+        {"cc_user_ids": ["u1"], "cc_role_ids": ["r1"], "cc_emails": [" c@x.test ", ""],
+         "explicit_to_cc": True}
     )
+    assert out["explicit_to_cc"] is True
     assert out["cc_user_ids"] == ["u1"]
     assert out["cc_role_ids"] == ["r1"]
     assert out["cc_emails"] == ["c@x.test"]
     empty = AutomationService._normalize_recipient_config(None)
     assert empty["cc_user_ids"] == [] and empty["cc_role_ids"] == [] and empty["cc_emails"] == []
+    assert empty["explicit_to_cc"] is False
+    assert AutomationService._normalize_recipient_config({"user_ids": []})["explicit_to_cc"] is False
 
 
 def test_preview_names_every_to():
@@ -610,3 +637,37 @@ def test_resend_never_borrows_the_other_class_row():
 
         assert handover_automation(db, "retail").id == retail.id
         assert handover_automation(db, "project") is None
+
+
+def test_resend_with_every_row_off_still_keeps_to_its_class():
+    """Reviewer should-fix 2: with every row switched off, the class's own row, never the
+    other class's."""
+    from datetime import datetime, timedelta
+
+    from app.services.oi_handover_resend import handover_automation
+
+    with blank_session() as db:
+        creator = _user(db, "creator")
+        template = _template(db)
+        now = datetime.utcnow()
+        project = _automation(db, template, creator, name="project", enabled=False,
+                              conditions=_class_rule("project"), created_at=now - timedelta(days=2))
+        retail = _automation(db, template, creator, name="retail", enabled=False,
+                             conditions=_class_rule("retail"), created_at=now - timedelta(days=1))
+        db.commit()
+        assert handover_automation(db, "retail").id == retail.id
+        assert handover_automation(db, "project").id == project.id
+        retail.conditions_json = _class_rule("project")
+        db.commit()
+        assert handover_automation(db, "retail") is None
+
+
+def test_actor_listed_under_to_is_still_cc():
+    from app.services.automation_recipients import order_for_email
+
+    ordered, to_count = order_for_email(
+        [{"email": "a@x.test", "cc": False}, {"email": "raiser@x.test", "cc": False}],  # explicit
+        "raiser@x.test",
+    )
+    assert [r["email"] for r in ordered] == ["a@x.test", "raiser@x.test"]
+    assert to_count == 1

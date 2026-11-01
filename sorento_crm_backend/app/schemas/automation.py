@@ -31,6 +31,9 @@ class RecipientConfig(BaseModel):
     cc_user_ids: list[str] = Field(default_factory=list)
     cc_role_ids: list[str] = Field(default_factory=list)
     cc_emails: list[str] = Field(default_factory=list)
+    #: Card Q2 (b): set by the To/Cc picker on save. Unset = the row sends as before
+    #: (first address To, the rest Cc).
+    explicit_to_cc: bool = False
 
 
 class AutomationBase(BaseModel):

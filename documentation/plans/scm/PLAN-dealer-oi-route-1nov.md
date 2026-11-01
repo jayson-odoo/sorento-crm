@@ -16,10 +16,10 @@ Dealer CS confirms a retail order's lines on Fulfilment Planning. The order inqu
 - To vs Cc was positional: first resolved address To, everyone else Cc (`notification_tasks.py`, `park_send.render_preview`). The outbox carried a single To (`email_outbox_service.enqueue(to: str)`).
 - "Send to purchasing" (resend) picks ONE automation, `park_send.first_automation` (`oi_handover_resend.handover_automation`).
 
-## Card (posted 1 Nov, built on the recommendations)
+## Card (posted 1 Nov; crew answered Q1 (a), Q2 (b), Q3 (a))
 
 - Q1 (a): a row with no class condition keeps firing for every class; no change on deploy. The guide tells the owner to add "Sales order class is Project" to the old row when he creates the retail one.
-- Q2 (a): no data migration. Everything a row lists today reads as To; the new Cc box starts empty; "Cc the person who raised it" stays Cc.
+- Q2 (b), crew ruling: an existing row keeps "first address To, the rest Cc" until someone re-saves it in the To/Cc picker, so tomorrow's emails go to exactly today's To/Cc. The picker sets `recipient_config.explicit_to_cc` on save; `resolve_recipients` resolves an unmarked row in its old order and marks it `legacy`, and `order_for_email` sends it with one To.
 - Q3 (a): an order with no class reads as Project, today's route.
 
 ## Build

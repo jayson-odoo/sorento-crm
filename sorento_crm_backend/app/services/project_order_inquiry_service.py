@@ -5148,6 +5148,8 @@ class ProjectOrderInquiryService:
             "so_number": facts.get("so_number"),
             "customer": facts.get("customer"),
             "project": facts.get("project"),
+            #: DEALER-OI-ROUTE: a stand-in row with no header reads its class from here.
+            "sales_order_class": email_class(facts.get("demand_class")),
             "line": {
                 "so_date": _handover_fmt_date(facts.get("so_date")),
                 "so_number": facts.get("so_number"),
@@ -5205,6 +5207,9 @@ class ProjectOrderInquiryService:
     def _fill_from_template(item: Dict[str, Any], template: Mapping[str, Any]) -> None:
         """The order's facts as the line's own item carried them, where the stand-in's
         header could not be read (a saved line queued before any header existed)."""
+        if not item.get("pso_id") and template.get("sales_order_class"):
+            # No header: `handover_item` read no order, so its class is the default.
+            item["sales_order_class"] = template["sales_order_class"]
         for key in ("pso_id", "so_number", "customer", "project"):
             if not item.get(key):
                 item[key] = template.get(key)
@@ -15408,18 +15413,25 @@ def register_order_inquiry_post_commit_dispatch() -> None:
 
             store_excel = park_send.first_automation(fresh, "order_inquiry_handover") is not None
             # DEALER-OI-ROUTE: one email per sales order class, so retail and project
-            # lines confirmed in one write reach their own purchasing team.
+            # lines confirmed in one write reach their own purchasing team. Each class is
+            # best-effort on its own: one failing never stops the other's email.
             for group in handover_class_groups(concluded):
-                built = build_handover_email(fresh, group, store_excel=store_excel)
-                if built is None:
-                    continue
-                context, source_id = built
-                AutomationService(fresh).dispatch_event(
-                    "order_inquiry_handover",
-                    context=context,
-                    source_kind="order_inquiry_handover",
-                    source_id=source_id,
-                )
+                try:
+                    built = build_handover_email(fresh, group, store_excel=store_excel)
+                    if built is None:
+                        continue
+                    context, source_id = built
+                    AutomationService(fresh).dispatch_event(
+                        "order_inquiry_handover",
+                        context=context,
+                        source_kind="order_inquiry_handover",
+                        source_id=source_id,
+                    )
+                except Exception:  # noqa: BLE001 - a post-commit side effect never raises
+                    fresh.rollback()
+                    logger.exception(
+                        "Automation dispatch(order_inquiry_handover) failed for one class"
+                    )
         except Exception:  # noqa: BLE001 - a post-commit side effect never raises
             fresh.rollback()
             logger.exception("Automation dispatch(order_inquiry_handover) failed to queue")

@@ -107,12 +107,16 @@ named **Order inquiry to purchasing**.
 
 * **To** and **Cc** - each has **Specific users**, **By role**, and **External emails** (type an
   address and click **Add**). Everyone under **To** is on the mail's To line; everyone under
-  **Cc** is on its Cc line. A row saved before Cc existed lists all its recipients under **To**.
+  **Cc** is on its Cc line. A row saved before Cc existed shows all its recipients under
+  **To** but keeps sending as it always did (the first address on To, everyone else on Cc) until
+  you save it here. From that save on, To and Cc mean exactly what the boxes say, so check both
+  boxes before you save.
 * **Cc the person who raised it** (in the **Cc** block) - keeps the CS admin who made the change
   on the thread.
 * **One email, everyone on the thread** - sends a single mail to everyone, so a reply-all
-  reaches the whole thread. The person who raised it is always on Cc, never on To. With this
-  off, each person gets a separate copy and To / Cc does not apply.
+  reaches the whole thread. The person who raised it goes on Cc, even if they are also picked
+  under **To**; only when nobody else is on the mail are they on To. With this off, each person
+  gets a separate copy and To / Cc does not apply.
 * **Enabled** - untick this to stop the mail once the manual email is retired. Nothing else
   needs to change.
 
@@ -146,7 +150,9 @@ retail mail goes to both rows' recipients.
 the existing row a **Project** condition and add a **Retail** row with the dealer recipients.
 
 **Send to purchasing (resend)** uses the enabled row whose condition matches the order
-inquiry's sales order class (the oldest one, if several match).
+inquiry's sales order class (the oldest one, if several match). When every row is switched off,
+it uses the switched-off row for that class. If no row is for that class, the order inquiry is
+not sent and the preview lists it as skipped: it never goes to the other class's people.
 
 ## Parallel run
 

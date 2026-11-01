@@ -5,10 +5,13 @@ import RecipientPicker from './RecipientPicker';
 import type { RecipientConfig } from '../types/automation.types';
 
 vi.mock('@/services/userSelectService', () => ({
-  getUsersSelect: vi.fn().mockResolvedValue([]),
+  getUsersSelect: vi.fn().mockResolvedValue([{ id: 'u1', name: 'Buyer One', email: 'b1@example.com' }]),
 }));
 vi.mock('@/lib/api', () => ({
-  apiFetch: vi.fn().mockResolvedValue({ ok: true, json: async () => [] }),
+  apiFetch: vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => [{ id: 'r1', name: 'Dealer Purchasing', slug: 'dealer-purchasing' }],
+  }),
 }));
 
 const BASE: RecipientConfig = {
@@ -18,7 +21,7 @@ const BASE: RecipientConfig = {
   extra_emails: [],
 };
 
-/** DEALER-OI-ROUTE: explicit To and Cc (`PLAN-dealer-oi-route-1nov.md`, AC-R6). */
+/** DEALER-OI-ROUTE: explicit To and Cc (`PLAN-dealer-oi-route-1nov.md`, AC-R7). */
 describe('RecipientPicker - explicit To and Cc', () => {
   it('shows a To block and a Cc block', () => {
     render(<RecipientPicker value={BASE} onChange={vi.fn()} />);
@@ -66,5 +69,27 @@ describe('RecipientPicker - explicit To and Cc', () => {
     render(<RecipientPicker value={BASE} onChange={vi.fn()} />);
     const cc = within(screen.getByRole('group', { name: 'Cc' }));
     expect(cc.getByLabelText(/Cc the person who raised it/i)).toBeInTheDocument();
+  });
+
+  it('a user ticked under Cc lands on cc_user_ids, never user_ids', async () => {
+    const onChange = vi.fn();
+    render(<RecipientPicker value={BASE} onChange={onChange} />);
+    const cc = within(screen.getByRole('group', { name: 'Cc' }));
+    fireEvent.click(cc.getByRole('button', { name: 'Pick users' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Buyer One/ }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ cc_user_ids: ['u1'], user_ids: [] }),
+    );
+  });
+
+  it('a role ticked under Cc lands on cc_role_ids, never role_ids', async () => {
+    const onChange = vi.fn();
+    render(<RecipientPicker value={BASE} onChange={onChange} />);
+    const cc = within(screen.getByRole('group', { name: 'Cc' }));
+    fireEvent.click(cc.getByRole('button', { name: 'Pick roles' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Dealer Purchasing/ }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ cc_role_ids: ['r1'], role_ids: [] }),
+    );
   });
 });

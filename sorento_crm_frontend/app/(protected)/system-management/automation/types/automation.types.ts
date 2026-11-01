@@ -22,6 +22,9 @@ export interface RecipientConfig {
   cc_user_ids?: string[];
   cc_role_ids?: string[];
   cc_emails?: string[];
+  /** Set on save by the To/Cc picker. Unset = the row still sends "first address To, the
+   * rest Cc" (DEALER-OI-ROUTE card Q2 (b)). */
+  explicit_to_cc?: boolean;
 }
 
 import type { RuleGroup } from '@/components/rule-builder/types';
