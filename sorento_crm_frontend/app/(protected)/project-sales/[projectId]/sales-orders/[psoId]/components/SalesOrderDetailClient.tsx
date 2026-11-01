@@ -47,6 +47,7 @@ import {
   useSalesOrderMutations,
   projectSalesOrdersPagerQuery,
 } from '../../../../_shared/hooks/useProjectSalesOrders';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { useProject } from '../../../../_shared/hooks/useProjects';
 import { useReviewOriginHref } from '../../../../_shared/hooks/useReviewOrigin';
 import { useOpenDivergenceForOrder } from '../../../../_shared/hooks/useSoDivergence';
@@ -127,7 +128,12 @@ export function SalesOrderDetailClient({
   const scheduleVersions = useScheduleVersions(salesOrder.data?.purchase_order_id ?? undefined);
 
   const [dismissing, setDismissing] = React.useState<FlagItem | null>(null);
-  const [tab, setTab] = React.useState<'lines' | 'autocount' | null>(null);
+  // 'auto' is the landing value (no `tab` param): the open tab is then derived from the order
+  // below. Picking Lines or AutoCount writes `?tab=` so the pager carries it to the next order.
+  const [urlTab, setTab] = useUrlTab<'auto' | 'lines' | 'autocount'>({
+    tabs: ['lines', 'autocount'],
+    defaultTab: 'auto',
+  });
   const [regrouping, setRegrouping] = React.useState(false);
   const [publishing, setPublishing] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
@@ -232,7 +238,8 @@ export function SalesOrderDetailClient({
   const anythingOpen = flagItems.some(needsAttention);
   // S7-2: Lines while anything is open or the order is not in AutoCount yet; otherwise the
   // AutoCount comparison is the work left, until the reader picks a tab themselves.
-  const activeTab = tab ?? (anythingOpen || !isPublished ? 'lines' : 'autocount');
+  const activeTab =
+    urlTab !== 'auto' ? urlTab : anythingOpen || !isPublished ? 'lines' : 'autocount';
   const poVersionNo = scheduleVersions.data?.find(
     (version) => version.id === so.schedule_version_id,
   )?.po_version_no;
@@ -631,7 +638,7 @@ export function SalesOrderDetailClient({
         </CardContent>
       </Card>
 
-      <Tabs value={activeTab} onValueChange={(value) => setTab(value as 'lines' | 'autocount')}>
+      <Tabs value={activeTab} onValueChange={setTab}>
         <TabsList aria-label="Sales order sections">
           <TabsTrigger value="lines">Lines</TabsTrigger>
           <TabsTrigger value="autocount">

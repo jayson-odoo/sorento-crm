@@ -34,6 +34,7 @@ import {
 } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { formatDateInMalaysia, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
 import { numberFieldError } from '@/lib/number-field';
 import {
@@ -521,7 +522,19 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
     { all: true, subject: target?.subject_kind ?? 'agent' },
     !!target,
   );
-  const [tab, setTab] = useState<RecordTab>('details');
+  // The tab ids this record renders, mirroring the `tabs` list below (that one needs the loaded record).
+  const tabKind = isCreate ? draft?.kind : target?.subject_kind;
+  const [tab, setTab] = useUrlTab<RecordTab>({
+    tabs: [
+      'details',
+      'periods',
+      ...(tabKind === 'team' ? (['agents'] as const) : []),
+      ...(tabKind === 'dealer' ? (['accounts'] as const) : []),
+      ...(target?.parent ? (['team'] as const) : []),
+      'commission',
+    ],
+    defaultTab: 'details',
+  });
   // Set once Save found a bad number: each field's sentence then follows its value live.
   const [showErrors, setShowErrors] = useState(false);
 
@@ -788,7 +801,7 @@ export default function TargetRecord({ id, preset }: { id?: string; preset?: Tar
         </CardHeader>
       </Card>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as RecordTab)}>
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line" className="mb-5">
           {tabs.map((t) => (
             <TabsTrigger key={t.value} value={t.value} onClick={() => setTab(t.value)}>

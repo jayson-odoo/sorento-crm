@@ -38,6 +38,7 @@ import { FileDropzone } from '@/components/common/FileDropzone';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import type { RecordAction } from '@/components/common/recordActions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import {
   IDEAS_KEY,
   useIdeaMutations,
@@ -167,7 +168,10 @@ export function IdeaDetail({ id }: { id: string }) {
   const { vote, update, move, restore, unmerge, upload, promote } =
     useIdeaMutations();
 
-  const [tab, setTab] = useState<IdeaTab>('details');
+  const [tab, setTab] = useUrlTab<IdeaTab>({
+    tabs: IDEA_TABS.map((t) => t.value),
+    defaultTab: 'details',
+  });
   const [isEditing, setIsEditing] = useState(false);
   const [mergeIdeas, setMergeIdeas] = useState<Idea[] | null>(null);
   const [title, setTitle] = useState('');
@@ -536,7 +540,7 @@ export function IdeaDetail({ id }: { id: string }) {
         </CardHeader>
       </Card>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as IdeaTab)}>
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line" className="mb-5">
           {IDEA_TABS.map((t) => (
             <TabsTrigger

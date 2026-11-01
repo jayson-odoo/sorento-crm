@@ -25,6 +25,7 @@ import { RecordNavigation } from '@/components/common/RecordNavigation';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import SalesOpportunityPortalDetail from '@/app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalDetail';
 import { formatCurrency, formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -94,7 +95,7 @@ function StaffSalesOpportunityDetail({ id }: { id: string }) {
   const rows = list?.data ?? [];
   const index = rows.findIndex((r) => r.id === id);
 
-  const [tab, setTab] = useState('details');
+  const [tab, setTab] = useUrlTab({ tabs: ['details', 'products'], defaultTab: 'details' });
 
   // The lost/won dialog a stage move can open (F6). Any other transition runs straight away.
   const [pending, setPending] = useState<SalesOpportunityTransition | null>(null);

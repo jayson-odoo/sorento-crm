@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Pencil } from 'lucide-react';
@@ -16,6 +16,7 @@ import RecordNavigation from '@/components/common/RecordNavigation';
 import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
 import { getProductClassLabels } from '../../product-categories/services/categoryService';
 import { useSpecKeyActions } from '../actions';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { useSpecCoverageQuery } from '../hooks/useSpecCoverageQuery';
 import { useSpecKeyRecord } from '../hooks/useSpecKeyRecord';
 import { selectSpecKey, useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
@@ -40,7 +41,10 @@ const LIST_PATH = '/master-data-management/product-specifications';
 export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState('details');
+  const [tab, setTab] = useUrlTab({
+    tabs: ['details', 'choices', 'rules', 'products', 'history'],
+    defaultTab: 'details',
+  });
 
   const { data: keys, isLoading, isError } = useSpecRegistryQuery();
   const row = selectSpecKey(keys, specKey);
