@@ -6,7 +6,7 @@ shipped, and when you want to tell from the Sales Orders list which orders still
 ## Where
 
 * **[Project Sales Admin → Sales Orders](/scm/sales-orders)** - tick the orders, then
-  **Start** → **Plan selected (N)**.
+  **Plan selected (N)**.
 * **[Supply Chain → Project Demand → Fulfilment Planning](/project-sales/fulfilment-planning)**
   (also reachable as **Project Sales → Fulfilment Planning**) - the board that opens.
 
@@ -44,7 +44,7 @@ An order whose every line is one of those has nothing to plan at all.
 1. Open **[Project Sales Admin → Sales Orders](/scm/sales-orders)**. Find the orders you want,
    whatever their status - a **Completed** one can be planned.
 2. Tick them in the list.
-3. Click **Start** → **Plan selected (N)**. With nothing ticked the item is greyed out and says
+3. Click **Plan selected (N)**. With nothing ticked the button is greyed out and says
    **Tick the sales orders to plan first.**; over the board's own limit it says how many the
    board takes at a time and how many you selected.
 4. The board opens on that selection. Work each line the usual way (see
@@ -81,13 +81,17 @@ On [Fulfilment Planning](/project-sales/fulfilment-planning), open **Filters** a
 **Type**. The list opens on **Project**. **Retail** also lists **Other** orders, and you can pick
 both Project and Retail to see them together. The **Type** column says which each order is.
 
-On [Sales Orders](/scm/sales-orders), use the **Type** filter, tick the orders, then **Start** →
+On [Sales Orders](/scm/sales-orders), use the **Type** filter, tick the orders, then
 **Plan selected (N)**. A sales order's own page offers **Plan** when it has a line the board can
 take.
 
-A dealer order reaches the board when it is open and at least one of its lines is at an active
-dealer location. A closed dealer order stays off, as does a dealer order with no such line and an
-order with no class set; the board says which when you open it.
+A dealer order reaches the board when at least one of its lines is at an active dealer location,
+whether it reads **Outstanding** or **Completed**, the same as a project order: a line already
+delivered can still be planned. A dealer order with no such line and an order with no class set
+stay off; the board says which when you open it.
+
+The Fulfilment Planning list shows only open orders that still owe quantity, so open a
+**Completed** dealer order from Sales Orders or from its own page.
 
 ## When a line cannot be planned
 
@@ -122,8 +126,7 @@ name. Open the cell to see each line's reason.
 * **No lines in these dates** with **The selection holds N lines on other dates.** - the day
   window you are scrolled to is empty, the selection is not. Move the window.
 * **No lines to plan on these sales orders** with a sentence naming the order - the order has no
-  class set, is a closed dealer order, or is a dealer order with no line at an active dealer
-  location.
+  class set, or is a dealer order with no line at an active dealer location.
 
 ## The Planned pill
 

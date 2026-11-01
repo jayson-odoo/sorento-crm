@@ -3,7 +3,7 @@
 Roles only, never staff names, in code, tests, docs or seeds. Owner answers: Q1 (a), Q2 (a), Q3 (a), Q5 (a). Reorder-run demand counting and `scm.committed_v` do NOT change.
 
 ## Admission
-- R1 An open order of class `retail` or `other` with at least one line at an active dealer-segment location is listed, adopts with no project, opens on the board, takes line drafts, confirms and raises its OI. 'other' counts as retail (`demand_class.planning_class`).
+- R1 An order of class `retail` or `other`, open or closed, fully delivered included, with at least one line at an active dealer-segment location adopts with no project, opens on the board, takes line drafts, confirms and raises its OI. Delivered quantity stays plannable, the same rule as a project order, no filter and no date window (owner ruling, 1 Nov 2026, after his hand test on a closed delivered order). A cancelled order stays refused. 'other' counts as retail (`demand_class.planning_class`). The Fulfilment Planning list keeps showing only open orders with quantity owed, as it does for project; a closed order is reached from Sales Orders.
 - R2 A retail order with no line at a dealer-segment location stays out, as today.
 - R3 An order with no class stays off the board, and the reason given is true: not "Every line is cancelled, fully returned" (`FulfilmentBoardPanel.tsx:3350-3353`).
 - R4 On an admitted order, a retail line at a project location reads "Outside fulfilment planning" and cannot be decided, even at a location in planning.

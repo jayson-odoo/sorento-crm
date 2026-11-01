@@ -1,6 +1,6 @@
 # PLAN: Dealer sales orders plannable on Fulfilment Planning
 
-**Status:** PR 1 merged (#2062). PR 2 building on `crew/dealer-planning-retail`, track M. PR 3 next.
+**Status:** PR 1 merged (#2062). PR 2 in review as #2068 on `crew/dealer-planning-retail`, track M, owner ruling on closed orders folded in. PR 3 next.
 
 UAC: `dealer-planning-1nov-acceptance-criteria.md` for PR 1, `dealer-planning-retail-acceptance-criteria.md` for PR 2 (both beside this file).
 
@@ -62,7 +62,7 @@ Retail orders at dealer-segment locations work end to end in Fulfilment Planning
 
 ### PR 2 architecture
 
-- **Admission, one predicate** in `scm/planning_predicate.py`: project class as today, or planning class retail with at least one line at an active dealer-segment bin. Used at the board's three reads, line drafts, adoption and the worklist. `adopt_for_migration` and the OI import stay project only. A retail line at a project bin earns the verdict.
+- **Admission, one predicate** in `scm/planning_predicate.py`: project class as today, or planning class retail, open or closed, with at least one line at an active dealer-segment bin, or with a planning record already. Same rule as project, no filter and no date window (owner ruling below). Used at the board's three reads, line drafts, adoption and the worklist. The worklist keeps its own `status = open` and quantity-owed test, so closed orders never reach that list; they are reached from Sales Orders, max 50 at a time. `adopt_for_migration` and the OI import stay project only. A retail line at a project bin earns the verdict.
 - **Own pool, one read.** `_add_back_own_pool_demand` puts back what the pool's book counted, read with `_pile_read`'s predicate, on that line's facts only. The walk's and confirm's shared ledgers hold the true net and true share; a line's add-back joins them for that line alone and is spent first. A retail line at its own dealer location holds no dealer share back; its draw there does not touch the pile's project share.
 - **Pools, one running net, spent as drawn,** in the walk (`pool_share_capacity`) and at confirm (`_check_line`). Other pools are measured by the true net, never by a line's add-back. At confirm this replaces walking the chain, so it fixes the disclosed short for every line, project-bin lines included.
 - **Loading Plan:** a confirmed retail line stays in the Retail half, less SPO links. One file.
@@ -79,6 +79,7 @@ The order inquiry handover email routes by sales order class: retail to dealer p
 - Q3 (a): "other" counts as retail. No class stays off the board with a true reason.
 - Q4 (a): retail email To dealer purchasing, Cc project purchasing and the raiser. The undo email follows the same class rule.
 - Q5 (a): Type filter on the Fulfilment Planning list only, multi-select.
+- Closed orders, owner ruling after his hand test: "whether it is delivered or not doesn't affect our planning ... same as project". A closed retail order at an active dealer location is admitted and its delivered quantity stays plannable. No filter, no date window. On the dev copy that is 127,269 closed orders at BRW and 137,172 at all dealer locations, against 1,561 and 1,617 open. Visible effect: their Planned pill on Sales Orders goes from a dash to a red Not planned, as on project; the owner was told and can ask to soften it later.
 
 ## Open
 
