@@ -212,8 +212,8 @@ BE (`sorento_crm_backend/`):
   keep their signatures.
 - `app/services/document_access_service.py`: `build_matrix(db, *, contact_id=None) -> dict` (the DAS-BE-9/10 body)
   and `list_documents(db, type_id, *, contact_id=None, page=1, limit=50) -> dict` (`{items, total, page, limit}`).
-- Routes `app/api/v1/resources/document_access.py`: `GET /api/v1/resources/document-access`,
-  `GET /api/v1/resources/document-access/{type_id}/documents`, query `contact_id`, `page`, `limit`,
+- Routes `app/api/v1/resources/document_access.py`: `GET /api/v1/resource-management/document-access`,
+  `GET /api/v1/resource-management/document-access/{type_id}/documents`, query `contact_id`, `page`, `limit`,
   `company_scope`.
 - `scripts/doc_access_carryover_check.py --database-url URL [--seed-audiences "Type=dealer,..."]`: the dev-copy
   proof (refuses a DB name containing `prod`).
@@ -226,6 +226,15 @@ FE (`sorento_crm_frontend/app/(protected)/resource-management/document-access/`)
 - `components/DocumentAccessSheet.tsx`. Ticks and the Direct access switch call
   `attachment-types/services/attachmentTypeService.ts` `updateAttachmentType(id, { ai_read_staff } |
   { ai_read_codes } | { is_direct_access })`; toasts via `sonner`.
+- Conventions the red tests pin (tester, 1 Nov): each row's ticks are `role=checkbox`, ordered Staff then the access
+  types in catalogue order; the toolbar comboboxes are named "Preview as" and "AI reads" (options "On" / "Off");
+  the previewed contact's access-type headers carry `data-contact-access="true"`; the amber reach sits in an
+  element with a `title` and a class containing `warning` or `amber`; a row click opens the sheet as `role=dialog`
+  with Direct access as `role=switch`; permissions come from `useHasPermission` / `usePermissions`; the backend
+  routes live under the existing `/api/v1/resource-management` router (`app/api/v1/__init__.py:158-162`).
+- Verdict precedence, first match wins. Contact level: runs as staff (then `staff_reads` / `not_for_staff`),
+  `ambiguous`, `no_access_type`, `no_company`. Row level: `off`, `staff_only`, `not_ticked`, `no_documents`,
+  `reads`.
 
 ### Slices (one lane, one PR; the tester writes all red tests first, then ONE coder)
 

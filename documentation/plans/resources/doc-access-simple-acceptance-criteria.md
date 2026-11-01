@@ -55,12 +55,12 @@ Q1-Q5 all (a), confirmed 20:4x ("Doc all a"). `BE` = `sorento_crm_backend/app`, 
   `read_block_reason` use it (an Off type: "The AI does not read files of this type."). `update_type` queues the
   type's unread or failed files when the type goes from not-on to on (first tick), as today; removing the last
   tick queues nothing.
-- **DAS-BE-8** Given `PUT /api/v1/resources/attachment-types/{id}` with `ai_read_staff`, `ai_read_codes` or
+- **DAS-BE-8** Given `PUT /api/v1/resource-management/attachment-types/{id}` with `ai_read_staff`, `ai_read_codes` or
   `is_direct_access`, then it saves them (partial update; omitted fields untouched); a code not in the catalogue or
   inactive -> 400 with a readable message naming it; duplicates are stored once, in catalogue order; the response
   carries `ai_read_staff`, `ai_read_codes`, `is_direct_access` and no `ai_audience`; create accepts the two AI fields
   (default false / []). Without `resource.attachment_types.edit` -> 403.
-- **DAS-BE-9** Given `GET /api/v1/resources/document-access` with `resource.attachment_types.view` (403 without),
+- **DAS-BE-9** Given `GET /api/v1/resource-management/document-access` with `resource.attachment_types.view` (403 without),
   then the response is `{access_types: [{code, name}] (active, sort order), contact: null, rows: [...]}` with one row
   per type: `id, type_name, is_shared, is_direct_access, grant_count, file_count` (not deleted), `readable_count`
   (not deleted, filename ends .pdf or .docx, the reader's own rule `knowledge_service.py:341-342`),
@@ -77,7 +77,7 @@ Q1-Q5 all (a), confirmed 20:4x ("Doc all a"). `BE` = `sorento_crm_backend/app`, 
   predicate function `search_for_contact` uses (one function, not a copy), restricted to the contact's companies or
   shared; `no_shared_code` and `other_company` split the rest. A parity test seeds chunks and asserts `reads` equals
   the distinct documents `search_for_contact` can return.
-- **DAS-BE-11** Given `GET /api/v1/resources/document-access/{type_id}/documents?contact_id=&page=&limit=`, then it
+- **DAS-BE-11** Given `GET /api/v1/resource-management/document-access/{type_id}/documents?contact_id=&page=&limit=`, then it
   lists the type's readable documents (`id, original_filename, access_levels, company_name` or null for shared,
   `ai_read_status`, `verdict`: `reads|no_shared_code|other_company|<blocked>`|null without a contact), ordered by
   filename, `limit` default 50 and at most 200, with `total`; unknown type -> 404; same permissions as DAS-BE-9/10.
