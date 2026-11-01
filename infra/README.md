@@ -51,7 +51,7 @@ sorento-infra/
 | `templates/walg.env.example` | WAL-G env names for Cloudflare R2 (values on the box only) |
 | `templates/wireguard/wg0.conf.template` | three-member mesh, if the tailnet is not used |
 | `templates/systemd/role-watcher.service` | runs the role watcher |
-| `scripts/role-watcher.sh` | workers + scheduler only on the Patroni leader |
+| `scripts/role-watcher.sh` | workers + scheduler only on the Patroni leader; starts with `--no-recreate` on the tag in `.ha-image-tag` (written by the HA deploy), skips its tick while the deploy lock is held |
 | `scripts/ha-checks.sh` | disk / etcd / lag / archive / WAL / backup-age checks to Healthchecks.io, prunes old dumps |
 | `tests/test_ha_scripts.py` | shell tests with fake curl/docker/etcdctl/df: `python3 -m pytest infra/tests -q` |
 

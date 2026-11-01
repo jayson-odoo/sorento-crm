@@ -18,6 +18,8 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 WATCHER = SCRIPTS / "role-watcher.sh"
 CHECKS = SCRIPTS / "ha-checks.sh"
 
+TAG = "0123456789abcdef0123456789abcdef01234567"
+
 FAKES = {
     # curl: -w '%{http_code}' prints FAKE_HTTP_CODES' next word (a queue in a file), else 200.
     # A plain ping (no -w) just logs.
@@ -37,6 +39,7 @@ exit 0
     # docker compose ... ps: prints FAKE_RUNNING ids; exec ... psql -Atc <sql>: answers by keyword.
     "docker": r"""#!/usr/bin/env bash
 echo "docker $*" >> "$FAKE_LOG"
+echo "docker $* IMAGE_TAG=${IMAGE_TAG-UNSET}" >> "$FAKE_DIR/env.log"
 args=" $* "
 case "$args" in
   *" ps "*) [ -n "${FAKE_PS_FAIL:-}" ] && exit 1; for c in ${FAKE_RUNNING:-}; do echo "$c"; done; exit 0 ;;
@@ -71,6 +74,7 @@ def env(tmp_path):
         p.chmod(0o755)
     log = tmp_path / "calls.log"
     log.touch()
+    (tmp_path / ".ha-image-tag").write_text(TAG + "\n")
     e = {
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "FAKE_LOG": str(log),
@@ -100,7 +104,7 @@ def test_watcher_starts_workers_only_after_two_leader_readings(env):
     assert not any("up -d" in c for c in calls(log)), "one reading must not act"
 
     r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
-    ups = [c for c in calls(log) if "--profile promoted up -d --no-deps worker worker_fast" in c]
+    ups = [c for c in calls(log) if "--profile promoted up -d" in c and "--no-deps" in c and c.endswith("worker worker_fast")]
     assert len(ups) == 1
 
 
@@ -145,6 +149,192 @@ def test_watcher_flapping_reading_never_acts(env):
     (tmp / "codes").write_text("200\n503\n200\n503\n")
     run(WATCHER, e, MAX_TICKS=4, FAKE_RUNNING="a")
     assert not any("up -d" in c or " stop " in c for c in calls(log))
+
+
+# ---------------------------------------------------------------- role-watcher, H4b deploy path
+
+
+def _ups(log):
+    return [c for c in calls(log) if " up -d" in c]
+
+
+def test_watcher_leader_start_never_recreates_a_running_worker(env):
+    e, log, tmp = env
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    ups = _ups(log)
+    assert len(ups) == 1, calls(log)
+    assert "--no-recreate" in ups[0], ups[0]
+
+
+def test_watcher_leader_starts_workers_on_the_recorded_image_tag(env):
+    e, log, tmp = env
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    lines = [c for c in (tmp / "env.log").read_text().splitlines() if " up -d" in c]
+    assert len(lines) == 1, lines
+    assert lines[0].endswith("IMAGE_TAG=" + TAG), lines[0]
+
+
+def test_watcher_leader_without_a_recorded_tag_starts_nothing_but_replica_still_stops(env):
+    e, log, tmp = env
+    (tmp / ".ha-image-tag").unlink()
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    assert not _ups(log), calls(log)
+    assert "no image tag" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a b")
+    assert len(_stops(log)) == 1
+
+
+def _lock(tmp, mode=0o600):
+    lock = tmp / "deploy.lock"
+    lock.touch()
+    lock.chmod(mode)
+    return lock
+
+
+def test_watcher_exclusive_deploy_lock_skips_a_leader_tick_but_a_replica_still_stops(env):
+    import fcntl
+
+    e, log, tmp = env
+    lock = _lock(tmp)
+    with open(lock, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        r = run(WATCHER, e, MAX_TICKS=3, FAKE_HTTP_CODE=200, FAKE_RUNNING="a", DEPLOY_LOCK_PATH=lock)
+        assert not _ups(log) and not _stops(log), calls(log)
+        assert "skip" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
+        run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a", DEPLOY_LOCK_PATH=lock)
+    assert len(_stops(log)) == 1, calls(log)
+
+
+def test_watcher_shared_lock_holder_does_not_block_the_leader(env):
+    import fcntl
+
+    e, log, tmp = env
+    lock = _lock(tmp)
+    with open(lock, "r") as fh:
+        fcntl.flock(fh, fcntl.LOCK_SH)  # the weekly restore test holds it shared
+        run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200, DEPLOY_LOCK_PATH=lock)
+    assert len(_ups(log)) == 1, calls(log)
+
+
+def _unsafe_lock(tmp, kind):
+    if kind == "symlink":
+        real = tmp / "real.lock"
+        real.touch(); real.chmod(0o600)
+        link = tmp / "link.lock"
+        link.symlink_to(real)
+        return link
+    if kind == "fifo":
+        fifo = tmp / "fifo.lock"
+        os.mkfifo(fifo, 0o600)
+        return fifo
+    if kind == "dir_group_writable":
+        d = tmp / "lockdir"
+        d.mkdir(); d.chmod(0o775)
+        lock = d / "deploy.lock"
+        lock.touch(); lock.chmod(0o600)
+        return lock
+    lock = tmp / "other.lock"
+    lock.touch(); lock.chmod(0o646)
+    return lock
+
+
+def _run_bounded(e, tmp, kind, **extra):
+    """run() with a hard cap, so a watcher that blocks opening a FIFO fails the test, not hangs it."""
+    full = {**e, **{k: str(v) for k, v in extra.items()}}
+    try:
+        return subprocess.run(["bash", str(WATCHER)], env=full, capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"watcher hung on a {kind} lock path")
+    finally:
+        if kind == "fifo":  # release any opener still blocked on the pipe
+            try:
+                os.close(os.open(tmp / "fifo.lock", os.O_RDWR | os.O_NONBLOCK))
+            except OSError:
+                pass
+
+
+UNSAFE = ["symlink", "fifo", "dir_group_writable", "file_other_writable"]
+
+
+@pytest.mark.parametrize("kind", UNSAFE)
+def test_watcher_unsafe_lock_path_blocks_a_leader_start_and_is_logged(env, kind):
+    e, log, tmp = env
+    lock = _unsafe_lock(tmp, kind)
+    r = _run_bounded(e, tmp, kind, MAX_TICKS=2, FAKE_HTTP_CODE=200, DEPLOY_LOCK_PATH=lock)
+    assert not _ups(log), calls(log)
+    out = (r.stdout + r.stderr).lower()
+    assert "unsafe" in out and "lock" in out, out
+
+
+@pytest.mark.parametrize("kind", UNSAFE)
+def test_watcher_unsafe_lock_path_still_lets_a_replica_stop(env, kind):
+    e, log, tmp = env
+    lock = _unsafe_lock(tmp, kind)
+    _run_bounded(e, tmp, kind, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a", DEPLOY_LOCK_PATH=lock)
+    assert len(_stops(log)) == 1, calls(log)
+
+
+def test_watcher_accepts_a_lock_file_others_can_read(env):
+    e, log, tmp = env
+    lock = _lock(tmp, 0o644)
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200, DEPLOY_LOCK_PATH=lock)
+    assert len(_ups(log)) == 1, calls(log)
+    assert "unsafe" not in (r.stdout + r.stderr).lower()
+
+
+def _unsafe_project(tmp, kind):
+    proj = tmp / "proj"
+    proj.mkdir()
+    (proj / ".ha-image-tag").write_text(TAG + "\n")
+    (proj / ".ha-image-tag").chmod(0o644)
+    if kind == "symlink":
+        link = tmp / "projlink"
+        link.symlink_to(proj)
+        return link
+    proj.chmod(0o775)
+    return proj
+
+
+@pytest.mark.parametrize("kind", ["symlink", "group_writable"])
+def test_watcher_unsafe_project_dir_blocks_a_leader_start_and_is_logged(env, kind):
+    e, log, tmp = env
+    proj = _unsafe_project(tmp, kind)
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200, PROJECT_DIR=proj)
+    assert not _ups(log), calls(log)
+    out = r.stdout + r.stderr
+    assert str(proj) in out and "unsafe" in out.lower(), out
+
+
+@pytest.mark.parametrize("kind", ["symlink", "group_writable"])
+def test_watcher_unsafe_project_dir_still_lets_a_replica_stop(env, kind):
+    e, log, tmp = env
+    proj = _unsafe_project(tmp, kind)
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a", PROJECT_DIR=proj)
+    assert len(_stops(log)) == 1, calls(log)
+
+
+def _bad_tag(tmp, kind):
+    f = tmp / ".ha-image-tag"
+    f.unlink()
+    if kind == "symlink":
+        secret = tmp / "secret.txt"
+        secret.write_text("API_SECRET=hunter2-do-not-log\n")
+        f.symlink_to(secret)
+    elif kind == "writable":
+        f.write_text(TAG + "\n"); f.chmod(0o664)
+    else:
+        f.write_text(kind + "\n")
+
+
+@pytest.mark.parametrize("kind", ["symlink", "writable", "abc123", "A" * 40, "g" * 40, "0" * 41, TAG + " x"])
+def test_watcher_refuses_an_invalid_image_tag_file(env, kind):
+    e, log, tmp = env
+    _bad_tag(tmp, kind)
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    assert not _ups(log), calls(log)
+    out = (r.stdout + r.stderr).lower()
+    assert "invalid" in out, out
+    assert "hunter2" not in out, "the log must never echo what the tag file points at"
 
 
 # ---------------------------------------------------------------- ha-checks
