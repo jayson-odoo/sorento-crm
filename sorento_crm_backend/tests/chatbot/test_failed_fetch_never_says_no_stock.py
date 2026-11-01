@@ -133,3 +133,57 @@ def test_the_control_a_read_that_worked_and_found_nothing_still_says_no_stock(co
     out = console.say(f"check stock {CODE} x 3", stock(product(CODE, 3)))
     assert "No stock and no incoming" in out, out
     assert "could not fetch" not in out.lower(), out
+
+
+# ---------------------------------------------------------------------- the function itself
+#
+# Crew's independent read of the path (origin/main 5ab31ead29): a failed read keeps `error` on
+# the envelope (`turn_runtime.envelope_of`), is never a miss (`turn/fetch.py::envelope_missed`),
+# and `engine` hands it to `apply_crossdomain_hit`, which reads only the reply text and the
+# empty figures.
+
+
+def _ladder_over(envelope: dict[str, Any]) -> tuple[str, list[str]]:
+    from types import SimpleNamespace
+
+    from app.services.chatbot import answer_bridge
+    from app.services.chatbot.lanes.business.services import AnswerServices
+    from app.services.chatbot.turn import compose as turn_compose
+    from app.services.chatbot.turn.state import Profile
+
+    probed: list[str] = []
+
+    def incoming_has_no_rows(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        probed.append(tool)
+        return {"answers": [], "has_result": False}
+
+    row = {"entity_type": "product", "uuid": "11111111-2222-4333-8444-555555555555", "canonical_code": CODE}
+    answer = answer_bridge.apply_crossdomain_hit(
+        turn_compose.Answer(text="I could not fetch stock just now, please try again."),
+        envelope=envelope,
+        parser={"message_type": "business_query", "domain_hint": "inventory", "entities": [product(CODE)]},
+        resolved={"tokens": [CODE], "intersection": [row]},
+        entities_names=[],
+        crossdomain_ladder={},
+        ctx=SimpleNamespace(),
+        services=AnswerServices(mcp_probe=incoming_has_no_rows, family_fetch=lambda query: None),
+        contact_id="900000001",
+        space_id=None,
+        profile=Profile(tier="dealer"),
+    )
+    return answer.text, probed
+
+
+def test_the_ladder_claims_no_absence_over_an_envelope_that_carries_an_error() -> None:
+    text, probed = _ladder_over({"domain": "inventory", "error": "timeout", "figures": []})
+    assert "No stock and no incoming" not in text, text
+    assert text == "I could not fetch stock just now, please try again."
+    assert probed == []
+
+
+def test_the_control_the_same_call_without_the_error_does_reach_the_absence_line() -> None:
+    """Without this the test above could pass for the wrong reason: a call that never gets
+    as far as the line."""
+    text, probed = _ladder_over({"domain": "inventory", "figures": []})
+    assert f"No stock and no incoming for {CODE}" in text, text
+    assert probed == [INCOMING_TOOL]
