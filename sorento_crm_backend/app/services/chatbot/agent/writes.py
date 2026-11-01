@@ -2299,3 +2299,123 @@ USER_READS[LIST_IDEAS] = UserRead(
     },
     run=_ideas_list,
 )
+
+
+# ------------------------------------------------------------------ PR 4 complaint close
+
+CLOSE_COMPLAINT = "crm_complaint_close"
+COMPLAINT_CLOSE = "complaint_management.complaints.close"
+COMPLAINTS_PREFIX = "/api/v1/complaints-management/complaints"
+_COMPLAINT_WORDS = {
+    "approved": "Approved", "closed": "Closed", "processed_by_cs": "Processed by CS", "new": "New",
+    "rejected": "Rejected", "voided": "Voided",
+}
+
+
+def _complaint_read_before(db, user: dict, args: dict) -> dict:
+    """The complaint as it is now, after every check the route and the service make before closing, and the
+    one the service skips: a closed complaint is a no-op there, so a card for it would offer nothing."""
+    from app.services import handling_lock_service
+    from app.services.complaints_service import ComplaintService
+    from app.services.error_handler import handle_conflict, handle_validation_error
+    from app.services.form_action_service import FormActionService
+    from app.services.uuid_path_param import validate_uuid_path
+
+    cid = str(args["complaint_id"])
+    validate_uuid_path(cid, resource="Complaint")
+    _module_open(user, db, "complaints")
+    handling_lock_service.assert_can_act_on_form(db, cid, user, source_entity_type="complaint")
+    service = ComplaintService(db)
+    complaint = service.get_complaint(cid)
+    status = (getattr(complaint, "status", None) or "").strip().lower()
+    if status == "closed":
+        raise handle_conflict("This complaint is already closed.")
+    if status not in service._RESOLVE_ALLOWED_FROM_STATUSES:
+        raise handle_validation_error(
+            f"Complaint must be approved before it can be marked closed (current status: {status or 'unknown'})."
+        )
+    if FormActionService(db).pending_for("complaint", cid) is not None:
+        raise handle_conflict("Another action on this form is still pending. Wait for it to apply, or undo it first.")
+    return {
+        "status": status,
+        "revision_no": int(getattr(complaint, "revision_no", None) or 0),
+        "_show": {"number": complaint.complaint_number or "(no number)", "customer": complaint.customer_name or ""},
+    }
+
+
+def _complaint_summary(args: dict, before: dict) -> str:
+    text = f"Close complaint {_word(before['number'])}"
+    if before["customer"]:
+        text += f" for {_word(before['customer'])}"
+    if _line(args.get("note")):
+        text += f", with the note {_in_full(args['note'])}"
+    return text + ". The contact will be told."
+
+
+def _complaint_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
+    from starlette.requests import Request
+    from fastapi.responses import JSONResponse
+
+    from app.api.v1.complaints.complaints import close_complaint
+    from app.schemas.complaints import ComplaintFinalizeRequest
+    from app.services.revision_fence import assert_revision_current
+
+    cid = str(args["complaint_id"])
+    _module_open(user, db, "complaints")
+    # The route's revision fence, with the revision the user confirmed.
+    assert_revision_current(db, "complaint", cid, confirmed.get("revision_no"))
+    body = ComplaintFinalizeRequest(note=_line(args.get("note")) or None)
+    # A person clicked Confirm, so the browser channel: the screen's grace window applies.
+    request = Request({"type": "http", "method": "POST", "headers": [], "path": COMPLAINTS_PREFIX})
+    out = close_complaint(complaint_id=cid, payload=body, request=request, current_user=user, db=db)
+    if isinstance(out, JSONResponse):
+        parked = json.loads(out.body)
+        return {
+            "id": cid,
+            "after": {
+                "status": "closed", "deferred": True, "commit_at": parked.get("commit_at"),
+                "window_seconds": parked.get("window_seconds"), "pending_action_id": parked.get("pending_action_id"),
+            },
+            "note": (
+                f"It applies in {parked.get('window_seconds')} seconds; until then it can be withdrawn "
+                "and nobody is told."
+            ),
+        }
+    return {"id": cid, "after": {"status": "closed", "deferred": False}}
+
+
+def _complaint_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    now = _COMPLAINT_WORDS["closed"]
+    if after.get("deferred"):
+        now = f"{now} (applies in {after.get('window_seconds')} seconds)"
+    was = _COMPLAINT_WORDS.get(before.get("status"), before.get("status"))
+    return _diff(f"Complaint {shown.get('number', '')}".strip(), [("Status", was, now)])
+
+
+WRITES[CLOSE_COMPLAINT] = WriteDef(
+    name=CLOSE_COMPLAINT,
+    user_permission=COMPLAINT_CLOSE,
+    schema={
+        "type": "function",
+        "function": {
+            "name": CLOSE_COMPLAINT,
+            "description": (
+                "Propose closing one approved complaint that cannot be resolved, as the screen's Close does. "
+                "Nothing changes until the user confirms; on confirm the contact is told, with the note if one "
+                "is given, and the user can withdraw it for a short while. complaint_id must come from "
+                "crm_complaints_find or crm_complaints_list. Call once per complaint."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"complaint_id": {"type": "string"}, "note": {"type": "string", "maxLength": MAX_NOTE_CHARS}},
+                "required": ["complaint_id"],
+            },
+        },
+    },
+    read_before=_complaint_read_before,
+    summary=_complaint_summary,
+    execute=_complaint_execute,
+    record_key="complaint_id",
+    changes=_complaint_changes,
+    execute_takes_before=True,
+)
