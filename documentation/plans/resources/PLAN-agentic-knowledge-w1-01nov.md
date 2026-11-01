@@ -129,6 +129,9 @@ stays a test idea (off the board); only a live (WhatsApp) turn creates a real id
 carried into the create step by the loop, never by the model). Owner rule for next time: these follow from existing
 rulings ("console turns are test turns everywhere"), so decide from the ruling and record the reasoning here instead
 of asking.
+Decided from that ruling (captain, 1 Nov): a stored create step without `_is_test` is a TEST idea (fail safe).
+Steps stored before this deploy were proposed while ideas were test-only, and an unknown origin is never treated as
+live.
 
 ## W2 - dealer writes (next lane, after AGENT-CONFIRM-GATE #2055), least risk first
 
