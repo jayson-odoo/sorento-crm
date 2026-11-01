@@ -197,13 +197,19 @@ def test_the_control_the_same_call_without_the_error_does_reach_the_absence_line
 
 
 def _wire_answer_when_the_crm(tool: str, handler: Any, **settings_overrides: Any) -> str:
-    """What the chatbot receives, built by the real MCP client, sanitizer and presenter."""
+    """What the chatbot receives, built by THIS checkout's real MCP client and presenter. Not
+    the sanitizer: `sorento_crm_mcp.server` needs the `mcp` package, which the backend's CI job
+    does not install (`sorento_crm_mcp/tests/test_transport_failure_is_error_envelope.py`
+    covers that step)."""
     import asyncio
 
     import httpx
+
+    from tests.chatbot.test_chat_grouped_order_status import _mcp_root
+
+    _mcp_root()
     from sorento_crm_mcp.http_client import CRMClient
     from sorento_crm_mcp.presenters import present_response
-    from sorento_crm_mcp.server import _sanitize_tool_response
     from sorento_crm_mcp.settings import Settings
 
     async def read() -> str:
@@ -214,7 +220,7 @@ def _wire_answer_when_the_crm(tool: str, handler: Any, **settings_overrides: Any
         finally:
             await crm.aclose()
 
-    return present_response(tool, _sanitize_tool_response(tool, asyncio.run(read())))
+    return present_response(tool, asyncio.run(read()))
 
 
 def _connection_refused(request: Any) -> Any:
@@ -307,3 +313,100 @@ def test_a_plain_text_answer_is_no_zero_on_a_multi_ask_line(measure: str) -> Non
     lines = sub_asks._lines(run, calls, {"measure": measure}, ["11111111-2222-4333-8444-555555555555"], None)
     assert calls.failures, lines
     assert not any(line.rstrip().endswith(": 0") for line in lines), lines
+
+
+# ------------------------------------------------------------------ "- no incoming" on a roster line
+
+ERROR_ENVELOPE = {"error": "GET /api/v1/external/incoming returned HTTP 502", "answers": [], "has_result": False}
+#: `miss_suggest` hands this over when the probe raised; {} is a probe that answered nothing.
+FAILED_PROBES = {"error_envelope": ERROR_ENVELOPE, "raised": {"error": "probe failed"}, "no_envelope": {}}
+
+
+def _sibling_offer(probe: Any) -> str:
+    from app.services.chatbot.lanes.business.answer import build_suggest_offer
+
+    uuid = "11111111-2222-4333-8444-555555555555"
+    out = build_suggest_offer(
+        {},
+        parser={"message_type": "business_query", "domain_hint": "incoming"},
+        resolved={"tokens": ["SRT36"], "resolutions": [], "unresolved_tokens": []},
+        gate={"compatible_entities": [], "gate_debug": {"domain": "incoming"}},
+        sibling_probe=probe,
+        sibling_transform={"siblings": [{"code": CODE, "uuid": uuid}, {"code": OTHER, "uuid": uuid}]},
+    )
+    return out["suggest_response"]
+
+
+@pytest.mark.parametrize("probe", FAILED_PROBES.values(), ids=FAILED_PROBES.keys())
+def test_a_failed_sibling_probe_stamps_no_line_no_incoming(probe: Any) -> None:
+    text = _sibling_offer(probe)
+    assert "no incoming" not in text, text
+    assert "has incoming" not in text, text
+    assert f"1. {CODE}\n2. {OTHER}" in text, text
+
+
+def test_the_control_a_sibling_probe_that_answered_still_stamps_each_line() -> None:
+    text = _sibling_offer({"answers": [{"title": OTHER}], "has_result": True})
+    assert f"1. {OTHER} - has incoming" in text, text
+    assert f"2. {CODE} - no incoming" in text, text
+
+
+ROSTER = {
+    "gate_clarification": f"Multiple matches found. Please choose:\n1. {CODE}\n2. {OTHER}",
+    "compatible_entities": [
+        {"code": CODE, "entity_type": "product"},
+        {"code": OTHER, "entity_type": "product"},
+    ],
+}
+
+
+@pytest.mark.parametrize("probe", [*FAILED_PROBES.values(), None], ids=[*FAILED_PROBES.keys(), "none"])
+def test_a_failed_incoming_probe_stamps_no_roster_line(probe: Any) -> None:
+    from app.services.chatbot.lanes.business import pickers
+
+    out = pickers.annotate_incoming(dict(ROSTER), probe=probe)
+    assert out["escalate_message"] == ROSTER["gate_clarification"], out["escalate_message"]
+    assert out["incoming_by_code"] == {}, out
+
+
+def test_the_control_a_roster_probe_that_answered_still_stamps_each_line() -> None:
+    from app.services.chatbot.lanes.business import pickers
+
+    out = pickers.annotate_incoming(dict(ROSTER), probe={"answers": [{"title": OTHER}]})
+    assert f"1. {CODE} - no incoming" in out["escalate_message"]
+    assert f"2. {OTHER} - has incoming" in out["escalate_message"]
+
+
+def test_an_error_envelope_is_not_measured_for_every_roster_stamp() -> None:
+    """One rule at `probe_rows`: the DO and promo stamps read None as "no stamp"."""
+    from app.services.chatbot.lanes.business import pickers
+
+    assert pickers.probe_rows(ERROR_ENVELOPE) is None
+    assert pickers.customer_bases_with_do(ERROR_ENVELOPE) is None
+    assert pickers.product_codes_in(ERROR_ENVELOPE) is None
+
+
+# ------------------------------------------------------------------ the low stock report keeps its line
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        json.dumps({"result_type": "crm_low_stock_report", "error": "request_failed", "status_code": 502,
+                    "detail": {}, "response": "", "answers": [], "attachments": [], "has_result": False}),
+        "Internal Server Error",
+    ],
+    ids=["http_error_envelope", "not_json"],
+)
+def test_a_failed_low_stock_report_says_its_own_line(session_factory, answer: str) -> None:
+    from app.services.chatbot.lanes.business import run_fetch
+    from app.services.chatbot.lanes.business.services import FetchServices
+    from tests.chatbot.test_low_stock_lane import GRANT_KEY, _payload
+
+    result = run_fetch(
+        _payload(attributes=[GRANT_KEY], entities=[]),
+        services=FetchServices(mcp_call=lambda _name, _args: answer),
+    )
+    assert (result or {}).get("response") == (
+        "Low stock report (all categories, no grouping)\nCould not run the low stock report right now."
+    ), result

@@ -320,3 +320,26 @@ def test_the_clarifier_keeps_the_one_attempt_it_always_had(monkeypatch, clock) -
     with pytest.raises(casual.ClarifierRateLimited):
         casual.call_clarifier(config, "hello")
     assert seen[0].get("deadline_seconds") == llm_call.ATTEMPT_TIMEOUT_SECONDS
+
+
+def test_every_model_call_but_the_parser_states_its_own_budget() -> None:
+    """The queue cap counts ONE 35 s model call for a turn, and that one is the parser's. Any
+    other call in a turn that took the default would add a second 35 s on top of it."""
+    import ast
+    from pathlib import Path
+
+    import app.services.chatbot as package
+
+    root = Path(package.__file__).parent
+    unbudgeted: list[str] = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            base = node.func.value
+            if node.func.attr != "chat" or not (isinstance(base, ast.Name) and base.id == "llm_call"):
+                continue
+            if path.name != "parser.py" and not any(k.arg == "deadline_seconds" for k in node.keywords):
+                unbudgeted.append(f"{path.relative_to(root)}:{node.lineno}")
+    assert unbudgeted == []
