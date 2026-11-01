@@ -1134,12 +1134,16 @@ def with_preview_combo(db: Session, product, data: dict, combo_id: Optional[str]
 
     if not combo_id:
         return {**data, "combo": None}
-    validate_uuid_path(combo_id, resource="Combo")
+    combo_id = validate_uuid_path(combo_id, resource="Combo")
     combo = combo_for_host(db, combo_id, product.id, {product.id: product})
     if combo is None:
         raise AppException(status_code=404, message="Combo not found.", code="NOT_FOUND")
+    # The price the combo would print with nothing picked (AC-5.3); blank stays the host's.
+    combo_list, combo_sell, sell_decided = combo_prices(combo, set())
     return {
         **data,
+        "list_price": combo_list if combo_list is not None else data.get("list_price"),
+        "offer_price": combo_sell if sell_decided else data.get("offer_price"),
         "images": _lead_with_cover(combo, data["images"]) if combo.image_attachment_id else data["images"],
         "combo": _combo_object(db, combo, set(), staff_viewer()),
     }
@@ -1751,7 +1755,10 @@ def data_hash(row: dict) -> str:
         )
     }
     # PRICETAG-COMBO AC-2.8: the combo's text, options and picks move the hash.
-    subject["combo"] = _plain(row.get("combo")) or None
+    # Only a row that has a combo carries the key, so a no-combo row hashes exactly as it
+    # did before this lane and a stored Keep still matches (AC-0.2).
+    if row.get("combo"):
+        subject["combo"] = _plain(row["combo"])
     # AC-S5-10: WHICH photo leads (`is_primary`) is part of what prints - a
     # combo's picture swapping the lead (the designer's product-image slot
     # draws `images[0]`) must move the hash even when the underlying set of

@@ -188,10 +188,9 @@ def test_ac_3_4_a_surviving_combo_line_keeps_its_one_per_combination_tags_on_sav
         (t.id, t.sort_order, t.quantity, tuple(t.choices.items())) for t in _tags(request)
     )
     assert after == before, "ids, order, quantity and choices survive; nothing collapses"
-    kept = {t.id: t for t in _tags(request)}
     first = next(t for t in _tags(request) if t.sort_order == 0)
     assert first.marketing_price_override == Decimal("123.00")
-    assert kept, "the marketing override rides along with its tag"
+    assert first.marketing_override_reason == "ZZT hand split", "the override rides along with its tag"
 
 
 def test_ac_3_4_a_new_style_single_tag_is_kept_on_save_with_the_same_id(db):

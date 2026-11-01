@@ -642,3 +642,73 @@ def test_a_combo_sell_price_above_the_list_price_still_prints_in_selling_mode(db
     )
     assert D(str(priced["sell_price"])) == D("1099.00")
     assert priced["sell_price_basis"] != "list"
+
+
+# --------------------------------------------------------------------------- review round
+
+
+def test_ac_2_8_a_description_only_edit_reaches_a_designing_tag_with_its_change_note(crm):
+    client, db = crm
+    s = _fixed_combo(db)
+    request = _designing(db, s)
+    s["combo"].description = "Only the description moved"
+    db.commit()
+
+    assert client.get(f"/api/v1/dealer-kit/price-tag-requests/{request.id}/data-changes").status_code == 200
+    tag = _pinned_tag(db, request)
+    assert tag.data_updated_at is not None
+    assert tag.pinned_tag_data["combo"]["description"] == "Only the description moved"
+    labels = " ".join(str(change) for change in (tag.data_update_changes or [])).lower()
+    assert "combo description" in labels
+
+
+def test_ac_2_7_line_pricing_under_the_promotion_agrees_with_the_tag(db):
+    from app.services.dealer_kit import tag_data_service
+    from app.services.dealer_kit.pricing import line_pricing
+
+    s = _std(db)
+    promo = seed.promotion(db, [(s["host"], "800.00"), (s["mirror"], "0.00")])
+    line = {**_pricing_line(s, [s["mirror"].id, s["white"].id]), "promotion_id": promo.id}
+    (priced,) = line_pricing(db, lines=[line], viewer=tag_data_service.staff_viewer(), auto_pick=False)
+    assert D(str(priced["sell_price"])) == D("1100.00"), "800 host + 0 free mirror + 300 white"
+    # Without the combo the free part would add its list price.
+    plain = {k: v for k, v in line.items() if k != "combo_id"}
+    (unpriced,) = line_pricing(db, lines=[plain], viewer=tag_data_service.staff_viewer(), auto_pick=False)
+    assert D(str(unpriced["sell_price"])) == D("1300.00")
+
+
+def test_a_no_combo_row_hashes_as_it_did_before_the_combo_key_existed():
+    from app.services.dealer_kit.tag_data_service import data_hash
+
+    row = {"code": "ZZ1", "name": "ZZ1", "list_price": 10.0, "sell_price": None, "images": [], "parts": []}
+    assert data_hash({**row, "combo": None}) == data_hash(row)
+    assert data_hash({**row, "combo": {"id": "c", "name": "n"}}) != data_hash(row)
+
+
+def test_ac_2_5_is_judged_per_group(db):
+    from app.services.dealer_kit.pricing import combo_prices
+
+    host = seed.product(db, "ZZGHOST", list_price="1000.00")
+    a1 = seed.product(db, "ZZGA1")
+    a2 = seed.product(db, "ZZGA2")
+    b1 = seed.product(db, "ZZGB1")
+    b2 = seed.product(db, "ZZGB2")
+    cb = seed.combo(
+        db,
+        host,
+        "ZZT two groups",
+        parts=[
+            {"product": a1, "group": "Basin", "sell_price": D("100.00")},
+            {"product": a2, "group": "Basin"},
+            {"product": b1, "group": "Tap", "sell_price": D("40.00")},
+            {"product": b2, "group": "Tap"},
+        ],
+    )
+    # Basin picked with a price, Tap still open and priced: blank, each Tap prints its own.
+    assert combo_prices(cb, {a1.id})[1:] == (None, True)
+    # Both picked: the first picked option that has a price.
+    assert combo_prices(cb, {a1.id, b1.id})[1:] == (D("100.00"), True)
+    # Only the unpriced Basin option picked, Tap's pick is priced: Tap's price counts.
+    assert combo_prices(cb, {a2.id, b1.id})[1:] == (D("40.00"), True)
+    # Both groups picked with no price on either picked option: today's sum.
+    assert combo_prices(cb, {a2.id, b2.id})[1:] == (None, False)

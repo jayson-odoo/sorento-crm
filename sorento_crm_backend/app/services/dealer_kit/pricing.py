@@ -522,6 +522,9 @@ def line_pricing(
             list_price += price
         list_price = list_price.quantize(_LINE_MONEY)
 
+        # PRICETAG-COMBO: the combo only counts when it hangs off this line's own scoped host.
+        combo_row = combo_for_host(db, line.get("combo_id"), product_id, products_by_id)
+
         covering = _covering_promotions(
             db, lookup_ids, viewer, keep_id=given_promotion_id
         )
@@ -531,7 +534,7 @@ def line_pricing(
         for promo in covering:
             total, parts_at_list_for_promo = _line_total_under(
                 db, products_by_id, resolved_ids, part_ids, viewer, promo.id,
-                combo=bool(line.get("combo_id")),
+                combo=combo_row is not None,
             )
             totals_by_promotion[promo.id] = (total, parts_at_list_for_promo)
             promotion_options.append(
@@ -583,7 +586,6 @@ def line_pricing(
 
         # PRICETAG-COMBO AC-2.4/2.6: the combo's own price, by the one rule the tag
         # data also reads. A manual figure still wins the sell side.
-        combo_row = combo_for_host(db, line.get("combo_id"), product_id, products_by_id)
         if combo_row is not None:
             combo_list, combo_sell, sell_decided = combo_prices(combo_row, set(part_ids))
             if combo_list is not None:
@@ -677,20 +679,35 @@ def combo_prices(
     list_price = _as_decimal(combo.list_price)
     parts = list(combo.parts or [])
     options = [p for p in parts if not p.is_upgrade and p.choice_group]
-    picked_option = next((p for p in options if p.part_product_id in picked_ids), None)
     picked_upgrade = next(
         (p for p in parts if p.is_upgrade and p.part_product_id in picked_ids), None
     )
-    base = _as_decimal(picked_option.sell_price) if picked_option is not None else None
+    combo_sell = _as_decimal(combo.sell_price)
+    groups: dict = {}
+    for p in options:
+        groups.setdefault(p.choice_group, []).append(p)
+    # AC-2.5, per group: with no combo sell price, a group still open whose options print
+    # their own prices leaves the tag's sell price blank - one figure would hide those prices.
+    open_priced = any(
+        any(o.sell_price is not None for o in group)
+        and not any(o.part_product_id in picked_ids for o in group)
+        for group in groups.values()
+    )
+    if combo_sell is None and open_priced and picked_upgrade is None:
+        return list_price, None, True
+    # The first picked option that has a price of its own (a one-option group auto-resolves,
+    # so several groups can each have a pick), else the combo's.
+    base = next(
+        (
+            _as_decimal(p.sell_price)
+            for p in options
+            if p.part_product_id in picked_ids and p.sell_price is not None
+        ),
+        None,
+    )
     if base is None:
-        base = _as_decimal(combo.sell_price)
+        base = combo_sell
     if base is None:
-        if (
-            picked_option is None
-            and picked_upgrade is None
-            and any(p.sell_price is not None for p in options)
-        ):
-            return list_price, None, True
         return list_price, None, False
     if picked_upgrade is not None:
         base += _as_decimal(picked_upgrade.topup_amount) or Decimal("0")

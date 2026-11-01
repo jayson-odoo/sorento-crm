@@ -554,6 +554,11 @@ SLOT_BINDINGS = (
     "alternatives",
     "accessories",
     "set_members",
+    "combo_image",
+    "combo_name",
+    "combo_description",
+    "combo_choices",
+    "combo_topups",
 )
 
 

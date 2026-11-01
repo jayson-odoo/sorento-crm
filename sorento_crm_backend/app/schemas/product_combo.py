@@ -73,8 +73,8 @@ class ProductComboUpdate(BaseModel):
     name: Optional[str] = None
     sort_order: Optional[int] = None
     #: Omitted = left alone, explicit null = cleared (`model_fields_set`).
-    description: Optional[str] = None
-    free_items: Optional[str] = None
+    description: Optional[str] = Field(default=None, max_length=5000)
+    free_items: Optional[str] = Field(default=None, max_length=2000)
     list_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
     sell_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
 

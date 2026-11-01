@@ -292,3 +292,16 @@ def test_ac_5_3_another_companys_combo_id_answers_404(api):
     db.commit()
     response = client.get(PRODUCT_URL.format(id=host.id), params={"combo_id": theirs.id})
     assert response.status_code == 404, response.text
+
+
+def test_ac_5_3_the_preview_carries_the_combos_own_list_and_sell_price(api):
+    client, db, _ = api
+    host, cb = _host_with_combo(
+        db, "ZZT Priced pack", list_price=Decimal("2000.00"), sell_price=Decimal("1500.00")
+    )
+    db.commit()
+    body = client.get(PRODUCT_URL.format(id=host.id), params={"combo_id": cb.id}).json()
+    assert body["list_price"] == 2000.0
+    assert body["offer_price"] == 1500.0
+    plain = client.get(PRODUCT_URL.format(id=host.id)).json()
+    assert plain["list_price"] == 1000.0, "without a combo the host price is unchanged"

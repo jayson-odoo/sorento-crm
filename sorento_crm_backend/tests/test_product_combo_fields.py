@@ -458,3 +458,13 @@ def test_ac_1_5_a_part_edit_lands_on_the_audit_trail_with_the_new_values(db, mon
         merged.update(row.new_values or {})
     assert {"sell_price", "topup_amount", "is_upgrade"} <= set(merged)
     assert merged["is_upgrade"] in (True, "true", "True")
+
+
+@pytest.mark.parametrize("field,limit", [("description", 5000), ("free_items", 2000)])
+def test_a_text_over_its_limit_is_422_and_at_the_limit_is_saved(db, monkeypatch, field, limit):
+    host = _product(db, "SRTBF20")
+    combo = _combo(db, host, "3 in 1")
+    client = _caller(db, {VIEW, EDIT}, monkeypatch)
+    url = COMBO.format(combo_id=combo.id)
+    assert client.patch(url, json={field: "x" * (limit + 1)}).status_code == 422
+    assert client.patch(url, json={field: "x" * limit}).status_code == 200
