@@ -37,6 +37,7 @@ exit 0
     # docker compose ... ps: prints FAKE_RUNNING ids; exec ... psql -Atc <sql>: answers by keyword.
     "docker": r"""#!/usr/bin/env bash
 echo "docker $*" >> "$FAKE_LOG"
+echo "docker $* IMAGE_TAG=${IMAGE_TAG-UNSET}" >> "$FAKE_DIR/env.log"
 args=" $* "
 case "$args" in
   *" ps "*) [ -n "${FAKE_PS_FAIL:-}" ] && exit 1; for c in ${FAKE_RUNNING:-}; do echo "$c"; done; exit 0 ;;
@@ -100,7 +101,7 @@ def test_watcher_starts_workers_only_after_two_leader_readings(env):
     assert not any("up -d" in c for c in calls(log)), "one reading must not act"
 
     r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
-    ups = [c for c in calls(log) if "--profile promoted up -d --no-deps worker worker_fast" in c]
+    ups = [c for c in calls(log) if "--profile promoted up -d" in c and "--no-deps" in c and c.endswith("worker worker_fast")]
     assert len(ups) == 1
 
 
@@ -145,6 +146,54 @@ def test_watcher_flapping_reading_never_acts(env):
     (tmp / "codes").write_text("200\n503\n200\n503\n")
     run(WATCHER, e, MAX_TICKS=4, FAKE_RUNNING="a")
     assert not any("up -d" in c or " stop " in c for c in calls(log))
+
+
+# ---------------------------------------------------------------- role-watcher, H4b deploy path
+
+
+def _ups(log):
+    return [c for c in calls(log) if " up -d" in c]
+
+
+def test_watcher_leader_start_never_recreates_a_running_worker(env):
+    e, log, tmp = env
+    (tmp / ".ha-image-tag").write_text("tag9\n")
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    ups = _ups(log)
+    assert len(ups) == 1, calls(log)
+    assert "--no-recreate" in ups[0], ups[0]
+
+
+def test_watcher_leader_starts_workers_on_the_recorded_image_tag(env):
+    e, log, tmp = env
+    (tmp / ".ha-image-tag").write_text("tag9\n")
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    lines = [c for c in (tmp / "env.log").read_text().splitlines() if " up -d" in c]
+    assert len(lines) == 1, lines
+    assert lines[0].endswith("IMAGE_TAG=tag9"), lines[0]
+
+
+def test_watcher_leader_without_a_recorded_tag_starts_nothing_but_replica_still_stops(env):
+    e, log, tmp = env
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
+    assert not _ups(log), calls(log)
+    assert "no image tag" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a b")
+    assert len(_stops(log)) == 1
+
+
+@pytest.mark.parametrize("code", [200, 503])
+def test_watcher_skips_the_tick_while_the_deploy_lock_is_held(env, code):
+    import fcntl
+
+    e, log, tmp = env
+    (tmp / ".ha-image-tag").write_text("tag9\n")
+    lock = tmp / "deploy.lock"
+    with open(lock, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        r = run(WATCHER, e, MAX_TICKS=3, FAKE_HTTP_CODE=code, FAKE_RUNNING="a", DEPLOY_LOCK_PATH=lock)
+    assert not _ups(log) and not _stops(log), calls(log)
+    assert "skip" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
 
 
 # ---------------------------------------------------------------- ha-checks
