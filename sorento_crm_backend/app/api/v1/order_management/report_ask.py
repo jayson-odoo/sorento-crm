@@ -25,12 +25,13 @@ from app.api.v1.order_management._contact_scope import (
 from app.api.v1.order_management.orders import _normalize_entities
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
-from app.models.base import company_scope, set_brand_scope
+from app.models.base import company_scope, get_company_scope, set_brand_scope
 from app.models.company import Company, RespondContactCompany
 from app.models.order import Customer
 from app.models.product import Brand, Product, ProductCategory
 from app.models.sales_agent import SalesAgent
-from app.services import contact_asker
+from app.services import contact_asker, contact_field_reveal_service, own_scope
+from app.services.user_service import gate_user_ids
 from app.schemas.report_ask import ReportAskChatResponse, ReportAskResponse
 from app.services.contact_brand_scope import contact_brand_scope, limits_brands
 from app.services.error_handler import AppException, handle_not_found
@@ -283,8 +284,12 @@ def report_ask(
 ):
     contact_id = (contact_id or "").strip() or None
     space_id = (space_id or "").strip() or None
+    # AGENTIC-UNIFY AC-7: an identity read has no contact (a pair with the header is already refused,
+    # `company_scope_resolver.resolve_staff_identity`): who asks is the staff member, in their active
+    # company, and the reveals below come from their permissions. A plain key still names a contact.
+    staff_read = bool(current_user.get("key_user_id"))
     require_contact_identity_pair(contact_id, space_id)
-    if not (contact_id and space_id):
+    if not (contact_id and space_id) and not staff_read:
         raise AppException(
             422,
             "contact_id and space_id are required",
@@ -301,7 +306,8 @@ def report_ask(
             request, db, date_from=date_from, date_to=date_to, basis=basis, measure=measure,
             group_by=group_by, top_n=top_n, sort=sort, subjects=subjects, product_ids=product_ids,
             customer_ids=customer_ids, contact_id=contact_id, space_id=space_id, askers=askers,
-            category_ids=category_ids, brand_ids=brand_ids,
+            category_ids=category_ids, brand_ids=brand_ids, staff_user_id=str(current_user["id"]) if staff_read else None,
+            gate_ids=gate_user_ids(current_user) if staff_read else None,
         )
     for key in request.query_params.keys():
         if key not in _PARAMS:
@@ -407,8 +413,12 @@ def report_ask(
     from app.services.contact_field_reveal_service import granted_keys
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
-    resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
-    keys = granted_keys(db, resolved) if resolved else []
+    resolved = None if staff_read else resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
+    keys = (
+        contact_field_reveal_service.staff_reveal_keys_for(db, gate_user_ids(current_user))
+        if staff_read
+        else granted_keys(db, resolved) if resolved else []
+    )
     # The reveal follows the basis: the outstanding kinds need the Outstanding reveal (and no Sales report one), the
     # sales bases the Sales report one. A linked contact is forced to its own customers on every basis below.
     outstanding_kind = basis_norm in ask.OPEN_BASES
@@ -418,6 +428,11 @@ def report_ask(
     # customers below (`enforce_customer_scope`). Only a "my ..." ask is narrowed to a salesperson's own book.
     # The one rule the chatbot seams share (`contact_asker.may_ask_sales_ranking`).
     decision, book = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=granted)
+    if staff_read:
+        # Only the user's permissions decide. Their linked contact's book is what a "my ..." ask narrows
+        # to, never a way past the slug.
+        decision = "granted" if granted else "not_granted"
+        _, book = contact_asker.may_ask_sales_ranking(db, own_scope.me(db, str(current_user["id"])).contact_id, granted=granted)
     if decision == "not_granted" and basis_norm == "pending_delivery" and resolved and contact_asker.pending_delivery_open(db, str(resolved)):
         # Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY, #b6e9): as before #1922, pending delivery needs no reveal; undelivered
         # orders and unpaid invoices do. Only a contact the company knows: office staff (every customer) or a linked
@@ -457,7 +472,8 @@ def report_ask(
             raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
     per_document = basis_norm == "unpaid"
     hidden: set[str] = set()
-    if (spec_terms and not per_document) or spec_group:
+    # A staff member has no contact's spec policy: their product screens hide no spec key.
+    if ((spec_terms and not per_document) or spec_group) and not staff_read:
         from app.services.spec_visibility import contact_hidden_keys
 
         hidden = contact_hidden_keys(db, contact_id, space_id)
@@ -483,7 +499,7 @@ def report_ask(
 
     limit, window_minutes = _rate_limit_setting(db)
     if not rate_limit.hit(
-        "report_ask", str(resolved), limit=limit, window_seconds=window_minutes * 60
+        "report_ask", str(resolved or current_user["id"]), limit=limit, window_seconds=window_minutes * 60
     ).allowed:
         unit = "1 minute" if window_minutes == 1 else f"{window_minutes} minutes"
         return _response(
@@ -513,7 +529,8 @@ def report_ask(
         if outside:
             raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
 
-    # The contact's OWN companies (the sales analysis route's read), never the session scope.
+    # The contact's OWN companies (the sales analysis route's read), never the session scope. A staff
+    # member's are that scope: their active company, resolved as a session's is.
     grants = {
         str(c)
         for (c,) in db.query(RespondContactCompany.company_id)
@@ -521,6 +538,9 @@ def report_ask(
         .all()
         if c
     }
+    if staff_read:
+        scope = get_company_scope(db)
+        grants = {str(c) for c in scope} if isinstance(scope, frozenset) else set()
 
     company_name: Optional[str] = None
     if (company or "").strip():
@@ -747,6 +767,8 @@ def _chat_report_ask(
     askers: Optional[list[str]] = None,
     category_ids: Optional[list[str]] = None,
     brand_ids: Optional[list[str]] = None,
+    staff_user_id: Optional[str] = None,
+    gate_ids: Optional[list[str]] = None,
 ):
     """`dataset=chat`: the bot's chat analytics (asks, turns, failures, contacts). Same gates
     as the sales report in the same order, with the `chatbot.analytics` reveal in place of the
@@ -813,9 +835,13 @@ def _chat_report_ask(
     from app.services.contact_field_reveal_service import granted_keys
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
-    contact_id, space_id = contact_id.strip(), space_id.strip()
-    resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
-    keys = granted_keys(db, resolved) if resolved else []
+    contact_id, space_id = (contact_id or "").strip(), (space_id or "").strip()
+    resolved = None if staff_user_id else resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
+    keys = (
+        contact_field_reveal_service.staff_reveal_keys_for(db, gate_ids or [staff_user_id])
+        if staff_user_id
+        else granted_keys(db, resolved) if resolved else []
+    )
     if CHAT_GRANT not in keys:
         raise AppException(403, "Chat analytics is not enabled for your account.", code="chat_analytics_not_enabled")
 
@@ -838,7 +864,7 @@ def _chat_report_ask(
 
     limit, window_minutes = _rate_limit_setting(db)
     if not rate_limit.hit(
-        "report_ask", str(resolved), limit=limit, window_seconds=window_minutes * 60
+        "report_ask", str(resolved or staff_user_id), limit=limit, window_seconds=window_minutes * 60
     ).allowed:
         minutes = "1 minute" if window_minutes == 1 else f"{window_minutes} minutes"
         return _chat_response(
@@ -852,7 +878,7 @@ def _chat_report_ask(
     # its own customers (a named one outside them is the helper's own 403) and to the dealer's
     # breakdowns; a salesperson to the customers whose card agent is theirs; staff, and a contact
     # nobody classified that holds the grant, see all.
-    asker = contact_asker.classify(db, str(resolved))
+    asker = "staff" if staff_user_id else contact_asker.classify(db, str(resolved))
     scoped = None
     if asker == "dealer":
         scoped = enforce_customer_scope(
@@ -876,6 +902,9 @@ def _chat_report_ask(
         .all()
         if c
     }
+    if staff_user_id:
+        scope = get_company_scope(db)
+        grants = {str(c) for c in scope} if isinstance(scope, frozenset) else set()
     echo: list[tuple[str, list[str]]] = []
     if subject_codes:
         from app.services.reports.datasets import chat_asks

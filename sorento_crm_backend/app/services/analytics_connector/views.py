@@ -137,7 +137,7 @@ SELECT t.id::text AS id,
         SELECT r.id, r.name FROM respond_contacts r
          WHERE r.respond_io_id = t.contact_respond_id ORDER BY r.created_at ASC LIMIT 1
   ) rc ON true
- WHERE NOT t.is_test
+ WHERE NOT t.is_test AND t.ingress <> 'panel'
 """
 
 EPISODES_V = f"""
@@ -159,7 +159,7 @@ SELECT cf.id::text AS id,
        {_mask('cf.last_assistant_summary')} AS last_assistant_summary
   FROM conversation_frames cf
   LEFT JOIN respond_contacts rc ON rc.id = cf.contact_respond_id
- WHERE NOT cf.is_test
+ WHERE NOT cf.is_test AND left(cf.contact_respond_id, 6) <> 'panel-'
 """
 
 VIEWS = (MESSAGES_V, CONTACTS_V, BOT_TURNS_V, EPISODES_V)
@@ -274,7 +274,7 @@ SELECT t.id::text AS id,
          WHERE lc.chatbot_turn_id = t.id::text
          GROUP BY lc.chatbot_turn_id
   ) calls ON true
- WHERE NOT t.is_test
+ WHERE NOT t.is_test AND t.ingress <> 'panel'
 """
 
 COST_VIEWS = (LLM_CALLS_V, TURN_COSTS_V)

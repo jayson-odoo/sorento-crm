@@ -210,3 +210,13 @@ def test_ac26_enforce_on_with_no_bearer_is_401(crm):
         resp = client.post("/mcp", json=body, headers=no_bearer)
     assert resp.status_code == 401
     assert _crm_requests(crm) == []
+
+
+# --- a staff read with a blank contact pair on a hinted tool still forwards the identity ---------
+def test_a_hinted_report_tool_with_a_blank_pair_forwards_the_identity(mcp, crm):
+    args = {"contact_id": "", "space_id": "", "basis": "invoiced", "top_n": 5, "date_from": "2026-10-01",
+            "date_to": "2026-10-31", "measure": "amount", "group_by": "customer"}
+    _call(mcp, "crm_report_ask", args, STAFF)
+    sent = [r for r in _crm_requests(crm) if r.url.path.endswith("/order-management/report-ask")]
+    assert len(sent) == 1, "the blank pair must not stop the call before the CRM"
+    assert sent[0].headers.get(IDENTITY) == STAFF_ID

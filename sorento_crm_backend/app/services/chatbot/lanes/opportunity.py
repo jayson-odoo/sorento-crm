@@ -29,6 +29,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot import required_fields as rf
 from app.services.chatbot.turn import pending as turn_pending
 
@@ -115,11 +116,15 @@ def call_opportunity_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str
 
 
 def is_salesperson(db: Any, contact_respond_id: Any, space_id: Any) -> bool:
-    """A salesperson by the one asker rule, not revoked (the route's gate, steps 2 and 3)."""
+    """A salesperson by the one asker rule, not revoked (the route's gate, steps 2 and 3). A staff
+    principal has no contact: their own `sales.opportunities.add` answers, on the first message (AC-12)."""
     from app.services.contact_asker import classify
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
     from app.services.sales.target_chat_scope import _user_revoked
 
+    principal = staff_principal.current()
+    if principal is not None:
+        return principal.may(db, staff_principal.OPPORTUNITIES_ADD)
     if not contact_respond_id or not str(contact_respond_id).strip():
         return False
     contact_id = resolve_contact_with_null_workspace_fallback(
@@ -253,9 +258,43 @@ def _error_line(result: Any) -> str | None:
     return COULD_NOT_SAVE
 
 
-def _call(tool_name: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+def _staff_tool(db: Any, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """The lane's two tools for a staff principal, in process, as the user (AC-12). A refusal comes back
+    in the routes' error shape, so `_error_line` words it the same."""
+    from app.services.error_handler import AppException
+    from app.services.sales import opportunity_chat
+
+    principal = staff_principal.current()
+    may_add = principal.may(db, staff_principal.OPPORTUNITIES_ADD)
     try:
-        result = call_opportunity_tool(tool_name, arguments)
+        if tool_name == OPTIONS_TOOL:
+            return opportunity_chat.staff_customer_options(
+                db, user_id=principal.user_id, may_add=may_add, q=arguments.get("q")
+            )
+        return opportunity_chat.staff_create(
+            db,
+            user_id=principal.user_id,
+            may_add=may_add,
+            customer_id=arguments.get("customer_id"),
+            prospect_name=arguments.get("prospect_name"),
+            title=arguments.get("title"),
+            expected_amount=Decimal(str(arguments["expected_amount"])),
+            expected_close_date=date.fromisoformat(arguments["expected_close_date"]),
+            dry_run=arguments.get("dry_run") == "true",
+            real_user_id=principal.real_user_id,
+        )
+    except AppException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        return {"status_code": exc.status_code, "code": detail.get("code"), "http_error": True}
+
+
+def _call(tool_name: str, arguments: dict[str, Any], db: Any = None) -> tuple[dict[str, Any], str | None]:
+    try:
+        result = (
+            _staff_tool(db, tool_name, arguments)
+            if staff_principal.current() is not None
+            else call_opportunity_tool(tool_name, arguments)
+        )
     except Exception:  # noqa: BLE001 - never a raw error to the customer
         logger.warning("chatbot opportunity lane: %s failed", tool_name, exc_info=True)
         return {}, COULD_NOT_SAVE
@@ -315,7 +354,7 @@ def _read_back(values: Mapping[str, Any], *, asked_at_turn: int | None) -> LaneR
     return LaneReply(text="\n".join(lines), pending=confirm)
 
 
-def _save(values: Mapping[str, Any], *, contact_respond_id: Any, space_id: Any, dry_run: bool) -> LaneReply:
+def _save(values: Mapping[str, Any], *, contact_respond_id: Any, space_id: Any, dry_run: bool, db: Any = None) -> LaneReply:
     customer = values["customer"]["value"]
     args: dict[str, Any] = {
         "contact_id": jsc.js_string(contact_respond_id),
@@ -331,7 +370,7 @@ def _save(values: Mapping[str, Any], *, contact_respond_id: Any, space_id: Any, 
     if dry_run:
         # A string: the tool's body params are strings (the route reads it as a bool).
         args["dry_run"] = "true"
-    result, line = _call(LOG_TOOL, args)
+    result, line = _call(LOG_TOOL, args, db)
     if line:
         return LaneReply(text=line, called=(LOG_TOOL,))
     if dry_run or result.get("dry_run") is True:
@@ -354,10 +393,12 @@ def run(
     space_id: Any,
     dry_run: bool,
     turn_no: int | None,
+    db: Any = None,
 ) -> LaneReply:
-    """One opportunity turn. Pure but for the two tool calls at the seam."""
+    """One opportunity turn. Pure but for the two tool calls at the seam. `db` is for a staff
+    principal, whose two calls run in process."""
     if not salesperson:
-        return LaneReply(text=NOT_SALESPERSON)
+        return LaneReply(text=NOT_ENABLED if staff_principal.current() is not None else NOT_SALESPERSON)
     confirm = own_pending(pending)
     slot = own_slot(open_ask)
     status = _status(verdict)
@@ -368,7 +409,7 @@ def run(
         if _bare_yes_no(verdict) is True and len(values) == len(OPPORTUNITY_ASK.fields):
             if _stale(confirm.payload.get("asked_at")):
                 return LaneReply(text=TIMED_OUT)
-            return _save(values, contact_respond_id=contact_respond_id, space_id=space_id, dry_run=dry_run)
+            return _save(values, contact_respond_id=contact_respond_id, space_id=space_id, dry_run=dry_run, db=db)
         return LaneReply(text=NOT_SAVED)
     if mode == "cancel" or (mode == "no" and confirm is not None):
         return LaneReply(text=NOT_SAVED)
@@ -408,7 +449,7 @@ def run(
     elif words:
         result, line = _call(OPTIONS_TOOL, {
             "contact_id": jsc.js_string(contact_respond_id), "space_id": jsc.js_string(space_id), "q": words,
-        })
+        }, db)
         called.append(OPTIONS_TOOL)
         if line:
             return LaneReply(text=line, called=tuple(called))
