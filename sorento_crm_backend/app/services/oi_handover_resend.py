@@ -258,8 +258,8 @@ class OrderInquiryHandoverResend:
         actor_user_id: str,
         row_ids: Optional[Sequence[str]] = None,
     ):
-        """`(automation, sendable, skipped)`; sendable = `[(inquiry, context, line_count,
-        recipients, open_rows, picked_ids)]` in the order asked. `row_ids` (single OI only)
+        """`(sendable, skipped)`; sendable = `[(inquiry, context, line_count, recipients,
+        open_rows, picked_ids, automation)]` in the order asked. `row_ids` (single OI only)
         picks which open rows go; `None` is every open row."""
         if not inquiry_ids:
             raise AppException(422, "Choose at least one order inquiry.")

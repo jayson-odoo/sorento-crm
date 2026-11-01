@@ -873,7 +873,7 @@ def _applied_split_resend_lines(api, monkeypatch, *, qty_48, cut_48=None):
         .order_by(OrderInquiryRow.created_at.desc()).first()
     )
     inquiry = db.get(OrderInquiry, row.order_inquiry_id)
-    _auto, sendable, _skipped = OrderInquiryHandoverResend(db)._plan(
+    sendable, _skipped = OrderInquiryHandoverResend(db)._plan(
         [str(inquiry.id)], world.actor, None)
     return [(ln["qty"], ln["remark"]) for ln in sendable[0][1]["handover"]["lines"]]
 

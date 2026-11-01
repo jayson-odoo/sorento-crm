@@ -63,6 +63,7 @@ def eligible_contact(db, contact_respond_id: str):
     active. Holding the rollout permission is what let the turn start."""
     from app.models.access import RespondContact
     from app.models.base import company_scope
+    from app.models.user import User, UserStatus
     from app.services import chatbot_allowed_service
 
     principal = staff_principal.current()
