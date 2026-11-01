@@ -83,5 +83,5 @@ The rehearsal renders the templates and overrides nothing else. Every override, 
 
 ## Last run
 
-Outage 4 s (stop to first write); PITR restored plain_t 600 (= 600 at the noted time, 700 later)
+Last green run 1 Nov on head 456f4dd572, templates as written: outage 6 s (clock started before the stop); PITR restored plain_t 600 (= 600 at the noted time, 700 later)
 and items 5000; all 10 checks PASS.
