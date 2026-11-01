@@ -1,8 +1,9 @@
 # PLAN: retire n8n, reuse its box as the HA standby (N8N-DECOM-HA)
 
-Status: plan filed for owner review (lane N8N-DECOM-HA, 1 Nov 2026). Plan only: nothing in
-production changes from this lane. Track: L (cross-repo, prod infra), LEAD pattern; each build step
-in section 4 and section 5 is its own lane with its own track.
+Status: APPROVED with owner rulings 1 Nov about 12:05 (section 6); in progress: HA steps H1-H4 on
+node A + witness, and stage 0 (owner read-only checks). The lane changes nothing in production:
+every prod step goes to crew as owner commands. Track: L (cross-repo, prod infra), LEAD pattern;
+each CRM PR in section 4 is its own lane with its own track.
 
 Owner, 1 Nov 2026: retire n8n now and make the n8n box serve as the HA standby.
 
@@ -114,16 +115,18 @@ workflow and turns the CRM job on in the same minute.
 | 1 | `chatbot_direct_ingress_mode` to `all` (if not already): the CRM starts every turn, n8n only sends | owner, Settings | respond.io webhook to the CRM live (`RESPOND_WEBHOOK_SECRET` set) AND the n8n `chatbot-sender` live with its URL + key on the workspace: without them a covered contact silently keeps the n8n path (`sender_configured`, `app/services/chatbot/direct_ingress.py:215-227`). The exports hold the sender only as an inactive template (UNVERIFIED live). If it is not live, skip stage 1: stage 2 turns on both switches together | set `off` |
 | 2 | PR A ships; switch "CRM sends replies" on (and direct ingress `all`, if stage 1 was skipped) after a test on the owner's own number | lane A, owner | stage 1, or PR A alone | switch off: back to the n8n path |
 | 3 | PRs B, C, D, E ship in parallel lanes; each switched on with its n8n twin off (poller, ht-sweeper + forms, SLA schedule + hand-off + close, revise) | lanes B-E, owner | stage 2 for B and C | per PR: CRM switch off, n8n workflow back on |
-| 4 | PR F ships per attachment type (`triggers_n8n_webhook` off per type as each native task lands) | lane F | audit | per type: flag back on |
+| 4 | PR F ports EVERY attachment type the n8n workflow handles (Q5 b), shipped type by type (`triggers_n8n_webhook` off per type as each native task lands) | lane F | the live workflow export (the only copy in the repo's reach is a backup of 3 Aug or older) | per type: flag back on |
 | 5 | Deactivate producer, dispatcher, spine (gap slice 6); remove n8n's respond.io webhook / trigger subscription | owner | stages 2-3 soaked 48 h | reactivate |
-| 6 | Stop the n8n containers (do not delete) for 14 days; then final export + n8n DB dump to the private backup; MCP server on its own key | owner | stage 5 | start the containers |
+| 6 | Stop the n8n containers (do not delete) for 14 days; then final export + n8n DB dump to the private backup; MCP server on its own key | owner | stage 5, and stage 4 done for every type | start the containers |
 | 7 | PR G cleanup (dead code, settings columns, routes, runbooks); revoke n8n's key; close the n8n private path and its firewall openings into the CRM box | lane G, owner | stage 6 ended | revert PR (columns dropped last) |
 | 8 | Node B rebuilt as a CRM node, joins HA (section 5) | crew + owner | stage 6 ended | n/a |
 
 Order of CRM PRs: A first (largest, gates stage 5); B and C next (both need A's sender for the
 messages they send); D, E, F independent of A and can run in parallel; G last. Estimated
-lane-days: A 2.5-3, B 1, C 1, D 1.5, E 0.5-1, F 2-4 (depends on the audit), G 1; about 10-13 in
-all, 3 lanes at a time, so about 2-3 weeks to stage 5, plus the 14-day stop.
+lane-days: A 2.5-3, B 1, C 1, D 1.5, E 0.5-1, F 3-5 (every type, Q5 b), G 1; about 11-14 in
+all, 3 lanes at a time, so about 2-3 weeks to stage 5, plus the 14-day stop. Stage 5 does not wait
+for F: attachment extraction is not on the chat path, so n8n's upload workflow can be the last one
+left running.
 
 ## 5. HA Tier 1 on the freed box: changes to plan v2
 
@@ -135,11 +138,11 @@ What changes in plan v2 (line numbers in `PLAN-ha-tier1-n8n-box-27oct.md`):
 | Resources (186-200), disk (462-475) | n8n rows removed; node B about 15 GB of 32 GB peak (section 3) |
 | Network (203-226) | container firewall only on the witness (shared-service apps), not on node B; no n8n openings into node A |
 | Section 6 (393-440) | replaced by this plan |
-| Failback O3 (247-259, 603-605) | its reason ("CRM and n8n on separate boxes again") is gone: owner question Q4 |
-| Effort (702-707) | minus "HAProxy for n8n"; plus "rebuild node B" if Q3 (a) |
+| Failback O3 (247-259, 603-605) | REVOKED by Q4 (owner, 1 Nov): no preferred node, no automatic move back. The primary stays where Patroni put it and the Cloudflare LB follows it by health check (section 5b). `infra/scripts/switchback.sh`, its tests and drill 8 are deleted |
+| Effort (702-707) | minus "HAProxy for n8n"; plus "rebuild node B" (Q3 a) and a local rehearsal of the Patroni adoption (H4a) |
 | Risks (760-761) | "n8n is a single point of failure for bot sends" removed: after stage 5 the bot path fails over with the CRM, since respond.io posts to the CRM's public host behind the LB |
-| Drills (765-778) | drill 9 runs on the witness only; drill 2 adds "the CRM sends the reply from node B" |
-| Templates | delete `infra/templates/haproxy/`; trim the n8n parts of `infra/templates/host/docker-user.nft`, `infra/templates/patroni/patroni.yml` (lines 14, 96, 106), `infra/templates/wireguard/wg0.conf.template`, `infra/README.md`, `infra/scripts/switchback.sh` comment; retire `documentation/runbooks/n8n-private-path.md` and the n8n parts of `backups.md`, `monitoring.md`, `prod-edge-lockdown.md` |
+| Drills (765-778) | drill 8 deleted (Q4); drill 9 runs on the witness only; drill 2 adds "the CRM sends the reply from node B" |
+| Templates | delete `infra/templates/haproxy/` and `infra/scripts/switchback.sh` (+ its tests); trim the n8n parts of `infra/templates/host/docker-user.nft`, `infra/templates/patroni/patroni.yml` (lines 14, 96, 106), `infra/templates/wireguard/wg0.conf.template`, `infra/README.md`; retire `documentation/runbooks/n8n-private-path.md` and the n8n parts of `backups.md`, `monitoring.md`, `prod-edge-lockdown.md` once n8n is stopped (stage 6) |
 
 Unchanged: active-passive (D1), all in Malaysia for now (D2), no webhook buffer (D3), Cloudflare LB
 + R2 (D4), automatic promotion with a witness on the shared-service box (D5, O1), 15 s checks (O2).
@@ -148,40 +151,68 @@ PR-sized steps:
 
 | # | Step | Who | Can start | Size |
 |---|---|---|---|---|
-| H1 | Amend plan v2 + trim the templates and runbooks above | lane | after this plan is approved | S |
-| H2 | Private infra repo with prod compose, nginx, `.deploy.env` shape captured (v2 step 9.1) | crew + owner | now | 0.5 d |
-| H3 | Witness etcd + WireGuard between node A and the witness; R2 bucket + scoped token | crew | now | 1 d |
-| H4 | Adopt prod Postgres into Patroni on node A as a one-member cluster, WAL-G archiving on (one 1-2 minute window, v2 step 6). Gives point-in-time restore (RPO 24 h to about 60 s) before node B exists | crew with owner at the box | after H2-H3 (Q2) | 1.5-2 d |
-| H5 | Release deploys both nodes, migrations only on the leader (v2 step 7) | lane | now (code) | 1-1.5 d |
-| H6 | Node B: fresh OS (Q3), edge rules, WireGuard, etcd member, CRM compose with `SKIP_MIGRATIONS=1`, role watcher; Patroni seeds the replica | crew + owner | after stage 6 ends, H5 merged | 1 d |
+| H1 | Amend plan v2 + trim the templates above, delete `switchback.sh` and drill 8 (this lane's PR) | lane | now | S |
+| H2 | Read-only pre-flight on node A and the witness (Postgres settings, data directory, sizes, compose location, OS, watchdog, free capacity); then capture the prod compose, nginx and `.deploy.env` key names into the private infra repo (v2 step 9.1) | owner commands, crew | now | 0.5 d |
+| H3 | WireGuard between node A and the witness; etcd with all three members LISTED but only node A and the witness started (quorum 2 of 3, no fault tolerance until node B joins); R2 bucket + scoped token | owner commands | after H2 | 1 d |
+| H4a | Rehearse H4 on a local throwaway stack (pgvector pg17 + Patroni + etcd + WAL-G to a test bucket, a copy of the dev schema): adoption, PITR restore to a minute, etcd loss with node A staying primary (`failsafe_mode`), a Postgres crash restart | lane | after H1 | 1 d |
+| H4 | Adopt prod Postgres into Patroni on node A as a one-member cluster, WAL-G archiving on (one 1-2 minute window, v2 step 6). Gives point-in-time restore (RPO 24 h to about 60 s) before node B exists | owner commands, crew on the call | after H2, H3, H4a | 1.5-2 d |
+| H5 | Release deploys both nodes, migrations only on the leader (v2 step 7) | lane | after H2 (needs the prod compose shape) | 1-1.5 d |
+| H6 | Node B: fresh OS (Q3 a), edge rules, WireGuard, etcd member 3, CRM compose with `SKIP_MIGRATIONS=1`, role watcher; Patroni seeds the replica; `synchronous_mode` on (non-strict) once the measured RTT is under 2 ms (v2 line 137) | owner commands | after stage 6 ends, H5 merged | 1 d |
 | H7 | Allowlists for node B's egress address (OpenAI and any other provider with one; v2 step 8) | owner | with H6 | - |
-| H8 | Cloudflare LB + monitor on `/api/v1/health/role` (v2 section 5) | owner + crew | after H6 | 0.5 d |
-| H9 | Drills 1-8 and 10 (v2 section 12) | owner + crew | after H8 | 1 d |
+| H8 | Cloudflare LB + monitor on `/api/v1/health/role` (section 5b) | owner | after H6 | 0.5 d |
+| H9 | Drills 1-7, 9 (witness only) and 10 (v2 section 12) | owner + crew | after H8 | 1 d |
 
-## 6. Owner questions
+## 5b. Cloudflare decides the route; the database decides who may write (Q4)
 
-Q1 Pace. (a) Staged: each CRM PR switched on alone, 48 h watch, n8n warm until stage 6, about 2-3
-weeks to stage 5 (recommended: zero chat downtime and a one-flip rollback at every step). (b) Build
-all, switch everything in one quiet night, about 2 weeks; one bad switch means hunting across six.
+Owner, 1 Nov: no preferred node; the Cloudflare load balancer decides where traffic goes. The LB
+cannot be trusted with WRITE safety (it only sees health checks; v2 lines 109-112), so routing and
+write protection are separate layers:
 
-Q2 HA start. (a) Start H2-H5 now (node A + witness, with point-in-time restore from H4); node B
-joins after n8n is stopped (recommended: PITR is the biggest risk cut and needs no node B). (b) All
-HA work after n8n is gone. (c) Node B joins now beside n8n with v2's HAProxy, removed later
-(throwaway work).
+1. **Routing follows the primary.** One Cloudflare LB, two pools (node A, node B), steering "off"
+   (failover order), monitor `GET /api/v1/health/role` every 15 s (O2), 2 failures. The endpoint
+   answers 200 only where the local Postgres is not in recovery (`sorento_crm_backend/app/main.py:731`,
+   check at `:748`) and 503 on a replica or when the DB is unreachable, so at most one pool is ever
+   healthy and the LB sends all traffic there. Pool order is only a tie-break that a healthy cluster
+   never uses; "off" steering is chosen over random or weighted so that even a fault that made both
+   answer 200 would still send everything to one node. No move back after a failover (Q4).
+2. **Only one database accepts writes.** Patroni holds the leader key in etcd with a 30 s TTL
+   (`infra/templates/patroni/patroni.yml:38`); a leader that cannot renew it demotes ITSELF to
+   read-only before the TTL ends, and the other node may promote only after it expires, so the two
+   never overlap. Promotion needs a majority of the three etcd voters, so a cut-off node can never
+   promote itself. `failsafe_mode` (`patroni.yml:42`) keeps a leader up when etcd is down only if it
+   still reaches every Patroni member, which a cut-off node cannot. The watchdog reboots a node whose
+   Patroni hangs (v2 line 136).
+3. **A node that is not the leader cannot write, whatever the LB does.** Its local Postgres is a
+   read-only replica, so any write a request tries fails there. This also covers the gap while no
+   pool is healthy: Cloudflare then sends traffic to the LB's fallback pool (its documented behaviour, UNVERIFIED from this sandbox), where reads may answer
+   and writes fail cleanly. Workers and the scheduler run only on the leader (role watcher,
+   `infra/scripts/role-watcher.sh:6`, `:63`; scheduler guard refuses on a replica and holds an
+   advisory lock, `sorento_crm_backend/app/scheduler/leader.py:53`, `:83`). The chatbot inbox
+   sweeper runs in every API process (`sorento_crm_backend/app/main.py:411-415`) but claims a turn
+   with a database write before it sends (`sorento_crm_backend/app/services/chatbot/inbox_queue.py:556-567`,
+   send at `:729`), so on a replica it can never send. PR A keeps that order and tests it.
+4. **What a failover can still lose.** Writes in flight on the old primary at the moment it dies
+   fail with an error (staff retry; respond.io retries its webhooks for about 3 minutes; chatbot
+   turns are Postgres rows and are picked up again). Commits the old primary acknowledged but had not
+   yet streamed are discarded when it rejoins: normally under a second, never more than 16 MB
+   (`patroni.yml:41`, beyond that no automatic promotion). With both nodes in Malaysia,
+   `synchronous_mode` (non-strict) closes even that while both nodes are up (H6).
 
-Q3 Node B. (a) Rebuild from a fresh OS after the 14-day stop and the final n8n dump (recommended:
-no n8n leftovers such as Tailscale entries, host mappings, cron, firewall rules; and it proves the
-infra repo can build a node, which the disaster restore needs anyway). (b) Remove n8n in place.
+## 6. Owner rulings (1 Nov 2026 about 12:05, on the plan card)
 
-Q4 Primary placement (revisits O3, whose reason was keeping the CRM and n8n on separate boxes).
-(a) No preferred node: the primary stays where a failover leaves it; `switchback.sh` and drill 8 are
-dropped (recommended: both boxes carry today's load, and every switchback is a 5-15 s write pause
-for no gain). (b) Keep O3: back to node A at 04:00 after 24 h healthy. (c) Make node B, the larger
-box, the preferred primary and switch back to it instead.
+Owner, verbatim: "For one, yes, A. For two, also A. For three, A, yes. For four, it depends on the
+load balancer at Cloudflare. He will decide which load to go to. Then, yes, attachment AI reading,
+yes, A. No, actually, every time. Every time." Crew's reading, applied in this plan:
 
-Q5 Attachment extraction. (a) Port only the attachment types the CRM's own integration log shows
-in use in the last 60 days; other types lose automatic extraction (recommended: smallest PR F, and
-the audit is a read on the CRM's own data). (b) Port every type the n8n workflow handles.
+- **Q1 (a) staged.** Each CRM job switched on beside n8n alone, 48 h watch, n8n warm until stage 6
+  (section 4).
+- **Q2 (a) HA starts now** on node A and the witness: infra repo, WireGuard, etcd, Patroni as a
+  one-member cluster with WAL-G point-in-time restore (H1-H5). Node B joins after n8n is stopped.
+- **Q3 (a) node B is rebuilt** from a fresh OS after the 14-day stop and the final n8n dump (H6).
+- **Q4 no preferred node.** The Cloudflare LB decides the route by health check; the primary stays
+  where Patroni put it; `switchback.sh` and drill 8 go. Section 5b says how writes are protected.
+  This revokes v2's O3.
+- **Q5 (b) every attachment type** is ported, not only the recently used ones (stage 4, PR F).
 
 ## 7. Risks
 
@@ -195,3 +226,9 @@ the audit is a read on the CRM's own data). (b) Port every type the n8n workflow
   owner checks in respond.io.
 - Stopping n8n removes the failover poller; PR B must be on first or missed messages get no
   answer during a respond.io webhook outage.
+- Until node B joins, etcd runs on two of its three listed members (node A, witness): losing either
+  drops etcd quorum. Node A must then stay primary through `failsafe_mode` (it still reaches every
+  Patroni member, itself); H4a rehearses exactly this before the prod window. UNVERIFIED until then.
+- Adopting the running prod Postgres into Patroni points Patroni at the real data directory; a wrong
+  path makes Patroni create an empty cluster (v2 step 6). H2's pre-flight reads the path and H4a
+  rehearses the adoption first.
