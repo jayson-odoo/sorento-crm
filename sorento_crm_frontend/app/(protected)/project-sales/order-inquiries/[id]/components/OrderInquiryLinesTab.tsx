@@ -28,6 +28,7 @@ import {
 import { useTableDeepLinkHighlight } from '@/hooks/useTableDeepLinkHighlight';
 import { useSoLineAttachmentLookup } from '../../../_shared/hooks/useSoLineAttachments';
 import { STATE_LABEL } from '../../../_shared/components/OrderInquiryVerbPill';
+import { reserveStatusFrom } from '../../../_shared/lib/orderInquiryHeaderStatus';
 import { DEFAULT_HIDDEN_COLUMNS } from '../../components/orderInquiryWorklistColumns';
 import {
   StagedReserveEntry,
@@ -181,9 +182,13 @@ export function OrderInquiryLinesTab({
   const [expanded, setExpanded] = useState<ExpandedState>({});
   // AC-RS-88: `?reserve=<id>` preselects "Request to reserve" - never opens a dialog
   // any more (round 3's own deep-link dialog is retired).
-  const [stateFilter, setStateFilter] = useState<string[]>(() =>
-    searchParams.get('reserve') ? [RESERVE_REQUESTED_FILTER_VALUE] : [],
-  );
+  // Not for `reserved` / `notice_parked`: those lines are already answered (AC-RF-83).
+  const [stateFilter, setStateFilter] = useState<string[]>(() => {
+    const reserve = searchParams.get('reserve');
+    return reserve && reserve !== 'reserved' && reserve !== 'notice_parked'
+      ? [RESERVE_REQUESTED_FILTER_VALUE]
+      : [];
+  });
   // #1312 (AC-U6): ONE lookup call for every line's attachments, never one per row -
   // the same shape the fulfilment board's own list view reads.
   const attachmentLineIds = useMemo(
@@ -210,7 +215,9 @@ export function OrderInquiryLinesTab({
     // The param is dropped the moment the reader touches the filter themselves - it
     // has done its one job (preselecting) and must not keep re-forcing that selection
     // back on every unrelated re-render.
-    if (searchParams.get('reserve')) {
+    // A list status is the list's own filter and stays, so the pager keeps its list (AC-RF-81).
+    const reserve = searchParams.get('reserve');
+    if (reserve && !reserveStatusFrom(reserve)) {
       const params = new URLSearchParams(searchParams.toString());
       params.delete('reserve');
       const qs = params.toString();

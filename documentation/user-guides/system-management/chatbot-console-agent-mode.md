@@ -23,8 +23,11 @@ leave it empty to use the global value (shown as the placeholder).
 The agent also needs:
 
 * **AI replies** switched on for the contact.
-* The contact linked to an **active user** (the agent acts as that user, see "Whose permissions
-  apply" below).
+
+A contact linked to an **active user** is answered as that user (see "Whose permissions apply"
+below). A contact with no linked user is answered as the contact itself, with the read-only rules
+of [The agent on WhatsApp](./chatbot-agent-on-whatsapp.md): no changes, and only what the bot
+would give that contact.
 
 If any of these is missing, the console tells you which one:
 
@@ -33,7 +36,6 @@ If any of these is missing, the console tells you which one:
 | *This contact was not found.* | Pick the contact again. |
 | *AI replies are off for this contact.* | Turn AI replies on for the contact. |
 | *Agent mode is off for this contact (Contact Details > Chatbot).* | Switch on **Agent mode (auto)**. |
-| *This contact has no linked active user.* | Link the contact to an active user. |
 | *The agent is still working on another message for this contact.* | Wait for the earlier answer, then send again. |
 
 ## The Bot tab: the bot or the agent answers, automatically
@@ -152,8 +154,9 @@ check ("I stopped at the ... limit before finishing, so I did not check: ...").
 
 ## Whose permissions apply
 
-The agent acts **as the contact's linked user**, inside that user's company. It can only look up
-or change what that user could.
+For a contact with a linked user, the agent acts **as the contact's linked user**, inside that
+user's company. It can only look up or change what that user could. For a contact with no linked
+user it acts as the contact (read only, see [The agent on WhatsApp](./chatbot-agent-on-whatsapp.md)).
 
 To confirm a change, **you** (the person at the console) must also hold every permission that
 change needs. Otherwise you see *You do not have permission for this change.*
