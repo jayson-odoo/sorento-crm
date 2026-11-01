@@ -25,7 +25,7 @@ The route is `GET /api/v1/order-management/report-ask`. The param is `account_ty
   counts under 4; a ledger tagged `[A/C IV]` but typed SORENTO does not.
 - **AT-4 [BE]** The agent code's suffix never decides the account: a customer typed CABANA under an agent code ending `III` counts
   under 4.
-- **AT-5 [BE]** `4`, `IV`, `iv`, `A/C IV`, `a/c iv`, `CABANA` and `cabana` give the same figures. An odd value (`²`, `①`, 5,000 digits) is an unknown value, never a 500, on the route and on the screen run.
+- **AT-5 [BE]** `4`, `IV`, `iv`, `A/C IV`, `a/c iv`, `CABANA` and `cabana` give the same figures. An odd value (`²`, `①`) is an unknown value, never a 500, on the route and on the screen run; 5,000 digits is AT-12's 422 on the route and zero rows on the screen run.
 - **AT-6 [BE]** The number's type is derived per company: the type most ledgers with that tag carry. One stray ledger does not move it.
   A seeded made-up type (`ZZT TYPE`) on the `[A/C IV]` ledgers makes 4 mean `ZZT TYPE`, proving nothing is hard-coded. Ties go to the first
   type by name. A type answers to one number only, the one most of its ledgers carry: one `[A/C V]` ledger typed SORENTO does not make 5 mean SORENTO, so 5 is unknown and not listed.
