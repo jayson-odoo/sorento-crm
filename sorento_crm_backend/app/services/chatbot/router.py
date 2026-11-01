@@ -100,7 +100,7 @@ def decide_route(
     if prompt is None:
         return RouteDecision("chat", "router_failed:no_prompt")
     instructions, criteria, model = prompt
-    criteria = _with_open_record(_with_agent_tools(criteria))
+    criteria = _with_agent_tools(_with_open_page(criteria))
 
     state = _state(db, contact_respond_id, text)
     started = time.perf_counter()
@@ -207,18 +207,27 @@ OPEN_RECORD_CRITERION = (
     "record, in words like this purchase request, this one, what happened here, or its status, needs the "
     "agent, which holds the record's facts."
 )
+OPEN_PAGE_CRITERION = (
+    "The user is on a screen of the CRM, named in current_page in the state. A question about that screen, "
+    "what it shows or what they are looking at, or about how to use the CRM or how to do something in it, "
+    "needs the agent, which holds the screen's text and the user guides."
+)
 
 
-def _with_open_record(criteria: dict[str, Any]) -> dict[str, Any]:
-    """The criteria Jev is sent. For a panel turn with a record open, a copy with one more `agent` criterion;
-    the published label is never touched, so this is panel only and no other caller sees it."""
+def _with_open_page(criteria: dict[str, Any]) -> dict[str, Any]:
+    """The criteria Jev is sent. For a panel turn with a page open, a copy with more `agent` criteria
+    (`open_record` only when a record is open); the published label is never touched, so this is panel only
+    and no other caller sees it."""
     principal = staff_principal.current()
-    if principal is None or not (principal.page or {}).get("record_ref"):
+    if principal is None or not principal.page:
         return criteria
     agent = criteria.get("agent")
     if not isinstance(agent, dict):
         return criteria
-    return {**criteria, "agent": {**agent, "open_record": OPEN_RECORD_CRITERION}}
+    extra = {"open_page": OPEN_PAGE_CRITERION}
+    if principal.page.get("record_ref"):
+        extra["open_record"] = OPEN_RECORD_CRITERION
+    return {**criteria, "agent": {**agent, **extra}}
 
 
 def _bot_asked(block: dict[str, Any]) -> bool:
