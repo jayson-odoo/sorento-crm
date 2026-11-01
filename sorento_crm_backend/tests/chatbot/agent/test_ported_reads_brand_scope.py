@@ -1,4 +1,4 @@
-"""AGENTIC-UNIFY PR 4, slice 1 (red): a brand-scoped linked contact and the ported reads (AC-7, second half).
+"""AGENTIC-UNIFY PR 4, a brand-scoped linked contact and the ported reads (AC-7, second half).
 
 Every read goes through `services._mcp_call(db)`, which refuses a tool by `brand_scope_allows_tool` and guards
 the result with `brand_guard.guard_result` for a tool marked `filtered`. These tests pin what that does for
@@ -7,7 +7,9 @@ the ported reads that can name a product, through the real seam with only the MC
 The guard prunes a row only by a product key it finds (`product_code`, `item_code`, `product_id`, plus the
 tool's own keys in `BRAND_SCOPE_PRODUCT_KEYS`); a row naming no product passes, as on every filtered tool.
 The tools are panel only (AC-0) and a panel turn has no brand scope, so only the forecast's own existing refusal
-for a scope naming a brand is pinned here; the three project reads' brand refusal was removed with the ruling.
+for a scope naming a brand is pinned here. `_TOOLS_DENIED_WHEN_SCOPED` is exactly the forecast
+(`test_ported_last_items.py`); the three project reads run for such a scope as before PR 4 would have it, and the
+brand rule returns with the AC-0 trigger.
 """
 from __future__ import annotations
 

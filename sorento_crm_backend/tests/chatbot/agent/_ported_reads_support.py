@@ -47,9 +47,9 @@ EXTRA_SLUGS = {"crm_order_analytics": (SALES_REPORT_SLUG,)}
 CAPABILITIES = "crm_system_tool_capabilities_summary"
 FIND = "crm_find"
 #: `crm_system_tool_capabilities_summary` is dropped (its route reads a catalog path the deployed image lacks):
-#: it is in no list here, and `test_ported_panel_only.py` pins that it is nowhere in `REGISTRY`.
+#: it is in no list here, and `test_ported_reads_access.py` pins that it is in no registry, label or turn.
 AC1_NAMES = [row[0] for row in AC1]
-#: The tools Jev is told about and whose operator is checked (AC-3, AC-8): AC-1 less find and capabilities.
+#: The tools Jev is told about and whose operator is checked (AC-8): AC-1 less `crm_find`.
 PORTED = [row for row in AC1 if row[0] != FIND]
 PORTED_NAMES = [row[0] for row in PORTED]
 OWN_ROWS = [row for row in AC1 if row[2]]
