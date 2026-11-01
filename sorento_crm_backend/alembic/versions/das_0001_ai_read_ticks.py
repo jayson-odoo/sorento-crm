@@ -1,7 +1,7 @@
 """DOC-ACCESS-SIMPLE: who may read a document type is two ticks, not one audience
 
 Revision ID: das_0001_ai_read_ticks
-Revises: dp_0001_cs_planning_access
+Revises: pux_0001_series_exclusion
 Create Date: 2026-11-01 00:00:00.000000
 
 `attachment_types.ai_read_staff` (Staff tick) and `ai_read_codes` (the access codes ticked for contacts)
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "das_0001_ai_read_ticks"
-down_revision = "dp_0001_cs_planning_access"
+down_revision = "pux_0001_series_exclusion"
 branch_labels = None
 depends_on = None
 
