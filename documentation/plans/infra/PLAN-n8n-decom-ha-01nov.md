@@ -37,6 +37,27 @@ read-only owner checks (screenshots); until they arrive, section 1 rests on loca
 
 ## 1. Inventory: n8n workflows
 
+**Live check, 1 Nov (owner, read-only):** the production n8n (2.27.4, queue mode: main, worker, its own
+Postgres 15, Redis 7 and Mongo 7) has 99 of 155 workflows active. Runs in the last 14 days (errors in
+brackets): sla-policy-checker 20160; save-message-redis 19271; consume-main (S7 spine) 9513; sendmsg
+9412; findcontact 9377; sorento-main 9310; chatbot-sender 4706; dispatcher 877; redis-consume-queue-mongo
+463 (287 errors, 62%); healthcheck 335 (1); send-attachments 323; upload-attachments 306;
+failover-poller-LIVE 175; respond-send-user 146; close-convo 40; create-update-contact 37; add-comment
+32; ht-sweeper 29; working-day-detection 14; error-logger 13; every fc-* and failover-* clone 0. So the
+S7 spine is live and the n8n chatbot-sender already carries CRM-started turns (stage 1 is at least
+partly in effect; the direct-ingress setting's value is still to be read). The table below is from the
+local exports and stays as the map of jobs; the counts above are the live truth.
+
+**redis-consume-queue-mongo, 62% errors (flagged):** every 5 s it pops one message from n8n's Redis list
+(filled by save-message-redis) and POSTs it to `/api/v1/external/chat-history/messages`
+(`sorento_crm_backend/app/api/v1/external/chat_history.py:63`): the chat-history mirror. The CRM already
+writes the same rows itself (respond.io webhook, `app/api/v1/public/respond_webhook.py:335`, and the
+enabled chat-history reconcile, `app/scheduler/task_scheduler.py:347`), so no CRM PR has to replace it:
+it retires at stage 1 after a read-only check of its error message and of the Redis list's backlog.
+Whether n8n saves this workflow's successful runs is UNVERIFIED, so 62% may overstate the failure rate.
+New job not in the export map: working-day-detection (daily; the CRM has work-calendar endpoints,
+`app/api/v1/external/work_calendar.py:23`, `:57`; what it writes is UNVERIFIED, owner export decides).
+
 Source: local exports only. Crew has no n8n API access (crew config points every n8n URL at
 `.invalid`). Newest export of any workflow is 3 Oct 2026; the export repo's HEAD is 2 Sep with a
 large uncommitted tree; the producers are newest in a drafts branch of 8 Sep. So about 4 weeks of
@@ -114,8 +135,8 @@ workflow and turns the CRM job on in the same minute.
 
 | Stage | What | Who | Needs | Rollback |
 |---|---|---|---|---|
-| 0 | Read-only checks + full export archived privately; deactivate test clones the 14-day counts show unused | owner | - | reactivate |
-| 1 | `chatbot_direct_ingress_mode` to `all` (if not already): the CRM starts every turn, n8n only sends | owner, Settings | respond.io webhook to the CRM live (`RESPOND_WEBHOOK_SECRET` set) AND the n8n `chatbot-sender` live with its URL + key on the workspace: without them a covered contact silently keeps the n8n path (`sender_configured`, `app/services/chatbot/direct_ingress.py:215-227`). The exports hold the sender only as an inactive template (UNVERIFIED live). If it is not live, skip stage 1: stage 2 turns on both switches together. Owner check 1 Nov: the workspace sender URL and retry URL ARE set, so stage 1 is viable (whether the n8n workflow behind it answers: the n8n box check) | set `off` |
+| 0 | DONE 1 Nov except the full export (owner's Mac, from the n8n UI): read-only checks of both boxes and n8n. Next: deactivate the fc-* and failover-* clones (0 runs in 14 days) | owner | - | reactivate |
+| 1 | Retire redis-consume-queue-mongo and save-message-redis (the CRM writes chat history itself) after the error/backlog check. `chatbot_direct_ingress_mode` to `all` (if not already; chatbot-sender's 4706 runs say it is on for some or all contacts): the CRM starts every turn, n8n only sends | owner, Settings | respond.io webhook to the CRM live (`RESPOND_WEBHOOK_SECRET` set) AND the n8n `chatbot-sender` live with its URL + key on the workspace: without them a covered contact silently keeps the n8n path (`sender_configured`, `app/services/chatbot/direct_ingress.py:215-227`). The exports hold the sender only as an inactive template (UNVERIFIED live). If it is not live, skip stage 1: stage 2 turns on both switches together. Owner check 1 Nov: the workspace sender URL and retry URL ARE set, so stage 1 is viable (whether the n8n workflow behind it answers: the n8n box check) | set `off` |
 | 2 | PR A ships; switch "CRM sends replies" on (and direct ingress `all`, if stage 1 was skipped) after a test on the owner's own number | lane A, owner | stage 1, or PR A alone | switch off: back to the n8n path |
 | 3 | PRs B, C, D, E ship in parallel lanes; each switched on with its n8n twin off (poller, ht-sweeper + forms, SLA schedule + hand-off + close, revise) | lanes B-E, owner | stage 2 for B and C | per PR: CRM switch off, n8n workflow back on |
 | 4 | PR F ports EVERY attachment type the n8n workflow handles (Q5 b), shipped type by type (`triggers_n8n_webhook` off per type as each native task lands) | lane F | the live workflow export (the only copy in the repo's reach is a backup of 3 Aug or older) | per type: flag back on |
