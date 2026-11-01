@@ -1,6 +1,13 @@
 # PLAN: HA plan v2, Tier 1 on the n8n box with automatic failover (HA-TIER1-N8N-BOX)
 
-Status: plan + code guards + templates in review, PR #1915. Owner rulings D1-D5, O1, O2 and O3
+**AMENDED 1 Nov 2026 by `PLAN-n8n-decom-ha-01nov.md` (same folder), owner rulings there.** n8n
+retires, so node B becomes a plain CRM node, a mirror of node A. Everything below that keeps n8n
+on node B is superseded: the HAProxy (`infra/templates/haproxy/`, deleted), section 6, the n8n
+container-firewall rules on node B, and drill 9 on node B. O3 is REVOKED (no preferred node, the
+Cloudflare LB follows the primary): `infra/scripts/switchback.sh` and drill 8 are deleted. That
+plan's section 5 lists every changed line and its section 5b says how writes stay single-primary.
+
+Status: merged as PR #1915 (plan, two backend guards, templates; nothing applied on prod). Owner rulings D1-D5, O1, O2 and O3
 recorded 27 Oct (section 10); D2 REVISED 27 Oct about 23:55: everything stays in Malaysia for now
 (standby on the n8n KVM 8, witness on the shared-service box), off-region later by config + runbook.
 Track: docs + infra templates + two small backend guards (health role endpoint, scheduler leader
