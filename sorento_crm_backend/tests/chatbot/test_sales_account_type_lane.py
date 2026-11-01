@@ -1543,3 +1543,14 @@ def test_at35_a_company_picked_at_the_question_narrows_the_book(bot, seeded) -> 
     text, calls = bot.say(refine, "and cabana")
     args = _only_report_ask(calls)
     assert args["account_types"] == ["4"] and "brand_ids" not in args, args
+
+
+def test_at37_an_answer_never_prints_a_crafted_word(bot, seeded) -> None:
+    _ask_open(bot)
+    crafted = ("x" * 1500) + "‮\x07" + ("y" * 1500)
+    verdict = _reply(
+        domain_hint=None, intent_hint=None, entities=[_word("cabana", "brand", crafted, "brand")],
+    )
+    text, calls = bot.say(verdict, "cabana brand")
+    assert calls == [], calls
+    assert text.strip() == "I don't know that brand.", text
