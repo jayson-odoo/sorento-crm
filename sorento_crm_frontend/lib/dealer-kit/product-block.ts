@@ -18,6 +18,7 @@
  */
 
 import type {
+  TagCombo,
   GroupBinding,
   LineTagData,
   ProductSetMemberTagData,
@@ -202,6 +203,117 @@ export function subjectOf(
   };
 }
 
+/** The combo a binding carries: the line's, or the designer preview's product row. */
+export function comboOf(data: TagBindingData | null | undefined): TagCombo | null {
+  if (data?.kind === 'line') return data.line.combo ?? null;
+  if (data?.kind === 'product') return data.product.combo ?? null;
+  return null;
+}
+
+/** A line of a combo listing: `CODE  Description  RM 999`, the description only when it
+ *  says more than the code. */
+function comboLine(code: string, description: string, price: string | null): string {
+  // A product description often ends with its own code; the line already leads with it.
+  const rest = code ? description.split(code).join(' ').replace(/\s+/g, ' ').trim() : description;
+  return [code, rest && rest !== code ? rest : '', price ?? '']
+    .filter(Boolean)
+    .join('  ');
+}
+
+function upgradePrice(amount: number | null): string | null {
+  return amount == null ? null : `+${formatTagPrice(amount)}`;
+}
+
+/**
+ * Combo Choices (AC-4.5): a header per group, then one line per option. A pick narrows
+ * the group to the picked line; on a one-group combo a picked upgrade stands in as its only line (AC-4.5).
+ * Plain text, so the canvas, the preview and the PDF print the same words (AC-4.8).
+ */
+function comboChoicesText(combo: TagCombo | null): string {
+  if (!combo) return '';
+  const upgrade = combo.upgrades.find((entry) => entry.picked);
+  const upgradeLine = upgrade
+    ? comboLine(upgrade.code, upgrade.description, upgradePrice(upgrade.topup_amount))
+    : null;
+  const out: string[] = [];
+  combo.choices.forEach((group) => {
+    const role = group.role.toUpperCase();
+    const pick = group.options.find((option) => option.picked);
+    // One group: the picked upgrade stands in as its only line. More groups print as
+    // usual and the upgrade follows in its own section (AC-4.5).
+    if (upgradeLine && combo.choices.length === 1) {
+      out.push(role, upgradeLine);
+      return;
+    }
+    if (pick) {
+      out.push(
+        role,
+        comboLine(pick.code, pick.description, pick.sell_price == null ? null : formatTagPrice(pick.sell_price)),
+      );
+      return;
+    }
+    out.push(group.options.length > 1 ? `${role}: PICK ONE` : role);
+    for (const option of group.options) {
+      out.push(
+        comboLine(
+          option.code,
+          option.description,
+          option.sell_price == null ? null : formatTagPrice(option.sell_price),
+        ),
+      );
+    }
+  });
+  if (upgradeLine && combo.choices.length !== 1) out.push('UPGRADE', upgradeLine);
+  return out.join('\n');
+}
+
+/** Combo Top-ups (AC-4.6): the upgrades on offer; nothing once one was picked. */
+function comboTopupsText(combo: TagCombo | null): string {
+  if (!combo || combo.upgrades.length === 0 || combo.upgrades.some((entry) => entry.picked)) {
+    return '';
+  }
+  return [
+    'UPGRADE',
+    ...combo.upgrades.map((entry) =>
+      comboLine(entry.code, entry.description, upgradePrice(entry.topup_amount)),
+    ),
+  ].join('\n');
+}
+
+/**
+ * The five Combo slots. Undefined for any other slot, so the caller carries on.
+ * An empty string, never null, where there is nothing to print: null means "use the
+ * layer's own placeholder" and a printed tag must not show one (AC-4.7).
+ */
+function comboSlotText(
+  slot: Exclude<SlotBinding, null>,
+  data: TagBindingData | null | undefined,
+): string | null | undefined {
+  const combo = comboOf(data);
+  switch (slot) {
+    case 'combo_image':
+      return null;
+    case 'combo_name':
+      if (combo) return combo.name;
+      if (data?.kind === 'line') return data.line.code;
+      if (data?.kind === 'product') return data.product.code;
+      return '';
+    case 'combo_description': {
+      const own = combo?.description?.trim();
+      if (own) return combo?.description ?? '';
+      if (data?.kind === 'line') return data.line.price_tag_description ?? '';
+      if (data?.kind === 'product') return data.product.price_tag_description ?? '';
+      return '';
+    }
+    case 'combo_choices':
+      return comboChoicesText(combo);
+    case 'combo_topups':
+      return comboTopupsText(combo);
+    default:
+      return undefined;
+  }
+}
+
 /**
  * The value a slot resolves to, or null when this layer is not bound to one or
  * the data behind it has not arrived.
@@ -215,6 +327,11 @@ export function resolveSlotText(
 ): string | null {
   const subject = subjectOf(data, layer);
   if (!layer.slot_binding || !subject) return null;
+
+  // PRICETAG-COMBO: the combo slots read the combo off the line (or the preview's
+  // product row), never off a part subject.
+  const comboText = comboSlotText(layer.slot_binding, data);
+  if (comboText !== undefined) return comboText;
 
   // A price on a TEXT layer, which is not the same thing as a price badge and
   // does not replace it. The flyer prints `LP: RM 1,550` as an ordinary line
@@ -346,6 +463,10 @@ export function slotImageAttachmentId(
       : null;
   }
   if (layer.props.kind !== 'image') return null;
+
+  // Combo Photo (AC-4.3): the combo's cover leads the line's images already, and a
+  // pinned photo source does not apply - the combo's own picture is the point.
+  if (layer.slot_binding === 'combo_image') return primaryImageOf(images)?.attachment_id ?? null;
 
   const source = imageSourceOf(layer.props);
   if (source?.type === 'asset') return null;
@@ -1069,13 +1190,22 @@ export function imagesOf(data: TagBindingData | null | undefined): TagImage[] {
   return [];
 }
 
+/** The photos a layer chooses from: its subject's, except Combo Photo, which reads the
+ *  line's own list (the combo's cover leads it). */
+export function slotImagesOf(
+  layer: Pick<TagLayer, 'slot_binding' | 'props'>,
+  data: TagBindingData | null | undefined,
+): TagImage[] {
+  return imagesOf(layer.slot_binding === 'combo_image' ? data : subjectOf(data, layer));
+}
+
 /** The URL a product-photo slot draws, resolved by D42 against the bound data.
  *  D7: resolves the subject's own images first - see `slotImageAttachmentId`. */
 function boundImageUrl(
   layer: Pick<TagLayer, 'slot_binding' | 'props'>,
   data: TagBindingData | null | undefined,
 ): string | null {
-  const images = imagesOf(subjectOf(data, layer));
+  const images = slotImagesOf(layer, data);
   const attachmentId = slotImageAttachmentId(layer, images);
   if (!attachmentId) return null;
   return images.find((image) => image.attachment_id === attachmentId)?.url ?? null;

@@ -458,6 +458,32 @@ def test_r1_a_planned_retail_order_that_closes_can_still_apply_its_pending_chang
     assert applied.json()["applied_orders"] == [core.so_number], applied.text
 
 
+def test_r1_a_planned_retail_order_stays_admitted_after_its_dealer_location_retires(api):
+    """The planning record admits on its own. A retail order adopted while its dealer bin was
+    active stays planning work once the bin retires, so its decided rows do not vanish; the
+    control, an unplanned order at the same retired bin, stays out."""
+    from app.services.scm.planning_predicate import admitted_to_planning
+
+    client, world = api
+    planned, _lines = _planned_retail_order(client, world)
+    unplanned, _other = _retail_order(world)
+    world.pool_wh.is_active = False
+    world.db.commit()
+
+    admitted = {
+        row.so_number
+        for row in world.db.query(SalesOrder.so_number)
+        .filter(SalesOrder.id.in_((planned.id, unplanned.id)), admitted_to_planning())
+        .all()
+    }
+    board = _board_of(client, planned)
+    rows = [row for row in board["contributions"] if row["so_number"] == planned.so_number]
+
+    assert admitted == {planned.so_number}
+    assert len(rows) == 1, board.get("unplanned_orders")
+    assert rows[0]["decision"], rows[0]
+
+
 # --------------------------------------------------------------------------- an adopted mirror
 
 

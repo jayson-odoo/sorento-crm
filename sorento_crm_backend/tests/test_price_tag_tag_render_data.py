@@ -157,7 +157,7 @@ def _request(db, *, product, combo=None, parts=None, promotion_id=None, price_mo
     """D1 (S6): a promotion is a LINE fact, never the header - `promotion_id`
     is attached to the line's own dict here, not to `data["promotion_id"]`
     (which the schema no longer accepts and the service no longer honours)."""
-    return PriceTagRequestService.submit_request(
+    request = PriceTagRequestService.submit_request(
         db,
         contact_id=_contact(db).id,
         company_id=SORENTO,
@@ -176,6 +176,11 @@ def _request(db, *, product, combo=None, parts=None, promotion_id=None, price_mo
             ],
         },
     )
+    # PRICETAG-COMBO AC-3.4: these tests start from the per-candidate tag set a
+    # request in flight (or a hand split) already holds.
+    from tests._ptag_combo_seed import resplit_per_combination
+
+    return resplit_per_combination(db, request)
 
 
 def _rows(db, request):

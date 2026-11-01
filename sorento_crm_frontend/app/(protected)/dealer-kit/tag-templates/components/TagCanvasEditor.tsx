@@ -163,7 +163,9 @@ import { ProductPickDialog, type PickMode } from './ProductPickDialog';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useKitLibrary, useTagBindings } from './useTagBindings';
-import { getProductTagData } from '../../services/tagDataService';
+import { getProductTagData, comboOptions } from '../../services/tagDataService';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { toast } from '@/lib/toast';
 import { CanvasToolbar, type CanvasTool, type ToolbarTrailingAction } from './CanvasToolbar';
 import { CanvasRulers, RULER_THICKNESS } from './CanvasRulers';
 import { LayersPanel } from './LayersPanel';
@@ -573,6 +575,48 @@ export function TagCanvasEditor({
   const bindings = useTagBindings(promotionId);
   const library = useKitLibrary();
 
+  /**
+   * The combo the designer is previewing (PRICETAG-COMBO AC-5.1): editor state only,
+   * like `previews`, so nothing it shows reaches the document Save sends. It outranks
+   * the document's own bindings for every layer, and a block's own preview outranks it.
+   */
+  const [comboPreview, setComboPreview] = useState<{
+    id: string;
+    label: string;
+    data: TagBindingData;
+  } | null>(null);
+  /** combo id -> its host product id, learned from the options the picker lists. */
+  const comboHosts = useRef(new Map<string, { hostId: string; label: string }>());
+
+  const fetchComboOptions = useCallback(async (query: string) => {
+    const rows = await comboOptions(query);
+    for (const row of rows) {
+      comboHosts.current.set(row.value, { hostId: row.hostProductId, label: row.label });
+    }
+    return rows;
+  }, []);
+
+  const handlePreviewCombo = useCallback(
+    async (comboId: string) => {
+      if (!comboId) {
+        setComboPreview(null);
+        return;
+      }
+      const known = comboHosts.current.get(comboId);
+      try {
+        const product = await getProductTagData(known?.hostId ?? '', promotionId ?? null, comboId);
+        setComboPreview({
+          id: comboId,
+          label: known?.label ?? product.combo?.name ?? '',
+          data: { kind: 'product', product },
+        });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load the combo');
+      }
+    },
+    [promotionId],
+  );
+
   const containerRef = useRef<HTMLDivElement>(null);
   /** The whole [left][canvas][right] row, measured to convert px <-> % (S1). */
   const panelGroupRef = useRef<HTMLDivElement>(null);
@@ -923,10 +967,11 @@ export function TagCanvasEditor({
       // rest of it.
       const previewed = previewBindingFor(layer, previews, groupOfChild);
       if (previewed) return bindings.get(previewed);
+      if (comboPreview) return comboPreview.data;
       if (boundData) return boundData;
       return bindings.get(bindingOf(layer));
     },
-    [bindings, bindingOf, boundData, groupOfChild, previews],
+    [bindings, bindingOf, boundData, comboPreview, groupOfChild, previews],
   );
 
   // Resolve whatever the document already carries, once, on open. A template
@@ -3415,6 +3460,27 @@ export function TagCanvasEditor({
         selectionIsGroup={selectionIsGroup}
         trailing={toolbarTrailing}
       />
+
+      {/* Preview combo (AC-5.1): template editor only - the request designer already
+          has its line's combo on the canvas. */}
+      {!boundData && (
+        <div className="flex shrink-0 items-center gap-2 border-b bg-background px-3 py-1">
+          <div className="w-full max-w-xs">
+            <SearchableSelect
+              value={comboPreview?.id ?? ''}
+              onChange={(value: string) => void handlePreviewCombo(value)}
+              fetchOptions={fetchComboOptions}
+              selectedOption={
+                comboPreview ? { value: comboPreview.id, label: comboPreview.label } : undefined
+              }
+              placeholder="Preview combo"
+              aria-label="Preview combo"
+              clearable
+              size="sm"
+            />
+          </div>
+        </div>
+      )}
 
       <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">
         {/* Left column collapsed strip: rendered OUTSIDE the panel so it stays

@@ -596,3 +596,62 @@ def test_resend_excel_rows_are_the_emails_own_lines(rs, stored):
     _sheet_head, sheet = excel_rows(upload["bytes"], head)
     assert len(emailed) == 2, emailed
     assert sorted(emailed) == sorted(sheet)
+
+
+# ------------------------------------------------------------- DEALER-OI-ROUTE AC-R6
+
+
+def test_each_oi_resends_through_the_row_for_its_own_class(rs):
+    """Reviewer kill M6: `_plan` must pick the row per OI by its sales order's class."""
+    from app.models.order import SalesOrder
+
+    client, world = rs
+    db = world.db
+    retail_buyer = _user(db, f"{MARKER} Dealer Buyer")
+    project_buyer = _user(db, f"{MARKER} Project Buyer")
+    _automation(world)
+
+    def rule(value):
+        return {"kind": "group", "combinator": "and", "rules": [
+            {"kind": "condition", "fact": "order_inquiry.salesOrderClass",
+             "operator": "eq", "value": value}]}
+
+    seeded = db.execute(sa.text(
+        "SELECT id FROM automations WHERE trigger_type = 'order_inquiry_handover'"
+    )).scalar()
+    db.execute(sa.text(
+        "UPDATE automations SET conditions_json = CAST(:t AS jsonb), "
+        "recipient_config = CAST(:c AS jsonb) WHERE id = :id"
+    ), {"t": json.dumps(rule("project")), "c": json.dumps({"user_ids": [project_buyer]}),
+        "id": seeded})
+    db.execute(sa.text(
+        "INSERT INTO automations (id, name, enabled, trigger_type, trigger_config, action_type, "
+        "email_template_id, recipient_config, conditions_json, group_matches, schedule_type, "
+        "timezone, created_at, updated_at) SELECT :nid, 'zzt retail', true, trigger_type, "
+        "trigger_config, action_type, email_template_id, CAST(:c AS jsonb), CAST(:t AS jsonb), "
+        "group_matches, schedule_type, timezone, now(), now() FROM automations WHERE id = :id"
+    ), {"nid": _uid(), "c": json.dumps({"user_ids": [retail_buyer]}),
+        "t": json.dumps(rule("retail")), "id": seeded})
+    db.commit()
+
+    def oi_of(demand_class):
+        so = SalesOrder(id=_uid(), company_id=world.company_id,
+                        so_number=f"ZZT-CORE-{_uid()[:8]}", status="open",
+                        demand_class=demand_class)
+        db.add(so)
+        db.flush()
+        pso = _pso(db, world.company_id)
+        pso.so_id = so.id
+        inquiry = _inquiry_for(db, world.company_id, pso)
+        inquiry.raised_by = world.requester
+        db.commit()
+        _line(world, inquiry)
+        return inquiry
+
+    retail_oi, project_oi = oi_of("retail"), oi_of("project")
+    body = _ok(client.post(PREVIEW, json={"inquiry_ids": [retail_oi.id, project_oi.id]}))
+    to_by_oi = {e["inquiry_id"]: e["to"]["name"] for e in body["emails"]}
+    from app.models.user import User
+
+    assert to_by_oi[retail_oi.id] == db.get(User, retail_buyer).name
+    assert to_by_oi[project_oi.id] == db.get(User, project_buyer).name

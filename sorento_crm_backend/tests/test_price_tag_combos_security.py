@@ -202,6 +202,11 @@ def _request_with_open_tag(db, *, company_id: str, candidates: int = 2):
             ],
         },
     )
+    # PRICETAG-COMBO AC-3.4: start from the per-candidate tag set a request in flight
+    # (or a hand split) already holds.
+    from tests._ptag_combo_seed import resplit_per_combination
+
+    resplit_per_combination(db, request)
     db.commit()
     return request, basins
 
