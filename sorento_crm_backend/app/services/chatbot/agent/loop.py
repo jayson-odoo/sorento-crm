@@ -1098,7 +1098,9 @@ def _run(
         if operator_user_id and str(operator_user_id) != str(ctx.user_id):
             ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
         # A contact's own proposal has no user (user_id ""), so a staff user's pending action never reaches its turn.
-        waiting = actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
+        waiting = actions.pending_action(
+            db, contact_respond_id, user_id=ctx.user_id, test=is_test if ctx.principal == "contact" else None
+        )
         offered = permitted_tools(db, ctx)
         reads, write_tools = writes.permitted_user_reads(db, ctx), writes.permitted_writes(db, ctx)
         # The dealer's portal writes (AGENTIC-WA-W2): a contact principal only, under the portal's own gates.

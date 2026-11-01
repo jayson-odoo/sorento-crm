@@ -126,10 +126,13 @@ def _propose(db, ctx, name, args, seen=(), *, is_test=False):
     return writes.propose_step(db, ctx, name, args, seen_ids=set(seen), loop_args={"_is_test": is_test})
 
 
-def _store_and_confirm(db, ctx, step):
+def _store_and_confirm(db, ctx, step, *, operator: str | None = None):
+    """Live: the dealer's own next turn. With `operator`: the console's Confirm button."""
     from app.services.chatbot.agent import actions
 
     action = actions.store_proposal(db, ctx, conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()), steps=[step])
+    if operator:
+        return actions.confirm(db, ctx.contact_respond_id, str(action.id), via="console", operator_user_id=operator)
     return actions.confirm(db, ctx.contact_respond_id, str(action.id), via="chat", turn_id=str(uuid.uuid4()))
 
 
@@ -586,7 +589,7 @@ def test_ac17_a_console_confirm_writes_nothing(db):
     out, step = _propose(db, ctx, SI_CREATE, {"product_code": _product(db), "quantity": "4"}, is_test=True)
     assert out.status == "proposed"
 
-    outcome = _store_and_confirm(db, ctx, step)
+    outcome = _store_and_confirm(db, ctx, step, operator=seed_user(db, contact_pk=None, slugs=()))
 
     assert db.query(StockInquiry).filter(StockInquiry.contact_id == contact["pk"]).count() == 0
     assert "Test turn: nothing was sent." in outcome.reply_text
@@ -600,7 +603,7 @@ def test_ac17_a_console_withdraw_deletes_nothing(db):
     ctx = _ctx(db, contact)
     _out, step = _propose(db, ctx, SI_WITHDRAW, {"submission_id": rid}, [rid], is_test=True)
 
-    _store_and_confirm(db, ctx, step)
+    _store_and_confirm(db, ctx, step, operator=seed_user(db, contact_pk=None, slugs=()))
 
     assert db.get(StockInquiry, rid) is not None
 
@@ -731,3 +734,101 @@ def test_ac16_a_stage_someone_acted_on_refuses_the_withdraw(db, touch):
     out, step = _propose(db, _ctx(db, contact), SI_WITHDRAW, {"submission_id": rid}, [rid])
 
     assert step is None and REFUSED in (out.message or "")
+
+
+# ================================================================ security round 1 (B1, S1, S2)
+
+
+def _live_action(db, ctx, name, args, seen=()):
+    from app.services.chatbot.agent import actions
+
+    _out, step = _propose(db, ctx, name, args, seen)
+    assert step is not None, _out.message
+    return actions.store_proposal(db, ctx, conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()), steps=[step])
+
+
+def test_b1_a_staff_console_confirm_of_a_live_dealer_proposal_is_refused(db):
+    from app.models.procurement import StockInquiry
+    from app.services.chatbot.agent import actions
+
+    contact = _dealer(db)
+    ctx = _ctx(db, contact)
+    action = _live_action(db, ctx, SI_CREATE, {"product_code": _product(db), "quantity": "4"})
+    staff = seed_user(db, contact_pk=None, slugs=())
+
+    with pytest.raises(actions.ActionRefused):
+        actions.confirm(db, contact["respond_id"], str(action.id), via="console", operator_user_id=staff)
+    with pytest.raises(actions.ActionRefused):
+        actions.confirm(db, contact["respond_id"], str(action.id), via="chat", turn_id=str(uuid.uuid4()),
+                        operator_user_id=staff)
+    assert db.query(StockInquiry).filter(StockInquiry.contact_id == contact["pk"]).count() == 0
+    db.refresh(action)
+    assert action.status == "proposed"
+
+
+def test_b1_a_live_withdraw_cannot_be_run_from_the_console(db):
+    from app.models.procurement import StockInquiry
+    from app.services.chatbot.agent import actions
+
+    contact = _dealer(db)
+    rid = _submitted_si(db, contact["pk"])
+    ctx = _ctx(db, contact)
+    action = _live_action(db, ctx, SI_WITHDRAW, {"submission_id": rid}, [rid])
+
+    with pytest.raises(actions.ActionRefused):
+        actions.confirm(db, contact["respond_id"], str(action.id), via="console",
+                        operator_user_id=seed_user(db, contact_pk=None, slugs=()))
+    assert db.get(StockInquiry, rid) is not None
+
+
+def test_b1_a_console_turn_is_not_offered_the_confirm_of_a_live_proposal(db):
+    from app.services.chatbot.agent import actions
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    contact = _dealer(db)
+    ctx = _ctx(db, contact)
+    live = _live_action(db, ctx, SI_CREATE, {"product_code": _product(db), "quantity": "4"})
+    provider = _scripted(_says("ok"))
+
+    run_agent_turn(db, contact_respond_id=contact["respond_id"], text="yes", provider=provider, mcp_call=_forbidden,
+                   catalog={}, is_test=True, operator_user_id=seed_user(db, contact_pk=None, slugs=()))
+
+    assert "confirm_action" not in provider.calls[0]["tools"]
+    db.refresh(live)
+    assert live.status == "proposed"
+
+
+def test_s1_a_console_operator_cannot_cancel_a_live_dealer_proposal(db):
+    from app.services.chatbot.agent import actions
+
+    contact = _dealer(db)
+    action = _live_action(db, _ctx(db, contact), SI_CREATE, {"product_code": _product(db), "quantity": "4"})
+
+    with pytest.raises(actions.ActionRefused):
+        actions.cancel(db, contact["respond_id"], str(action.id), operator_user_id=seed_user(db, contact_pk=None, slugs=()))
+    db.refresh(action)
+    assert action.status == "proposed"
+
+
+def test_s2_a_console_proposal_leaves_the_live_one_and_neither_answers_the_other(db):
+    from app.services.chatbot.agent import actions
+    from app.services.chatbot.router import decide_route
+
+    contact = _dealer(db)
+    ctx = _ctx(db, contact)
+    code = _product(db)
+    live = _live_action(db, ctx, SI_CREATE, {"product_code": code, "quantity": "4"})
+    _out, step = _propose(db, ctx, SI_CREATE, {"product_code": code, "quantity": "9"}, is_test=True)
+    test = actions.store_proposal(db, ctx, conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()), steps=[step])
+
+    db.refresh(live)
+    assert live.status == "proposed", "a console test must not expire the dealer's live proposal"
+    assert actions.pending_action(db, contact["respond_id"], user_id="", test=False).id == live.id
+    assert actions.pending_action(db, contact["respond_id"], user_id="", test=True).id == test.id
+    # The dealer's WhatsApp yes cannot confirm the console's test.
+    with pytest.raises(actions.ActionRefused):
+        actions.confirm(db, contact["respond_id"], str(test.id), via="chat", turn_id=str(uuid.uuid4()))
+    # The live proposal is still the newest live one and confirms from the dealer's own turn.
+    assert actions.confirm(db, contact["respond_id"], str(live.id), via="chat", turn_id=str(uuid.uuid4())).status == "executed"
+    decision = decide_route(db, contact_respond_id=contact["respond_id"], text="hi", session_vars=None, has_media=False)
+    assert decision.reason != "pending_action", "a console test proposal never holds the WhatsApp message"

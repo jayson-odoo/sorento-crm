@@ -75,7 +75,8 @@ def decide_route(
     # The agent's own question keeps the reply on the agent (R3): a linked user's proposal, or a contact
     # principal's own (user_id "", AGENTIC-WA-W2); a staff user's proposal never holds a contact's turn.
     owner = str(user.id) if user is not None else ""
-    if agent_actions.pending_action(db, contact_respond_id, user_id=owner) is not None:
+    # A contact's console test proposal never holds its WhatsApp message (test=False).
+    if agent_actions.pending_action(db, contact_respond_id, user_id=owner, test=False if user is None else None) is not None:
         return RouteDecision("agent", "pending_action")
 
     # `None` = the contact's stored session, `{}` = a console Reset (remembers nothing).

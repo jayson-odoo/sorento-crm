@@ -441,7 +441,7 @@ def _si_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict
 # ------------------------------------------------------------------ withdraw a fresh stock inquiry
 
 
-def _withdraw_target(db, token, args: dict) -> tuple[Any, list]:
+def _withdraw_target(db, token, args: dict, *, lock: bool = False) -> tuple[Any, list, list]:
     """The contact's own inquiry and its history, when it may still be withdrawn; refusals otherwise."""
     from app.models.entity_attachment import EntityAttachmentLink
     from app.models.entity_conversation import EntityConversationMessage as Msg
@@ -456,11 +456,11 @@ def _withdraw_target(db, token, args: dict) -> tuple[Any, list]:
 
     require_form_visible(db, token.contact_id, STOCK_INQUIRY)
     sid = validate_uuid_path(str(args.get("submission_id")), resource="Stock inquiry")
-    row = (
-        db.query(StockInquiry)
-        .filter(StockInquiry.id == sid, StockInquiry.contact_id == token.contact_id, StockInquiry.space_id == token.space_id)
-        .first()
+    query = db.query(StockInquiry).filter(
+        StockInquiry.id == sid, StockInquiry.contact_id == token.contact_id, StockInquiry.space_id == token.space_id
     )
+    # The delete holds the row while it re-checks "untouched", so a staff reply cannot land in between.
+    row = (query.with_for_update(of=StockInquiry) if lock else query).first()
     if row is None or row.portal_draft_at is not None:
         raise handle_not_found("Stock inquiry", sid)
     history = (
@@ -543,7 +543,7 @@ def _withdraw_execute(db, token, args: dict, confirmed: dict) -> dict:
 
     if args.get("_is_test"):
         return _test_result()
-    row, _history, trackers = _withdraw_target(db, token, args)
+    row, _history, trackers = _withdraw_target(db, token, args, lock=True)
     sid = str(row.id)
     # Hard delete (D7): the row and what points at it, so no bell, open stage or history entry names a missing
     # request. A stage's own children (events, comments) go with it (ON DELETE CASCADE).
