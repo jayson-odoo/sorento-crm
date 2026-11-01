@@ -31,7 +31,7 @@ The route is `GET /api/v1/order-management/report-ask`. The param is `account_ty
   type by name. A type answers to one number only, the one most of its ledgers carry: one `[A/C V]` ledger typed SORENTO does not make 5 mean SORENTO, so 5 is unknown and not listed.
 - **AT-7 [BE]** The filter echo reads the account as asked: `account_types=4` gives key `account_type`, label "Account type", values
   `["4"]`, and neither the echo nor any other field of the response states the type behind it.
-- **AT-8 [BE]** On all six bases `group_by=account_type` returns one row per stored type plus the `(blank)` row for customers with no type and for lines with no customer,
+- **AT-8 [BE]** On all six bases `group_by=account_type` returns one row per stored type plus the `(blank)` row for customers with no type (and, tested on invoiced and pending_delivery, lines with no customer),
   `group_label` "Account type", and the rows add up to the unfiltered total.
 - **AT-9 [BE]** The filter ANDs with the others: brand CABANA on account 3 returns only those lines.
 - **AT-10 [BE]** Nothing loaded. When no customer in the caller's companies has a type, a filter or a split returns `status: refused`,

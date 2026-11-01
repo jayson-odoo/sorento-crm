@@ -1,6 +1,6 @@
 # SALES-ACCOUNT-TYPE: sales by the customer's account type
 
-**Status:** Build, PR 1 review fix round. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
+**Status:** PR 1 reviewed READY at 3c498df5c3, waits for the browser pass on the 1028 copy. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
 
 Lane brief: crew `SALES-ACCOUNT-TYPE`. Branch `crew/sales-account-type`. UAC: `sales-account-type-acceptance-criteria.md`.
 Agent codes are masked (AGENT A, AGENT B) because this repo is public. The real codes are in the crew card.
@@ -88,7 +88,7 @@ Rules:
    it is SORENTO, BRAVAT and CABANA. "cabana brand" and "cabana account" say which, so no question. A word that is only a stored type
    (CERAMIC on Sorento) reads as the account type. Asks that are not sales ("cabana stock") stay the brand.
 2. "account type 4", "account 4" and "A/C IV" find the customers of that account by their AutoCount debtor type. For each company,
-   the number's type is the one most ledgers tagged `[A/C IV]` carry, read from the data. A type answers to one number only, the one most of its ledgers carry, so a lone `[A/C V]` ledger does not make 5 mean that whole type. No code or row states that 4 is CABANA,
+   the number's type is the one most ledgers tagged `[A/C IV]` carry, read from the data. A type answers to one number only, the one most of its ledgers carry, so a lone `[A/C V]` ledger does not make 5 mean that whole type. Where that hides a number (one type on every tag, or a tag whose majority type has a bigger tag), the reply refuses and lists what exists; it never answers with the wrong sales. No code or row states that 4 is CABANA,
    and no table holds it.
 3. The reply shows the account the way it was asked ("Account type: 4"), never a definition such as "Account type 4: CABANA".
 4. One filter and one split in the shared report ask, on all six bases: invoiced, delivered, ordered, undelivered, pending
