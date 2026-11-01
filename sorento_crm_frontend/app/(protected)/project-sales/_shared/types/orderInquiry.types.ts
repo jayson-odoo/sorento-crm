@@ -772,6 +772,8 @@ export interface OrderInquiryWorklistParams {
   reserve?: 'parked' | 'needs_reserve' | 'notice_parked' | 'reserved';
   /** LINKAGE-UNIFY U3 (Q5): keep a row holding a link whose document is dead this way. */
   dead_document?: OrderInquiryDeadReason;
+  /** Exact OI numbers, comma-joined (the reserve emails' button). */
+  inquiry_no?: string;
   /**
    * The bounds of one schedule-matrix cell's own period (S3): a click's drilldown asks
    * the list for exactly this cell's axis + period rather than reading rows back out of
