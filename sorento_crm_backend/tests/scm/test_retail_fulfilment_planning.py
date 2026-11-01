@@ -774,21 +774,23 @@ _VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 _GRANTED = ("projects.projects.view", "projects.projects.edit", "scm.dashboard.view")
 
 
+#: The grant migration, by its own revision id. It was the alembic head when it landed, but
+#: any later migration on main becomes the head, so the lookup must not read "the head".
+_GRANT_REVISION = "dp_0001_cs_planning_access"
+
+
 def _head_migration():
-    """The lane's one new migration is the alembic head (CI proves there is exactly one)."""
+    """The Customer Service grant migration (`_GRANT_REVISION`), loaded from its file."""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     config = Config()
     config.set_main_option("script_location", str(_VERSIONS.parent))
     script = ScriptDirectory.from_config(config)
-    heads = script.get_heads()
-    assert len(heads) == 1, heads
-    path = Path(script.get_revision(heads[0]).path)
+    path = Path(script.get_revision(_GRANT_REVISION).path)
     source = path.read_text()
     assert "customer_service" in source and all(slug in source for slug in _GRANTED), (
-        f"the head migration {path.name} does not grant the Customer Service role "
-        f"{_GRANTED}"
+        f"the migration {path.name} does not grant the Customer Service role {_GRANTED}"
     )
     spec = importlib.util.spec_from_file_location("zzt_r16_head", path)
     module = importlib.util.module_from_spec(spec)
