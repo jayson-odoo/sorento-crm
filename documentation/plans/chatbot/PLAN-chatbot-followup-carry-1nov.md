@@ -1,6 +1,6 @@
 # PLAN: a follow-up keeps the customer the user picked (CHATBOT-FOLLOWUP-CARRY, 1 Nov 2026)
 
-**Status: review rounds 1 and 2 fixed, regression, re-review and console pass pending. Small fix track (no migration, no auth/RBAC change, no new ingest surface). Size S.**
+**Status: review rounds 1 to 3 fixed, console pass and hand test pending. Small fix track (no migration, no auth/RBAC change, no new ingest surface). Size S.**
 UAC: `chatbot-followup-carry-acceptance-criteria.md`.
 
 ## Owner ruling (1 Nov ~16:25, "follow up yes")
@@ -81,6 +81,10 @@ ids the report actually ran on, never from re-reading an entity or a name.
 - "by customer" over a customer's total drops the customer: the axis's own filter is never held, as for every other axis.
 - A named customer's one-row ranking on a customer axis, then "how about ordered": no customer held, as the customer is that ranking's
   ranked side. Read in review, not measured live.
+- **A refine naming a company the contact does not hold, with the customer staying:** runs the held customer's figure, as on main.
+  The reviewer asked to move the refusal up to every refine. Declined here: not a regression, nothing foreign runs (the route checks
+  grants), and it could newly refuse a brand word the parser also read as a company ("mocha only") on a contact without that company.
+  Only the refine where the customer went reads the company, because only there is it owed.
 - A count with no axis over a held total ("top 5" with no grain, on the sales ranking label) still gets the catalogue line, as on main:
   there is no total to hold a count (AC-OR9), and the stamp is off. Not measured live.
 - `warehouse_codes`, `spec` and `customer_agent_ids` are still not held. Not measured in this lane; the ruling is about the customer.
@@ -91,6 +95,9 @@ ids the report actually ran on, never from re-reading an entity or a name.
   products oct by amount delivered", then "1": "Sorento or Mocha?", slot with no customer, on the copy and in the engine harness. The
   same parse with `order_status` null keeps it. The plan row is gone before the lane: the trace's `narrowing` has no
   `sales.customer:just_picked`. Pick turn, not a follow-up, so not this fix. Cause past that point not traced.
+- **Same root, on a refine:** a pick that reaches `_refine` without its row no longer runs the held customer. It asks the company on a
+  two-company contact, but on a one-company contact, or on an outstanding ask, it runs with no customer, like the fresh path on main.
+  Wrong answer either way until the pick is fixed at the plan: a line here would be new wording for a bug that needs its own lane.
 - **A bare basis word can read as a document status.** "how about ordered" and "and delivered?" came back `order_status` null or
   `delivered` on 2 of 4 runs with the fix (0 of 6 before it, same prompt and session, so parser variance): an order list instead of a
   figure, on the same 9 ledgers. The customer is kept; the answer type is the parser's call (no post-parser domain override).

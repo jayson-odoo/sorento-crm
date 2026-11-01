@@ -2063,7 +2063,7 @@ def _refine(
         args["customer_ids"] = own_customer
         args.pop("company", None)
     elif parse_output.get("ranking_pick") is True:
-        args.pop("customer_ids", None)  # a pick that lost its row is never the held customer: it asks
+        args.pop("customer_ids", None)  # a pick that lost its row is never the held customer
     if "product" in _current_kinds(parse_output):
         product_args, line = _product_args(entities)
         if product_args is None:
@@ -2120,7 +2120,7 @@ def _refine(
         # Item 4 (owner 29 Oct): never the company question on an outstanding ask.
         own = _own_companies(companies)
         named, foreign = _company_said(parse_output, own)
-        if foreign:
+        if own and foreign:
             return None, COMPANY_FORBIDDEN_LINE
         if named is not None:
             args["company"] = str(named[0])
