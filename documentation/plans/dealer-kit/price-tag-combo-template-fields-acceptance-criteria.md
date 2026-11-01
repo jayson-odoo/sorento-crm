@@ -41,8 +41,9 @@ All figures below are synthetic. Real flyer data never enters this repo.
 
 - AC-3.1 A line with a `combo_id` and open choice groups mints ONE tag with empty `choices` at submit, whatever the number of groups or options.
 - AC-3.2 A dealer pick on the line resolves that part as today; the tag then shows only that option (AC-4.5).
+- AC-3.5 Upgrades reach the portal line as one open `Upgrade` row of candidates, even with a single candidate, never as a fixed part. Left open they add nothing to the price and print under Combo Top-ups. They are never named in a `Missing:` warning. The dealer picks one in that row.
 - AC-3.3 A line with open groups and NO `combo_id` keeps today's one tag per combination.
-- AC-3.4 A surviving line whose carried tags already match today's one-per-combination set keeps them untouched on save, so requests in flight and a split marketing made by hand do not collapse. The manual Split and Pick one still work.
+- AC-3.4 A surviving line whose carried tags already match today's one-per-combination set keeps them untouched on save, so requests in flight do not collapse. (Split and Pick one left the product before this lane, D6, so marketing cannot narrow a one-tag line after submit; the dealer's pick is the only narrowing. Reported to the owner.)
 
 ## 4. Template fields
 
@@ -50,7 +51,7 @@ All figures below are synthetic. Real flyer data never enters this repo.
 - AC-4.2 Merge tokens `combo.name`, `combo.description`, `combo.free_items` appear in a Combo group in Insert field and resolve in text layers.
 - AC-4.3 Combo Photo prints the combo's cover picture and ignores a layer's pinned photo source. No cover, or no combo: the product's primary photo.
 - AC-4.4 Combo Name prints the combo's name, else the product code. Combo Description prints the combo's description, else the product's price tag description, else nothing.
-- AC-4.5 Combo Choices prints plain text, one group after another: a header `ROLE: PICK ONE` (just `ROLE` when the group has one option or a pick was made), then one line per option `CODE  Description  RM 999`, the price only when that option has its own. With a pick, only the picked line prints. A picked upgrade prints as the group's only line, with `+RM 100` in place of a price when it has a top-up.
+- AC-4.5 Combo Choices prints plain text, one group after another: a header `ROLE: PICK ONE` (just `ROLE` when the group has one option or a pick was made), then one line per option `CODE  Description  RM 999`, the price only when that option has its own. With a pick, only the picked line prints. On a one-group combo a picked upgrade prints as the group's only line, with `+RM 100` in place of a price when it has a top-up; on a combo with more groups the groups print as usual and the picked upgrade follows in its own `UPGRADE` section.
 - AC-4.6 Combo Top-ups prints a header `UPGRADE`, then one line per upgrade `CODE  Description  +RM 100`, the amount only when set. It prints nothing when the combo has no upgrades or an upgrade was picked.
 - AC-4.7 On a line with no combo, Combo Choices and Combo Top-ups print nothing, and the layer shows no placeholder on the printed tag.
 - AC-4.8 The canvas, the preview and the PDF print the same text for each field: they share `resolveSlotText` and its neighbours in `lib/dealer-kit/product-block.ts`.
@@ -59,7 +60,7 @@ All figures below are synthetic. Real flyer data never enters this repo.
 
 - AC-5.1 The template editor shows a Preview combo `SearchableSelect`, clearable, searching combos by name or host code. Picking one previews that combo's real photo, name, description and options on the canvas.
 - AC-5.2 New endpoint: `GET /api/v1/dealer-kit/tag-data/combos?query=&limit=` answers `{data: [{combo_id, name, host_product_id, host_code}]}`, bounded by `limit`, joined to the host so the company scope applies, same permission as the other tag data routes.
-- AC-5.3 The existing product tag data route takes an optional `combo_id`, and the preview payload carries the same `combo` object as AC-2.1. A `combo_id` that does not belong to that product answers 404. Omitted: today's response plus `combo: null`.
+- AC-5.3 The existing product tag data route takes an optional `combo_id`, and the preview payload carries the same `combo` object as AC-2.1, with the list and sell price the combo would print with nothing picked. A `combo_id` that does not belong to that product answers 404. Omitted: today's response plus `combo: null`.
 
 ## 6. Combos card on the product page
 

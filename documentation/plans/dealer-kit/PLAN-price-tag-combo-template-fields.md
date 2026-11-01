@@ -63,11 +63,11 @@ Additive only. Existing templates and approved tags print exactly as before.
 | Combo picture | no schema change, direct binding | `product_combos.image_attachment_id`, `ComboImageControl`, `product_combo_service.upload_image` |
 | Combo description | `product_combos.description` TEXT | `PriceTagDescriptionBlock` editor, `renderPriceTagDescription` |
 | Combo title | none, `name` holds the printed title | existing `name` column and `AddComboModal` |
-| OR choices | none | `choice_group`, Split / Pick one on the tag |
+| OR choices | none | `choice_group`, the dealer's pick on the line |
 | Free items | `product_combos.free_items` TEXT, copied to the line | `price_tag_request_lines.included_accessories` and its slot |
 | Top-ups | `product_combo_parts.topup_amount` NUMERIC, `is_upgrade` BOOLEAN | part rows, Sold with card |
 | Combo price | `product_combos.list_price`, `sell_price`; `product_combo_parts.sell_price` | `manual_sell_price` precedent, tag override stays last |
-| One tag per combo line | `_add_line_tags` stops multiplying when the line has a `combo_id` | carried tag rule, Split, Pick one |
+| One tag per combo line | `_add_line_tags` stops multiplying when the line has a `combo_id` | carried tag rule |
 | Template fields | new Combo group in the Field select and Insert field dialog | `SlotBinding`, `merge-fields.ts`, `InsertFieldDialog` |
 | Designer preview | Preview combo picker | `useTagBindings`, `product_tag_data` |
 | Later data changes | combo fields join the tag data diff | `apply_auto_data_updates`, red dot, roll back |
