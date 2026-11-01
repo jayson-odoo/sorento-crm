@@ -1672,3 +1672,9 @@ def test_load_gold_checks_the_account_type_expect_types(tmp_path):
     with pytest.raises(ValueError):
         pg.load_gold(_write(tmp_path, [_row("a", "x", {"account_type": "4"})]))
     assert pg.load_gold(_write(tmp_path, [_row("a", "x", {"account_type": ["4"], "date_filter_start": None})]))
+
+
+def test_group_by_null_is_graded_not_skipped():
+    assert pg.grade_parse({"group_by": "month"}, {"group_by": None})[0] is False
+    assert pg.grade_parse({"group_by": None}, {"group_by": None})[0] is True
+    assert pg.grade_parse({}, {"group_by": None})[0] is True
