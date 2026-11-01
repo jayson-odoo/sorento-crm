@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY panel, the staff principal on the chatbot brain
 
-Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slices 1 (staff principal, live chat turn) and 2 (agent side, write routes, report path, opportunity, escalation) and 3 (page context) built; slice 4 (panel screen) in Phase 2. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
+Status: owner answered Q1-Q3 on 31 Oct 2026, all (a) ("q1 a q2a, q3a"). UAC written. Slices 1 (staff principal, live chat turn) and 2 (agent side, write routes, report path, opportunity, escalation) 3 (page context) and 4 (panel screen) built, five review rounds done, PR #2060 in hand test. PR 3 of 4, builds on #2048 (identity) and the console PR (shared parts). Full pipeline, size L.
 
 Behaviour: `CARD-agentic-unify-v2-31oct.md` and its owner table (on branch `crew/agentic-unify`, #2048). Its section 2 (test path) was overruled by the owner: a panel turn is live, with no WhatsApp send. This plan replaces that section.
 

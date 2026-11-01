@@ -62,7 +62,11 @@ A labelled set of real panel questions run through both paths; "nothing lost" pe
 
 ## Known limits
 
-- A panel escalation has the SLA clock and My Pending, but never climbs a tier and refuses a manual escalate: tier climbing goes through the conversation (`/integration/escalate`), which a panel task does not have. Contactless rows leave the runner's list so they cannot starve customers' escalations.
+- A panel escalation has the SLA clock and My Pending, but never climbs a tier and refuses a manual escalate: tier climbing goes through the conversation (`/integration/escalate`), which a panel task does not have. Rows marked `panel_escalation` leave the runner's list so they cannot starve customers' escalations.
+- `crm_portal_link_get` has no meaning without a contact, so a how-to question the parser reads as a portal link can reply "I could not fetch this request just now". How-to questions go to the guides in PR 4.
+- `entity_resolver.request_read_check` allows by default: a future thread running a purchase request probe inside a turn would skip the check. No such thread exists today.
+- The panel-only line telling Jev about an open record is sent from code, not the published prompt.
+- AC-26 holds by a refusal: `respond()` answers `tool_not_available` for the four tools that need a contact, because the MCP fix would otherwise open them to every panel user.
 - The chat lane logs an opportunity only when the published parser label carries `OPPORTUNITY_LINE` (UNVERIFIED at prod; `engine.py:6023` says v63 lacks it). Until then staff log one through the agent, with Confirm.
 
 ## Hand test
