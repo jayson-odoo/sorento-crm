@@ -470,3 +470,22 @@ def test_a_rerun_with_nothing_to_change_reports_unchanged_and_an_upgrade_is_one_
     _code, _out, dry = _run(db, tmp_path, photos)
     assert _by_id(dry)["C1"]["status"] == "unchanged"
     assert _parts(db, _combo(db, "ZZT 3 in 1", "ZZTH1"))["ZZTU1"].is_upgrade is True
+
+
+def test_the_host_listed_among_the_components_is_not_a_drop_but_a_missing_code_still_is(
+    db, catalogue, photos, tmp_path, storage
+):
+    entries = json.loads(SEED.read_text())
+    entries[0]["components"].insert(0, {"code": "ZZTH1", "role": "Cabinet", "dimensions": "", "lp": 1})
+    entries[0]["components"].append({"code": "ZZTLOST", "role": "Odd", "dimensions": "", "lp": 1})
+    seed_path = tmp_path / "host-listed.json"
+    seed_path.write_text(json.dumps(entries))
+    for apply in (False, True):
+        report = tmp_path / f"host-{apply}.csv"
+        argv = ["--file", str(seed_path), "--photos", str(photos), "--report", str(report)]
+        assert _script().main(argv + (["--apply"] if apply else []), db=db, out=io.StringIO()) == 0
+        with open(report, newline="", encoding="utf-8-sig") as fh:
+            row = next(r for r in csv.DictReader(fh) if r["id"] == "C1")
+        assert "ZZTH1" not in row["dropped_parts"], (apply, row["dropped_parts"])
+        assert row["dropped_parts"] == "ZZTLOST"
+    assert "ZZTH1" not in _parts(db, _combo(db, "ZZT 3 in 1", "ZZTH1"))

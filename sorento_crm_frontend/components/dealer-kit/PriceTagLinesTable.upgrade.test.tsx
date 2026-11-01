@@ -94,6 +94,23 @@ describe('Upgrade row', () => {
     expect(screen.getByRole('option', { name: /ZZU\s+\+RM 250/ })).toBeInTheDocument();
   });
 
+  it('reads the top-up from the line\'s chosen package, not another one carrying the same upgrade', () => {
+    const upgrade = (topup: number) => [
+      { product_id: 'u', code: 'ZZU', name: 'Stone', choice_group: null, is_upgrade: true, topup_amount: topup },
+    ];
+    renderTable(
+      line(open([{ product_id: 'u', code: 'ZZU', name: 'Stone' }]), {
+        combo_id: 'c2',
+        combos: [
+          { combo_id: 'c1', name: '3 in 1', parts: upgrade(100) },
+          { combo_id: 'c2', name: '4 in 1', parts: upgrade(300) },
+        ],
+      }),
+    );
+    expect(screen.getByRole('option', { name: /ZZU\s+\+RM 300/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /RM 100/ })).toBeNull();
+  });
+
   it('a resolved upgrade (reopened draft, no candidates) is a plain row, not No upgrade', () => {
     renderTable(
       line([{ key: 'u1', product_id: 'u', code: 'ZZU', name: 'Stone', role: 'Upgrade', candidates: [] }]),

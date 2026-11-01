@@ -197,13 +197,14 @@ def process_entry(db, entry, host, parts_by_code, photos, apply: bool) -> dict:
     )
     present = {part.part_product_id for part in existing.parts} if existing else set()
 
-    # What apply would add, judged the same way on a dry run, so the dry run reports what
-    # apply drops: the host as its own part, and a product named twice.
+    # What apply would add, judged the same way on a dry run. The host listed among the
+    # components is the flyer's own layout, not a drop: it is skipped silently, as is a
+    # product named twice.
     to_add: list[dict] = []
     for part in keep:
         product = parts_by_code[part["code"].upper()]
         if product.id == host.id:
-            dropped.append(f"{part['code']} (is the host)")
+            continue
         elif product.id in present or any(a["product"].id == product.id for a in to_add):
             continue
         else:

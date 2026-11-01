@@ -601,7 +601,7 @@ function LineRow({
             part={part}
             pricing={pricing}
             priceMode={priceMode}
-            combos={line.combos}
+            combos={line.combos.filter((combo) => combo.combo_id === line.combo_id)}
             colSpan={subRowSpan}
             onResolvePart={onResolvePart}
             onRemovePart={onRemovePart}
