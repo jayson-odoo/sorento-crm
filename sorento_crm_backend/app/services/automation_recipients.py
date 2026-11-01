@@ -202,7 +202,9 @@ def order_for_email(
 
     to = [r for r in recipients if not r.get("cc") and not is_actor(r)]
     cc = [r for r in recipients if r.get("cc") and not is_actor(r)]
-    ordered = to + cc + [r for r in recipients if is_actor(r)]
+    # The actor rides on Cc even when also picked under To, so a preview (`to_count`) and
+    # the send agree.
+    ordered = to + cc + [{**r, "cc": True} for r in recipients if is_actor(r)]
     # The actor is never counted as To, even when also configured under To.
     return ordered, (max(len(to), 1) if ordered else 0)
 

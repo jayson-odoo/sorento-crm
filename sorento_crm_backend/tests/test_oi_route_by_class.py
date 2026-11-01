@@ -671,3 +671,24 @@ def test_actor_listed_under_to_is_still_cc():
     )
     assert [r["email"] for r in ordered] == ["a@x.test", "raiser@x.test"]
     assert to_count == 1
+    from app.services.automation_recipients import to_count as preview_count
+
+    assert preview_count(ordered) == 1, "the preview names the same To as the send"
+
+
+def test_a_stand_in_line_with_no_header_keeps_its_orders_class():
+    """Reviewer kill L5: a saved line queued before any OI header existed reads its class
+    from the order's template, not the default."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    item = {"pso_id": None, "sales_order_class": "project", "line": {}}
+    ProjectOrderInquiryService._fill_from_template(
+        item, {"pso_id": "p1", "sales_order_class": "retail", "line": {}}
+    )
+    assert item["sales_order_class"] == "retail"
+    # An item that read its own order keeps its own class.
+    own = {"pso_id": "p2", "sales_order_class": "project", "line": {}}
+    ProjectOrderInquiryService._fill_from_template(
+        own, {"pso_id": "p2", "sales_order_class": "retail", "line": {}}
+    )
+    assert own["sales_order_class"] == "project"
