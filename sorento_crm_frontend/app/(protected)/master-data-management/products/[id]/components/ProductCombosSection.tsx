@@ -4,6 +4,11 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { ImagePlus, LoaderCircleIcon, Plus, Trash2, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { NumberInput } from '@/components/ui/number-input';
+import { Textarea } from '@/components/ui/textarea';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
   SearchableSelect,
@@ -15,11 +20,17 @@ import {
   useProductComboDelete,
   useProductComboPartDelete,
   useProductCombos,
+  useUpdateProductCombo,
   useUpdateProductComboPart,
 } from '../../hooks/useProductCombos';
 import { useProductComboImage } from '../../hooks/useProductComboImage';
 import { getProducts } from '../../services/productService';
-import type { ProductComboPartRow, ProductComboRow } from '../../types/productCombo.types';
+import type {
+  ProductComboPartRow,
+  ProductComboPartUpdate,
+  ProductComboRow,
+  ProductComboUpdate,
+} from '../../types/productCombo.types';
 import { AddComboModal } from './AddComboModal';
 import { codeWithName, distinctName } from '@/lib/product-display';
 
@@ -44,12 +55,111 @@ async function fetchProductOptions(
   }));
 }
 
+/** A Decimal arrives as a string ("2500.00"); the box wants a number. */
+function toNumber(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatMoney(value: number | string | null | undefined): string {
+  const amount = toNumber(value);
+  return amount === null
+    ? '-'
+    : `RM ${amount.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * A money box that saves on blur, and only when the figure changed. Empty saves null
+ * (the price goes back to the summed one); a draft the browser cannot read as a number
+ * is left alone.
+ */
+function MoneyField({
+  id,
+  label,
+  value,
+  onSave,
+  className,
+  labelClassName,
+}: {
+  id: string;
+  label: string;
+  value: number | string | null | undefined;
+  onSave: (next: number | null) => void;
+  className?: string;
+  labelClassName?: string;
+}) {
+  const saved = toNumber(value);
+  const [draft, setDraft] = useState<number | null>(saved);
+  return (
+    <div className={className}>
+      <Label htmlFor={id} className={labelClassName}>
+        {label}
+      </Label>
+      <NumberInput
+        id={id}
+        min={0}
+        step="0.01"
+        inputMode="decimal"
+        value={draft}
+        onValueChange={setDraft}
+        onBlur={() => {
+          if (draft !== null && Number.isNaN(draft)) return;
+          if (draft !== saved) onSave(draft);
+        }}
+      />
+    </div>
+  );
+}
+
+/** A text box that saves on blur, and only when the text changed. Empty saves null. */
+function TextField({
+  id,
+  label,
+  value,
+  onSave,
+  multiline,
+}: {
+  id: string;
+  label: string;
+  value: string | null | undefined;
+  onSave: (next: string | null) => void;
+  multiline?: boolean;
+}) {
+  const saved = value ?? '';
+  const [draft, setDraft] = useState(saved);
+  const commit = () => {
+    if (draft !== saved) onSave(draft.trim() === '' ? null : draft);
+  };
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      {multiline ? (
+        <Textarea id={id} rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
+      ) : (
+        <Input id={id} value={draft} onChange={(e) => setDraft(e.target.value)} onBlur={commit} />
+      )}
+    </div>
+  );
+}
+
+/** Label and value as text, for a reader without the edit permission. */
+function ReadOnlyField({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="min-w-0 space-y-0.5">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="whitespace-pre-line break-words text-sm">{value || '-'}</p>
+    </div>
+  );
+}
+
 interface PartRowProps {
   part: ProductComboPartRow;
   groupOptions: SearchableSelectOption[];
   canEdit: boolean;
   isRemoving: boolean;
   onChoiceGroup: (label: string | null) => void;
+  onWrite: (write: ProductComboPartUpdate) => void;
   onRemove: () => void;
 }
 
@@ -59,8 +169,10 @@ function PartRow({
   canEdit,
   isRemoving,
   onChoiceGroup,
+  onWrite,
   onRemove,
 }: PartRowProps) {
+  const isOption = !!part.choice_group && !part.is_upgrade;
   return (
     <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_13rem_auto] sm:items-center">
       <div className="min-w-0">
@@ -106,6 +218,49 @@ function PartRow({
         />
       ) : (
         <p className="text-sm text-muted-foreground">{part.choice_group || 'Fixed part'}</p>
+      )}
+      {canEdit ? (
+        <div className="flex flex-wrap items-end gap-3 sm:col-span-full">
+          {isOption ? (
+            <MoneyField
+              id={`${part.id}-sell`}
+              label="If picked, sell price"
+              value={part.sell_price}
+              onSave={(next) => onWrite({ sell_price: next })}
+              className="w-40 space-y-1.5"
+              labelClassName="text-xs text-muted-foreground"
+            />
+          ) : null}
+          {part.is_upgrade ? (
+            <MoneyField
+              id={`${part.id}-topup`}
+              label="Top-up"
+              value={part.topup_amount}
+              onSave={(next) => onWrite({ topup_amount: next })}
+              className="w-40 space-y-1.5"
+              labelClassName="text-xs text-muted-foreground"
+            />
+          ) : null}
+          <label className="flex items-center gap-2 pb-2 text-sm">
+            <Checkbox
+              checked={!!part.is_upgrade}
+              onCheckedChange={(checked) => onWrite({ is_upgrade: checked === true })}
+              disabled={isRemoving}
+            />
+            <span>Upgrade</span>
+          </label>
+        </div>
+      ) : (
+        <div className="sm:col-span-full">
+          {isOption && toNumber(part.sell_price) !== null ? (
+            <p className="text-xs text-muted-foreground">
+              {formatMoney(part.sell_price)} if picked
+            </p>
+          ) : null}
+          {part.is_upgrade && toNumber(part.topup_amount) !== null ? (
+            <p className="text-xs text-muted-foreground">+{formatMoney(part.topup_amount)}</p>
+          ) : null}
+        </div>
       )}
       {canEdit ? (
         <Button
@@ -253,6 +408,8 @@ interface ComboBlockProps {
   onDelete: () => void;
   onRemovePart: (part: ProductComboPartRow) => void;
   onChoiceGroup: (part: ProductComboPartRow, label: string | null) => void;
+  onPartWrite: (part: ProductComboPartRow, write: ProductComboPartUpdate) => void;
+  onComboWrite: (write: ProductComboUpdate) => void;
   onAddPart: (comboId: string, productId: string) => void;
   addPartError: string | null;
   isAddingPart: boolean;
@@ -266,6 +423,8 @@ function ComboBlock({
   onDelete,
   onRemovePart,
   onChoiceGroup,
+  onPartWrite,
+  onComboWrite,
   onAddPart,
   addPartError,
   isAddingPart,
@@ -285,9 +444,12 @@ function ComboBlock({
   // Fixed parts first, then one block per choice group in the order the groups
   // first appear - so the package reads top to bottom the way the catalogue page
   // lists it, rather than alphabetically.
-  const fixedParts = combo.parts.filter((part) => !part.choice_group);
+  // Upgrades are their own block after the groups, whatever group they were typed with.
+  const upgradeParts = combo.parts.filter((part) => part.is_upgrade);
+  const choiceParts = combo.parts.filter((part) => !part.is_upgrade);
+  const fixedParts = choiceParts.filter((part) => !part.choice_group);
   const groups: { label: string; parts: ProductComboPartRow[] }[] = [];
-  for (const part of combo.parts) {
+  for (const part of choiceParts) {
     if (!part.choice_group) continue;
     const existing = groups.find((group) => group.label === part.choice_group);
     if (existing) existing.parts.push(part);
@@ -302,6 +464,7 @@ function ComboBlock({
       canEdit={canEdit}
       isRemoving={removingPartId === part.id}
       onChoiceGroup={(label) => onChoiceGroup(part, label)}
+      onWrite={(write) => onPartWrite(part, write)}
       onRemove={() => onRemovePart(part)}
     />
   );
@@ -331,6 +494,54 @@ function ComboBlock({
         ) : null}
       </div>
       <ComboImageControl combo={combo} canEdit={canEdit} />
+      {/* The combo's own text and prices, printed on the tag (PRICETAG-COMBO).
+          Same fields read-only and editing; edits save on blur. */}
+      {canEdit ? (
+        <div className="grid gap-3 border-b p-3 sm:grid-cols-2">
+          <MoneyField
+            id={`${combo.id}-list-price`}
+            label="List price"
+            value={combo.list_price}
+            onSave={(next) => onComboWrite({ list_price: next })}
+            className="space-y-1.5"
+          />
+          <MoneyField
+            id={`${combo.id}-sell-price`}
+            label="Sell price"
+            value={combo.sell_price}
+            onSave={(next) => onComboWrite({ sell_price: next })}
+            className="space-y-1.5"
+          />
+          <div className="sm:col-span-2">
+            <TextField
+              id={`${combo.id}-description`}
+              label="Description"
+              value={combo.description}
+              onSave={(next) => onComboWrite({ description: next })}
+              multiline
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <TextField
+              id={`${combo.id}-free-items`}
+              label="Free items"
+              value={combo.free_items}
+              onSave={(next) => onComboWrite({ free_items: next })}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="grid gap-3 border-b p-3 sm:grid-cols-2">
+          <ReadOnlyField label="List price" value={toNumber(combo.list_price) === null ? null : formatMoney(combo.list_price)} />
+          <ReadOnlyField label="Sell price" value={toNumber(combo.sell_price) === null ? null : formatMoney(combo.sell_price)} />
+          <div className="sm:col-span-2">
+            <ReadOnlyField label="Description" value={combo.description} />
+          </div>
+          <div className="sm:col-span-2">
+            <ReadOnlyField label="Free items" value={combo.free_items} />
+          </div>
+        </div>
+      )}
       <div className="space-y-3 p-3">
         {combo.parts.length === 0 ? (
           <p className="text-sm text-muted-foreground">No parts yet.</p>
@@ -351,6 +562,12 @@ function ComboBlock({
               {group.parts.map(partRow)}
             </div>
           ))}
+          {upgradeParts.length > 0 ? (
+            <div className="space-y-3 rounded-md border border-dashed p-3">
+              <p className="text-xs text-muted-foreground">Upgrade</p>
+              {upgradeParts.map(partRow)}
+            </div>
+          ) : null}
         </div>
         {canEdit ? (
           <div className="space-y-1.5">
@@ -406,6 +623,7 @@ export function ProductCombosSection({ productId }: { productId: string }) {
   const partDeletion = useProductComboPartDelete(productId, partProductIds);
   const addPart = useAddProductComboPart(productId);
   const updatePart = useUpdateProductComboPart(productId);
+  const updateCombo = useUpdateProductCombo(productId);
 
   const handleAddPart = useCallback(
     async (comboId: string, partProductId: string) => {
@@ -473,6 +691,8 @@ export function ProductCombosSection({ productId }: { productId: string }) {
                 onChoiceGroup={(part, label) =>
                   updatePart.mutate({ partId: part.id, write: { choice_group: label } })
                 }
+                onPartWrite={(part, write) => updatePart.mutate({ partId: part.id, write })}
+                onComboWrite={(write) => updateCombo.mutate({ comboId: combo.id, write })}
                 onAddPart={handleAddPart}
                 addPartError={
                   addPartError?.comboId === combo.id ? addPartError.message : null
