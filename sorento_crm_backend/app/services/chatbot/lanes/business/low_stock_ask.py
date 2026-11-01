@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.chatbot import principal as staff_principal
 from app.services.chatbot import required_fields as rf
 from app.services.chatbot.lanes.business import services as business_services
 
@@ -161,6 +162,8 @@ def brand_categories(db: Any, brands: list[str]) -> rf.Resolved | None:
 def _supplier_rows(db: Any) -> list[tuple[str, str, str]]:
     from app.models.procurement import Supplier
 
+    if staff_principal.lacks(db, staff_principal.SUPPLIERS_VIEW):
+        return []
     return [
         ((name or "").casefold(), name or "", (code or "").casefold())
         for name, code in db.query(Supplier.supplier_name, Supplier.supplier_code)
