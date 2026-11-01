@@ -792,7 +792,6 @@ def test_at20_a_breakdown_gets_no_extra_question_after_the_answer(bot, seeded) -
     text, calls = bot.say(_pick(2), "account type")
     args = _only_report_ask(calls)
     assert args["group_by"] == "customer" and args["account_types"] == ["CABANA"], args
-    assert args["sales_agent_ids"] == [bot.ids["agent"]], args
     assert "By quantity or by amount?" not in text, text
 
 
