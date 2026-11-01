@@ -2419,3 +2419,91 @@ WRITES[CLOSE_COMPLAINT] = WriteDef(
     changes=_complaint_changes,
     execute_takes_before=True,
 )
+
+
+# ------------------------------------------------------------------ PR 4 order cancel
+
+CANCEL_ORDER = "crm_order_cancel"
+#: The route's own slug (`orders.py` cancel): the same gate as the screen.
+ORDER_CANCEL = "order_management.orders.view"
+
+
+def _order_read_before(db, user: dict, args: dict) -> dict:
+    """The order as it is now, found by its number in the user's company scope, after the refusals the route
+    and its service would make. The order's id is kept in `before` for the execute, never in the card."""
+    from app.services.error_handler import AppException, handle_conflict, handle_not_found
+    from app.services.order_field_ownership import reject_autocount_owned_edit
+    from app.services.order_service import OrderService
+
+    _module_open(user, db, "order")
+    number = _line(args["order_number"])
+    order = OrderService(db).get_order_by_order_number(number)
+    if order is None:
+        raise handle_not_found("Order", number)
+    if order.is_cancelled:
+        raise handle_conflict(f"Order {number} is already cancelled.")
+    reject_autocount_owned_edit(order, {"is_cancelled": True})
+    return {
+        "order_id": str(order.id),
+        "is_cancelled": False,
+        "remarks": order.remarks,
+        "_show": {"number": order.order_number, "customer": order.debtor_name or ""},
+    }
+
+
+def _order_summary(args: dict, before: dict) -> str:
+    text = f"Cancel order {_word(before['number'])}"
+    if before["customer"]:
+        text += f" for {_word(before['customer'])}"
+    if _line(args.get("reason")):
+        text += f", with the reason {_quoted(args['reason'])}"
+    return text + ". Complaints on this order are re-evaluated."
+
+
+def _order_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
+    from app.api.v1.order_management.orders import OrderCancelRequest, cancel_order
+
+    _module_open(user, db, "order")
+    order = cancel_order(
+        order_id=str(confirmed["order_id"]), body=OrderCancelRequest(reason=_line(args.get("reason")) or None),
+        current_user=user, db=db,
+    )
+    return {"id": str(confirmed["order_id"]), "after": {"is_cancelled": True, "remarks": order.remarks}}
+
+
+def _order_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    return _diff(
+        f"Order {shown.get('number', '')}".strip(),
+        [("Cancelled", "No", "Yes"), ("Remarks", before.get("remarks"), after.get("remarks"))],
+    )
+
+
+WRITES[CANCEL_ORDER] = WriteDef(
+    name=CANCEL_ORDER,
+    user_permission=ORDER_CANCEL,
+    schema={
+        "type": "function",
+        "function": {
+            "name": CANCEL_ORDER,
+            "description": (
+                "Propose cancelling one order by its order number, as the screen's Cancel does. Nothing changes "
+                "until the user confirms. Complaints on the order are re-evaluated. An order that is already "
+                "cancelled or owned by AutoCount is refused. Call once per order."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_number": {"type": "string"},
+                    "reason": {"type": "string", "maxLength": MAX_NOTE_CHARS},
+                },
+                "required": ["order_number"],
+            },
+        },
+    },
+    read_before=_order_read_before,
+    summary=_order_summary,
+    execute=_order_execute,
+    record_key="order_number",
+    changes=_order_changes,
+    execute_takes_before=True,
+)
