@@ -23,7 +23,7 @@ interface Props {
   isLoading: boolean;
   error: unknown;
   onRetry: () => void;
-  pendingRowId: string | null;
+  pendingRowIds: ReadonlySet<string>;
   onOpen: (id: string) => void;
   onTick: (
     row: DocumentAccessRow,
@@ -42,7 +42,7 @@ export function DocumentAccessCards({
   isLoading,
   error,
   onRetry,
-  pendingRowId,
+  pendingRowIds,
   onOpen,
   onTick,
 }: Props) {
@@ -144,7 +144,7 @@ export function DocumentAccessCards({
                     role="checkbox"
                     aria-checked={chip.on}
                     aria-label={`${chip.name} reads ${row.type_name}`}
-                    disabled={!canEdit || pendingRowId === row.id}
+                    disabled={!canEdit || pendingRowIds.has(row.id)}
                     onClick={() => onTick(row, chip.code, chip.name, !chip.on)}
                     className={cn(
                       'inline-flex h-8 items-center gap-2 rounded-full border px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60',

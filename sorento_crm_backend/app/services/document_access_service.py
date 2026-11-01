@@ -132,13 +132,13 @@ def _grant_counts(db: Session, user_id: Optional[str]) -> dict:
 
     allowed = _allowed_company_ids(db, user_id)
     with company_scope(db, None):
-        q = (
-            db.query(ContactAttachmentType.attachment_type_id, func.count(func.distinct(ContactAttachmentType.contact_id)))
-            .join(RespondContactCompany, RespondContactCompany.respond_contact_id == ContactAttachmentType.contact_id)
-            .group_by(ContactAttachmentType.attachment_type_id)
-        )
-        if allowed is not None:
-            q = q.filter(RespondContactCompany.company_id.in_(allowed))
+        q = db.query(
+            ContactAttachmentType.attachment_type_id, func.count(func.distinct(ContactAttachmentType.contact_id))
+        ).group_by(ContactAttachmentType.attachment_type_id)
+        if allowed is not None:  # an unscoped caller counts every grant, a contact with no company included
+            q = q.join(RespondContactCompany, RespondContactCompany.respond_contact_id == ContactAttachmentType.contact_id).filter(
+                RespondContactCompany.company_id.in_(allowed)
+            )
         return {str(k): int(v) for k, v in q.all()}
 
 

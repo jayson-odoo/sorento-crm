@@ -1,6 +1,12 @@
 'use client';
 
-import { createContext, useContext, useMemo, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from 'react';
 import {
   getCoreRowModel,
   useReactTable,
@@ -22,6 +28,7 @@ import { cn } from '@/lib/utils';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
   useDocumentAccessMutations,
+  type TickInput,
   useDocumentAccessQuery,
 } from '../hooks/useDocumentAccessQuery';
 import { searchPreviewContacts } from '../services/documentAccessService';
@@ -41,8 +48,8 @@ const AI_FILTER_OPTIONS: SearchableSelectOption[] = [
   { value: 'off', label: 'Off' },
 ];
 
-/** The row whose tick save is pending; its ticks are locked until the row is re-read. */
-const PendingRowContext = createContext<string | null>(null);
+/** The rows whose tick save is pending; each row's ticks are locked until that row is re-read. */
+const PendingRowContext = createContext<ReadonlySet<string>>(new Set());
 
 const isOn = (row: DocumentAccessRow) =>
   row.ai_read_staff || row.ai_read_codes.length > 0;
@@ -58,8 +65,27 @@ export function DocumentAccessView() {
   const { data, isLoading, isPlaceholderData, error, refetch } =
     useDocumentAccessQuery(contact?.value);
   const { tick } = useDocumentAccessMutations();
-  const mutateTick = tick.mutate;
-  const pendingRowId = tick.isPending ? (tick.variables?.row.id ?? null) : null;
+  const [pendingRowIds, setPendingRowIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const tickMutateAsync = tick.mutateAsync;
+  // One lock per row: a save for row B never frees row A, which stays locked until ITS save and refresh end.
+  const mutateTick = useCallback(
+    (input: TickInput) => {
+      const id = input.row.id;
+      setPendingRowIds((prev) => new Set(prev).add(id));
+      tickMutateAsync(input)
+        .catch(() => undefined) // the hook's onError already toasted
+        .finally(() =>
+          setPendingRowIds((prev) => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+          }),
+        );
+    },
+    [tickMutateAsync],
+  );
   const phone = useIsPhone();
 
   const accessTypes = useMemo(() => data?.access_types ?? [], [data]);
@@ -88,7 +114,7 @@ export function DocumentAccessView() {
         const r = row.original;
         const on =
           code === null ? r.ai_read_staff : r.ai_read_codes.includes(code);
-        const pendingId = useContext(PendingRowContext);
+        const pendingIds = useContext(PendingRowContext);
         const reach = code === null ? r.readable_count : (r.reach[code] ?? 0);
         const short =
           code !== null &&
@@ -103,7 +129,7 @@ export function DocumentAccessView() {
             <Checkbox
               size="sm"
               checked={on}
-              disabled={!canEdit || pendingId === r.id}
+              disabled={!canEdit || pendingIds.has(r.id)}
               aria-label={`${name} reads ${r.type_name}`}
               onCheckedChange={(next) =>
                 mutateTick({ row: r, code, name, on: next === true, catalogue })
@@ -334,7 +360,7 @@ export function DocumentAccessView() {
   return (
     <>
       <PageHeader title="Document Access" />
-      <PendingRowContext.Provider value={pendingRowId}>
+      <PendingRowContext.Provider value={pendingRowIds}>
         <div className="mt-5">
           {phone ? (
             <div className="space-y-3">
@@ -347,7 +373,7 @@ export function DocumentAccessView() {
                 isLoading={isLoading}
                 error={error}
                 onRetry={() => void refetch()}
-                pendingRowId={pendingRowId}
+                pendingRowIds={pendingRowIds}
                 onOpen={setOpenId}
                 onTick={(row, code, name, on) =>
                   mutateTick({ row, code, name, on, catalogue })

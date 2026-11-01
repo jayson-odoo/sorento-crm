@@ -276,10 +276,10 @@ function SheetBodyFor({
             }
           >
             <DataGridTable />
+            {pages > 1 ? (
+              <DataGridPagination sizes={[PAGE_SIZE]} sizesInfo="" />
+            ) : null}
           </DataGrid>
-          {pages > 1 ? (
-            <DataGridPagination sizes={[PAGE_SIZE]} sizesInfo="" />
-          ) : null}
         </section>
 
         <section className="space-y-2">

@@ -67,5 +67,5 @@ def get_document_access_documents(
             limit=limit,
             user_id=current_user["id"],
             can_upload=can_upload,
-            active_companies=None if active is None else {str(c) for c in active},
+            active_companies=None if active is None else ({str(c) for c in active} if isinstance(active, frozenset) else set()),
         )
