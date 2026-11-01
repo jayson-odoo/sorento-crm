@@ -535,9 +535,9 @@ def test_three_orders_at_the_pool_each_keep_their_own_half():
     assert rows == [half, half, half]
 
 
-def test_a_later_line_at_the_pool_is_measured_from_the_true_net_not_zero():
-    """100 at another pool, 130 owed at this one: a net of -30. A project line walks first and
-    buys, and the line of 40 behind it reads -30 + 40 = 10, not 40."""
+def test_another_pool_lends_a_line_at_the_pool_nothing_while_the_pools_are_short():
+    """100 at another pool, 130 owed at this one: a net of -30. The add-back is what the line
+    stands on, not a claim on another pool's stock, so the line of 40 buys."""
     with blank_session() as db:
         company_id, _actor, project, product = _world(db)
         pool = _dealer_pool(db, on_hand=0, product=product)
@@ -553,7 +553,7 @@ def test_a_later_line_at_the_pool_is_measured_from_the_true_net_not_zero():
         )
         row = _board_row(_board(db, at_pool, at_bin), at_pool)
 
-    assert _sources(row) == {"reserve": Decimal("10"), "buy": Decimal("30")}
+    assert _sources(row) == {"buy": Decimal("40")}
 
 
 # --------------------------------------------------------------------------- what the book counted

@@ -607,7 +607,7 @@ def pool_reserve_capacity(
     Nothing is un-netted here, unlike rung 2: a line at a project bin is booked at
     `BRW-<group>`, never at a pool, so none of it is inside `pools_net`. A line AT a pool
     is booked there, and its caller hands in a net with that line's own demand already put
-    back (`project_supply_service._stands_on_its_own_pool`).
+    back (`project_supply_service._add_back_own_pool_demand`).
     """
     left = max(_dec(pools_net), ZERO)
     out: List[Tuple[str, Decimal]] = []
