@@ -40,7 +40,7 @@ echo "docker $*" >> "$FAKE_LOG"
 args=" $* "
 case "$args" in
   *" ps "*) [ -n "${FAKE_PS_FAIL:-}" ] && exit 1; for c in ${FAKE_RUNNING:-}; do echo "$c"; done; exit 0 ;;
-  *"etcdctl auth status"*) echo "Authentication Status: ${FAKE_ETCD_AUTH:-true}"; exit 0 ;;
+  *"etcdctl auth status"*) if [ -n "${FAKE_ETCD_AUTH_ERR:-}" ]; then echo "$FAKE_ETCD_AUTH_ERR" >&2; exit 1; fi; echo "Authentication Status: ${FAKE_ETCD_AUTH:-true}"; exit 0 ;;
   *"etcdctl endpoint health"*) for i in $(seq 1 "${FAKE_ETCD_HEALTHY:-3}"); do echo "http://m$i:2379 is healthy: took 2ms"; done; exit 0 ;;
   *" backup-list "*) echo "${FAKE_BACKUPS:-[]}"; exit 0 ;;
   *"pg_stat_replication WHERE"*) echo "${FAKE_REPLICAS:-1}"; exit 0 ;;
@@ -203,6 +203,22 @@ def test_checks_each_problem_pings_fail_with_its_reason(env, extra, reason):
     assert reason in r.stdout
     fails = [c for c in calls(log) if "hc.example/abc/fail" in c]
     assert fails and reason in fails[0]
+
+
+def test_checks_etcd_refusing_auth_status_means_auth_is_on(env):
+    # H4a rehearsal: with auth on, etcd refuses `auth status` to the role-less healthcheck user.
+    e, _, _ = env
+    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), FAKE_ETCD_AUTH_ERR="Error: etcdserver: permission denied")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "etcd auth not enabled" not in r.stdout
+
+
+def test_checks_docker_permission_error_is_not_read_as_auth_on(env):
+    e, _, _ = env
+    err = "permission denied while trying to connect to the Docker daemon socket"
+    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), FAKE_ETCD_AUTH_ERR=err)
+    assert r.returncode == 1
+    assert "etcd auth not enabled" in r.stdout
 
 
 def test_checks_accept_go_nanosecond_backup_timestamps(env):
