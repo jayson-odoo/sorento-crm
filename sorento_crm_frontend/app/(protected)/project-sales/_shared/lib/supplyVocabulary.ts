@@ -62,6 +62,30 @@ import type {
   BoardLineOrderInquiry,
 } from '../types/fulfilmentPlanning.types';
 
+type UnplannableFacts = Pick<BoardContribution, 'fulfilment_location' | 'sources'>;
+
+/** The server's own reason for a line that HAS a location and still cannot be planned. */
+function stated(line: UnplannableFacts): string | null {
+  if (!line.fulfilment_location) return null;
+  return line.sources.find((source) => source.kind === 'unplannable')?.reason ?? null;
+}
+
+/**
+ * What an unplannable line prints where its plan would be. "Needs a location" only when that
+ * is true: a line at a bin outside fulfilment planning already has one, and telling a planner
+ * to set it sends them to the wrong fix.
+ */
+export function unplannableLabel(line: UnplannableFacts): string {
+  return stated(line) ?? 'Needs a location';
+}
+
+/** The full sentence for a line at a bin outside planning; null for any other line. */
+export function outsidePlanningSentence(line: UnplannableFacts): string | null {
+  return stated(line)
+    ? `${line.fulfilment_location} is outside fulfilment planning, so this line cannot be decided here.`
+    : null;
+}
+
 /**
  * The ladder writing today's proposals, mirroring
  * `app.services.project_supply_service.LADDER_VERSION`.

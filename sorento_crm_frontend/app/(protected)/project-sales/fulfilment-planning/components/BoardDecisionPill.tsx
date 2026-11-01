@@ -13,6 +13,7 @@ import type {
   BoardContribution,
   BoardDecision,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import { outsidePlanningSentence, unplannableLabel } from '../../_shared/lib/supplyVocabulary';
 
 /**
  * How far one line has got, in one word (R6).
@@ -109,7 +110,7 @@ export const VERDICT_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: PURCHASING_REJECTED_FILTER, label: 'Rejected by purchasing' },
   { value: 'stale', label: VERDICT_LABEL.stale },
   { value: 'cancelled', label: VERDICT_LABEL.cancelled },
-  { value: 'unplannable', label: 'Needs a location' },
+  { value: 'unplannable', label: 'Not plannable' },
 ];
 
 /**
@@ -233,9 +234,12 @@ export function BoardDecisionPill({
     return (
       <span
         className="block truncate text-sm text-destructive"
-        title="This line cannot be decided here: its sales order states no fulfilment location."
+        title={
+          outsidePlanningSentence(contribution) ??
+          'This line cannot be decided here: its sales order states no fulfilment location.'
+        }
       >
-        Needs a location
+        {unplannableLabel(contribution)}
       </span>
     );
   }

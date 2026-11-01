@@ -280,6 +280,17 @@ describe('FulfilmentBoardMatrix marks a cell whose supply is already decided', (
  * suggestion until it is opened". A bar plus the dominant kind in words is the answer, and the
  * whole point of it is that it changes the moment a decision does.
  */
+describe('FulfilmentBoardMatrix counts the lines that cannot be planned', () => {
+  // The count covers a line with no location AND a line at a bin outside planning, so its
+  // words cannot name one of those reasons. The cell's own rows say which.
+  it('does not claim they all need a location', () => {
+    renderMatrix([{ ...cellWith([contribution()]), unplannable_count: 2 }]);
+
+    expect(screen.getByText('2 not plannable')).toBeInTheDocument();
+    expect(screen.queryByText(/a location$/)).not.toBeInTheDocument();
+  });
+});
+
 describe('FulfilmentBoardMatrix colours a cell by its supply', () => {
   it('draws the proposal, faded, and names the dominant kind in words', () => {
     renderMatrix([
