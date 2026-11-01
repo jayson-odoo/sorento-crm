@@ -72,8 +72,9 @@ project sales order and on a dealer (retail) one.
 * All the dealer locations are one pile. Stock the book owes at another location, or has reserved,
   cannot be reserved here, so an oversold location elsewhere can turn a suggestion into a **Buy**.
 * A **Buy** on the line goes to purchasing in the order inquiry the usual way.
-* The line stays on the Loading Plan in the **Retail** column once it is confirmed, less whatever
-  is linked to a shipping order.
+* Once confirmed, the line shows on the Loading Plan in the **Retail** column, less whatever is
+  linked to a shipping order, but only while the order reads **Outstanding**. The Loading Plan
+  shows no line of a **Completed** order, dealer or project.
 
 ## Finding a dealer order
 
