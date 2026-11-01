@@ -1,0 +1,152 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sales by account type mock</title>
+<!-- SALES-ACCOUNT-TYPE (1 Nov 2026). Annotated static mock, not shipped code. Plan: documentation/plans/sales/PLAN-sales-account-type-1nov.md.
+     Figures are sorento_prod_1028 read-only, tied to the AutoCount "Sorento sales report by account". Agent codes and totals only: no customer names. -->
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7eb;--line-soft:#f1f2f4;--primary:#1b84ff;--primary-soft:#e9f3ff;--callout:#e11d74;--radius:8px;--font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}
+.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+h2.frame-title{font-size:15px;margin:28px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);padding:20px;position:relative}
+.w1280{width:1280px}.w375{width:375px;flex:none;padding:14px 16px}
+.notes{flex:1 1 360px;min-width:300px;max-width:560px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;word-break:break-word}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:600}
+.ph h1{font-size:20px;margin:0}
+.crumbs{color:var(--muted);font-size:13px;margin-top:2px}
+.phrow{margin-bottom:16px}
+.tabs{display:flex;gap:18px;border-bottom:1px solid var(--line);margin:0 0 14px;overflow-x:auto;white-space:nowrap}
+.tabs span{padding:8px 0;color:var(--muted);font-weight:500;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs span.on{color:var(--fg);border-bottom-color:var(--primary)}
+.fbar{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+.f{min-width:150px;flex:0 1 auto}.f label{display:block;font-size:12px;color:var(--muted);margin-bottom:3px}
+.sel{border:1px solid var(--line);border-radius:6px;padding:6px 10px;background:#fff;white-space:nowrap}
+.f.new .sel{border-color:var(--primary);background:var(--primary-soft)}
+.w375 .f{flex:1 1 100%}
+.grid{border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:13px}
+.grid table{border-collapse:collapse;width:100%;table-layout:fixed}
+.grid th{background:#fafafa;color:var(--muted);font-weight:500;text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+.grid td{padding:8px 10px;border-bottom:1px solid var(--line-soft)}
+.num{text-align:right!important;font-variant-numeric:tabular-nums}
+tr.tot td{border-top:1px solid var(--line);font-weight:600}
+.caption{font-weight:600;margin:0 0 8px}
+.chat{display:flex;flex-direction:column;gap:8px;max-width:640px}
+.u,.b{padding:8px 12px;border-radius:12px;white-space:pre-line}
+.u{align-self:flex-end;background:var(--primary);color:#fff}
+.b{align-self:flex-start;background:var(--bg);border:1px solid var(--line)}
+.case{color:var(--muted);font-size:12px;margin:12px 0 2px;font-weight:600}
+</style></head><body><div class="doc">
+<h1>Sales by account type</h1>
+<p class="sub">Account type is the customer's AutoCount debtor type. It joins the filters and the summary on Sales &amp; outstanding, on the same figures the bot reads. The blue field is the only new control. Qty stays as it is today and is left out here because the tie-out checked RM only.</p>
+
+<h2 class="frame-title">1. Filter on: YMH, CABANA account, by month (1280)</h2>
+<div class="layout"><div class="scroll"><div class="frame w1280">
+<div class="phrow"><div class="ph"><h1>Sales &amp; outstanding</h1><div class="crumbs">Sales / Sales &amp; outstanding</div></div></div>
+<div class="tabs"><span class="on">Invoiced</span><span>Delivered</span><span>Ordered</span><span>Undelivered orders</span><span>Pending delivery</span><span>Unpaid invoices</span></div>
+<div class="fbar">
+<div class="f"><label>Period</label><div class="sel">1 Jan 2026 to 28 Oct 2026</div></div>
+<div class="f"><label>Customer</label><div class="sel">All</div></div>
+<div class="f new"><label>Account type</label><div class="sel">CABANA</div></div>
+<div class="f"><label>Brand</label><div class="sel">All</div></div>
+<div class="f"><label>Category</label><div class="sel">All</div></div>
+<div class="f"><label>Sales agent</label><div class="sel">YMH I, YMH III, YMH IV</div></div>
+<div class="f"><label>Specification</label><div class="sel">All</div></div>
+</div>
+<p class="caption">Invoiced sales</p>
+<div class="grid" style="max-width:520px"><table><thead><tr><th>Month</th><th class="num">RM</th></tr></thead><tbody>
+<tr><td>Jan 2026</td><td class="num">96,416.80</td></tr>
+<tr><td>Feb 2026</td><td class="num">71,106.53</td></tr>
+<tr><td>Mar 2026</td><td class="num">102,371.78</td></tr>
+<tr><td>Apr 2026</td><td class="num">118,942.40</td></tr>
+<tr><td>May 2026</td><td class="num">86,356.80</td></tr>
+<tr><td>Jun 2026</td><td class="num">114,335.11</td></tr>
+<tr><td>Jul 2026</td><td class="num">91,924.56</td></tr>
+<tr><td>Aug 2026</td><td class="num">76,240.53</td></tr>
+<tr><td>Sep 2026</td><td class="num">88,781.93</td></tr>
+<tr><td>Oct 2026</td><td class="num">83,873.54</td></tr>
+<tr class="tot"><td>Total</td><td class="num">930,349.98</td></tr>
+</tbody></table></div>
+</div></div>
+<div class="notes"><ol>
+<li><span class="co">1</span><div><b>Account type filter</b>A multi-select like Brand. Its options are the types the customers carry, never a fixed list.<span class="ref">sorento_crm_frontend/components/reports/ReportFilterBar.tsx, drawn from a new SelectParam beside brand in reports/datasets/billing_document_lines.py:231</span></div></li>
+<li><span class="co">2</span><div><b>Same tabs on every basis</b>The filter appears on all six tabs.<span class="ref">sales/sales-and-outstanding/SalesAndOutstandingView.tsx:17-29</span></div></li>
+<li><span class="co">3</span><div><b>Summary table</b>The existing pivot, unchanged.<span class="ref">components/reports/ReportPivotTable.tsx</span></div></li>
+<li><span class="co">4</span><div><b>Tie-out</b>January to August match the AutoCount PDF's YMH CABANA column to the cent. The PDF stops on 4 Sep, so September and October are the 28 Oct copy's own figures.</div></li>
+</ol></div></div>
+
+<h2 class="frame-title">2. Split: YMH, January, by account type (1280)</h2>
+<div class="layout"><div class="scroll"><div class="frame w1280">
+<div class="tabs"><span class="on">Invoiced</span><span>Delivered</span><span>Ordered</span><span>Undelivered orders</span><span>Pending delivery</span><span>Unpaid invoices</span></div>
+<div class="fbar">
+<div class="f"><label>Period</label><div class="sel">1 Jan 2026 to 31 Jan 2026</div></div>
+<div class="f"><label>Customer</label><div class="sel">All</div></div>
+<div class="f new"><label>Account type</label><div class="sel">All</div></div>
+<div class="f"><label>Brand</label><div class="sel">All</div></div>
+<div class="f"><label>Category</label><div class="sel">All</div></div>
+<div class="f"><label>Sales agent</label><div class="sel">YMH I, YMH III, YMH IV</div></div>
+<div class="f"><label>Specification</label><div class="sel">All</div></div>
+</div>
+<div class="grid" style="max-width:520px"><table><thead><tr><th>Account type</th><th class="num">RM</th></tr></thead><tbody>
+<tr><td>SORENTO</td><td class="num">282,203.77</td></tr>
+<tr><td>CERAMIC</td><td class="num">315,483.59</td></tr>
+<tr><td>CABANA</td><td class="num">96,416.80</td></tr>
+<tr class="tot"><td>Total</td><td class="num">694,104.16</td></tr>
+</tbody></table></div>
+</div></div>
+<div class="notes"><ol>
+<li><span class="co">5</span><div><b>Account type as rows</b>Picked in Configure summary like any other dimension. The existing Debtor type column is reused and relabelled.<span class="ref">components/reports/ConfigureSummaryDialog.tsx; reports/datasets/billing_document_lines.py:132</span></div></li>
+<li><span class="co">6</span><div><b>A customer with no type</b>Shows as the pivot's existing blank row, so the rows still add up to all sales.</div></li>
+</ol></div></div>
+
+<h2 class="frame-title">3. Phone (375)</h2>
+<div class="layout"><div class="frame w375">
+<div class="tabs"><span class="on">Invoiced</span><span>Delivered</span><span>Ordered</span></div>
+<div class="fbar">
+<div class="f new"><label>Account type</label><div class="sel">CABANA</div></div>
+<div class="f"><label>Sales agent</label><div class="sel">YMH I, YMH III, YMH IV</div></div>
+</div>
+<div class="grid"><table><thead><tr><th>Month</th><th class="num">RM</th></tr></thead><tbody>
+<tr><td>Jan 2026</td><td class="num">96,416.80</td></tr>
+<tr><td>Feb 2026</td><td class="num">71,106.53</td></tr>
+<tr><td>Mar 2026</td><td class="num">102,371.78</td></tr>
+</tbody></table></div>
+</div>
+
+<div class="frame" style="flex:1 1 560px;max-width:760px">
+<p class="caption">4. The bot</p>
+<div class="chat">
+<div class="case">A word that is both a brand and an account: the bot asks</div>
+<div class="u">YMH sales for cabana in Jan</div>
+<div class="b">Cabana as the item brand, or the customer's account (A/C IV)?
+1. Item brand
+2. Customer account</div>
+<div class="u">account</div>
+<div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
+Account type: CABANA (A/C IV)
+RM 96,416.80</div>
+<div class="case">Same question, answered "brand"</div>
+<div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
+Brand: CABANA
+RM 153,888.62</div>
+<div class="case">The account is named, so no question</div>
+<div class="u">total sales 2026 for sales agent ymh, cabana, invoiced, breakdown by month, for account 4</div>
+<div class="b">YMH invoiced sales by month, 1 Jan - 31 Dec 2026
+Account type: CABANA (A/C IV)
+Jan 2026 RM 96,416.80
+Feb 2026 RM 71,106.53
+... one line per month ...
+Oct 2026 RM 83,873.54</div>
+<div class="case">Brand and account together</div>
+<div class="u">cabana brand on account 3 for YMH in Jan</div>
+<div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
+Brand: CABANA, account type: CERAMIC (A/C III)
+RM 76,877.71</div>
+</div></div></div>
+</div></body></html>
