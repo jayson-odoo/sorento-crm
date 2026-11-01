@@ -1958,14 +1958,40 @@ jobs:
   # job reads via `cache-from`.
   build-images:
     name: Build and push images
-    needs: [changes]
-    # Same condition as build-and-deploy: only build for real on a release
-    # (workflow_dispatch on main). A push to main builds nothing (see the
-    # `push` trigger comment), a dispatch on any other ref runs the suite
-    # only, and a PR run still needs the images to exist for its own
-    # validate-backend/validate-mcp legs, which build separately (load:
-    # true, no push) and are unaffected by this job's `if`.
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    # After the tests, not beside them (CI-MAC-ONLY, crew/owner 1 Nov 2026):
+    # this job is GitHub-hosted and billed against the private repo's 3,000
+    # min/month, and a release whose tests fail used to bill its ~7-minute
+    # build anyway (about 660 min a month at the 26 Oct-1 Nov failure rate).
+    # Now a red release bills 0 GitHub-hosted minutes; a green one reaches the
+    # deploy approval about 7 minutes later.
+    needs:
+      [
+        changes,
+        check-migration-heads,
+        validate-backend,
+        validate-mcp,
+        validate-frontend,
+        test-backend,
+        test-backend-scm,
+        typecheck-frontend,
+        lean-gate,
+      ]
+    # Only build for real on a release (workflow_dispatch on main). A push to
+    # main builds nothing (see the `push` trigger comment), a dispatch on any
+    # other ref runs the suite only, and the full-suite validate-backend/
+    # validate-mcp legs build separately (load: true, no push).
+    # `!cancelled()` and the result checks, as on build-and-deploy: a lean
+    # release skips the shards and a skip_tests release skips every test job
+    # on purpose, and the default success-of-every-need rule would skip this
+    # job with them. A failed or cancelled need stops it.
+    if: >-
+      ${{ !cancelled()
+      && github.event_name == 'workflow_dispatch'
+      && github.ref == 'refs/heads/main'
+      && needs.changes.result == 'success'
+      && needs.check-migration-heads.result == 'success'
+      && !contains(needs.*.result, 'failure')
+      && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-latest
     # The frontend build measured 7.6 min (run 38017372957); twice the worst
     # of all three in sequence plus setup.

@@ -1782,6 +1782,37 @@ LEAN_RELEASE = {
 }
 
 
+@pytest.mark.parametrize(
+    "outputs,failed",
+    [
+        (LEAN_RELEASE, "lean-gate"),
+        (LEAN_RELEASE, "changes"),
+        (LEAN_RELEASE, "check-migration-heads"),
+        ({**LEAN_RELEASE, "lean": "false", "frontend": "true", "mcp": "true"}, "test-backend"),
+        ({**LEAN_RELEASE, "lean": "false", "frontend": "true", "mcp": "true"}, "test-backend-scm"),
+        ({**LEAN_RELEASE, "lean": "false", "frontend": "true", "mcp": "true"}, "validate-frontend"),
+        ({**LEAN_RELEASE, "lean": "false", "frontend": "true", "mcp": "true"}, "typecheck-frontend"),
+        ({**LEAN_RELEASE, "lean": "false", "frontend": "true", "mcp": "true"}, "validate-backend"),
+        ({**LEAN_RELEASE, "lean": "false", "frontend": "true", "mcp": "true"}, "validate-mcp"),
+    ],
+)
+def test_a_release_whose_tests_fail_builds_no_image(outputs, failed):
+    """CI-MAC-ONLY (crew/owner, 1 Nov 2026): build-images is the GitHub-hosted job a red
+    release used to bill anyway (it ran beside the tests). It now needs every test job,
+    so a failed test means 0 GitHub-hosted minutes for that release."""
+    results = _simulate("workflow_dispatch", outputs=outputs, forced={failed: "failure"})
+    assert results[failed] == "failure", results
+    assert results["build-images"] == "skipped", (failed, results)
+    assert results["build-and-deploy"] == "skipped", (failed, results)
+
+
+def test_build_images_waits_for_every_test_job():
+    needs = set(_job_ifs()["build-images"]["needs"])
+    tests = {"changes", "check-migration-heads", "lean-gate", "test-backend", "test-backend-scm",
+             "validate-frontend", "typecheck-frontend", "validate-backend", "validate-mcp"}
+    assert needs == tests, needs ^ tests
+
+
 def test_a_lean_release_runs_the_release_tests_job_never_the_shards():
     ran = _ran(_simulate("workflow_dispatch", outputs=LEAN_RELEASE))
     assert ran == {"check-migration-heads", "changes", "lean-gate", "build-images", "build-and-deploy"}
