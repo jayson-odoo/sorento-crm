@@ -9,6 +9,8 @@
 # Checks: disk use (and prune of old pre-migrate dumps past PRUNE_AT_PCT), etcd members healthy,
 # exactly one Patroni leader in the cluster, and on the leader: a replica streaming, its byte
 # lag, WAL archiving fresh and not failing, pg_wal size, newest WAL-G base backup age.
+# EXPECT_REPLICAS=0 while the leader runs alone (phase A of PLAN-n8n-decom-ha-01nov.md, before node B
+# joins; run it with ETCD_MEMBERS=2 then): the "no replica streaming" alert is off, the rest stays.
 # Cron runs from $HOME, so it cd's to PROJECT_DIR first (compose files are relative).
 set -uo pipefail
 
@@ -20,6 +22,7 @@ SNAPSHOT_DIR="${SNAPSHOT_DIR:-/opt/sorento-crm2/backups/pre-migrate}"
 SNAPSHOT_KEEP="${SNAPSHOT_KEEP:-2}"
 ETCD_MEMBERS="${ETCD_MEMBERS:-3}"
 ETCD_ONLY="${ETCD_ONLY:-0}"
+EXPECT_REPLICAS="${EXPECT_REPLICAS:-1}"
 MAX_LAG_BYTES="${MAX_LAG_BYTES:-8388608}"          # half of maximum_lag_on_failover
 MAX_ARCHIVE_AGE_S="${MAX_ARCHIVE_AGE_S:-600}"
 MAX_WAL_BYTES="${MAX_WAL_BYTES:-10737418240}"      # 10 GB
@@ -84,7 +87,7 @@ if [ "$ETCD_ONLY" != "1" ]; then
   code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' "$PATRONI_URL" 2>/dev/null) || code=000
   if [ "$code" = "200" ]; then
     replicas=$(sql "SELECT count(*) FROM pg_stat_replication WHERE state = 'streaming'")
-    if [ "${replicas:-0}" -lt 1 ]; then note "no replica streaming"; fi
+    if [ "$EXPECT_REPLICAS" != "0" ] && [ "${replicas:-0}" -lt 1 ]; then note "no replica streaming"; fi
     lag=$(sql "SELECT coalesce(max(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)), 0)::bigint FROM pg_stat_replication")
     if [ -n "$lag" ] && [ "$lag" -gt "$MAX_LAG_BYTES" ]; then note "replica lag ${lag} bytes"; fi
     arch=$(sql "SELECT coalesce(extract(epoch FROM now() - last_archived_time)::bigint, -1) || ' ' || (coalesce(last_failed_time, 'epoch') > coalesce(last_archived_time, 'epoch'))::int FROM pg_stat_archiver")
