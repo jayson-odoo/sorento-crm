@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-WA-W2 - safe dealer writes on WhatsApp, each with a confirm
 
-Status: CARD v1 ANSWERED 1 Nov (Q1-Q3, Q5 by crew from standing rulings; Q4 by the owner). Slice 1 in build on #2072. Track: L.
+Status: SLICE 1 BUILT on #2072: reviewer READY (kill test run), security PASS after rounds 1-2; owner hand test next. Card v1 answered 1 Nov (Q1-Q3, Q5 by crew from standing rulings; Q4 by the owner). Track: L.
 UAC: `agentic-wa-w2-acceptance-criteria.md` (written after the owner answers the card).
 
 Parent: `PLAN-agentic-knowledge-p2-31oct.md` section "W2 - writes on WhatsApp". W1 merged in #2053
