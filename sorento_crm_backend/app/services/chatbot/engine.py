@@ -1217,6 +1217,23 @@ def _known_account_types(db: Session, parser_config: Any, contact_respond_id: An
         )
         if (scope or {}).get("enforced"):
             return []
+        # Only a contact the sales report accepts (the grant or a live salesperson, `_may_see_salespeople`), widened for
+        # the Outstanding reveal and an open pending-delivery ask. Anyone else gets no line; a lookup error fails closed.
+        from app.services import contact_asker, contact_field_reveal_service
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        resolved = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=str(contact_respond_id).strip(), space_id=business_services.fetch_space_id(db)
+        )
+        if not resolved:
+            return []
+        granted = contact_field_reveal_service.granted_keys(db, str(resolved))
+        if not (
+            _may_see_salespeople(db, str(resolved))
+            or "sales_orders.outstanding" in granted
+            or contact_asker.pending_delivery_open(db, str(resolved))
+        ):
+            return []
         from app.services.reports.ask_params import account_type_options
 
         return [name for name, _label in account_type_options(db)]
