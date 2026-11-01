@@ -1,8 +1,23 @@
 # PLAN: price tag combos carry their own picture, description and options, pullable into templates
 
-Status: draft, behaviour card + mock go to the owner first; nothing is built until the owner OKs both. Track: full (size L, migration).
+Status: approved by the owner 1 Nov 2026 (card "1a 2a 3a 4a 5b", mock approved), in build. Track: full (size L, migration).
 Lane: PRICETAG-COMBO, branch `crew/pricetag-combo`, one PR for the feature, seed data stays outside this repo.
-UAC: written after the owner's answers, as `price-tag-combo-template-fields-acceptance-criteria.md` beside this file.
+UAC: `price-tag-combo-template-fields-acceptance-criteria.md` beside this file.
+
+## Owner rulings, 1 Nov 2026
+
+- "reuse as much thing as we have with combo now as much as possible, just extend from there": new columns on `product_combos` and `product_combo_parts` only, no parallel model; every existing combo and template keeps working.
+- Q1 (a): a combo can hold its own LP and SP, plus an SP per option and a top-up per upgrade. Blank = today's summed price. Flyer prices are not loaded. Reverses the 14 Sep "no price on a combo" ruling for combos where a price is filled.
+- Q2 (a): one tag per combo line, listing every option with its price; a dealer pick narrows it to that option.
+- Q3 (a): two starter templates ship with the import; marketing adjusts.
+- Q4 (a): free items are plain text on the combo.
+- Q5 (b): load all flyer combos, drop missing parts, resolve unclear cards with the best reading, list every guess in the import report.
+- The production import is a separate owner go.
+
+Lead's decisions:
+- A combo lives on a real host (`host_product_id` NOT NULL). A host code with no product cannot load, so those flyer combos are reported `not_loaded_host_missing`, not created. Measured on the 28 Oct copy: 5 of 167.
+- A top-up amount is a flyer price too, so it is not loaded. Upgrades therefore need their own marker, `is_upgrade`, because a blank amount cannot mean "upgrade".
+- Combo Choices and Combo Top-ups print as text lines through the existing text layer, not a new table layer. A table would need a new layer kind in three renderers. Trigger for one: marketing cannot align prices with text.
 Predecessors: `PLAN-price-tag-combos.md` (#913), `PLAN-price-tag-r10.md` (S4 description, S5 combo image, #1083), `_archive/dealer-kit/PLAN-price-tag-line-promo-combo-subject.md` (#948).
 
 ## Journey (owner, 1 Nov 2026)
@@ -50,8 +65,9 @@ Additive only. Existing templates and approved tags print exactly as before.
 | Combo title | none, `name` holds the printed title | existing `name` column and `AddComboModal` |
 | OR choices | none | `choice_group`, Split / Pick one on the tag |
 | Free items | `product_combos.free_items` TEXT, copied to the line | `price_tag_request_lines.included_accessories` and its slot |
-| Top-ups | `product_combo_parts.topup_amount` NUMERIC | part rows, Sold with card |
-| Combo price | decided by the owner, see the card | `manual_sell_price` precedent, tag override stays last |
+| Top-ups | `product_combo_parts.topup_amount` NUMERIC, `is_upgrade` BOOLEAN | part rows, Sold with card |
+| Combo price | `product_combos.list_price`, `sell_price`; `product_combo_parts.sell_price` | `manual_sell_price` precedent, tag override stays last |
+| One tag per combo line | `_add_line_tags` stops multiplying when the line has a `combo_id` | carried tag rule, Split, Pick one |
 | Template fields | new Combo group in the Field select and Insert field dialog | `SlotBinding`, `merge-fields.ts`, `InsertFieldDialog` |
 | Designer preview | Preview combo picker | `useTagBindings`, `product_tag_data` |
 | Later data changes | combo fields join the tag data diff | `apply_auto_data_updates`, red dot, roll back |
@@ -66,6 +82,6 @@ Not built, with the trigger that would justify it:
 
 Real business data. `combos-seed.json` and the photo crops stay in the crew's private state folder, never in this public repo. This PR ships only the import script and a synthetic test fixture.
 
-## Open
+## Order of work
 
-Owner answers on the card, then UAC, tickets, red tests, build.
+One lane, one PR. Tester writes red tests from the UAC; coder makes them green, one behaviour per commit; reviewer and security-reviewer; browser pass 1280 and 375; hand test on the crew copy. The new list endpoint and the migration run the schema and pagination guards.
