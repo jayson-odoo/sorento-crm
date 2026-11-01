@@ -1,4 +1,5 @@
-"""DEALER-PLANNING PR 2, a line at its own pool (UAC R7 to R11; R12 is the front end's).
+"""DEALER-PLANNING PR 2, a line at its own pool (UAC R7 to R12; R12's client half is
+`CellStockTable.ownPool.test.tsx`).
 
 PR 1 lets a line at a dealer-segment pool be planned. It still nets the line's own demand
 against the stock it stands on, so 10 on hand and 10 ordered read a net of zero and propose
@@ -33,13 +34,14 @@ import pytest
 
 from app.models.inventory import Warehouse
 from app.models.project_so import OrderInquiryRow
+from app.schemas.project_board import BoardCellLocation
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
 from app.services.project_fulfilment_board_service import FulfilmentBoardService
 from app.services.project_supply_service import ProjectSupplyService, SupplyLinesRefused
 
 from .._pg_fixture import blank_session
 from ..test_so_supply_confirmation import _core_line, _project_line, _stock, _uid, _warehouse
-from .test_project_supply_service_ladder import REQUIRED_DATE, _components, _seed_line, _world
+from .test_project_supply_service_ladder import REQUIRED_DATE, _seed_line, _world
 
 TODAY = date.today()
 
@@ -91,7 +93,9 @@ def _totals(components):
 
 
 def _sheet(db, order):
-    return _totals(_components(ProjectSupplyService(db).proposal_for(order)))
+    """The whole order's proposal, every line: what the board's contributions sum to."""
+    proposal = ProjectSupplyService(db).proposal_for(order)
+    return _totals([c for line in proposal["lines"] for c in line["components"]])
 
 
 def _board(db, *cores):
@@ -250,7 +254,10 @@ def test_r8_a_line_at_a_retired_pool_adds_nothing_back():
 
 
 def test_r8_a_part_delivered_line_adds_back_what_it_still_owes():
-    """10 ordered, 3 delivered, 10 on hand, nobody else: it owes 7, so Reserve 7."""
+    """10 ordered, 3 delivered, 10 on hand, nobody else. The line asks its PLAN quantity, 10 (14
+    September 2026 ruling), so the proposal is Reserve 10. The net and Available are what prove
+    the 7 it still owes went back: the book counted 7, so 3 becomes 10, and an add-back of
+    `open_qty` would read 13."""
     with blank_session() as db:
         world = _world(db)
         pool = _pool(db, 10, world[3])
@@ -258,8 +265,12 @@ def test_r8_a_part_delivered_line_adds_back_what_it_still_owes():
         core_line.qty_delivered = Decimal("3")
         db.commit()
         got = _sheet(db, order)
+        service = ProjectSupplyService(db)
+        fact = next(iter(service._facts_for(order, service.lines_of(str(order.id))).values()))
+        net, available = fact.pools_net, fact.pool_available
 
-    assert got == {"reserve": Decimal("7")}
+    assert got == {"reserve": Decimal("10")}
+    assert (net, available) == (Decimal("10"), Decimal("10"))
 
 
 def test_r8_another_line_never_reads_this_lines_add_back():
@@ -453,7 +464,7 @@ def test_r10_on_the_board_a_project_line_moves_only_for_a_real_draw():
 
 # --------------------------------------------------------------------------- R10, random worlds
 
-SEEDS = range(int(os.environ.get("RND_FROM", "0")), int(os.environ.get("RND_TO", "8")))
+SEEDS = range(int(os.environ.get("RND_FROM", "0")), int(os.environ.get("RND_TO", "30")))
 
 
 def _random_world(db, rng, n_pools):
@@ -511,10 +522,17 @@ def _check_random_world(seed, n_pools):
             alone = _totals([s for c in distinct for s in c["sources"]])
             if sheet != alone:
                 problems.append(f"{label}: sheet {sheet} != board alone {alone}")
-            # A single retail line whose pool covers the book: it must read it all, no share.
+            # A single retail line whose pool covers the book reads it all, no share, when the
+            # running net allows it: the pools are one pile, so a true net below zero means
+            # another pool's oversell may turn it into a Buy (the net bound, R10 and R11).
             if entry["klass"] == "retail" and len(entry["lines"]) == 1:
                 where, qty = entry["lines"][0]
-                if hands[by_id[where]] >= book[where] and sheet != {"reserve": Decimal(qty)}:
+                net_allows = sum(hands) - sum(book.values()) >= 0
+                if (
+                    net_allows
+                    and hands[by_id[where]] >= book[where]
+                    and sheet != {"reserve": Decimal(qty)}
+                ):
                     problems.append(f"{label}: retail line {qty} covered by its pool read {sheet}")
 
         for entry in orders:
@@ -557,10 +575,15 @@ def _check_random_world(seed, n_pools):
 @pytest.mark.parametrize("seed", list(SEEDS))
 @pytest.mark.parametrize("n_pools", [2, 3])
 def test_r10_random_worlds_over_two_and_three_pools_confirm_their_own_proposal(n_pools, seed):
-    """One seeded world of two or three pools per case (16 cases, about a second each). For each: the engine's own proposal confirms with
-    0 short and 0 refused, the sheet equals the board alone, and a single retail line whose
-    pool covers its book reads Reserve all of it. Three pools are required: the shape a
-    previous attempt got wrong while two looked fine. Sized for under a minute."""
+    """One seeded world of two or three pools per case (60 cases, about a second each). For each:
+    the engine's own proposal confirms with 0 short and 0 refused, the sheet equals the board
+    alone, and a single retail line whose pool covers its book reads Reserve all of it WHEN THE
+    RUNNING NET ALLOWS IT: the pools' true net (all on hand less the whole book) is not negative,
+    so the net plus the line's own add-back reaches its quantity. Below that the bound stands and
+    it may read Buy (captain, 1 Nov 2026; measured read-only on dev: of 3,711 retail lines at these
+    pools, 767 are covered by their own pile, and the bound turns 2 of those into Buy, 5 units).
+    Three pools are required: the shape a previous attempt got wrong while two looked fine. Sized
+    for under a minute."""
     problems = _check_random_world(seed, n_pools)
 
     assert not problems, "\n".join(problems[:12])
@@ -630,3 +653,47 @@ def test_r11_two_orders_pressed_separately_cannot_both_hold_the_same_10(klass):
         second = _confirm_reserve(db, order_y, line_y, pool, actor, "10")
 
     assert first + second >= Decimal("10"), (first, second)
+
+
+# --------------------------------------------------------------------------- R12, the server
+
+
+@pytest.mark.parametrize(
+    "klass, hands, qty, own_figure, subtotal, sources",
+    [
+        ("project", (30,), 15, "15", "15", {"reserve": Decimal("15")}),
+        ("retail", (30,), 15, "30", "30", {"reserve": Decimal("15")}),
+        ("project", (10, 40), 30, "5", "25", {"reserve": Decimal("25"), "buy": Decimal("5")}),
+        ("retail", (10, 40), 30, "10", "30", {"reserve": Decimal("30")}),
+    ],
+    ids=["project-one-pool", "retail-one-pool", "project-two-pools", "retail-two-pools"],
+)
+def test_r12_the_row_a_line_stands_on_and_the_pools_subtotal_state_the_walks_figure(
+    klass, hands, qty, own_figure, subtotal, sources
+):
+    """R12: the stock pop-up on a line at its own pool. A project-class line's row and subtotal
+    show the share of what is Available there; a retail line's show Available, nothing being held
+    back from it. Another pool's row adds its own share of the true net to the subtotal, and
+    states none of the own-pool fields. Read through `BoardCellLocation`, because `response_model`
+    silently drops a field it does not declare."""
+    with blank_session() as db:
+        world = _world(db)
+        pool = _pool(db, hands[0], world[3])
+        for hand in hands[1:]:
+            _pool(db, hand, world[3])
+        _o, _l, core, _c = _line(db, world, pool, qty, klass=klass, when=_far(10))
+        row = _board_row(_board(db, core), core)
+        rows = [BoardCellLocation.model_validate(entry) for entry in row["locations"]]
+        got = _sources(row)
+        pool_id = str(pool.id)
+
+    own = [entry for entry in rows if entry.stands_on_pool]
+    others = [entry for entry in rows if not entry.stands_on_pool]
+
+    assert got == sources
+    assert [entry.warehouse_id for entry in own] == [pool_id]
+    assert Decimal(own[0].available_for_project) == Decimal(own_figure)
+    assert Decimal(own[0].pool_subtotal_for_project) == Decimal(subtotal)
+    assert own[0].own_pool_no_share is (klass == "retail")
+    assert all(entry.pool_subtotal_for_project is None for entry in others)
+    assert not any(entry.own_pool_no_share for entry in others)

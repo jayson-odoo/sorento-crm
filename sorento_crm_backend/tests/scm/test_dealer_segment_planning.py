@@ -221,8 +221,9 @@ def test_a_consignment_at_a_flagged_off_dealer_bin_still_borrows_at_its_own_bin(
     assert Decimal(str(components[0]["qty"])) == Decimal("10")
 
 
-def test_the_board_plans_a_line_at_a_dealer_pool_as_the_sheet_does():
-    """AC-1 on the screen's own read."""
+def test_the_board_plans_a_project_line_at_a_dealer_pool_with_the_share_as_the_sheet_does():
+    """AC-1 on the screen's own read. 10 on hand, 10 ordered, nobody else: the line's own demand
+    does not net the pool to zero (R7), and a project-class line keeps the dealer share (R9)."""
     with blank_session() as db:
         world = _board_world(
             db, doc_type="sales_order", status="open", qty="10", delivered="0", con_stock=10,
@@ -236,4 +237,7 @@ def test_the_board_plans_a_line_at_a_dealer_pool_as_the_sheet_does():
         row = _contributions(board, world["order"].so_number)[0]
 
     assert row["unplannable"] is False
-    assert [(s["kind"], Decimal(s["qty"])) for s in row["sources"]] == [("buy", Decimal("10"))]
+    assert [(s["kind"], Decimal(s["qty"])) for s in row["sources"]] == [
+        ("reserve", Decimal("5")),
+        ("buy", Decimal("5")),
+    ]
