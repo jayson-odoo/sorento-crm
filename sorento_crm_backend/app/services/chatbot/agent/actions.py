@@ -151,10 +151,15 @@ def _out_steps(steps: list[dict]) -> list[dict]:
 
 def _recheck(db, ctx, step: dict) -> str | None:
     """Why this step may no longer run, or None. Reads the record again as the user."""
-    definition = writes.WRITES.get(step["tool"])
+    definition = writes.write_def(step["tool"])
     if definition is None:
         return "This change is no longer available."
-    if not writes.holds(db, ctx.user_id, definition.user_permission):
+    if definition.runs_as == "contact":
+        from app.services.chatbot.agent import portal_writes
+
+        if not portal_writes.may_use(db, ctx, definition.name):
+            return "This change is no longer available to you."
+    elif not writes.holds(db, ctx.user_id, definition.user_permission):
         return "You no longer have permission for this change."
     if not writes.holds_ctx(db, ctx, definition.user_permission):
         return "You do not have permission for this change."
@@ -204,7 +209,9 @@ def _load(db, contact_respond_id: str, action_id: str) -> AgentAction:
 def operator_may_decide(db, ctx, action: AgentAction) -> bool:
     """Does the console operator (if any) hold the slug of every step of this action?"""
     return all(
-        (d := writes.WRITES.get(step.get("tool"))) is not None and writes.holds_ctx(db, ctx, d.user_permission)
+        (d := writes.write_def(step.get("tool"))) is not None
+        # A dealer write needs no slug: a console confirm of one writes nothing (owner W2-Q3 (a)).
+        and (d.runs_as == "contact" or writes.holds_ctx(db, ctx, d.user_permission))
         for step in action.steps or []
     )
 
@@ -266,13 +273,18 @@ def confirm(
         if failed:
             step["status"] = "skipped"
             continue
-        definition = writes.WRITES[step["tool"]]
+        definition = writes.write_def(step["tool"])
         try:
             if definition.execute_takes_before:
-                run = lambda user: definition.execute(db, user, step["args"], step.get("before") or {})  # noqa: E731
+                run = lambda who: definition.execute(db, who, step["args"], step.get("before") or {})  # noqa: E731
             else:
-                run = lambda user: definition.execute(db, user, step["args"])  # noqa: E731
-            result = writes.run_as_user(db, ctx, run, tool_name=step["tool"])
+                run = lambda who: definition.execute(db, who, step["args"])  # noqa: E731
+            if definition.runs_as == "contact":
+                from app.services.chatbot.agent import portal_writes
+
+                result = portal_writes.run_as_contact(db, ctx, run, tool_name=step["tool"])
+            else:
+                result = writes.run_as_user(db, ctx, run, tool_name=step["tool"])
             step.update(status="done", result_id=result.get("id"), after=result.get("after"), error=None)
             try:
                 if definition.changes is not None:
@@ -311,7 +323,7 @@ def _finish(
     notes = [
         s["note"] for s in steps
         if s.get("status") == "done" and s.get("note")
-        and getattr(writes.WRITES.get(s.get("tool")), "note_in_reply", False)
+        and getattr(writes.write_def(s.get("tool")), "note_in_reply", False)
     ]
     return ActionOutcome(str(action.id), status, _reply(status, steps), _out_steps(steps), notes)
 
@@ -338,7 +350,7 @@ def cancel(db, contact_respond_id: str, action_id: str, *, operator_user_id: str
             raise ActionRefused("entry_refused")
         theirs = str(operator_user_id)
         may = theirs == str(ctx.user_id) or any(
-            (d := writes.WRITES.get(step.get("tool"))) is not None and writes.holds(db, theirs, d.user_permission)
+            (d := writes.write_def(step.get("tool"))) is not None and writes.holds(db, theirs, d.user_permission)
             for step in action.steps or []
         )
         if str(ctx.user_id) != str(action.user_id) or not may:

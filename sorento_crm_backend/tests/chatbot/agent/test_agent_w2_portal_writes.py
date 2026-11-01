@@ -38,6 +38,19 @@ def db(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _listeners():
+    """Startup registers these in the app; a test registers them itself (idempotent)."""
+    from app.audit_context import clear_actor
+    from app.services.audit_service import register_audit_listeners
+    from app.services.company_scope import register_company_scope_listeners
+
+    register_company_scope_listeners()
+    register_audit_listeners()
+    yield
+    clear_actor()
+
+
+@pytest.fixture(autouse=True)
 def _no_outside_calls(monkeypatch):
     """Submits notify teams; nothing may leave the process in a test (no Respond, no email)."""
     from app.services import queue_service
@@ -101,7 +114,7 @@ def _submitted_si(db, contact_pk: str, *, minutes_ago: int = 1, status: str = "p
     for n in range(1, history + 1):
         db.add(PortalFormRevision(
             id=str(uuid.uuid4()), source_entity_type="stock_inquiry", source_entity_id=rid, version_no=n,
-            revision_no=0, kind="original" if n == 1 else "resubmission", created_at=stamp,
+            revision_no=0, kind="original" if n == 1 else "resubmission", created_at=stamp, submitted_at=stamp,
         ))
     db.flush()
     return rid
@@ -659,3 +672,62 @@ def test_ac18_the_list_refuses_a_kind_the_contact_cannot_see(db):
 
 
 # AC-19 (router unchanged for open bot questions) stays pinned by tests/chatbot/agent/test_router_bot_asked.py.
+
+
+def test_ac15_an_inquiry_sent_through_the_agent_can_be_withdrawn_at_once(db):
+    """End to end on the real submit: nothing the submit itself creates blocks its own undo."""
+    from app.models.notification import Notification
+    from app.models.portal import PortalFormRevision
+    from app.models.procurement import StockInquiry
+
+    contact = _dealer(db)
+    ctx = _ctx(db, contact)
+    _out, step = _propose(db, ctx, SI_CREATE, {"product_code": _product(db), "quantity": "4"})
+    assert _store_and_confirm(db, ctx, step).status == "executed"
+    rid = str(db.query(StockInquiry.id).filter(StockInquiry.contact_id == contact["pk"]).scalar())
+
+    out, step = _propose(db, ctx, SI_WITHDRAW, {"submission_id": rid}, [rid])
+    assert out.status == "proposed", out.message
+    assert _store_and_confirm(db, ctx, step).status == "executed"
+
+    assert db.get(StockInquiry, rid) is None
+    assert db.query(PortalFormRevision).filter(PortalFormRevision.source_entity_id == rid).count() == 0
+    assert db.query(Notification).filter(Notification.source_entity_id == rid).count() == 0
+
+
+def test_ac15_an_untouched_sla_stage_the_submit_opened_goes_with_the_inquiry(db):
+    from app.models.sla import ConversationSLATracking
+    from app.models.procurement import StockInquiry
+    from tests._void_harness import new_policy, new_tracker
+
+    contact = _dealer(db)
+    rid = _submitted_si(db, contact["pk"])
+    tid = new_tracker(db, source_entity_type="stock_inquiry", source_entity_id=rid, policy_id=new_policy(db))
+    ctx = _ctx(db, contact)
+    out, step = _propose(db, ctx, SI_WITHDRAW, {"submission_id": rid}, [rid])
+    assert out.status == "proposed", out.message
+
+    assert _store_and_confirm(db, ctx, step).status == "executed"
+    assert db.get(StockInquiry, rid) is None
+    assert db.get(ConversationSLATracking, tid) is None
+
+
+@pytest.mark.parametrize("touch", ["handled", "resolved", "form_action"])
+def test_ac16_a_stage_someone_acted_on_refuses_the_withdraw(db, touch):
+    from app.models.sla import SlaFormAction
+    from tests._void_harness import new_policy, new_tracker
+
+    contact = _dealer(db)
+    rid = _submitted_si(db, contact["pk"])
+    staff = seed_user(db, contact_pk=None, slugs=())
+    if touch == "form_action":
+        db.add(SlaFormAction(id=str(uuid.uuid4()), action_key="si.respond", source_entity_type="stock_inquiry",
+                             source_entity_id=rid, payload_json={}, prior_state_json={}))
+        db.flush()
+    else:
+        new_tracker(db, source_entity_type="stock_inquiry", source_entity_id=rid, policy_id=new_policy(db),
+                    handled_by_id=staff if touch == "handled" else None, is_resolved=touch == "resolved")
+
+    out, step = _propose(db, _ctx(db, contact), SI_WITHDRAW, {"submission_id": rid}, [rid])
+
+    assert step is None and REFUSED in (out.message or "")

@@ -22,7 +22,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.chatbot.agent import actions, memory, writes
+from app.services.chatbot.agent import actions, memory, portal_writes, writes
 from app.services.chatbot.agent.formatting import to_whatsapp
 from app.services.chatbot.agent.access import build_context, grants_hash, permitted_tools
 from app.services.chatbot.agent.tools import (
@@ -553,6 +553,9 @@ def _propose(
     # as a write tool sees only its arguments) and whether the turn is a test turn (a console turn makes a test
     # idea, a live one a real idea). Set here, never from the model's arguments.
     loop_args = {"_user_text": user_text, "_is_test": is_test} if name == writes.CREATE_IDEA else None
+    if portal_writes.is_portal_tool(name):
+        # A console turn is a test: its confirm writes nothing (owner W2-Q3 (a)). Set here, never by the model.
+        loop_args = {"_is_test": is_test}
     out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids, loop_args=loop_args)
     if step is None:
         return out
@@ -749,6 +752,15 @@ class _WrappedProvider:
         )
 
 
+DEALER_REQUESTS_PROTOCOL = (
+    "CUSTOMER REQUESTS: you can send a stock inquiry for this customer, add or remove a note on one of their own "
+    "requests, and withdraw a stock inquiry they sent in the last 10 minutes. Propose with the tool, using only "
+    "what the customer said; nothing is sent until the customer replies yes in their next message. To find the "
+    "request they mean, read crm_my_requests_list first. A request the tools refuse (an order, a complaint, a "
+    "change to their details) is not something you can do here: say so and suggest their salesman."
+)
+
+
 def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "user") -> str:
     from app.services import ai_prompt_registry
 
@@ -762,6 +774,8 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
         # A customer: no staff knowledge or user guide protocol and no "outside this user's access" line.
         if knowledge_service.KNOWLEDGE_TOOL in tool_names:
             text = f"{text.rstrip()}\n\n{knowledge_service.KNOWLEDGE_CONTACT_PROTOCOL}"
+        if any(portal_writes.is_portal_tool(n) for n in tool_names):
+            text = f"{text.rstrip()}\n\n{DEALER_REQUESTS_PROTOCOL}"
         return f"{text}\n\nToday's date is {today}. You are answering a Sorento customer on WhatsApp."
     if "USER GUIDE PROTOCOL" not in text:
         text = text.rstrip() + "\n\n" + ai_prompt_registry._synthesizer_fallback()
@@ -1083,13 +1097,14 @@ def _run(
 
         if operator_user_id and str(operator_user_id) != str(ctx.user_id):
             ctx = dataclasses.replace(ctx, operator_user_id=str(operator_user_id))
-        # A contact has no user to confirm for: a staff user's pending action never reaches its turn.
-        waiting = (
-            None if ctx.principal == "contact"
-            else actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
-        )
+        # A contact's own proposal has no user (user_id ""), so a staff user's pending action never reaches its turn.
+        waiting = actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
         offered = permitted_tools(db, ctx)
         reads, write_tools = writes.permitted_user_reads(db, ctx), writes.permitted_writes(db, ctx)
+        # The dealer's portal writes (AGENTIC-WA-W2): a contact principal only, under the portal's own gates.
+        dealer = portal_writes.offered(db, ctx)
+        reads += [portal_writes.PORTAL_READS[n] for n in dealer if n in portal_writes.PORTAL_READS]
+        write_tools += [portal_writes.PORTAL_WRITES[n] for n in dealer if n in portal_writes.PORTAL_WRITES]
         system = _system_prompt(
             db, ctx.user_name, {*(t.name for t in offered), *(r.name for r in reads), *(w.name for w in write_tools)},
             principal=ctx.principal,
@@ -1243,11 +1258,17 @@ def _run(
                 tool_index += 1
                 # Each call gets what is left of the turn, at most 10 s.
                 seconds = max(1, int(min(remaining(), MCP_CALL_TIMEOUT)))
-                if ctx.principal == "contact" and name not in CONTACT_TOOLS and name != HANDOFF:
-                    # A contact has no user: no write, user read, confirm or cancel, whatever the model names.
+                if ctx.principal == "contact" and not (
+                    name in CONTACT_TOOLS or name == HANDOFF or name in dealer
+                    or (name in (CONFIRM_ACTION, CANCEL_ACTION) and waiting is not None)
+                ):
+                    # A contact has no user: no staff write or user read, and a confirm or cancel only of its own
+                    # pending proposal, whatever the model names.
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
-                elif name in writes.WRITES:
+                elif name in writes.WRITES or name in portal_writes.PORTAL_WRITES:
                     out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text, is_test)
+                elif name in portal_writes.PORTAL_READS:
+                    out = portal_writes.run_read(db, ctx, name, args, seen_ids)
                 elif name in writes.USER_READS:
                     out = writes.run_user_read(db, ctx, name, args, seen_ids)
                 elif name == CONFIRM_ACTION and run.rounds > 1:

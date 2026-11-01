@@ -182,6 +182,11 @@ TOOL_LABELS: dict[str, str] = {
     "crm_idea_create": "record a suggestion or wish for what the system should have or do, an idea or a feature request",
     "crm_idea_update": "change one of your ideas",
     "crm_ideas_list": "your ideas",
+    "crm_my_requests_list": "the customer's own requests and their notes",
+    "crm_my_request_note_add": "add a note to one of the customer's own requests",
+    "crm_my_request_note_remove": "remove one of the customer's own notes",
+    "crm_stock_inquiry_create": "send a stock or lead-time inquiry for a product to the project sales team",
+    "crm_stock_inquiry_withdraw": "withdraw a stock inquiry the customer just sent",
     "confirm_action": "confirm the waiting change",
     "cancel_action": "cancel the waiting change",
 }
