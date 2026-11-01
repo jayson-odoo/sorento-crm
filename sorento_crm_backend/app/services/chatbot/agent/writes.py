@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import unicodedata
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -45,6 +46,8 @@ class WriteDef:
     changes: Callable[[dict, dict, dict, dict], list[dict]] | None = None
     #: True = `execute` also takes the confirmed `before` as a fourth argument, to refuse a different branch.
     execute_takes_before: bool = False
+    #: True = the step's `note` is repeated in a chat reply by code, and kept from the model (a link it must not invent).
+    note_in_reply: bool = False
 
 
 @dataclass(frozen=True)
@@ -1714,4 +1717,391 @@ WRITES[UNDO_PR] = WriteDef(
     record_key="request_id",
     changes=_undo_changes,
     execute_takes_before=True,
+)
+
+
+# ------------------------------------------------------------------ W4 ideas
+
+IDEA_VIEW = "ideation.board.view"
+IDEA_MANAGE = "ideation.ideas.manage"
+CREATE_IDEA = "crm_idea_create"
+UPDATE_IDEA = "crm_idea_update"
+LIST_IDEAS = "crm_ideas_list"
+#: Every idea the agent creates is a test idea, so it stays off the board. Owner ruling 31 Oct 2026; flip
+#: it when the agent reaches WhatsApp, and then drop the test-only edit rule in `_idea_update_read_before`
+#: and the test-idea source in `_ideas_list`.
+IDEA_IS_TEST = True
+MAX_SIMILAR_IDEAS = 3
+#: Newest agent actions of the contact read for ideas it made.
+MAX_IDEA_ACTIONS = 200
+#: Test ideas read live by id for one list.
+MAX_TEST_IDEAS = 5
+MAX_USE_CASES = 5
+IDEA_PROBLEM_CHARS = 120
+IDEA_NOT_CREATED = "The idea was not created because the Ideas workspace could not be reached. Try again later."
+IDEA_OWN_ONLY = "You can only edit your own ideas."
+IDEA_TEST_ONLY = "While ideas are in test, only test ideas can be changed here. Change this one on the Ideas board."
+#: Idea field (agent name) -> (ss name, label in words).
+_IDEA_FIELDS = {
+    "title": ("title", "title"),
+    "problem": ("problem", "problem"),
+    "desired_outcome": ("desiredOutcome", "desired outcome"),
+    "use_cases": ("useCases", "use cases"),
+    "current_workaround": ("currentWorkaround", "current workaround"),
+}
+_IDEA_PROPS = {
+    "title": {"type": "string", "maxLength": 200},
+    "desired_outcome": {"type": "string", "maxLength": MAX_NOTE_CHARS},
+    "use_cases": {"type": "array", "items": {"type": "string"}},
+    "current_workaround": {"type": "string", "maxLength": MAX_NOTE_CHARS},
+}
+
+
+def _idea_given(args: dict) -> dict:
+    """The idea fields the model gave, cleaned like the bot's extracted ones; an empty result is left out."""
+    from app.services.ideation_extractor import clean_use_cases, normalise_field_value, normalise_title
+
+    def plain(value: str) -> str:
+        """Format characters (zero-width, bidi overrides, tags) removed, so what is read is what is sent."""
+        return "".join(c for c in value if unicodedata.category(c) != "Cf")
+
+    out: dict = {}
+    for key in ("problem", "desired_outcome", "current_workaround"):
+        if isinstance(args.get(key), str) and (clean := normalise_field_value(key, plain(args[key]))):
+            out[key] = clean
+    if isinstance(args.get("title"), str) and (clean := normalise_title(plain(args["title"]))):
+        out["title"] = clean
+    cases = args.get("use_cases")
+    if cases := clean_use_cases([plain(c) for c in cases] if isinstance(cases, list) else cases):
+        out["use_cases"] = cases
+    return out
+
+
+def _idea_text(given: dict) -> str:
+    """The transcript sent with a create (a write tool sees its arguments, not the message): the fields given."""
+    lines = [given[k] for k in ("title", "problem") if given.get(k)]
+    lines += [f"{label.capitalize()}: {given[key]}" for key, label in (
+        ("desired_outcome", "desired outcome"), ("current_workaround", "current workaround")) if given.get(key)]
+    if given.get("use_cases"):
+        lines.append("Use cases: " + "; ".join(given["use_cases"]))
+    return "\n".join(lines)
+
+
+def _idea_contact(db, user: dict):
+    """The linked user's Respond contact (phone, name, tier) as the bot's capture reads it."""
+    from app.models.access import RespondContact
+    from app.models.user import User
+    from app.services.ideation_turn_service import _get_contact_row
+
+    respond_id = (
+        db.query(RespondContact.respond_io_id)
+        .join(User, User.respond_contact_id == RespondContact.id)
+        .filter(User.id == user["linked_user_id"])
+        .scalar()
+    )
+    return _get_contact_row(db, respond_id)
+
+
+def _check_use_cases(args: dict) -> None:
+    """At most 10 use cases of at most 4000 characters each, else a 422 before anything is sent."""
+    from app.services.error_handler import AppException
+
+    cases = args.get("use_cases") or []
+    if len(cases) > MAX_USE_CASES or any(len(c) > MAX_NOTE_CHARS for c in cases):
+        raise AppException(
+            status_code=422,
+            message=f"Give at most {MAX_USE_CASES} use cases of {MAX_NOTE_CHARS} characters each.",
+            code="VALIDATION_ERROR",
+        )
+
+
+def _idea_create_read_before(db, user: dict, args: dict) -> dict:
+    from app.services.error_handler import AppException
+    from app.services.ideation_capture_service import IdeationServiceError, _valid_uuid, call_similar_own
+    from app.services.ideation_turn_service import _resolve_ideation_config
+
+    _check_use_cases(args)
+    given = _idea_given(args)
+    if not given.get("problem"):
+        raise AppException(status_code=422, message="Give the problem the idea solves.", code="VALIDATION_ERROR")
+    if user["id"] != user["linked_user_id"]:
+        return {}  # the operator is only checked for the slug; the lookup is the linked user's
+    # Best effort: the proposal never depends on the shared service, so a lookup that cannot run adds no line.
+    similar: list[dict] = []
+    try:
+        config = _resolve_ideation_config(db)
+        if config.is_ready:
+            found = call_similar_own(
+                config.base_url, config.api_key,
+                {
+                    "product_id": config.product_id,
+                    "text": _idea_text(given),
+                    "submitter_crm_user_id": user["linked_user_id"],
+                    "submitter_phone": _idea_contact(db, user).phone_number,
+                    "is_test": IDEA_IS_TEST,
+                },
+            )
+            similar = [
+                {"number": str(m.get("idea_number") or ""), "title": str(m.get("title") or "")}
+                for m in found.get("matches") or []
+                if isinstance(m, dict) and _valid_uuid(m.get("idea_id"))
+            ][:MAX_SIMILAR_IDEAS]
+    except (IdeationServiceError, HTTPException):
+        logger.warning("agent: the similar-ideas lookup failed", exc_info=True)
+    return {"_show": {"similar": similar}}
+
+
+def _q(value: Any) -> str:
+    """A value quoted for the proposal line, with backslash and quote escaped so it cannot read as another field."""
+    return '"' + _line(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _idea_values(given: dict, keys: tuple[str, ...], joiner: str) -> list[str]:
+    """The given values in full, each quoted, as `label "value"` (or `label "a", "b"` for use cases)."""
+    parts = []
+    for key in keys:
+        if key in given:
+            value = ", ".join(_q(v) for v in given[key]) if key == "use_cases" else _q(given[key])
+            parts.append(f"{_IDEA_FIELDS[key][1]}{joiner}{value}")
+    return parts
+
+
+def _idea_create_summary(args: dict, before: dict) -> str:
+    given = _idea_given(args)
+    line = f"Log idea {_q(given['title'])}" if given.get("title") else "Log idea"
+    line += ": " + ", ".join(_idea_values(given, ("problem", "desired_outcome", "use_cases", "current_workaround"), " "))
+    similar = before.get("similar") or []
+    if similar:
+        line += ". Similar ideas of yours: " + "; ".join(_line(f"{s['number']} {s['title']}") for s in similar)
+    return line
+
+
+def _idea_create_execute(db, user: dict, args: dict) -> dict:
+    import uuid
+
+    from app.services.error_handler import AppException
+    from app.services.ideation_capture_service import (
+        IdeationServiceError, _idea_link, _missing_list, build_create_payload, call_create_idea,
+    )
+    from app.services.ideation_turn_service import _resolve_ideation_config
+
+    given = _idea_given(args)
+    text = _idea_text(given)
+    try:
+        config = _resolve_ideation_config(db)
+        if not config.is_ready:
+            raise IdeationServiceError("not configured")
+        contact = _idea_contact(db, user)
+        payload = build_create_payload(
+            config,
+            user_id=user["linked_user_id"],
+            contact=contact,
+            name=contact.display_name,
+            fields=given,
+            title=given.get("title", ""),
+            use_cases=given.get("use_cases", []),
+            source_text=text,
+            # Derived, not minted: a step keeps no private value between proposal and confirm, and the same
+            # idea proposed again must land on the same idea.
+            intake_ref=str(uuid.uuid5(uuid.NAMESPACE_OID, f"{user['linked_user_id']}\n{IDEA_IS_TEST}\n{text}")),
+            is_test=IDEA_IS_TEST,
+        )
+        result = call_create_idea(config.base_url, config.api_key, payload)
+    except (IdeationServiceError, HTTPException):
+        logger.warning("agent: the idea create failed", exc_info=True)
+        raise AppException(status_code=502, message=IDEA_NOT_CREATED, code="IDEATION_UNREACHABLE")
+    link = _idea_link(result.get("idea_id"))
+    number = result.get("idea_number")
+    missing = ", ".join(_missing_list(payload))
+    number = number or None  # ss may send none: the note then names no number
+    note = (f"Idea {number}" if number else "The idea") + (f": {link}" if link else "") + f". Not given: {missing}."
+    if IDEA_IS_TEST:
+        note += " This is a test idea, so it is not on the board."
+    return {
+        "id": str(result["idea_id"]),
+        "after": {"idea_number": number, "title": result.get("title") or given.get("title")},
+        "note": note,
+    }
+
+
+def _idea_update_read_before(db, user: dict, args: dict) -> dict:
+    from app.services.error_handler import AppException
+    from app.services.ideation_gateway_service import call_ss, require_uuid, ss_path
+
+    idea_id = require_uuid(args["idea_id"], "idea_id")
+    _check_use_cases(args)
+    if not [k for k in _idea_given(args) if k in _IDEA_FIELDS]:
+        raise AppException(status_code=422, message="Give a field to change.", code="VALIDATION_ERROR")
+    if user["id"] != user["linked_user_id"]:
+        # The console operator acting for someone else: they must manage ideas. No ss call as them.
+        if not holds(db, user["id"], IDEA_MANAGE):
+            raise AppException(status_code=403, message="You need permission to manage ideas to edit for someone else.", code="FORBIDDEN")
+        return {}
+    try:
+        idea = call_ss(db, user, "GET", ss_path("embed", "ideas", idea_id)).json()
+    except ValueError:
+        raise AppException(status_code=502, message="The Ideas workspace could not be reached.", code="IDEATION_UNREACHABLE")
+    # The board lets even a manager edit only their own here; other people's ideas stay on the board.
+    if not (isinstance(idea, dict) and idea.get("isMine") is True):
+        raise AppException(status_code=403, message=IDEA_OWN_ONLY, code="FORBIDDEN")
+    if IDEA_IS_TEST and idea.get("isTest") is not True:
+        raise AppException(status_code=403, message=IDEA_TEST_ONLY, code="FORBIDDEN")
+    before = {key: idea.get(ss_name) for key, (ss_name, _) in _IDEA_FIELDS.items()}
+    before["use_cases"] = before["use_cases"] or []
+    return {**before, "_show": {"number": idea.get("ideaNumber"), "idea_title": idea.get("title")}}
+
+
+def _idea_update_summary(args: dict, before: dict) -> str:
+    given = _idea_given(args)
+    changes = _idea_values(given, ("title", "problem", "desired_outcome", "use_cases", "current_workaround"), " to ")
+    head = f"Idea {_line(before.get('number'))} {_q(before.get('idea_title'))}: change "
+    return head + " and ".join(changes)
+
+
+def _idea_update_execute(db, user: dict, args: dict) -> dict:
+    from uuid import UUID
+
+    from app.api.v1.ideation.ideas import update_idea
+
+    given = _idea_given(args)
+    sent = {k: v for k, v in given.items() if k in _IDEA_FIELDS}
+    update_idea(idea_id=UUID(str(args["idea_id"])), payload={_IDEA_FIELDS[k][0]: v for k, v in sent.items()}, user=user, db=db)
+    return {"id": str(args["idea_id"]), "after": sent}
+
+
+def _idea_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    words = lambda v: "; ".join(v) if isinstance(v, list) else v  # noqa: E731
+    record = shown.get("idea_title") or f"Idea {shown.get('number', '')}".strip()
+    return _diff(record, [(_IDEA_FIELDS[k][1].capitalize(), words(before.get(k)), words(v)) for k, v in after.items()])
+
+
+def _idea_row(idea: dict) -> dict:
+    return {
+        "id": idea["id"], "idea_number": idea.get("ideaNumber"), "title": idea.get("title"),
+        "status": idea.get("status"), "is_test": bool(idea.get("isTest")),
+        "problem": _line(idea.get("problem"))[:IDEA_PROBLEM_CHARS],
+    }
+
+
+def _ideas_list(db, ctx, args: dict) -> ToolResult:
+    from app.models.chatbot_agent import AgentAction
+    from app.services.error_handler import AppException
+    from app.services.ideation_gateway_service import call_ss, ss_path
+
+    unknown = sorted(k for k in args if k != "search")
+    if unknown or not isinstance(args.get("search", ""), str):
+        return ToolResult("invalid", message="Only a search text may be given.")
+    # A manage operator needs the ids, so the list is not linked-only; a view-only one sees none of it.
+    operator = people(ctx)[1:]
+    if operator and not holds(db, operator[0], IDEA_MANAGE):
+        return ToolResult("denied", message="Listing someone else's ideas needs permission to manage ideas.")
+    needle = str(args.get("search") or "").strip().lower()
+    # ss's list leaves out test ideas (`services/ideas.py:507-508`), so the ideas this user's confirmed creates
+    # made are read live by id and put first. This goes away when IDEA_IS_TEST flips.
+    made: list[str] = []
+    recent = (
+        db.query(AgentAction)
+        .filter(AgentAction.contact_respond_id == ctx.contact_respond_id, AgentAction.user_id == str(ctx.user_id))
+        .order_by(AgentAction.created_at.desc())
+        .limit(MAX_IDEA_ACTIONS)
+    )
+    for action in recent:
+        for step in reversed(action.steps or []):
+            result_id = str(step.get("result_id") or "").lower()
+            if step.get("tool") == CREATE_IDEA and step.get("status") == "done" and result_id and result_id not in made:
+                made.append(result_id)
+    params = {"mine": "true", **({"search": args["search"]} if args.get("search") else {})}
+
+    def read(user: dict) -> list[dict]:
+        rows: list[dict] = []
+        for idea_id in made[:MAX_TEST_IDEAS]:
+            try:
+                idea = call_ss(db, user, "GET", ss_path("embed", "ideas", idea_id)).json()
+            except AppException as exc:
+                if exc.status_code == 404:
+                    continue
+                raise
+            if not (isinstance(idea, dict) and idea.get("isMine") is True and idea.get("id")):
+                continue
+            if needle and needle not in f"{idea.get('title') or ''} {idea.get('problem') or ''}".lower():
+                continue
+            rows.append(_idea_row(idea))
+        listed = call_ss(db, user, "GET", ss_path("embed", "ideas"), params=params).json()
+        # ss answers a bare list; anything else is no rows.
+        have = {r["id"].lower() for r in rows}
+        rows += [
+            _idea_row(i) for i in (listed if isinstance(listed, list) else [])
+            if isinstance(i, dict) and i.get("id") and str(i["id"]).lower() not in have
+        ]
+        return rows
+
+    try:
+        rows = run_as_user(db, ctx, read, tool_name=LIST_IDEAS)
+    except Exception:  # noqa: BLE001
+        logger.warning("agent: the ideas list failed", exc_info=True)
+        return ToolResult("error", message="Your ideas could not be read right now.")
+    data, more = cap_result({"ideas": rows[:MAX_LIST]})
+    # The test ideas not read (over MAX_TEST_IDEAS) count with the rows the size cap cut.
+    return ToolResult("ok", data=data, more=more + max(0, len(made) - MAX_TEST_IDEAS))
+
+
+WRITES[CREATE_IDEA] = WriteDef(
+    name=CREATE_IDEA,
+    user_permission=IDEA_VIEW,
+    schema={
+        "type": "function",
+        "function": {
+            "name": CREATE_IDEA,
+            "description": (
+                "Propose logging one new idea or feature request from the user. Nothing is created until the "
+                "user confirms. Use only what the user said: write a short title from their words and leave any "
+                "other field out. As soon as you have the problem, propose it: do not ask the user to adjust or add more first. Call once per idea."
+            ),
+            "parameters": {"type": "object", "properties": {"problem": {"type": "string", "maxLength": MAX_NOTE_CHARS}, **_IDEA_PROPS}, "required": ["problem"]},
+        },
+    },
+    read_before=_idea_create_read_before,
+    summary=_idea_create_summary,
+    execute=_idea_create_execute,
+    record_key="",
+    note_in_reply=True,
+)
+WRITES[UPDATE_IDEA] = WriteDef(
+    name=UPDATE_IDEA,
+    user_permission=IDEA_VIEW,
+    schema={
+        "type": "function",
+        "function": {
+            "name": UPDATE_IDEA,
+            "description": (
+                "Propose a change to one of the user's own ideas: any of its title, problem, desired outcome, "
+                "use cases or current workaround. Nothing changes until the user confirms. idea_id must come "
+                "from crm_ideas_list. Only test ideas can be changed for now. Use only what the user said and "
+                "leave other fields out. Call once per idea."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"idea_id": {"type": "string"}, "problem": {"type": "string", "maxLength": MAX_NOTE_CHARS}, **_IDEA_PROPS},
+                "required": ["idea_id"],
+            },
+        },
+    },
+    read_before=_idea_update_read_before,
+    summary=_idea_update_summary,
+    execute=_idea_update_execute,
+    record_key="idea_id",
+    changes=_idea_changes,
+)
+USER_READS[LIST_IDEAS] = UserRead(
+    name=LIST_IDEAS,
+    user_permission=IDEA_VIEW,
+    schema={
+        "type": "function",
+        "function": {
+            "name": LIST_IDEAS,
+            "description": "The user's own ideas, with the idea_id to use in crm_idea_update. Optional search text.",
+            "parameters": {"type": "object", "properties": {"search": {"type": "string"}}},
+        },
+    },
+    run=_ideas_list,
 )
