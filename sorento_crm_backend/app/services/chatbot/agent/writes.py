@@ -497,6 +497,11 @@ def propose_step(
         return ToolResult("denied", message=f"{name} is not a tool you may use."), None
     if not holds_ctx(db, ctx, definition.user_permission):
         return ToolResult("denied", message=f"{name} is outside this user's access."), None
+    if name == CREATE_IDEA and staff_principal.current() is not None:
+        # A panel turn runs as a test turn, so an idea would be a test idea: keep the Ideas board link instead.
+        from app.services.chatbot.lanes.ideate import PANEL_IDEAS_REPLY
+
+        return ToolResult("denied", message=PANEL_IDEAS_REPLY), None
     problem = _args_problem(definition, args)
     if problem:
         return ToolResult("invalid", message=problem), None
