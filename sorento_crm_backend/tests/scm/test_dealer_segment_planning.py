@@ -426,6 +426,136 @@ def test_two_orders_at_the_pool_read_the_same_on_the_board_as_on_their_sheets():
     assert (sheet, _sources(row_x), _sources(row_y)) == (half, half, half)
 
 
+def _far(days):
+    return date.today() + timedelta(days=days)
+
+
+def test_a_project_line_behind_a_line_at_the_pool_reads_the_true_net_across_two_pools():
+    """Two other pools hold 25 each, 30 is owed at this one: a true net of 20. Its line can't be
+    covered whole and buys. Beyond the window a line takes all or nothing, so 22 must buy too."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=0, product=product)
+        _dealer_pool(db, on_hand=25, product=product)
+        _dealer_pool(db, on_hand=25, product=product)
+        own = _project_bin(db, pool)
+        _order, _line, at_pool, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="30", required_date=_far(40),
+        )
+        _order, _line, at_bin, _core = _seed_line(
+            db, company_id, project, product, own, qty_ordered="22", required_date=_far(47),
+        )
+        row = _board_row(_board(db, at_pool, at_bin), at_bin)
+
+    assert _sources(row) == {"buy": Decimal("22")}
+
+
+def test_a_project_line_behind_a_unit_at_the_pool_reads_the_true_net():
+    """One order's two lines at the pool, 30 and 30, buy whole. 50 at another pool against 60
+    owed is a net of -10, so the project line behind them buys as well."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=0, product=product)
+        _dealer_pool(db, on_hand=50, product=product)
+        own = _project_bin(db, pool)
+        order, _line, at_pool, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="30", required_date=_far(40),
+        )
+        second = _core_line(
+            db, at_pool, product, pool, qty_ordered="30", required_date=_far(40),
+        )
+        _project_line(db, order, line_no=20, product=product, core_line=second)
+        _order, _line, at_bin, _core = _seed_line(
+            db, company_id, project, product, own, qty_ordered="5", required_date=_far(47),
+        )
+        db.commit()
+        row = _board_row(_board(db, at_pool, at_bin), at_bin)
+
+    assert _sources(row) == {"buy": Decimal("5")}
+
+
+def test_what_a_line_takes_beyond_its_own_half_comes_off_the_pools_share():
+    """20 on hand, 10 owed here: the pile's project share is 5. The line takes 10, half of what
+    it stands on, which spends that share, so the project line behind it buys."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=20, product=product)
+        own = _project_bin(db, pool)
+        _order, _line, at_pool, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        _order, _line, at_bin, _core = _seed_line(
+            db, company_id, project, product, own, qty_ordered="5",
+            required_date=REQUIRED_DATE + timedelta(days=1),
+        )
+        board = _board(db, at_pool, at_bin)
+        at_pool_row, at_bin_row = _board_row(board, at_pool), _board_row(board, at_bin)
+
+    assert _sources(at_pool_row) == {"reserve": Decimal("10")}
+    assert _sources(at_bin_row) == {"buy": Decimal("5")}
+
+
+def test_the_pools_share_is_seeded_from_the_true_net():
+    """As above, with 8 owed at another pool that holds nothing: a true net of 2, so the share
+    is 2 and the line at the pool spends it."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=20, product=product)
+        short = _dealer_pool(db, on_hand=0, product=product)
+        own = _project_bin(db, pool)
+        _seed_line(db, company_id, project, product, short, qty_ordered="8", line_no=30)
+        _order, _line, at_pool, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        _order, _line, at_bin, _core = _seed_line(
+            db, company_id, project, product, own, qty_ordered="5",
+            required_date=REQUIRED_DATE + timedelta(days=1),
+        )
+        row = _board_row(_board(db, at_pool, at_bin), at_bin)
+
+    assert _sources(row) == {"buy": Decimal("5")}
+
+
+def test_three_orders_at_the_pool_each_keep_their_own_half():
+    """60 on hand, all owed to these three. A draw within a line's own quantity costs the net
+    nothing, because the net already counted it, so the third still gets its half."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=60, product=product)
+        cores = [
+            _seed_line(
+                db, company_id, project, product, pool, qty_ordered="20", line_no=number,
+            )[2]
+            for number in (10, 20, 30)
+        ]
+        board = _board(db, *cores)
+        rows = [_sources(_board_row(board, core)) for core in cores]
+
+    half = {"reserve": Decimal("10"), "buy": Decimal("10")}
+    assert rows == [half, half, half]
+
+
+def test_a_later_line_at_the_pool_is_measured_from_the_true_net_not_zero():
+    """100 at another pool, 130 owed at this one: a net of -30. A project line walks first and
+    buys, and the line of 40 behind it reads -30 + 40 = 10, not 40."""
+    with blank_session() as db:
+        company_id, _actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=0, product=product)
+        _dealer_pool(db, on_hand=100, product=product)
+        own = _project_bin(db, pool)
+        _seed_line(db, company_id, project, product, pool, qty_ordered="90", line_no=30)
+        _order, _line, at_pool, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="40",
+        )
+        _order, _line, at_bin, _core = _seed_line(
+            db, company_id, project, product, own, qty_ordered="5",
+            required_date=REQUIRED_DATE - timedelta(days=14),
+        )
+        row = _board_row(_board(db, at_pool, at_bin), at_pool)
+
+    assert _sources(row) == {"reserve": Decimal("10"), "buy": Decimal("30")}
+
+
 # --------------------------------------------------------------------------- what the book counted
 #
 # 10 on hand, all owed to another line, so the pool's net is 0. A line the pool's book never
@@ -511,6 +641,10 @@ def test_a_retired_pool_adds_nothing_back():
         order, _line, _core_so, _core = _seed_line(
             db, company_id, project, product, retired, qty_ordered="10",
         )
-        got = _totals(_components(ProjectSupplyService(db).proposal_for(order)))
+        service = ProjectSupplyService(db)
+        fact = next(iter(service._facts_for(order, service.lines_of(str(order.id))).values()))
+        back = fact.pool_book_back
+        got = _totals(_components(service.proposal_for(order)))
 
+    assert back == 0
     assert "reserve" not in got, got
