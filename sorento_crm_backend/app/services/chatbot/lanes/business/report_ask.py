@@ -2383,15 +2383,6 @@ def _scope_answer(db: Any, parse_output: dict[str, Any], slot: dict[str, Any]) -
     return rf.Outcome(reply=jsc.js_string(scope.get("question") or ""), slot={**slot, "misses": 1})
 
 
-def _one_bucket(args: dict[str, Any]) -> bool:
-    """Is the settled period of a month (year) split inside one calendar month (year)?"""
-    axis = args.get("group_by")
-    first, last = _day(args.get("date_from")), _day(args.get("date_to"))
-    if axis not in TREND_AXES or first is None or last is None:
-        return False
-    return (first.year, first.month) == (last.year, last.month) if axis == "month" else first.year == last.year
-
-
 def route_args(outcome: rf.Outcome) -> dict[str, Any]:
     """The settled ask as `crm_report_ask`'s params (the route's names)."""
     args = dict(_dict(outcome.extras.get("args")))
@@ -2406,11 +2397,6 @@ def route_args(outcome: rf.Outcome) -> dict[str, Any]:
     top_n = (outcome.values.get("top_n") or {}).get("value")
     if args.get("group_by") and isinstance(top_n, int):
         args["top_n"] = top_n
-    if _one_bucket(args):
-        # A month split inside one calendar month (a year split inside one year) is one bucket: the total. Dropped here,
-        # where every fresh ask, refine and answered period passes, so the held frame records what actually ran.
-        args.pop("group_by", None)
-        args.pop("top_n", None)
     company = _dict(outcome.values.get("company")).get("value")
     if company and company != rf.ALL:
         args["company"] = str(company)  # the company the person chose
