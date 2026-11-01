@@ -103,6 +103,9 @@ def _serialize_part(part: ProductComboPart) -> Dict[str, Any]:
         "dimensions": _dimensions(product),
         "choice_group": part.choice_group,
         "sort_order": part.sort_order,
+        "sell_price": part.sell_price,
+        "topup_amount": part.topup_amount,
+        "is_upgrade": bool(part.is_upgrade),
     }
 
 
@@ -133,6 +136,10 @@ def _serialize(combo: ProductCombo, db: Session) -> Dict[str, Any]:
         "host_product_id": combo.host_product_id,
         "name": combo.name,
         "sort_order": combo.sort_order,
+        "description": combo.description,
+        "free_items": combo.free_items,
+        "list_price": combo.list_price,
+        "sell_price": combo.sell_price,
         "parts": [_serialize_part(part) for part in combo.parts],
         "image": _serialize_image(db, combo),
         "created_at": combo.created_at,
@@ -257,6 +264,13 @@ class ProductComboService:
             combo.name = cleaned
         if payload.get("sort_order") is not None:
             combo.sort_order = int(payload["sort_order"])
+        # Omitted = left alone; an explicit null clears (the payload is exclude_unset).
+        for field in ("description", "free_items"):
+            if field in payload:
+                setattr(combo, field, (payload[field] or "").strip() or None)
+        for field in ("list_price", "sell_price"):
+            if field in payload:
+                setattr(combo, field, payload[field])
         self.db.commit()
         return _serialize(self._combo_or_404(combo.id), self.db)
 
@@ -463,7 +477,11 @@ class ProductComboService:
     # ------------------------------------------------------------------ parts
 
     def add_part(
-        self, combo_id: str, part_product_id: str, choice_group: Optional[str]
+        self,
+        combo_id: str,
+        part_product_id: str,
+        choice_group: Optional[str],
+        is_upgrade: bool = False,
     ) -> Dict[str, Any]:
         combo = self._combo_or_404(combo_id)
         if part_product_id == combo.host_product_id:
@@ -498,6 +516,7 @@ class ProductComboService:
             part_product_id=part_product_id,
             choice_group=(choice_group or "").strip() or None,
             sort_order=len(combo.parts),
+            is_upgrade=bool(is_upgrade),
         )
         self.db.add(part)
         self.db.commit()
@@ -510,6 +529,11 @@ class ProductComboService:
             part.choice_group = (raw or "").strip() or None
         if payload.get("sort_order") is not None:
             part.sort_order = int(payload["sort_order"])
+        for field in ("sell_price", "topup_amount"):
+            if field in fields_set:
+                setattr(part, field, payload.get(field))
+        if payload.get("is_upgrade") is not None:
+            part.is_upgrade = bool(payload["is_upgrade"])
         self.db.commit()
         return _serialize_part(self._part_or_404(part.id))
 

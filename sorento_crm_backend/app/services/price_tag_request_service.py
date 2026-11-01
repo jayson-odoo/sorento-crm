@@ -394,6 +394,9 @@ class PriceTagRequestService:
             # engine the portal's and the CRM's own line-pricing routes call
             # (S7) - `show_promo_price` can never disagree with what those
             # routes just showed the salesperson.
+            combo_id = PriceTagRequestService._resolve_combo_id(
+                db, line_data, request.company_id
+            )
             basis = "list"
             if product_id:
                 parts_data = line_data.get("parts") or []
@@ -424,6 +427,7 @@ class PriceTagRequestService:
                             "product_id": product_id,
                             "part_product_ids": resolved_part_ids,
                             "candidate_product_ids": candidate_ids,
+                            "combo_id": combo_id,
                             "promotion_id": promotion_id,
                             "manual_sell_price": manual_sell_price,
                         }
@@ -503,9 +507,7 @@ class PriceTagRequestService:
                     product_set_id=product_set_id,
                     show_promo_price=selling and basis != "list",
                     quantity=line_data.get("quantity", 1),
-                    combo_id=PriceTagRequestService._resolve_combo_id(
-                        db, line_data, request.company_id
-                    ),
+                    combo_id=combo_id,
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
                     sort_order=idx if sort_order is None else sort_order,
@@ -527,6 +529,10 @@ class PriceTagRequestService:
     @staticmethod
     def _add_line_tags(db: Session, line, carried: list[dict] | None = None) -> None:
         """The tags that will be printed for this line (D3/D6, AC-S8-1..S8-3).
+
+        A line that names a combo mints ONE tag with empty `choices` whatever its
+        open groups (PRICETAG-COMBO AC-3.1): the tag lists every option and a dealer
+        pick narrows it. The rule below is for a line with no combo (AC-3.3).
 
         One tag per candidate COMBINATION across every open choice group the
         line still has (D6, owner ruling): a line with no open group mints
@@ -561,11 +567,23 @@ class PriceTagRequestService:
         else:
             new_choice_maps = [{}]
 
+        # AC-3.1/3.4: a combo line mints one tag, but a carried set that already
+        # matches the per-combination set (a request in flight, a split made by hand)
+        # is kept untouched.
+        also_keep = None
+        if line.combo_id and open_groups:
+            also_keep = new_choice_maps
+            new_choice_maps = [{}]
+
         if carried:
             carried_keys = {
                 tuple(sorted((row.get("choices") or {}).items())) for row in carried
             }
             new_keys = {tuple(sorted(choices.items())) for choices in new_choice_maps}
+            if also_keep is not None and carried_keys == {
+                tuple(sorted(choices.items())) for choices in also_keep
+            }:
+                new_keys = carried_keys
             if carried_keys == new_keys:
                 rows = carried
                 # A line that was never split has exactly one tag, and that
@@ -1044,6 +1062,7 @@ Marketing's own work is not part of the form's payload, so it is captured
                         "product_id": line.product_id,
                         "part_product_ids": resolved_part_ids,
                         "candidate_product_ids": candidate_ids,
+                        "combo_id": line.combo_id,
                         "promotion_id": promotion_id,
                         "manual_sell_price": manual_sell_price,
                     }
@@ -1804,6 +1823,36 @@ Marketing's own work is not part of the form's payload, so it is captured
 
     @staticmethod
     def _package_warning_for(db: Session, line, guarded: set[str]) -> str | None:
+        """The D2 package rule plus what the line's combo still lacks (PRICETAG-COMBO AC-7.1).
+
+        The combo note applies to any line with a combo, guarded class or not: the
+        tag prints the combo's own picture and description, so a blank one is worth
+        telling marketing about. It never blocks a submit.
+        """
+        notes = [
+            PriceTagRequestService._guarded_package_warning(db, line, guarded),
+            PriceTagRequestService._combo_content_warning(db, line),
+        ]
+        return "; ".join(note for note in notes if note) or None
+
+    @staticmethod
+    def _combo_content_warning(db: Session, line) -> str | None:
+        from app.models.product_combo import ProductCombo
+
+        if not line.combo_id:
+            return None
+        combo = db.query(ProductCombo).filter(ProductCombo.id == line.combo_id).first()
+        if combo is None:
+            return None
+        missing = []
+        if not combo.image_attachment_id:
+            missing.append("picture")
+        if not (combo.description or "").strip():
+            missing.append("description")
+        return "Combo has no " + " and no ".join(missing) if missing else None
+
+    @staticmethod
+    def _guarded_package_warning(db: Session, line, guarded: set[str]) -> str | None:
         """The D2 rule, in the order it reads on the plan.
 
         `None` for anything that is not a guarded product line, then the two
@@ -1854,6 +1903,8 @@ Marketing's own work is not part of the form's payload, so it is captured
         missing: list[str] = []
         seen_groups: list[str] = []
         for part in combo_parts:
+            if part.is_upgrade:
+                continue  # offered, never included: not a missing part (AC-3.5)
             if part.choice_group:
                 if part.choice_group not in seen_groups:
                     seen_groups.append(part.choice_group)

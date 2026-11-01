@@ -531,6 +531,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
               .filter((p) => p.product_id)
               .map((p) => p.product_id as string),
             candidate_product_ids: [],
+            combo_id: l.combo_id ?? null,
             promotion_id: override?.locked ? override.promotion_id : undefined,
           };
         }),
@@ -1142,10 +1143,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                             )}
                             {effectivePromotionId(line.id) ? (
                               <p className="text-sm font-medium whitespace-nowrap">
-                                RM{' '}
-                                {(
-                                  linePricing[line.id]?.sell_price ?? 0
-                                ).toLocaleString('en-MY')}
+                                {linePricing[line.id]?.sell_price != null
+                                  ? `RM ${linePricing[line.id]!.sell_price!.toLocaleString('en-MY')}`
+                                  : '-'}
                               </p>
                             ) : canEditLinePrice ? (
                               <NumberInput
@@ -1163,7 +1163,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 }
                                 onChange={(e) => setManualLinePrice(line.id, e.target.value)}
                                 onBlur={() => commitManualLinePrice(line.id)}
-                                placeholder="Type a price"
+                                placeholder={
+                                  line.combo_id &&
+                                  linePricing[line.id]?.sell_price_basis !== 'list' &&
+                                  linePricing[line.id]?.sell_price != null
+                                    ? `RM ${linePricing[line.id]!.sell_price!.toLocaleString('en-MY')}`
+                                    : 'Type a price'
+                                }
                                 aria-label={`Selling price for ${line.code || line.name}`}
                                 disabled={savingLinePrice === line.id}
                                 error={manualPriceError[line.id]}
