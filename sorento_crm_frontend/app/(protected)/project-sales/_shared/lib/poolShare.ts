@@ -79,11 +79,17 @@ export function availableForProject(
  * ONE accessor for both readers of this figure, `CellStockTable`'s own column and
  * `ReserveAddDialog`'s add-location table - a row reading "Not stated" outside a pool used
  * to disagree with the very cell it was added from, which stated Available for that same row.
+ *
+ * A line standing on its own pool reads that pool's row as `own`, and the walk's figure for it
+ * is the server's, the share or Available by the line's class (DEALER-PLANNING R12).
  */
 export function availableForProjectOf(
-  location: Pick<BoardCellLocation, 'where' | 'available_for_project' | 'available_qty'>,
+  location: Pick<
+    BoardCellLocation,
+    'where' | 'available_for_project' | 'available_qty' | 'stands_on_pool'
+  >,
 ): string | null {
-  return (location.where ?? 'own') === 'site_pool'
+  return (location.where ?? 'own') === 'site_pool' || location.stands_on_pool
     ? (location.available_for_project ?? '0')
     : (location.available_qty ?? null);
 }
@@ -100,12 +106,15 @@ export function availableForProjectOf(
  *
  * An own bin, a group sibling and another group are absent from the map on purpose: they
  * keep no share back, so a reserve there beside a Buy is still the mix the whole-line rule
- * refuses.
+ * refuses. The pool a line stands on is present, whatever its `where` says: the client must not
+ * refuse what confirm allows (DEALER-PLANNING R10).
  */
 export function poolShareLimitsOf(
   locations: readonly BoardCellLocation[],
 ): PoolShareLimits {
-  const pools = locations.filter((entry) => (entry.where ?? 'own') === 'site_pool');
+  const pools = locations.filter(
+    (entry) => (entry.where ?? 'own') === 'site_pool' || entry.stands_on_pool,
+  );
   const allowanceByWarehouseId: Record<string, string | null | undefined> = {};
   for (const entry of pools) {
     if (!entry.warehouse_id) continue;
@@ -115,8 +124,9 @@ export function poolShareLimitsOf(
     allowanceByWarehouseId,
     // N1 (fix round 5): `net_raw`, never `net` - `net` has this line's own demand added
     // back in for the SUBTOTAL's display, and the server's own confirm-time guard
-    // (`_is_pool_share_split`) bounds a pool-share split by the figure WITHOUT that
-    // addition. Reading `net` here admitted a split the server would refuse.
+    // (`_is_pool_share_split`) bounds a pool-share split by `fact.pools_net`. Reading `net`
+    // here admitted a split the server would refuse. The two agree on a line standing on
+    // its own pool, whose add-back is in `fact.pools_net` too (DEALER-PLANNING R7).
     net:
       pools.find((entry) => entry.net_raw !== null && entry.net_raw !== undefined)
         ?.net_raw ?? null,

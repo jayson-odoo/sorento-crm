@@ -55,6 +55,7 @@ from app.models.project_so import (
     SEVERITY_HARD,
     SEVERITY_INFO,
     SEVERITY_WARN,
+    SO_STATUS_ADOPTED,
     SO_STATUS_AMENDED,
     SO_STATUS_AWAITING_COSTING,
     SO_STATUS_BLOCKED,
@@ -2679,9 +2680,10 @@ class ProjectSODraftService:
         once instead of once per finding: a reviewer facing 30 hard findings on an order the
         manager has already decided to publish was clearing them one at a time. It needs the
         same grant and the same reason, and the reason lands on EVERY finding it clears, so
-        nothing is waved through silently. The other three refusals (already published,
+        nothing is waved through silently. The other refusals (adopted, already published,
         awaiting costing, no lines) are not findings and are not overridable.
         """
+        self._assert_not_adopted(order)
         if order.status == SO_STATUS_PUBLISHED:
             raise AppException(
                 status_code=409,
@@ -3191,13 +3193,29 @@ class ProjectSODraftService:
         Editing an unpublished draft commits nothing and raises no order change notice.
         Once it is published, the change has to travel with an OCN or purchasing and
         AutoCount are looking at different documents.
+
+        An ADOPTED order's lines mirror the AutoCount book, and it has no project for the
+        ownership check to read, so the route's `.edit` is the only gate in front of it. The
+        book is what changes it, and no screen edits one here.
         """
+        self._assert_not_adopted(order)
         if order.status in (SO_STATUS_PUBLISHED, SO_STATUS_AMENDED):
             raise AppException(
                 status_code=409,
                 message=(
                     f"{order.provisional_ref} is published. Raise an amendment with an "
                     "order change notice instead of editing it."
+                ),
+                code="so_not_editable",
+            )
+
+    def _assert_not_adopted(self, order: ProjectSalesOrder) -> None:
+        if order.status == SO_STATUS_ADOPTED:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{order.provisional_ref} is adopted from the sales order book, so it is "
+                    "changed there and planned here, not edited or published."
                 ),
                 code="so_not_editable",
             )
