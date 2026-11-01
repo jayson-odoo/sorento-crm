@@ -651,8 +651,8 @@ export function OrderInquiriesClient({
     // visit and a reload of one read identically. `ack=all` (a deliberate "show
     // everything") and every other value travel explicit, so a reload or a shared link
     // keeps them rather than falling back to the default over the buyer's choice.
-    // With an email's OI list the default is All, so a hand-picked To confirm is what travels.
-    if (ackFilter && ackFilter !== (inquiryNoFilter ? ACK_ANY : 'to_confirm')) next.set('ack', ackFilter);
+    // A mount that arrived with an email's OI list defaults to All (even after the chip is removed), so a hand-picked To confirm is what travels.
+    if (ackFilter && ackFilter !== (arrivedWithInquiryNo.current ? ACK_ANY : 'to_confirm')) next.set('ack', ackFilter);
     else next.delete('ack');
     if (linkUpTo) next.set('link_up_to', linkUpTo);
     else next.delete('link_up_to');
