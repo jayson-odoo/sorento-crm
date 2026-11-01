@@ -1143,6 +1143,9 @@ export const CellStockTable = React.forwardRef<
                                     (entry) => entry.pool_subtotal_for_project != null,
                                   )?.pool_subtotal_for_project
                                 }
+                                ownPoolNoShare={section.rows.some(
+                                  (entry) => entry.own_pool_no_share,
+                                )}
                               />
                             </td>
                           </tr>,
