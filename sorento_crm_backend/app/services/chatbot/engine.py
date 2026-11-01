@@ -1462,6 +1462,13 @@ def _candidates_of(res: list_resolver.Resolution) -> list[dict[str, Any]]:
     ]
 
 
+def _supplier_line(row: lookup_lists.LookupRow) -> str:
+    """The name a supplier is shown by, with its code: two suppliers can carry near-identical names (console pass 3:
+    "CO.,LTD" and "CO., LTD." were two companies), so every pick line names which record it is."""
+    code = next((t for t, home in zip(row.texts or (), row.homes or ()) if home == "code"), None)
+    return f"{row.label} ({code})" if code else row.label
+
+
 def _supplier_groups(resolutions: list[list_resolver.Resolution]) -> dict[str, list[tuple[str, str]]]:
     """SUPPLIER-ASK: per supplier row a span placed, the supplier rows that span scored within the resolver's runner-up
     margin (`list_resolver.AMBIGUITY_MARGIN`: a resolved span holds one, an ambiguous one every close row). Scores
@@ -1470,7 +1477,7 @@ def _supplier_groups(resolutions: list[list_resolver.Resolution]) -> dict[str, l
     for res in resolutions:
         if res.status not in ("resolved", "ambiguous"):
             continue
-        group = [(str(c.row.key), c.row.label) for c in res.candidates if c.row.list_name == "supplier"]
+        group = [(str(c.row.key), _supplier_line(c.row)) for c in res.candidates if c.row.list_name == "supplier"]
         for key, _label in group:
             held = out.setdefault(key, [])
             held.extend(g for g in group if g not in held)

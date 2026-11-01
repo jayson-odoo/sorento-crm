@@ -712,10 +712,14 @@ def test_three_equal_suppliers_ask_from_the_scores_and_a_pick_lists_that_one(ses
     ids = _staff_world(session_factory)
     twin = _seed_twin(session_factory)
     third = _seed_named(session_factory, THIRD, "ZZTSUP-TY03")
-    names = {SUPPLIER: ids["ours"], "ZZT TAIYANG SANITARY CO LTD": twin, THIRD: third}
+    names = {
+        f"{SUPPLIER} (ZZTSUP-TY01)": ids["ours"], "ZZT TAIYANG SANITARY CO LTD (ZZTSUP-TY02)": twin,
+        f"{THIRD} (ZZTSUP-TY03)": third,
+    }
     span = list_resolver.Span("taiyang", "supplier")
     reply, captured, seen = _span_turn(
-        session_factory, monkeypatch, "outstanding PO for taiyang", span, {"taiyang", *names}
+        session_factory, monkeypatch, "outstanding PO for taiyang", span,
+        {"taiyang", SUPPLIER, "ZZT TAIYANG SANITARY CO LTD", THIRD},
     )
     assert not _po_calls(captured), f"no PO list before the pick: {captured}"
     listed = [ln for ln in reply.splitlines() if ln[:1].isdigit()]
@@ -728,4 +732,44 @@ def test_three_equal_suppliers_ask_from_the_scores_and_a_pick_lists_that_one(ses
     calls = _po_calls(captured)
     assert calls and calls[0].get("supplier_ids") == [names[first]], captured
     assert not [n for n, _ in captured if n == "crm_report_ask"], "never the customer outstanding report"
+
+
+
+def test_a_span_typed_customer_is_scored_against_the_supplier_list_too(session_factory, monkeypatch):
+    """Console pass 3 step 1: the span model typed 太阳 `customer` (meaning "Tai Yang"). The type is a tie-break, never
+    a filter: the supplier rows are scored and, when the scores place the span there, the supplier binds."""
+    ids = _staff_world(session_factory)
+    span = list_resolver.Span(NATIVE, "customer", meaning="Tai Yang")
+    reply, captured, seen = _span_turn(
+        session_factory, monkeypatch, OWNER_MESSAGE, span, {NATIVE, "Tai Yang", SUPPLIER},
+        qf=_ask(NATIVE, None, hint="supplier"),
+    )
+    assert f"[id: {ids['ours']}]" in seen[-1], seen[-1]
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["ours"]], (reply, captured)
+
+
+def test_a_customer_typed_span_resolves_to_a_supplier_row_when_only_the_supplier_scores(session_factory):
+    _seed_suppliers(session_factory)
+    rows = ll.load_rows(scoped(session_factory), include_suppliers=True)
+    embed = meaning_embed({"tai yang", SUPPLIER.casefold()})
+    res = list_resolver.resolve([list_resolver.Span(NATIVE, "customer", meaning="Tai Yang")], rows, embed=embed)[0]
+    assert res.status == "resolved" and res.candidates[0].row.list_name == "supplier", (
+        res.status, [(c.row.list_name, c.row.label) for c in res.candidates]
+    )
+
+
+def test_two_suppliers_with_one_name_are_two_lines_each_with_its_code(session_factory, monkeypatch):
+    """Console pass 3 note a: "CO.,LTD" and "CO., LTD." were two companies on two lines nobody could tell apart, and
+    two suppliers with the very same name shared one line. Every supplier is its own line, named with its code."""
+    ids = _staff_world(session_factory)
+    same = _seed_named(session_factory, SUPPLIER, "ZZTSUP-TY09")
+    span = list_resolver.Span("taiyang", "supplier")
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstanding PO for taiyang", span, {"taiyang", SUPPLIER}
+    )
+    lines = [ln.split(". ", 1)[1] for ln in reply.splitlines() if ln[:1].isdigit()]
+    assert sorted(lines) == sorted([f"{SUPPLIER} (ZZTSUP-TY01)", f"{SUPPLIER} (ZZTSUP-TY09)"]), reply
+    assert not _po_calls(captured), captured
+    assert same != ids["ours"]
 
