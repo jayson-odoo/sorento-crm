@@ -28,6 +28,14 @@ rows). Four files agreeing by hand is a rule that holds until one of them is edi
 exact reasoning `pool_predicate.py` records for the site-pool test, and it is this module's
 whole justification.
 
+**A line at a dealer-segment bin is plannable although the bin is OFF (DEALER-PLANNING, owner
+1 Nov 2026).** Dealer sales orders sit at a site pool such as BRW. Refusing them told a planner
+to fix a location that was already right, and ticking the flag instead would add the pool to the
+planning, netting and Stock Debt reads of every project line. So the VERDICT
+(`outside_fulfilment_planning`) exempts the dealer segment, using the one spelling
+`pool_predicate.is_site_pool`, and the flag and `in_fulfilment_planning` do not move: what a line
+may be planned AT and what the engine reads as planning supply are two questions.
+
 **Site pools are OFF, and that is not a bug.** A pool is reached through
 `pool_warehouse_id`, never as an ownership group, so the pool rung reads its own set
 (`project_supply_service._site_pool_warehouses`) and is unaffected by this predicate.
@@ -37,6 +45,8 @@ Anything that nets the two together has to union the two sets explicitly, which 
 from __future__ import annotations
 
 from typing import Any, Optional
+
+from app.services.scm.pool_predicate import is_site_pool
 
 #: The verdict a line at a flagged-off bin carries, on the board and at confirm
 #: (AC-S1-6). One string, shared, because the board renders it and the confirm refuses
@@ -95,7 +105,9 @@ def planned_at_own_bin(warehouse: Any, doc_type: Optional[str]) -> bool:
 def outside_fulfilment_planning(warehouse: Any, doc_type: Optional[str] = None) -> bool:
     """Whether this bin earns the `OUTSIDE_FULFILMENT_PLANNING` verdict: ACTIVE, flag off.
 
-    A line whose `doc_type` is in `PLANNED_AT_OWN_BIN_DOC_TYPES` never earns it.
+    A line whose `doc_type` is in `PLANNED_AT_OWN_BIN_DOC_TYPES` never earns it, and neither
+    does a line at a dealer-segment bin (see the module docstring). What is left is a project
+    bin somebody flagged off.
 
     Deliberately not `not in_fulfilment_planning(...)`. An INACTIVE warehouse was already
     outside everything the ladder reads before this flag existed, and it keeps the verdict
@@ -103,6 +115,8 @@ def outside_fulfilment_planning(warehouse: Any, doc_type: Optional[str] = None) 
     points them at a switch that is not the one to flip.
     """
     if warehouse is None or doc_type in PLANNED_AT_OWN_BIN_DOC_TYPES:
+        return False
+    if is_site_pool(getattr(warehouse, "segment", None)):
         return False
     return bool(getattr(warehouse, "is_active", False)) and not bool(
         getattr(warehouse, "fulfilment_planning", False)

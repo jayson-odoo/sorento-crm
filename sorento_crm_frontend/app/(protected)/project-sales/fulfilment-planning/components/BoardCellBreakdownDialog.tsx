@@ -51,6 +51,7 @@ import {
   suggestionBreakdown,
   takenByLocation,
   takenKindsByLocation,
+  outsidePlanningSentence,
 } from '../../_shared/lib/supplyVocabulary';
 import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
@@ -517,7 +518,8 @@ export function BoardCellBreakdownDialog({
           row.original.covered
             ? 'This line is already confirmed. Amend it to change what was decided.'
             : row.original.unplannable
-              ? 'This line cannot be decided here: its sales order states no fulfilment location.'
+              ? (outsidePlanningSentence(row.original) ??
+                'This line cannot be decided here: its sales order states no fulfilment location.')
               : isPreMarkOnly(row.original, draft[row.original.key] ?? null)
                 ? // N-2 (reviewer, fix round 2): was "Open the row to decide it", which is
                   // no longer where the quickest answer is - the Verdict cell beside this

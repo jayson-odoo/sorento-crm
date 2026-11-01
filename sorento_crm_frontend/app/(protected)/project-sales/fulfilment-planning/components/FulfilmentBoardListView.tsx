@@ -56,6 +56,8 @@ import {
   // Aliased the way `SalesOrderDetail` aliases it: bare `describe` is vitest's, and a file
   // that imports both reads as though the test runner were writing the column.
   describe as describeSupply,
+  outsidePlanningSentence,
+  unplannableLabel,
 } from '../../_shared/lib/supplyVocabulary';
 import type { SupplyPart } from '../../_shared/lib/supplyVocabulary';
 import type {
@@ -454,7 +456,8 @@ export function FulfilmentBoardListView({
         enableRow: (row) => canDecide(row.original),
         disabledReason: (row) =>
           row.original.unplannable
-            ? 'This line cannot be decided here: its sales order states no fulfilment location.'
+            ? (outsidePlanningSentence(row.original) ??
+              'This line cannot be decided here: its sales order states no fulfilment location.')
             : row.original.cancelled
               ? 'This line was removed from the sales order.'
               : undefined,
@@ -864,7 +867,12 @@ export function FulfilmentBoardListView({
             // The ladder was never walked for it (AC-FP16), so there is nothing to suggest -
             // and the reason is the one thing worth saying in its place.
             return (
-              <span className="text-muted-foreground">Needs a location</span>
+              <span
+                className="block truncate text-muted-foreground"
+                title={unplannableLabel(contribution)}
+              >
+                {unplannableLabel(contribution)}
+              </span>
             );
           }
           const parts = contributionSuggestion(contribution);
@@ -1263,7 +1271,7 @@ function hasBuy(parts: SupplyPart[] | null): boolean {
  * the words on screen.
  */
 function suggestedSortText(contribution: BoardContribution): string {
-  if (contribution.unplannable) return 'Needs a location';
+  if (contribution.unplannable) return unplannableLabel(contribution);
   const parts = contributionSuggestion(contribution);
   if (!parts) return 'Not recorded';
   return describeSupply(parts, contribution.fulfilment_location) || 'Nothing proposed';

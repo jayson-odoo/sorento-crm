@@ -4008,6 +4008,44 @@ describe('BoardCellBreakdownDialog: own arrival (S5)', () => {
     );
   }
 
+  it('a line at a bin outside fulfilment planning states that reason on its checkbox', () => {
+    const base = cellOf([demand({ fulfilment_location: 'BRW-SMC' })]);
+    const cell = {
+      ...base,
+      contributions: [
+        {
+          ...base.contributions[0],
+          unplannable: true,
+          fulfilment_location: 'BRW-SMC',
+          sources: [
+            {
+              kind: 'unplannable',
+              qty: '24',
+              location: null,
+              warehouse_id: null,
+              reason: 'Outside fulfilment planning',
+              spo_number: null,
+              arrival_date: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as BoardCell;
+    renderDialogFor(cell);
+    openLines();
+
+    expect(
+      screen.getAllByTitle(
+        'BRW-SMC is outside fulfilment planning, so this line cannot be decided here.',
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.queryByTitle(
+        'This line cannot be decided here: its sales order states no fulfilment location.',
+      ),
+    ).not.toBeInTheDocument();
+  });
+
   it('AC-S5-1: a source carrying source: own_arrival renders a "Received N" chip naming the PO in its title', () => {
     const cell = cellWithOwnArrival();
     const key = cell.contributions[0].key;
