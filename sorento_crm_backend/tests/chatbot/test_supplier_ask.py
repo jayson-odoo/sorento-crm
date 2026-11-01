@@ -30,7 +30,7 @@ from app.services.chatbot.lanes.business import resolve_gate
 from app.services.company_scope import DEFAULT_COMPANY_ID
 
 from tests.chatbot.conftest import session_factory  # noqa: F401
-from tests.chatbot.test_engine import _parser_output
+from tests.chatbot.test_engine import CONTACT_ID, _parser_output
 from tests.chatbot.test_lookup_lists_s2 import meaning_embed, scoped
 from tests.chatbot.test_outstanding_lane import _run_turn, _seed_contact
 from tests.chatbot.test_po_ref_ask import _make_staff
@@ -122,37 +122,6 @@ def _po_calls(captured) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 
-def test_owner_message_lists_the_suppliers_open_pos(session_factory, monkeypatch):
-    """AC-1: "the outstanding for 太阳" (an order-domain outstanding ask) names a supplier:
-    it is answered from the open PO book filtered to that supplier, never the SO report."""
-    ids = _seed_suppliers(session_factory)
-    _seed_contact(session_factory, variables={})
-    _make_staff(session_factory)
-    _reply, captured = _turn(session_factory, monkeypatch, _ask(NATIVE, SUPPLIER), OWNER_MESSAGE)
-    calls = _po_calls(captured)
-    assert calls, f"the open PO book was never asked: {captured}"
-    assert calls[0].get("supplier_ids") == [ids["ours"]], calls[0]
-    assert not [n for n, _ in captured if n == "crm_report_ask"], "a supplier is not a customer outstanding report"
-
-
-@pytest.mark.parametrize(
-    "raw,canonical,text_body",
-    [
-        ("taiyang", None, "outstanding PO for taiyang"),  # an English (romanised) name the resolver matches by word
-        ("ZZTSUP-TY01", None, "POs for ZZTSUP-TY01"),  # the supplier's code
-        ("taiyng", SUPPLIER, "outstanding for taiyng"),  # a typo the span pass placed on the row
-    ],
-)
-def test_name_code_and_typo_list_the_same_suppliers_open_pos(session_factory, monkeypatch, raw, canonical, text_body):
-    """AC-2."""
-    ids = _seed_suppliers(session_factory)
-    _seed_contact(session_factory, variables={})
-    _make_staff(session_factory)
-    _reply, captured = _turn(session_factory, monkeypatch, _ask(raw, canonical), text_body)
-    calls = _po_calls(captured)
-    assert calls and calls[0].get("supplier_ids") == [ids["ours"]], captured
-
-
 def test_a_po_domain_ask_for_a_supplier_filters_by_it(session_factory, monkeypatch):
     """"POs for supplier X" parsed straight into the purchase_order domain."""
     ids = _seed_suppliers(session_factory)
@@ -177,21 +146,6 @@ def _seed_twin(session_factory) -> str:
     db.add(twin)
     db.commit()
     return twin.id
-
-
-@pytest.mark.parametrize("text_body", ["outstanding PO for taiyang", "outstanding for taiyng"])
-def test_several_equal_suppliers_ask_which_one_and_never_drop_the_filter(session_factory, monkeypatch, text_body):
-    """Crew console pass (1 Nov 2026): "taiyang" placed several suppliers equally and the turn
-    answered with no supplier filter. Two suppliers for one ask is a question."""
-    _seed_suppliers(session_factory)
-    _seed_twin(session_factory)
-    _seed_contact(session_factory, variables={})
-    _make_staff(session_factory)
-    reply, captured = _turn(session_factory, monkeypatch, _ask("taiyang", None), text_body)
-    assert "Which one do you mean?" in reply, reply  # the roster every optional filter asks with
-    assert SUPPLIER in reply and "ZZT TAIYANG SANITARY CO LTD" in reply, reply
-    assert not _po_calls(captured), f"no unfiltered (or all-supplier) PO list before the pick: {captured}"
-    assert not [n for n, _ in captured if n == "crm_report_ask"], captured
 
 
 # --------------------------------------------------------------------------- #
@@ -239,17 +193,6 @@ def test_staff_without_the_reveal_get_no_supplier_filter_on_a_po_ask(session_fac
     )
     assert not [a for a in _po_calls(captured) if a.get("supplier_ids")], captured
     assert SUPPLIER not in reply, reply
-
-
-def test_the_owner_message_with_asks_still_reads_the_po_book(session_factory, monkeypatch):
-    """The plan reads `asks` before `domain_hint`, so the swap rewrites both."""
-    ids = _seed_suppliers(session_factory)
-    _seed_contact(session_factory, variables={})
-    _make_staff(session_factory)
-    qf = {**_ask(NATIVE, SUPPLIER), "asks": [{"domain": "order"}]}
-    _reply, captured = _turn(session_factory, monkeypatch, qf, OWNER_MESSAGE)
-    calls = _po_calls(captured)
-    assert calls and calls[0].get("supplier_ids") == [ids["ours"]], captured
 
 
 @pytest.mark.parametrize(
@@ -475,7 +418,7 @@ def _migration(name: str):
     return module
 
 
-def test_the_span_edit_asks_meanings_names_the_supplier_and_reads_chinese_names_by_pinyin():
+def test_the_span_edit_asks_meanings_and_names_the_supplier_type():
     """Crew console pass: the production span prompt (v1) asks for no meaning, so the edit adds it."""
     from app.services.ai_prompt_registry import PROMPT_KEYS
     from app.services.chatbot.head import span_extract
@@ -592,66 +535,9 @@ def test_a_console_parser_pin_runs_its_paired_span_prompt_on_a_dry_run_only(sess
     assert engine_mod._span_override(db, env({}), dry_run=True) is None
 
 
-def test_a_pick_from_the_supplier_roster_lists_that_suppliers_open_pos(session_factory, monkeypatch):
-    """Hand-test step 4: "1" after "Which one do you mean?" filters by the supplier on line 1."""
-    ids = _seed_suppliers(session_factory)
-    twin = _seed_twin(session_factory)
-    _seed_contact(session_factory, variables={})
-    _make_staff(session_factory)
-    asked, _ = _turn(session_factory, monkeypatch, _ask("taiyang", None), "outstanding PO for taiyang")
-    assert "Which one do you mean?" in asked, asked
-    first = next(ln for ln in asked.splitlines() if ln.startswith("1. "))
-    expected = ids["ours"] if SUPPLIER in first else twin
-    pick = _parser_output(
-        message_type="answer", intent_hint=None, domain_hint=None, entities=[], reference_positions=[1],
-    )
-    _reply, captured = _turn(session_factory, monkeypatch, pick, "1")
-    calls = _po_calls(captured)
-    assert calls and calls[0].get("supplier_ids") == [expected], captured
-
-
 # --------------------------------------------------------------------------- #
 # Console pass 2 (crew, e04e8ebb9d): the three failures, red first
 # --------------------------------------------------------------------------- #
-
-
-def test_a_spaced_pinyin_meaning_does_not_reach_the_record_but_the_joined_one_does(session_factory):
-    """The span model answered "tai yang"; the records keep "TAIYANG". Code scores spans, it does not guess
-    a join, so the prompt must ask for the name as written in the records: one word per name word."""
-    _seed_suppliers(session_factory)
-    spaced = _resolve(session_factory, list_resolver.Span(NATIVE, "supplier", meaning="tai yang"))
-    joined = _resolve(session_factory, list_resolver.Span(NATIVE, "supplier", meaning="Taiyang"))
-    assert not (spaced.status == "resolved" and spaced.candidates[0].row.label == SUPPLIER)
-    assert joined.status == "resolved" and joined.candidates[0].row.label == SUPPLIER
-
-
-def test_the_span_prompt_asks_for_pinyin_joined_the_way_records_write_the_name():
-    sask = _migration("sask_0002_span_supplier")
-    sentence = sask.NAME_MEANING_SENTENCE
-    assert "Taiyang" in sentence and "tai yang" in sentence, sentence
-    assert "joined" in sentence or "one word" in sentence, sentence
-
-
-def test_the_parser_line_says_several_equal_supplier_lines_are_a_question_not_a_pick():
-    """Console pass 2 step 3: three Supplier candidates fitted "taiyang" equally and the parser picked one."""
-    line = _migration("sask_0002_span_supplier").PARSER_SUPPLIER_LINE
-    assert "several" in line and "canonical_code" in line, line
-    assert "share" in line, "the shared name word is the token, so the resolver finds every supplier it names"
-
-
-def test_the_native_name_read_as_the_shared_word_asks_which_supplier(session_factory, monkeypatch):
-    """What the parser answers under the new line for "太阳" with several TAIYANG suppliers listed: hint
-    supplier, canonical_code the shared word. The resolver finds every supplier it names and the turn asks."""
-    _seed_suppliers(session_factory)
-    _seed_twin(session_factory)
-    _seed_contact(session_factory, variables={})
-    _make_staff(session_factory)
-    reply, captured = _turn(session_factory, monkeypatch, _ask(NATIVE, "TAIYANG"), OWNER_MESSAGE)
-    # The roster question, in the asker's language (this message is Chinese: 您指的是哪一个？).
-    lines = reply.splitlines()
-    assert f"1. {SUPPLIER}" in lines or f"2. {SUPPLIER}" in lines, reply
-    assert any(ln.endswith("ZZT TAIYANG SANITARY CO LTD") for ln in lines), reply
-    assert not _po_calls(captured), captured
 
 
 def test_republishing_never_stacks_a_second_supplier_line(session_factory, monkeypatch):
@@ -683,5 +569,163 @@ def test_republishing_never_stacks_a_second_supplier_line(session_factory, monke
         AIPromptVersion.name == "chatbot_semantic_parser", AIPromptVersion.version == parser_v
     ).one()
     assert "A changed supplier line." in row.template
-    assert 'A "Supplier candidates" line' not in row.template, "the earlier line rode in from its own version"
+    assert sask.SUPPLIER_ID_ASK not in row.template, "the earlier line rode in from its own version"
     assert row.template.count("== LOOKUP SPANS ==") == 1
+
+
+def test_the_published_prompts_compare_no_names():
+    """Owner ruling (1 Nov 2026, "match by meaning"): no example name, no shared-word rule; the parser answers
+    with the row id, and the code constant and the migration's frozen copy agree."""
+    from app.services.chatbot.head import parser as parser_mod
+
+    sask = _migration("sask_0002_span_supplier")
+    assert sask.SUPPLIER_ID_ASK == parser_mod.SUPPLIER_ID_ASK
+    assert sask.PARSER_SUPPLIER_LINE.startswith(parser_mod.SUPPLIER_ID_ASK)
+    for text in (sask.PARSER_SUPPLIER_LINE, sask.NAME_MEANING_SENTENCE, sask.SUPPLIER_TYPE_LINE):
+        assert "aiyang" not in text.lower() and "share" not in text and "pinyin" not in text, text
+
+
+# --------------------------------------------------------------------------- #
+# The span flow, end to end (owner ruling: suppliers do exactly what customers do). The span model and the embedder
+# are doubles: `near` is the set of texts the embedder puts on one axis (cosine 1), everything else is orthogonal.
+# The parser double answers what the id rule asks: the id of the FIRST Supplier candidates line it is shown.
+# --------------------------------------------------------------------------- #
+
+#: A name written the way some suppliers spell the same words apart.
+SPACED = "ZZT TAI YANG TRADING SDN BHD"
+THIRD = "ZZT TAIYANG METAL CO LTD"
+
+
+class _PickFirstSupplierId(list):
+    """`capture_user_block` for `_run_turn`: sees the user block the parser was shown and writes the first Supplier
+    line's id into the verdict, as the parser would under `SUPPLIER_ID_ASK`."""
+
+    def __init__(self, qf: dict[str, Any]) -> None:
+        super().__init__()
+        self.qf = qf
+
+    def append(self, block: str) -> None:  # type: ignore[override]
+        super().append(block)
+        import re
+
+        section = block.split(ll.header("supplier"), 1)
+        ids = re.findall(r"\[id: ([0-9a-f-]{36})\]", section[1]) if len(section) == 2 else []
+        for e in self.qf.get("entities") or []:
+            if e.get("hint") == "supplier":
+                e["canonical_code"] = ids[0] if ids else None
+
+
+def _seed_named(session_factory, name: str, code: str) -> str:
+    from app.models.procurement import Supplier
+
+    db = session_factory()
+    row = Supplier(id=str(uuid.uuid4()), supplier_code=code, supplier_name=name, company_id=DEFAULT_COMPANY_ID)
+    db.add(row)
+    db.commit()
+    return row.id
+
+
+def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver.Span, near: set[str], *,
+               qf: dict[str, Any] | None = None, attributes=STAFF_GRANTS):
+    import functools
+
+    from app.services import contact_field_reveal_service
+    from app.services.chatbot.head import parser as parser_mod
+    from app.services.chatbot.head import span_extract
+
+    monkeypatch.setattr(
+        parser_mod, "ParserConfig",
+        functools.partial(parser_mod.ParserConfig, lookup_spans=True, supplier_ids=True),
+    )
+    monkeypatch.setattr(span_extract, "resolve_config", lambda db, **kw: span_extract.SpanConfig(
+        "sys", 1, "openai", "gpt-zz", "ZZ-key", "label"))
+    monkeypatch.setattr(span_extract, "extract", lambda config, message: span_extract.SpanAnswer([span], {}, 1))
+    monkeypatch.setattr(ll, "EMBED", meaning_embed({t.casefold() for t in near}))
+    monkeypatch.setattr(contact_field_reveal_service, "granted_keys", lambda db, pk: list(attributes))
+    qf = qf or _ask(span.text, None)
+    seen = _PickFirstSupplierId(qf)
+    result, captured = _run_turn(
+        session_factory, monkeypatch, qf=qf, text_body=text_body,
+        msg_id=f"ZZT-supplier-span-{uuid.uuid4().hex[:10]}", attributes=list(attributes), real_resolver=True,
+        capture_user_block=seen,
+    )
+    return ((result.reply or {}).get("text") or ""), captured, seen
+
+
+def _staff_world(session_factory) -> dict[str, Any]:
+    from tests.chatbot._turn_helpers import make_office_access_type
+
+    ids = _seed_suppliers(session_factory)
+    _seed_contact(session_factory, variables={})
+    _make_staff(session_factory)
+    make_office_access_type(session_factory, CONTACT_ID)
+    return ids
+
+
+@pytest.mark.parametrize(
+    "text_body,span",
+    [
+        (OWNER_MESSAGE, list_resolver.Span(NATIVE, "supplier", meaning="Taiyang")),  # the owner's message
+        (OWNER_MESSAGE, list_resolver.Span(NATIVE, "supplier")),  # no meaning: the native span itself
+        ("outstanding for tai yang", list_resolver.Span("tai yang", "supplier")),  # spaced romanisation
+        ("outstanding for Taiyang", list_resolver.Span("Taiyang", "supplier")),
+        ("outstanding for Taiyan", list_resolver.Span("Taiyan", "supplier")),  # a typo
+        ("ada PO pembekal 太阳 ke", list_resolver.Span(NATIVE, "supplier", meaning="Taiyang")),  # Malay / Chinese mix
+    ],
+)
+def test_one_supplier_by_meaning_lists_its_open_pos(session_factory, monkeypatch, text_body, span):
+    """The span list places the phrase on the supplier BY ITS SCORES (meaning here: the embedder double puts the
+    phrase, its meaning and the supplier on one axis); the parser answers with the line's id; the id binds."""
+    ids = _staff_world(session_factory)
+    near = {span.text, span.meaning or span.text, SUPPLIER}
+    reply, captured, seen = _span_turn(session_factory, monkeypatch, text_body, span, near)
+    assert seen and ll.header("supplier") in seen[-1], "the parser was shown the Supplier candidates"
+    assert f"[id: {ids['ours']}]" in seen[-1], seen[-1]
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["ours"]], (reply, captured)
+    assert not [n for n, _ in captured if n == "crm_report_ask"], captured
+
+
+def test_a_spaced_supplier_name_is_reached_by_meaning(session_factory, monkeypatch):
+    """A record written "TAI YANG" (two words) is the supplier "太阳" means when the embedder says so: no join rule."""
+    _staff_world(session_factory)
+    spaced = _seed_named(session_factory, SPACED, "ZZTSUP-TY07")
+    # The native span alone: only the embedder places it (the romanised "Taiyang" would also name the TAIYANG
+    # record by its word, two close suppliers, which is a question, see the three-supplier test).
+    span = list_resolver.Span(NATIVE, "supplier")
+    _reply, captured, _seen = _span_turn(session_factory, monkeypatch, OWNER_MESSAGE, span, {NATIVE, SPACED})
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [spaced], captured
+
+
+def test_a_single_clear_supplier_binds_without_a_question(session_factory, monkeypatch):
+    ids = _staff_world(session_factory)
+    span = list_resolver.Span("jinbai", "supplier")
+    reply, captured, _seen = _span_turn(session_factory, monkeypatch, "outstanding PO for jinbai", span, {"jinbai", OTHER})
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["other"]], (reply, captured)
+
+
+def test_three_equal_suppliers_ask_from_the_scores_and_a_pick_lists_that_one(session_factory, monkeypatch):
+    """Console pass 2: "taiyang" placed three suppliers equally and the parser bound one. The id binds the whole
+    runner-up group, so the turn asks; "1" then lists the supplier on line 1. The parser still picked ONE id."""
+    ids = _staff_world(session_factory)
+    twin = _seed_twin(session_factory)
+    third = _seed_named(session_factory, THIRD, "ZZTSUP-TY03")
+    names = {SUPPLIER: ids["ours"], "ZZT TAIYANG SANITARY CO LTD": twin, THIRD: third}
+    span = list_resolver.Span("taiyang", "supplier")
+    reply, captured, seen = _span_turn(
+        session_factory, monkeypatch, "outstanding PO for taiyang", span, {"taiyang", *names}
+    )
+    assert not _po_calls(captured), f"no PO list before the pick: {captured}"
+    listed = [ln for ln in reply.splitlines() if ln[:1].isdigit()]
+    assert sorted(ln.split(". ", 1)[1] for ln in listed) == sorted(names), reply
+    first = listed[0].split(". ", 1)[1]
+    pick = _parser_output(
+        message_type="answer", intent_hint=None, domain_hint=None, entities=[], reference_positions=[1],
+    )
+    _r, captured, _s = _span_turn(session_factory, monkeypatch, "1", list_resolver.Span("1"), set(), qf=pick)
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [names[first]], captured
+    assert not [n for n, _ in captured if n == "crm_report_ask"], "never the customer outstanding report"
+

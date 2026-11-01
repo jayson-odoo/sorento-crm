@@ -747,6 +747,10 @@ def resolve_entity_body(
         # SUPPLIER-ASK: a supplier is staff-only (`contracts.supplier_visible`); a word the
         # parser hinted as one is never looked up for anyone else.
         entities = [e for e in entities if jsc.lower_or_empty(jsc.get(e, "hint")) != "supplier"]
+    else:
+        # SUPPLIER-ASK: a supplier the span pass placed binds by its row id (`bind_span_suppliers`),
+        # never by its name through the resolver's text probes.
+        entities = [e for e in entities if span_supplier_group(e, ctx) is None]
 
     match_mode = parse_output.get("match_mode")
     match_mode = match_mode if jsc.truthy(match_mode) else "and"
@@ -1598,6 +1602,8 @@ def run(
     if isinstance(resolved, dict) and not ctx.get("supplier_visible"):
         # SUPPLIER-ASK: the resolver's cross-type rerun can place any word on a supplier.
         without_rows_of(resolved, "supplier")
+    if isinstance(resolved, dict):
+        bind_span_suppliers(parser, resolved, ctx)
     if customer_names is not None and isinstance(resolved, dict):
         name_unnamed_customers(resolved, customer_names)
 
@@ -1781,6 +1787,43 @@ def _without_customer_rows(resolved: dict[str, Any]) -> None:
     `order` the resolver reads a brand or category word as the customer it names
     (`entity_resolver._DOMAIN_HINT_EXPANSIONS`), so the parser's tag cannot be trusted here."""
     without_rows_of(resolved, "customer")
+
+
+def span_supplier_group(entity: Any, ctx: dict[str, Any]) -> list[tuple[str, str]] | None:
+    """SUPPLIER-ASK: the span pass's group for a supplier entity whose `canonical_code` is the id of a Supplier
+    candidates line (`engine._supplier_groups`), else None. The id is the binding; a name is never matched here."""
+    if jsc.lower_or_empty(jsc.get(entity, "hint")) != "supplier":
+        return None
+    groups = ctx.get("span_suppliers") if isinstance(ctx.get("span_suppliers"), dict) else {}
+    return groups.get(jsc.nullish_str(jsc.get(entity, "canonical_code")).strip()) or None
+
+
+def bind_span_suppliers(parser: dict[str, Any], resolved: dict[str, Any], ctx: dict[str, Any]) -> None:
+    """SUPPLIER-ASK (owner ruling, 1 Nov 2026: "match by meaning"): each supplier entity the span pass placed joins
+    the resolver's answer as one resolution holding its whole score group: one supplier binds, a near tie stays
+    several and the purchase_order narrowing (`supplier: optional_filter`) asks which one. In place."""
+    if not ctx.get("supplier_visible"):
+        return
+    added = []
+    for e in jsc.array(parser.get("entities")):
+        group = span_supplier_group(e, ctx)
+        if not group:
+            continue
+        token = jsc.nullish_str(jsc.get(e, "raw")).strip() or jsc.nullish_str(jsc.get(e, "canonical_code"))
+        added.append({
+            "raw": token,
+            "token": token,
+            "matches": [
+                {
+                    "entity_type": "supplier", "uuid": key, "canonical_code": name, "match_field": "span",
+                    "match_tier": "exact" if len(group) == 1 else "span", "display": {"supplier_name": name},
+                }
+                for key, name in group
+            ],
+        })
+    if added:
+        resolved["resolutions"] = [*jsc.array(resolved.get("resolutions")), *added]
+        resolved["tokens"] = [*jsc.array(resolved.get("tokens")), *(a["token"] for a in added)]
 
 
 def without_rows_of(resolved: dict[str, Any], kind: str) -> None:

@@ -38,13 +38,20 @@ See `supplier-ask-acceptance-criteria.md`.
 - Route: an order/sales verdict naming a supplier and no customer-side party becomes
   `purchase_order` / `check_po` (its `asks` too) right after the access check (`engine`, the dealer-cost
   swap's precedent), decided by the entity kind, never a word.
-- Span pass: `lookup_lists._supplier_rows` (name + code) only for office staff holding the supplier reveal;
-  `list_resolver.SPAN_TYPES` gains `supplier`. Floors borrowed from the customer list, not yet measured.
+- Span pass (owner ruling 1 Nov 2026, "match by meaning", crew option (a)): suppliers do what customers do. The
+  Supplier lookup list (name + code, office staff with the supplier reveal) is scored like every list: exact,
+  spelling, word partial and embedding meaning. `supplier` is in `lookup_lists.ID_LISTS`: under
+  `parser.SUPPLIER_ID_ASK` each Supplier line carries its row id and the parser answers with it. The id binds
+  (`resolve_gate.bind_span_suppliers`) together with every supplier the span scored within the runner-up margin
+  (`list_resolver.AMBIGUITY_MARGIN`, `engine._supplier_groups`), so a near tie asks "Which one do you mean?" from the
+  scores; a span-matched supplier never goes through the resolver's name probes. Floors: measured on the dev copy with
+  the Gemini embedder (`scripts/measure_supplier_span_floor.py`, crew runs it); until then the customer list's.
 - Prompts, UNLABELLED (migration `sask_0002_span_supplier`): a span version (production text + the meaning
-  paragraph it lacked + a supplier type line + a pinyin sentence for company names in Chinese characters) and a
-  span-pass parser version (span marker kept, one supplier line after it) that records its span version
-  (`config_json.span_prompt_version_id`). A console dry run pinning that parser runs that span prompt too
-  (`engine._span_override`); a live turn never does.
+  paragraph it lacked + a supplier type line + one sentence asking for a company name in another script in the Latin
+  letters the company writes it in; no example name) and a span-pass parser version (span marker kept, the
+  `SUPPLIER_ID_ASK` line after it) that records its span version (`config_json.span_prompt_version_id`). A console
+  dry run pinning that parser runs that span prompt too (`engine._span_override`); a live turn never does.
+- Not built (crew option (b), "not now"): a resolver embedding tier for suppliers. Customers have none either.
 
 ## Owner steps to promote (after the chatbot eval)
 

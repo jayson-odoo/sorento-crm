@@ -2,13 +2,17 @@
 
 Crew console pass on the first cut (1 Nov 2026) found three gaps, fixed here:
 
-* the production span prompt (v1) asks for no "meaning", so "太阳" had no plain form to place on the supplier row
-  ("XIAMEN TAIYANG ..."). The span version published here is the production text, plus the meaning paragraph when
-  it lacks one, plus a supplier type line after the customer line and one sentence that has a company name written
-  in Chinese characters read by its pinyin, the form the business keeps such names in;
+* the production span prompt (v1) asks for no "meaning". The span version published here is the production text,
+  plus the meaning paragraph when it lacks one, plus a supplier type line after the customer line and one sentence
+  asking for a company name written in another script in the Latin letters the company writes it in. Matching is
+  the span list's: embeddings against the supplier rows, at a floor measured on the dev copy
+  (`scripts/measure_supplier_span_floor.py`);
 * no parser version carried both the span marker (`== LOOKUP SPANS ==`, which turns the span pass on) and a supplier
   line. The parser version published here is the production text when it carries the span marker, else the newest
   version that does, with one supplier line right after the marker;
+* the parser bound a supplier by its name; the published parser line asks for the row id of the Supplier candidates
+  line (`parser.SUPPLIER_ID_ASK`), which `resolve_gate.bind_span_suppliers` binds with every supplier the span pass
+  scored within the runner-up margin (owner ruling, 1 Nov 2026: "match by meaning");
 * the Chatbot Console pins only a parser version. The parser version records the span version it was published with
   (`config_json.span_prompt_version_id`); a dry run that pins this parser runs that span prompt too
   (`engine._span_override`). A live turn never reads the pairing.
@@ -51,16 +55,15 @@ MEANING_PARAGRAPH = (
 )
 SUPPLIER_TYPE_LINE = '- supplier: a company we buy goods from, a supplier, vendor or factory (e.g. "Xiamen ABC Technology")'
 NAME_MEANING_SENTENCE = (
-    'When the span is a company name written in Chinese characters, "meaning" is its pinyin without tones, the '
-    'syllables of each word of the name joined the way company records write it ("太阳" is "Taiyang", not "tai yang"), '
-    "never a translation of its words."
+    'When the span is a company name written in another script, "meaning" is that name as the company writes it in '
+    "Latin letters."
 )
+#: The parser's id rule is `parser.SUPPLIER_ID_ASK` (frozen copy): the id binds the supplier, and the suppliers the
+#: span pass scored within the runner-up margin bind with it, so a near tie is asked. No name is compared.
+SUPPLIER_ID_ASK = "For a supplier entity, canonical_code is the id of the Supplier candidates line the message means."
 PARSER_SUPPLIER_LINE = (
-    'A "Supplier candidates" line is a company we buy goods from: the entity is hint "supplier". When one line is the '
-    "supplier the message means, canonical_code is that line's name. When several lines fit the message's word "
-    "equally (they share the name word the message names), canonical_code is that shared word as the lines write "
-    "it, so the assistant asks which supplier; never pick one of them. What is outstanding with a supplier is our "
-    "open purchase orders to it (domain purchase_order)."
+    SUPPLIER_ID_ASK + " A supplier is a company we buy goods from; what is outstanding with a supplier is our open "
+    "purchase orders to it (domain purchase_order)."
 )
 _SPAN_LINE_RE = re.compile(r"^[ \t]*" + re.escape(SPAN_MARKER) + r"[ \t]*$", re.MULTILINE)
 
@@ -146,8 +149,9 @@ def publish_span(session: Session):
 
 
 def _ours(template: str | None) -> bool:
-    """A version this migration published (any wording of it): it carries a supplier line after the marker."""
-    return 'A "Supplier candidates" line' in (template or "")
+    """A version this migration published (any wording of it so far): it carries a supplier line after the marker."""
+    text = template or ""
+    return 'A "Supplier candidates" line' in text or SUPPLIER_ID_ASK in text
 
 
 def _span_parser_base(session: Session):

@@ -31,7 +31,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass, fields as dataclasses_fields, replace as dataclasses_replace
+from dataclasses import dataclass, field, fields as dataclasses_fields, replace as dataclasses_replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterator, Mapping
 
@@ -1339,6 +1339,12 @@ class _SpanPrep:
     # REPORT-UNIFY slice 3: the parser prompt asks for the row id (`parser.ROW_ID_ASK`), so a brand, salesperson or
     # category line carries it. Off for a bare prep; `_span_prep` takes it from the prompt in use.
     row_ids: bool = False
+    # SUPPLIER-ASK: the parser prompt asks for the supplier row id (`parser.SUPPLIER_ID_ASK`).
+    supplier_ids: bool = False
+    # SUPPLIER-ASK: filled by `_span_lookup`. Supplier row id -> the suppliers the span pass scored within the runner-up
+    # margin of the span that placed it (itself included, best first, as (id, name)). The resolver step binds a
+    # parser-picked id to its whole group, so a near tie is asked ("Which one do you mean?") and never guessed.
+    supplier_groups: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
 
 
 def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | None:
@@ -1367,6 +1373,7 @@ def _span_prep(
     db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
     group_categories: bool = False, row_ids: bool = False, span_override: str | None = None,
+    supplier_ids: bool = False,
 ) -> _SpanPrep | None:
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
     rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
@@ -1394,7 +1401,10 @@ def _span_prep(
         except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
             logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
         lookup_lists.warm([*rows, *spec_keys], embed)
-        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories, row_ids)
+        return _SpanPrep(
+            message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories, row_ids,
+            supplier_ids,
+        )
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
         return None
@@ -1452,6 +1462,21 @@ def _candidates_of(res: list_resolver.Resolution) -> list[dict[str, Any]]:
     ]
 
 
+def _supplier_groups(resolutions: list[list_resolver.Resolution]) -> dict[str, list[tuple[str, str]]]:
+    """SUPPLIER-ASK: per supplier row a span placed, the supplier rows that span scored within the resolver's runner-up
+    margin (`list_resolver.AMBIGUITY_MARGIN`: a resolved span holds one, an ambiguous one every close row). Scores
+    decide; no word of a name is compared here."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    for res in resolutions:
+        if res.status not in ("resolved", "ambiguous"):
+            continue
+        group = [(str(c.row.key), c.row.label) for c in res.candidates if c.row.list_name == "supplier"]
+        for key, _label in group:
+            held = out.setdefault(key, [])
+            held.extend(g for g in group if g not in held)
+    return out
+
+
 def _hits_of(resolutions: list[list_resolver.Resolution]) -> dict[str, list[lookup_lists.Hit]]:
     """The resolver's matched rows as lookup hits: per list, best first, one hit per row. Spec-name rows have no
     block (`lookup_lists.render` knows no such list); they are in the resolver so "colour" is not read as a value."""
@@ -1507,6 +1532,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 ]
                 extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
                 hits = _hits_of([*resolutions, *extra])
+                prep.supplier_groups = _supplier_groups([*resolutions, *extra])
                 span_keys = {h.row.key for hs in hits.values() for h in hs}
                 near_rows: list[dict[str, Any]] = []
                 # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
@@ -1566,7 +1592,11 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 ]
                 for name, hs in hits.items()
             }
-        lines = lookup_lists.render(hits, group_categories=prep.group_categories, row_ids=prep.row_ids)
+        lines = lookup_lists.render(
+            hits, group_categories=prep.group_categories, row_ids=prep.row_ids, supplier_ids=prep.supplier_ids
+        )
+        if not prep.supplier_ids:
+            prep.supplier_groups = {}
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
         lookup_event["hits"] = [
             {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
@@ -5325,6 +5355,7 @@ def _run_stages_body(  # noqa: PLR0915
                 lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
                 group_categories=parser_config.category_pick, row_ids=parser_config.row_ids,
                 span_override=_span_override(db, envelope, dry_run=dry_run),
+                supplier_ids=parser_config.supplier_ids,
             )
             lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
         elif parser_config.lookup_lists:
@@ -6725,6 +6756,8 @@ def _run_stages_body(  # noqa: PLR0915
                 "reference_kinds": _reference_kinds(ctx, customer_scope, state_out.profile),
                 # SUPPLIER-ASK: a supplier is looked up only for staff with the supplier reveal.
                 "supplier_visible": asker_sees_suppliers,
+                # SUPPLIER-ASK: the span pass's supplier groups; a parser-picked supplier id binds to its group.
+                "span_suppliers": dict(span_prep.supplier_groups) if span_prep is not None else {},
             }
             resolve_outcome = (
                 turn_runtime.resolve_kinds(

@@ -418,7 +418,7 @@ def _grouped_category_lines(hits: list[Hit]) -> list[str]:
 
 
 #: REPORT-UNIFY slice 3: the lists whose rows the report ask binds by id; their lines carry it when `row_ids`.
-ID_LISTS = frozenset({"brand", "salesperson", "category"})
+ID_LISTS = frozenset({"brand", "salesperson", "category", "supplier"})
 
 
 def cap_hits(name: str, hits: list[Hit]) -> list[Hit]:
@@ -452,6 +452,7 @@ def cap_hits(name: str, hits: list[Hit]) -> list[Hit]:
 def render(
     hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *, group_categories: bool = False,
     row_ids: bool = False,
+    supplier_ids: bool = False,
 ) -> list[str]:
     """One block per list with hits: the header, then `- <label>` once per label (a category block one line per
     class when `group_categories`). `row_ids` (a prompt that asks for it) ends the line of a brand, salesperson or
@@ -470,7 +471,9 @@ def render(
             label = _one_line(h.row.label)
             if label and label not in labels:
                 labels.append(label)
-                with_id = row_ids and name in ID_LISTS and h.row.key and not str(h.row.key).startswith("type:")
+                # SUPPLIER-ASK: a supplier line carries its id under its own prompt sentence (`supplier_ids`).
+                asks_id = supplier_ids if name == "supplier" else row_ids
+                with_id = asks_id and name in ID_LISTS and h.row.key and not str(h.row.key).startswith("type:")
                 printed.append(f"{label} [id: {h.row.key}]" if with_id else label)
         if labels:
             lines.append(header(name))
