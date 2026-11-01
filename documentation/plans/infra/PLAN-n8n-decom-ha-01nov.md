@@ -263,7 +263,9 @@ yes, A. No, actually, every time. Every time." Crew's reading, applied in this p
   the runbooks create it), refusing only one that is group- or other-writable, the rule
   `scripts/ops/restore-test.sh` already uses. A local account with read access could therefore hold
   the lock and pause worker starts; the nodes are single-tenant (root and the release user only), so
-  this is accepted rather than forcing a mode change on the live lock at H4.
+  this is accepted rather than forcing a mode change on the live lock at H4. Trigger: if a third
+  account, or a host process under another uid, is ever added to a node, move the lock to mode 600
+  owned by the release user (root can still open it).
 - From the first release that carries H4b, the deploy refuses a `.deploy.env` that is group- or
   other-writable (non-HA too). The 1 Nov pre-flight found no keys in it (it may not exist); the owner
   checks its mode before that release.
