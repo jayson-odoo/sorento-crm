@@ -22,7 +22,7 @@ MARKER = "== PARSER TEMPLATE =="
 
 TEMPLATE = """== PARSER TEMPLATE ==
 R-X-01 FRAME: what you are given and the order you decide in
-You are the Sorento Semantic Parser. The user block gives you "Previous response" (the assistant's last message, may be "(none)"), "Current user message" (the message you read), "Recent exchanges, oldest first" (to read a short reply against what was asked), the `State:` block (R-P1-01) and a "Known brands:" line (R-P2-09); it may carry "Promotion kinds:", "Product types:" and "Product details:" lines (R-X-06) and end with the candidates block (R-P2-02).
+You are the Sorento Semantic Parser. The user block gives you "Previous response" (the assistant's last message, may be "(none)"), "Current user message" (the message you read), "Recent exchanges, oldest first" (to read a short reply against what was asked), the `State:` block (R-P1-01) and a "Known brands:" line (R-P2-09); it may carry a "Known account types:" line (R-P2-14), "Promotion kinds:", "Product types:" and "Product details:" lines (R-X-06) and end with the candidates block (R-P2-02).
 Return ONE JSON object with the keys of R-X-06 and nothing else. Keep the user's own words for a value exactly in entities[].raw.
 Decide in this order; a later step reads what an earlier step decided and does not decide it again:
 P1. How this message relates to the State: `state_changes` (R-P1-01 to R-P1-10).
@@ -135,7 +135,7 @@ R-P1-10 UNSURE: when the relation cannot be told
 
 == P2: THE ENTITIES THIS MESSAGE NAMES ==
 R-P2-01 ENT: the entities this message names
-An entity is a concrete value THIS message names that could look up or filter a record; each has `raw` (the user's words for it, exactly), `hint`, `canonical_code`, `current_message` true, `confident`, `hint_confident`, `quantity`, `spec_key`, `spec_value`, `account` and `listed_item` (R-X-06). Hints, from {{entity_kinds}} and sales_agent:
+An entity is a concrete value THIS message names that could look up or filter a record; each has `raw` (the user's words for it, exactly), `hint`, `canonical_code`, `current_message` true, `confident`, `hint_confident`, `quantity`, `spec_key`, `spec_value`, `account`, `kind_said` and `listed_item` (R-X-06). Hints, from {{entity_kinds}}, sales_agent and account_type:
 - product: a specific product, by code or name ("SRTSCBD333-UF"); a bare family code is a product (see R-P2-03).
 - category: a product type or family, not one item ("kitchen tap", "mirror", "wash basin").
 - brand: a name on the Known brands line (see R-P2-09).
@@ -143,7 +143,7 @@ An entity is a concrete value THIS message names that could look up or filter a 
 - transporter: the carrier moving goods. order: an existing customer order or its DO number. promotion: a named promotion or flyer.
 - attachment: a company document (see R-P2-07). attachment_type: the kind of file asked, one per file word of a file ask (see R-P2-06).
 - form: a named form or form type. inbound_shipment: an incoming supplier shipment or container number. warehouse: a named warehouse or location (see R-P2-03).
-- specification: a property the product is described by (see R-P2-08). sales_agent: the person who sold (see R-P2-10).
+- specification: a property the product is described by (see R-P2-08). sales_agent: the person who sold (see R-P2-10). account_type: the account type of a customer's ledger (see R-P2-14).
 Extract a value even when unsure of its kind: your best-guess hint, and the resolver checks it against the data. A filter value belongs in entities, not only in `user_goal`. A word with no referent of its own (a particle or filler: "de", "lah", "got", "的", "吗") is no entity: "i want to see for srtwc286 de" -> the product srtwc286 alone. No concrete value: entities [].
 
 == CLOSED LISTS ==
@@ -195,6 +195,14 @@ A specification is a property the customer describes a product by (a colour or f
 
 R-P2-09 BRAND: brand entities
 The "Known brands:" line, built fresh each turn, holds the only brand names: a token matching one of them, or the code in parentheses beside it, is a brand entity with raw the word typed and `canonical_code` the brand name exactly as listed, never the code or the user's spelling ("Known brands: Sorento (SRT), Mocha (MCH)" + "MCH stock" -> raw MCH, hint brand, canonical_code Mocha). A word not on the line is not a brand: read it as what it otherwise is. No line this turn: no brand entity. A brand name is not a customer, though customers carry the same word in their names.
+
+R-P2-14 ACCTYPE: account type entities
+The "Known account types:" line, built fresh each turn, holds the stored account types of the customers' ledgers. On a sales or outstanding ask:
+- A word on that line and not on the Known brands line, or a number or tag the message calls an account type ("account type 4", "account 4", "A/C IV", "debtor type 4"), is an account_type entity with `hint_confident` true, raw the word, number or tag only ("cabana", "4", "A/C IV") and `canonical_code` null.
+- A word on both lines keeps the hint of the kind the message says: "cabana brand" -> brand, "cabana account" and "cabana debtor type" -> account_type; with neither said it is a brand (the code asks which it meant).
+- `kind_said` is true on a brand or account_type entity when this message itself says which kind the word is (brand, account, account type, debtor type), else null; the held State never makes it true.
+- "top accounts" are customers, and a customer's own ledger ("hanlim a/c 3") stays a customer with `account` 3; "project" stays the sales channel and "sample" a category unless the message says account type.
+- No Known account types line this turn: a bare word is no account_type entity.
 
 R-P2-10 PARTIES: who sold, who bought, what kind
 In a sales ranking or top selling ask, and when narrowing one:
@@ -320,7 +328,7 @@ Each report is `domain_hint` order, `intent_hint` check_order, with its own `ord
 Not a sales ranking: company totals by month, year or channel with nothing ranked stay sales_analysis; "sales report of X" stays sales_report; ranking products or categories stays top_selling. A refinement of a report on screen: see R-P1-02; an answer to a report question: see R-P1-06.
 
 R-P3-13 GROUPBY: `group_by`
-`group_by` is the axis this message asks the answer split by ("by customer", "per day", "ikut gudang", "按供应商"): customer, transporter (lorry), date (day by day), product (item), warehouse (location), supplier, and on a sales ask month, year, sales_agent, brand, category, channel; a message naming no axis -> null ("list the outstanding DO"). On a low stock ask: see R-P3-11.
+`group_by` is the axis this message asks the answer split by ("by customer", "per day", "ikut gudang", "按供应商"): customer, transporter (lorry), date (day by day), product (item), warehouse (location), supplier, and on a sales ask month, year, sales_agent, brand, category, channel, and account_type when the message says "by account type" (see R-P2-14); a message naming no axis -> null ("list the outstanding DO"). On a low stock ask: see R-P3-11.
 
 R-P3-14 TOPN: `top_n`
 `top_n` is how many rows this message asks for ("last 3", "top 5", "最近3次" -> 3, 5, 3), else null; it is not invented and not carried (the bot asks how many itself). A count over a report on screen: see R-P1-02.
@@ -357,7 +365,7 @@ One JSON object with exactly these keys (the schema is strict), each filled by i
 - `domain_hint` (R-P3-01): one of {{domains}} | null.
 - `order_status` (R-P3-06, R-P3-12): {{status_values}} | so_outstanding | do_outstanding | outstanding_both | sales_report | sales_analysis | sales_ranking | top_selling | null. `status` (R-P3-06): {{status_field_values}} | null.
 - `state_changes` (P1); `entity_op` (clear | replace_combine | replace | modify | reuse), `topic_reset` (false), `ranking_refine` (null), `reference_positions` ([]) (R-X-05); `open_question_answer` and `proceed_anyway` (null) (R-P1-06); `escalation` {is_escalation_confirmation (false), company_pick (null)} (R-P1-08).
-- `entities` (P2), each {raw, hint, canonical_code, current_message, confident, hint_confident, quantity, spec_key, spec_value, account, listed_item}; `account` is the numbered account the message names for a customer ("Soon Heng account 1" -> 1), else null. `demand_qty` (R-P2-05), `person_mention` (R-P2-11), `access_levels` ([]) (R-P2-12), `anaphora` {backward_reference} (R-P2-13).
+- `entities` (P2), each {raw, hint, canonical_code, current_message, confident, hint_confident, quantity, spec_key, spec_value, account, kind_said, listed_item}; `account` is the numbered account the message names for a customer ("Soon Heng account 1" -> 1), else null; `kind_said` (R-P2-14) is true, else null. `demand_qty` (R-P2-05), `person_mention` (R-P2-11), `access_levels` ([]) (R-P2-12), `anaphora` {backward_reference} (R-P2-13).
 - `domain_in_message` (R-P3-03), `requested_attributes` ([]) (R-P3-05), `document` ([]) (R-P3-07), `is_active` (R-P3-08), `scope_intent`, `broaden_axis`, `broaden_to` (R-P3-09), `asks` (R-P3-10), `low_stock` (R-P3-11), `group_by` and `top_n` (R-P3-13, R-P3-14), `contains_flyer` (false) (R-P3-15), `self_reference` (false) (R-P3-16), `correction` (false) (R-P3-17), `match_mode` (R-P3-18).
 - Reports (R-P3-12): `sales_channel` dealer | project | null; `rank_by` quantity | amount | null; `basis` invoiced | delivered | ordered | outstanding | unclear | null; `rank_group` item | category | unclear | null; `rank_direction` top | bottom | null; `measure` qty | amount | customers | orders | products | null; `compare_to` previous_period | last_year | null; `sales_basis` ordered | delivered | invoiced | null; `sales_company` a company or null; `ranking_drill` scoped | global | unsure | null.
 - `date_filter_start`, `date_filter_end`, `date_mode` (R-X-02); `user_goal` (R-X-07); `routing` {suggested_team, suggested_agent} (R-X-08); `find` (the find rule in R-X-09).

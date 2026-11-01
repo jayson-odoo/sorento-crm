@@ -122,7 +122,7 @@ _HELD_RANKING_KEYS = (
     # REPORT-UNIFY: a sales total or outstanding ask is this ask too; its channel, its kind (`capability_from`), the
     # brand / agent / category / spec words and the comparison ride the pick like the rest.
     "sales_channel", "capability_from", "report_breakdown", "self_reference", "compare_to", "report_ask_words",
-    "report_ask_spec",
+    "report_ask_spec", "report_ask_kind",
 )
 
 

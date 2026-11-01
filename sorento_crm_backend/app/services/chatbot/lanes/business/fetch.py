@@ -2944,7 +2944,7 @@ _LIST_OFFERS = {
 _ARG_FILTERS = {
     "product_code": "product", "product_ids": "product", "brand_ids": "brand", "category_ids": "category",
     "spec": "spec", "warehouse_codes": "location", "channel": "channel", "customer_ids": "customer",
-    "sales_agent_ids": "sales_agent", "customer_agent_ids": "customer_agent",
+    "sales_agent_ids": "sales_agent", "customer_agent_ids": "customer_agent", "account_types": "account_type",
 }
 
 

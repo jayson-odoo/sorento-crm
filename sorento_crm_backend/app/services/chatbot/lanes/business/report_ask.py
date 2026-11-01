@@ -63,6 +63,7 @@ GROUP_BY = {
     "warehouse": "location",
     "location": "location",
     "channel": "channel",
+    "account_type": "account_type",
     "month": "month",
     "year": "year",
 }
@@ -72,7 +73,7 @@ GROUP_BY = {
 OTHER_REPORTS = frozenset({"top_selling", "sales_report", "sales_analysis", "outstanding"})
 
 #: The entity hints `take_words` moves, and the noun each is said with when it names nothing.
-WORD_HINTS = {"brand": "brand", "sales_agent": "sales agent", "category": "category"}
+WORD_HINTS = {"brand": "brand", "sales_agent": "sales agent", "category": "category", "account_type": "account type"}
 
 #: One ceiling, shared with the routes (owner, 30 Sep 2026).
 TOP_N_MIN, TOP_N_MAX = 1, TOP_SELLING_N_CEILING
@@ -98,6 +99,7 @@ AXIS_NOUNS = {
     "sales_agent": ("sales agent", "sales agents"),
     "location": ("location", "locations"),
     "channel": ("channel", "channels"),
+    "account_type": ("account type", "account types"),
     "month": ("month", "months"),
     "year": ("year", "years"),
 }
@@ -133,6 +135,7 @@ _AXIS_FILTERS = {
     "category": ("category_ids",),
     "location": ("warehouse_codes",),
     "channel": ("channel",),
+    "account_type": ("account_types",),
 }
 #: The frame keys that are not route params.
 _FRAME_ONLY = ("date_from", "date_to", "top_n", "shown", "stale")
@@ -378,6 +381,11 @@ COMPANY_FORBIDDEN_LINE = "You do not have access to that company."
 def _company_held(extras: dict[str, Any], values: dict[str, Any], args: dict[str, Any], held: dict[str, Any]) -> dict[str, Any]:
     """`held` with the company question brought back while it is still owed: the first message found the company
     unnamed (its options ride the slot's extras) and neither an answer nor a named company has settled it."""
+    period = _dict(extras.get("held_period"))
+    if period and "period" not in values and "period" not in held:
+        # The kind question is asked before the period settles (it is the first field), so the period the first
+        # message named rides the slot's extras to the answer.
+        held = {**held, "period": rf.Resolved("ok", value=period.get("value"), label=period.get("label") or "")}
     options = extras.get("company_options")
     if not options or "company" in values or args.get("company"):
         return held
@@ -393,9 +401,27 @@ COMPANY = rf.FieldSpec(
     parser_only=True,
 )
 
+#: SALES-ACCOUNT-TYPE PR 2: a word that is both a brand and a stored account type is asked once, before any other owed
+#: field. Its options are the pick the parser is shown; the reply to the user is the bare question (`_kind_question`).
+KIND_OPTIONS = (("brand", "Brand"), ("account_type", "Account type"))
+
+
+def _kind_question(extras: dict[str, Any]) -> str:
+    """"Cabana, sorento: brand or account type?": the first word's first letter upper, the rest as typed."""
+    words = [w for w in (extras.get("kind_words") or []) if isinstance(w, str) and w.strip()]
+    head = ", ".join(words)
+    return f"{head[:1].upper()}{head[1:]}: brand or account type?" if head else "Brand or account type?"
+
+
+KIND = rf.FieldSpec(
+    name="kind", noun="kind", question="Brand or account type?", question_fn=_kind_question,
+    resolve=lambda _db, _word, _extras: rf.Resolved("unknown"), allow_all=False, required=False,
+    pick_head_is_question=True, parser_only=True, offered=lambda _extras: KIND_OPTIONS,
+)
+
 SALES_RANKING_ASK = rf.register(rf.AskType(
     name=ASK_NAME,
-    fields=(PERIOD, TOP_N, METRIC, BASIS, COMPANY, SALES_AGENT),  # the required fields first, the company last (one order)
+    fields=(KIND, PERIOD, TOP_N, METRIC, BASIS, COMPANY, SALES_AGENT),  # the kind question first, the company last
     slot_fields=(SCOPE,),
     # REPORT-SMART-L S3-1: the parser is shown the question (owed fields + held values) and
     # its declared answer (mode fill) runs the ask, as the low stock report's.
@@ -430,7 +456,9 @@ SALES_RANKING_ASK = rf.register(rf.AskType(
 SALES_STATUSES = frozenset({"sales_analysis", "sales_report"})
 #: The entity kinds that are a filter of the report ask (an outstanding ask holding none of these, and no axis, is an
 #: order list, not a report).
-_FILTER_HINTS = frozenset({"customer", "product", "brand", "category", "sales_agent", "warehouse", "specification"})
+_FILTER_HINTS = frozenset(
+    {"customer", "product", "brand", "category", "sales_agent", "warehouse", "specification", "account_type"}
+)
 #: A breakdown the parser did not read as a ranking (a sales analysis or report by an axis,
 #: "sales for all agents") lists every row, never asked "how many": up to this many.
 BREAKDOWN_TOP_N = 100
@@ -701,6 +729,9 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
         return verdict
     kept: list[Any] = []
     words: dict[str, list[str]] = {hint: [] for hint in WORD_HINTS}
+    #: SALES-ACCOUNT-TYPE PR 2: per brand / account word, what the message itself said (`kind_said`). An entity
+    #: with no such key (a prompt text that does not define it) leaves no entry: no question for that word.
+    kinds: list[dict[str, Any]] = []
     specs: list[str] = []
     for e in verdict.get("entities") or []:
         if not isinstance(e, dict):
@@ -712,16 +743,22 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
             continue
         hint = jsc.js_string(e.get("hint") or "").strip().lower()
         raw = " ".join(jsc.js_string(e.get("raw") or "").split())
-        if hint in WORD_HINTS:
+        typed = raw
+        if hint in WORD_HINTS and hint != "account_type":
             # AC-HT8-12, REPORT-UNIFY slice 3 (plan 3.2): the word the parser BOUND the mention to, a candidate's
             # label or its row id, before the verbatim raw; the raw is read only when it bound nothing.
+            # (An account type word or number goes exactly as typed.)
             raw = " ".join(jsc.js_string(e.get("canonical_code") or "").split()) or raw
         if hint not in WORD_HINTS:
             kept.append(e)
             continue
         if raw and e.get("current_message") is not False and raw not in words[hint]:
             words[hint].append(raw)
-    return {**verdict, "entities": kept, "report_ask_words": words, "report_ask_spec": specs}
+            if hint in ("brand", "account_type") and "kind_said" in e:
+                kinds.append({"hint": hint, "word": raw, "raw": typed, "said": e.get("kind_said") is True})
+    return {
+        **verdict, "entities": kept, "report_ask_words": words, "report_ask_spec": specs, "report_ask_kind": kinds,
+    }
 
 
 def typed_group_by(verdict: dict[str, Any]) -> dict[str, Any]:
@@ -935,6 +972,32 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
     return {**verdict, "open_question_answer": {"mode": "pick", "picked": [position or offered.index(kind) + 1], "items": [], "qty_for_all": None}}
 
 
+def as_kind_answer(verdict: dict[str, Any], slot: Any) -> tuple[dict[str, Any], bool]:
+    """Engine seam beside the company pick, the kind question open: a reply that repeats one of the asked words with the
+    parser's `kind_said` true ("cabana account") is that kind's pick, not a new ask. `(verdict, True)` when it was
+    read so; every other reply (a declared answer included) is returned untouched. Parser fields only."""
+    if not isinstance(slot, dict) or slot.get("ask") != ASK_NAME or slot.get("asking") != "kind":
+        return verdict, False
+    answer = verdict.get("open_question_answer")
+    if isinstance(answer, dict) and answer.get("mode") in rf.ANSWER_MODES:
+        return verdict, False
+    options = [o[0] for o in slot.get("options") or [] if isinstance(o, (list, tuple)) and o]
+    asked = {" ".join(jsc.js_string(w).split()).casefold() for w in _dict(slot.get("extras")).get("kind_words") or []}
+    said = [
+        e for e in jsc.array(verdict.get("entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False and e.get("kind_said") is True
+        and jsc.js_string(e.get("hint") or "").strip().lower() in options
+        and {" ".join(jsc.js_string(e.get(k) or "").split()).casefold() for k in ("raw", "canonical_code")} & asked
+    ]
+    hints = {jsc.js_string(e.get("hint")).strip().lower() for e in said}
+    if len(hints) != 1:
+        return verdict, False
+    position = options.index(next(iter(hints))) + 1
+    rest = [e for e in jsc.array(verdict.get("entities")) if not any(e is s for s in said)]
+    pick = {"mode": "pick", "picked": [position], "items": [], "qty_for_all": None}
+    return {**verdict, "entities": rest, "group_by": None, "open_question_answer": pick}, True
+
+
 def restates_the_ask(verdict: dict[str, Any]) -> bool:
     """REPORT-SMART-1021 (#1721 hand test step 7): a verdict flagged `ranking_refine` that the
     parser marked `new_subject` is the whole ask typed again, not a refine: it starts a new
@@ -1007,7 +1070,7 @@ HELD_KEY = "report_held"
 #: The route params of a held total that stay on the ranking its reply becomes: the period and the filters.
 _HELD_TOTAL_KEYS = (
     "date_from", "date_to", "product_code", "product_ids", "brand_ids", "category_ids", "customer_ids",
-    "sales_agent_ids", "customer_agent_ids", "channel", "spec", "warehouse_codes", "company",
+    "sales_agent_ids", "customer_agent_ids", "channel", "spec", "warehouse_codes", "company", "account_types",
 )
 #: REPORT-SMART-L R9: the open question a sales report reply arms with its drill offer (`fetch._sales_report_output`),
 #: so the engine-held sign that the last answer was a sales report (`contracts.DETAIL_OFFER_KINDS`).
@@ -1169,7 +1232,7 @@ def _dealer_outside(parse_output: dict[str, Any], group_by: str | None) -> bool:
     words = _dict(parse_output.get("report_ask_words"))
     named = any(
         " ".join(jsc.js_string(w).split())
-        for hint in ("sales_agent",) + (() if located else ("warehouse",))
+        for hint in ("sales_agent", "account_type") + (() if located else ("warehouse",))
         for w in jsc.array(words.get(hint))
     )
     return (
@@ -1278,6 +1341,90 @@ def _word_filters(
     return out, None
 
 
+def _account_plan(
+    db: Any, parse_output: dict[str, Any], companies: Any = (), *, ask: bool = False
+) -> dict[str, Any]:
+    """SALES-ACCOUNT-TYPE PR 2: the brand and account type words of a fresh ask, read against the DATA (the stored
+    types of the scoped session, the brands the resolver knows), never the user's words. The parser only says which
+    kind of word it heard (`hint`) and whether the message itself said it (`kind_said`, key absent = a prompt text
+    that does not define it).
+
+    Returns `account_types` (the filter values: a type in its stored spelling, a number or tag as typed), `drop`
+    (brand words that are not brand filters after all) and `ask` (words that are both a brand and a stored type, with
+    nothing in the message to settle them: asked once). `ask=False` reads such a word as the brand, as before."""
+    words = _dict(parse_output.get("report_ask_words"))
+    brand_words = [w for w in (" ".join(jsc.js_string(x).split()) for x in jsc.array(words.get("brand"))) if w]
+    acct_words = [w for w in (" ".join(jsc.js_string(x).split()) for x in jsc.array(words.get("account_type"))) if w]
+    plan: dict[str, Any] = {"account_types": [], "drop": set(), "ask": []}
+    if db is None or not (brand_words or acct_words):
+        return plan
+    from app.services.reports.ask_params import account_book, account_type_options, resolve_account_types
+
+    stored = {name.strip().casefold(): name for name, _label in account_type_options(db)}
+    entries = {
+        (e.get("hint"), e.get("word")): e for e in jsc.array(parse_output.get("report_ask_kind")) if isinstance(e, dict)
+    }
+    numbers = [w for w in acct_words if w.casefold() not in stored]
+    decided: list[tuple[str, str, str, str]] = []  # (how, hint, word, stored type); how: brand | account | ask
+    for hint, word in [("brand", w) for w in brand_words] + [("account_type", w) for w in acct_words]:
+        entry = entries.get((hint, word))
+        typed = jsc.js_string((entry or {}).get("raw") or word)
+        kind = stored.get(word.casefold()) or stored.get(typed.casefold())
+        if kind is None:
+            continue
+        if entry is None:
+            how = "brand" if hint == "brand" else "account"
+        elif entry.get("said") is True:
+            how = "brand" if hint == "brand" else "account"
+        elif _resolve_word(db, "brand", word)[0]:
+            how = "ask" if ask else "brand"
+        else:
+            how = "account"
+        decided.append((how, hint, word, kind))
+    number_types: set[str] = set()
+    ids = [str(c[0]) for c in jsc.array(companies) if isinstance(c, (list, tuple)) and c]
+    if numbers and ids and decided:
+        book = account_book(db, ids)
+        per_company, _unknown = resolve_account_types(book, numbers)
+        number_types = {t.strip().casefold() for types in per_company.values() for t in types}
+    account: list[str] = []
+    for how, hint, word, kind in decided:
+        same = kind.strip().casefold() in number_types
+        if how == "brand":
+            continue  # said as a brand: the brand filter stays beside any number
+        if how == "ask" and numbers:
+            if same:
+                plan["drop"].add(word)  # the number is this word's own type: the account filter alone
+            continue  # another type: the brand on that account
+        if how == "ask":
+            plan["ask"].append({"hint": hint, "word": word, "raw": jsc.js_string((entries.get((hint, word)) or {}).get("raw") or word), "type": kind})
+            plan["drop"].add(word)
+            continue
+        if hint == "brand":
+            plan["drop"].add(word)
+        if not same and kind not in account:
+            account.append(kind)
+    plan["account_types"] = [*account, *[n for n in numbers if n not in account]]
+    return plan
+
+
+def _kind_ask(db: Any, parse_output: dict[str, Any], plan: dict[str, Any], args: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """The held answer of the kind question: the words as typed, and for each choice the route params it adds. Each
+    choice carries the filters already on the ask, so the answer replaces them with the union."""
+    brand_words = [a["word"] for a in plan["ask"]]
+    found, line = _word_filters(
+        db, {**parse_output, "report_ask_words": {"brand": brand_words}}, (("brand", "brand_ids"),)
+    )
+    if found is None:
+        return None, line
+    brand_ids = [*jsc.array(args.get("brand_ids")), *[i for i in found.get("brand_ids", []) if i not in jsc.array(args.get("brand_ids"))]]
+    types = [*jsc.array(args.get("account_types")), *[a["type"] for a in plan["ask"] if a["type"] not in jsc.array(args.get("account_types"))]]
+    return {
+        "words": [a["raw"] for a in plan["ask"]],
+        "choices": {"brand": {"brand_ids": brand_ids}, "account_type": {"account_types": types}},
+    }, None
+
+
 def _product_args(
     entities: Any, *, total: bool = False, exact: bool = False, typed_codes: Any = ()
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -1338,7 +1485,8 @@ def _without_carried_products(parse_output: dict[str, Any], entities: Any) -> li
 
 
 def _fresh_args(
-    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True
+    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True,
+    companies: Any = (), ask_kind: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The route params a fresh ask names (every one but the period and top_n), or the one
     line to say instead of running. `dealer`: the turn's contact is customer-scoped."""
@@ -1365,11 +1513,21 @@ def _fresh_args(
     if parse_output.get("self_reference") is True:
         args["mine"] = True
 
-    filters, line = _word_filters(db, parse_output, agent_filter=agent_filter, lenient=True)
+    plan = _account_plan(db, parse_output, companies, ask=ask_kind) if not dealer else _account_plan(None, {})
+    words = _dict(parse_output.get("report_ask_words"))
+    read = {**parse_output, "report_ask_words": {**words, "brand": [w for w in jsc.array(words.get("brand")) if " ".join(jsc.js_string(w).split()) not in plan["drop"]]}}
+    filters, line = _word_filters(db, read, agent_filter=agent_filter, lenient=True)
     if filters is None:
         return None, line
     unbound = filters.pop("_unbound", [])
     args.update(filters)
+    if plan["account_types"]:
+        args["account_types"] = plan["account_types"]
+    if plan["ask"]:
+        asked, line = _kind_ask(db, parse_output, plan, args)
+        if asked is None:
+            return None, line
+        args["_kind_ask"] = asked  # popped by `settle`; never a route param
 
     # The gate's resolved rows, of the kinds THIS message named (a carried subject from an
     # earlier question is not this ask's filter).
@@ -1595,11 +1753,15 @@ def settle(
     outcome, line = _settle(db, parse_output, entities, dealer=dealer, agent_filter=agent_filter, companies=companies)
     if outcome is not None and outcome.slot and outcome.slot.get("asking") == "company" and outcome.reply:
         outcome.reply = _company_question(_dict(outcome.slot.get("extras")))
-    company = _dict(outcome.values.get("company")) if outcome is not None else {}
-    if company.get("value") == rf.ALL and outcome is not None:
-        # Two unreadable answers to the company question: a plain give-up, never a run (the route would 403 "all").
-        word = str(company.get("missed") or "that")
-        return rf.Outcome(values=outcome.values, reply=GIVE_UP.format(word=word), slot=None, extras=outcome.extras), line
+    if outcome is not None and outcome.slot and outcome.slot.get("asking") == "kind" and outcome.reply:
+        outcome.reply = _kind_question(_dict(outcome.slot.get("extras")))  # bare, as the mock draws it
+    for field in ("company", "kind"):
+        asked = _dict(outcome.values.get(field)) if outcome is not None else {}
+        if asked.get("value") == rf.ALL and outcome is not None:
+            # Two unreadable answers to the company (or kind) question: a plain give-up, never a run (the route would
+            # 403 "all", and an unanswered kind would run without the word).
+            word = str(asked.get("missed") or "that")
+            return rf.Outcome(values=outcome.values, reply=GIVE_UP.format(word=word), slot=None, extras=outcome.extras), line
     return outcome, line
 
 
@@ -1767,7 +1929,7 @@ def _settle(
         # The same axis typed again is a new ask (a new frame): read whole, nothing held.
         parse_output = {**parse_output, "ranking_refine": False}
     if parse_output.get("ranking_refine") is True and frame and not new_axis:
-        return _refine(db, parse_output, frame, entities, dealer=dealer)
+        return _refine(db, parse_output, frame, entities, dealer=dealer, companies=companies)
     if drill == "scoped":
         # Owner ruling B (23 Oct): only the parser's `scoped` narrows to the rows on screen. A new axis
         # read as global, unsure or not at all runs across all (below), and the header says so.
@@ -1811,16 +1973,19 @@ def _settle(
             held_channel = source["channel"]
         # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not).
         held_filters = {
-            k: source[k] for k in ("brand_ids", "category_ids", "sales_agent_ids")
+            k: source[k] for k in ("brand_ids", "category_ids", "sales_agent_ids", "account_types")
             if source.get(k) and k not in _AXIS_FILTERS.get(axis, ())
         }
         holding = True
         parse_output = {**parse_output, "ranking_refine": False}
 
-    args, line = _fresh_args(db, parse_output, entities, dealer=dealer, agent_filter=agent_filter)
+    args, line = _fresh_args(
+        db, parse_output, entities, dealer=dealer, agent_filter=agent_filter, companies=companies, ask_kind=True
+    )
     if args is None:
         return None, line
     not_applied = args.pop("_unbound", [])
+    kind_ask = args.pop("_kind_ask", None)
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
         for e in jsc.array(parse_output.get("entities"))
@@ -1828,7 +1993,7 @@ def _settle(
     } & _FILTER_HINTS
     if parse_output.get("capability_from") == "outstanding":
         named -= {"warehouse"}  # item 9: an outstanding ask's unknown location narrows nothing, as before #1922
-    if named and parse_output.get("capability_from") and not set(args) - _NON_FILTER_ARGS and not held_product:
+    if named and parse_output.get("capability_from") and not set(args) - _NON_FILTER_ARGS and not held_product and not kind_ask:
         # A sales total or outstanding ask that NAMED a subject which resolved to no filter would run over everything.
         return None, CATALOGUE_LINE
     if held_product and not (args.get("product_code") or args.get("product_ids")):
@@ -1851,6 +2016,7 @@ def _settle(
         and not dealer  # the route forces a dealer's links, so a plain total can never widen
         and not args.get("group_by")
         and not set(args) - _NON_FILTER_ARGS
+        and not kind_ask
         and not parse_output.get("capability_from")  # a sales / outstanding total with no filter is the company's own
     ):
         # Not a valid ask: no axis and nothing to total. Say what can be ranked and open nothing.
@@ -1894,7 +2060,7 @@ def _settle(
             return None, COMPANY_FORBIDDEN_LINE  # the message named a company the contact does not hold
         if named is not None:
             args["company"] = str(named[0])
-        elif len(own) > 1 and not any(
+        elif len(own) > 1 and not kind_ask and not any(
             args.get(k) for k in ("customer_ids", "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "spec")
         ):
             given["company"] = rf.Resolved("ambiguous", options=tuple((str(c[0]), str(c[1])) for c in own))
@@ -1934,7 +2100,19 @@ def _settle(
     if across_all and frame.get("group_by") in AXIS_NOUNS and _drill_source(frame):
         # Owner ruling B: after a ranking, a new axis runs across all, and the header line says so.
         extras["note"] = f"Across all {AXIS_NOUNS[frame['group_by']][1]}"
+    if kind_ask:
+        _ask_kind(given, extras, kind_ask)
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
+
+
+def _ask_kind(given: dict[str, Any], extras: dict[str, Any], kind_ask: dict[str, Any]) -> None:
+    """Owe the kind question: it is the first field, so the period the message named rides the extras to the answer."""
+    given["kind"] = rf.Resolved("ambiguous", options=KIND_OPTIONS)
+    extras["kind_words"] = kind_ask["words"]
+    extras["kind_choices"] = kind_ask["choices"]
+    period = given.get("period")
+    if isinstance(period, rf.Resolved) and period.status == "ok":
+        extras["held_period"] = {"value": period.value, "label": period.label}
 
 
 def _widened(parse_output: dict[str, Any]) -> str | None:
@@ -1947,7 +2125,8 @@ def _widened(parse_output: dict[str, Any]) -> str | None:
 
 
 def _refine(
-    db: Any, parse_output: dict[str, Any], frame: dict[str, Any], entities: Any = (), *, dealer: bool = False
+    db: Any, parse_output: dict[str, Any], frame: dict[str, Any], entities: Any = (), *, dealer: bool = False,
+    companies: Any = (),
 ) -> tuple[rf.Outcome | None, str | None]:
     """The parser said this message only refines the sales ranking that ran (`ranking_refine`):
     the held route args re-run with ONLY the keys the verdict changed (count, period, basis,
@@ -1974,10 +2153,21 @@ def _refine(
             return None, DEALER_REFUSAL
         args["channel"] = channel
     # A brand or category word the refine names replaces that dimension; the rest stays held.
-    filters, line = _word_filters(db, parse_output, (("brand", "brand_ids"), ("category", "category_ids")))
+    plan = _account_plan(db, parse_output, companies, ask=True) if not dealer else _account_plan(None, {})
+    words = _dict(parse_output.get("report_ask_words"))
+    read = {**parse_output, "report_ask_words": {**words, "brand": [w for w in jsc.array(words.get("brand")) if " ".join(jsc.js_string(w).split()) not in plan["drop"]]}}
+    filters, line = _word_filters(db, read, (("brand", "brand_ids"), ("category", "category_ids")))
     if filters is None:
         return None, line
     args.update(filters)
+    if plan["account_types"]:
+        args["account_types"] = plan["account_types"]  # an account word replaces the held account filter
+    kind_ask = None
+    if plan["ask"]:
+        # What the question adds replaces that dimension on the held ask, as a plain brand or account word does.
+        kind_ask, line = _kind_ask(db, parse_output, plan, {k: v for k, v in args.items() if k != "brand_ids"})
+        if kind_ask is None:
+            return None, line
     if "product" in _current_kinds(parse_output):
         product_args, line = _product_args(entities)
         if product_args is None:
@@ -2022,6 +2212,8 @@ def _refine(
     if period is not None:
         given["period"] = period
     extras = {"args": args, "top_n": top_n, **({"kind_ask": True} if asks_kind else {})}
+    if kind_ask:
+        _ask_kind(given, extras, kind_ask)
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
 
 
@@ -2205,12 +2397,15 @@ def route_args(outcome: rf.Outcome) -> dict[str, Any]:
     agent = _dict(outcome.values.get("sales_agent")).get("value")
     if agent:
         args["sales_agent_ids"] = [str(agent)]  # the agent the person picked
+    kind = _dict(outcome.values.get("kind")).get("value")
+    for key, values in _dict(_dict(outcome.extras.get("kind_choices")).get(kind)).items():
+        args[key] = list(values)  # brand or account type: the answer to the question
     return args
 
 
 #: REPORT-OUTSTANDING-SUMMARY item 3: the route params that make an outstanding ask about a subject (a product, a
 #: customer or a brand, as the pre-#1922 report's subjects); without one the ask is the outstanding document list.
-_SUBJECT_ARGS = ("product_code", "product_ids", "spec", "customer_ids", "brand_ids")
+_SUBJECT_ARGS = ("product_code", "product_ids", "spec", "customer_ids", "brand_ids", "account_types")
 #: Outstanding kind -> the grouping that lists its documents (`reports.ask.DOCUMENT_LISTS`).
 LIST_GROUPS = {"outstanding": "sales_order", "pending_delivery": "delivery_order"}
 
@@ -2245,7 +2440,8 @@ def invoiced_location_line(args: dict[str, Any]) -> str | None:
 #: The entity kinds a report ask turns into a route param (a customer, product, brand, category, sales agent,
 #: location or spec). Any other kind the message named has no param.
 _APPLIED_HINTS = frozenset(
-    {"customer", "product", "brand", "category", "product_type", "sales_agent", "warehouse", "specification", "spec"}
+    {"customer", "product", "brand", "category", "product_type", "sales_agent", "warehouse", "specification", "spec",
+     "account_type"}
 )
 
 

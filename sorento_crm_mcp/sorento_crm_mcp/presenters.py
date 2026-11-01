@@ -3702,7 +3702,9 @@ def _report_ask(body: dict) -> str:
     count = int(body.get("total_count") or (raw_rows + more)) - (raw_rows - len(rows))
     of = f" of {count:,}" if count > len(rows) else ""
     by = f"{measure}, {basis}" if measure in _ASK_COUNT_UNITS else basis
-    lines = [f"{lead} {len(rows)}{of} {plural} by {by}", *facts]
+    # A month or year split is a trend, not a ranking: it opens "By month, invoiced", never "Top N".
+    opening = f"By {group_by}, {basis}" if group_by in ("month", "year") else f"{lead} {len(rows)}{of} {plural} by {by}"
+    lines = [opening, *facts]
     items = group_by in ("product", "category")
     if items and body.get("sort") == "asc":
         # REPORT-SMART-L R3a: what the top selling reply said of a least sold ranking (an item that sold nothing is never ranked).
