@@ -1,7 +1,7 @@
 # PROPOSAL: router wording for dealer requests (AGENTIC-WA-W2 slice 1)
 
-Status: PROPOSED, not published. Gate run by crew decides (`scripts/gate_router_variant_b.py`). No stored prompt is
-changed on any database by this lane. Track: L (part of #2072).
+Status: GATE FAILED 2 Nov (crew, PR #2072 comment 6565024164): not published, by the rule set before the run. No stored
+prompt is changed on any database by this lane. Track: L (part of #2072).
 
 ## Why
 
@@ -50,7 +50,29 @@ agent proposes one and the dealer says yes), or stay a stock check the bot answe
 check on the bot, because most such asks want an answer now and the inquiry is for when the dealer asks the team to
 act; the guide and the hand test then use an explicit ask ("please send a stock inquiry ...").
 
-## If the gate passes: publishing (admin, no release)
+## Gate result (2 Nov): FAIL
+
+Run by crew on the dev copy at 8b3736ea (also stands for 7ba13d9f), `scripts.gate_router_variant_b`, jev-1.14.0, floor 0.70.
+
+| Set | v1 floor | B floor | v1 pick | B pick | Result |
+| --- | --- | --- | --- | --- | --- |
+| real, 75 | 68/75 | 67/75 | 68/75 | 69/75 | FAIL at the floor |
+| panel-base, 50 | 43/50 | 42/50 | 50/50 | 48/50 | FAIL at both |
+| panel-new, 30 | 24/30 | 25/30 | 27/30 | 29/30 | pass |
+| panel-control, 6 | 6/6 | 6/6 | 6/6 | 6/6 | pass |
+| w2-dealer, 18 x2 (not gated) | 16/36 | 32/36 | 27/36 | 34/36 | reported |
+| w2-control, 3 x2 (not gated) | 6/6 | 6/6 | 6/6 | 6/6 | reported |
+
+The loss that is not drift: "please pass this to the sales team" (labelled bot) went from the bot at 0.02 to the agent at
+0.98. "Any request for the team to act" also reads as asking for a person, which is the bot's escalation lane. A second
+wording would have to tell filing a record (the agent) from being handed to a person (the bot), and per the rule it is
+measured on fresh rows, not reworded against these.
+
+Consequence for slice 1: it ships with the published v1. By the single runs, about half of the dealer request phrasings
+reach the agent (16/36 at the floor), and the rest get today's bot reply. Nothing breaks, and no write happens without the
+dealer's yes. The guide's example uses an explicit ask.
+
+## If a later wording passes: publishing (admin, no release)
 
 1. Sidebar: AI Assistant > Prompts, open `chatbot_router`.
 2. On the Edit tab, replace all the text with the JSON block below. Commit message, then **Save as new version** (v2).
