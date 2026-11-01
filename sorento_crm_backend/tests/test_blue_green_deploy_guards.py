@@ -777,3 +777,114 @@ def test_a_pg_dump_that_dies_part_way_stops_the_deploy(box):
     assert "snapshot failed" in r.stdout, r.stdout
     assert not _started_new_colour(_calls(box))
     assert not list((box["root"] / "backups" / "pre-migrate").glob("pre-migrate-*")), "no truncated dump is kept"
+
+
+# --- H4b: the release path on a Patroni node (compose.ha.yml replaces `db`) ----------
+# Patroni allows only local peer auth: admin commands inside `db` run as OS user postgres
+# AND DB user postgres. Prod-dependent bits fail loudly in a preflight, never guessed.
+
+
+def _ha_box(box, *, compose_file=True, postgres_db=True):
+    """compose.ha.yml in the project dir; COMPOSE_FILE (and POSTGRES_DB) set in .deploy.env."""
+    (box["root"] / "compose.ha.yml").write_text("services: {}\n")
+    lines = []
+    if compose_file:
+        lines.append("COMPOSE_FILE=docker-compose.yml:compose.ha.yml")
+    if postgres_db:
+        lines.append("POSTGRES_DB=sorento_app")
+    (box["root"] / ".deploy.env").write_text("\n".join(lines) + "\n")
+    # Extend the docker stub: log COMPOSE_FILE per call; admin psql can be made to fail.
+    stub = (box["stub"] / "docker_stub.py").read_text()
+    stub = stub.replace(
+        'args = sys.argv[1:]\n',
+        'args = sys.argv[1:]\n'
+        'open(os.path.join(d, "env.log"), "a").write("COMPOSE_FILE=" + os.environ.get("COMPOSE_FILE", "<unset>") + "\\n")\n',
+        1,
+    )
+    stub = stub.replace(
+        '        elif "psql" in joined:\n',
+        '        elif "psql" in joined:\n'
+        '            if os.path.exists(os.path.join(d, "admin_fail")) and "-u postgres" in joined:\n'
+        '                sys.stderr.write("psql: error: peer authentication failed\\n")\n'
+        '                sys.exit(2)\n',
+        1,
+    )
+    (box["stub"] / "docker_stub.py").write_text(stub)
+
+
+def _changed_anything(calls) -> bool:
+    return any(
+        l.startswith("compose") and (" up " in l or " stop " in l or "--force-recreate" in l or " pull " in l)
+        for l in calls
+    ) or _swapped(calls)
+
+
+def test_h4b_every_deploy_env_variable_is_exported_to_compose(box):
+    (box["root"] / ".deploy.env").write_text("COMPOSE_FILE=docker-compose.yml:compose.ha.yml\nPOSTGRES_DB=sorento_app\n")
+    stub = (box["stub"] / "docker_stub.py").read_text().replace(
+        'args = sys.argv[1:]\n',
+        'args = sys.argv[1:]\n'
+        'open(os.path.join(d, "env.log"), "a").write("COMPOSE_FILE=" + os.environ.get("COMPOSE_FILE", "<unset>") + "\\n")\n',
+        1,
+    )
+    (box["stub"] / "docker_stub.py").write_text(stub)
+    _run(box)
+    seen = (box["stub"] / "env.log").read_text().splitlines()
+    assert seen and all(l == "COMPOSE_FILE=docker-compose.yml:compose.ha.yml" for l in seen), seen[:3]
+
+
+def test_h4b_compose_ha_file_present_but_not_in_compose_file_is_refused_before_any_change(box):
+    _ha_box(box, compose_file=False)
+    r = _run(box)
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "compose.ha.yml" in r.stdout + r.stderr
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_h4b_failed_admin_connection_stops_the_deploy_before_any_change(box):
+    _ha_box(box)
+    (box["stub"] / "admin_fail").write_text("1")
+    r = _run(box)
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "admin connection" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr
+    assert any("exec -T -u postgres db psql -U postgres" in l for l in _calls(box)), _calls(box)
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_h4b_unset_postgres_db_stops_the_deploy_before_any_change(box):
+    _ha_box(box, postgres_db=False)
+    r = _run(box)
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "POSTGRES_DB" in r.stdout + r.stderr
+    assert not _changed_anything(_calls(box)), _calls(box)
+
+
+def test_h4b_ha_snapshot_and_alembic_preflight_run_as_the_postgres_user(box):
+    _ha_box(box)
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    for needle in ("pg_dump", "count(*) from public.alembic_version"):
+        line = next((l for l in calls if needle in l and " exec " in l), None)
+        assert line is not None, (needle, calls)
+        assert "exec -T -u postgres" in line, line
+        assert "-U postgres" in line, line
+
+
+def test_h4b_non_ha_snapshot_and_preflight_commands_are_unchanged(box):
+    # Regression pin: no compose.ha.yml and no COMPOSE_FILE keeps today's commands.
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    execs = [l for l in _calls(box) if " exec " in l]
+    assert execs and not any("-u postgres" in l for l in execs), execs
+    dump = next(l for l in execs if "pg_dump" in l)
+    assert "exec -T -e DUMP_DB=sorento_app db sh -c" in dump and '-U "$POSTGRES_USER"' in dump, dump
+
+
+def test_h4b_successful_deploy_records_the_image_tag_for_the_role_watcher(box):
+    _ha_box(box)
+    r = _run(box, IMAGE_TAG="tag-h4b-1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    tag = box["root"] / ".ha-image-tag"
+    assert tag.exists(), list(box["root"].iterdir())
+    assert tag.read_text().strip() == "tag-h4b-1"
