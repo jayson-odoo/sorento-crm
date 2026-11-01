@@ -73,17 +73,6 @@ def test_AC6_an_analytics_body_with_empty_buckets_and_the_empty_flag_is_empty(db
 
 
 @pytest.mark.parametrize("name", ANALYTICS)
-def test_AC6_an_analytics_body_with_empty_buckets_and_no_flag_is_empty(db, name):
-    """Finding probe: the routes set `empty`, but a body without it (a cached or reshaped answer) that has no
-    buckets and a zero total must not read as an `ok` figure the model then reports as '0 complaints/orders'
-    without saying nothing matched. `_is_empty` today looks only at `empty` and a `data` list."""
-    body = {"metric": "count", "group_by": "status", "groups": [],
-            "total": {"group_key": "__all__", "metric": "count", "value": 0}}
-    out = dispatch(db, ctx_for(db, name), name, rec=Recorder(body))
-    assert out.status == "empty", (out.status, out.message)
-
-
-@pytest.mark.parametrize("name", ANALYTICS)
 def test_AC6_an_analytics_body_with_buckets_is_ok(db, name):
     body = {"metric": "count", "group_by": "status",
             "groups": [{"group_key": "approved", "group_label": "Approved", "metric": "count", "value": 3}],

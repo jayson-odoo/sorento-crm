@@ -1,4 +1,4 @@
-"""AGENTIC-UNIFY PR 4, slice 1 (red): AC-4 and AC-5, the twelve ported reads through the REAL compiled MCP tool.
+"""AGENTIC-UNIFY PR 4, slice 1 (red): AC-4 and the AC-5 guard, the twelve ported reads through the REAL compiled MCP tool.
 
 Panel tests stub MCP, so only this file proves the tools can be reached as the agent calls them:
 - staff shape: blank `contact_id` and `space_id`, `X-MCP-Scope: staff` + `X-MCP-Staff-User`
@@ -146,21 +146,15 @@ def test_AC4_a_staff_read_that_omits_the_pair_entirely_also_reaches_its_route(mc
     assert any(fragment in r.url.path for r in _crm(crm)), flat
 
 
-# ------------------------------------------------------------------ AC-5: query on the two list tools
-
-
-def _spec(name):
-    return next(s for s in CATALOG if s.name == name)
+# ------------------------------------------------------------------ AC-5: the catalog stays UUID-first
 
 
 @pytest.mark.parametrize("name", ["crm_complaints_list", "crm_projects_list"])
-def test_AC5_query_is_a_declared_param_of_the_catalog_entry(name):
-    assert "query" in _spec(name).query_params
-    assert "query" in _spec(name).description
-
-
-@pytest.mark.parametrize("name", ["crm_complaints_list", "crm_projects_list"])
-def test_AC5_query_is_in_the_compiled_schema(mcp, name):
+def test_AC5_query_stays_off_the_catalog_and_the_compiled_schema(mcp, name):
+    """A complaint number or project code is found by the in-process `crm_complaints_find` /
+    `crm_projects_find`; the MCP list tools keep the UUID-first contract (`test_no_freetext_query_on_data_list_tools`)."""
+    spec = next(s for s in CATALOG if s.name == name)
+    assert "query" not in spec.query_params
     body = {"jsonrpc": "2.0", "id": "1", "method": "tools/list", "params": {}}
     resp = mcp.post("/mcp", json=body, headers=BASE)
     assert resp.status_code == 200, resp.text
@@ -168,17 +162,4 @@ def test_AC5_query_is_in_the_compiled_schema(mcp, name):
     if "text/event-stream" in resp.headers.get("content-type", ""):
         text = [ln[5:].strip() for ln in text.splitlines() if ln.startswith("data:")][-1]
     tools = {t["name"]: t for t in json.loads(text)["result"]["tools"]}
-    assert "query" in tools[name]["inputSchema"]["properties"], sorted(tools[name]["inputSchema"]["properties"])
-
-
-@pytest.mark.parametrize(
-    "name,fragment",
-    [("crm_complaints_list", "/complaints-management/complaints"), ("crm_projects_list", "/project-sales/projects")],
-)
-@pytest.mark.parametrize("shape", ["staff", "contact"])
-def test_AC5_query_reaches_the_routes_query_string(mcp, crm, name, fragment, shape):
-    headers = STAFF if shape == "staff" else BASE
-    _call(mcp, name, {**PAIRS[shape], "query": "ZZT-0042"}, headers)
-    hits = [r for r in _crm(crm) if fragment in r.url.path]
-    assert hits, [r.url.path for r in _crm(crm)]
-    assert hits[0].url.params.get("query") == "ZZT-0042", str(hits[0].url)
+    assert "query" not in tools[name]["inputSchema"]["properties"]

@@ -4,10 +4,9 @@ Every read goes through `services._mcp_call(db)`, which refuses a tool by `brand
 the result with `brand_guard.guard_result` for a tool marked `filtered`. These tests pin what that does for
 the ported reads that can name a product, through the real seam with only the MCP client faked.
 
-Measured while writing them (reported to the captain): the guard prunes a row only by a product key it finds
-(`product_code`, `item_code`, `product_id`, plus the tool's own keys in `BRAND_SCOPE_PRODUCT_KEYS`). A row that
-names no product passes. Complaint rows and quotation lines name one; a project list row does not, so the
-guard cannot narrow a project list by brand (the project forecast is refused outright, `brand_scope_allows_tool`).
+The guard prunes a row only by a product key it finds (`product_code`, `item_code`, `product_id`, plus the
+tool's own keys in `BRAND_SCOPE_PRODUCT_KEYS`); a row naming no product passes, as on every filtered tool.
+Projects carry no brand, so a scope naming a brand gets no project read (`brand_scope_allows_tool`).
 """
 from __future__ import annotations
 
@@ -119,24 +118,6 @@ def test_AC7_order_analytics_buckets_for_another_brands_product_are_dropped(db, 
     assert world.p_sorento.product_code not in keys, keys
 
 
-def test_AC7_quotation_lines_of_another_brand_are_dropped(db, world, monkeypatch):
-    body = {
-        "data": [
-            {
-                "quotation_no": "ZZT-Q-1",
-                "lines": [
-                    {"product_code": world.p_mocha.product_code, "qty": 1},
-                    {"product_code": world.p_sorento.product_code, "qty": 2},
-                ],
-            }
-        ]
-    }
-    call = _seam(db, world, monkeypatch, scoped=True, answer=body)
-    result = call("crm_project_quotations_list", {"project_id": "x"})
-    lines = result["data"][0]["lines"]
-    assert [ln["product_code"] for ln in lines] == [world.p_mocha.product_code]
-
-
 def test_AC7_the_project_forecast_is_refused_for_a_brand_scoped_contact(db, world, monkeypatch):
     from app.services.chatbot.lanes.business.fetch import ToolNotAllowed
 
@@ -144,6 +125,37 @@ def test_AC7_the_project_forecast_is_refused_for_a_brand_scoped_contact(db, worl
     with pytest.raises(ToolNotAllowed):
         call("crm_project_forecast", {})
     assert _Client.calls == []
+
+
+PROJECT_READS = [
+    ("crm_projects_list", {}),
+    ("crm_project_detail", {"project_id": "x"}),
+    ("crm_project_quotations_list", {"project_id": "x"}),
+    ("crm_project_forecast", {}),
+]
+
+
+@pytest.mark.parametrize("name,args", PROJECT_READS, ids=[r[0] for r in PROJECT_READS])
+def test_AC7_a_scope_naming_a_brand_gets_no_project_read_at_all(db, world, monkeypatch, name, args):
+    """Projects carry no brand, so the guard cannot narrow them: refused like the forecast (crew ruling (b))."""
+    from app.services.chatbot.lanes.business.fetch import ToolNotAllowed
+
+    call = _seam(db, world, monkeypatch, scoped=True, answer={"data": [{"project_code": "ZZT-P-1"}]})
+    with pytest.raises(ToolNotAllowed):
+        call(name, args)
+    assert _Client.calls == [], f"{name} reached the MCP for a brand-scoped contact"
+
+
+@pytest.mark.parametrize("name,args", PROJECT_READS, ids=[r[0] for r in PROJECT_READS])
+def test_AC7_a_class_only_scope_still_runs_every_project_read(db, world, monkeypatch, name, args):
+    """`limits_brands` is False for a scope of item classes alone (TAG-BRAND-CLASS crew ruling (b))."""
+    call = _seam(db, world, monkeypatch, scoped=False, answer={"data": [{"project_code": "ZZT-P-1"}]})
+    set_brand_scope(db, frozenset({"class:ZZTCLS"}))
+    from app.services.chatbot.lanes.business import services
+
+    call = services._mcp_call(db)
+    call(name, args)
+    assert [c[0] for c in _Client.calls] == [name]
 
 
 @pytest.mark.parametrize("name", ["crm_order_analytics", "crm_find"])
