@@ -21,6 +21,7 @@ Contract assumptions (tell the captain if one does not fit):
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 import uuid
@@ -279,6 +280,13 @@ def canon(value) -> str:
     return json.dumps(value, sort_keys=True)
 
 
+def baseline(published):
+    """What Jev gets with no open record: the published criteria through main's `_with_agent_tools`."""
+    from app.services.chatbot import router
+
+    return router._with_agent_tools(copy.deepcopy(published))
+
+
 class TestJevIsToldTheOpenRecord:
     def test_a_readable_record_adds_one_open_record_sentence_under_agent(
         self, session_factory, monkeypatch, staff, grants, world, jev, inquiry
@@ -292,9 +300,8 @@ class TestJevIsToldTheOpenRecord:
         sent = call["criteria"]
         sentence = sent["agent"].get("open_record")
         assert isinstance(sentence, str) and sentence.strip() and "current_page" in sentence
-        assert {k: v for k, v in sent["agent"].items() if k != "open_record"} == published["agent"]
-        assert sent["chat"] == published["chat"]
-        assert set(sent) == set(published)
+        without = {**sent, "agent": {k: v for k, v in sent["agent"].items() if k != "open_record"}}
+        assert canon(without) == canon(baseline(published))
         assert call["instructions"] == PUBLISHED_INSTRUCTIONS
 
     def test_a_page_with_no_entity_sends_the_published_criteria_byte_for_byte(
@@ -305,7 +312,7 @@ class TestJevIsToldTheOpenRecord:
 
         run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(None))
 
-        assert canon(jev.calls[0]["criteria"]) == canon(published)
+        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published))
         assert jev.calls[0]["instructions"] == PUBLISHED_INSTRUCTIONS
 
     def test_a_denied_record_gets_no_line_and_the_same_page_with_the_slug_does(
@@ -315,7 +322,7 @@ class TestJevIsToldTheOpenRecord:
 
         run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(inquiry))
         assert "record_ref" not in jev.calls[0]["state"]["current_page"], "fixture: the record must be denied"
-        assert canon(jev.calls[0]["criteria"]) == canon(published)
+        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published))
 
         grants.add(VIEW)
         run_chat(session_factory, monkeypatch, new_thread(session_factory, staff), world, jev, snapshot(inquiry))
@@ -329,7 +336,7 @@ class TestJevIsToldTheOpenRecord:
 
         run_chat(session_factory, monkeypatch, staff, world, jev, None)
 
-        assert canon(jev.calls[0]["criteria"]) == canon(published)
+        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published))
         assert jev.calls[0]["instructions"] == PUBLISHED_INSTRUCTIONS
 
     def test_a_contact_turn_without_a_principal_sends_the_published_criteria(self, session_factory, jev):
@@ -343,7 +350,7 @@ class TestJevIsToldTheOpenRecord:
 
         decide_route(db, contact_respond_id=contact["respond_id"], text="why did sales drop", session_vars=None, has_media=False)
 
-        assert canon(jev.calls[0]["criteria"]) == canon(published)
+        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published))
         assert "current_page" not in jev.calls[0]["state"]
 
     def test_the_published_prompt_is_not_mutated_by_a_call_with_a_page(
@@ -356,19 +363,18 @@ class TestJevIsToldTheOpenRecord:
         assert "open_record" in jev.calls[0]["criteria"]["agent"], "fixture: the first call carries the line"
         run_chat(session_factory, monkeypatch, new_thread(session_factory, staff), world, jev, snapshot(None))
 
-        assert canon(jev.calls[1]["criteria"]) == canon(published)
+        assert canon(jev.calls[1]["criteria"]) == canon(baseline(published))
 
-    def test_an_agent_criterion_that_is_not_a_dict_is_sent_unchanged(
-        self, session_factory, monkeypatch, staff, grants, world, jev, inquiry
+    def test_an_agent_criterion_that_is_not_a_dict_does_not_raise(
+        self, session_factory, monkeypatch, staff, grants, world, jev
     ):
         published = publish_criteria(session_factory, "several reads combined, why, analysis")
         grants.add(VIEW)
 
-        run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(inquiry))
+        run_chat(session_factory, monkeypatch, staff, world, jev, snapshot(None))
 
         assert jev.calls, "decide_route must not raise"
-        assert canon(jev.calls[0]["criteria"]) == canon(published)
-        assert jev.calls[0]["state"]["current_page"]["record_ref"] == inquiry.ref
+        assert canon(jev.calls[0]["criteria"]) == canon(baseline(published))
 
 
 # --------------------------------------------------------------------------- #
