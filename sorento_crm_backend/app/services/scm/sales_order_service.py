@@ -1274,8 +1274,9 @@ class SalesOrderService:
 
         `plannable_lines` is how many lines the fulfilment board would ADMIT and
         `planned_lines` how many of those are settled - both by the board's own predicates
-        (`is_undecided_demand()` and `is_decided_demand()`), imported rather than restated, so
-        an order cannot read "2 of 3 planned" here and open a board that disagrees.
+        (`is_undecided_demand()` and `is_decided_demand()`, on an order
+        `admitted_to_planning()`), imported rather than restated, so an order cannot read "2 of
+        3 planned" here and open a board that disagrees.
 
         ONE GROUPED QUERY over the page's lines, never one per row: the book holds 15,000
         sales orders and a per-row read is an N+1 that only shows itself in production. An
@@ -1290,6 +1291,7 @@ class SalesOrderService:
             return rows
 
         from app.services.scm.demand import is_decided_demand, is_undecided_demand
+        from app.services.scm.planning_predicate import admitted_to_planning
 
         decided = is_decided_demand()
         counted = (
@@ -1298,8 +1300,10 @@ class SalesOrderService:
                 func.count(SalesOrderLine.id),
                 func.count(SalesOrderLine.id).filter(decided),
             )
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .filter(
                 SalesOrderLine.sales_order_id.in_(list(by_id)),
+                admitted_to_planning(),
                 is_undecided_demand(),
             )
             .group_by(SalesOrderLine.sales_order_id)
