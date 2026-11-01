@@ -234,7 +234,7 @@ def _unsafe_lock(tmp, kind):
         lock.touch(); lock.chmod(0o600)
         return lock
     lock = tmp / "other.lock"
-    lock.touch(); lock.chmod(0o604)
+    lock.touch(); lock.chmod(0o646)
     return lock
 
 
@@ -253,7 +253,7 @@ def _run_bounded(e, tmp, kind, **extra):
                 pass
 
 
-UNSAFE = ["symlink", "fifo", "dir_group_writable", "file_other_perm"]
+UNSAFE = ["symlink", "fifo", "dir_group_writable", "file_other_writable"]
 
 
 @pytest.mark.parametrize("kind", UNSAFE)
@@ -271,6 +271,45 @@ def test_watcher_unsafe_lock_path_still_lets_a_replica_stop(env, kind):
     e, log, tmp = env
     lock = _unsafe_lock(tmp, kind)
     _run_bounded(e, tmp, kind, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a", DEPLOY_LOCK_PATH=lock)
+    assert len(_stops(log)) == 1, calls(log)
+
+
+def test_watcher_accepts_a_lock_file_others_can_read(env):
+    e, log, tmp = env
+    lock = _lock(tmp, 0o644)
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200, DEPLOY_LOCK_PATH=lock)
+    assert len(_ups(log)) == 1, calls(log)
+    assert "unsafe" not in (r.stdout + r.stderr).lower()
+
+
+def _unsafe_project(tmp, kind):
+    proj = tmp / "proj"
+    proj.mkdir()
+    (proj / ".ha-image-tag").write_text(TAG + "\n")
+    (proj / ".ha-image-tag").chmod(0o644)
+    if kind == "symlink":
+        link = tmp / "projlink"
+        link.symlink_to(proj)
+        return link
+    proj.chmod(0o775)
+    return proj
+
+
+@pytest.mark.parametrize("kind", ["symlink", "group_writable"])
+def test_watcher_unsafe_project_dir_blocks_a_leader_start_and_is_logged(env, kind):
+    e, log, tmp = env
+    proj = _unsafe_project(tmp, kind)
+    r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200, PROJECT_DIR=proj)
+    assert not _ups(log), calls(log)
+    out = r.stdout + r.stderr
+    assert str(proj) in out and "unsafe" in out.lower(), out
+
+
+@pytest.mark.parametrize("kind", ["symlink", "group_writable"])
+def test_watcher_unsafe_project_dir_still_lets_a_replica_stop(env, kind):
+    e, log, tmp = env
+    proj = _unsafe_project(tmp, kind)
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a", PROJECT_DIR=proj)
     assert len(_stops(log)) == 1, calls(log)
 
 
