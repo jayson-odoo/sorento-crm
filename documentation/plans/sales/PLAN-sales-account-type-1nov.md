@@ -1,6 +1,6 @@
 # SALES-ACCOUNT-TYPE: sales by the customer's account type
 
-**Status:** PR 1 (#2067) ready, Waiting:ci; on-screen figures and the hand test wait for INVOICED-CHANNEL-PERF. PR 2 (#2074, draft) stacked on #2067: code green, kill proof posted, reviewers and prompt gate running. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
+**Status:** PR 1 (#2067) ready, Waiting:ci; on-screen figures and the hand test wait for INVOICED-CHANNEL-PERF. PR 2 (#2074, draft) stacked on #2067: fix round after review (reviewer NOT READY, 4 blockers; security 6 should-fix, no leak). Prompt gate TRAIN A 99, B 97 of 118, flips under diag. Track: full (prompt change, multi-company scoping). Plan created: 1 Nov 2026. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
 
 Lane brief: crew `SALES-ACCOUNT-TYPE`. Branch `crew/sales-account-type`. UAC: `sales-account-type-acceptance-criteria.md`.
 Agent codes are masked (AGENT A, AGENT B) because this repo is public. The real codes are in the crew card.
@@ -116,7 +116,7 @@ held 2026 month list. So the parser is not the cause on this text. No code widen
 count (`presenters.py`: `{lead} {len(rows)} {plural}`) over a month list, ten months with sales, the shape of the owner's other message, "2026 ... breakdown by month". Reading: the reply belongs to that ask, whose period
 was right and whose head is the defect. UNVERIFIED: the owner's own turn is in production and nobody on this lane can read it. One row x1 on another arm could still flip. 
 
-**Corrected by the gold run (1 Nov, 19 rows x1).** The production text has no month rule at all; the rule at `parser_template.py:37` is in a different lineage (item 4 below). `group_by: month` appeared on "in Jan" asks: 1 row of 19 on the baseline and 3 of 19 on the first candidates, each with January dates. So the "in Jan" axis fault is real and flaky; the "1 Jan to 31 Dec" period is still not reproduced. PR 2 fixes the head, adds the month rule to the candidate text, pins the month in gold rows, and adds one rule in the lane that reads no words: a month split inside one calendar month, or a year split inside one calendar year, is the total. So a flaky axis prints the total, not a one-row list.
+**Corrected by the gold run (1 Nov, 19 rows x1).** The production text has no month rule at all; the rule at `parser_template.py:37` is in a different lineage (item 4 below). `group_by: month` appeared on "in Jan" asks: 1 row of 19 on the baseline and 3 of 19 on the first candidates, each with January dates. So the "in Jan" axis fault is real and flaky; the "1 Jan to 31 Dec" period is still not reproduced. PR 2 fixes the head, adds the month rule to the candidate text, and pins the month in gold rows. A lane rule turning a one-bucket split into a total was built and withdrawn: review found it turned 16 existing tests red, it dropped the Yearly comparison's axis, and it made one outstanding ask a document list. Without it a stray axis prints the right figure in one row under "By month", which does not justify the risk.
 
 **Known limit, gold on the final text.** "cabana brand" still asks the question on about two runs in three (`kind_said` stays null on a word already hinted brand), after five rounds of wording. It costs one needless question and the answer gives the right figure; it never runs the wrong filter. "cabana account" and "cabana debtor type" passed in the last runs. The owner rules whether this holds up the label move.
 
@@ -133,8 +133,8 @@ was right and whose head is the defect. UNVERIFIED: the owner's own turn is in p
 
 ### Calls made here, filed with crew
 
-- Account type is NOT a named subject for the company question (`report_ask.py:1897`): a number means a different type per company, so a two-company contact asking "account 4" and nothing else is asked the company. A brand keeps today's reading. Cost: one question, on a rare shape.
+- Account type is NOT a named subject for the company question (`report_ask.py:1897`): a number means a different type per company, so a two-company contact asking "account 4" and nothing else is asked the company. A word that asks gets the company question first too, even if the answer turns out to be the brand. A brand said outright keeps today's reading. Cost: one question, on a rare shape.
 - A customer-scoped contact (dealer) never gets the question or the line: the route refuses them the filter (AT-13), so "cabana" stays the brand and "account 4" is the dealer refusal.
-- The word question comes before every other owed field and prints bare, as mock v4 draws it. A basis still owed is asked next.
+- The word question is the LAST question of the ask and prints bare. Built first as mock v4 draws it, but asking it first lost what the message had settled: an agent pick vanished and the answer ran a company-wide figure. So a basis, company or agent pick still owed is asked before it. This differs from the mock's order when a basis is owed; its wording is unchanged.
 - A word on a follow-up asks too, because rule 1 has no follow-up exception.
 - Side finding, not this lane: on baseline one row read AGENT A as a customer and the other as a sales agent.
