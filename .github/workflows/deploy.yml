@@ -160,6 +160,8 @@ env:
 #   - build-images and build-and-deploy: `ubuntu-latest`. Prod images are
 #     amd64 (an amd64 build on the arm64 VM is QEMU and the frontend `next
 #     build` OOMs there), and only build-and-deploy holds the deploy secrets.
+#     build-images waits for every test job, so a red release bills no
+#     GitHub-hosted minute.
 #   - The dispatch input `runner` routes nothing; it stays declared so a
 #     dispatch that passes `-f runner=github` still parses.
 #   - Every job on the Mac declares its token: contents read, plus the label

@@ -265,8 +265,10 @@ changed screen. Name the track in the plan's Status line.
   (`runs-on: [self-hosted, sorento-mac]`, Linux arm64 colima VM, `scripts/ci-runner/`), the PR
   gate, the release tests, the shards, `outline-user-guides-sync` and the never-stuck smoke
   included. Only `build-images` and `build-and-deploy` (amd64 images, deploy secrets) and
-  `rollback.yml` run GitHub-hosted. No fallback: with the Mac busy or offline a job queues, and
-  jobs run one at a time. Budget per release: `documentation/reference/CI-LABELS-AND-MINUTES.md`.
+  `rollback.yml` run GitHub-hosted; build-images waits for every test job, so a red release
+  bills nothing. No fallback: with the Mac busy or offline a job queues, and jobs run one at a
+  time (extra runners: `scripts/ci-runner/README.md`). Budget per release:
+  `documentation/reference/CI-LABELS-AND-MINUTES.md`.
 - CI enforcement already in place: `check-migration-heads` job fails any PR/merge-queue entry
   with two heads; `build-and-deploy` runs in the `deploy-production` concurrency group so
   two releases dispatched close together deploy serially instead of overlapping.
