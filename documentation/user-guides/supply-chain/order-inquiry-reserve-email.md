@@ -63,6 +63,15 @@ The subject says who raised the order inquiries and how the answers went, for ex
 * An email about several opens the order inquiry list showing exactly those order inquiries, whatever
   their state. Remove the **Order inquiries** filter on the list to see all order inquiries again.
 
+If you prefer to work in **Lines**, press **Lines** after opening the link: the filter comes with you,
+and you see every line of those order inquiries and no others. **Documents** brings you back to the
+same list. Your usual Lines view is not changed by working this way. **Unlink all** is the one action on
+Lines that does not follow this filter: it stays company-wide, as its dialog says.
+
+Prev and next on an order inquiry's page walk the list you opened it from, and changing the line filter
+on that page does not change the walk. An email about one order inquiry opens its page directly, with no
+list behind it, so prev and next show only when that order inquiry is on your default list page.
+
 ## How to manage it
 
 Open **System Management → Automation**. Two rows manage these emails:
