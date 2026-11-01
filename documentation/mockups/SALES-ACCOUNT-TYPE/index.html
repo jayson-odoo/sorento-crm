@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sales by account type mock</title>
-<!-- SALES-ACCOUNT-TYPE (1 Nov 2026). Annotated static mock, not shipped code. Plan: documentation/plans/sales/PLAN-sales-account-type-1nov.md.
+<!-- SALES-ACCOUNT-TYPE v2 (1 Nov 2026, owner feedback on v1: no brand-or-account question, no CABANA = account 4 link). Annotated static mock, not shipped code. Plan: documentation/plans/sales/PLAN-sales-account-type-1nov.md.
      Figures are sorento_prod_1028 read-only, tied to the AutoCount "Sorento sales report by account". Agent codes and totals only: no customer names. -->
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7eb;--line-soft:#f1f2f4;--primary:#1b84ff;--primary-soft:#e9f3ff;--callout:#e11d74;--radius:8px;--font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -43,7 +43,7 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 .b{align-self:flex-start;background:var(--bg);border:1px solid var(--line)}
 .case{color:var(--muted);font-size:12px;margin:12px 0 2px;font-weight:600}
 </style></head><body><div class="doc">
-<h1>Sales by account type</h1>
+<h1>Sales by account type (v2)</h1>
 <p class="sub">Account type is the customer's AutoCount debtor type. It joins the filters and the summary on Sales &amp; outstanding, on the same figures the bot reads. The blue field is the only new control. Qty stays as it is today and is left out here because the tie-out checked RM only.</p>
 
 <h2 class="frame-title">1. Filter on: YMH, CABANA account, by month (1280)</h2>
@@ -122,31 +122,38 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <div class="frame" style="flex:1 1 560px;max-width:760px">
 <p class="caption">4. The bot</p>
 <div class="chat">
-<div class="case">A word that is both a brand and an account: the bot asks</div>
+<div class="case">A bare brand word stays the item brand, as today. No question.</div>
 <div class="u">YMH sales for cabana in Jan</div>
-<div class="b">Cabana as the item brand, or the customer's account (A/C IV)?
-1. Item brand
-2. Customer account</div>
-<div class="u">account</div>
-<div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
-Account type: CABANA (A/C IV)
-RM 96,416.80</div>
-<div class="case">Same question, answered "brand"</div>
 <div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
 Brand: CABANA
 RM 153,888.62</div>
-<div class="case">The account is named, so no question</div>
-<div class="u">total sales 2026 for sales agent ymh, cabana, invoiced, breakdown by month, for account 4</div>
-<div class="b">YMH invoiced sales by month, 1 Jan - 31 Dec 2026
-Account type: CABANA (A/C IV)
-Jan 2026 RM 96,416.80
-Feb 2026 RM 71,106.53
-... one line per month ...
-Oct 2026 RM 83,873.54</div>
-<div class="case">Brand and account together</div>
-<div class="u">cabana brand on account 3 for YMH in Jan</div>
+<div class="case">Asked by account, naming the account type</div>
+<div class="u">YMH sales for cabana account in Jan</div>
 <div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
-Brand: CABANA, account type: CERAMIC (A/C III)
+Account type: CABANA
+RM 96,416.80</div>
+<div class="case">Open question, "account 4", option (a): the reply lists the types, the answer resumes the ask</div>
+<div class="u">YMH sales for account 4 in Jan</div>
+<div class="b">Which account type: BRAVAT, CABANA, CERAMIC, PROJECT, SAMPLE or SORENTO?</div>
+<div class="u">cabana</div>
+<div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
+Account type: CABANA
+RM 96,416.80</div>
+<div class="case">Open question, "account 4", option (b): the reply lists the types, the user asks again</div>
+<div class="u">YMH sales for account 4 in Jan</div>
+<div class="b">I have no account type called account 4. Account types: BRAVAT, CABANA, CERAMIC, PROJECT, SAMPLE, SORENTO.</div>
+<div class="case">Split by account type</div>
+<div class="u">YMH January by account type</div>
+<div class="b">YMH invoiced sales by account type, 1 Jan - 31 Jan 2026
+CERAMIC RM 315,483.59
+SORENTO RM 282,203.77
+CABANA RM 96,416.80
+Total RM 694,104.16</div>
+<div class="case">A brand on an account</div>
+<div class="u">cabana brand on the ceramic account for YMH in Jan</div>
+<div class="b">YMH invoiced sales, 1 Jan - 31 Jan 2026
+Brand: CABANA, account type: CERAMIC
 RM 76,877.71</div>
-</div></div></div>
+</div>
+<p class="sub" style="margin:14px 0 0">The account type names are the AutoCount report's columns. The real list is whatever the customers carry once the shared service sends it.</p></div></div>
 </div></body></html>
