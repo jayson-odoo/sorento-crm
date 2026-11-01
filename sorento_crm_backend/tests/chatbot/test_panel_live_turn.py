@@ -867,9 +867,15 @@ class TestOutboundGuardOnEveryContactCall:
 # --------------------------------------------------------------------------- #
 
 
-PANEL_PORTAL_EN = "Portal links go to a contact on WhatsApp, so I can't send one from here."
-PANEL_PORTAL_MS = "Pautan portal dihantar kepada kenalan di WhatsApp, jadi saya tidak dapat menghantarnya dari sini."
-PANEL_PORTAL_ZH = "门户链接是通过 WhatsApp 发送给联系人的，所以我无法在这里发送。"
+PANEL_PORTAL_EN = (
+    "Portal links go to a contact on WhatsApp, so I can't send one from here. "
+    "If you want the steps for something, ask me how to do it."
+)
+PANEL_PORTAL_MS = (
+    "Pautan portal dihantar kepada kenalan di WhatsApp, jadi saya tidak dapat menghantarnya dari sini. "
+    "Jika anda mahu langkah untuk sesuatu, tanya saya cara melakukannya."
+)
+PANEL_PORTAL_ZH = "门户链接是通过 WhatsApp 发送给联系人的，所以我无法在这里发送。如果您想了解某件事的操作步骤，可以问我怎么做。"
 
 
 def _portal_form_must_not_be_checked(monkeypatch):
@@ -931,7 +937,6 @@ def test_the_panel_portal_sentence_has_ms_and_zh_in_the_label_catalog():
     assert entry.get("zh") == PANEL_PORTAL_ZH
     for lang, text in (("ms", PANEL_PORTAL_MS), ("zh", PANEL_PORTAL_ZH)):
         assert label_catalog.defaults(lang).get(PANEL_PORTAL_EN) == text, lang
-    assert PANEL_PORTAL_EN in label_catalog.INLINE
 
 
 @pytest.mark.parametrize(

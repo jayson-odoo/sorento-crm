@@ -214,3 +214,42 @@ describe('WhatsAppBlocks: a marker around inline code (round 9)', () => {
     expect(container.querySelector('code')).toBeNull();
   });
 });
+
+// Round 9, second pass: the slot that stands in for a code span (edge cases of the mask-and-fill).
+describe('WhatsAppBlocks: code slots (round 9, second pass)', () => {
+  const SLOT = '';
+
+  it('keeps spans in order across segments: bold, plain, a fence, italic', () => {
+    const { container } = render(<WhatsAppBlocks text={'*`/a`* and `/b` ```c``` _`/d`_'} />);
+    expect(Array.from(container.querySelectorAll('code')).map((c) => c.textContent)).toEqual(['/a', '/b', 'c', '/d']);
+    expect(container.textContent).not.toContain('`');
+    expect(container.textContent).not.toContain('*');
+    expect(container.textContent).not.toContain(SLOT);
+  });
+
+  it('a literal U+E000 in the reply never shows, and adds no extra or empty code element', () => {
+    const { container } = render(<WhatsAppBlocks text={`before ${SLOT} middle \`x\` after`} />);
+    expect(container.textContent).not.toContain(SLOT);
+    const codes = Array.from(container.querySelectorAll('code'));
+    expect(codes.map((c) => c.textContent)).toEqual(['x']);
+    expect(container.textContent).toContain('before');
+    expect(container.textContent).toContain('after');
+  });
+
+  it('a literal U+E000 before a bold-wrapped span leaves the span text right', () => {
+    const { container } = render(<WhatsAppBlocks text={`${SLOT} *\`/a\`* ${SLOT}`} />);
+    expect(container.textContent).not.toContain(SLOT);
+    expect(Array.from(container.querySelectorAll('code')).map((c) => c.textContent)).toEqual(['/a']);
+    expect(container.querySelector('strong code')?.textContent).toBe('/a');
+  });
+
+  it('a URL directly before a code span: any link rendered carries no U+E000 in its href', () => {
+    const { container } = render(<WhatsAppBlocks text={'https://x.test/a`b`'} />);
+    for (const a of Array.from(container.querySelectorAll('a'))) {
+      expect(a.getAttribute('href') ?? '').not.toContain(SLOT);
+      expect(decodeURIComponent(a.getAttribute('href') ?? '')).not.toContain(SLOT);
+    }
+    expect(container.textContent).not.toContain(SLOT);
+    expect(container.querySelector('code')?.textContent).toBe('b');
+  });
+});
