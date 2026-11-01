@@ -304,6 +304,8 @@ export interface ComboPartOption {
   name: string;
   /** Null = fixed part. A label = one of the options for that label. */
   choice_group: string | null;
+  /** An upgrade is offered, never included: it reaches the line as one open `Upgrade` row. */
+  is_upgrade?: boolean;
 }
 
 /** One catalogue package on a host product, named the way the catalogue names it. */

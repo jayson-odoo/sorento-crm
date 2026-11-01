@@ -115,6 +115,7 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
   const out: DraftPart[] = [];
   const seen = new Set<string>();
   for (const part of combo.parts) {
+    if (part.is_upgrade) continue;
     if (!part.choice_group) {
       out.push({
         key: newPartKey(),
@@ -145,6 +146,19 @@ export function partsFromCombo(combo: ProductComboOption): DraftPart[] {
       candidates,
     });
   }
+  // AC-3.5: upgrades are offered, never included. One open `Upgrade` row, even with a
+  // single candidate (no D17 auto-resolve), so an unanswered upgrade adds nothing.
+  const upgrades = combo.parts.filter((p) => p.is_upgrade);
+  if (upgrades.length > 0) {
+    out.push({
+      key: newPartKey(),
+      product_id: null,
+      code: '',
+      name: '',
+      role: 'Upgrade',
+      candidates: upgrades.map((p) => ({ product_id: p.product_id, code: p.code, name: p.name })),
+    });
+  }
   return out;
 }
 
@@ -163,13 +177,14 @@ export function packageWarningFor(line: DraftLine): string | null {
   if (!combo) return null;
   const missing: string[] = [];
   for (const part of combo.parts) {
-    if (part.choice_group) continue;
+    if (part.choice_group || part.is_upgrade) continue;
     if (!line.parts.some((row) => row.product_id === part.product_id)) {
       missing.push(part.code);
     }
   }
   const groups: string[] = [];
   for (const part of combo.parts) {
+    if (part.is_upgrade) continue;
     if (part.choice_group && !groups.includes(part.choice_group)) {
       groups.push(part.choice_group);
     }

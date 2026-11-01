@@ -1903,6 +1903,8 @@ Marketing's own work is not part of the form's payload, so it is captured
         missing: list[str] = []
         seen_groups: list[str] = []
         for part in combo_parts:
+            if part.is_upgrade:
+                continue  # offered, never included: not a missing part (AC-3.5)
             if part.choice_group:
                 if part.choice_group not in seen_groups:
                     seen_groups.append(part.choice_group)
