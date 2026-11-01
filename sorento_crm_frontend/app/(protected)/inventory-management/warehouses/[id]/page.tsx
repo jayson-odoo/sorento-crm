@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import DetailActions from '@/components/common/DetailActions';
@@ -68,6 +69,8 @@ export default function WarehouseDetailPage({
   const router = useRouter();
   const backHref = useBackToListHref('/inventory-management/warehouses');
   const { data: warehouse, isLoading } = useWarehouse(id);
+  // `?tab=` so the record pager keeps the open tab on prev/next (NAV-KEEP-TAB).
+  const [tab, setTab] = useUrlTab({ tabs: ['basic', 'planning'], defaultTab: 'basic' });
 
   // Delete asks nothing (D7): the countdown takes the primary button's place
   // and Cancel is the way back.
@@ -190,7 +193,7 @@ export default function WarehouseDetailPage({
           {/* Same tab set, same field order, and the same grid spans as the edit view: a
               field that spans both columns there must span both here, or it lands in a
               different row and column between the two views. */}
-          <Tabs defaultValue="basic">
+          <Tabs value={tab} onValueChange={setTab}>
             <TabsList>
               <TabsTrigger value="basic">
                 <Info />

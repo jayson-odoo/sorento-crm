@@ -16,6 +16,9 @@ import UserProfileEditDialog from './user-profile-edit-dialog';
 interface UserProfileProps {
   user: User;
   isLoading: boolean;
+  /** The open tab's route segment (`''` for Profile, `'/logs'`), so prev/next lands on the
+   *  same tab of the next user (NAV-KEEP-TAB), as the contact record already does. */
+  tabSegment?: string;
 }
 
 /**
@@ -42,7 +45,7 @@ const HeroLoading = () => {
   );
 };
 
-const HeroContent = ({ user }: { user: User }) => {
+const HeroContent = ({ user, tabSegment = '' }: { user: User; tabSegment?: string }) => {
   const router = useRouter();
   const backHref = useBackToListHref('/user-management/users');
   const [isEditDialogOpen, setEditDialogOpen] = useState(false);
@@ -77,6 +80,8 @@ const HeroContent = ({ user }: { user: User }) => {
           listQueryKey: usersListQueryKey,
           fetchPage: fetchUsersListPage,
           ariaLabel: 'user',
+          hrefFor: (nextId, search) =>
+            `/user-management/users/${nextId}${tabSegment}${search ? `?${search}` : ''}`,
         }}
         actions={actions}
         dialogs={
@@ -97,8 +102,8 @@ const HeroContent = ({ user }: { user: User }) => {
   );
 };
 
-const UserHero = ({ user, isLoading }: UserProfileProps) => {
-  return isLoading || !user ? <HeroLoading /> : <HeroContent user={user} />;
+const UserHero = ({ user, isLoading, tabSegment }: UserProfileProps) => {
+  return isLoading || !user ? <HeroLoading /> : <HeroContent user={user} tabSegment={tabSegment} />;
 };
 
 export default UserHero;

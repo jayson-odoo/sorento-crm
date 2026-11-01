@@ -946,9 +946,13 @@ def _search_in_scope(db: Any, ctx: Any, query: str) -> dict:
 def _knowledge_handoff(db: Any, ctx: Any, args: Any) -> ToolResult:
     """`crm_knowledge_handoff`: say whether the marketing product team offer can be made to this
     contact, and the sentence to end the reply with. It writes nothing: the loop arms the offer at the
-    end of a live turn that answered, and the ticket is made on the contact's own "yes" later."""
+    end of a live turn that answered, and the ticket is made on the contact's own "yes" later.
+
+    A contact that may not be offered gets `refer: True` and the miss line alone: the loop prints the
+    salesman line after it through `turn/refer.py` when it puts the sentence in a reply that did not
+    fail, so the turn is marked for Customer asks exactly when the customer is told to refer
+    (CUSTOMER-ASKS-REFER-ONLY), never for a turn that failed after this tool ran."""
     from app.services import knowledge_service
-    from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
 
     if not is_contact_principal(ctx):
         return ToolResult("denied", message=f"{HANDOFF} is not a tool you may use.")
@@ -962,8 +966,10 @@ def _knowledge_handoff(db: Any, ctx: Any, args: Any) -> ToolResult:
     except Exception:  # noqa: BLE001 - a tool failure is a result the model can work around
         logger.warning("agent: %s failed", HANDOFF, exc_info=True)
         return ToolResult("error", message=FIXED_ERROR)
-    offer = knowledge_service.KNOWLEDGE_MISS_OFFER if armed else REFER_TO_SALESMAN
-    return ToolResult("ok", data={"armed": armed, "say": f"{knowledge_service.KNOWLEDGE_MISS_LINE} {offer}"})
+    if armed:
+        say = f"{knowledge_service.KNOWLEDGE_MISS_LINE} {knowledge_service.KNOWLEDGE_MISS_OFFER}"
+        return ToolResult("ok", data={"armed": True, "say": say})
+    return ToolResult("ok", data={"armed": False, "say": knowledge_service.KNOWLEDGE_MISS_LINE, "refer": True})
 
 
 def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:

@@ -674,7 +674,10 @@ export function SalesOrderDetail({
   // bookmarked or shared link (`?tab=lines`) opens directly on that tab. S6 (AC-B6-3): a
   // `?line=<id>` deep link always lands on Lines, whatever `tab` says - the only tab that
   // line could ever be found on.
-  const tab = searchParams.get('line') ? 'lines' : searchParams.get('tab') || 'general';
+  const requestedTab = searchParams.get('line') ? 'lines' : searchParams.get('tab') || 'general';
+  // The pager carries `?tab=` to the next order (NAV-KEEP-TAB); Invoices hidden by
+  // permission falls back to General rather than an empty panel.
+  const tab = requestedTab === 'invoices' && !canSeeInvoices ? 'general' : requestedTab;
   // The truck lightbox and the Delivery tab's DO list (DO-SO-LINK-SURFACE R3) read the same
   // rows: fetched on the first of the two, then shared.
   const deliveries = useSalesOrderDeliveries(id, deliveriesRequested || tab === 'delivery');

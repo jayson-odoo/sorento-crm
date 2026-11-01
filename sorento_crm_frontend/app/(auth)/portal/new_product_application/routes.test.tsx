@@ -11,6 +11,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 
 const replace = vi.fn();
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace, back: vi.fn() }),
   notFound: () => {
     throw new Error('notFound');

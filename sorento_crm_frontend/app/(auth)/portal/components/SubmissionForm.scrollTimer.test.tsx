@@ -8,6 +8,7 @@ import type { PortalContact } from '../lib/portal-client';
 import { typeBadInput } from '@/test-utils/badInput';
 
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));

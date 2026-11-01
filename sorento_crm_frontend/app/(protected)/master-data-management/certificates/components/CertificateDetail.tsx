@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 import DetailActions from '@/components/common/DetailActions';
 import { certificatesPagerQuery } from '../hooks/useCertificates';
@@ -41,6 +42,8 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
   const router = useRouter();
   const backHref = useBackToListHref(LIST_PATH);
   const { data: certificate, isLoading } = useCertificate(certificateId);
+  // `?tab=` so the record pager keeps the open tab on prev/next (NAV-KEEP-TAB).
+  const [tab, setTab] = useUrlTab({ tabs: ['overview', 'products', 'revisions'], defaultTab: 'overview' });
 
   // Delete asks nothing (D7). The countdown stands where Edit stands and Cancel
   // is the way back; the uploaded files survive either way.
@@ -156,7 +159,7 @@ export default function CertificateDetail({ certificateId }: { certificateId: st
         ALWAYS relevant (coverage, revisions) - not for a warning that is not
         firing, which is just noise.
       */}
-      <Tabs defaultValue="overview">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line" className="mb-5">
           <TabsTrigger value="overview">
             <FileText />

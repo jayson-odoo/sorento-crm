@@ -1,6 +1,6 @@
 """AGENTIC-KNOWLEDGE P2 W1, slice S4: hand-off on a knowledge miss (UAC AC-W23 .. AC-W27).
 
-Contract (PLAN section S4): `knowledge_service.arm_knowledge_miss_offer(db, contact_pk) -> bool`
+Contract (PLAN section S4): `chatbot.agent.knowledge_miss.arm_knowledge_miss_offer(db, contact_pk) -> bool`
 writes the bot's single-team offer into `respond_contacts.session_vars["open_question"]`;
 the local tool `crm_knowledge_handoff` (contact principal only, no arguments) arms it; the escalation
 bar is never lifted: a barred contact is referred to its salesman (owner ruling W-Q2 a).
@@ -80,9 +80,9 @@ def _contact_ctx(contact):
 
 
 def _arm(db, pk):
-    from app.services import knowledge_service
+    from app.services.chatbot.agent import knowledge_miss
 
-    return knowledge_service.arm_knowledge_miss_offer(db, pk)
+    return knowledge_miss.arm_knowledge_miss_offer(db, pk)
 
 
 def _dispatch(db, ctx, name, args):
@@ -281,8 +281,9 @@ def test_ac_w26_a_barred_contact_with_an_open_knowledge_miss_offer_still_loads_e
 
 
 def test_ac_w27_a_barred_contact_is_not_armed_nothing_is_written_and_the_say_refers_to_the_salesman(db):
+    """The tool hands back the miss line and `refer`; the loop prints the salesman line after it
+    through `turn/refer.py` (see the refer-mark tests below), so the tool itself marks nothing."""
     from app.services import knowledge_service as ks
-    from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
 
     contact = _contact(db, escalation_allowed=False)
     before = _session_vars(db, contact["pk"])
@@ -294,8 +295,8 @@ def test_ac_w27_a_barred_contact_is_not_armed_nothing_is_written_and_the_say_ref
     assert out.data["armed"] is False
     assert _session_vars(db, contact["pk"]) == before
     assert (_session_vars(db, contact["pk"]) or {}).get("open_question") is None
-    assert ks.KNOWLEDGE_MISS_LINE in out.data["say"]
-    assert REFER_TO_SALESMAN in out.data["say"]
+    assert out.data["say"] == ks.KNOWLEDGE_MISS_LINE
+    assert out.data["refer"] is True
     assert "marketing product team" not in out.data["say"]
 
 
@@ -399,6 +400,69 @@ def test_fr1_f7_a_barred_contacts_reply_refers_to_the_salesman_and_arms_nothing(
     assert REFER_TO_SALESMAN in result.reply_text
     assert "marketing product team" not in result.reply_text
     assert (_session_vars(db, contact["pk"]) or {}).get("open_question") is None
+
+
+# ---------------------------------------------------------------- CUSTOMER-ASKS-REFER-ONLY: the refer mark
+# The salesman line is printed through `turn/refer.py`, so the turn is marked for Customer asks when, and
+# only when, the reply the customer gets carries it. Each test opens `refer.tracking()` itself so the mark
+# is observable. No agent caller opens one today (inbox, console and panel all run the agent outside the
+# engine's tracking and write no Customer asks row), so in production this mark is not yet read.
+
+
+def test_refer_a_barred_contacts_knowledge_miss_marks_the_turn_and_the_reply_ends_with_the_line(db):
+    from app.services import knowledge_service as ks
+    from app.services.chatbot.turn import refer
+    from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
+
+    contact = _contact(db, escalation_allowed=False)
+
+    with refer.tracking() as mark:
+        result, _ = _turn(db, contact, is_test=False)
+
+    assert result.reply_text.endswith(f"{ks.KNOWLEDGE_MISS_LINE} {REFER_TO_SALESMAN}"), result.reply_text
+    assert mark.referred is True
+
+
+def test_refer_an_allowed_contact_offered_the_team_is_not_marked(db):
+    from app.services.chatbot.turn import refer
+    from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
+
+    contact = _contact(db)
+
+    with refer.tracking() as mark:
+        result, _ = _turn(db, contact, is_test=False)
+
+    assert REFER_TO_SALESMAN not in result.reply_text
+    assert mark.referred is False
+
+
+def test_refer_a_turn_that_fails_after_the_handoff_ran_is_not_marked(db):
+    """The over-log guard: the tool told a barred contact's turn to refer, then the model failed, so the
+    customer never got the line and no Customer asks row may be written for it."""
+    from app.services.chatbot.agent.loop import run_agent_turn
+    from app.services.chatbot.turn import refer
+    from app.services.chatbot.turn.refer import REFER_TO_SALESMAN
+
+    class Boom(_Provider):
+        def chat(self, messages, *, tools=None, **kw):
+            self.calls.append({"messages": [], "tools": [t["function"]["name"] for t in tools or []]})
+            if len(self.calls) == 1:
+                return _asks({"id": "h1", "name": TOOL, "arguments": {}})
+            raise RuntimeError("zzt model down")
+
+    contact = _contact(db, escalation_allowed=False)
+    provider = Boom()
+
+    with refer.tracking() as mark:
+        result = run_agent_turn(
+            db, contact_respond_id=contact["respond_id"], text="warranty?", provider=provider,
+            mcp_call=forbidden_call, catalog={}, is_test=False,
+        )
+
+    assert len(provider.calls) >= 2  # the handoff tool ran before the failure
+    assert result.status == "failed"
+    assert REFER_TO_SALESMAN not in result.reply_text
+    assert mark.referred is False
 
 
 def test_fr1_f7_the_backstop_strips_an_escalation_offer_the_model_wrote_for_a_barred_contact(db):

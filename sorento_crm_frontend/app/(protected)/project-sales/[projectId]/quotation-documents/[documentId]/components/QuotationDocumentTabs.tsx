@@ -39,6 +39,22 @@ export function quotationDocumentTabs(projectId: string, documentId: string): Ta
   ];
 }
 
+/**
+ * Where prev/next lands: the neighbouring document on the SAME tab (NAV-KEEP-TAB). The tabs are
+ * route segments, so the open one is read off the pathname; anything that is not one of the
+ * tabs (the `/edit` form, a typo) lands on the neighbour's Header.
+ */
+export function quotationSiblingHref(
+  projectId: string,
+  documentId: string,
+  siblingId: string,
+  pathname: string | null,
+): string {
+  const open = quotationDocumentTabs(projectId, documentId).find((t) => t.path === pathname);
+  const suffix = open ? open.path.slice(`/project-sales/${projectId}/quotation-documents/${documentId}`.length) : '';
+  return `/project-sales/${projectId}/quotation-documents/${siblingId}${suffix}`;
+}
+
 export function QuotationDocumentTabs({
   projectId,
   documentId,

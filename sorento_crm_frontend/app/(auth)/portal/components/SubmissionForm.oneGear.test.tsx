@@ -24,6 +24,7 @@ const push = vi.fn();
 const replace = vi.fn();
 const router = { push, replace };
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => router,
 }));
 

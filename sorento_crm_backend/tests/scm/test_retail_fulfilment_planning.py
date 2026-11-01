@@ -774,25 +774,23 @@ _VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 _GRANTED = ("projects.projects.view", "projects.projects.edit", "scm.dashboard.view")
 
 
-#: The grant migration, by its own revision id. It was the alembic head when it landed, but
-#: any later migration on main becomes the head, so the lookup must not read "the head".
-_GRANT_REVISION = "dp_0001_cs_planning_access"
-
-
-def _head_migration():
-    """The Customer Service grant migration (`_GRANT_REVISION`), loaded from its file."""
+def _lane_migration():
+    """The lane's migration, loaded by its revision id. It was the alembic head when the lane
+    merged, but any later migration (#2060's `pnl_0002_agent_slug` was the first) moves the
+    head, so asking for "the head" made these tests fail on the next merge."""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     config = Config()
     config.set_main_option("script_location", str(_VERSIONS.parent))
     script = ScriptDirectory.from_config(config)
-    path = Path(script.get_revision(_GRANT_REVISION).path)
+    path = Path(script.get_revision("dp_0001_cs_planning_access").path)
     source = path.read_text()
     assert "customer_service" in source and all(slug in source for slug in _GRANTED), (
-        f"the migration {path.name} does not grant the Customer Service role {_GRANTED}"
+        f"the migration {path.name} does not grant the Customer Service role "
+        f"{_GRANTED}"
     )
-    spec = importlib.util.spec_from_file_location("zzt_r16_head", path)
+    spec = importlib.util.spec_from_file_location("zzt_r16_lane", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -802,7 +800,7 @@ def _run(db, direction="upgrade"):
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
 
-    module = _head_migration()
+    module = _lane_migration()
     context = MigrationContext.configure(connection=db.connection())
     with Operations.context(context):
         getattr(module, direction)()

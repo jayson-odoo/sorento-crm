@@ -655,14 +655,14 @@ def test_fr1_f1_an_ambiguous_contact_principal_fails_closed(db):
 def test_fr1_f1_arming_refuses_when_any_namesake_row_is_barred(db):
     from sqlalchemy import text as _text
 
-    from app.services import knowledge_service
+    from app.services.chatbot.agent import knowledge_miss
 
     contact = seed_contact(db)
-    assert knowledge_service.arm_knowledge_miss_offer(db, contact["pk"]) is True  # control
+    assert knowledge_miss.arm_knowledge_miss_offer(db, contact["pk"]) is True  # control
     db.execute(_text("UPDATE respond_contacts SET session_vars = '{}'::jsonb WHERE id = :i"), {"i": contact["pk"]})
     _second_row(db, contact["respond_id"], esc=False)
 
-    assert knowledge_service.arm_knowledge_miss_offer(db, contact["pk"]) is False
+    assert knowledge_miss.arm_knowledge_miss_offer(db, contact["pk"]) is False
     sv = db.execute(_text("SELECT session_vars FROM respond_contacts WHERE id = :i"), {"i": contact["pk"]}).scalar()
     assert not (sv or {}).get("open_question")
 
