@@ -766,6 +766,47 @@ def test_a_confirmation_cannot_reserve_more_than_the_pool_holds():
     assert short == Decimal("10")
 
 
+def test_a_project_line_in_the_same_confirmation_reads_the_true_net():
+    """12 on hand, 10 owed at the pool: a true net of 2. The line at the pool takes 6, paid for
+    by its own add-back, so the 2 are still there. A project line of ANOTHER pool's group, which
+    reads this pool as one of its others and has no own reading to correct it, gets those 2."""
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=12, product=product)
+        own = _project_bin(db, _dealer_pool(db, on_hand=0, product=product))
+        order, line, core_so, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+            required_date=_far(10), line_no=10,
+        )
+        bin_core = _core_line(db, core_so, product, own, qty_ordered="5", required_date=_far(17))
+        bin_line = _project_line(db, order, line_no=20, product=product, core_line=bin_core)
+        db.commit()
+        service = ProjectSupplyService(db)
+        service.confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(
+                        project_line_id=str(line.id),
+                        reserve=[{"warehouse_id": str(pool.id), "qty": Decimal("6")}],
+                        buy_qty=Decimal("4"),
+                    ),
+                    ConfirmLine(
+                        project_line_id=str(bin_line.id),
+                        reserve=[{"warehouse_id": str(pool.id), "qty": Decimal("5")}],
+                    ),
+                ]
+            ),
+            actor_user_id=actor,
+        )
+        short = sum(
+            (entry["short"] for entries in service._stock_short.values() for entry in entries),
+            Decimal("0"),
+        )
+
+    assert short == Decimal("3")
+
+
 def test_the_confirm_preview_of_a_line_at_the_pool_raises_its_order_row():
     """AC-7 on the path the board's preview calls. Nothing is refused, and the Buy is listed."""
     with blank_session() as db:
