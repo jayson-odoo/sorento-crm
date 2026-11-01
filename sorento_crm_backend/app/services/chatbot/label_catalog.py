@@ -290,6 +290,12 @@ LABELS: dict[str, dict[str, str]] = {
     "Bottom {top_n} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} {rank_noun} terbawah mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名后 {top_n} 位的{rank_noun}"},
     "Bottom {top_n} of {of_total} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} daripada {of_total} {rank_noun} terbawah mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名后 {top_n} 位（共 {of_total} 个{rank_noun}）"},
     "Sales by {basis}": {"ms": "Jualan mengikut {basis}", "zh": "按{basis}统计的销售"},
+    # SALES-ACCOUNT-TYPE PR 2: a month or year split opens "By month, ..." / "By year, ..." (never "Top N"); the account
+    # filter line, and the word question (`report_ask._kind_question`).
+    "By month, {basis}": {"ms": "Mengikut bulan, {basis}", "zh": "按月份，{basis}"},
+    "By year, {basis}": {"ms": "Mengikut tahun, {basis}", "zh": "按年统计，{basis}"},
+    "Account type": {"ms": "Jenis akaun", "zh": "账户类型"},
+    "{word}: brand or account type?": {"ms": "{word}: jenama atau jenis akaun?", "zh": "{word}：品牌还是账户类型？"},
     "No {basis} found": {"ms": "Tiada {basis} ditemui", "zh": "未找到{basis}"},
     "delivered sales": {"ms": "jualan dihantar", "zh": "已送货销售"},
     "ordered sales": {"ms": "jualan dipesan", "zh": "已订购销售"},
