@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sales by account type mock</title>
-<!-- SALES-ACCOUNT-TYPE v2 (1 Nov 2026, owner feedback on v1: a bare brand word stays the brand, no question; users say "account type 4"). Annotated static mock, not shipped code. Plan: documentation/plans/sales/PLAN-sales-account-type-1nov.md.
+<!-- SALES-ACCOUNT-TYPE v3 (1 Nov 2026, owner on card v2: account type 4 reads the debtor type, and the reply does not define 4 as a type). Annotated static mock, not shipped code. Plan: documentation/plans/sales/PLAN-sales-account-type-1nov.md.
      Figures are sorento_prod_1028 read-only, tied to the AutoCount "Sorento sales report by account". Agent codes are masked (AGENT A, AGENT B) because this repo is public; totals are real. -->
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--fg:#111827;--muted:#6b7280;--line:#e5e7eb;--line-soft:#f1f2f4;--primary:#1b84ff;--primary-soft:#e9f3ff;--callout:#e11d74;--radius:8px;--font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
@@ -43,7 +43,7 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 .b{align-self:flex-start;background:var(--bg);border:1px solid var(--line)}
 .case{color:var(--muted);font-size:12px;margin:12px 0 2px;font-weight:600}
 </style></head><body><div class="doc">
-<h1>Sales by account type (v2)</h1>
+<h1>Sales by account type (v3)</h1>
 <p class="sub">Account type is the customer's AutoCount debtor type. It joins the filters and the summary on Sales &amp; outstanding, on the same figures the bot reads. The blue field is the only new control. Qty stays as it is today and is left out here because the tie-out checked RM only.</p>
 
 <h2 class="frame-title">1. Filter on: AGENT A, CABANA account, by month (1280)</h2>
@@ -127,44 +127,38 @@ tr.tot td{border-top:1px solid var(--line);font-weight:600}
 <div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
 Brand: CABANA
 RM 153,888.62</div>
-<div class="case">"account type 4", option (b): the customers' AutoCount debtor type (recommended)</div>
+<div class="case">Account type, shown the way it was asked</div>
 <div class="u">AGENT A sales for account type 4 in Jan</div>
 <div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
-Account type 4: CABANA
+Account type: 4
 RM 96,416.80</div>
-<div class="case">Same ask, option (a): the [A/C IV] ledger tag</div>
-<div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
-Account type: A/C IV
-RM 96,416.80</div>
-<div class="case">Where they differ: AGENT B, May. The report says RM 171,921.52.</div>
-<div class="u">AGENT B sales for account type 4 in May</div>
-<div class="b">Option (b), expected once real types arrive: RM 171,921.52
-Option (a), measured: RM 176,360.68</div>
-<div class="case">Split, option (b)</div>
+<div class="u">AGENT B sales for account 4 in May</div>
+<div class="b">AGENT B invoiced sales, 1 May - 31 May 2026
+Account type: 4
+RM 171,921.52</div>
+<div class="case">Split by account type</div>
 <div class="u">AGENT A January by account type</div>
 <div class="b">AGENT A invoiced sales by account type, 1 Jan - 31 Jan 2026
 CERAMIC RM 315,483.59
 SORENTO RM 282,203.77
 CABANA RM 96,416.80
 Total RM 694,104.16</div>
-<div class="case">Split, option (a): the RM 393 ledger has no tag, so it gets its own row and the total still matches</div>
-<div class="b">AGENT A invoiced sales by account type, 1 Jan - 31 Jan 2026
-A/C III RM 315,483.59
-A/C I RM 281,810.77
-A/C IV RM 96,416.80
-No account tag RM 393.00
-Total RM 694,104.16</div>
-<div class="case">A brand on an account (either option)</div>
+<div class="case">A brand on an account</div>
 <div class="u">cabana on account type 3 for AGENT A in Jan</div>
 <div class="b">AGENT A invoiced sales, 1 Jan - 31 Jan 2026
-Brand: CABANA, account type 3
+Brand: CABANA
+Account type: 3
 RM 76,877.71</div>
-<div class="case">"cabana" and "account 4" together: cabana is the brand, so this is the brand within the account</div>
+<div class="case">A bare "cabana" with "account 4": cabana is the brand, so this is the brand within the account</div>
 <div class="u">total sales 2026 for sales agent AGENT A, cabana, invoiced, breakdown by month, for account 4</div>
 <div class="b">AGENT A invoiced sales by month, 1 Jan - 31 Dec 2026
-Brand: CABANA, account type 4
+Brand: CABANA
+Account type: 4
 Jan 2026 RM 77,010.91
 ... one line per month ...</div>
+<div class="case">A number the customers do not carry</div>
+<div class="u">AGENT A sales for account type 9 in Jan</div>
+<div class="b">No account type 9. Account types: 1, 2, 3, 4, 5, PROJECT, SAMPLE.</div>
 </div>
-<p class="sub" style="margin:14px 0 0">The screen frames above follow option (b). Under option (a) the filter's options read A/C I to A/C V, and the split gets a No account tag row.</p></div></div>
+<p class="sub" style="margin:14px 0 0">Filter options and the list after "Account types:" come from what the customers carry once the shared service sends it. AGENT B's May figure is the AutoCount report's; it is expected, not yet measured, until real types arrive.</p></div></div>
 </div></body></html>

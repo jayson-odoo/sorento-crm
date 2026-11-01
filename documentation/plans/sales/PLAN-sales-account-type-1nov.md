@@ -1,6 +1,6 @@
 # SALES-ACCOUNT-TYPE: sales by the customer's account type
 
-**Status:** Plan. Size M. Behaviour card v2 filed; one question open (how "account type 4" maps). No product code yet.
+**Status:** Build, PR 1 tests. Size M. Card decided by the owner: debtor type, number derived. Screen waits for the mock OK.
 
 Lane brief: crew `SALES-ACCOUNT-TYPE`. Branch `crew/sales-account-type`. UAC: `sales-account-type-acceptance-criteria.md`.
 Agent codes are masked (AGENT A, AGENT B) because this repo is public. The real codes are in the crew card.
@@ -68,34 +68,43 @@ Jun 114,335.11, Jul 91,924.56, Aug 76,240.53, 1-4 Sep 27,290.36; total 784,984.8
 AGENT A January: SORENTO 282,203.77 (A/C I 281,810.77 + untagged 393.00), CERAMIC 315,483.59, CABANA 96,416.80, total 694,104.16.
 Brand CABANA across accounts: A/C III 76,877.71 + A/C IV 77,010.91 = 153,888.62, the bot's figure.
 
-## 4. Behaviour card v2 (filed to crew; answers go here)
+## 4. Behaviour card (decided)
 
-Mock v2: `documentation/mockups/SALES-ACCOUNT-TYPE/index.html`.
+Mock v3: `documentation/mockups/SALES-ACCOUNT-TYPE/index.html`.
 
 Owner, 1 Nov: "don't need customzie this logic, just allow the user to ask by brand, we are not hard setting caban is account 4",
-then "for account type, when cabana, still go to cabana, i will ask the user to say it is account type 4".
+"for account type, when cabana, still go to cabana, i will ask the user to say it is account type 4", and on card v2: "i dont need
+the definition of Account 4 = cabana, I just need to be able to search by account 4 just like b". On test data: "yeah can fill test
+account types on test copy".
 
 Rules:
 
 1. A bare brand word (cabana, sorento, bravat) stays the item brand, as today, with no question.
-2. "account type 4", "account 4" and "A/C IV" mean the numbered account. No code or row states that 4 is CABANA.
-3. One filter and one split in the shared report ask, on all six bases: invoiced, delivered, ordered, undelivered, pending
+2. "account type 4", "account 4" and "A/C IV" find the customers of that account by their AutoCount debtor type. For each company,
+   the number's type is the one most ledgers tagged `[A/C IV]` carry, read from the data. No code or row states that 4 is CABANA,
+   and no table holds it.
+3. The reply shows the account the way it was asked ("Account type: 4"), never a definition such as "Account type 4: CABANA".
+4. One filter and one split in the shared report ask, on all six bases: invoiced, delivered, ordered, undelivered, pending
    delivery, unpaid. The bot, the AI panel (MCP) and Sales & outstanding all read it. Label "Account type" (the label "Debtor type"
    is already the CRM's own project / cash concept, `app/models/order.py:184-190`).
-4. A month alone is that month of this year. A month or year split never prints "Top N".
-5. An unknown number says so and lists the account types. Rows add up to all sales. "top accounts" stays customers.
+5. A pushed type reaches every same-code ledger of the company, as the agent does (`master_ingest_service.py:1252`); back-created
+   rows otherwise stay blank.
+6. A month alone is that month of this year. A month or year split never prints "Top N".
+7. Nothing loaded: "Account types are not loaded from AutoCount yet", never RM 0. An unknown number says so and lists the numbers and
+   any type with no number. Rows add up to all sales. "top accounts" stays customers.
 
-Open question: option (a) the ledger tag, option (b) the debtor type with the number derived from the tags. See the card.
+Known limits on "tally 100%": the CRM's agent total itself differs from the PDF on two agent-months, whatever the account reads
+(RM 2,592.24 and RM 290.57, cause UNVERIFIED; the PDF was made on 4 Sep and the copy is from 28 Oct). The match on every other cell
+is expected, not measured, until real types arrive.
 
-Withdrawn from v1: the brand-or-account question, and crew's answers to Q3 and Q4. Crew's Q1, the shared service partner lane,
-stands.
+Test data: an UPDATE from the tag on this lane's own test copy only, never a shared copy.
 
 ## 5. Plan
 
-- **Partner lane, shared service:** `DebtorType -> market_segment_code` on the customer task (mapping row, `SINK_FIELDS`,
-  backfill like module Alembic 0029); each customer re-stages once. No CRM migration. It also reports DebtorType x tag.
-- **PR 1, CRM, no prompt:** param and axis on the six datasets, route, MCP catalog, replies. The screen part follows the owner's OK
-  on the mock.
+- **Partner lane, shared service (crew's SS-DEBTOR-TYPE):** `DebtorType -> market_segment_code` on the customer task (mapping row,
+  `SINK_FIELDS`, backfill like module Alembic 0029); each customer re-stages once. No CRM migration. It also reports DebtorType x tag.
+- **PR 1, CRM, no prompt:** param `account_types` and axis `account_type` on the six datasets, route, MCP catalog, replies, same-code
+  fan-out. The screen part follows the owner's OK on the mock.
 - **PR 2, CRM, prompt gate:** parser's reading of the numbered account, the period fix, user guide. Prompt gate with v70 as the fixed
   baseline; only the owner moves the production label.
 
