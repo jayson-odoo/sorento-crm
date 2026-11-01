@@ -1,6 +1,6 @@
 # PLAN: Invoiced tab Channel column fast (set-based), same figures
 
-Status: in progress (small fix track: no migration expected, no auth/RBAC change, no new ingest surface)
+Status: in review, PR #2071 (small fix track: no migration, no auth/RBAC change, no new ingest surface)
 
 Lane: INVOICED-CHANNEL-PERF. UAC: `invoiced-channel-perf-01nov-acceptance-criteria.md`.
 
