@@ -42,7 +42,7 @@ export class ActionRefusedError extends Error {
   }
 }
 
-async function actionRefusalReason(response: Response): Promise<string | null> {
+export async function actionRefusalReason(response: Response): Promise<string | null> {
   try {
     const detail = (await response.clone().json())?.detail;
     if (detail && detail.code === 'action_refused' && typeof detail.reason === 'string') {
