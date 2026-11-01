@@ -164,6 +164,21 @@ def test_checks_all_ok_pings_success(env):
     assert pings and not any("/fail" in c for c in pings)
 
 
+def test_checks_one_member_phase_expects_no_replica(env):
+    # Phase A (PLAN-n8n-decom-ha-01nov.md H4-H6): node A leads a one-member cluster for weeks
+    # before node B exists, with 2 of the 3 etcd members started. No replica is expected then.
+    e, log, _ = env
+    r = run(
+        CHECKS, e, HC_URL="https://hc.example/abc", EXPECT_REPLICAS=0, ETCD_MEMBERS=2,
+        FAKE_REPLICAS=0, FAKE_ETCD_HEALTHY=2, FAKE_CLUSTER='{"members": [{"role": "leader"}]}',
+        FAKE_BACKUPS=_fresh_backup(),
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "no replica streaming" not in r.stdout
+    pings = [c for c in calls(log) if "hc.example" in c]
+    assert pings and not any("/fail" in c for c in pings)
+
+
 @pytest.mark.parametrize(
     "extra, reason",
     [
