@@ -1,10 +1,10 @@
-"""DEALER-PLANNING PR 2, retail orders in Fulfilment Planning: admission, finding, priority and
-display (UAC R1 to R6, R13, R14).
+"""DEALER-PLANNING PR 2, retail orders in Fulfilment Planning: admission, finding, priority,
+display and access (UAC R1 to R6, R13, R14, R16).
 
 Contract: `documentation/plans/scm/dealer-planning-1nov-acceptance-criteria.md` and the PR 2
 UAC. Written test-first, so every test fails today on a missing feature (a retail order is
 refused at adoption, the list has no `demand_class` filter or field, the ranking calls every
-row project) and not on an import or a fixture.
+row project, no migration grants the roles) and not on an import or a fixture.
 
 Two seams are CONTRACT NAMES that do not exist yet, taken from the brief:
 
@@ -13,16 +13,19 @@ Two seams are CONTRACT NAMES that do not exist yet, taken from the brief:
 * R3 gives the board payload an `unplanned_orders` list of `{so_number, reason}` for an
   order the board was asked for and does not carry.
 
-Postgres only (`blank_session` and the `api` harness of `tests/test_so_supply_confirmation.py`),
-every test seeds its own chain.
+Postgres only (`blank_session`, the `api` harness of `tests/test_so_supply_confirmation.py`
+and `pg_session` for the migration), every test seeds its own chain.
 """
 from __future__ import annotations
 
+import importlib.util
 import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.project_so import (
@@ -35,7 +38,7 @@ from app.services.project_order_inquiry_service import ProjectOrderInquiryServic
 from app.services.project_so_adoption_service import ProjectSOAdoptionService
 from app.services.scm.planning_predicate import OUTSIDE_FULFILMENT_PLANNING
 
-from .._pg_fixture import blank_session
+from .._pg_fixture import blank_session, pg_session
 from ..test_so_supply_confirmation import (  # noqa: F401  (`api` is a fixture)
     BASE,
     _core_line,
@@ -575,3 +578,135 @@ def test_r14_a_retail_orders_internal_note_does_not_print_as_a_project_on_the_bo
     rows = [r for r in board["contributions"] if r["so_number"] == retail.so_number]
     assert rows, board.keys()
     assert all(not r.get("project_label") for r in rows), [r.get("project_label") for r in rows]
+
+
+# --------------------------------------------------------------------------- R16
+
+_VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
+_GRANTED = ("projects.projects.view", "projects.projects.edit", "scm.dashboard.view")
+
+
+def _head_migration():
+    """The lane's one new migration is the alembic head (CI proves there is exactly one)."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config()
+    config.set_main_option("script_location", str(_VERSIONS.parent))
+    script = ScriptDirectory.from_config(config)
+    heads = script.get_heads()
+    assert len(heads) == 1, heads
+    path = Path(script.get_revision(heads[0]).path)
+    source = path.read_text()
+    assert "customer_service" in source and all(slug in source for slug in _GRANTED), (
+        f"the head migration {path.name} does not grant the Customer Service role "
+        f"{_GRANTED}"
+    )
+    spec = importlib.util.spec_from_file_location("zzt_r16_head", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _run(db, direction="upgrade"):
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    module = _head_migration()
+    context = MigrationContext.configure(connection=db.connection())
+    with Operations.context(context):
+        getattr(module, direction)()
+
+
+def _role(db, slug, name):
+    row = db.execute(text("select id from user_roles where slug = :s"), {"s": slug}).scalar()
+    if row:
+        return row
+    row = _uid()
+    db.execute(
+        text("insert into user_roles (id, slug, name, is_trashed, is_protected, is_default, created_at) "
+             "values (:i, :s, :n, false, false, false, now())"),
+        {"i": row, "s": slug, "n": name},
+    )
+    return row
+
+
+def _perm(db, slug):
+    row = db.execute(text("select id from user_permissions where slug = :s"), {"s": slug}).scalar()
+    if row:
+        return row
+    row = _uid()
+    db.execute(
+        text("insert into user_permissions (id, slug, name, created_at) values (:i, :s, :s, now())"),
+        {"i": row, "s": slug},
+    )
+    return row
+
+
+def _granted(db, role_id):
+    return {
+        slug
+        for (slug,) in db.execute(
+            text("select p.slug from user_role_permissions rp join user_permissions p "
+                 "on p.id = rp.permission_id where rp.role_id = :r"),
+            {"r": role_id},
+        )
+    }
+
+
+def _clear(db, role_id):
+    db.execute(text("delete from user_role_permissions where role_id = :r"), {"r": role_id})
+
+
+def test_r16_the_customer_service_role_gains_the_three_slugs_and_no_other_role_moves():
+    with pg_session() as db:
+        cs = _role(db, "customer_service", "Customer Service")
+        bystander = _role(db, f"zzt-r16-{_uid()[:6]}", f"ZZT R16 {_uid()[:6]}")
+        for slug in _GRANTED:
+            _perm(db, slug)
+        _clear(db, cs)
+        _clear(db, bystander)
+        db.flush()
+
+        _run(db)
+
+        assert _granted(db, cs) == set(_GRANTED)
+        assert _granted(db, bystander) == set()
+
+
+def test_r16_it_is_additive_and_idempotent():
+    with pg_session() as db:
+        cs = _role(db, "customer_service", "Customer Service")
+        for slug in (*_GRANTED, "zzt.r16.keep"):
+            _perm(db, slug)
+        _clear(db, cs)
+        db.execute(
+            text("insert into user_role_permissions (id, role_id, permission_id, assigned_at) "
+                 "values (:i, :r, :p, now())"),
+            {"i": _uid(), "r": cs, "p": _perm(db, "zzt.r16.keep")},
+        )
+        db.flush()
+
+        _run(db)
+        _run(db)
+
+        assert _granted(db, cs) == {*_GRANTED, "zzt.r16.keep"}
+        count = db.execute(
+            text("select count(*) from user_role_permissions where role_id = :r"), {"r": cs}
+        ).scalar()
+        assert count == len(_GRANTED) + 1
+
+
+def test_r16_a_database_without_the_role_is_not_an_error():
+    with pg_session() as db:
+        db.execute(
+            text("update user_roles set slug = :s where slug = 'customer_service'"),
+            {"s": f"zzt-renamed-{_uid()[:6]}"},
+        )
+        db.flush()
+
+        _run(db)
+
+        assert db.execute(
+            text("select count(*) from user_roles where slug = 'customer_service'")
+        ).scalar() == 0
