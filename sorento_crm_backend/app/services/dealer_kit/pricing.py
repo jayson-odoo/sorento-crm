@@ -590,11 +590,9 @@ def line_pricing(
                 list_price = combo_list
             if sell_decided and manual is None:
                 sell_price = combo_sell
-                if (
-                    combo_sell is not None
-                    and sell_price_basis == "list"
-                    and combo_sell < list_price
-                ):
+                # A combo's sell price always prints, even at or above its list price
+                # (a sink with an included tap can list at 1,090 and sell at 1,099).
+                if combo_sell is not None and sell_price_basis == "list":
                     sell_price_basis = "promotion"
 
         # One lookup for every candidate on the line, not one per candidate

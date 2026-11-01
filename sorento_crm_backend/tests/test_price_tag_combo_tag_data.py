@@ -296,13 +296,13 @@ def test_ac_2_4_a_picked_upgrade_on_a_combo_with_no_sell_price_is_todays_sum(db)
 
 def test_ac_2_4_the_line_manual_price_beats_the_combo_price(db):
     s = _std(db, combo_fields={"sell_price": D("1800.00")}, white_sell=D("1700.00"))
-    row, _ = _row(db, s, pick=s["white"], manual_sell_price="1234.00")
+    row, _ = _row(db, s, pick=s["white"], manual_sell_price="1234.00", price_mode="selling")
     assert row["sell_price"] == D("1234.00")
 
 
 def test_ac_2_4_the_tag_override_beats_the_manual_price_and_the_combo_price(db):
     s = _std(db, combo_fields={"sell_price": D("1800.00")})
-    row, request = _row(db, s, pick=s["white"], manual_sell_price="1234.00")
+    row, request = _row(db, s, pick=s["white"], manual_sell_price="1234.00", price_mode="selling")
     tag = request.lines[0].tags[0]
     tag.marketing_price_override = D("999.00")
     tag.marketing_override_reason = "ZZT roadshow"
@@ -617,3 +617,28 @@ def test_ac_2_9_the_export_payload_carries_the_combo(crm):
     assert combo["name"] == "ZZT pair"
     assert combo["description"] == "Old text"
     assert combo["free_items"] == "Old free"
+
+
+# --------------------------------------------------------------------------- sell above list
+
+
+def test_a_combo_sell_price_above_the_list_price_still_prints_in_selling_mode(db):
+    """A real case: a sink with an included tap lists at 1,090 and sells at 1,099."""
+    from app.services.dealer_kit import tag_data_service
+    from app.services.dealer_kit.pricing import line_pricing
+
+    s = _std(db, combo_fields={"list_price": D("1090.00"), "sell_price": D("1099.00")})
+    row, _ = _row(db, s, pick=s["white"], price_mode="selling")
+    assert row["list_price"] == D("1090.00")
+    assert row["sell_price"] == D("1099.00")
+    assert row["show_promo_price"] is True, "the combo's sell price is never dropped for being above list"
+    assert row["sell_price_basis"] != "list"
+
+    (priced,) = line_pricing(
+        db,
+        lines=[_pricing_line(s, [s["mirror"].id, s["white"].id])],
+        viewer=tag_data_service.staff_viewer(),
+        auto_pick=False,
+    )
+    assert D(str(priced["sell_price"])) == D("1099.00")
+    assert priced["sell_price_basis"] != "list"

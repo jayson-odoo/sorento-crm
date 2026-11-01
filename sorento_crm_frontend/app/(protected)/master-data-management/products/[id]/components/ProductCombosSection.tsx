@@ -77,6 +77,7 @@ function formatMoney(value: number | string | null | undefined): string {
 function MoneyField({
   id,
   label,
+  ariaLabel,
   value,
   onSave,
   className,
@@ -84,6 +85,8 @@ function MoneyField({
 }: {
   id: string;
   label: string;
+  /** Names the input through its row when the visible label alone would be ambiguous. */
+  ariaLabel?: string;
   value: number | string | null | undefined;
   onSave: (next: number | null) => void;
   className?: string;
@@ -98,6 +101,7 @@ function MoneyField({
       </Label>
       <NumberInput
         id={id}
+        aria-label={ariaLabel}
         min={0}
         step="0.01"
         inputMode="decimal"
@@ -224,7 +228,8 @@ function PartRow({
           {isOption ? (
             <MoneyField
               id={`${part.id}-sell`}
-              label="If picked, sell price"
+              label="Sell price if picked"
+              ariaLabel={`Sell price if picked for ${part.code}`}
               value={part.sell_price}
               onSave={(next) => onWrite({ sell_price: next })}
               className="w-40 space-y-1.5"
@@ -235,6 +240,7 @@ function PartRow({
             <MoneyField
               id={`${part.id}-topup`}
               label="Top-up"
+              ariaLabel={`Top-up for ${part.code}`}
               value={part.topup_amount}
               onSave={(next) => onWrite({ topup_amount: next })}
               className="w-40 space-y-1.5"
@@ -500,14 +506,14 @@ function ComboBlock({
         <div className="grid gap-3 border-b p-3 sm:grid-cols-2">
           <MoneyField
             id={`${combo.id}-list-price`}
-            label="List price"
+            label="List price (RM)"
             value={combo.list_price}
             onSave={(next) => onComboWrite({ list_price: next })}
             className="space-y-1.5"
           />
           <MoneyField
             id={`${combo.id}-sell-price`}
-            label="Sell price"
+            label="Sell price (RM)"
             value={combo.sell_price}
             onSave={(next) => onComboWrite({ sell_price: next })}
             className="space-y-1.5"
@@ -532,8 +538,8 @@ function ComboBlock({
         </div>
       ) : (
         <div className="grid gap-3 border-b p-3 sm:grid-cols-2">
-          <ReadOnlyField label="List price" value={toNumber(combo.list_price) === null ? null : formatMoney(combo.list_price)} />
-          <ReadOnlyField label="Sell price" value={toNumber(combo.sell_price) === null ? null : formatMoney(combo.sell_price)} />
+          <ReadOnlyField label="List price (RM)" value={toNumber(combo.list_price) === null ? null : formatMoney(combo.list_price)} />
+          <ReadOnlyField label="Sell price (RM)" value={toNumber(combo.sell_price) === null ? null : formatMoney(combo.sell_price)} />
           <div className="sm:col-span-2">
             <ReadOnlyField label="Description" value={combo.description} />
           </div>

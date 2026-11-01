@@ -574,7 +574,10 @@ function LineRow({
             <tr>
               <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
                 <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
-                  Marketing will prepare one tag per option.
+                  {/* A line with a combo gets one tag listing every option (AC-3.1). */}
+                  {line.combo_id
+                    ? 'The tag will list every option.'
+                    : 'Marketing will prepare one tag per option.'}
                 </p>
               </td>
             </tr>

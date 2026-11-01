@@ -147,15 +147,15 @@ describe('Combos card, combo fields (AC-6.1)', () => {
     const block = renderCard();
     const scope = within(block);
 
-    expect(scope.getByLabelText(/^List price/i)).toHaveValue(2500);
-    expect(scope.getByLabelText(/^Sell price/i)).toHaveValue(1999);
+    expect(scope.getByLabelText(/^List price \(RM\)/i)).toHaveValue(2500);
+    expect(scope.getByLabelText(/^Sell price \(RM\)/i)).toHaveValue(1999);
     expect(scope.getByLabelText(/^Description/i)).toHaveValue('Cabinet, mirror and basin');
     expect(scope.getByLabelText(/^Free items/i)).toHaveValue('Tap, waste');
   });
 
   it('saves a changed combo price through the combo update hook with a number', () => {
     const block = renderCard();
-    const input = within(block).getByLabelText(/^List price/i);
+    const input = within(block).getByLabelText(/^List price \(RM\)/i);
     fireEvent.change(input, { target: { value: '2600' } });
     fireEvent.blur(input);
 
@@ -183,7 +183,7 @@ describe('Combos card, combo fields (AC-6.1)', () => {
 
   it('sends null, not an empty string, when a price is cleared', () => {
     const block = renderCard();
-    const input = within(block).getByLabelText(/^Sell price/i);
+    const input = within(block).getByLabelText(/^Sell price \(RM\)/i);
     fireEvent.change(input, { target: { value: '' } });
     fireEvent.blur(input);
 
@@ -194,7 +194,7 @@ describe('Combos card, combo fields (AC-6.1)', () => {
 
   it('does not save when nothing changed', () => {
     const block = renderCard();
-    fireEvent.blur(within(block).getByLabelText(/^List price/i));
+    fireEvent.blur(within(block).getByLabelText(/^List price \(RM\)/i));
     expect(updateComboMutate).not.toHaveBeenCalled();
   });
 
@@ -244,7 +244,7 @@ describe('Combos card, combo fields (AC-6.1)', () => {
     expect(scope.getByText('Cabinet, mirror and basin')).toBeInTheDocument();
     expect(scope.getByText('Tap, waste')).toBeInTheDocument();
     expect(scope.getByText(/2,?500/)).toBeInTheDocument();
-    expect(scope.queryByLabelText(/^List price/i)).toBeNull();
+    expect(scope.queryByLabelText(/^List price \(RM\)/i)).toBeNull();
     expect(scope.queryByLabelText(/^Description/i)).toBeNull();
   });
 
