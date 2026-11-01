@@ -101,6 +101,9 @@ _PRIOR_JSON = json.loads(r'''{
  }
 }''')
 _PRIOR = {REQUEST_CODE: _PRIOR_JSON["request"], RESERVED_CODE: _PRIOR_JSON["reserved"]}
+# The reserved template's seeded description (oirs_0001 / oirs_0003) still promises a balance.
+_PRIOR[RESERVED_CODE]["description"] = "Tells the requester what CS reserved, and the balance still to buy."
+_NEW_RESERVED_DESCRIPTION = "Tells the requester what CS reserved or rejected, line by line."
 
 _ASKER = "{{ requester.name if requester else '-' }}"
 _ACTOR = "{{ actor.name if actor else '-' }}"
@@ -238,9 +241,13 @@ def _swap(bind, code: str, *, old: dict, new: dict) -> None:
     bind.execute(
         sa.text(
             "UPDATE email_templates SET subject = :subject, layout_json = CAST(:layout AS jsonb), "
-            "body_text = :body_text WHERE id = :id"
+            "body_text = :body_text, "
+            "description = CASE WHEN description = :old_description THEN :new_description ELSE description END "
+            "WHERE id = :id"
         ),
         {
+            "old_description": old.get("description"),
+            "new_description": new.get("description"),
             "subject": new["subject"],
             "layout": json.dumps(new["layout"]),
             "body_text": new["text"],
@@ -250,7 +257,10 @@ def _swap(bind, code: str, *, old: dict, new: dict) -> None:
 
 
 def _new(code: str) -> dict:
-    return {"subject": _subject(code), "layout": _layout(code), "text": _text(code)}
+    out = {"subject": _subject(code), "layout": _layout(code), "text": _text(code)}
+    if code == RESERVED_CODE:
+        out["description"] = _NEW_RESERVED_DESCRIPTION
+    return out
 
 
 def upgrade() -> None:
