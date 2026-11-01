@@ -201,7 +201,7 @@ The "Known account types:" line, built fresh each turn, holds the stored account
 - A word on that line and not on the Known brands line, or a number or tag the message calls an account type ("account type 4", "account 4", "A/C IV", "debtor type 4"), is an account_type entity with `hint_confident` true, raw the word, number or tag only ("cabana", "4", "A/C IV") and `canonical_code` null.
 - A word on both lines keeps the hint of the kind the message says: "cabana brand" -> brand, "cabana account" and "cabana debtor type" -> account_type; with neither said it is a brand (the code asks which it meant).
 - `kind_said` is true on a brand or account_type entity when this message itself says which kind the word is (brand, account, account type, debtor type), else null; the held State never makes it true.
-- "top accounts" are customers, and a customer's own ledger ("hanlim a/c 3") stays a customer with `account` 3; "project" stays the sales channel and "sample" a category unless the message says account type.
+- "top accounts" are customers, and a customer's own ledger ("ZZT TRADING a/c 3") stays a customer with `account` 3; "project" stays the sales channel and "sample" a category unless the message says account type.
 - No Known account types line this turn: a bare word is no account_type entity.
 
 R-P2-10 PARTIES: who sold, who bought, what kind
