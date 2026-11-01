@@ -11,6 +11,7 @@ import { useComplaint } from '@/app/(protected)/complaint-management/complaints/
 import { useStockInquiry } from '@/app/(protected)/procurement-management/stock-inquiries/hooks/useStockInquiries';
 import { usePurchaseRequest } from '@/app/(protected)/procurement-management/purchase-requests/hooks/usePurchaseRequests';
 import type { FormCommentKind } from '@/types/formComments';
+import { useUrlTab } from '@/hooks/useUrlTab';
 
 export interface FormDetailExtraTab {
   value: string;
@@ -73,8 +74,14 @@ function Shell({
   children,
   extraTabs = [],
 }: FormDetailWithSLATabsProps) {
+  // The open tab lives in `?tab=` so the record pager carries it to the next record
+  // (NAV-KEEP-TAB); a tab this record does not render falls back to Details.
+  const [tab, setTab] = useUrlTab({
+    tabs: ['details', ...extraTabs.map((t) => t.value), 'sla'],
+    defaultTab: 'details',
+  });
   return (
-    <Tabs defaultValue="details">
+    <Tabs value={tab} onValueChange={setTab}>
       {/* The house underlined strip (same as the product/user detail pages), so
           every record in the system wears one tab style. The list carries its
           own bottom margin, so the root drops space-y. */}
