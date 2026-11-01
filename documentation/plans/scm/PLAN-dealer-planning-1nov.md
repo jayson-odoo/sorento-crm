@@ -1,6 +1,6 @@
 # PLAN: Dealer sales orders plannable on Fulfilment Planning
 
-**Status:** PR 1 built on the briefed S track: flag exemption, own-pool netting fix, real reason. Retail widening is not in it; crew decision pending, recommendation in Open below. PR 2 not started: behaviour card first.
+**Status:** PR 1 (#2062) built, browser pass done, hand test next. PR 2 and PR 3 wait on the owner's answers to the behaviour card. Tracks: PR 1 S, PR 2 M unless the permission question makes it L, PR 3 M.
 
 UAC: `dealer-planning-1nov-acceptance-criteria.md` (beside this file).
 
@@ -60,11 +60,15 @@ Results for a line of 10 at its own pool, 50% default share, due within the wind
 - **Two dates of one product on one order at its own pool** read cautiously: the walk's ledger is seeded once per product, so the later date can propose more Buy than strictly needed. A planner can amend it.
 - **Own-arrival credit stays 0 at a pool**, because `_on_hand_at` reads the group list, which is empty for a pool. The line falls through to the pool share. Named by the trace at `project_supply_service.py:3852`, not separately tested.
 
-## PR 2
+## PR 2 (owner ruling, 1 Nov 2026)
 
-Order inquiry recipients for dealer orders: To Josephine, Cc Joey, configurable. Behaviour card first, then build on the answers. The routing key is the owner's choice.
+Retail orders at dealer-segment locations work end to end in Fulfilment Planning: board, sales order list and class filter, decide, confirm, borrow, order inquiry email. Reorder-run demand counting is not changed, and neither is the committed view. The Loading Plan is in scope: its Lines tab is built by `container_request_service.py`, and a decided retail line vanishes from it (`:522`, `:782`, `:884`). The coverage reader is out.
+
+## PR 3 (owner ruling, 1 Nov 2026)
+
+The order inquiry handover email routes by sales order class: retail to dealer purchasing, project unchanged. To and Cc are explicit, and the owner edits them in System Management > Automation. The owner creates the retail automation row himself after release; no seed carries recipients.
 
 ## Open
 
-- **Widen to retail: not safe as designed, crew decision pending.** A retail line with a confirmed decision and a raised ORDER row counts twice: the book leg has no decided-line test (`scm/demand.py:503-510`, `:726-733`) and the confirmed leg has no class test (`:536-556`, `:736-770`). An All-scope run takes both (`:861`), so 10 owed with 0 on hand buys 20 (`reorder_run_service.py:2812-2816`). The Container Request drops the same line to 0 (`container_request_service.py:522,884`). The view fix needs a migration. Recommendation filed: ship this PR, demo on a project-class order at BRW, build retail as its own PR with a behaviour card.
-- Whether the SO list has a class filter dealer CS can use: UNVERIFIED, only matters for the retail PR.
+- PR 2 and PR 3 behaviour card: filed with crew 1 Nov, waiting on answers.
+- Branches, agreed with crew: `crew/dealer-planning-retail` and `crew/dealer-planning-oi-route`, cut from main after #2062 merges.
