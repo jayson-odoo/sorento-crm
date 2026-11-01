@@ -10,7 +10,7 @@ Use the AI assistant panel to ask how something works, look up stock or sales, a
 | **Use the AI Assistant on the chatbot's brain** | Your messages are answered by the same thinking as the WhatsApp chatbot, as described on this page. No role has it by default. Without it, the panel answers the way it did before |
 | **View AI Assistant Settings** | You also see how each reply was reached: the **Agent** or **Chat** pill, **Steps** and **View trace** |
 
-Records and figures follow your own permissions and your active company: if you cannot open a record on its screen, the assistant will not show it to you either. Reference names, such as products, brands and warehouses, help it read your question and may appear in a reply, whatever your permissions. Complaints are not split by company, so you see them across companies, as on the complaints screen.
+Records and figures follow your own permissions and your active company: if you cannot open a record on its screen, the assistant will not show it to you either. Reference names, such as products, brands and warehouses, help it read your question and may appear in a reply, whatever your permissions. Complaints and SLA tracking are not split by company, so you see them across companies, as on their own screens.
 
 ## Steps
 
@@ -27,10 +27,9 @@ Records and figures follow your own permissions and your active company: if you 
 * **How do I...** questions. The answer comes from these user guides, as numbered steps.
 * **The page you are on**, such as what a record's status is.
 * **Complaints**, such as open complaints, how many a product has, or one complaint by its number.
-* **SLA tracking**, such as what is overdue.
+* **SLA tracking**, such as the dashboard's counts or a person's tracking rows.
 * **Projects**, such as which projects are at a stage, one project by its code, its quotations, or the forecast.
 * **Order totals**, such as delivered value by customer or average delivery time.
-* **What it can do**, if you are not sure what to ask.
 
 If the question is vague, it may ask you back.
 
@@ -43,13 +42,13 @@ The assistant does not change a record until you confirm it. The one thing that 
 1. Ask for the change, such as logging an opportunity, approving a purchase request, closing a complaint, cancelling an order or raising an IT support ticket.
 2. A card shows what will change, with the value before and after where there is one.
 3. Press **Confirm change**, or **Cancel** to leave everything as it is. The card then reads **Done** or **Cancelled**.
-4. Some actions, such as approving a purchase request or closing a complaint, wait for a few seconds before they apply. While the countdown runs, press **Undo** to take it back. After Undo, nothing has changed and nobody has been told.
+4. Some actions, such as approving a purchase request or closing a complaint, can wait for a few seconds before they apply. While the countdown runs, press **Undo** to take it back. After Undo, nothing has changed and nobody has been told.
 
 A confirmed change does what the same action does on its screen, including telling the people that action normally tells. On a purchase request or a complaint, the card says who will be told.
 
-* **Closing a complaint** tells the contact on WhatsApp once it applies. The complaint must be approved first.
+* **Closing a complaint** tells the contact on WhatsApp once it applies, if the complaint has a contact to reach; the card says so. The complaint must be approved first.
 * **Cancelling an order** applies at once, with no countdown. An order that comes from AutoCount cannot be cancelled here.
-* **Raising an IT support ticket** creates a draft. The reply links to it, and you review and submit it on that page.
+* **Raising an IT support ticket** creates a draft. The reply links to it, and you review and submit it on that page. You need permission to edit tickets.
 
 If you reload the page, the panel opens empty. Reopen the conversation from **History**: it looks the same as before, and a card you already answered does not ask again. A countdown keeps running during the reload, and it applies when it ends, so reopen the conversation quickly if you want to press **Undo**.
 

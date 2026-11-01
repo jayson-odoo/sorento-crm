@@ -16,6 +16,8 @@ Security reviewer FAIL at f057a34f25, checked by the lead. On console and WhatsA
 
 **Deferred from card Q2: "WhatsApp staff gain them too".** Trigger for later: run these reads as the linked user on non-panel turns, audited tool by tool. Crew tells the owner in the morning summary; the owner may overrule.
 
+The second reviewer added, all checked: capabilities dropped (its route needs a package the deployed image does not hold, and its body is cut to a count); the ticket gated on `tickets.tickets.edit`, since a user without it cannot finish the draft; "the contact will be told" only when there is a contact; an empty find backs a `not_found` claim; the label filter and the tool gate share one predicate; `crm_complaints_list`'s catalog text corrected, because the route's default is oldest first.
+
 This supersedes below: fact 1's `own_permission` condition (no panel check needed), the operator check, fact 9's project brand denial, and the `combine` and brand refusal on the finds, all removed. Fact 2's labels hold on panel turns only. The `left_out` prompt line must not name these tools on other turns, because it would tell a slug holder "outside access".
 
 ## ARCHITECTURE
