@@ -1,7 +1,7 @@
 """PRICING-UX-FIXES: a series can exclude an in-scope product
 
 Revision ID: pux_0001_series_exclusion
-Revises: dp_0001_cs_planning_access
+Revises: pnl_0002_agent_slug
 Create Date: 2026-11-01 00:00:00.000000
 
 Additive and idempotent. `projects.series_products.excluded` (default false, so every existing row
@@ -11,7 +11,7 @@ OUT of the series: it is not listed, not standard and not priced, until it is ad
 from alembic import op
 
 revision = "pux_0001_series_exclusion"
-down_revision = "dp_0001_cs_planning_access"
+down_revision = "pnl_0002_agent_slug"
 branch_labels = None
 depends_on = None
 
