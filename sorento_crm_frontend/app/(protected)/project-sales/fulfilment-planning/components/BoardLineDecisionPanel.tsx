@@ -49,6 +49,7 @@ import type {
   BoardDecision,
   BorrowCandidate,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import { outsidePlanningSentence } from '../../_shared/lib/supplyVocabulary';
 import { BoardLadderOptionsTable } from './BoardLadderOptionsTable';
 import { BorrowAddDialog } from './BorrowAddDialog';
 import { ReserveAddDialog } from './ReserveAddDialog';
@@ -827,9 +828,8 @@ export function BoardLineDecisionPanel({
               data-testid={`line-decision-blocked-${contribution.key}`}
               className="break-words text-sm text-destructive"
             >
-              This sales order states no fulfilment location, so this line
-              cannot be decided here. Set the location on the sales order, then
-              plan it again.
+              {outsidePlanningSentence(contribution) ??
+                'This sales order states no fulfilment location, so this line cannot be decided here. Set the location on the sales order, then plan it again.'}
             </p>
           </div>
         </div>

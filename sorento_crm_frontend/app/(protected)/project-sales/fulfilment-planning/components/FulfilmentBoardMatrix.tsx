@@ -481,7 +481,7 @@ function BoardCellButton({
       <span className="flex flex-wrap gap-1">
         {cell.unplannable_count > 0 && (
           <span className="rounded bg-destructive/10 px-1 text-[10px] font-medium text-destructive">
-            {`${cell.unplannable_count} need${cell.unplannable_count === 1 ? 's' : ''} a location`}
+            {`${cell.unplannable_count} not plannable`}
           </span>
         )}
         {decided > 0 && (

@@ -40,7 +40,7 @@ echo "docker $*" >> "$FAKE_LOG"
 args=" $* "
 case "$args" in
   *" ps "*) [ -n "${FAKE_PS_FAIL:-}" ] && exit 1; for c in ${FAKE_RUNNING:-}; do echo "$c"; done; exit 0 ;;
-  *"etcdctl auth status"*) echo "Authentication Status: ${FAKE_ETCD_AUTH:-true}"; exit 0 ;;
+  *"etcdctl auth status"*) if [ -n "${FAKE_ETCD_AUTH_ERR:-}" ]; then echo "$FAKE_ETCD_AUTH_ERR" >&2; exit 1; fi; echo "Authentication Status: ${FAKE_ETCD_AUTH:-true}"; exit 0 ;;
   *"etcdctl endpoint health"*) for i in $(seq 1 "${FAKE_ETCD_HEALTHY:-3}"); do echo "http://m$i:2379 is healthy: took 2ms"; done; exit 0 ;;
   *" backup-list "*) echo "${FAKE_BACKUPS:-[]}"; exit 0 ;;
   *"pg_stat_replication WHERE"*) echo "${FAKE_REPLICAS:-1}"; exit 0 ;;
@@ -164,6 +164,21 @@ def test_checks_all_ok_pings_success(env):
     assert pings and not any("/fail" in c for c in pings)
 
 
+def test_checks_one_member_phase_expects_no_replica(env):
+    # Phase A (PLAN-n8n-decom-ha-01nov.md H4-H6): node A leads a one-member cluster for weeks
+    # before node B exists, with 2 of the 3 etcd members started. No replica is expected then.
+    e, log, _ = env
+    r = run(
+        CHECKS, e, HC_URL="https://hc.example/abc", EXPECT_REPLICAS=0, ETCD_MEMBERS=2,
+        FAKE_REPLICAS=0, FAKE_ETCD_HEALTHY=2, FAKE_CLUSTER='{"members": [{"role": "leader"}]}',
+        FAKE_BACKUPS=_fresh_backup(),
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "no replica streaming" not in r.stdout
+    pings = [c for c in calls(log) if "hc.example" in c]
+    assert pings and not any("/fail" in c for c in pings)
+
+
 @pytest.mark.parametrize(
     "extra, reason",
     [
@@ -188,6 +203,22 @@ def test_checks_each_problem_pings_fail_with_its_reason(env, extra, reason):
     assert reason in r.stdout
     fails = [c for c in calls(log) if "hc.example/abc/fail" in c]
     assert fails and reason in fails[0]
+
+
+def test_checks_etcd_refusing_auth_status_means_auth_is_on(env):
+    # H4a rehearsal: with auth on, etcd refuses `auth status` to the role-less healthcheck user.
+    e, _, _ = env
+    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), FAKE_ETCD_AUTH_ERR="Error: etcdserver: permission denied")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "etcd auth not enabled" not in r.stdout
+
+
+def test_checks_docker_permission_error_is_not_read_as_auth_on(env):
+    e, _, _ = env
+    err = "permission denied while trying to connect to the Docker daemon socket"
+    r = run(CHECKS, e, FAKE_BACKUPS=_fresh_backup(), FAKE_ETCD_AUTH_ERR=err)
+    assert r.returncode == 1
+    assert "etcd auth not enabled" in r.stdout
 
 
 def test_checks_accept_go_nanosecond_backup_timestamps(env):
@@ -240,170 +271,3 @@ def test_checks_no_prune_below_threshold(env):
     r = run(CHECKS, e, ETCD_ONLY=1, SNAPSHOT_DIR=snap)
     assert len(list(snap.glob("*.dump"))) == 4
     assert r.returncode == 1 and "disk 82% used" in r.stdout
-
-
-# ---------------------------------------------------------------- switchback
-
-SWITCHBACK = SCRIPTS / "switchback.sh"
-
-# 04:02 MYT on 27 Oct 2026 (20:02 UTC on 26 Oct); the window starts at 04:00, clear of the
-# 03:00 nightly pg_dump.
-IN_WINDOW = 1793041320 + 3600
-DAY = 24 * 3600
-
-
-def _members(kl_role="Replica", kl_state="streaming", kl_lag=0, leader="crm-b"):
-    import json
-
-    rows = [{"Member": "crm-a", "Role": kl_role, "State": kl_state, "Lag in MB": kl_lag}]
-    if leader != "crm-a":
-        rows.append({"Member": leader, "Role": "Leader", "State": "running"})
-    return json.dumps(rows)
-
-
-@pytest.fixture
-def sb(env, tmp_path):
-    e, log, _ = env
-    patroni = tmp_path / "bin" / "docker"
-    patroni.write_text(
-        r"""#!/usr/bin/env bash
-echo "docker $*" >> "$FAKE_LOG"
-# Cron starts in $HOME: the script must have cd'd to PROJECT_DIR (compose files are relative).
-[ "$PWD" = "$PROJECT_DIR" ] || { echo "docker: wrong cwd $PWD" >&2; exit 9; }
-case " $* " in
-  *" list "*) echo "$FAKE_MEMBERS" ;;
-  *" switchover "*) exit ${FAKE_SWITCH_RC:-0} ;;
-esac
-"""
-    )
-    patroni.chmod(0o755)
-    state = tmp_path / "state"
-    project = tmp_path / "project"
-    project.mkdir()
-    return {**e, "STATE_DIR": str(state), "PROJECT_DIR": str(project)}, log, state / "crm-a-healthy-since"
-
-
-def _switches(log):
-    return [c for c in calls(log) if " switchover " in c]
-
-
-def test_switchback_after_24h_healthy_inside_the_window(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - DAY - 60))
-    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
-    assert r.returncode == 0, r.stdout + r.stderr
-    sw = _switches(log)
-    assert len(sw) == 1 and "--leader crm-b --candidate crm-a --force" in sw[0]
-    assert not marker.exists()
-
-
-def test_switchback_waits_until_24h(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - DAY + 600))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
-    assert _switches(log) == []
-
-
-def test_switchback_outside_the_window_does_nothing(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 3 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW - 3600, FAKE_MEMBERS=_members())  # 03:02 MYT: backup hour
-    assert _switches(log) == []
-
-
-def test_first_healthy_reading_starts_the_clock(sb):
-    e, log, marker = sb
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
-    assert marker.read_text().strip() == str(IN_WINDOW)
-    assert _switches(log) == []
-
-
-@pytest.mark.parametrize(
-    "members",
-    [
-        _members(kl_lag=20),
-        _members(kl_lag="unknown"),
-        _members(kl_state="starting"),
-        _members(kl_role="Replica", kl_state="stopped"),
-    ],
-)
-def test_any_unhealthy_reading_resets_the_clock(sb, members):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 3 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=members)
-    assert not marker.exists()
-    assert _switches(log) == []
-
-
-def test_small_stale_lag_keeps_the_clock(sb):
-    """Patroni's lag is up to 10 s stale: a write burst reading a few MB is not unhealthy."""
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 2 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(kl_lag=3))
-    assert len(_switches(log)) == 1
-
-
-def test_paused_cluster_is_left_alone(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 2 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(), FAKE_CLUSTER='{"pause": true, "members": []}')
-    assert _switches(log) == []
-    assert marker.exists()
-
-
-def test_garbage_marker_restarts_the_clock(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text("not-a-number")
-    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
-    assert r.returncode == 0
-    assert marker.read_text().strip() == str(IN_WINDOW)
-    assert _switches(log) == []
-
-
-def test_runs_from_the_project_dir_even_when_cron_starts_elsewhere(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 2 * DAY))
-    r = subprocess.run(
-        ["bash", str(SWITCHBACK)],
-        env={**e, "NOW": str(IN_WINDOW), "FAKE_MEMBERS": _members()},
-        cwd="/",
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert "wrong cwd" not in r.stderr
-    assert len(_switches(log)) == 1
-
-
-def test_nothing_when_kl_already_leads(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 3 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(kl_role="Leader", kl_state="running", leader="crm-a"))
-    assert _switches(log) == []
-    assert not marker.exists()
-
-
-def test_failed_switchover_keeps_the_clock_and_exits_nonzero(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 2 * DAY))
-    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(), FAKE_SWITCH_RC=1)
-    assert r.returncode == 1
-    assert marker.exists()
-
-
-def test_patronictl_failure_resets_and_fails(sb):
-    e, log, marker = sb
-    marker.parent.mkdir()
-    marker.write_text(str(IN_WINDOW - 2 * DAY))
-    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS="not json")
-    assert r.returncode == 1 and not marker.exists()

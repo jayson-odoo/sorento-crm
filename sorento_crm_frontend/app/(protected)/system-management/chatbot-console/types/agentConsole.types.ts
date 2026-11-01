@@ -153,6 +153,9 @@ export const AGENT_TOOL_LABELS: Record<string, string> = {
   crm_purchase_requests_list: 'Purchase requests',
   crm_purchase_request_decide: 'Decide purchase request',
   crm_purchase_request_action_undo: 'Undo purchase request action',
+  crm_idea_create: 'Log idea',
+  crm_idea_update: 'Change idea',
+  crm_ideas_list: 'Your ideas',
   confirm_action: 'Confirm',
   cancel_action: 'Cancel',
 };

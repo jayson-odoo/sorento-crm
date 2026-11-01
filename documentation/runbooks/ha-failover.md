@@ -1,6 +1,7 @@
 # HA failover runbook (Tier 1, Patroni + etcd)
 
-Plan: `documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md`. Templates: `infra/`. This file
+Plan: `documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md`, amended 1 Nov 2026 by
+`documentation/plans/infra/PLAN-n8n-decom-ha-01nov.md` (n8n retires). Templates: `infra/`. This file
 grows with the drills (plan section 12); today it holds the witness sections. Placeholders only:
 no addresses, hostnames or secrets here.
 
@@ -9,11 +10,12 @@ no addresses, hostnames or secrets here.
 Owner ruling 27 Oct about 23:55: everything stays in Malaysia for now.
 
 - Node A: the CRM box (primary today).
-- Node B: the n8n KVM 8, also in Malaysia (standby; it keeps running n8n).
-- Witness: the shared-service box (`chat.foundryx.my`), Malaysia: etcd only,
+- Node B: the former n8n KVM 8, also in Malaysia (standby). Once n8n is retired it is rebuilt and
+  runs exactly node A's CRM stack, nothing else.
+- Witness: the shared-service box, Malaysia: etcd only,
   `infra/templates/witness/compose.witness.yml` in its own directory next to that box's own
   stack, joined to the WireGuard mesh; `infra/templates/host/docker-user.nft` loaded there too,
-  with every one of its app networks in `<N8N_SUBNETS>`; checks with `ETCD_ONLY=1 PROJECT_DIR=<witness
+  with every one of its app networks in `<APP_SUBNETS>`; checks with `ETCD_ONLY=1 PROJECT_DIR=<witness
   dir> COMPOSE_FILES="-f compose.witness.yml" infra/scripts/ha-checks.sh` every 5 minutes.
 
 **Known limitation**: all three are in Malaysia (provider not confirmed; hPanel suggests Hostinger
@@ -67,7 +69,8 @@ section 3). Example: shared-service box (`witness-ss`) to a Hetzner EU VPS
 1. New box: WireGuard peer added on it, on node A and node B (the old witness stays for now);
    `docker-user.nft` loaded.
 2. Certs, minted OFFLINE with the private CA (`ca.key` never on a box): `peer` and `server`
-   with the new `<NEW_WITNESS_WG_IP>` in the SAN, plus `healthcheck`. Copy to `/etc/etcd/pki`.
+   with the new `<NEW_WITNESS_WG_IP>` AND `IP:127.0.0.1` in the server cert's SAN (local `etcdctl`
+   and `ha-checks.sh` use `https://127.0.0.1:2379`), plus `healthcheck`. Copy to `/etc/etcd/pki`.
 3. On any current member:
    `etcdctl member add witness-hz --learner --peer-urls=https://<NEW_WITNESS_WG_IP>:2380`
    It prints the `ETCD_INITIAL_CLUSTER` line for the new member.
@@ -81,8 +84,8 @@ section 3). Example: shared-service box (`witness-ss`) to a Hetzner EU VPS
 6. `etcdctl member remove <witness-ss id>`, then on the shared-service box
    `docker compose -f compose.witness.yml down` and remove its WireGuard peer and certs.
 7. On node A and node B: edit `/etc/sorento-ha/ha-members.env` (`WITNESS_NAME`, `WITNESS_WG_IP`,
-   `PATRONI_ETCD3_HOSTS`) and `/etc/sorento-ha/ha-members.nft`, reload nft
-   (`nft -f docker-user.nft`). Patroni discovers etcd members from the cluster itself, so no
+   `PATRONI_ETCD3_HOSTS`). The container firewall (`docker-user.nft` with `ha-members.nft`) runs
+   on the witness only, so the new box got its own copy in step 1. Patroni discovers etcd members from the cluster itself, so no
    Patroni restart is needed (the new env applies at its next planned restart; unverified, the
    step-8 check proves it).
 8. Check: `patronictl list` shows the leader and the replica unchanged; `etcdctl member list`
