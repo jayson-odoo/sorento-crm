@@ -64,7 +64,7 @@ import uuid
 from datetime import date
 from typing import Any, Optional
 
-from sqlalchemy import case, func, text
+from sqlalchemy import Numeric, case, func, literal_column, text
 from sqlalchemy.orm import Session
 
 from app.models.order import SalesOrder, SalesOrderLine
@@ -80,10 +80,8 @@ from app.services.error_handler import AppException
 from app.services.scm import plan_statement, priority, supplier_notice_service
 from app.services.scm.customer_label import CUSTOMER_JOIN_ON, CUSTOMER_LABEL_SQL
 from app.services.scm.demand import (
-    PLAN_DEMAND_LINE_SQL,
     demand_qty,
     is_open_demand,
-    is_plan_demand_line,
     is_plan_demand_order,
 )
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
@@ -453,13 +451,14 @@ _OPEN_QTY_SQL = (
 #: `scm.committed_v` nets its own project legs - except a link only counts here when it
 #: targets an SPO allocation (`spo_allocation_id IS NOT NULL`). Never matched on a document
 #: number or an item code.
-_SPO_PLACED_ON_LINE_SQL = """
-    LEFT JOIN LATERAL (
+#: One spelling of the walk, for the raw SQL below and for `_open_need`'s ORM query, which
+#: names the core line by its table rather than by the alias `sol`.
+_SPO_PLACED_SELECT_SQL = """
         SELECT COALESCE(SUM(l.qty), 0) AS placed
         FROM projects.order_inquiry_links l
         JOIN projects.order_inquiry_rows oir ON oir.id = l.row_id
         JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
-        WHERE psl.core_sales_order_line_id = sol.id
+        WHERE psl.core_sales_order_line_id = {core_line_id}
           -- AC-RL-16e (`PLAN-oi-replan-received-links.md` S5, code review 17 Sep): a
           -- redirected row's own link is history - the goods it names already shipped
           -- to another order (AC-RL-10) - so it must not net this line's own open need
@@ -470,7 +469,9 @@ _SPO_PLACED_ON_LINE_SQL = """
           -- plan may subtract. A PO link stays in the sum `demand.py` / `scm.committed_v`
           -- compute (R2) but is excluded here.
           AND l.spo_allocation_id IS NOT NULL
-    ) lk ON TRUE
+"""
+_SPO_PLACED_ON_LINE_SQL = f"""
+    LEFT JOIN LATERAL ({_SPO_PLACED_SELECT_SQL.format(core_line_id="sol.id")}) lk ON TRUE
 """
 
 
@@ -727,11 +728,15 @@ def _open_need(
 
     The same "still owed" rule the sales-order book's own `outstanding` filter reads
     (`app.services.scm.demand.is_open_demand`), so this screen and the SO list cannot
-    disagree about what is still owed. `is_plan_demand_order()` / `is_plan_demand_line()`
-    (the same pair `coverage_timeline.py` applies) are ALSO applied, so this screen does not
-    ask for stock twice: a project-class order the Order Inquiry never named is not
-    purchasing demand yet (S13b), and a line an active supply decision already covers is
-    already being handled through that decision - see `demand.py`.
+    disagree about what is still owed. `is_plan_demand_order()` is ALSO applied, so this
+    screen does not ask for stock twice: a project-class order the Order Inquiry never named is not
+    purchasing demand yet (S13b).
+
+    A LINE AN ACTIVE SUPPLY DECISION COVERS STAYS (DEALER-PLANNING R15): once retail orders are
+    planned the decision only says where the stock comes from, and a Buy still has to be asked
+    of the supplier. Each line nets by its shipping-order placements instead, the walk
+    `_project_open_need` reads, so what is on a shipping order is not asked for twice. The
+    DATE and the order count come off the lines that survive the netting, as they do there.
 
     The class split follows the repo's own rule, not a literal string match:
     "project" is `demand_class == 'project'`, "retail" is anything stated that is NOT
@@ -748,7 +753,11 @@ def _open_need(
     """
     if not product_ids:
         return {}
-    qty = demand_qty()
+    placed = literal_column(
+        f"({_SPO_PLACED_SELECT_SQL.format(core_line_id='sales_order_lines.id')})",
+        type_=Numeric,
+    )
+    qty = func.greatest(demand_qty() - placed, 0)
     query = (
         db.query(
             SalesOrderLine.product_id.label("product_id"),
@@ -779,7 +788,7 @@ def _open_need(
             SalesOrder.status == "open",
             is_open_demand(),
             is_plan_demand_order(),
-            is_plan_demand_line(),
+            qty > 0,
         )
     )
     if horizon is not None:
@@ -817,9 +826,9 @@ def _open_lines(
     """The open SO lines behind the demand rows, at line grain - CHANGE 2.
 
     Same predicates `_open_need` and `_project_open_need` aggregate - `is_open_demand()`
-    (open line, not covered, positive net qty) and `SalesOrder.status == 'open'` on both
-    channels, `is_plan_demand_line()` on the retail one and the placement netting on the
-    project one - raw SQL rather than the ORM only because the customer label needs
+    (open line, not covered, positive net qty), `SalesOrder.status == 'open'` and the
+    placement netting on both channels - raw SQL rather than the ORM only because the customer
+    label needs
     `customer_label.py`'s shared COALESCE fragment, which is written as SQL. Keeping the
     predicates textually identical to those two is what keeps `sum(qty)` per product here
     equal to that product's `open_so_need` (the invariant `build`'s docstring states) - a
@@ -828,9 +837,9 @@ def _open_lines(
 
     BOTH channels since R15: a project requirement is a sales-order line again, so it has a
     line to list here, and it is listed at its REMAINDER - the same figure the Project column
-    counts, net of what CS already placed. `PLAN_DEMAND_LINE_SQL` (the active-decision test)
-    stays on the retail half alone, because on the project half the placement links are what
-    say a requirement is already handled.
+    counts, net of what CS already placed. A retail line reads the same since DEALER-PLANNING
+    R15: an active decision does not take it off, and its placement links are what say a
+    requirement is already handled.
 
     Raw SQL bypasses the ORM's automatic company-scope loader criteria, so the predicate is
     reproduced by hand via `company_sql_predicate` (same pattern as
@@ -845,9 +854,6 @@ def _open_lines(
         return []
     co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="crl")
     qty = _OPEN_QTY_SQL
-    # `demand.py`'s line fragment, unmodified: it is already written for the aliases
-    # `so`/`sol` this query uses, so using it (rather than restating the rule) keeps this in
-    # lockstep with `is_plan_demand_line()` above.
     sql = f"""
         SELECT * FROM (
             SELECT sol.product_id::text AS product_id, so.so_number, so.demand_class,
@@ -857,9 +863,7 @@ def _open_lines(
                    COALESCE(NULLIF(sa.person_label, ''), NULLIF(sa.sales_agent, '')) AS agent_label,
                    sol.unit_price AS unit_price,
                    {qty} AS open_qty,
-                   CASE WHEN so.demand_class = 'project'
-                        THEN GREATEST({qty} - COALESCE(lk.placed, 0), 0)
-                        ELSE {qty} END AS qty
+                   GREATEST({qty} - COALESCE(lk.placed, 0), 0) AS qty
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
             LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
@@ -881,7 +885,6 @@ def _open_lines(
               AND sol.line_status = 'open'
               AND sol.purchasing_status <> 'covered'
               AND {qty} > 0
-              AND (so.demand_class = 'project' OR {PLAN_DEMAND_LINE_SQL})
               -- Planning horizon (captain, 20 Aug): same shape as
               -- `demand.horizon_committed_select_sql`'s sheet leg - a stated required_date
               -- past the cutoff is excluded, no date at all is always in, a NULL horizon is
@@ -892,8 +895,8 @@ def _open_lines(
                    OR sol.required_date >= CAST(:horizon_start AS date))
               {("AND " + co) if co else ""}
         ) l
-        -- A project line placed in full has nothing left to ask for, so it is not a line on
-        -- this request either - the same `> 0` test the Project column applies.
+        -- A line placed in full has nothing left to ask for, so it is not a line on this
+        -- request either - the same `> 0` test the two columns apply.
         WHERE qty > 0
         ORDER BY required_date NULLS LAST, so_number
     """
