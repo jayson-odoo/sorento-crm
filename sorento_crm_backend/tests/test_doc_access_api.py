@@ -641,4 +641,6 @@ def test_documents_can_edit_levels_needs_write_permission_and_active_company_or_
         return {i["original_filename"]: i["can_edit_levels"] for i in res.json()["items"]}
 
     assert flags(api.manager) == {"a_mine.pdf": True, "b_shared.pdf": True, "c_other.pdf": False}
-    assert flags(api.reader_no_edit) == {"a_mine.pdf": False, "b_shared.pdf": False, "c_other.pdf": False}
+    seen = flags(api.reader_no_edit)
+    assert "c_other.pdf" not in seen, "granted Sorento only: company scope hides the other company's file"
+    assert seen == {"a_mine.pdf": False, "b_shared.pdf": False}
