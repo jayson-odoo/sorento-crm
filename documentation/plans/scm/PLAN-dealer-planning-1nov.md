@@ -1,6 +1,6 @@
 # PLAN: Dealer sales orders plannable on Fulfilment Planning
 
-**Status:** PR 1 (#2062) repaired after review, re-review and browser pass on the final head next. PR 2 and PR 3 answered, start after #2062 merges. Tracks: PR 1 S, PR 2 M, PR 3 M.
+**Status:** PR 1 (#2062) repaired after two review rounds, re-review and browser pass on the final head next. PR 2 and PR 3 answered, start after #2062 merges. Tracks: PR 1 S, PR 2 M, PR 3 M.
 
 UAC: `dealer-planning-1nov-acceptance-criteria.md` (beside this file).
 
@@ -40,7 +40,7 @@ Retail is what dealer agents sell: 1,559 open dealer-segment SOs have a retail a
 ## PR 1
 
 1. Exemption in `outside_fulfilment_planning`, using `pool_predicate.is_site_pool`.
-2. **Own-pool netting (found while tracing, proved by running it, repaired after review).** A line at a pool is inside that pool's book, so 10 on hand and 10 ordered read net 0 and proposed Buy 10. `_add_back_own_pool_demand` in `project_supply_service.py` puts back what the pool's book counted for the line, read with the book's own predicate, so a closed, non-transferable or covered line adds nothing. The add-back is that line's alone: the walk's shared net and share ledgers hold the true figures, and it joins them only for the line that earned it. A line at a project bin that draws the pool is untouched.
+2. **Own-pool netting (found while tracing, proved by running it, repaired after review).** A line at a pool is inside that pool's book, so 10 on hand and 10 ordered read net 0 and proposed Buy 10. `_add_back_own_pool_demand` in `project_supply_service.py` puts back what the pool's book counted for the line, read with the book's own predicate, so a closed, non-transferable or covered line adds nothing. The add-back is that line's alone: the walk's shared net and share ledgers hold the true figures, and it joins them only for the line that earned it. Confirm's ledger follows the same rule. What the add-back is worth in the share is the spare of what the line stands on, with no net in the sum. A line at a project bin that draws the pool is untouched.
 3. Real reason in the frontend. A flagged-off bin reads "Outside fulfilment planning", the reason the server already sends. A line with no location keeps "Needs a location". The cell count and the filter read "not plannable", because they cover both.
 4. Regression: consignment borrow unchanged.
 5. Guide: `documentation/user-guides/supply-chain/plan-undecided-lines.md`.
