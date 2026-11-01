@@ -70,7 +70,7 @@ from .test_order_inquiry_reserve import (
     _reserved_calls,
 )
 from .test_order_inquiry_reserve_round2 import _foreign_reserve_request
-from .test_order_inquiry_worklist import _customer, _purchase_order, _uid, _user
+from .test_order_inquiry_worklist import LIST, _customer, _purchase_order, _uid, _user
 
 MARKER = "zzt-oi-rf"
 REQUEST_TRIGGER = "order_inquiry_reserve_requested"
@@ -1231,3 +1231,83 @@ def test_ac_rf_70_export_headings_unchanged():
         "DELIVERY DATE", "PROJECT/CUSTOMER", "SUPPLIER", "PO NO ", "LOCATION", "ACKNOWLEDGED",
         "TAKEN", "REMAINING", "SUGGESTED", "CHANGE QUANTITY", "CHANGE DATE", "REMARK",
     )
+
+
+# --------------------------------------------------------------------------------- #
+# I. The Lines worklist takes inquiry_no too (AC-RF-86)                              #
+# --------------------------------------------------------------------------------- #
+
+
+def _lines_world(world):
+    """Two OIs: 2 rows on OI-2610-910 and 3 rows on OI-2610-9100 (so 910 is a prefix of 9100)."""
+    one, _r1 = _oi(world, world.requester, [_line("A"), _line("B")])
+    two, _r2 = _oi(world, world.requester, [_line("C"), _line("D"), _line("E")])
+    one.inquiry_no, two.inquiry_no = "OI-2610-910", "OI-2610-9100"
+    world.db.commit()
+    return one, two
+
+
+def _lines(client, **params):
+    response = client.get(LIST, params={"limit": 100, **params})
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+def test_ac_rf_86_lines_list_takes_inquiry_no_exact_multi_value(sn):
+    client, world = sn
+    _lines_world(world)
+    assert len(_lines(client)) == 5, "fixture check: every row lists without the filter"
+    assert {r["inquiry_no"] for r in _lines(client, inquiry_no="OI-2610-910")} == {"OI-2610-910"}
+    assert len(_lines(client, inquiry_no="OI-2610-910")) == 2, "exact, not the 9100 prefix match"
+    both = _lines(client, inquiry_no="OI-2610-910,OI-2610-9100")
+    assert len(both) == 5
+    repeated = client.get(
+        LIST, params=[("limit", "100"), ("inquiry_no", "OI-2610-910"), ("inquiry_no", "OI-2610-9100")]
+    )
+    assert repeated.status_code == 200 and len(repeated.json()["data"]) == 5
+    assert len(_lines(client, inquiry_no="OI-2610-910,OI-9999-999")) == 2, "unknown adds nothing"
+    assert _lines(client, inquiry_no="OI-9999-999") == []
+    assert len(_lines(client, inquiry_no="")) == 5, "an empty value is ignored"
+
+
+def test_ac_rf_86_lines_list_has_no_200_value_cap_and_is_company_scoped(sn):
+    client, world = sn
+    _lines_world(world)
+    numbers = ["OI-2610-910"] + [f"OI-9999-{n:03d}" for n in range(200)]
+    rows = _lines(client, inquiry_no=",".join(numbers))
+    assert {r["inquiry_no"] for r in rows} == {"OI-2610-910"}
+    foreign_inquiry_id = _foreign_reserve_request(world.db)[2]
+    with company_scope(world.db, None):
+        foreign = world.db.get(OrderInquiry, foreign_inquiry_id)
+        foreign.inquiry_no = "OI-2610-907"
+        world.db.commit()
+    assert _lines(client, inquiry_no="OI-2610-907") == [], "another company's OI never lists"
+
+
+def test_ac_rf_86_summary_matrix_and_export_honour_inquiry_no(sn):
+    import io
+
+    import openpyxl
+
+    client, world = sn
+    _lines_world(world)
+    base = client.get(f"{LIST}/summary")
+    assert base.status_code == 200 and base.json()["total_rows"] == 5, base.text
+    one = client.get(f"{LIST}/summary", params={"inquiry_no": "OI-2610-910"})
+    assert one.status_code == 200 and one.json()["total_rows"] == 2, one.text
+
+    matrix = client.get(f"{LIST}/matrix", params={"axis": "product", "inquiry_no": "OI-2610-910"})
+    assert matrix.status_code == 200, matrix.text
+    assert sum(int(cell["rows"]) for cell in matrix.json()["data"]) == 2
+
+    export = client.get(f"{LIST}/export", params={"inquiry_no": "OI-2610-910"})
+    assert export.status_code == 200, export.text[:200]
+    sheet = openpyxl.load_workbook(io.BytesIO(export.content)).worksheets[0]
+    assert sheet.max_row - 1 == 2, "the download holds exactly the OI's two rows"
+
+
+def test_ac_rf_86_async_export_request_carries_inquiry_no():
+    from app.schemas.project_order_inquiry import OrderInquiryWorklistExportRequest
+
+    payload = OrderInquiryWorklistExportRequest(inquiry_no="OI-2610-910,OI-2610-9100")
+    assert payload.model_dump(exclude_none=True).get("inquiry_no") == "OI-2610-910,OI-2610-9100"

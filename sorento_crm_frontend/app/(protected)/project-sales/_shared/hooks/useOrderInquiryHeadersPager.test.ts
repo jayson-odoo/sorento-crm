@@ -17,6 +17,12 @@ import type { ListPagerParams } from '@/hooks/useListPager';
 
 vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
 
+const stepState = vi.hoisted(() => ({ search: '', push: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: stepState.push, prefetch: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(stepState.search),
+}));
+
 const { apiFetch } = await import('@/lib/api');
 const mockFetch = apiFetch as unknown as ReturnType<typeof vi.fn>;
 
@@ -120,5 +126,89 @@ describe('orderInquiryHeadersPagerQuery carries inquiry_no (AC-RF-27)', () => {
     expect(orderInquiryHeadersPagerQuery.listQueryKey(params)).not.toEqual(
       orderInquiryHeadersPagerQuery.listQueryKey({ ...params, filters: {} }),
     );
+  });
+});
+
+/**
+ * AC-RF-80 / AC-RF-82: `?reserve=` on a detail page holds a list status OR a request id (the
+ * one-OI email link). Only a list status may reach the headers API, and only a list status
+ * may be carried on to the next OI.
+ */
+describe('the pager and ?reserve= (AC-RF-80, AC-RF-82)', () => {
+  const reserveSent = async (reserve: string): Promise<string | null> => {
+    mockFetch.mockClear();
+    mockFetch.mockResolvedValue(ok({ data: [], pagination: { total: 0, page: 1, limit: 25 } }));
+    await orderInquiryHeadersPagerQuery.fetchPage({
+      pageIndex: 0,
+      pageSize: 25,
+      sorting: [],
+      searchQuery: '',
+      filters: { reserve },
+    });
+    const url = String(mockFetch.mock.calls[mockFetch.mock.calls.length - 1][0]);
+    return new URLSearchParams(url.split('?')[1]).get('reserve');
+  };
+
+  it.each([
+    ['a request id', '0b7f7a52-3c1e-4f0a-9d55-6f1c2a9e8b11'],
+    ['the value requested', 'requested'],
+  ])('AC-RF-80: %s is not sent to the headers list', async (_name, value) => {
+    expect(await reserveSent(value)).toBeNull();
+  });
+
+  it.each(['parked', 'needs_reserve', 'notice_parked', 'reserved'])(
+    'AC-RF-80: the list status %s is still sent',
+    async (status) => {
+      expect(await reserveSent(status)).toBe(status);
+    },
+  );
+
+  it('AC-RF-80: the pager key for a request id equals the key without reserve', () => {
+    const base: ListPagerParams = { pageIndex: 0, pageSize: 25, sorting: [], searchQuery: '', filters: {} };
+    expect(
+      orderInquiryHeadersPagerQuery.listQueryKey({ ...base, filters: { reserve: 'rr-1' } }),
+    ).toEqual(orderInquiryHeadersPagerQuery.listQueryKey(base));
+  });
+});
+
+describe('a prev/next step lands on this URL (AC-RF-82)', () => {
+  async function stepUrl(search: string): Promise<URLSearchParams> {
+    const React = await import('react');
+    const { renderHook, act, waitFor } = await import('@testing-library/react');
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
+    const { useListPager } = await import('@/hooks/useListPager');
+    stepState.search = search;
+    stepState.push.mockClear();
+    mockFetch.mockResolvedValue(
+      ok({ data: [{ id: 'h-1' }, { id: 'h-2' }, { id: 'h-3' }], pagination: { total: 3, page: 1, limit: 25 } }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client }, children);
+    const { result } = renderHook(
+      () =>
+        useListPager({
+          ...orderInquiryHeadersPagerQuery,
+          detailPath: '/project-sales/order-inquiries',
+          currentId: 'h-2',
+        }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.hasNext).toBe(true));
+    act(() => result.current.goNext());
+    await waitFor(() => expect(stepState.push).toHaveBeenCalled());
+    const href = String(stepState.push.mock.calls[0][0]);
+    expect(href).toContain('/project-sales/order-inquiries/h-3');
+    return new URLSearchParams(href.split('?')[1] ?? '');
+  }
+
+  it('a request id is not carried on to the next OI', async () => {
+    const query = await stepUrl('page=1&limit=25&reserve=0b7f7a52-3c1e-4f0a-9d55-6f1c2a9e8b11');
+    expect(query.get('reserve')).toBeNull();
+  });
+
+  it('a list status stays, because the next OI is on that list', async () => {
+    const query = await stepUrl('page=1&limit=25&reserve=needs_reserve');
+    expect(query.get('reserve')).toBe('needs_reserve');
   });
 });
