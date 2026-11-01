@@ -891,7 +891,7 @@ describe('FulfilmentBoardPanel: the cells', () => {
 
     renderPanel();
 
-    expect(await screen.findByText('1 needs a location')).toBeInTheDocument();
+    expect(await screen.findByText('1 not plannable')).toBeInTheDocument();
   });
 
   it('marks a cell whose stock an earlier-dated line already took', async () => {
