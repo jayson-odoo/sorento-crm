@@ -33,6 +33,9 @@ export default function AutomationDetailPage() {
     (automation?.recipient_config?.user_ids.length ?? 0) +
     (automation?.recipient_config?.role_ids.length ?? 0) +
     (automation?.recipient_config?.extra_emails.length ?? 0) +
+    (automation?.recipient_config?.cc_user_ids?.length ?? 0) +
+    (automation?.recipient_config?.cc_role_ids?.length ?? 0) +
+    (automation?.recipient_config?.cc_emails?.length ?? 0) +
     (automation?.recipient_config?.include_promotion_owner ? 1 : 0);
 
   return (
@@ -132,25 +135,13 @@ export default function AutomationDetailPage() {
             <CardContent className="space-y-2 text-sm">
               {automation && recipientCount > 0 ? (
                 <>
-                  <Row label="Users" value={automation.recipient_config.user_ids.length || <Empty />} />
-                  <Row label="Roles" value={automation.recipient_config.role_ids.length || <Empty />} />
+                  <Row label="To users" value={automation.recipient_config.user_ids.length || <Empty />} />
+                  <Row label="To roles" value={automation.recipient_config.role_ids.length || <Empty />} />
                   <Row label="Promotion owner" value={automation.recipient_config.include_promotion_owner ? 'Yes' : <Empty />} />
-                  <Row
-                    label="External emails"
-                    value={
-                      automation.recipient_config.extra_emails.length ? (
-                        <div className="flex flex-wrap gap-1">
-                          {automation.recipient_config.extra_emails.map((e) => (
-                            <Badge key={e} variant="secondary">
-                              {e}
-                            </Badge>
-                          ))}
-                        </div>
-                      ) : (
-                        <Empty />
-                      )
-                    }
-                  />
+                  <EmailsRow label="To emails" emails={automation.recipient_config.extra_emails} />
+                  <Row label="Cc users" value={automation.recipient_config.cc_user_ids?.length || <Empty />} />
+                  <Row label="Cc roles" value={automation.recipient_config.cc_role_ids?.length || <Empty />} />
+                  <EmailsRow label="Cc emails" emails={automation.recipient_config.cc_emails ?? []} />
                 </>
               ) : (
                 <Empty hint="No recipients configured. Edit the automation to add some." />
@@ -217,4 +208,25 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 function Empty({ hint }: { hint?: string } = {}) {
   return <span className="text-muted-foreground italic">{hint ?? '-'}</span>;
+}
+
+function EmailsRow({ label, emails }: { label: string; emails: string[] }) {
+  return (
+    <Row
+      label={label}
+      value={
+        emails.length ? (
+          <div className="flex flex-wrap gap-1">
+            {emails.map((e) => (
+              <Badge key={e} variant="secondary">
+                {e}
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <Empty />
+        )
+      }
+    />
+  );
 }

@@ -16,7 +16,12 @@ export interface RecipientConfig {
   /** When set, sends one email for the whole match (every resolved address on it,
    * the actor's address last) instead of one email per recipient. */
   one_email?: boolean;
+  /** To: `user_ids`, `role_ids` and these. */
   extra_emails: string[];
+  /** DEALER-OI-ROUTE: explicit Cc. Rows saved before Cc existed have none. */
+  cc_user_ids?: string[];
+  cc_role_ids?: string[];
+  cc_emails?: string[];
 }
 
 import type { RuleGroup } from '@/components/rule-builder/types';

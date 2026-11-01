@@ -216,6 +216,9 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       recipientConfig.user_ids.length +
       recipientConfig.role_ids.length +
       recipientConfig.extra_emails.length +
+      (recipientConfig.cc_user_ids?.length ?? 0) +
+      (recipientConfig.cc_role_ids?.length ?? 0) +
+      (recipientConfig.cc_emails?.length ?? 0) +
       (recipientConfig.include_promotion_owner ? 1 : 0) +
       (recipientConfig.include_assigned_cs_pic ? 1 : 0);
     if (totalRecipients === 0) {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { getUsersSelect, type UserSelectItem } from '@/services/userSelectService';
@@ -27,57 +27,45 @@ interface Props {
   onChange: (next: RecipientConfig) => void;
 }
 
-export default function RecipientPicker({ value, onChange }: Props) {
-  const [users, setUsers] = useState<UserSelectItem[]>([]);
-  const [roles, setRoles] = useState<RoleItem[]>([]);
+interface Addresses {
+  userIds: string[];
+  roleIds: string[];
+  emails: string[];
+}
+
+interface AddressFieldsProps {
+  title: 'To' | 'Cc';
+  users: UserSelectItem[];
+  roles: RoleItem[];
+  value: Addresses;
+  onChange: (next: Addresses) => void;
+  children?: ReactNode;
+}
+
+function toggle(list: string[], id: string): string[] {
+  return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+}
+
+/** One recipient line of the email (To or Cc): users, roles and typed addresses. */
+function AddressFields({ title, users, roles, value, onChange, children }: AddressFieldsProps) {
   const [emailDraft, setEmailDraft] = useState('');
-
-  useEffect(() => {
-    void getUsersSelect({ status: 'ACTIVE' }).then(setUsers).catch(() => setUsers([]));
-    void apiFetch('/api/v1/user-management/roles/select')
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data: RoleItem[]) => setRoles(data ?? []))
-      .catch(() => setRoles([]));
-  }, []);
-
-  const selectedUsers = users.filter((u) => value.user_ids.includes(u.id));
-  const selectedRoles = roles.filter((r) => value.role_ids.includes(r.id));
-
-  function toggleUser(id: string) {
-    onChange({
-      ...value,
-      user_ids: value.user_ids.includes(id)
-        ? value.user_ids.filter((x) => x !== id)
-        : [...value.user_ids, id],
-    });
-  }
-
-  function toggleRole(id: string) {
-    onChange({
-      ...value,
-      role_ids: value.role_ids.includes(id)
-        ? value.role_ids.filter((x) => x !== id)
-        : [...value.role_ids, id],
-    });
-  }
+  const headingId = `rp-${title.toLowerCase()}-heading`;
+  const selectedUsers = users.filter((u) => value.userIds.includes(u.id));
+  const selectedRoles = roles.filter((r) => value.roleIds.includes(r.id));
 
   function addEmail() {
     const email = emailDraft.trim();
     if (!email) return;
-    if (value.extra_emails.includes(email)) {
-      setEmailDraft('');
-      return;
-    }
-    onChange({ ...value, extra_emails: [...value.extra_emails, email] });
+    if (!value.emails.includes(email)) onChange({ ...value, emails: [...value.emails, email] });
     setEmailDraft('');
   }
 
-  function removeEmail(email: string) {
-    onChange({ ...value, extra_emails: value.extra_emails.filter((e) => e !== email) });
-  }
-
   return (
-    <div className="space-y-3 rounded-md border p-3">
+    <div role="group" aria-labelledby={headingId} className="space-y-3 rounded-md border p-3">
+      <p id={headingId} className="text-sm font-semibold">
+        {title}
+      </p>
+
       <div className="space-y-1">
         <Label>Specific users</Label>
         <Popover>
@@ -93,10 +81,10 @@ export default function RecipientPicker({ value, onChange }: Props) {
                 className="flex items-center gap-2 px-2 py-1 hover:bg-muted rounded cursor-pointer"
               >
                 <Checkbox
-                  checked={value.user_ids.includes(u.id)}
-                  onCheckedChange={() => toggleUser(u.id)}
+                  checked={value.userIds.includes(u.id)}
+                  onCheckedChange={() => onChange({ ...value, userIds: toggle(value.userIds, u.id) })}
                 />
-                <span className="text-sm">
+                <span className="text-sm truncate" title={`${u.name || u.email} ${u.email}`}>
                   {u.name || u.email}
                   <span className="text-muted-foreground ml-1">{u.email}</span>
                 </span>
@@ -133,8 +121,8 @@ export default function RecipientPicker({ value, onChange }: Props) {
                 className="flex items-center gap-2 px-2 py-1 hover:bg-muted rounded cursor-pointer"
               >
                 <Checkbox
-                  checked={value.role_ids.includes(r.id)}
-                  onCheckedChange={() => toggleRole(r.id)}
+                  checked={value.roleIds.includes(r.id)}
+                  onCheckedChange={() => onChange({ ...value, roleIds: toggle(value.roleIds, r.id) })}
                 />
                 <span className="text-sm">{r.name}</span>
               </label>
@@ -155,65 +143,7 @@ export default function RecipientPicker({ value, onChange }: Props) {
         )}
       </div>
 
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="rp-owner"
-          checked={value.include_promotion_owner}
-          onCheckedChange={(c) =>
-            onChange({ ...value, include_promotion_owner: Boolean(c) })
-          }
-        />
-        <Label htmlFor="rp-owner">Include promotion creator / owner</Label>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="rp-cs-pic"
-          checked={Boolean(value.include_assigned_cs_pic)}
-          onCheckedChange={(c) =>
-            onChange({ ...value, include_assigned_cs_pic: Boolean(c) })
-          }
-        />
-        <Label htmlFor="rp-cs-pic">
-          Include assigned CS PIC (purchase request / sponsorship form)
-        </Label>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="rp-actor"
-          checked={Boolean(value.include_actor)}
-          onCheckedChange={(c) => onChange({ ...value, include_actor: Boolean(c) })}
-        />
-        <Label htmlFor="rp-actor">Cc the person who raised it</Label>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="rp-raiser"
-          checked={Boolean(value.include_raiser)}
-          onCheckedChange={(c) => onChange({ ...value, include_raiser: Boolean(c) })}
-        />
-        <Label htmlFor="rp-raiser">Cc the person who raised the inquiry</Label>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="rp-requester"
-          checked={Boolean(value.include_requester)}
-          onCheckedChange={(c) => onChange({ ...value, include_requester: Boolean(c) })}
-        />
-        <Label htmlFor="rp-requester">Cc the person who requested</Label>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="rp-one-email"
-          checked={Boolean(value.one_email)}
-          onCheckedChange={(c) => onChange({ ...value, one_email: Boolean(c) })}
-        />
-        <Label htmlFor="rp-one-email">One email, everyone on the thread</Label>
-      </div>
+      {children}
 
       <div className="space-y-1">
         <Label>External emails</Label>
@@ -234,18 +164,138 @@ export default function RecipientPicker({ value, onChange }: Props) {
             Add
           </Button>
         </div>
-        {value.extra_emails.length > 0 && (
+        {value.emails.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-1">
-            {value.extra_emails.map((e) => (
-              <Badge key={e} variant="secondary" className="gap-1">
-                {e}
-                <button type="button" onClick={() => removeEmail(e)} aria-label={`Remove ${e}`}>
+            {value.emails.map((e) => (
+              <Badge key={e} variant="secondary" className="gap-1 max-w-full">
+                <span className="truncate" title={e}>
+                  {e}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...value, emails: value.emails.filter((x) => x !== e) })}
+                  aria-label={`Remove ${e}`}
+                >
                   <X className="size-3" />
                 </button>
               </Badge>
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+export default function RecipientPicker({ value, onChange }: Props) {
+  const [users, setUsers] = useState<UserSelectItem[]>([]);
+  const [roles, setRoles] = useState<RoleItem[]>([]);
+
+  useEffect(() => {
+    void getUsersSelect({ status: 'ACTIVE' }).then(setUsers).catch(() => setUsers([]));
+    void apiFetch('/api/v1/user-management/roles/select')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: RoleItem[]) => setRoles(data ?? []))
+      .catch(() => setRoles([]));
+  }, []);
+
+  const to: Addresses = {
+    userIds: value.user_ids,
+    roleIds: value.role_ids,
+    emails: value.extra_emails,
+  };
+  const cc: Addresses = {
+    userIds: value.cc_user_ids ?? [],
+    roleIds: value.cc_role_ids ?? [],
+    emails: value.cc_emails ?? [],
+  };
+
+  return (
+    <div className="space-y-3">
+      <AddressFields
+        title="To"
+        users={users}
+        roles={roles}
+        value={to}
+        onChange={(next) =>
+          onChange({
+            ...value,
+            user_ids: next.userIds,
+            role_ids: next.roleIds,
+            extra_emails: next.emails,
+          })
+        }
+      >
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="rp-owner"
+            checked={value.include_promotion_owner}
+            onCheckedChange={(c) => onChange({ ...value, include_promotion_owner: Boolean(c) })}
+          />
+          <Label htmlFor="rp-owner">Include promotion creator / owner</Label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="rp-cs-pic"
+            checked={Boolean(value.include_assigned_cs_pic)}
+            onCheckedChange={(c) => onChange({ ...value, include_assigned_cs_pic: Boolean(c) })}
+          />
+          <Label htmlFor="rp-cs-pic">
+            Include assigned CS PIC (purchase request / sponsorship form)
+          </Label>
+        </div>
+      </AddressFields>
+
+      <AddressFields
+        title="Cc"
+        users={users}
+        roles={roles}
+        value={cc}
+        onChange={(next) =>
+          onChange({
+            ...value,
+            cc_user_ids: next.userIds,
+            cc_role_ids: next.roleIds,
+            cc_emails: next.emails,
+          })
+        }
+      >
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="rp-actor"
+            checked={Boolean(value.include_actor)}
+            onCheckedChange={(c) => onChange({ ...value, include_actor: Boolean(c) })}
+          />
+          <Label htmlFor="rp-actor">Cc the person who raised it</Label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="rp-raiser"
+            checked={Boolean(value.include_raiser)}
+            onCheckedChange={(c) => onChange({ ...value, include_raiser: Boolean(c) })}
+          />
+          <Label htmlFor="rp-raiser">Cc the person who raised the inquiry</Label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="rp-requester"
+            checked={Boolean(value.include_requester)}
+            onCheckedChange={(c) => onChange({ ...value, include_requester: Boolean(c) })}
+          />
+          <Label htmlFor="rp-requester">Cc the person who requested</Label>
+        </div>
+      </AddressFields>
+
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="rp-one-email"
+          checked={Boolean(value.one_email)}
+          onCheckedChange={(c) => onChange({ ...value, one_email: Boolean(c) })}
+        />
+        <Label htmlFor="rp-one-email">One email, everyone on the thread</Label>
       </div>
     </div>
   );
