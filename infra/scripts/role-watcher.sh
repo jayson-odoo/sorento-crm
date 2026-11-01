@@ -57,8 +57,8 @@ lock_block() {
   if [ -L "$DEPLOY_LOCK_PATH" ] || [ ! -f "$DEPLOY_LOCK_PATH" ]; then
     echo "deploy lock path is unsafe (symlink or not a regular file)"; return 0
   fi
-  if [ -n "$(find "$DEPLOY_LOCK_PATH" -maxdepth 0 \( -perm -001 -o -perm -002 -o -perm -004 \) 2>/dev/null)" ]; then
-    echo "deploy lock path is unsafe (file has permissions for others)"; return 0
+  if [ -n "$(find "$DEPLOY_LOCK_PATH" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]; then
+    echo "deploy lock path is unsafe (file is writable by group or others)"; return 0
   fi
   ( exec 8<"$DEPLOY_LOCK_PATH" && flock -s -n 8 ) 2>/dev/null && return 0
   echo "deploy lock is held by a deploy, skipping the start this tick"
@@ -105,13 +105,16 @@ while :; do
     if [ "$role" = leader ]; then
       if [ "$running" -lt "$want_count" ]; then
         blocked=$(lock_block)
+        if [ -z "$blocked" ] && { [ -L "$PWD" ] || [ -n "$(find "$PWD" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]; }; then
+          blocked="project directory $PWD is unsafe (symlink or writable by group or others), not starting $SERVICES"
+        fi
         tag=$(read_tag); tag_rc=$?
         if [ -n "$blocked" ]; then
           log "$blocked"
         elif [ "$tag_rc" = 2 ]; then
           log "local Postgres leads but no image tag is recorded in $PWD/.ha-image-tag: not starting $SERVICES"
         elif [ "$tag_rc" != 0 ]; then
-          log "local Postgres leads but the image tag file is invalid (not a plain, owner-only file holding a 40 hex SHA): not starting $SERVICES"
+          log "local Postgres leads but the image tag file is invalid (not a plain file, not writable by group or others, holding a 40 hex SHA): not starting $SERVICES"
         else
           log "local Postgres leads: starting $SERVICES on $tag (running: $running)"
           # shellcheck disable=SC2086
