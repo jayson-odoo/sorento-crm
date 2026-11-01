@@ -709,6 +709,7 @@ class FulfilmentBoardService:
             str(i) for i in (exclude_covered_line_ids or [])
         }
         self._locations_by_row = {}
+        self._row_facts: Dict[str, Any] = {}
         self._buy_origin: Dict[str, Optional[str]] = {}
         self._split_edited: set = set()
         if granularity not in GRANULARITIES:
@@ -2922,6 +2923,8 @@ class FulfilmentBoardService:
             ],
             exclude_line_ids=list(self._exclude_covered_line_ids) or None,
         )
+        # The cell tables state what these facts say about a line at its own pool (R12).
+        self._row_facts = facts
 
         # S4 (`PLAN-local-supplier-oi-routing.md`): moved onto `ProjectSupplyService` as
         # `open_po_balance`, the ONE implementation both this board and a donor's own
@@ -4784,6 +4787,7 @@ class FulfilmentBoardService:
             self._locations_by_row[row.key] = self._locations_for(
                 members, by_location, group_codes, own_demand=self._own_demand(row)
             )
+            self._state_own_pool(self._locations_by_row[row.key], row)
         # The cell's own table is the FIRST contributing line's, which is the highest ranked
         # (members are sorted) and, on the overwhelming majority of cells, the only one. The
         # drawer switches it to whichever line the planner expands.
@@ -5020,8 +5024,7 @@ class FulfilmentBoardService:
                 )
         return out
 
-    @staticmethod
-    def _own_demand(row: _Row) -> Dict[Tuple[str, str], Decimal]:
+    def _own_demand(self, row: _Row) -> Dict[Tuple[str, str], Decimal]:
         """THE ASKING LINE's own open quantity, at its own (product, location) (R1).
 
         Netted back out of the SO qty its table prints, so the table answers "what is here
@@ -5036,10 +5039,34 @@ class FulfilmentBoardService:
         code `B2155-NL-BLUE` on the live book and land in ONE cell, and their demand is not
         each other's - netting by location would take the second product's lines out of the
         first product's SO qty and print stock nobody has.
+
+        A LINE AT ITS OWN POOL gets back what the pool's book counted for it (R8), the figure
+        the walk read, so the row it stands on prints the walk's Available and net.
         """
         if not row.warehouse_id or not row.product_id:
             return {}
-        return {(str(row.product_id), str(row.warehouse_id)): _dec(row.qty)}
+        fact = self._row_facts.get(row.key)
+        own = fact.pool_book_back if fact is not None and fact.stands_on_pool else _dec(row.qty)
+        return {(str(row.product_id), str(row.warehouse_id)): own}
+
+    def _state_own_pool(self, locations: List[Dict[str, Any]], row: _Row) -> None:
+        """R12: on a line standing on its own pool, the row it stands on and the pools' subtotal
+        state what the walk reads, for its class: the share for a project line, Available for a
+        retail one (`ProjectSupplyService.own_pool_figures`).
+
+        That row's own Where tag says `own`, so the client reads these fields rather than its
+        `site_pool` rule. Every other table keeps AC-2.6b: the subtotal is the share of the net.
+        """
+        fact = self._row_facts.get(row.key)
+        if fact is None or not fact.stands_on_pool:
+            return
+        own_figure, subtotal = self.supply.own_pool_figures(fact)
+        for entry in locations:
+            if entry.get("warehouse_id") == str(fact.pool.id):
+                entry["available_for_project"] = qty_text(own_figure)
+                entry["stands_on_pool"] = True
+                entry["own_pool_no_share"] = fact.own_pool_no_share
+                entry["pool_subtotal_for_project"] = qty_text(subtotal)
 
     def _location(
         self,
@@ -5261,10 +5288,13 @@ class FulfilmentBoardService:
                     position.net + self._mine_in(position, own_demand, product_id)
                 ),
                 "net_of": POOLS_SET,
-                # N1 (fix round 5): the figure `_is_pool_share_split` and `stock-detail`
-                # actually bound a pool-share composition by - never the displayed net
-                # above, which has this line's own demand added back in.
-                "net_raw": qty_text(position.net),
+                # N1 (fix round 5): the figure `_is_pool_share_split` bounds a pool-share
+                # composition by, `fact.pools_net`: the true net, plus what the pool's book
+                # counted for a line standing on it (DEALER-PLANNING R12, so the client does
+                # not refuse what confirm allows).
+                "net_raw": qty_text(
+                    position.net + self._mine_in(position, own_demand, product_id)
+                ),
             }
         group = netting.group_of(warehouse_id)
         if not group:

@@ -78,9 +78,9 @@ def test_the_consignment_exemption_still_answers_first():
 # --------------------------------------------------------------------------- the engine
 
 
-def test_a_line_at_a_dealer_pool_is_plannable_and_gets_a_proposal():
-    """AC-1: no verdict, and the ladder is walked. 100 on hand, 40 owed here, so Available is 60
-    and the dealers' half leaves 30 to reserve."""
+def test_a_line_at_a_dealer_pool_is_plannable_and_reserves_with_its_own_demand_back():
+    """AC-1: no verdict, and the ladder is walked. 100 on hand, 40 owed here and all of it this
+    line's, so Available is 100 and the dealers' half leaves 50: Reserve 40 (R7)."""
     with blank_session() as db:
         company_id, _actor, project, product = _world(db)
         pool = _dealer_pool(db, on_hand=100, product=product)
@@ -92,12 +92,12 @@ def test_a_line_at_a_dealer_pool_is_plannable_and_gets_a_proposal():
         got = _totals(_components(service.proposal_for(order)))
 
     assert fact.unplannable_reason is None
-    assert got == {"reserve": Decimal("30"), "buy": Decimal("10")}
+    assert got == {"reserve": Decimal("40")}
 
 
-def test_known_limit_a_line_on_just_enough_stock_buys():
-    """Known limit, disclosed on the PR. 10 on hand, 10 ordered, nobody else: the line's own
-    demand nets the pool to zero, so it proposes Buy 10. PR 2 changes this answer."""
+def test_a_project_line_on_just_enough_stock_keeps_the_dealer_share():
+    """10 on hand, 10 ordered, nobody else, a project-class line: its own demand no longer nets
+    the pool to zero (R7), and the dealers' half is still held back from it (R9)."""
     with blank_session() as db:
         company_id, _actor, project, product = _world(db)
         pool = _dealer_pool(db, on_hand=10, product=product)
@@ -106,7 +106,7 @@ def test_known_limit_a_line_on_just_enough_stock_buys():
         )
         got = _totals(_components(ProjectSupplyService(db).proposal_for(order)))
 
-    assert got == {"buy": Decimal("10")}
+    assert got == {"reserve": Decimal("5"), "buy": Decimal("5")}
 
 
 def test_confirming_a_buy_at_a_dealer_pool_raises_its_order_row():

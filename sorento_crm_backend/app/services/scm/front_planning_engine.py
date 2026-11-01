@@ -220,6 +220,11 @@ def pool_allowance(
     """
     if not pool:
         return ZERO
+    if pool.get("no_share"):
+        # A retail line at its own dealer location (DEALER-PLANNING R9): nothing is kept back
+        # from it, so what it may take is its Available, bounded by the net. It holds no part
+        # of the share either, so the share ledger says nothing about it.
+        return min(max(_dec(pool.get("available")), ZERO), max(_dec(pools_net), ZERO))
     allowed = available_for_project(pool.get("available"), pools_net, pool_share_pct)
     if share_left is None:
         return allowed
@@ -227,6 +232,21 @@ def pool_allowance(
     if stated is None:
         return allowed
     return min(allowed, max(_dec(stated), ZERO))
+
+
+def _net_after_pool(
+    left: Decimal, true_net: Decimal, capacity: Decimal, own_back: Decimal
+) -> Decimal:
+    """What the running net leaves for the next pool of a chain, after one pool gave `capacity`.
+
+    `own_back` is the line's own demand, put back on the pool it stands on
+    (`project_supply_service._add_back_own_pool_demand`). It is what the line stands on, never a
+    claim on another pool: the draw spends it first, and whatever happens at that pool, even
+    nothing at all, the next pool reads the TRUE net less only what went beyond it.
+    """
+    if own_back <= ZERO:
+        return left - capacity
+    return max(true_net, ZERO) - max(capacity - own_back, ZERO)
 
 
 def pool_share_capacity(
@@ -251,8 +271,15 @@ def pool_share_capacity(
     cap the chain by the FIRST pool's allowance and spread that one number over every
     location, which printed `offered=0` beside `taken=300` the moment another site's pool
     answered (review round 2, S5).
+
+    A LINE AT ITS OWN POOL (DEALER-PLANNING R7, R10): `pools_net` is what this line reads, its
+    own add-back included, and the pool it stands on states that add-back as `own_back` on its
+    chain entry. Only that pool reads the add-back; every other pool is measured by the true
+    net (`_net_after_pool`).
     """
-    left = max(_dec(pools_net), ZERO)
+    line_net = _dec(pools_net)
+    true_net = line_net - sum((_dec(pool.get("own_back")) for pool in pools), ZERO)
+    left = max(line_net, ZERO)
     out: List[Tuple[str, Decimal, Decimal]] = []
     for pool in pools:
         if left <= ZERO:
@@ -260,14 +287,21 @@ def pool_share_capacity(
         location = pool.get("location")
         if not location:
             continue
+        own_back = _dec(pool.get("own_back"))
         allowance = min(
-            pool_allowance(pool, pools_net, pool_share_pct, share_left), left
+            pool_allowance(
+                pool,
+                line_net if own_back > ZERO else true_net,
+                pool_share_pct,
+                share_left,
+            ),
+            left,
         )
         capacity = min(max(_dec(pool.get("free")), ZERO), allowance)
+        left = _net_after_pool(left, true_net, max(capacity, ZERO), own_back)
         if capacity <= ZERO:
             continue
         out.append((str(location), capacity, allowance))
-        left -= capacity
     return out
 
 
@@ -604,10 +638,14 @@ def pool_reserve_capacity(
     rather than the whole of one for a subset of items. A parameter nothing reads is a rule
     a reader still believes in.
 
-    Nothing is un-netted here, unlike rung 2: this line's demand is booked at
-    `BRW-<group>`, never at a pool, so none of it is inside `pools_net`.
+    Nothing is un-netted here, unlike rung 2: a line at a project bin is booked at
+    `BRW-<group>`, never at a pool, so none of it is inside `pools_net`. A line AT a pool is
+    booked there, and its caller hands in a net with that line's own demand already put back
+    and states it as `own_back` on the pool's chain entry (`_net_after_pool`).
     """
-    left = max(_dec(pools_net), ZERO)
+    line_net = _dec(pools_net)
+    true_net = line_net - sum((_dec(pool.get("own_back")) for pool in pools), ZERO)
+    left = max(line_net, ZERO)
     out: List[Tuple[str, Decimal]] = []
     for pool in pools:
         if left <= ZERO:
@@ -616,14 +654,21 @@ def pool_reserve_capacity(
         if not location:
             continue
         capacity = min(max(_dec(pool.get("free")), ZERO), left)
+        left = _net_after_pool(left, true_net, max(capacity, ZERO), _dec(pool.get("own_back")))
         if capacity <= ZERO:
             continue
         out.append((str(location), capacity))
-        left -= capacity
     return out
 
 
-def pool_share_reason(location: str, qty: Decimal, allowance: Decimal) -> str:
+def pool_share_reason(
+    location: str,
+    qty: Decimal,
+    allowance: Decimal,
+    *,
+    no_share: bool = False,
+    retail_line: bool = False,
+) -> str:
     """LADDER V8 (R-A/R-B): why the site pool may lend a PROJECT line this much.
 
     The number beside it is the ALLOWANCE - what the pool can spare once the dealers' share
@@ -632,7 +677,14 @@ def pool_share_reason(location: str, qty: Decimal, allowance: Decimal) -> str:
 
     Public because the supply service builds this sentence when it reads a CONFIRMED
     component back off a frozen snapshot.
+
+    A retail line is not a project (DEALER-PLANNING): at its own location nothing is held back
+    from it (`no_share`), and at another pool the same share is what that pool may lend.
     """
+    if no_share:
+        return f"Pool {location} has {qty_text(allowance)} available for this line"
+    if retail_line:
+        return f"Pool {location} spares {qty_text(qty)} of the {qty_text(allowance)} it may lend"
     return (
         f"Pool {location} spares {qty_text(qty)} of the {qty_text(allowance)} it may lend "
         "a project"
@@ -1286,7 +1338,7 @@ def walk_line(
     )
     step_share = _Offer()
     if wanted > ZERO:
-        _draw_pool_share(step_share, chain, wanted)
+        _draw_pool_share(step_share, chain, wanted, pools or ())
     share_qty = step_share.qty
     offers[STEP_POOL_SHARE] = step_share
 
@@ -1858,6 +1910,7 @@ def _draw_pool_share(
     offer: "_Offer",
     chain: Sequence[Tuple[str, Decimal, Decimal]],
     need: Decimal,
+    pools: Sequence[Mapping[str, Any]] = (),
 ) -> None:
     """Step 0 (LADDER V8, R-N): the site pools of the chain, in the caller's own order.
 
@@ -1871,16 +1924,26 @@ def _draw_pool_share(
     covered, so a pool whose own share answers the whole line leaves every other pool
     untouched (AC-N.4). Nobody is owed a free pool draw back - the BORROW half (R34) is
     what raises a debt, further down the walk.
+
+    `pools` is the chain's own entries, whose flags choose the sentence for a retail line.
     """
+    entries = {str(pool.get("location")): pool for pool in pools}
     for location, capacity, allowance in chain:
         left = need - offer.qty
         if left <= ZERO:
             break
+        entry = entries.get(location, {})
         offer.add(
             Component(
                 kind=RESERVE,
                 qty=min(left, capacity),
-                reason=pool_share_reason(location, min(left, capacity), allowance),
+                reason=pool_share_reason(
+                    location,
+                    min(left, capacity),
+                    allowance,
+                    no_share=bool(entry.get("no_share")),
+                    retail_line=bool(entry.get("retail_line")),
+                ),
                 source_location=location,
                 rung=RUNG_POOL,
             )
