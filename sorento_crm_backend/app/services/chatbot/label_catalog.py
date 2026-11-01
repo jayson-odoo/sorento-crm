@@ -317,6 +317,11 @@ LABELS: dict[str, dict[str, str]] = {
     "channel": {"ms": "saluran", "zh": "渠道"},
     "months": {"ms": "bulan", "zh": "月份"},
     "month": {"ms": "bulan", "zh": "月份"},
+    "account types": {"ms": "jenis akaun", "zh": "账户类型"},
+    "account type": {"ms": "jenis akaun", "zh": "账户类型"},
+    # The route's refusals for the account filter (`order_management/report_ask.py`, `reports/ask_params.py`).
+    "Account types are not loaded from AutoCount yet": {"ms": "Jenis akaun belum dimuatkan daripada AutoCount", "zh": "账户类型尚未从 AutoCount 载入"},
+    "No account type {unknown}. Account types: {names}.": {"ms": "Tiada jenis akaun {unknown}. Jenis akaun: {names}.", "zh": "没有账户类型 {unknown}。账户类型：{names}。"},
     "You can only see sales for your own account.": {"ms": "Anda hanya boleh melihat jualan untuk akaun anda sendiri.", "zh": "您只能查看自己账户的销售数据。"},
     "That breakdown is not available for your account.": {"ms": "Pecahan itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法查看该细分数据。"},
     "You can only see orders for your own account.": {"ms": "Anda hanya boleh melihat pesanan untuk akaun anda sendiri.", "zh": "您只能查看自己账户的订单。"},
@@ -896,7 +901,8 @@ _SUB_ASK_KEYS = frozenset(
 #: DIRECT_ONLY so a bare line ("products", "month") is never rewritten on its own.
 _RANK_NOUNS = frozenset(
     {"products", "product", "categories", "category", "customers", "customer", "brands", "brand",
-     "sales agents", "sales agent", "locations", "location", "channels", "channel", "months", "month"}
+     "sales agents", "sales agent", "locations", "location", "channels", "channel", "months", "month",
+     "account types", "account type"}
 )
 _RANK_BASES = frozenset({"invoiced sales", "delivered sales", "ordered sales", "outstanding orders"})
 _RANK_MEASURES = frozenset({"customers", "orders", "products"})
