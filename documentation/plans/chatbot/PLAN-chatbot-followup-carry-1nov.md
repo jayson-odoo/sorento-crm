@@ -1,6 +1,6 @@
 # PLAN: a follow-up keeps the customer the user picked (CHATBOT-FOLLOWUP-CARRY, 1 Nov 2026)
 
-**Status: red tests next. Small fix track (no migration, no auth/RBAC change, no new ingest surface). Size S.**
+**Status: fix committed, kill test and reviewer pending. Small fix track (no migration, no auth/RBAC change, no new ingest surface). Size S.**
 UAC: `chatbot-followup-carry-acceptance-criteria.md`.
 
 ## Owner ruling (1 Nov ~16:25, "follow up yes")
@@ -53,12 +53,38 @@ ids the report actually ran on, never from re-reading an entity or a name.
 
 ## Fix
 
-1. `with_held`: the stamp also turns on for `modify` naming no customer, and for `replace_combine` naming no customer while a
-   customer is held. A ranking frame stays off (its own rules) unless it holds a customer and is not stale.
-2. `_settle`: `customer_ids` joins the hold, unless the message named a customer, `self_reference` is true, a pick answered this
-   turn (`ranking_pick`), the parser widened customers to all, the new axis is customer, or the ranked side is customer on an
-   "across all" read.
+1. `with_held` (`_follows_up`): the stamp also turns on for `modify` naming no customer, and for `replace_combine` naming no
+   customer while a customer is held. A ranking frame stays off (its own rules) unless it is filtered to a customer and not stale.
+2. `_settle`: `customer_ids` joins the hold (`_customer_stays`), unless the message named a customer, `self_reference` is true, a
+   pick answered this turn (`ranking_pick`), the parser widened customers to all, the new axis is customer, or customers were the
+   ranked side on an "across all" read. `company` joins it too, or the follow-up asks "Sorento or Mocha?" again after the person
+   already answered it (measured, brand total in one company).
 3. `_widened`: `customer` joins `channel` and `product`, so `_refine` drops the held customer on "all customers" too.
+4. The basis and any measure on screen stay **for a customer that stays** (`_HELD_CUSTOMER_KEYS`), so "what about last month" does
+   not ask the basis again. Decided from S6c (`_settle`), the engine's R8 note and `_refine`, which all keep them; the reply's
+   header names the basis, so it is not a silent default. A company total with no customer still asks (SALES-TOTAL-ASK, owner 27 Oct).
+5. `lanes/business/__init__.py`: a sales analysis over a held customer skips the company total's own basis question. That question
+   carries no customer (`sales_basis_ask.CARRIED`), and this is not a company total: the report ask's slot holds the customer across
+   anything it still owes.
+
+## Not changed, with reasons
+
+- A follow-up over a ranking with no refine flag runs a total on the held customer and period, not the ranking again: that is the
+  parser's reading (`ranking_refine` null, no axis, the sales label), and the ruling is about the customer and the period.
+- "by customer" over a customer's total drops the customer: the axis's own filter is never held, as for every other axis.
+- `warehouse_codes`, `spec` and `customer_agent_ids` are still not held. Not measured in this lane; the ruling is about the customer.
+
+## Found, not fixed
+
+- **A ranking asked with a customer loses the pick when the parser repeats `top_selling` on the pick turn.** "Dealer <customer> top 5
+  products oct by amount delivered", then "1": "Sorento or Mocha?", slot with no customer, on the copy and in the engine harness. The
+  same parse with `order_status` null keeps it. The plan row is gone before the lane: the trace's `narrowing` has no
+  `sales.customer:just_picked`. Pick turn, not a follow-up, so not this fix. Cause past that point not traced.
+- **A bare basis word can read as a document status.** "how about ordered" and "and delivered?" came back `order_status` null or
+  `delivered` on 2 of 4 runs with the fix (0 of 6 before it, same prompt and session, so parser variance): an order list instead of a
+  figure, on the same 9 ledgers. The customer is kept; the answer type is the parser's call (no post-parser domain override).
+- **A total with no customer, "what about last month":** the company total's basis question carries only `sales_basis_ask.CARRIED`, so a
+  brand filter on screen is not on the run that follows the answer (read in code, not run).
 
 ## Tests (red first)
 
