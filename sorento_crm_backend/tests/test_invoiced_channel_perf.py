@@ -222,3 +222,19 @@ def test_the_channel_filter_keeps_the_same_documents(db):
         new = set(db.execute(document_base(None).add_columns(BillingDocument.id)
                              .where(inv.sales_type_filter([value]))).scalars())
         assert old == new, value
+
+
+def test_a_report_run_switches_jit_off_for_its_transaction_only(db):
+    """The invoiced statements cost far above `jit_above_cost`, and the JIT compile took longer
+    than the query (5 s on 0.3 s for a seeded month). The engine runs them with JIT off, for the
+    report's own transaction."""
+    from app.services.reports import engine
+    from tests._sales_unified_seed import view
+
+    from app.services.reports.datasets.billing_document_lines import ASK_DEFINITION
+
+    db.execute(sa.text("SET LOCAL jit = on"))
+    v = view(rows="month", cols="all", measures=("amount",), columns=("channel",))
+    params = {k: val for k, val in v.params.items() if k != "company"}
+    engine.run(db, ASK_DEFINITION, params, v, company_grants=frozenset({DEFAULT_COMPANY_ID}))
+    assert db.execute(sa.text("SHOW jit")).scalar_one() == "off"

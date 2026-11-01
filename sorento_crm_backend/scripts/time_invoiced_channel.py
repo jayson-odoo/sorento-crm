@@ -101,6 +101,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     db = SessionLocal()
     try:
         company = args.company or _default_company(db, month_start, month_end)
+        import sqlalchemy as sa
+
+        print("server jit:", db.execute(sa.text("SHOW jit")).scalar_one())
+        db.rollback()
         print(f"{'period':<6} {'case':<10} {'rows':>6} {'load':>6}  seconds per run")
         for period_name, period in periods:
             for case, columns in cases.items():

@@ -239,11 +239,32 @@ def _traced_sales_order_ids(document_id: Any, company_id: Any) -> Any:
     )
 
 
-def _sales_order_class_kind(in_traced: Any) -> Any:
-    """The sales type the traced sales orders give (`in_traced(so_id_column)` says which):
-    none -> no sales order; two or more classes -> mixed; no class at all -> type not set;
-    else the one class's type."""
+def _traced_ids() -> Any:
+    """SELECT of the ids of the sales orders this document's figures follow: its own traced
+    orders, else (a credit or debit note with no traced line) its invoice's. A UNION, so each id
+    once."""
+    own = _traced_sales_order_ids(BillingDocument.id, BillingDocument.company_id)
+    inherited = _traced_sales_order_ids(
+        BillingDocument.against_document_id, BillingDocument.company_id
+    ).subquery("inherited_ids")
+    no_own = ~sa.exists(own.subquery("own_ids").select()).correlate(BillingDocument)
+    fallback = (
+        sa.select(inherited.c[0])
+        .where(BillingDocument.against_document_id.isnot(None), no_own)
+        .correlate(BillingDocument)
+    )
+    return sa.union(own, fallback)
+
+
+def _sales_order_class_kind() -> Any:
+    """The sales type the traced sales orders give: none -> no sales order; two or more classes
+    -> mixed; no class at all -> type not set; else the one class's type.
+
+    Driven FROM the traced ids and joined to `sales_orders` by key (INVOICED-CHANNEL-PERF): the
+    ids are a handful per document, so the orders are index lookups, never a scan of the table
+    tested against the ids once per document."""
     so = aliased(SalesOrder)
+    traced = _traced_ids().subquery("traced_ids")
     classes = sa.func.count(sa.distinct(so.demand_class))
     one = sa.func.max(so.demand_class)
     return (
@@ -256,24 +277,8 @@ def _sales_order_class_kind(in_traced: Any) -> Any:
                 else_=sa.literal(TYPE_NOT_SET),
             )
         )
-        .where(in_traced(so.id))
+        .select_from(traced.join(so, so.id == traced.c[0]))
         .correlate(BillingDocument).scalar_subquery()
-    )
-
-
-def in_traced_sales_orders(so_id: Any) -> Any:
-    """`so_id` is one of the sales orders this document's figures follow: its own traced
-    orders, else (a credit or debit note with no traced line) its invoice's."""
-    own = _traced_sales_order_ids(BillingDocument.id, BillingDocument.company_id)
-    has_own = (
-        sa.select(sa.func.count()).select_from(own.subquery("own_ids")).correlate(BillingDocument).scalar_subquery() > 0
-    )
-    inherited = _traced_sales_order_ids(
-        BillingDocument.against_document_id, BillingDocument.company_id
-    )
-    return sa.or_(
-        so_id.in_(own),
-        sa.and_(BillingDocument.against_document_id.isnot(None), ~has_own, so_id.in_(inherited)),
     )
 
 
@@ -295,14 +300,17 @@ def sales_type() -> Any:
     traced sales orders' class, then no sales order."""
     return sa.case(
         (_set_apart(), sa.literal(SET_APART)),
-        else_=_sales_order_class_kind(in_traced_sales_orders),
+        else_=_sales_order_class_kind(),
     )
 
 
 def sales_type_label() -> Any:
-    value = sales_type()
+    """The sales type's label. A simple `CASE <type> WHEN ...`, so the type is computed once: a
+    searched `CASE WHEN <type> = ...` per type inlined (and ran) the whole subquery seven times
+    (INVOICED-CHANNEL-PERF)."""
     return sa.case(
-        *[(value == key, sa.literal(label)) for key, label in SALES_TYPES],
+        {key: sa.literal(label) for key, label in SALES_TYPES},
+        value=sales_type(),
         else_=sa.null(),
     )
 
