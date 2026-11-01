@@ -378,6 +378,36 @@ describe('AC-RF-90 a chip session never changes the remembered Lines view', () =
   });
 });
 
+describe('AC-RF-90 removing the chip then remounting from that URL (reload, Back from an SO line)', () => {
+  it('writes no ack=all, keeps the stored view, and the plain remount opens as a plain visit', async () => {
+    const seedFilters = { ack: 'to_confirm', location: 'ZZT-WH-A', supplier_id: 'sup-1' };
+    getUserListColumnConfig.mockResolvedValue({
+      listing_key: 'projects.projects.view::order-inquiry-worklist',
+      config: { version: 1, sorting: null, filtersVersion: 1, filters: seedFilters },
+    });
+    arriveWith(`inquiry_no=${NUMBERS}`);
+    const first = renderClient();
+    fireEvent.click(await screen.findByRole('button', { name: CLEAR_CHIP }));
+    await waitFor(() => expect(sent(lastList().inquiry_no)).toBeUndefined());
+    expect(new URLSearchParams(nav.state.search).get('ack'), 'ack=all in the URL after the chip').toBeNull();
+    first.unmount();
+    listOrderInquiryWorklist.mockClear();
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() => expect(listOrderInquiryWorklist).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    for (const [, payload] of (upsertUserListColumnConfig as unknown as { mock: { calls: unknown[][] } }).mock.calls) {
+      expect(
+        JSON.stringify((payload as { filters?: unknown }).filters),
+        'the stored view written back',
+      ).toBe(JSON.stringify(seedFilters));
+    }
+    expect(sent(lastList().ack), 'the remount opens at To confirm').toBe('to_confirm');
+    expect(sent(lastList().location), 'the remembered location').toBe('ZZT-WH-A');
+    expect(sent(lastList().inquiry_no)).toBeUndefined();
+  });
+});
+
 describe('AC-RF-91 narrowing by hand with the chip on survives a reload', () => {
   it('a real row state stays in the request and the URL', async () => {
     arriveWith(`inquiry_no=${NUMBERS}&state=cancelled`);
