@@ -141,6 +141,12 @@ _AXIS_FILTERS = {
 _FRAME_ONLY = ("date_from", "date_to", "top_n", "shown", "stale")
 
 
+def kind_was_said(value: Any) -> bool:
+    """`kind_said` is the word of the message that says the kind: a non-blank string means said; null, blank or absent
+    do not. (A bare true is still read as said.)"""
+    return value is True or (isinstance(value, str) and bool(value.strip()))
+
+
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -755,7 +761,7 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
         if raw and e.get("current_message") is not False and raw not in words.setdefault(hint, []):
             words[hint].append(raw)
             if hint in ("brand", "account_type") and "kind_said" in e:
-                kinds.append({"hint": hint, "word": raw, "raw": typed, "said": e.get("kind_said") is True})
+                kinds.append({"hint": hint, "word": raw, "raw": typed, "said": kind_was_said(e.get("kind_said"))})
     return {
         **verdict, "entities": kept, "report_ask_words": words, "report_ask_spec": specs, "report_ask_kind": kinds,
     }
@@ -985,7 +991,7 @@ def as_kind_answer(verdict: dict[str, Any], slot: Any) -> tuple[dict[str, Any], 
     asked = {" ".join(jsc.js_string(w).split()).casefold() for w in _dict(slot.get("extras")).get("kind_words") or []}
     said = [
         e for e in jsc.array(verdict.get("entities"))
-        if isinstance(e, dict) and e.get("current_message") is not False and e.get("kind_said") is True
+        if isinstance(e, dict) and e.get("current_message") is not False and kind_was_said(e.get("kind_said"))
         and jsc.js_string(e.get("hint") or "").strip().lower() in options
         and {" ".join(jsc.js_string(e.get(k) or "").split()).casefold() for k in ("raw", "canonical_code")} & asked
     ]

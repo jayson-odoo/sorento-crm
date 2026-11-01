@@ -907,11 +907,11 @@ KNOWN_ACCOUNT_TYPES_WORD = "Known account types"
 
 
 def with_kind_said(schema: dict[str, Any]) -> dict[str, Any]:
-    """A copy of `schema` with the entity key `kind_said` (true: the message itself said brand or account type;
+    """A copy of `schema` with the entity key `kind_said` (the word of the message that says brand or account type;
     null: a bare word), last in the entity's `properties` and `required` (required and nullable, as strict mode needs)."""
     out = copy.deepcopy(schema)
     entity = out["properties"]["entities"]["items"]
-    entity["properties"]["kind_said"] = {"type": ["boolean", "null"]}
+    entity["properties"]["kind_said"] = {"type": ["string", "null"]}
     entity["required"] = [*[k for k in entity["required"] if k != "kind_said"], "kind_said"]
     return out
 

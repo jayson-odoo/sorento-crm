@@ -182,11 +182,16 @@ def _expected_date(value: Any) -> Any:
     return value.replace("{year}", str(today_malaysia().year))
 
 
+def _kind_said(value: Any) -> bool:
+    """`kind_said` is the message's own word for the kind: a non-blank string (a bare true still counts)."""
+    return value is True or (isinstance(value, str) and bool(value.strip()))
+
+
 def _entity_raws(entities: list[dict[str, Any]], hint: str, *, said: bool = False) -> set[str]:
     """The folded raws of the current-message entities of one hint (only those with `kind_said` true when `said`)."""
     return {
         _fold(e.get("raw")) for e in entities
-        if e.get("hint") == hint and e.get("current_message") is not False and (not said or e.get("kind_said") is True)
+        if e.get("hint") == hint and e.get("current_message") is not False and (not said or _kind_said(e.get("kind_said")))
     }
 
 
