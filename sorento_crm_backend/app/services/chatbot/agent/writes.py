@@ -501,7 +501,11 @@ def propose_step(
         # A panel turn runs as a test turn, so an idea would be a test idea: keep the Ideas board link instead.
         from app.services.chatbot.lanes.ideate import PANEL_IDEAS_REPLY
 
-        return ToolResult("denied", message=PANEL_IDEAS_REPLY), None
+        return ToolResult(
+            "invalid",
+            data={"say": PANEL_IDEAS_REPLY},
+            message="No idea was created and nothing is waiting for a yes. Ideas are logged on the Ideas board: /ideas",
+        ), None
     problem = _args_problem(definition, args)
     if problem:
         return ToolResult("invalid", message=problem), None

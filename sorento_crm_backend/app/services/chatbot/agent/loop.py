@@ -1383,6 +1383,19 @@ def _run(
                 reply = say  # nothing else to say: the hand-off sentence stands alone
             else:
                 reply = f"{reply}\n\n{say}".strip()
+        # A panel idea create is refused (`propose_step`): the Ideas board link reaches the reply by code, once.
+        # Its own line, not `say`: a hand-off sentence arms the offer and this one must not.
+        ideas_say = next(
+            (
+                str(e["data"]["say"])
+                for e in ledger.values()
+                if e.get("name") == writes.CREATE_IDEA and e.get("status") == "invalid"
+                and isinstance(e.get("data"), dict) and e["data"].get("say")
+            ),
+            "",
+        )
+        if ideas_say and "/ideas" not in reply:
+            reply = f"{reply}\n\n{ideas_say}".strip()
         if ctx.principal == "contact":
             reply = _contact_reply_backstop(db, ctx, reply)
         if (
