@@ -97,6 +97,8 @@ export interface FulfilmentPlanningRow {
   so_number?: string | null;
   /** AC-CONSIGN-CRM: the core sales order's doc_type ('consignment' / 'sales_order'). */
   so_doc_type?: string | null;
+  /** The class stored on the core order: project, retail or other (DEALER-PLANNING R6). */
+  demand_class?: string | null;
   /** Whether the planning record was authored here or adopted from the core book. */
   origin?: 'authored' | 'adopted' | null;
   provisional_ref?: string | null;
@@ -225,6 +227,8 @@ export interface FulfilmentPlanningListParams {
   query?: string;
   /** One state, or several comma-joined (OR-ed). */
   review_state?: string;
+  /** Empty means Project, on the server too (DEALER-PLANNING R6). */
+  demand_class?: string[];
   project_id?: string;
   sales_order_id?: string;
   /** One of `FULFILMENT_PLANNING_SORT_FIELDS`. Omitted leaves the server's own order. */
@@ -1798,6 +1802,14 @@ export interface BoardCellLocation {
    * figure past what the raw pile carries.
    */
   net_raw?: string | null;
+  /**
+   * DEALER-PLANNING R12: the asking line stands on this pool, so `available_for_project` is what
+   * the walk reads for it, whatever `where` says, and `pool_subtotal_for_project` is what the
+   * pools' subtotal prints. `own_pool_no_share`: no dealer share is held back from it here (R9).
+   */
+  stands_on_pool?: boolean;
+  own_pool_no_share?: boolean;
+  pool_subtotal_for_project?: string | null;
   /** What is owed here. `qty` is kept as an alias of it. */
   qty: string;
   qty_demand?: string | null;
@@ -2045,6 +2057,8 @@ export interface BoardCommitPreview {
  */
 export interface PlanningBoard {
   granularity: BoardGranularity;
+  /** DEALER-PLANNING R3: selected orders left out because they are not admitted, and why. */
+  unplanned_orders?: { so_number: string; reason: string }[];
   /** Which policy produced the ranking on show. Always stated (13.5). */
   policy: BoardPolicy;
   /** The date the board was built against, so `is_past` is reproducible in a test. */

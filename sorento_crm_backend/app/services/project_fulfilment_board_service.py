@@ -1622,7 +1622,8 @@ class FulfilmentBoardService:
             .all()
         )
         return [
-            {"so_number": number, "reason": why_not_admitted(klass)} for number, klass in records
+            {"so_number": number, "reason": why_not_admitted(number, klass)}
+            for number, klass in records
         ]
 
     def _demand_rows(

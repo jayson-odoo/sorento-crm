@@ -349,7 +349,7 @@ class ProjectSOAdoptionService:
         if admitted is None:
             raise AppException(
                 409,
-                f"Sales order {core.so_number}: {why_not_admitted(core.demand_class)}",
+                why_not_admitted(core.so_number, core.demand_class),
                 code=(
                     "sales_order_not_project_class"
                     if core.demand_class

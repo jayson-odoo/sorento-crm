@@ -2,15 +2,15 @@
  * DEALER-PLANNING PR 2, R12: the stock pop-up on a line at a pool states figures that agree
  * with the suggestion, for both classes. Today a line's own pool row says "Available for
  * Project 30" while the Site pool subtotal under it, re-derived from the pool's net, says a
- * smaller figure, with nothing explaining the gap. The rows carry what the walk obeyed
- * (`available_for_project`, the line's own demand already added back), so the subtotal of a
- * section whose rows state it must print the same figure, and a row and its subtotal can no
- * longer disagree.
+ * smaller figure, with nothing explaining the gap.
  *
- * Derivation: one pool row, on hand 30 and nothing owed but the line's own 15, so the walk's
- * figure for the line is 30 (its 15 added back to the true net of 15). The subtotal of a
- * single row is that row's figure. Written test-first; the subtotal still shows the share of
- * the NET (7) today.
+ * Captain's ruling, 1 Nov 2026: on a line STANDING ON ITS OWN POOL the own row and the subtotal
+ * agree and follow the class: a project-class line shows the share, a retail line at its own
+ * location shows Available. Everywhere else AC-2.6b stands (`CellStockTable.test.tsx`).
+ *
+ * Derivation: on hand 30, nothing owed but the line's own 15. The server states the walk's
+ * figure on the row it stands on and on the subtotal: a project line's share is 15, a retail
+ * line's Available is 30.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -37,14 +37,15 @@ function ownPool(over: Partial<BoardCellLocation> = {}): BoardCellLocation {
     qty_on_hand: '30',
     qty_reserved: '0',
     qty_free: '30',
-    so_qty: '15',
+    so_qty: '0',
     spo_qty: '0',
-    available_qty: '15',
+    available_qty: '30',
     incoming: [],
-    where: 'site_pool',
-    net: '15',
+    // A line at its own pool reads that pool's row as `own`.
+    where: 'own',
+    net: '30',
     net_of: 'pools',
-    available_for_project: '30',
+    stands_on_pool: true,
     ...over,
   } as BoardCellLocation;
 }
@@ -58,20 +59,59 @@ function renderTable(rows: BoardCellLocation[]) {
   );
 }
 
-describe('R12: a line at its own pool reads one set of figures', () => {
-  it('the pool subtotal states the same Available for Project as the row above it', () => {
-    renderTable([ownPool()]);
+function ownRowFigure() {
+  const row = screen.getAllByRole('row').find((entry) => entry.textContent?.includes('BRW'));
+  return row?.textContent ?? '';
+}
 
-    expect(screen.getByRole('table').textContent).toContain('30');
-    expect(screen.getByTestId('stock-subtotal-available-for-project-pools').textContent).toBe('30');
+describe('R12: a line at its own pool reads one set of figures', () => {
+  it('a project-class line: the row and the subtotal state the share', () => {
+    renderTable([ownPool({ available_for_project: '15', pool_subtotal_for_project: '15' })]);
+
+    expect(ownRowFigure()).toContain('15');
+    expect(screen.getByTestId('stock-subtotal-available-for-project-pools').textContent).toBe('15');
+    expect(screen.getByRole('columnheader', { name: 'Available for Project' })).toBeTruthy();
   });
 
-  it('a pool whose rows state different figures sums them in its subtotal', () => {
+  it('a retail line at its own location: the row and the subtotal state Available', () => {
     renderTable([
-      ownPool(),
-      ownPool({ location: 'MWH', warehouse_id: 'wh-mwh', available_for_project: '10' }),
+      ownPool({
+        available_for_project: '30',
+        pool_subtotal_for_project: '30',
+        own_pool_no_share: true,
+      }),
+    ]);
+
+    expect(ownRowFigure()).toContain('30');
+    expect(screen.getByTestId('stock-subtotal-available-for-project-pools').textContent).toBe('30');
+    expect(screen.getByRole('columnheader', { name: 'Available for this line' })).toBeTruthy();
+  });
+
+  it('another pool beside the own one adds what the server states for the pools', () => {
+    renderTable([
+      ownPool({ available_for_project: '30', pool_subtotal_for_project: '40' }),
+      ownPool({
+        location: 'MWH',
+        warehouse_id: 'wh-mwh',
+        where: 'site_pool',
+        stands_on_pool: false,
+        available_for_project: '10',
+      }),
     ]);
 
     expect(screen.getByTestId('stock-subtotal-available-for-project-pools').textContent).toBe('40');
+  });
+
+  it('a line not standing on a pool keeps AC-2.6b: the subtotal is the share of the net', () => {
+    renderTable([
+      ownPool({
+        where: 'site_pool',
+        stands_on_pool: false,
+        net: '50',
+        available_for_project: '50',
+      }),
+    ]);
+
+    expect(screen.getByTestId('stock-subtotal-available-for-project-pools').textContent).toBe('25');
   });
 });

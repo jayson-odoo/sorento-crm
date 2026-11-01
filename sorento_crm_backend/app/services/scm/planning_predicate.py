@@ -63,13 +63,6 @@ from app.services.scm.pool_predicate import is_site_pool, site_pool_clause
 #: with it, and two spellings would read as two different rules.
 OUTSIDE_FULFILMENT_PLANNING = "Outside fulfilment planning"
 
-#: Why an order is not admitted (`why_not_admitted`). One spelling per reason, because adoption
-#: refuses with it and the board's empty state prints it.
-NO_CLASS_REASON = "This sales order has no class set, so it is not planned here."
-NO_DEALER_LINE_REASON = (
-    "This dealer sales order has no line at a dealer location, so it is not planned here."
-)
-
 
 def fulfilment_planning_predicate(model: Optional[Any] = None):
     """The same rule as an ORM clause, for a caller writing a SQLAlchemy query.
@@ -178,14 +171,18 @@ def admitted_to_planning():
     )
 
 
-def why_not_admitted(demand_class: Optional[str]) -> str:
-    """The true reason for an order `admitted_to_planning` left out, given its class."""
-    return NO_DEALER_LINE_REASON if demand_class else NO_CLASS_REASON
+def why_not_admitted(so_number: Optional[str], demand_class: Optional[str]) -> str:
+    """The true reason for an order `admitted_to_planning` left out. One sentence per reason,
+    because adoption refuses with it and the board's empty state prints it."""
+    if demand_class:
+        return (
+            f"Sales order {so_number} is a dealer order with no line at a dealer location, so "
+            "it is not planned here."
+        )
+    return f"Sales order {so_number} has no class set, so it is not planned here."
 
 
 __all__ = [
-    "NO_CLASS_REASON",
-    "NO_DEALER_LINE_REASON",
     "OUTSIDE_FULFILMENT_PLANNING",
     "PLANNED_AT_OWN_BIN_DOC_TYPES",
     "admitted_to_planning",
