@@ -69,7 +69,8 @@ section 3). Example: shared-service box (`witness-ss`) to a Hetzner EU VPS
 1. New box: WireGuard peer added on it, on node A and node B (the old witness stays for now);
    `docker-user.nft` loaded.
 2. Certs, minted OFFLINE with the private CA (`ca.key` never on a box): `peer` and `server`
-   with the new `<NEW_WITNESS_WG_IP>` in the SAN, plus `healthcheck`. Copy to `/etc/etcd/pki`.
+   with the new `<NEW_WITNESS_WG_IP>` AND `IP:127.0.0.1` in the server cert's SAN (local `etcdctl`
+   and `ha-checks.sh` use `https://127.0.0.1:2379`), plus `healthcheck`. Copy to `/etc/etcd/pki`.
 3. On any current member:
    `etcdctl member add witness-hz --learner --peer-urls=https://<NEW_WITNESS_WG_IP>:2380`
    It prints the `ETCD_INITIAL_CLUSTER` line for the new member.
