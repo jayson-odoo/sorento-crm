@@ -13,8 +13,10 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { LayoutGrid, PackageSearch, Play } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConsignmentBadge } from '@/app/(protected)/scm/lib/docType';
+import { demandClassBadge } from '@/app/(protected)/scm/lib/demandClass';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -78,6 +80,14 @@ const SORTABLE_COLUMNS = new Set<string>(FULFILMENT_PLANNING_SORT_FIELDS);
  */
 const DEFAULT_SORTING: SortingState = [{ id: 'earliest_required_date', desc: false }];
 
+/** The list opens on Project, the screen as it has always read (DEALER-PLANNING R6). */
+const DEFAULT_DEMAND_CLASS = ['project'];
+const DEMAND_CLASS_OPTIONS = [
+  { value: 'project', label: 'Project' },
+  { value: 'retail', label: 'Retail' },
+  { value: 'other', label: 'Other' },
+];
+
 const REVIEW_STATE_OPTIONS = [
   { value: 'not_started', label: REVIEW_STATE_LABELS.not_started },
   {
@@ -111,6 +121,7 @@ export function FulfilmentPlanningClient() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [reviewState, setReviewState] = React.useState('');
+  const [demandClass, setDemandClass] = React.useState<string[]>(DEFAULT_DEMAND_CLASS);
   const {
     value: search,
     setValue: setSearch,
@@ -199,7 +210,7 @@ export function FulfilmentPlanningClient() {
   // the old set is a page of nothing in the new one.
   React.useEffect(() => {
     setPagination((current) => ({ ...current, pageIndex: 0 }));
-  }, [debounced, reviewState, sorting]);
+  }, [debounced, reviewState, demandClass, sorting]);
 
   // The sort travels in the URL beside whatever else is there, so the view can be linked and
   // reloaded. `replace`, not `push`: sorting a list is not a place in history to go back to.
@@ -222,6 +233,7 @@ export function FulfilmentPlanningClient() {
     limit: pagination.pageSize,
     query: debounced || undefined,
     review_state: reviewState || undefined,
+    demand_class: demandClass,
     sort: sorting[0]?.id,
     dir: sorting[0] ? (sorting[0].desc ? 'desc' : 'asc') : undefined,
   });
@@ -398,6 +410,22 @@ export function FulfilmentPlanningClient() {
         size: 220,
         minSize: 150,
         meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-28" /> },
+      },
+      {
+        // Not sortable: the server's sort is a closed set, and this is a filter's column.
+        id: 'demand_class',
+        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        cell: ({ row }) => {
+          const cls = demandClassBadge(row.original.demand_class);
+          return (
+            <Badge variant={cls.variant} appearance="light" size="md">
+              {cls.label}
+            </Badge>
+          );
+        },
+        size: 110,
+        minSize: 90,
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-14" /> },
       },
       {
         id: 'earliest_required_date',
@@ -607,7 +635,10 @@ export function FulfilmentPlanningClient() {
     columnResizeMode: 'onChange',
   });
 
-  const filtersActive = reviewState ? 1 : 0;
+  const typeFilterMoved =
+    demandClass.length !== DEFAULT_DEMAND_CLASS.length ||
+    demandClass.some((value) => !DEFAULT_DEMAND_CLASS.includes(value));
+  const filtersActive = (reviewState ? 1 : 0) + (demandClass.length > 0 && typeFilterMoved ? 1 : 0);
 
   /**
    * Every sales-order number this session has seen, by row key.
@@ -699,7 +730,7 @@ export function FulfilmentPlanningClient() {
           <span className="inline-flex flex-wrap items-center gap-2">
             Fulfilment planning
             <InfoHint label="About fulfilment planning">
-              Outstanding project sales orders, earliest delivery date first.
+              Outstanding sales orders, earliest delivery date first.
             </InfoHint>
           </span>
         }
@@ -754,7 +785,8 @@ export function FulfilmentPlanningClient() {
         // so that a column's id, its sort key and the wire field are one word. A config saved
         // against the old ids would order the grid by names that no longer exist, so everyone
         // takes the new defaults once rather than finding two columns adrift.
-        listingKey="projects.projects.view::project-fulfilment-planning-v3"
+        // v4: a Type column joined the set, for the same reason.
+        listingKey="projects.projects.view::project-fulfilment-planning-v4"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         // A not-started row has no planning record to open, and clicking a row must never
         // be the thing that writes one: Start planning is an explicit press.
@@ -788,15 +820,28 @@ export function FulfilmentPlanningClient() {
                 active: filtersActive > 0,
                 activeCount: filtersActive,
                 content: (
-                  <div className="space-y-1.5">
-                    <p className="text-sm font-medium">Review state</p>
-                    <SearchableMultiSelect
-                      value={splitMulti(reviewState)}
-                      onChange={(value) => setReviewState(joinMulti(value))}
-                      options={REVIEW_STATE_OPTIONS}
-                      placeholder="Any review state"
-                      clearable
-                    />
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <p className="text-sm font-medium">Review state</p>
+                      <SearchableMultiSelect
+                        value={splitMulti(reviewState)}
+                        onChange={(value) => setReviewState(joinMulti(value))}
+                        options={REVIEW_STATE_OPTIONS}
+                        placeholder="Any review state"
+                        clearable
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-sm font-medium">Type</p>
+                      <SearchableMultiSelect
+                        value={demandClass}
+                        onChange={setDemandClass}
+                        options={DEMAND_CLASS_OPTIONS}
+                        // Nothing picked reads as Project on the server, so the box says so.
+                        placeholder="Project"
+                        clearable
+                      />
+                    </div>
                   </div>
                 ),
               }}

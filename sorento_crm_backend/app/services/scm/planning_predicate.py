@@ -36,6 +36,20 @@ planning, netting and Stock Debt reads of every project line. So the VERDICT
 `pool_predicate.is_site_pool`, and the flag and `in_fulfilment_planning` do not move: what a line
 may be planned AT and what the engine reads as planning supply are two questions.
 
+**Which ORDERS are admitted at all (DEALER-PLANNING PR 2, owner 1 Nov 2026).** Project class as
+ever (open or closed, the 14 Sep ruling), or an order that weighs as retail
+(`demand_class.planning_class`, so `other` too) that is OPEN or CLOSED with at least one line at
+an active dealer-segment bin, or that ALREADY HAS a planning record. The same rule as a project
+order, no filter and no date window (owner ruling, 1 Nov 2026): a fully delivered order is
+admitted and its delivered quantity stays plannable. Cancelled stays out unless it has a
+planning record: the status test is what keeps a cancelled order from reading plannable. One
+predicate, `admitted_to_planning`, so the
+board, line drafts, adoption and the worklist cannot disagree about it. It is a HEADER test: every
+line of an admitted order is on the board, so its line numbers stay the ones a draft key names,
+and a retail line at a project bin is on screen with the verdict rather than missing
+(`outside_fulfilment_planning`). `adopt_for_migration` and the OI import stay project only, on
+purpose: their population is history measured and accepted as project.
+
 **Site pools are OFF, and that is not a bug.** A pool is reached through
 `pool_warehouse_id`, never as an ownership group, so the pool rung reads its own set
 (`project_supply_service._site_pool_warehouses`) and is unaffected by this predicate.
@@ -46,7 +60,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from app.services.scm.pool_predicate import is_site_pool
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS, OTHER, PROJECT, planning_class
+from app.services.scm.pool_predicate import is_site_pool, site_pool_clause
 
 #: The verdict a line at a flagged-off bin carries, on the board and at confirm
 #: (AC-S1-6). One string, shared, because the board renders it and the confirm refuses
@@ -102,12 +117,15 @@ def planned_at_own_bin(warehouse: Any, doc_type: Optional[str]) -> bool:
     )
 
 
-def outside_fulfilment_planning(warehouse: Any, doc_type: Optional[str] = None) -> bool:
+def outside_fulfilment_planning(
+    warehouse: Any, doc_type: Optional[str] = None, demand_class: Optional[str] = None
+) -> bool:
     """Whether this bin earns the `OUTSIDE_FULFILMENT_PLANNING` verdict: ACTIVE, flag off.
 
     A line whose `doc_type` is in `PLANNED_AT_OWN_BIN_DOC_TYPES` never earns it, and neither
     does a line at a dealer-segment bin (see the module docstring). What is left is a project
-    bin somebody flagged off.
+    bin somebody flagged off, and a RETAIL order's line at any project bin, flag or no flag:
+    retail is admitted for its dealer locations, and a project bin holds a project's stock.
 
     Deliberately not `not in_fulfilment_planning(...)`. An INACTIVE warehouse was already
     outside everything the ladder reads before this flag existed, and it keeps the verdict
@@ -118,16 +136,77 @@ def outside_fulfilment_planning(warehouse: Any, doc_type: Optional[str] = None) 
         return False
     if is_site_pool(getattr(warehouse, "segment", None)):
         return False
+    if planning_class(demand_class) == DEFAULT_DEMAND_CLASS:
+        return True
     return bool(getattr(warehouse, "is_active", False)) and not bool(
         getattr(warehouse, "fulfilment_planning", False)
+    )
+
+
+def admitted_to_planning():
+    """Whether a sales order is planning work at all, as a clause over `SalesOrder`.
+
+    A correlated EXISTS over ALIASES: the callers' own queries have `sales_order_lines` in
+    their FROM, and a sub-select over the same unaliased table would correlate to the row being
+    aggregated and become a per-line filter. ANY line counts, a cancelled one too: the board's
+    cancelled-line reads exist for an order with no live line left, and an order must not fall
+    off them because the book cancelled its last dealer line. The planning record is the same
+    kind of EXISTS, in this one clause, so a read of many orders stays one query.
+    """
+    from sqlalchemy import and_, exists, or_
+    from sqlalchemy.orm import aliased
+
+    from app.models.inventory import Warehouse
+    from app.models.order import SalesOrder, SalesOrderLine
+    from app.models.project_so import ProjectSalesOrder
+
+    line = aliased(SalesOrderLine)
+    mirror = aliased(ProjectSalesOrder)
+    location = aliased(Warehouse)
+    at_dealer_location = (
+        exists()
+        .where(
+            line.sales_order_id == SalesOrder.id,
+            location.id == line.warehouse_id,
+            location.is_active.is_(True),
+            site_pool_clause(location),
+        )
+        .correlate(SalesOrder)
+    )
+    planned = exists().where(mirror.so_id == SalesOrder.id).correlate(SalesOrder)
+    return or_(
+        SalesOrder.demand_class == PROJECT,
+        and_(
+            SalesOrder.demand_class.in_((DEFAULT_DEMAND_CLASS, OTHER)),
+            or_(and_(SalesOrder.status.in_(("open", "closed")), at_dealer_location), planned),
+        ),
+    )
+
+
+def why_not_admitted(
+    so_number: Optional[str], demand_class: Optional[str], status: Optional[str] = "open"
+) -> str:
+    """The true reason for an order `admitted_to_planning` left out. One sentence per reason,
+    because adoption refuses with it and the board's empty state prints it."""
+    if not demand_class:
+        return f"Sales order {so_number} has no class set, so it is not planned here."
+    if status not in ("open", "closed"):
+        return (
+            f"Sales order {so_number} is {status or 'in no state'}, so there is nothing to plan."
+        )
+    return (
+        f"Sales order {so_number} is a dealer order with no line at an active dealer location, so "
+        "it is not planned here."
     )
 
 
 __all__ = [
     "OUTSIDE_FULFILMENT_PLANNING",
     "PLANNED_AT_OWN_BIN_DOC_TYPES",
+    "admitted_to_planning",
     "fulfilment_planning_predicate",
     "in_fulfilment_planning",
     "planned_at_own_bin",
     "outside_fulfilment_planning",
+    "why_not_admitted",
 ]
