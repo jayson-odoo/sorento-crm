@@ -45,6 +45,10 @@ EXPECTED_LABELS = [
     "take back a purchase request action",
     "record a suggestion or wish for what the system should have or do, an idea or a feature request",
     "change one of your ideas",
+    # AGENTIC-UNIFY PR 4: the three writes.
+    "close a complaint",
+    "cancel an order",
+    "raise an IT support ticket",
     "your customer asks",
     "recent changes",
     "your sales opportunities",
@@ -248,7 +252,8 @@ def test_AC_R1_7_the_list_follows_what_the_user_may_use(db, jev):
     route(db, wide["respond_id"])
     assert len(jev.calls) == 2
     first, second = (c["criteria"]["agent"]["tools"] for c in jev.calls)
-    assert first == ["recent changes"], "the one tool that needs no permission"
+    # The IT support ticket needs no slug either (AGENTIC-UNIFY PR 4).
+    assert first == ["raise an IT support ticket", "recent changes"], "the tools that need no permission"
     assert second and set(first) < set(second) < set(router_labels())
     assert "change a customer ask" in second
 

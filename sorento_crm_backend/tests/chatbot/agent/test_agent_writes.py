@@ -278,6 +278,8 @@ def test_01_the_registry_holds_exactly_the_registered_writes_and_the_in_process_
         UPDATE, "crm_opportunity_create", "crm_opportunity_update", "crm_contact_access_update",
         "crm_purchase_request_decide", "crm_purchase_request_action_undo",
         "crm_idea_create", "crm_idea_update",
+        # AGENTIC-UNIFY PR 4.
+        "crm_complaint_close", "crm_order_cancel", "crm_it_support_ticket_create",
     }
     assert {LIST, "crm_agent_actions_recent"} <= set(writes.USER_READS)
     definition = writes.WRITES[UPDATE]
@@ -294,8 +296,10 @@ def test_01_a_write_tool_is_exposed_only_when_the_linked_user_holds_its_slug(db)
     can = make_world(db, slugs=(VIEW, EDIT))
     cannot = make_world(db, slugs=(VIEW,))
 
-    assert [w.name for w in writes.permitted_writes(db, build_context(db, can.respond_id))] == [UPDATE]
-    assert writes.permitted_writes(db, build_context(db, cannot.respond_id)) == []
+    # The IT support ticket needs no slug (AGENTIC-UNIFY PR 4), so every linked user is offered it.
+    ticket = "crm_it_support_ticket_create"
+    assert [w.name for w in writes.permitted_writes(db, build_context(db, can.respond_id))] == [UPDATE, ticket]
+    assert [w.name for w in writes.permitted_writes(db, build_context(db, cannot.respond_id))] == [ticket]
 
     _, with_edit = run_turn(db, can, [answer_("Hello.")])
     _, without_edit = run_turn(db, cannot, [answer_("Hello.")])
