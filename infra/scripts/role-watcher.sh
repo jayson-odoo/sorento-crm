@@ -6,12 +6,20 @@
 # Every INTERVAL seconds it asks the LOCAL Patroni (GET /primary: 200 only on the leader).
 # After CONFIRM readings in a row:
 #   leader:     start the worker services if fewer than all are running (--no-deps, so the
-#               Patroni `db` and pgbouncer are never recreated by this script);
+#               Patroni `db` and pgbouncer are never recreated by this script, and
+#               --no-recreate, so a running worker is never touched). They start on the image
+#               tag the last HA deploy recorded in $PROJECT_DIR/.ha-image-tag; with none
+#               recorded nothing is started (a replica still stops).
 #   not leader: stop them, every tick (stop is idempotent, so an unreadable `ps` or a worker
 #               stuck restarting can never leave one running on a replica).
 # Patroni unreachable counts as "not leader": a leader whose Patroni died loses its key anyway.
 #
+# While the deploy's exclusive lock (DEPLOY_LOCK_PATH, same file as scripts/blue_green_deploy.sh;
+# it must match the deploy's) is held, or its path is unsafe, the START is skipped so it never races
+# a deploy's worker recreate; a replica still stops every tick.
+#
 # Env (all optional): PATRONI_URL, INTERVAL, CONFIRM, SERVICES, COMPOSE_FILES, PROJECT_DIR,
+# DEPLOY_LOCK_PATH,
 # MAX_TICKS (tests: stop after N ticks; 0 = forever).
 set -uo pipefail
 
@@ -22,6 +30,7 @@ SERVICES="${SERVICES:-worker worker_fast}"
 COMPOSE_FILES="${COMPOSE_FILES:--f docker-compose.yml -f compose.ha.yml}"
 PROJECT_DIR="${PROJECT_DIR:-.}"
 MAX_TICKS="${MAX_TICKS:-0}"
+DEPLOY_LOCK_PATH="${DEPLOY_LOCK_PATH:-/opt/sorento-crm2/.deploy.lock}"
 
 cd "$PROJECT_DIR" || { echo "role-watcher: cannot cd to $PROJECT_DIR" >&2; exit 1; }
 
@@ -30,6 +39,43 @@ log() { echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) role-watcher: $*"; }
 compose() {
   # shellcheck disable=SC2086
   docker compose $COMPOSE_FILES --profile promoted "$@"
+}
+
+# Prints nothing when starting workers is allowed, else the reason (one line). Never opens a
+# path that is not a plain file in a folder only its owner can write (a FIFO would hang, a
+# symlink would open anything), the same rules as scripts/ops/restore-test.sh. No lock file
+# yet: nothing to wait for. A shared holder (the weekly restore test) does not block; only the
+# deploy's exclusive lock does.
+# Relies on `flock` from util-linux (always installed on the Ubuntu nodes).
+lock_block() {
+  local dir
+  [ -e "$DEPLOY_LOCK_PATH" ] || [ -L "$DEPLOY_LOCK_PATH" ] || return 0
+  dir=$(dirname "$DEPLOY_LOCK_PATH")
+  if [ -L "$dir" ] || [ -n "$(find "$dir" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]; then
+    echo "deploy lock path is unsafe (folder is a symlink or writable by group or others)"; return 0
+  fi
+  if [ -L "$DEPLOY_LOCK_PATH" ] || [ ! -f "$DEPLOY_LOCK_PATH" ]; then
+    echo "deploy lock path is unsafe (symlink or not a regular file)"; return 0
+  fi
+  if [ -n "$(find "$DEPLOY_LOCK_PATH" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]; then
+    echo "deploy lock path is unsafe (file is writable by group or others)"; return 0
+  fi
+  ( exec 8<"$DEPLOY_LOCK_PATH" && flock -s -n 8 ) 2>/dev/null && return 0
+  echo "deploy lock is held by a deploy, skipping the start this tick"
+}
+
+# The recorded image tag on stdout, or nothing. Returns 1 (and prints nothing) when the file is
+# unsafe or not a 40 hex SHA; 2 when there is none. Never logs the file's content.
+read_tag() {
+  local f="$PWD/.ha-image-tag" raw
+  [ -e "$f" ] || [ -L "$f" ] || return 2
+  if [ -L "$f" ] || [ ! -f "$f" ] || [ -n "$(find "$f" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]; then
+    return 1
+  fi
+  raw=$(head -c 64 "$f" 2>/dev/null || true)
+  raw=${raw%%$'\n'*}
+  [[ "$raw" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s' "$raw"
 }
 
 is_leader() {
@@ -58,9 +104,22 @@ while :; do
     running=$(running_count)
     if [ "$role" = leader ]; then
       if [ "$running" -lt "$want_count" ]; then
-        log "local Postgres leads: starting $SERVICES (running: $running)"
-        # shellcheck disable=SC2086
-        compose up -d --no-deps $SERVICES || log "start failed; retrying next tick"
+        blocked=$(lock_block)
+        if [ -z "$blocked" ] && { [ -L "$PWD" ] || [ -n "$(find "$PWD" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]; }; then
+          blocked="project directory $PWD is unsafe (symlink or writable by group or others), not starting $SERVICES"
+        fi
+        tag=$(read_tag); tag_rc=$?
+        if [ -n "$blocked" ]; then
+          log "$blocked"
+        elif [ "$tag_rc" = 2 ]; then
+          log "local Postgres leads but no image tag is recorded in $PWD/.ha-image-tag: not starting $SERVICES"
+        elif [ "$tag_rc" != 0 ]; then
+          log "local Postgres leads but the image tag file is invalid (not a plain file, not writable by group or others, holding a 40 hex SHA): not starting $SERVICES"
+        else
+          log "local Postgres leads: starting $SERVICES on $tag (running: $running)"
+          # shellcheck disable=SC2086
+          IMAGE_TAG="$tag" compose up -d --no-deps --no-recreate $SERVICES || log "start failed; retrying next tick"
+        fi
       fi
     else
       [ "$running" != "0" ] && log "local Postgres does not lead: stopping $SERVICES (running: $running)"

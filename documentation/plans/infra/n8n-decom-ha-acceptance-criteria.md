@@ -40,6 +40,11 @@ lane named in the plan copies the criteria it owns into its own UAC and adds its
 13. Adopting prod Postgres into Patroni takes one window of at most 2 minutes of downtime, and the
     database afterwards is the same database (row counts and the alembic head match before/after).
 
+13b. (H4b) The first release after H4 deploys cleanly on the Patroni node: the HA compose file is loaded, the
+    pre-migrate snapshot and alembic preflight work, workers start on the released image, and the
+    role watcher never fights the deploy. A deploy on a box whose HA setup is half-configured stops at
+    the preflight with a message naming what is missing, before it changes anything.
+
 ## HA, phase B: the freed box is the standby
 
 14. Node B runs the same CRM stack as node A and nothing else; it serves no traffic while its
