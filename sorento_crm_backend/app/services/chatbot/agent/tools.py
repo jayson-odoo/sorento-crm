@@ -221,6 +221,7 @@ TOOL_LABELS: dict[str, str] = {
     "crm_system_tool_capabilities_summary": "what the assistant can do",
     "crm_complaint_close": "close a complaint",
     "crm_order_cancel": "cancel an order",
+    "crm_it_support_ticket_create": "raise an IT support ticket",
     "crm_complaints_find": "finding a complaint by its number",
     "crm_projects_find": "finding a project by its code",
     "crm_customer_asks_list": "your customer asks",

@@ -2507,3 +2507,87 @@ WRITES[CANCEL_ORDER] = WriteDef(
     changes=_order_changes,
     execute_takes_before=True,
 )
+
+
+# ------------------------------------------------------------------ PR 4 IT support ticket
+
+CREATE_TICKET = "crm_it_support_ticket_create"
+
+
+def _ticket_read_before(db, user: dict, args: dict) -> dict:
+    from app.services.error_handler import handle_validation_error
+
+    if not _line(args["title"]):
+        raise handle_validation_error("`title` is required.")
+    return {}
+
+
+def _ticket_summary(args: dict, before: dict) -> str:
+    text = f"Create a draft IT support ticket {_quoted(args['title'])}"
+    extras = [f"priority {args['priority']}" if args.get("priority") else "", f"category {args['category']}" if args.get("category") else ""]
+    extras = [e for e in extras if e]
+    if extras:
+        text += f" ({', '.join(extras)})"
+    if _line(args.get("description")):
+        text += f", described as {_quoted(args['description'])}"
+    return text + ". You can review it before it is submitted."
+
+
+def _ticket_execute(db, user: dict, args: dict) -> dict:
+    from html import escape
+
+    from app.schemas.tickets import ITSupportTicketCreateRequest
+    from app.services.ticket_intake_service import TicketIntakeService
+
+    description = _line(args.get("description"))
+    principal = staff_principal.current()
+    payload = ITSupportTicketCreateRequest(
+        # A title is always given (the schema requires it), so the server's LLM draft never runs.
+        title=_line(args["title"]),
+        priority=args.get("priority"),
+        category=args.get("category"),
+        description_text=description or None,
+        description_html=f"<p>{escape(description)}</p>" if description else None,
+        source_channel="ai_assistant",
+        actor_user_id=str(user["id"]),
+        source_conversation_id=principal.conversation_id if principal is not None else None,
+    )
+    out = TicketIntakeService(db).submit(payload, actor_user_id_fallback=str(user["id"]))
+    return {
+        "id": out.ticket_id,
+        "after": {"ticket_number": out.ticket_number},
+        # Put in the reply by code (`note_in_reply`): a link the model must not invent.
+        "note": f"The draft ticket {out.ticket_number} is ready to review and submit: {out.draft_url}",
+    }
+
+
+WRITES[CREATE_TICKET] = WriteDef(
+    name=CREATE_TICKET,
+    user_permission="",
+    schema={
+        "type": "function",
+        "function": {
+            "name": CREATE_TICKET,
+            "description": (
+                "Propose raising one IT support ticket for the user, as a draft they review before it is "
+                "submitted. Nothing is created until the user confirms. Give a short title from the user's "
+                "words; description, priority and category only when the user said them. Call once per ticket."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "maxLength": 200},
+                    "description": {"type": "string", "maxLength": MAX_NOTE_CHARS},
+                    "priority": {"type": "string", "enum": ["low", "medium", "high", "urgent"]},
+                    "category": {"type": "string", "enum": ["bug", "feature", "question", "other"]},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    read_before=_ticket_read_before,
+    summary=_ticket_summary,
+    execute=_ticket_execute,
+    record_key="",
+    note_in_reply=True,
+)
