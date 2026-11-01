@@ -382,9 +382,22 @@ def _ledger_with_found_id(name, args, pid):
 @pytest.mark.parametrize("name,args", PLAIN_READS[:3], ids=[r[0] for r in PLAIN_READS[:3]])
 def test_an_empty_read_with_an_id_argument_does_not_back_a_not_found_claim(name, args):
     pid = str(uuid.uuid4())
+    # An id this turn resolved cleanly: the empty read is a real "none" for it.
     ledger = _ledger_with_found_id(name, {**args, "customer_ids": [pid]}, pid)
     _, bad = agent_loop.verify_answer(_claim("complaints for Acme"), ledger, "complaints for Acme")
-    assert bad == ["complaints for Acme"], "an empty read narrowed by an id says nothing about the whole"
+    assert bad == [], "an empty read for an id resolved cleanly is a real none"
+    # An id the turn never resolved (or only found ambiguous) backs nothing.
+    other = str(uuid.uuid4())
+    ledger = _ledger_with_found_id(name, {**args, "customer_ids": [other]}, pid)
+    _, bad = agent_loop.verify_answer(_claim("complaints for Acme"), ledger, "complaints for Acme")
+    assert bad == ["complaints for Acme"], "an empty read narrowed by an id the turn did not resolve backs nothing"
+    ambiguous = {
+        "r1": {"name": agent_tools.RESOLVE, "status": "ok", "args": {}, "data": {
+            "results": [{"term": "ACME", "status": "ambiguous", "matches": [{"id": pid}, {"id": other}]}]}},
+        "f1": {"name": name, "status": "empty", "args": {**args, "customer_ids": [pid]}, "data": None},
+    }
+    _, bad = agent_loop.verify_answer(_claim("complaints for Acme"), ambiguous, "complaints for Acme")
+    assert bad == ["complaints for Acme"], "an ambiguous resolve must stay unbacked"
 
 
 @pytest.mark.parametrize("name,args", PLAIN_READS[:3], ids=[r[0] for r in PLAIN_READS[:3]])
