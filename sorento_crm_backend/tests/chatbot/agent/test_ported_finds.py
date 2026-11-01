@@ -1,4 +1,7 @@
-"""AGENTIC-UNIFY PR 4, slice 1 (red): `crm_complaints_find` and `crm_projects_find` (AC-5, AC-7, AC-8).
+"""AGENTIC-UNIFY PR 4: `crm_complaints_find` and `crm_projects_find` (AC-5, AC-8).
+
+Panel only (AC-0, crew ruling 2 Nov): every run below is inside `panel_turn`. The console operator `combine` and
+the brand refusal are gone with that ruling; their tests were removed.
 
 Two in-process `UserRead`s in `writes.USER_READS`, run through `writes.run_user_read` as the user, on the real
 route functions and real role rows (blank Postgres schema, nothing patched). The catalog keeps its UUID-first rule,
@@ -9,7 +12,6 @@ the id must all be in the result, and the id must join `seen_ids`.
 """
 from __future__ import annotations
 
-import dataclasses
 import json
 import uuid
 from datetime import date
@@ -17,7 +19,6 @@ from datetime import date
 import pytest
 
 import app.main  # noqa: F401  register every model and the app's listeners
-from app.models.base import set_brand_scope
 from app.models.company import UserCompany
 from app.models.complaints import Complaint
 from app.models.projects import Project
@@ -124,7 +125,8 @@ class Scene:
 def find(db, ctx, name: str, query: str, seen: set[str] | None = None):
     assert name in writes.USER_READS, f"{name} is not in writes.USER_READS"
     seen = seen if seen is not None else set()
-    return writes.run_user_read(db, ctx, name, {"query": query}, seen)
+    with panel_turn(ctx.user_id):
+        return writes.run_user_read(db, ctx, name, {"query": query}, seen)
 
 
 def blob(out) -> str:
@@ -176,17 +178,12 @@ def test_AC5_a_view_holder_sees_every_row(db, name, view, own):
     assert s.key_a in blob(out) and s.key_b in blob(out)
 
 
-@pytest.mark.parametrize("panel", [True, False], ids=["panel_turn", "non_panel_turn"])
 @pytest.mark.parametrize("name,view,own", FAMILIES)
-def test_AC5_a_view_own_holder_sees_only_their_own_rows_on_every_kind_of_turn(db, name, view, own, panel):
-    """The finds run in process as the user, so own scope holds on a console or WhatsApp turn as well."""
+def test_AC5_a_view_own_holder_sees_only_their_own_rows_on_the_panel(db, name, view, own):
+    """The finds run in process as the user, so the screen's own scope holds."""
     s = Scene(db, name, view, own)
     ctx = make_ctx(s.owner_a)
-    if panel:
-        with panel_turn(s.owner_a):
-            out = find(db, ctx, name, s.tag)
-    else:
-        out = find(db, ctx, name, s.tag)
+    out = find(db, ctx, name, s.tag)
     assert out.status == "ok", (out.status, out.message)
     text = blob(out)
     assert s.key_a in text
@@ -206,86 +203,97 @@ def test_AC5_no_slug_means_not_offered_and_refused(db, name, view, own):
     nobody = mk_user(db, UNRELATED)
     ctx = make_ctx(nobody)
     assert name in writes.USER_READS, f"{name} is not in writes.USER_READS"
-    assert name not in [r.name for r in writes.permitted_user_reads(db, ctx)]
-    out = writes.run_user_read(db, ctx, name, {"query": s.key_a}, set())
+    with panel_turn(nobody):
+        assert name not in [r.name for r in writes.permitted_user_reads(db, ctx)]
+    out = find(db, ctx, name, s.key_a)
     assert out.status == "denied", (out.status, out.message)
     assert s.key_a not in blob(out)
 
 
 @pytest.mark.parametrize("name,view,own", FAMILIES)
-def test_AC5_each_slug_alone_is_offered(db, name, view, own):
+def test_AC5_each_slug_alone_is_offered_on_the_panel(db, name, view, own):
     s = Scene(db, name, view, own)
     assert name in writes.USER_READS, f"{name} is not in writes.USER_READS"
     for user_id in (s.viewer, s.owner_a):
-        assert name in [r.name for r in writes.permitted_user_reads(db, make_ctx(user_id))]
+        with panel_turn(user_id):
+            assert name in [r.name for r in writes.permitted_user_reads(db, make_ctx(user_id))]
 
 
-# ------------------------------------------------------------------ a console operator
+# ------------------------------------------------------------------ approved projects only
 
 
-@pytest.mark.parametrize("name,view,own", FAMILIES)
-def test_AC5_with_an_operator_only_rows_both_may_see_are_shown(db, name, view, own):
-    s = Scene(db, name, view, own)
-    ctx = make_ctx(s.viewer, operator=s.owner_b)  # the operator may see only their own row
-    out = find(db, ctx, name, s.tag)
+def mk_registration(db, tag: str, n: int, *, owner: str, state: str) -> Project:
+    """A portal registration waiting for approval (or rejected): `approval_state` set, not yet a project."""
+    row = mk_project(db, tag, n, owner=owner)
+    row.approval_state = state
+    db.commit()
+    return row
+
+
+@pytest.mark.parametrize("state", ["pending", "rejected"])
+def test_AC5_projects_find_returns_no_unapproved_registration(db, state):
+    s = Scene(db, PROJECTS, P_VIEW, P_OWN)
+    reg = mk_registration(db, s.tag, 9, owner=s.owner_a, state=state)
+    out = find(db, make_ctx(s.viewer), PROJECTS, s.tag)
     assert out.status == "ok", (out.status, out.message)
     text = blob(out)
-    assert s.key_b in text
-    assert s.key_a not in text, "a row the operator may not see was shown"
+    assert s.key_a in text, "the approved project is missing"
+    assert reg.project_code not in text, f"a {state} registration was returned"
 
 
-@pytest.mark.parametrize("name,view,own", FAMILIES)
-def test_AC5_an_operator_holding_view_adds_no_narrowing(db, name, view, own):
-    s = Scene(db, name, view, own)
-    op = mk_user(db, view)
-    out = find(db, make_ctx(s.viewer, operator=op), name, s.tag)
+def test_AC5_projects_find_for_an_unapproved_registrations_exact_code_is_empty(db):
+    s = Scene(db, PROJECTS, P_VIEW, P_OWN)
+    reg = mk_registration(db, s.tag, 8, owner=s.owner_a, state="pending")
+    out = find(db, make_ctx(s.viewer), PROJECTS, reg.project_code)
+    assert out.status == "empty", (out.status, out.message)
+
+
+def test_AC5_projects_list_is_called_with_no_approval_argument_it_is_unchanged(db):
+    """The catalog's list already leaves registrations out on a machine read; the agent adds nothing to it."""
+    from tests.chatbot.agent._ported_reads_support import Recorder, dispatch
+
+    viewer = mk_user(db, P_VIEW)
+    rec = Recorder()
+    with panel_turn(viewer):
+        out = dispatch(db, make_ctx(viewer), "crm_projects_list", {}, rec=rec)
     assert out.status == "ok", (out.status, out.message)
-    assert s.key_a in blob(out) and s.key_b in blob(out)
+    sent = rec.calls[0][1]
+    assert not ({"approved_only", "approval_state"} & set(sent)), sent
 
 
-@pytest.mark.parametrize("name,view,own", FAMILIES)
-def test_AC5_an_operator_with_no_slug_is_refused(db, name, view, own):
-    s = Scene(db, name, view, own)
-    op = mk_user(db, UNRELATED)
-    assert name in writes.USER_READS, f"{name} is not in writes.USER_READS"
-    out = writes.run_user_read(db, make_ctx(s.viewer, operator=op), name, {"query": s.key_a}, set())
-    assert out.status == "denied", (out.status, out.message)
-    assert s.key_a not in blob(out)
+# ------------------------------------------------------------------ the not-found verifier
 
 
-# ------------------------------------------------------------------ a scope naming a brand
+def _ledger(name: str, status: str, query: str) -> dict:
+    return {"f1": {"name": name, "status": status, "args": {"query": query}, "data": None}}
 
 
-@pytest.fixture()
-def brand_scope(db):
-    def apply(scope):
-        set_brand_scope(db, scope)
+@pytest.mark.parametrize("name", [COMPLAINTS, PROJECTS])
+@pytest.mark.parametrize("what", ["CMP-0042", "complaint CMP-0042", "cmp-0042"])
+def test_AC5_an_empty_find_backs_a_not_found_claim_for_the_term_it_searched(name, what):
+    from app.services.chatbot.agent import loop
 
-    yield apply
-    set_brand_scope(db, None)
-
-
-@pytest.mark.parametrize("name,view,own", FAMILIES)
-def test_AC7_a_scope_naming_a_brand_refuses_the_find(db, name, view, own, brand_scope):
-    s = Scene(db, name, view, own)
-    scope = frozenset({str(uuid.uuid4())})
-    brand_scope(scope)
-    ctx = dataclasses.replace(make_ctx(s.viewer), brand_scope=scope)
-    assert name in writes.USER_READS, f"{name} is not in writes.USER_READS"
-    out = writes.run_user_read(db, ctx, name, {"query": s.key_a}, set())
-    assert out.status == "denied", (out.status, out.message)
-    assert s.key_a not in blob(out)
+    args = {"text": "I could not find it.", "not_found": [{"what": what, "call_id": "f1"}]}
+    bad_numbers, bad_not_found = loop.verify_answer(args, _ledger(name, "empty", "CMP-0042"), "is CMP-0042 there")
+    assert bad_not_found == [], f"an empty {name} for the same term did not back the claim: {bad_not_found}"
 
 
-@pytest.mark.parametrize("name,view,own", FAMILIES)
-def test_AC7_a_class_only_scope_does_not_refuse_the_find(db, name, view, own, brand_scope):
-    s = Scene(db, name, view, own)
-    scope = frozenset({"class:ZZTCLS"})
-    brand_scope(scope)
-    ctx = dataclasses.replace(make_ctx(s.viewer), brand_scope=scope)
-    assert name in writes.USER_READS, f"{name} is not in writes.USER_READS"
-    out = writes.run_user_read(db, ctx, name, {"query": s.key_a}, set())
-    assert out.status != "denied", (out.status, out.message)
+@pytest.mark.parametrize("name", [COMPLAINTS, PROJECTS])
+def test_AC5_an_empty_find_does_not_back_a_not_found_claim_for_a_different_term(name):
+    from app.services.chatbot.agent import loop
+
+    args = {"text": "No.", "not_found": [{"what": "CMP-0099", "call_id": "f1"}]}
+    _, bad_not_found = loop.verify_answer(args, _ledger(name, "empty", "CMP-0042"), "is CMP-0099 there")
+    assert bad_not_found == ["CMP-0099"]
+
+
+@pytest.mark.parametrize("name", [COMPLAINTS, PROJECTS])
+def test_AC5_a_find_that_returned_rows_does_not_back_a_not_found_claim(name):
+    from app.services.chatbot.agent import loop
+
+    args = {"text": "No.", "not_found": [{"what": "CMP-0042", "call_id": "f1"}]}
+    _, bad_not_found = loop.verify_answer(args, _ledger(name, "ok", "CMP-0042"), "is CMP-0042 there")
+    assert bad_not_found == ["CMP-0042"]
 
 
 # ------------------------------------------------------------------ labels

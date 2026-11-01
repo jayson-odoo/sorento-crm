@@ -1,5 +1,8 @@
 """Shared table and helpers for the AGENTIC-UNIFY PR 4 ported-read tests (not a test module).
 
+After the security review (crew ruling, 2 Nov) every tool of PR 4 is offered on a panel turn only, so the slug
+tests run inside `panel_turn` and the reveal keys of a panel ctx come from `staff_reveal_keys` (`panel_ctx`).
+
 Nothing here imports a name the coder has yet to build at module load: `PORTED_READS`, `ToolDef.own_permission`
 and the new `REGISTRY` rows are all reached inside a function, so a missing one fails the test that needs it.
 """
@@ -19,6 +22,11 @@ PROJECTS_VIEW = "projects.projects.view"
 PROJECTS_VIEW_OWN = "projects.projects.view_own"
 ORDERS_VIEW = "order_management.orders.view"
 PRODUCTS_VIEW = "master_data.products.view"
+STOCK_VIEW = "inventory.stock.view"
+ESCALATION_LOGS_VIEW = "sla_management.escalation_logs.view"
+#: The staff slug that answers the `sales_orders.sales_report` reveal key (`_STAFF_REVEAL_SLUGS`).
+SALES_REPORT_SLUG = "sales.reports.view"
+SALES_REPORT_KEY = "sales_orders.sales_report"
 
 #: AC-1: (tool, slug, own slug a panel turn also accepts or None).
 AC1 = [
@@ -26,17 +34,21 @@ AC1 = [
     ("crm_complaint_analytics", COMPLAINTS_VIEW, None),
     ("crm_sla_conversation_tracking_dashboard", SLA_VIEW, None),
     ("crm_sla_conversation_tracking_list", SLA_VIEW, None),
-    ("crm_sla_conversation_event_logs_list", SLA_VIEW, None),
+    ("crm_sla_conversation_event_logs_list", ESCALATION_LOGS_VIEW, None),
     ("crm_projects_list", PROJECTS_VIEW, PROJECTS_VIEW_OWN),
     ("crm_project_detail", PROJECTS_VIEW, PROJECTS_VIEW_OWN),
     ("crm_project_quotations_list", PROJECTS_VIEW, PROJECTS_VIEW_OWN),
     ("crm_project_forecast", PROJECTS_VIEW, None),
     ("crm_order_analytics", ORDERS_VIEW, None),
-    ("crm_find", PRODUCTS_VIEW, None),
+    ("crm_find", STOCK_VIEW, None),
 ]
+#: Slugs a tool needs beyond its row's slug (the order analytics also asks the sales reveal).
+EXTRA_SLUGS = {"crm_order_analytics": (SALES_REPORT_SLUG,)}
 CAPABILITIES = "crm_system_tool_capabilities_summary"
 FIND = "crm_find"
-AC1_NAMES = [row[0] for row in AC1] + [CAPABILITIES]
+#: `crm_system_tool_capabilities_summary` is dropped (its route reads a catalog path the deployed image lacks):
+#: it is in no list here, and `test_ported_panel_only.py` pins that it is nowhere in `REGISTRY`.
+AC1_NAMES = [row[0] for row in AC1]
 #: The tools Jev is told about and whose operator is checked (AC-3, AC-8): AC-1 less find and capabilities.
 PORTED = [row for row in AC1 if row[0] != FIND]
 PORTED_NAMES = [row[0] for row in PORTED]
@@ -44,11 +56,11 @@ OWN_ROWS = [row for row in AC1 if row[2]]
 NO_OWN_ROWS = [row for row in AC1 if not row[2]]
 
 #: A slug that opens none of the above.
-UNRELATED = "inventory.stock.view"
+UNRELATED = "master_data.brands.view"
 
 #: What a route answers (render envelope for crm_find, the raw body for every other read).
 GOOD_BODY = {"data": [{"ref": "ZZT-1"}], "total": 1}
-GOOD_ENVELOPE = {"has_result": True, "items": [{"ref": "ZZT-1"}]}
+GOOD_ENVELOPE = {"result_type": "find", "response": "Code: ZZT-1\nStock: 5", "has_result": True}
 
 
 def good_body(name: str) -> dict:
@@ -61,16 +73,28 @@ def catalog() -> dict[str, dict]:
     return {name: {"description": name, "inputSchema": {"type": "object", "properties": dict(props)}} for name in AC1_NAMES}
 
 
-def make_ctx(user_id: str, *, operator: str | None = None) -> AgentContext:
+def slugs_for(name: str, slug: str) -> tuple[str, ...]:
+    """What a user needs to hold for `name`: the row's slug and any extra the tool asks."""
+    return (slug, *EXTRA_SLUGS.get(name, ()))
+
+
+def make_ctx(user_id: str, *, operator: str | None = None, grants=frozenset()) -> AgentContext:
     return AgentContext(
         contact_pk="zzt-pk",
         contact_respond_id="ZZT-RESPOND-1",
         space_id="364817",
         user_id=user_id,
         user_name="ZZT User",
-        grants=frozenset(),
+        grants=frozenset(grants),
         operator_user_id=operator,
     )
+
+
+def panel_ctx(db, user_id: str) -> AgentContext:
+    """The ctx a panel turn builds for the user: the reveal keys are the staff member's own permissions."""
+    from app.services.contact_field_reveal_service import staff_reveal_keys
+
+    return make_ctx(user_id, grants=staff_reveal_keys(db, user_id))
 
 
 @contextmanager

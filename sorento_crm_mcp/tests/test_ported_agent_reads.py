@@ -1,9 +1,9 @@
-"""AGENTIC-UNIFY PR 4, slice 1 (red): AC-4 and the AC-5 guard, the twelve ported reads through the REAL compiled MCP tool.
+"""AGENTIC-UNIFY PR 4: AC-4 and the AC-5 guard, the eleven ported reads through the REAL compiled MCP tool.
 
 Panel tests stub MCP, so only this file proves the tools can be reached as the agent calls them:
 - staff shape: blank `contact_id` and `space_id`, `X-MCP-Scope: staff` + `X-MCP-Staff-User`
-  (what `_mcp_call` sends for a staff principal);
-- linked-contact shape: a real-looking `contact_id` and `space_id`, no staff headers.
+  (what `_mcp_call` sends for a staff principal). The tools are panel only (AC-0), so no linked-contact shape.
+  The capabilities summary is dropped from the agent (its route reads a catalog path the image lacks).
 
 Only the network is faked, at the httpx transport, so the request asserted is the one that would
 reach the CRM. The agent's dispatch always sends the pair, even to tools whose catalog entry does not
@@ -38,8 +38,6 @@ TOKEN = "x" * 40
 STAFF_ID = "11111111-1111-4111-8111-111111111111"
 PROJECT_ID = "55555555-5555-4555-8555-555555555555"
 IDENTITY = "x-staff-user"
-CONTACT = "900000008"
-SPACE = "364817"
 
 BASE = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json",
         "Authorization": f"Bearer {TOKEN}"}
@@ -61,10 +59,9 @@ TOOLS: dict[str, tuple[str, dict]] = {
     "crm_project_forecast": ("/project-sales/reports/forecast", {}),
     "crm_order_analytics": ("/order-management/orders/analytics", {}),
     "crm_find": ("/master-data/products/find", {"filters": "[]"}),
-    "crm_system_tool_capabilities_summary": ("/system/tool-capabilities/summary", {}),
 }
 
-PAIRS = {"staff": {"contact_id": "", "space_id": ""}, "contact": {"contact_id": CONTACT, "space_id": SPACE}}
+PAIR = {"contact_id": "", "space_id": ""}
 
 
 def test_the_worktree_copy_of_the_mcp_package_is_the_one_under_test():
@@ -117,23 +114,18 @@ def _refusal_text(reply: dict) -> str:
     return json.dumps(reply)
 
 
-@pytest.mark.parametrize("shape", ["staff", "contact"])
 @pytest.mark.parametrize("name", list(TOOLS))
-def test_AC4_each_read_reaches_its_route_in_both_shapes(mcp, crm, name, shape):
+def test_AC4_each_read_reaches_its_route_as_staff(mcp, crm, name):
     fragment, extra = TOOLS[name]
-    headers = STAFF if shape == "staff" else BASE
-    reply = _call(mcp, name, {**extra, **PAIRS[shape]}, headers)
+    reply = _call(mcp, name, {**extra, **PAIR}, STAFF)
     flat = _refusal_text(reply)
     assert "scope_required" not in flat, flat
     assert "validation error" not in flat.lower() and "missing" not in flat.lower(), flat
     assert reply.get("result", {}).get("isError") is not True, flat
     sent = _crm(crm)
-    assert sent, f"{name} ({shape}) never reached the CRM: {flat}"
+    assert sent, f"{name} never reached the CRM: {flat}"
     assert any(fragment in r.url.path for r in sent), [r.url.path for r in sent]
-    if shape == "staff":
-        assert all(r.headers.get(IDENTITY) == STAFF_ID for r in sent), [dict(r.headers) for r in sent]
-    else:
-        assert all(IDENTITY not in r.headers for r in sent)
+    assert all(r.headers.get(IDENTITY) == STAFF_ID for r in sent), [dict(r.headers) for r in sent]
 
 
 @pytest.mark.parametrize("name", list(TOOLS))

@@ -6,7 +6,8 @@ the ported reads that can name a product, through the real seam with only the MC
 
 The guard prunes a row only by a product key it finds (`product_code`, `item_code`, `product_id`, plus the
 tool's own keys in `BRAND_SCOPE_PRODUCT_KEYS`); a row naming no product passes, as on every filtered tool.
-Projects carry no brand, so a scope naming a brand gets no project read (`brand_scope_allows_tool`).
+The tools are panel only (AC-0) and a panel turn has no brand scope, so only the forecast's own existing refusal
+for a scope naming a brand is pinned here; the three project reads' brand refusal was removed with the ruling.
 """
 from __future__ import annotations
 
@@ -133,17 +134,6 @@ PROJECT_READS = [
     ("crm_project_quotations_list", {"project_id": "x"}),
     ("crm_project_forecast", {}),
 ]
-
-
-@pytest.mark.parametrize("name,args", PROJECT_READS, ids=[r[0] for r in PROJECT_READS])
-def test_AC7_a_scope_naming_a_brand_gets_no_project_read_at_all(db, world, monkeypatch, name, args):
-    """Projects carry no brand, so the guard cannot narrow them: refused like the forecast (crew ruling (b))."""
-    from app.services.chatbot.lanes.business.fetch import ToolNotAllowed
-
-    call = _seam(db, world, monkeypatch, scoped=True, answer={"data": [{"project_code": "ZZT-P-1"}]})
-    with pytest.raises(ToolNotAllowed):
-        call(name, args)
-    assert _Client.calls == [], f"{name} reached the MCP for a brand-scoped contact"
 
 
 @pytest.mark.parametrize("name,args", PROJECT_READS, ids=[r[0] for r in PROJECT_READS])

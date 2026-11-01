@@ -13,19 +13,22 @@ import pytest
 from app.services.chatbot.agent import tools as agent_tools
 from tests._pg_fixture import blank_session
 from tests.chatbot.agent._seed import seed_user
+from tests.chatbot.agent import _ported_reads_support as support
 from tests.chatbot.agent._ported_reads_support import (
     AC1,
     AC1_NAMES,
-    CAPABILITIES,
     FIND,
     Recorder,
-    dispatch,
-    make_ctx,
+    panel_ctx,
+    panel_turn,
+    slugs_for,
     tool,
 )
 
 SLUG_OF = {name: slug for name, slug, _own in AC1}
-SLUG_OF[CAPABILITIES] = None
+#: The real `crm_find` reply after the MCP presenter (`_find_envelope`): text in `response`, no `items`.
+FIND_ENVELOPE = {"result_type": "find", "response": "Code: ZZT-1\nStock: 5", "has_result": True}
+FIND_EMPTY = {"result_type": "find", "response": "", "has_result": False}
 #: Every read whose answer is the route's raw JSON (all but crm_find).
 RAW = [n for n in AC1_NAMES if n != FIND]
 ANALYTICS = ["crm_complaint_analytics", "crm_order_analytics"]
@@ -39,8 +42,13 @@ def db():
 
 
 def ctx_for(db, name):
-    slug = SLUG_OF[name]
-    return make_ctx(seed_user(db, contact_pk=None, slugs=(slug,) if slug else ()))
+    """The panel ctx of a user holding what the tool needs (every ported tool is panel only, AC-0)."""
+    return panel_ctx(db, seed_user(db, contact_pk=None, slugs=slugs_for(name, SLUG_OF[name])))
+
+
+def dispatch(db, ctx, name, args=None, *, rec):
+    with panel_turn(ctx.user_id):
+        return support.dispatch(db, ctx, name, args, rec=rec)
 
 
 # ------------------------------------------------------------------ empty
@@ -60,7 +68,7 @@ def test_AC6_a_route_answering_an_explicit_empty_flag_is_empty(db, name):
 
 
 def test_AC6_crm_find_with_no_rows_is_empty(db):
-    out = dispatch(db, ctx_for(db, FIND), FIND, rec=Recorder({"has_result": False, "items": []}))
+    out = dispatch(db, ctx_for(db, FIND), FIND, rec=Recorder(FIND_EMPTY))
     assert out.status == "empty", (out.status, out.message)
 
 
@@ -99,13 +107,10 @@ def test_AC6_an_oversized_list_is_cut_to_the_cap_with_the_count_of_what_was_cut(
     assert len(json.dumps(out.data, default=str)) <= agent_tools.RESULT_CHAR_CAP
 
 
-def test_AC6_crm_find_oversized_items_are_cut_and_counted(db):
-    body = {"has_result": True, "items": _rows(300)}
-    out = dispatch(db, ctx_for(db, FIND), FIND, rec=Recorder(body))
+def test_AC6_crm_find_answers_its_real_envelope_whole(db):
+    out = dispatch(db, ctx_for(db, FIND), FIND, rec=Recorder(FIND_ENVELOPE))
     assert out.status == "ok", (out.status, out.message)
-    kept = len(out.data["items"])
-    assert 0 < kept < 300
-    assert out.more == 300 - kept
+    assert out.data["response"] == FIND_ENVELOPE["response"]
 
 
 @pytest.mark.parametrize("name", RAW)
@@ -127,7 +132,7 @@ def test_AC6_every_read_but_find_is_called_without_the_render_view(db, name):
 
 
 def test_AC6_crm_find_is_called_with_the_render_view(db):
-    rec = Recorder({"has_result": True, "items": [{"ref": "ZZT-1"}]})
+    rec = Recorder(FIND_ENVELOPE)
     dispatch(db, ctx_for(db, FIND), FIND, rec=rec)
     assert rec.calls and rec.calls[0][1].get("view") == "render", rec.calls
 

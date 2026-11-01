@@ -172,3 +172,55 @@ def test_AC6_complaints_have_no_company_column_so_a_staff_read_is_not_company_sc
 
     assert number in _numbers(env.client.get(COMPLAINTS, headers=env.ident(in_a)))
     assert number in _numbers(env.client.get(COMPLAINTS, headers=env.ident(in_b)))
+
+
+# ------------------------------------------------------------------ the buyer's phone and main contact (security review)
+
+CUSTOMERS_VIEW = "order_management.customers.view"
+PROJECT_DETAIL = "/api/v1/project-sales/projects/"
+
+
+def _project_with_a_buyer_and_main_contact(env):
+    """A project whose buyer has an office phone and a main contact with a name."""
+    from app.models.order import CustomerContact
+    from tests.test_staff_read_identity import _project_with_a_customer
+
+    project = _project_with_a_customer(env, "0312345678")
+    from app.models.projects import ProjectSalesProfile
+
+    customer_id = env.db.query(ProjectSalesProfile.customer_id).filter(ProjectSalesProfile.project_id == project.id).scalar()
+    env.db.add(
+        CustomerContact(
+            id=str(uuid.uuid4()), customer_id=customer_id, full_name="ZZT Main Contact", phone="0399999999",
+            contact_role="main", company_id=SORENTO,
+        )
+    )
+    env.db.flush()
+    return project
+
+
+def _row(env, user, project):
+    listed = env.client.get(PROJECTS, params={"limit": 100}, headers=env.ident(user))
+    assert listed.status_code == 200, listed.text[:300]
+    (row,) = [r for r in listed.json()["data"] if r["id"] == project.id]
+    detail = env.client.get(f"{PROJECT_DETAIL}{project.id}", headers=env.ident(user))
+    assert detail.status_code == 200, detail.text[:300]
+    return row, detail.json()
+
+
+def test_SEC_a_panel_read_without_the_customers_slug_shows_no_phone_and_no_main_contact(env):
+    env.use_actas(perms=[VIEW, CUSTOMERS_VIEW])
+    project = _project_with_a_buyer_and_main_contact(env)
+    staff = mk_user(env.db, "nocust", perms=[VIEW], companies=(SORENTO,), last_active=SORENTO)
+    for body in _row(env, staff, project):
+        assert body["customer_phone"] is None and body["customer_attn"] is None, body
+        assert "ZZT Main Contact" not in str(body)
+
+
+def test_SEC_a_panel_read_with_the_customers_slug_shows_the_phone_and_the_main_contact(env):
+    env.use_actas(perms=[VIEW, CUSTOMERS_VIEW])
+    project = _project_with_a_buyer_and_main_contact(env)
+    staff = mk_user(env.db, "cust", perms=[VIEW, CUSTOMERS_VIEW], companies=(SORENTO,), last_active=SORENTO)
+    for body in _row(env, staff, project):
+        assert body["customer_phone"] == "0312345678", body
+        assert body["customer_attn"] == "ZZT Main Contact", body

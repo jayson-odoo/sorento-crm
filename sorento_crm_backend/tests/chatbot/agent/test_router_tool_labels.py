@@ -252,8 +252,8 @@ def test_AC_R1_7_the_list_follows_what_the_user_may_use(db, jev):
     route(db, wide["respond_id"])
     assert len(jev.calls) == 2
     first, second = (c["criteria"]["agent"]["tools"] for c in jev.calls)
-    # The IT support ticket needs no slug either (AGENTIC-UNIFY PR 4).
-    assert first == ["raise an IT support ticket", "recent changes"], "the tools that need no permission"
+    # Off the panel none of PR 4's tools is told to Jev (AC-0), so the ticket label is gone too.
+    assert first == ["recent changes"], "the tools that need no permission"
     assert second and set(first) < set(second) < set(router_labels())
     assert "change a customer ask" in second
 

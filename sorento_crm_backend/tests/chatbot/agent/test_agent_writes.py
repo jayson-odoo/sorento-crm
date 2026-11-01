@@ -296,10 +296,9 @@ def test_01_a_write_tool_is_exposed_only_when_the_linked_user_holds_its_slug(db)
     can = make_world(db, slugs=(VIEW, EDIT))
     cannot = make_world(db, slugs=(VIEW,))
 
-    # The IT support ticket needs no slug (AGENTIC-UNIFY PR 4), so every linked user is offered it.
-    ticket = "crm_it_support_ticket_create"
-    assert [w.name for w in writes.permitted_writes(db, build_context(db, can.respond_id))] == [UPDATE, ticket]
-    assert [w.name for w in writes.permitted_writes(db, build_context(db, cannot.respond_id))] == [ticket]
+    # PR 4's writes are panel only (AC-0): a console or WhatsApp turn is offered none of them.
+    assert [w.name for w in writes.permitted_writes(db, build_context(db, can.respond_id))] == [UPDATE]
+    assert [w.name for w in writes.permitted_writes(db, build_context(db, cannot.respond_id))] == []
 
     _, with_edit = run_turn(db, can, [answer_("Hello.")])
     _, without_edit = run_turn(db, cannot, [answer_("Hello.")])
