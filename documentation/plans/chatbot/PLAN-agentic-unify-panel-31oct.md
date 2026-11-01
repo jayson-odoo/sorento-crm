@@ -150,6 +150,12 @@ Not changed, shown at hand test: the closing line of a proposal ("Reply yes to g
 - **Not this lane:** `GET /system/chat-history` returns 500 on all four running copies, so the trace page shows a toast though its drawer opens. Thread times read 8 hours off because `updated_at` is naive UTC: same field and same read on the old path. Both reported to crew.
 - **Not changed, known limit:** `crm_portal_link_get` has no meaning without a contact, so "How do I upload a GRN" can reply "I could not fetch this request just now". How-to questions go to the guides in PR 4, and the labelled set measures them before default. The parser did read the page line on that turn, and it answered from the question, not the page.
 
+## Round 4: Jev and the open record
+
+Live at ec4e704ad1: on PR26-0392's page, "what happened to this purchase request" went to chat at 0.42, twice, and replied "Could not find spo allocation". `state["current_page"]` reaches Jev, but the published criteria say nothing of it, so it carries no weight. This replaces the Slice 3 line "the owner publishes a criterion": that would leave AC-19 failing at hand test.
+
+Ruling: with a readable record open (`record_ref` on the principal's page), and only then, the agent criterion carries one more line, sent from `router.py` on a copy of the published criteria. No production label changes. With no record, no page, or on any contact's turn, not one byte changes. If a live probe shows it is not enough, the labelled set says so before default. The trigger to move it into the published prompt: the owner tuning Jev's criteria for the panel at all.
+
 Accepted for hand test: `*Co B:*` under `3. Carol` sits inside that item, since it has no blank line before it (`tail/member_offer.py:255-262`). It needs more than one routing company, and the principal has one.
 
 ## Still to count or prove
