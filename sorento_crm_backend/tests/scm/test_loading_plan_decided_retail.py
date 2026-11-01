@@ -144,6 +144,23 @@ def test_r15_a_retail_line_placed_in_full_asks_for_nothing_and_is_not_listed():
     assert rows == []
 
 
+def test_r15_a_retail_line_placed_in_full_is_not_listed_beside_other_demand():
+    """The product still has demand, so its lines are read: the placed one must not appear at 0."""
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        _so, line = _decided_retail(db, w, "A", 10)
+        _place_spo(db, w, line, 10)
+        _retail_need(db, w, "A", 20)
+
+        out = svc.build(db, supplier_id=str(w.supplier.id), include_lines=True)
+        row = _row(out, w, "A")
+        mine = [l for l in out["lines"] if l["product_id"] == str(w.product("A").id)]
+
+    assert [l["qty"] for l in mine] == [20]
+    assert (row["retail_qty"], row["open_so_need"], row["so_count"]) == (20, 20, 1)
+
+
 def test_r15_an_order_with_a_decided_and_an_undecided_line_counts_once():
     with pg_session() as db:
         w = World(db)
