@@ -1,8 +1,8 @@
 # PLAN: Dealer sales orders plannable on Fulfilment Planning
 
-**Status:** PR 1 (#2062) cut to the flag exemption and the real reason (crew ruling 1 Nov), re-review and browser pass on the final head next. PR 2 and PR 3 answered, start after #2062 merges. Tracks: PR 1 S, PR 2 M, PR 3 M.
+**Status:** PR 1 merged (#2062). PR 2 building on `crew/dealer-planning-retail`, track M. PR 3 next.
 
-UAC: `dealer-planning-1nov-acceptance-criteria.md` (beside this file).
+UAC: `dealer-planning-1nov-acceptance-criteria.md` for PR 1, `dealer-planning-retail-acceptance-criteria.md` for PR 2 (both beside this file).
 
 ## Journey
 
@@ -59,6 +59,14 @@ An own-pool add-back was built here first. Four review rounds found faults in it
 ## PR 2 (owner ruling, 1 Nov 2026)
 
 Retail orders at dealer-segment locations work end to end in Fulfilment Planning: board, sales order list and class filter, decide, confirm, borrow, order inquiry email. Reorder-run demand counting is not changed, and neither is the committed view. PR 2 also builds the own-location read once, with Q1: a line at its own pool stops netting its own demand against that pool, retail takes no dealer share there, and the stock pop-up tells the truth. Start from the add-back, its tests and the reviewer's scenarios on `crew/dealer-planning-retail-seed`, kept in `crew/state/files/dealer-planning-pr2-seed` too. Those scenarios are its red tests. Required of PR 2: pools read one running net, spent as drawn, in the walk and at confirm, with tests, which fixes the disclosed confirm short. The Loading Plan is in scope: its Lines tab is built by `container_request_service.py`, and a decided retail line vanishes from it (`:522`, `:782`, `:884`). The coverage reader is out.
+
+### PR 2 architecture
+
+- **Admission, one predicate** in `scm/planning_predicate.py`: project class as today, or planning class retail with at least one line at an active dealer-segment bin. Used at the board's three reads, line drafts, adoption and the worklist. `adopt_for_migration` and the OI import stay project only. A retail line at a project bin earns the verdict.
+- **Own pool, one read.** `_add_back_own_pool_demand` puts back what the pool's book counted, read with `_pile_read`'s predicate, on that line's facts only. The walk's and confirm's shared ledgers hold the true net and true share; a line's add-back joins them for that line alone and is spent first. A retail line at its own dealer location holds no dealer share back; its draw there does not touch the pile's project share.
+- **Pools, one running net, spent as drawn,** in the walk (`pool_share_capacity`) and at confirm (`_check_line`). Other pools are measured by the true net, never by a line's add-back. At confirm this replaces walking the chain, so it fixes the disclosed short for every line, project-bin lines included.
+- **Loading Plan:** a confirmed retail line stays in the Retail half, less SPO links. One file.
+- **Access:** an additive migration grants the Customer Service role three slugs.
 
 ## PR 3 (owner ruling, 1 Nov 2026)
 
