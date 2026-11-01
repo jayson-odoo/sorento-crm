@@ -1006,12 +1006,12 @@ def _settled_by_its_axis(values: dict[str, Any], group_by: Any) -> dict[str, Any
 HELD_KEY = "report_held"
 #: The route params of a held total that stay on the ranking its reply becomes: the period and the filters.
 _HELD_TOTAL_KEYS = (
-    "date_from", "date_to", "product_code", "product_ids", "brand_ids", "category_ids", "customer_ids",
+    "date_from", "date_to", "product_code", "product_ids", "brand_ids", "category_ids",
     "sales_agent_ids", "customer_agent_ids", "channel", "spec", "warehouse_codes", "company",
 )
-#: A follow-up over a held customer (`_customer_stays`) keeps the basis and any measure on screen too (S6c; the message's
-#: own win, and the reply's header names them). A company total with no customer is still asked (SALES-TOTAL-ASK).
-_HELD_CUSTOMER_KEYS = (*_HELD_TOTAL_KEYS, "basis", "measure")
+#: A follow-up over a customer that stays (`_customer_stays`) keeps that customer, and the basis and any measure on screen
+#: (S6c; the message's own win, and the reply's header names them). A company total is still asked (SALES-TOTAL-ASK).
+_HELD_CUSTOMER_KEYS = (*_HELD_TOTAL_KEYS, "customer_ids", "basis", "measure")
 #: REPORT-SMART-L R9: the open question a sales report reply arms with its drill offer (`fetch._sales_report_output`),
 #: so the engine-held sign that the last answer was a sales report (`contracts.DETAIL_OFFER_KINDS`).
 SALES_REPORT_OFFER = "sales_report_detail"
@@ -1030,12 +1030,15 @@ def _follows_up(verdict: dict[str, Any], frame: dict[str, Any], replaced: dict[s
         return True
     if entity_op not in ("modify", "replace_combine") or "customer" in _current_kinds(verdict):
         return False
-    held_args = _dict(_dict(replaced).get("extras")).get("args") if replaced is not None else frame
-    return entity_op == "modify" or bool(_dict(held_args).get("customer_ids"))
+    if entity_op == "modify":
+        return True
+    if replaced is not None:
+        return bool(_dict(_dict(_dict(replaced).get("extras")).get("args")).get("customer_ids"))
+    return _holds_a_customer(frame)
 
 
-def _ranking_holds_a_customer(frame: dict[str, Any]) -> bool:
-    """A ranking filtered to a customer, still on screen. The customer is its filter, not its ranked side."""
+def _holds_a_customer(frame: dict[str, Any]) -> bool:
+    """A report filtered to a customer, still what the person last saw. On a customer ranking they are its ranked side."""
     return bool(frame.get("customer_ids")) and not frame.get("stale") and frame.get("group_by") != "customer"
 
 
@@ -1054,8 +1057,8 @@ def with_held(
 
     On only when the parser keeps the held subject (`_follows_up`, no topic reset, no `new_subject` op), the
     verdict is a ranking (R9: an axis-less one too, which runs the total), no ranking frame is held (a held one
-    keeps its own rules: refine, S6b, ruling B, stale; one filtered to a customer also keeps that customer when the
-    parser reads no refine), the last ask was a sales figure, and no open ask is being
+    keeps its own rules: refine, S6b, ruling B, stale; one filtered to a customer is stamped too, and the stamp is the
+    only source of a held customer), the last ask was a sales figure, and no open ask is being
     answered. `held_domains`: the domains the focus held before this turn's State applier wrote its own (the engine
     reads them; `Focus.domains` when not given). The source is the open report ask this verdict replaced
     (`names_its_own_ask`), alone, less what a total or month trend settled on its own (`_settled_by_its_axis`: no
@@ -1074,12 +1077,14 @@ def with_held(
         or not _follows_up(verdict, frame, replaced)
         or verdict.get("topic_reset") is True
         or _new_subject(verdict, parser_ops)
-        or (frame.get("group_by") and not _ranking_holds_a_customer(frame))
+        or (frame.get("group_by") and not _holds_a_customer(frame))
         or contracts.SALES_DOMAIN not in (domains or [])
         or (open_ask is not None and replaced is None)
     ):
         return verdict
-    axisless = not jsc.js_string(typed_group_by(verdict).get("group_by") or "").strip()
+    typed_axis = jsc.js_string(typed_group_by(verdict).get("group_by") or "").strip().lower()
+    axisless = not typed_axis
+    customer_stays = _customer_stays(verdict, GROUP_BY.get(typed_axis, typed_axis))
     if axisless and verdict.get("top_n") is not None:
         # AC-OR9: a typed count keeps the ranking. With no axis there is no total to hold it (a total settles no
         # count), so neither the carry nor the reroute applies: the reply is today's.
@@ -1095,9 +1100,11 @@ def with_held(
         values = _settled_by_its_axis(_dict(replaced.get("values")), _dict(extras.get("args")).get("group_by"))
         args = route_args(rf.Outcome(values=values, extras=extras))
         held = {k: v for k, v in args.items() if k not in ("group_by", "sort") and v not in (None, "", [])}
+        if not customer_stays:
+            held.pop("customer_ids", None)
     elif frame:
         # A held report (a total, or a ranking filtered to a customer): its period and filters stay.
-        keys = _HELD_CUSTOMER_KEYS if frame.get("customer_ids") and _customer_stays(verdict, None, None) else _HELD_TOTAL_KEYS
+        keys = _HELD_CUSTOMER_KEYS if customer_stays and _holds_a_customer(frame) else _HELD_TOTAL_KEYS
         held = {k: v for k, v in frame.items() if k in keys and v not in (None, "", [])}
     else:
         window = _dict(getattr(focus, "date_window", None))
@@ -1772,6 +1779,14 @@ def _settle(
 
     frame = parse_output.get("sales_ranking_frame")
     frame = frame if isinstance(frame, dict) else {}
+    if parse_output.get("ranking_refine") is True and _widened(parse_output) == "customer" and frame.get("customer_ids"):
+        # "all customers" flagged a refine, over a report held for a customer: with the customer gone nothing it held settles
+        # the company, so this is a new ask on the axis on screen, and it asks what it owes (AC-8, SALES-TOTAL-ASK).
+        parse_output = {
+            **parse_output, "ranking_refine": False,
+            "group_by": parse_output.get("group_by") or frame.get("group_by"),
+            "top_n": parse_output.get("top_n") or frame.get("top_n"),
+        }
     drill = parse_output.get("ranking_drill")
     raw_group = jsc.js_string(parse_output.get("group_by") or "").strip().lower()
     # A refine never changes the axis: a verdict naming another axis than the held ranking's
@@ -1834,15 +1849,16 @@ def _settle(
         }
         if axis != "channel" and widened != "channel" and source.get("channel") in ("dealer", "project"):
             held_channel = source["channel"]
-        # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not), and the
-        # company it ran in.
+        # A brand, category or sales agent filter on screen is held too (the new axis's own filter is not).
         held_filters = {
-            k: source[k] for k in ("brand_ids", "category_ids", "sales_agent_ids", "company")
+            k: source[k] for k in ("brand_ids", "category_ids", "sales_agent_ids")
             if source.get(k) and k not in _AXIS_FILTERS.get(axis, ())
         }
-        if source.get("customer_ids") and _customer_stays(parse_output, axis, frame.get("group_by") if across_all else None):
+        held_customer = _dict(parse_output.get(HELD_KEY)).get("customer_ids")
+        if held_customer and _customer_stays(parse_output, axis):
+            # Only off the stamp, never the frame: an open ask the message replaced is newer than a ranking still on screen.
             # The ids the report ran on, so a pick's ledgers stay exactly the pick's: never re-read from a code or a name.
-            held_filters["customer_ids"] = source["customer_ids"]
+            held_filters["customer_ids"] = held_customer
         holding = True
         parse_output = {**parse_output, "ranking_refine": False}
 
@@ -1850,6 +1866,9 @@ def _settle(
     if args is None:
         return None, line
     not_applied = args.pop("_unbound", [])
+    if holding and source.get("company") and not set(args) - _NON_FILTER_ARGS - {"channel"}:
+        # The company it ran in stays, unless this message has a subject of its own: that may be in the other company.
+        args["company"] = source["company"]
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
         for e in jsc.array(parse_output.get("entities"))
@@ -1966,13 +1985,15 @@ def _settle(
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
 
 
-def _customer_stays(parse_output: dict[str, Any], axis: str | None, ranked: Any) -> bool:
+def _customer_stays(parse_output: dict[str, Any], axis: str | None) -> bool:
     """Owner ruling, 1 Nov 2026 (CHATBOT-FOLLOWUP-CARRY): the held customer stays on a follow-up unless this message replaces
-    it: a customer of its own (named, or the one a pick just answered), "my ...", the parser's widening to all customers, or
-    customers as the axis now ranked or just ranked ("across all" says so). Parser fields and engine keys only."""
+    it: a customer of its own (named, or the one a pick just answered), "my ...", the parser's widening to all customers
+    (`broaden_axis`, or `ranking_drill` global: "global when it says so"), or customers as the axis now ranked. Parser fields
+    and engine keys only."""
     return (
-        "customer" not in (axis, ranked)
+        axis != "customer"
         and _widened(parse_output) != "customer"
+        and parse_output.get("ranking_drill") != "global"
         and "customer" not in _current_kinds(parse_output)
         and parse_output.get("ranking_pick") is not True
         and parse_output.get("self_reference") is not True
@@ -2020,6 +2041,8 @@ def _refine(
     if filters is None:
         return None, line
     args.update(filters)
+    if "customer" in _current_kinds(parse_output) and _gate_ids(entities, "customer"):
+        args["customer_ids"] = _gate_ids(entities, "customer")  # a customer named replaces the held one (AC-7)
     if "product" in _current_kinds(parse_output):
         product_args, line = _product_args(entities)
         if product_args is None:
@@ -2046,6 +2069,11 @@ def _refine(
         args["compare_to"] = parse_output["compare_to"]
     if parse_output.get("self_reference") is True:
         args["mine"] = True
+        # "my ...": the contact's own accounts, as a fresh ask reads them, never the customer held.
+        own = _gate_ids([e for e in jsc.array(entities) if isinstance(e, dict) and e.get("scope")], "customer")
+        args.pop("customer_ids", None)
+        if own:
+            args["customer_ids"] = own
     if args.get("compare_to") and args.get("group_by") == "month":
         return None, COMPARE_BY_MONTH_LINE
     top_n = parse_output.get("top_n")
