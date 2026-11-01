@@ -64,8 +64,8 @@ vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
 import { FulfilmentPlanningClient } from './FulfilmentPlanningClient';
 
 const ROW = {
-  id: 'pso-1', provisional_ref: 'PSO-000123', autocount_doc_no: 'SO376201', project_id: 'proj-1', project_code: 'PRJ-0041',
-  project_name: 'ZZT Tuju Residences', customer_name: 'Buimaco Sdn Bhd (Project)', po_number: 'HQ/26/01/121', area_group: 'TOWER',
+  id: 'pso-1', provisional_ref: 'PSO-000123', autocount_doc_no: 'SO376201', project_id: 'proj-1', project_code: 'ZZT-PRJ-1',
+  project_name: 'ZZT Project', customer_name: 'ZZT Customer', po_number: 'ZZT-PO-0001', area_group: 'TOWER',
   status: 'published', line_count: 4, lines_linked: 4, exception_count: 0, review_state: 'needs_cs_review', updated_at: '2026-08-14T02:41:00',
   demand_class: 'retail',
 };
@@ -93,7 +93,7 @@ async function render_(open = true) {
       <FulfilmentPlanningClient />
     </QueryClientProvider>,
   );
-  await screen.findByText('ZZT Tuju Residences');
+  await screen.findByText('ZZT Project');
   if (open) openFilters();
 }
 
