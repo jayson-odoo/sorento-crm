@@ -147,7 +147,7 @@ ITEMS0=$(pgq "SELECT count(*) FROM items"); PLAIN0=$(pgq "SELECT count(*) FROM p
 DATADIR=$(pgq "SHOW data_directory" postgres); PRELOAD=$(pgq "SHOW shared_preload_libraries" postgres)
 echo "ha-rehearsal: standalone seeded: items=$ITEMS0 plain_t=$PLAIN0 data_directory=$DATADIR preload=$PRELOAD"
 
-# ---- 2c. etcd: three members LISTED, two STARTED (phase A shape), auth on --------------------
+# ---- 2c. etcd: node A + witness only (phase A shape, as the template lists them), auth on ------
 # Only each etcd's own files, as compose.ha.yml does (never patroni.key, never ca.key).
 ETCD_PKI=(); for f in ca.crt peer.crt peer.key server.crt server.key healthcheck.crt healthcheck.key; do
   ETCD_PKI+=(-v "$PKI/$f:/etc/etcd/pki/$f:ro"); done

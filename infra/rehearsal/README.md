@@ -70,7 +70,7 @@ The rehearsal renders the templates and overrides nothing else. Every override, 
 - `etcd.env.template` had no `ETCDCTL_ENDPOINTS`; etcdctl defaults to plain http, so the TLS-only
   client port broke every etcdctl call. The template now names `https://127.0.0.1:2379`.
 - A member that is LISTED in `ETCD_INITIAL_CLUSTER` but never started keeps the etcd cluster
-  version at 3.0.0; Patroni 4.0.5 then calls the removed `/v3alpha` API and gets 404 forever
+  version at 3.0.0; Patroni 4.0.5 then calls the removed `/v3alpha` API and gets 404 forever.
   Phase A bootstraps etcd with node A + witness only (the template now lists just those two); node B
   joins at H6 with `etcdctl member add --learner`, then `member promote`.
 - Patroni's etcd client cert must have no CN: the HTTP gateway rejects a client cert with a CN
