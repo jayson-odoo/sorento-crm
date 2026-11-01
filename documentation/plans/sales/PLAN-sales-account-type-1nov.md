@@ -1,6 +1,6 @@
 # SALES-ACCOUNT-TYPE: sales by the customer's account type
 
-**Status:** PR 1 (#2067) ready, Waiting:ci; on-screen figures and the hand test wait for INVOICED-CHANNEL-PERF. PR 2 (#2074, draft) stacked on #2067: fix round after review (reviewer NOT READY, 4 blockers; security 6 should-fix, no leak). Prompt gate TRAIN A 99, B 97 of 118, flips under diag. Track: full (prompt change, multi-company scoping). Plan created: 1 Nov 2026. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
+**Status:** PR 1 (#2067) ready, Waiting:ci; on-screen figures and the hand test wait for INVOICED-CHANNEL-PERF. PR 2 (#2074, draft) stacked on #2067: review rounds running. Prompt gate: TRAIN A 99, B 97 of 118, write-up with crew; owner decides the prompt and HIDDEN. Track: full (prompt change, multi-company scoping). Plan created: 1 Nov 2026. Size M. Card decided by the owner: debtor type, number derived; a word that is both a brand and a type asks which. Owner approved mock v4 (15:34), so the screen is in PR 1.
 
 Lane brief: crew `SALES-ACCOUNT-TYPE`. Branch `crew/sales-account-type`. UAC: `sales-account-type-acceptance-criteria.md`.
 Agent codes are masked (AGENT A, AGENT B) because this repo is public. The real codes are in the crew card.
@@ -137,4 +137,5 @@ was right and whose head is the defect. UNVERIFIED: the owner's own turn is in p
 - A customer-scoped contact (dealer) never gets the question or the line: the route refuses them the filter (AT-13), so "cabana" stays the brand and "account 4" is the dealer refusal.
 - The word question is the LAST question of the ask and prints bare. Built first as mock v4 draws it, but asking it first lost what the message had settled: an agent pick vanished and the answer ran a company-wide figure. So a basis, company or agent pick still owed is asked before it. This differs from the mock's order when a basis is owed; its wording is unchanged.
 - A word on a follow-up asks too, because rule 1 has no follow-up exception.
+- A reply to the word question is the answer, and whatever else it says edits the held ask. Three review rounds found a list of "this makes it a new ask" conditions kept losing the agent on an echo or a period, a company-wide figure with no error. Only another subject or another filter word starts a new ask.
 - Side finding, not this lane: on baseline one row read AGENT A as a customer and the other as a sales agent.
