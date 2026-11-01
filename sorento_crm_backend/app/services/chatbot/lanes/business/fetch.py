@@ -1664,7 +1664,10 @@ FORM_NOT_AVAILABLE_MESSAGE = "That form is not available on your account."
 
 
 #: A panel turn has no contact to send a portal link to. MS / ZH in `label_catalog`.
-PANEL_NO_PORTAL_LINK = "Portal links go to a contact on WhatsApp, so I can't send one from here."
+PANEL_NO_PORTAL_LINK = (
+    "Portal links go to a contact on WhatsApp, so I can't send one from here. "
+    "If you want the steps for something, ask me how to do it."
+)
 
 
 def portal_form_granted(db: Any, contact_respond_id: Any, space_id: Any, submission_type: str) -> bool:
