@@ -39,16 +39,18 @@ Retail is what dealer agents sell: 1,559 open dealer-segment SOs have a retail a
 
 ## PR 1
 
-1. Exemption in `outside_fulfilment_planning`, using `pool_predicate.is_site_pool`. Walk and confirm stay as on main, so no project line's answer can change.
+1. Exemption in `outside_fulfilment_planning`, using `pool_predicate.is_site_pool`. Walk and confirm stay as on main. A project line's sheet does not change; on the board, a project-bin line's answer changes only when a line at the pool really draws the same stock.
 2. Real reason in the frontend. A flagged-off bin reads "Outside fulfilment planning", the reason the server already sends. A line with no location keeps "Needs a location". The cell count and the filter read "not plannable", because they cover both.
 3. Regression: consignment borrow unchanged.
 4. Guide: `documentation/user-guides/supply-chain/plan-undecided-lines.md`.
 
 ### Known limits, disclosed on the PR and in the hand test
 
-- **A line whose location holds just enough for it reads Buy.** 10 on hand, 10 ordered, nobody else: Buy 10, because the line's own demand nets the pool to zero, and a planner cannot reserve it by hand either. Measured on dev: 8 of 301 undecided project-class lines at these bins would answer differently, at most 1,399 of 19,942 owed units. PR 2 fixes it.
+- **A line whose location holds just enough for it reads Buy.** 10 on hand, 10 ordered, nobody else: Buy 10, because the line's own demand nets the pool to zero, and a planner can reserve it by hand only by giving a reason. Measured on dev: 8 of 301 undecided project-class lines at these bins would answer differently, at most 1,399 of 19,942 owed units. PR 2 fixes it.
 - **The stock pop-up can disagree on a line at a pool:** BRW row Available for Project 30 against Site pool 15, with nothing explaining it. PR 2 fixes and tests it.
+- **Confirm can come up short on a line at a pool that draws another pool.** 10 here, 40 at another pool, a line of 30: the proposal is Reserve 20 there + Buy 10, and confirm records 10 short with one ORDER row of 10, so 10 units are neither reserved nor bought. A short notice shows on the board. The cause is old (`project_supply_service.py:6176-6178` spends the net on the own pool's whole floor first) and project-bin lines hit it today; PR 1 lets lines at a pool reach it. Dev estimate: 0 of 299 open undecided lines reach it. PR 2 must fix and test it, with one running net spent as drawn.
 - **The dealer share caps a project-class line at BRW**, the written rule, confirmed by the owner (card Q1).
+- **Closed orders become plannable too.** 10,712 closed project-class orders (41,129 undecided lines) at these bins, against 223 open, when someone selects one. A person must press Confirm.
 
 ### Why PR 1 was cut
 
@@ -56,7 +58,7 @@ An own-pool add-back was built here first. Four review rounds found faults in it
 
 ## PR 2 (owner ruling, 1 Nov 2026)
 
-Retail orders at dealer-segment locations work end to end in Fulfilment Planning: board, sales order list and class filter, decide, confirm, borrow, order inquiry email. Reorder-run demand counting is not changed, and neither is the committed view. PR 2 also builds the own-location read once, with Q1: a line at its own pool stops netting its own demand against that pool, retail takes no dealer share there, and the stock pop-up tells the truth. Start from the add-back, its tests and the reviewer's scenarios on `crew/dealer-planning-retail-seed`, kept in `crew/state/files/dealer-planning-pr2-seed` too. Those scenarios are its red tests. Open from that work: other pools must read one budget of the true net, spent as drawn, in the walk and at confirm (a line at the pool drawing two other pools above the true net confirmed short). The Loading Plan is in scope: its Lines tab is built by `container_request_service.py`, and a decided retail line vanishes from it (`:522`, `:782`, `:884`). The coverage reader is out.
+Retail orders at dealer-segment locations work end to end in Fulfilment Planning: board, sales order list and class filter, decide, confirm, borrow, order inquiry email. Reorder-run demand counting is not changed, and neither is the committed view. PR 2 also builds the own-location read once, with Q1: a line at its own pool stops netting its own demand against that pool, retail takes no dealer share there, and the stock pop-up tells the truth. Start from the add-back, its tests and the reviewer's scenarios on `crew/dealer-planning-retail-seed`, kept in `crew/state/files/dealer-planning-pr2-seed` too. Those scenarios are its red tests. Required of PR 2: pools read one running net, spent as drawn, in the walk and at confirm, with tests, which fixes the disclosed confirm short. The Loading Plan is in scope: its Lines tab is built by `container_request_service.py`, and a decided retail line vanishes from it (`:522`, `:782`, `:884`). The coverage reader is out.
 
 ## PR 3 (owner ruling, 1 Nov 2026)
 
