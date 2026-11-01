@@ -1,6 +1,6 @@
 # PLAN: a picked customer is replaced by a code match (CHATBOT-PICK-CARRY, 1 Nov 2026)
 
-**Status: in progress. Small fix track (no migration, no auth/RBAC change, no new ingest surface). Size S.**
+**Status: fix committed, reviewer and hand test pending. Small fix track (no migration, no auth/RBAC change, no new ingest surface). Size S.**
 UAC: `chatbot-pick-carry-acceptance-criteria.md`.
 
 ## Owner report
@@ -21,8 +21,14 @@ different customer in the other company, Total RM 0.00. Neither was offered or p
 - `turn_runtime._entities_for` (`turn_runtime.py:5941-5951`) keeps a resolver row when its CODE matches a plan row, and once
   a kind is "answered" drops the plan's own rows of that kind. The picked uuids are replaced; the sales ask's slot holds
   the replacement (`report_ask.py:1391`), and the next turn runs it.
-- Engine-level reproduction: an echo of the code at turn 2 gives `[A1, Z]`, the owner's shape; an echo of the name gives
+- Engine-level reproduction: an echo of the code at turn 2 gives `[A1, Z]`, the owner's shape; an echo of the label gives
   `[A1]`, the pick cut to one ledger. The focus stays right in both; only the fetch rows are wrong.
+- Confirmed by the owner's turn 2 trace (prompt v70): one customer entity, the option's name as `raw`, the option's code as
+  `canonical_code`, `current_message` true, `entity_op` replace_combine, beside pick [1]. The resolver is asked
+  `canonical_code` first (`resolve_gate.py:511`), so the name in `raw` did not protect it. Pinned as test p0.
+- Live on the crew copy, pre-fix, real resolver and gate: "1 <code>" at turn 2 sent turn 3's report the picked ledger of that
+  code and another company's unrelated customer. Same turns with the fix: all nine picked ledgers. The copy's own prompts did
+  not echo the code on a bare "1", so typing it is how the same parse is reached there.
 
 ## Leads checked and ruled out (with evidence)
 
@@ -49,7 +55,8 @@ different customer in the other company, Total RM 0.00. Neither was offered or p
 
 `_entities_for`: a resolver row answers for a code the plan holds settled only when it is one of the plan's own uuids; the
 plan's settled rows of a code the resolver returned stay. A code the plan holds no uuid for (a word typed this turn) keeps
-today's match. Add the `_with_the_picked_axis` change only if a test shows the kept echo still harms the turn.
+today's match. `_with_the_picked_axis` stays as it is: with this fix a kept echo costs one resolver call and changes nothing
+(tests p0, p1, p2), so a second change there has no problem to solve.
 
 ## Tests (red first)
 
@@ -61,4 +68,10 @@ same customer (guard), plus unit guards on `_entities_for` for a word typed this
 
 Invoiced sales for a contact with a location cap: `reports/ask.py:291` caps by policy, `billing_document_lines.py:118`
 refuses any location, so the reply is "I could not fetch sales just now" (422 `location_needs_order_basis`). Whether such a
-contact may see invoiced figures at all is an access decision: filed with crew as a question, not decided here.
+contact may see invoiced figures at all is an access decision. Owner, 1 Nov: decide later, out of this PR.
+
+## The owner's RM 0.00
+
+Not answerable on the crew copy: its active company holds zero billing documents, so every invoiced figure there is 0. On
+production the reply's total was over the wrong two ledgers, so it says nothing about the picked customer. Check by re-asking
+after release, or Finance > Billing documents filtered to that customer for October.
