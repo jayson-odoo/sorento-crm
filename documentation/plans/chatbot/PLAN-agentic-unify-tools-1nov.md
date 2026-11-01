@@ -20,7 +20,9 @@ UAC: `agentic-unify-tools-acceptance-criteria.md`. Behaviour: `CARD-agentic-unif
 
 1. **`.view_own` is safe on a panel turn only.** On a non-panel turn the route runs as the shared key's user (`services.py:343`), and `complaint_own_scope` narrows to that user, not the linked one. An any-of gate there would pass a `.view_own` holder into a read the route does not narrow for them. Hence `ToolDef.own_permission`, honoured only when `staff_principal.current()` is set (AC-2).
 2. **Jev is not told about `REGISTRY` reads.** `agent_tool_labels` (`router.py:295`) lists writes and user reads only, "the bot answers those lookups too". The bot does not answer complaints, SLA or projects: they are in `UNDOMAINED_CHATBOT_TOOLS` (`contracts.py:65`). Without a label those questions depend on router text we may not reword. Hence `PORTED_READS`, listed to Jev (AC-8). `crm_find` and capabilities are left out: the first overlaps `crm_products_find` and the bot's lookups; a capability question is not a domain.
-3. **No search on two catalog tools.** `get_complaints` and `list_projects` take `query`; the catalog does not expose it (`catalog.py:1291, 1659`). A number or code cannot find its row, and a write needs the id from a result. Add the one param to each.
+3. **No search on two catalog tools, on purpose.** `get_complaints` and `list_projects` take `query`, but `sorento_crm_mcp/tests/test_catalog_compile.py:107` forbids a fuzzy `query` on entity list tools (UUID-first contract), so the catalog stays closed. My first draft added it; the tester found the guard. A number or code still has to find its row, and a write needs the id. `crm_resolve` is not the place: a new default kind could change resolution on every existing turn. So two `UserRead`s, the precedent being `crm_purchase_requests_list` and `crm_contacts_find` (`writes.py:378`): in process, the route function, as the user, own scope right on every turn. PR 4 then has no MCP code change.
+8. **Two reads were off the chatbot's allow-list.** `crm_order_analytics` and `crm_find` are not in `CHATBOT_READ_ONLY_TOOLS`, so `_mcp_call` refuses them. Both are plain GETs. They join `UNDOMAINED_CHATBOT_TOOLS` (`contracts.py:65`).
+9. **Projects carry no brand.** Rows name no product, so the brand guard cannot narrow `crm_projects_list` or `crm_project_detail`. The forecast is already refused for a scope naming a brand (`contact_brand_scope.py:217`, crew ruling (b)); the project reads join it, same reason, same trigger: per-brand project scoping. No lane calls them, so nothing else moves.
 4. **Order rows carry no UUID, by design** (`catalog.py:607`). So `crm_order_cancel` takes `order_number` and its `read_before` finds the row. No new read tool. Complaint rows do carry `id`, so complaint close follows the `_check_ids` rule like PR decide.
 5. **Complaint close parks** (`complaints.py:1484`, `dispatch_or_defer`, `cx.finalize`, `tells_contact=True`) and has a revision fence on the route dependency. Copy `_pr_execute`: browser-channel `Request`, `assert_revision_current`, the same `JSONResponse` to parked-dict mapping. Consider one small helper only when the second caller is in hand here, not before.
 6. **Order cancel does not park** and its route slug is `orders.view` (`orders.py:1220`). Same gate as the screen today; see question 1.
@@ -32,8 +34,10 @@ UAC: `agentic-unify-tools-acceptance-criteria.md`. Behaviour: `CARD-agentic-unif
 | --- | --- |
 | `CHAT/agent/tools.py` | `ToolDef.own_permission`. Twelve `REGISTRY` rows. `NON_RENDER_TOOLS` gains all but `crm_find`. `PORTED_READS`. Labels. A small `_tool_permitted` used by `user_may_use` and `_dispatch_inner` (slug, or own slug on a panel turn, plus the operator for `PORTED_READS`). Capabilities joins the no-slug branch beside `GUIDES` |
 | `CHAT/router.py` | `agent_tool_labels` adds `PORTED_READS` |
-| `CHAT/agent/writes.py` | Three `WriteDef`s with `read_before`, `summary`, `execute`, `changes` |
-| `sorento_crm_mcp/sorento_crm_mcp/catalog.py` | `query` on `crm_complaints_list` and `crm_projects_list`, with its line in each description |
+| `CHAT/agent/writes.py` | Three `WriteDef`s with `read_before`, `summary`, `execute`, `changes`. Two `UserRead`s, `crm_complaints_find` and `crm_projects_find`, with `combine` |
+| `CHAT/contracts.py` | `crm_order_analytics` and `crm_find` in `UNDOMAINED_CHATBOT_TOOLS` |
+| `app/services/contact_brand_scope.py` | Three project tools in `_TOOLS_DENIED_WHEN_SCOPED` |
+| `documentation/user-guides/_shared/ai-assistant-side-panel.md` | From #2060. Drop "Not on this path yet"; add the new questions and the three changes. Same PR, per the guide rule |
 
 Merge with #2053: it rewrites `agent_tool_labels(db, user)` and adds `CONTACT_TOOLS`, an allow-list, so ported reads stay off contact principals with no change here. Whichever lands second carries the labels through its per-user filter: a contact with no linked user gets none. Test pinned once both are in.
 
@@ -48,7 +52,9 @@ Merge with #2053: it rewrites `agent_tool_labels(db, user)` and adds `CONTACT_TO
 - Per AC-1 row: offered with the slug, not offered and refused without, on real role rows, because `check_user_has_permission` passes every admin.
 - `.view_own` only: panel offered and route narrows to own rows; console refused. Kill by removing the panel condition.
 - Operator lacking the slug on console: refused, for each `PORTED_READS` name.
-- MCP compiled tool, one case per tool per shape, with the worktree MCP first on `sys.path` (the venv's editable install points at the primary checkout).
+- MCP compiled tool, one case per tool per shape, with the worktree MCP first on `sys.path` (the venv's editable install points at the primary checkout). All 24 pass on the catalog as it is: they pin it, they do not need a change.
+- Finds: a number finds its row and its id joins the turn's ids; `.view_own` gets own rows only, on panel and console; operator combine; a scope naming a brand refuses; unknown number is `empty`.
+- A scope naming a brand: each project read refused through `_mcp_call`.
 - Raw route shape: `{"data": []}` is `empty`; a big list is capped and counted; analytics buckets with no rows; a dict body with an error.
 - `agent_tool_labels` holds the new labels and the stored prompt row is untouched; a guard that every `PORTED_READS` name has a label and is read only.
 - Complaint close: every refusal in AC-10; Confirm parks; withdraw leaves status unchanged and sends nothing, with the Respond send patched and asserted not called; a revision bumped after the card is refused; own company only.
@@ -60,8 +66,10 @@ Merge with #2053: it rewrites `agent_tool_labels(db, user)` and adds `CONTACT_TO
 
 Baseline A is today's text with today's labels, fixed; B adds the labels. Baseline rows are the existing panel and WhatsApp set (68/75 on A). New rows are fresh paraphrases across complaints, SLA, projects, analytics and the three writes, written before any run and never tuned against. **Bar:** no fewer than A on the baseline rows, and at least 80 percent Agent on the new rows. Below the bar, stop and report, no rewording. Runner stops on two busy replies or any 429. Jev only, cheap, and budget asked of crew first: the 1 Nov cap is spent.
 
-## Questions for crew, none blocking the build
+## Crew rulings, 1 Nov (ask a29175772)
 
-1. **Order cancel slug.** Route gate is `orders.view`, so anyone who can view an order can cancel it, on the screen and on the panel today. (a) Same as the screen, with the Confirm as the gate. (b) Require an edit slug on the agent only. **Recommend (a):** chat stricter than the screen helps little while the route stays open. The route's gate belongs with #1754. Security-reviewer sees this line.
-2. **Copy and WhatsApp.** A complaint close tells the contact through Respond. Can a copy send it? Unanswered for email too. The hand test needs a test contact or a confirmed block. Blocks only that live step.
-3. **Live budget** for AC-16 and AC-17.
+1. **Order cancel slug: same as the screen.** The agent mirrors the route's `orders.view`; no agent-only slug (owner ruling 30 Oct: agent writes check permissions through the P1 tools, Confirm before write). The PR body says the route is gated on `orders.view` (`orders.py:1220`) and that the route fix belongs with #1754.
+2. **Every copy counts as ABLE to send WhatsApp.** The complaint close live step runs only on a test contact with Respond egress blocked (proxy env, verified), or it is covered by a mocked Respond test instead. Never against a real contact. Ask crew to check the copy's Respond creds before that step. The hand test script says the same.
+3. **Live budget.** Org key caps stand: USD 2 a day all lanes, USD 0.25 a run, x1. 1 Nov is spent, so AC-16 and AC-17 run under the 2 Nov cap, ledger before and after. Estimate approved for 2 Nov (a29286280): Run A, Jev gate, about 0.009 USD; Run B, 10 live turns, about 0.14 USD with a stop at 0.25; x1. When slices 1 and 2 are green, `crew report --ask` for a copy on this worktree; crew brings it up and checks its Respond creds and egress block before the complaint close step.
+4. **Guides stay in #2060.**
+5. **#2053 has the owner's merge go and lands first.** PR 4 merges main after it and carries `agent_tool_labels` through its per-user filter (`router.py:295`).
