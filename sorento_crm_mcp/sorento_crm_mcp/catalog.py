@@ -1501,7 +1501,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "incoming, but a PO is placed') the CRM probes this tool itself.\n\n"
             "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
             "repeated; the line's warehouse - an SPO allocation also matches by its book "
-            "location code). "
+            "location code), `supplier_ids` (the PO's supplier, for 'outstanding POs for supplier "
+            "X'; resolve the supplier with crm_resolve kind supplier first). "
             "Date window: expected_date_from / expected_date_to (filters only; the expected "
             "date is not rendered in the reply).\n\n"
             "SORT: `sort` = expected_date | product | supplier | outstanding_qty | po_date | "
@@ -1516,8 +1517,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/procurement/purchase-orders/placed",
         (),
         (
-            "limit", "product_ids", "warehouse_ids", "expected_date_from", "expected_date_to",
-            "group_by", "include_summary", "sort", "dir",
+            "limit", "product_ids", "warehouse_ids", "supplier_ids", "expected_date_from",
+            "expected_date_to", "group_by", "include_summary", "sort", "dir",
             "contact_id", "space_id",
         ),
         domain="purchase_order",
