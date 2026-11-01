@@ -191,3 +191,18 @@ Accepted for hand test: `*Co B:*` under `3. Carol` sits inside that item, since 
 - A live overridden turn has no test (`tests/chatbot/test_console_switch_override.py:150, 175`); runtime UNVERIFIED.
 - A panel reset writes its frame through `CHAT/turn/memory.py`, keyed on the thread and with no embedding enqueued; `S/frame_service.py` is n8n's path and is not reached. Read from the code, no test pins it.
 - Slices follow the answers; the page context layer and panel rendering are as in card v2 section 4 and mock v1.
+
+## Round 8: inline code on the panel
+
+A code span in a panel reply showed raw backticks. `WhatsAppBlocks` splits on code spans before `WhatsAppText`, so `WhatsAppText` and `lib/whatsappText.ts`, shared with the console and inbox, do not change. Red f13f098a5f, fix da1cbde60d. The earlier browser failure was a stale dev build, settled by the copy restart.
+
+## Round 9: reviewer on a3ec9516c5 and rounds 6 to 8
+
+Crew asked for this review before merging. Verdict NOT READY on the guide and one regression; the code boundaries held: nothing added for the panel reaches a console or WhatsApp turn. Crew merges only with CI green and the reviewer clean.
+
+- **Guide:** five wrong statements, fixed: reload, files, the limit wording, "never changes anything" (a request for help can create a task, by the round 6 ruling), and "will not show it" (reference names stay open, the audit table above). The Escalate link went: a panel task refuses a manual escalate.
+- **A marker around code** (`*Sales Orders (`code`)*`) showed raw `*` at both ends, because the split breaks the marker. Fixed in `WhatsAppBlocks`, red first. Two stray backticks on one line stay code, as in markdown: not changed.
+- **`PANEL_NO_PORTAL_LINK`** said "try asking in different words", a dead end for a real form-link ask, with no MS or ZH. It now says why, with both.
+- **Two tests that only pinned shape:** the four-tool list now reads `sorento_crm_mcp/server.py` by path, and the portal test names a form and asserts the reply.
+- **Left as is:** round 6's criteria tests pin the key and words; real routing rests on the live measurements, and the labelled set measures it before default.
+

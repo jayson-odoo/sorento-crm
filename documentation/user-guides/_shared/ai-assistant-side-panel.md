@@ -10,7 +10,7 @@ Use the AI assistant panel to ask how something works, look up stock or sales, a
 | **Use the AI Assistant on the chatbot's brain** | Your messages are answered by the same thinking as the WhatsApp chatbot, as described on this page. No role has it by default. Without it, the panel answers the way it did before |
 | **View AI Assistant Settings** | You also see how each reply was reached: the **Agent** or **Chat** pill, **Steps** and **View trace** |
 
-Everything else follows your own permissions and your active company. If you cannot see something on its screen, the assistant will not show it to you either.
+Records and figures follow your own permissions and your active company: if you cannot open a record on its screen, the assistant will not show it to you either. Reference names, such as products, brands, categories and warehouses, are open to every staff member.
 
 ## Steps
 
@@ -33,36 +33,35 @@ Not on this path yet: complaints, SLA tracking, projects and order analytics. As
 
 ## Making a change
 
-The assistant never changes anything until you confirm it.
+The assistant does not change a record until you confirm it. The one thing that happens without a card is a request for help: see the next section.
 
 1. Ask for the change, such as logging an opportunity or approving a purchase request.
 2. A card shows what will change, with the value before and after where there is one.
 3. Press **Confirm change**, or **Cancel** to leave everything as it is. The card then reads **Done** or **Cancelled**.
 4. Some actions, such as approving a purchase request, wait for a few seconds before they apply. While the countdown runs, press **Undo** to take it back. After Undo, nothing has changed and nobody has been told.
 
-A confirmed change does what the same action does on its screen, including telling the people that action normally tells. The card says who will be told.
+A confirmed change does what the same action does on its screen, including telling the people that action normally tells. On a purchase request, the card says who will be told.
 
-If you reload the page, the conversation looks the same as before, and a card you already answered does not ask again.
+If you reload the page, the panel opens empty. Reopen the conversation from **History**: it looks the same as before, and a card you already answered does not ask again. A countdown keeps running during the reload, and it applies when it ends, so reopen the conversation quickly if you want to press **Undo**.
 
 ## Asking to speak to someone
 
-Ask for a person during a stock or sales question. The reply names who was assigned and says they will follow up directly.
+Ask for a person during a stock or sales question. The reply names who was assigned and says they will follow up directly. A message the assistant reads as a request for help can do the same even if you did not ask for a person by name, and it creates their task straight away, with no card to confirm.
 
 ## What gets created
 
 * Your conversation, saved in **History**.
 * Any record you confirmed, under your name.
-* If you asked for a person, a task in their **My Pending** with an SLA clock.
-* Files you ask for go to your **My Downloads**.
+* If a person was asked for, a task in their **My Pending** with an SLA clock. It cannot be escalated by hand from there.
+* Generated reports go to your **My Downloads**. Other files, such as a drawing, a certificate or a picture, come back on the reply.
 
 ## How you'll be notified
 
 Replies appear in the panel. A panel conversation never sends anything to WhatsApp by itself. A person you asked for gets an in-app notification, not a WhatsApp message.
 
-There is a daily limit per person on the longer answers, such as reports and changes, across all your conversations. Past it, the assistant still answers quick lookups. If you send many messages in a few minutes, it asks you to wait a few minutes.
+There is a daily limit per person on the longer answers, such as reports and changes, across all your conversations. Past it, the assistant still answers quick lookups. If you send many messages in a short time, it asks you to try again shortly.
 
 ## See also
 
 * [My Tasks & My Team Tasks](./dashboard-my-tasks-sla.md)
-* [Escalate a task or enquiry you can't handle](./escalate-a-task-or-enquiry.md)
 * [Chatbot Console](../system-management/chatbot-console-agent-mode.md)
