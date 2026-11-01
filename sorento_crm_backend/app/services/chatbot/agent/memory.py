@@ -114,7 +114,9 @@ def _cap_quoted(match: "re.Match[str]") -> str:
 
 
 def cap_quoted_values(text: str) -> str:
-    """`text` with every quoted value cut to `WAITING_VALUE_CHARS` (then "...")."""
+    """`text` with every quoted value cut to `WAITING_VALUE_CHARS` (then "..."). It caps every quoted value in
+    a replayed reply, not only the values of a proposal: harmless by design, since history is read by the model
+    only and the reply the user saw is stored whole."""
     return _QUOTED.sub(_cap_quoted, text)
 
 

@@ -533,3 +533,41 @@ def test_fr2_f_an_agent_answered_row_has_branch_kind_agent_and_its_fact_says_so(
 
     assert branch == "agent"
     assert fact == [("agent", "answered")]
+
+
+def _failing_with_notes(seams, monkeypatch, notes):
+    from app.services.chatbot import inbox_queue
+    from app.services.chatbot.agent import loop
+
+    def fake(db, **kwargs):
+        seams.agent_calls.append(kwargs)
+        return loop.AgentTurnResult(
+            turn_id=seams.agent_turn_id, conversation_id=str(uuid.uuid4()),
+            reply_text="The agent could not answer: the model provider failed.",
+            status="failed", limit_hit=None, rounds=1, usage={}, tool_calls=[], notes=list(notes),
+        )
+
+    monkeypatch.setattr(loop, "run_agent_turn", fake)
+    monkeypatch.setattr(inbox_queue, "run_agent_turn", fake, raising=False)
+
+
+def test_fr4_r3_the_whatsapp_post_carries_the_confirm_note_after_a_failure(world, seams, monkeypatch):
+    from app.services.chatbot import inbox_queue
+
+    note = "Idea IDEA-0184: https://crm.zzt.example/ideas/7ab51c1c-3bd7-4372-83d4-8d9785c7d3a9. Not given: Photos or files."
+    _failing_with_notes(seams, monkeypatch, [note])
+
+    _drive(world, seams, label="r3note")
+
+    assert seams.bot_calls == []
+    assert seams.sent[0]["actions"] == _expected_actions(inbox_queue.AGENT_FAILED_LINE + "\n\n" + note)
+
+
+def test_fr4_r3_control_a_failure_with_no_notes_posts_the_fixed_line_alone(world, seams, monkeypatch):
+    from app.services.chatbot import inbox_queue
+
+    _failing_with_notes(seams, monkeypatch, [])
+
+    _drive(world, seams, label="r3none")
+
+    assert seams.sent[0]["actions"] == _expected_actions(inbox_queue.AGENT_FAILED_LINE)
