@@ -70,6 +70,8 @@ def test_the_audited_gemini_floors_are_the_ones_in_the_resolver():
     assert lr.MEANING_FLOORS_BY_MODEL[MODEL] == {
         "category": 0.70, "spec": 0.75, "file_type": 0.65, "brand": 0.60, "promotion_kind": 0.75,
         "location": 0.65, "salesperson": 0.70, "customer": 0.75, "sales_channel": 0.65, "spec_key": 0.75,
+        # SUPPLIER-ASK: the customer list's floor, borrowed (both are company names); not audited on a supplier gold.
+        "supplier": 0.75,
     }
 
 

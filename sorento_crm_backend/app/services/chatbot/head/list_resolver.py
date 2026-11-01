@@ -33,7 +33,7 @@ from app.services.chatbot.head.lookup_lists import Embedder, LookupRow, _fold, _
 
 SPAN_TYPES = (
     "brand", "customer", "salesperson", "location", "category", "spec_key", "spec_value",
-    "file_type", "promotion_kind", "sales_channel", "product_code",
+    "file_type", "promotion_kind", "sales_channel", "product_code", "supplier",
 )
 #: The list a span type prefers on a tie; every type but `spec_value` is its own list's name.
 TYPE_LIST = {t: t for t in SPAN_TYPES} | {"spec_value": "spec"}
@@ -49,6 +49,8 @@ FLOORS: dict[str, dict[str, float]] = {
     "location": {"spell": 0.5, "partial": 0.8, "meaning": 0.55},
     "salesperson": {"spell": 0.4, "partial": 0.8, "meaning": 0.6},
     "customer": {"spell": 0.5, "partial": 0.6, "meaning": 0.6},
+    # SUPPLIER-ASK: company names like the customer list; Customer's floors until measured for suppliers.
+    "supplier": {"spell": 0.5, "partial": 0.6, "meaning": 0.6},
     "sales_channel": {"spell": 0.5, "partial": 0.8, "meaning": 0.55},
     "spec_key": {"spell": 0.5, "partial": 0.8, "meaning": 0.6},
 }
@@ -60,6 +62,8 @@ MEANING_FLOORS_BY_MODEL: dict[str, dict[str, float]] = {
     "gemini-embedding-001": {
         "category": 0.70, "spec": 0.75, "file_type": 0.65, "brand": 0.60, "promotion_kind": 0.75,
         "location": 0.65, "salesperson": 0.70, "customer": 0.75, "sales_channel": 0.65, "spec_key": 0.75,
+        # SUPPLIER-ASK: the customer list's floor, borrowed (both are company names); not audited on a supplier gold.
+        "supplier": 0.75,
     },
 }
 _OPENAI_MODEL = "text-embedding-3-small"

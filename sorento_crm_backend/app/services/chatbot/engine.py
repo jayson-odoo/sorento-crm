@@ -1230,6 +1230,13 @@ def _customer_visibility(db: Session, resolved: str) -> tuple[bool, frozenset[st
     return False, None
 
 
+def _sees_suppliers(include_customers: bool, customer_ids: frozenset[str] | None) -> bool:
+    """SUPPLIER-ASK: the Supplier block is office staff's only: the contact `_customer_visibility` gives every
+    customer (staff), never a dealer held to its links. The supplier reveal itself is checked at the resolver
+    (`contracts.supplier_visible`), where the turn's access is known."""
+    return bool(include_customers) and customer_ids is None
+
+
 def _guarded(db: Session, fn: Any, default: Any) -> Any:
     """`fn()` in its own savepoint; `default` (fail closed) when it raises, with the session still usable."""
     try:
@@ -1281,6 +1288,7 @@ def _lookup_lines(
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group,
+                include_suppliers=_sees_suppliers(include_customers, customer_ids),
             )
             brand_words = lookup_lists.brand_words(db, brands)
             lookup_lists.warm(rows, embed)
@@ -1341,6 +1349,7 @@ def _span_prep(
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group_categories,
+                include_suppliers=_sees_suppliers(include_customers, customer_ids),
             )
             spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
             brand_words = lookup_lists.brand_words(db, brands)
@@ -1380,6 +1389,7 @@ def start_lookup_warm(session_factory: Any = None) -> threading.Thread | None:
 
             rows = lookup_lists.load_rows(
                 db, include_salespeople=True, include_customers=True, customer_ids=None, group_categories=False,
+                include_suppliers=True,
             )
             spec_keys = list_resolver.spec_key_rows(product_spec_registry.active_registry(db))
             db.rollback()

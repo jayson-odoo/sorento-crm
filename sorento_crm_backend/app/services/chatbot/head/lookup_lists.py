@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 HEADER_NOUN = {
     "category": "Category", "spec": "Spec", "file_type": "File type", "brand": "Brand",
     "promotion_kind": "Promotion kind", "salesperson": "Salesperson", "location": "Location",
-    "sales_channel": "Sales channel", "customer": "Customer",
+    "sales_channel": "Sales channel", "customer": "Customer", "supplier": "Supplier",
 }
 FLOOR_SPELLING = 0.5
 #: ENTITY-EXTRACT-MATCH S2 V2: on the span path a row the message spells at least this well is offered even when no
@@ -43,6 +43,8 @@ FLOOR_MEANING = 0.5
 #: Per list for text-embedding-3-small (free re-score of 26 Oct); any other list uses `_FLOOR_MEANING_OTHER`.
 FLOOR_MEANING_BY_LIST = {
     "category": 0.55, "sales_channel": 0.55, "brand": 0.58, "spec": 0.55, "file_type": 0.59, "customer": 0.53,
+    # SUPPLIER-ASK: a company name list like Customer, so Customer's measured floor until one is measured for it.
+    "supplier": 0.53,
 }
 _FLOOR_MEANING_OTHER = 0.55
 #: A message is read for its first words only (CPU bound).
@@ -53,10 +55,11 @@ MAX_NUMBER_ASKS = 3
 MAX_LABEL_CHARS = 120
 TOP_K = {
     "category": 10, "spec": 10, "file_type": 5, "brand": 3, "promotion_kind": 3, "salesperson": 5, "location": 5,
-    "sales_channel": 2, "customer": 5,
+    "sales_channel": 2, "customer": 5, "supplier": 5,
 }
 DEFAULT_ORDER = (
     "category", "spec", "file_type", "brand", "promotion_kind", "salesperson", "location", "sales_channel", "customer",
+    "supplier",
 )
 
 EMBED_MODEL = "text-embedding-3-small"
@@ -625,10 +628,25 @@ def _customer_rows(db: "Session", only_ids: frozenset[str] | None) -> list[Looku
     ]
 
 
+def _supplier_rows(db: "Session") -> list[LookupRow]:
+    """SUPPLIER-ASK: active suppliers of the session's companies, labelled by `supplier_name`, with the supplier code
+    as a second text. Staff-only: the engine asks for them only for an office contact (`include_suppliers`)."""
+    from app.models.procurement import Supplier
+
+    out: list[LookupRow] = []
+    query = db.query(Supplier.id, Supplier.supplier_name, Supplier.supplier_code).filter(Supplier.is_active.is_(True))
+    for sid, name, code in query.order_by(Supplier.supplier_code).all():
+        label = (name or "").strip()
+        if label and _fold(label):
+            texts, homes = _tagged(("label", [label]), ("code", [(code or "").strip()]))
+            out.append(LookupRow("supplier", str(sid), label, texts, homes=homes))
+    return out
+
+
 def load_rows(
     db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = False,
     include_customers: bool = False, customer_ids: frozenset[str] | None = None, brands: list[dict] | None = None,
-    group_categories: bool = False,
+    group_categories: bool = False, include_suppliers: bool = False,
 ) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
     spec word values, file types and the sales channels. `group_categories` (EEM-CATEGORY-PICK) reads the class
@@ -682,6 +700,8 @@ def load_rows(
         out.extend(_salesperson_rows(db))
     if include_customers:
         out.extend(_customer_rows(db, customer_ids))
+    if include_suppliers:
+        out.extend(_supplier_rows(db))
     # The channel values are code's; the owner's `sales_channel_alias` set only adds words for them ("retail" = dealer).
     channel_words = pv._alias_words(db, "sales_channel_alias")
     for ch in SALES_CHANNELS:
