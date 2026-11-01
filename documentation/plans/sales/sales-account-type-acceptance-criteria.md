@@ -78,7 +78,7 @@ baseline. "Stored types" are the types the customers of the asker's company carr
 - **AT-27 [T]** Unchanged readings: "cabana stock" stays the brand with no question; "project sales" stays the channel; a verdict reading "sample" as a category stays the category (the production parser gives it no entity today, so the gate grades it as any stored type);
   "top accounts" stays customers.
 - **AT-28 [T]** "sales for cabana in Jan" means 1 Jan to 31 Jan of this year, one total, on a fresh conversation and after a held 2026 month list. A month or year split never prints
-  "Top N": its first line reads "By month, invoiced" ("By year, delivered"), and the lines under it stay as they are. Every other axis keeps "Top N".
+  "Top N": its first line reads "By month, invoiced" ("By year, delivered"), and the lines under it stay as they are. Every other axis keeps "Top N". A month split inside one calendar month, or a year split inside one calendar year, is the total.
 - **AT-29 [T]** The owner's examples on AT-16's invented figures: account RM 100,400.00, brand RM 150,000.00.
 - **AT-30 [T]** The AI panel's agent can pass an account type word or number through `crm_report_ask` and reads the same reply.
 - **AT-32 [T]** A customer-scoped contact (dealer): "cabana" stays the brand with no question, "account 4" is the dealer refusal, and the Known account types line is never in their parser input.
