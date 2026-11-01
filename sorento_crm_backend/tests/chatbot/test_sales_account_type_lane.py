@@ -1282,20 +1282,55 @@ def test_at21_a_repeat_naming_another_filter_word_is_a_new_ask(bot, seeded) -> N
     assert "sales_agent_ids" not in args, args
 
 
-def test_at37_a_contact_linked_between_turns_is_not_offered_agents(span_bot) -> None:
-    from app.services.chatbot.lanes.business import report_ask
+@pytest.fixture
+def plain_span_bot(console, monkeypatch):
+    """The span bot's contact WITHOUT the office access type: a plain contact holding the sales report reveal."""
+    from sqlalchemy import text as sql
+
+    from app.services.contact_field_reveal_service import set_granted_keys
+    from tests.chatbot.test_engine import CONTACT_ID
+    from tests.chatbot.test_report_unify_span_binding import SpanBot
+
+    db = console.session_factory()
+    try:
+        internal = db.execute(
+            sql("SELECT id FROM respond_contacts WHERE respond_io_id = :cid"), {"cid": str(CONTACT_ID)}
+        ).scalar_one()
+        set_granted_keys(db, str(internal), ["sales_orders.sales_report"], actor_id=None)
+        db.commit()
+    finally:
+        db.close()
+    return SpanBot(console, monkeypatch)
+
+
+def _agent_ask_then_link(bot):
     from tests.chatbot.test_report_ask_lane import _link_dealer
 
-    text, calls = span_bot.say(
+    text, calls = bot.say(
         _status("sales_report", _ent("yu", "sales_agent"), basis=None, **JAN), "sales agent yu sales in Jan",
         spans=_agent_spans(),
     )
     assert calls == [], calls
-    _link_dealer(span_bot.console)
-    text, calls = span_bot.say(_pick(2), "delivered")
+    _link_dealer(bot.console)
+    return bot.say(_pick(2), "delivered")
+
+
+def test_at37_a_contact_linked_between_turns_is_not_offered_agents(plain_span_bot) -> None:
+    from app.services.chatbot.lanes.business import report_ask
+
+    text, calls = _agent_ask_then_link(plain_span_bot)
     assert calls == [], calls
     assert text.strip() == report_ask.DEALER_REFUSAL, text
     assert "ZZT-YU" not in text, text
+
+
+def test_at37_a_linked_staff_contact_keeps_the_agent_list(span_bot) -> None:
+    from app.services.chatbot.lanes.business import report_ask
+
+    text, calls = _agent_ask_then_link(span_bot)
+    assert calls == [], calls
+    assert text.strip() != report_ask.DEALER_REFUSAL, text
+    assert WHICH_AGENT in text and "ZZT-YU-3" in text, text
 
 
 def test_at35_a_refine_on_a_held_default_company_reads_only_its_book(bot, seeded) -> None:
