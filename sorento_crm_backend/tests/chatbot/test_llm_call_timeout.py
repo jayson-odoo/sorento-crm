@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from app.config import settings
 from app.services import llm_provider
 from app.services.chatbot import llm_call
 from app.services.chatbot.head import parser as parser_mod
@@ -81,7 +82,10 @@ def test_every_attempt_carries_a_timeout(monkeypatch, clock):
     assert provider.timeouts == [llm_call.ATTEMPT_TIMEOUT_SECONDS]
 
 
-def test_a_timeout_raises_timed_out_and_is_not_retried(monkeypatch, clock):
+def test_a_timeout_raises_timed_out_and_is_not_retried_when_n_is_zero(monkeypatch, clock):
+    """Owner, 1 Nov 2026: a timeout is retried up to `CHATBOT_LLM_RETRIES` times
+    (`test_llm_call_retry.py`). Zero is the old behaviour."""
+    monkeypatch.setitem(settings.__dict__, "chatbot_llm_retries", 0)
     provider = Provider(errors=[APITimeoutError("Request timed out.")])
     _install(monkeypatch, provider)
     with pytest.raises(llm_call.TimedOut) as caught:
@@ -100,7 +104,7 @@ def test_gemini_style_wrapped_timeout_is_recognised(monkeypatch, clock):
             raise RuntimeError(f"Gemini request failed: {inner}") from inner
     except RuntimeError as wrapped:
         error = wrapped
-    _install(monkeypatch, Provider(errors=[error]))
+    _install(monkeypatch, Provider(errors=[error] * 10))
     with pytest.raises(llm_call.TimedOut):
         llm_call.chat("gemini", "k", "m", [])
 
@@ -141,7 +145,7 @@ def test_last_attempt_gets_only_the_time_left(monkeypatch, clock):
 
 
 def test_parser_timeout_fails_understood_with_the_busy_flag(monkeypatch, clock):
-    _install(monkeypatch, Provider(errors=[APITimeoutError("Request timed out.")]))
+    _install(monkeypatch, Provider(errors=[APITimeoutError("Request timed out.")] * 10))
     config = parser_mod.ParserConfig(
         system_prompt="s", prompt_version=1, provider="openai", model="m", api_key="k"
     )
