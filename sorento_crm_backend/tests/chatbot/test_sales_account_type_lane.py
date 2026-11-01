@@ -433,6 +433,49 @@ def test_at28_after_a_held_2026_month_list_a_month_is_still_one_total(bot, seede
     assert args["brand_ids"] == [seeded["CABANA"]], args
 
 
+def test_at28_a_month_split_inside_one_month_is_one_total(bot, seeded) -> None:
+    text, calls = bot.say(_sales(_acct("4"), group_by="month", measure="amount"), "account 4 sales in Jan")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["4"], args
+    assert not args.get("group_by"), args
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-01-31", args
+
+
+def test_at28_a_year_split_inside_one_year_is_one_total(bot, seeded) -> None:
+    text, calls = bot.say(
+        _sales(_acct("4"), group_by="year", measure="amount", **YEAR), "account 4 sales in 2026"
+    )
+    args = _only_report_ask(calls)
+    assert not args.get("group_by"), args
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+
+
+def test_at28_a_month_split_across_months_stays_a_split(bot, seeded) -> None:
+    text, calls = bot.say(
+        _sales(_acct("4"), group_by="month", measure="amount", date_filter_start="2026-01-01", date_filter_end="2026-03-31"),
+        "account 4 sales by month Jan to Mar",
+    )
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "month", args
+
+
+def test_at28_a_month_split_of_a_year_stays_a_split(bot, seeded) -> None:
+    text, calls = bot.say(
+        _sales(_acct("4"), group_by="month", measure="amount", **YEAR), "account 4 sales by month 2026"
+    )
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "month", args
+
+
+def test_at28_a_year_split_across_years_stays_a_split(bot, seeded) -> None:
+    text, calls = bot.say(
+        _sales(_acct("4"), group_by="year", measure="amount", date_filter_start="2025-01-01", date_filter_end="2026-12-31"),
+        "account 4 sales by year 2025 to 2026",
+    )
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "year", args
+
+
 # --------------------------------------------------------------------------------------------- AT-29 (AT-16's figures)
 
 
