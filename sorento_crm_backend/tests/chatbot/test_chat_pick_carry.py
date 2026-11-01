@@ -92,6 +92,7 @@ def _services(ids: dict[str, str]) -> ResolveGateServices:
         found = {
             SHARED_CODE.casefold(): [project, hit("stranger", SHARED_CODE, STRANGER, "MCH")],
             OPTION_LABEL.casefold(): [project, ac1, iborn],
+            DEALER_A.casefold(): [project, ac1, iborn],
         }
         everyone = [project, ac1, iborn, hit("dealer_b", "300-ZZ59", DEALER_B)]
         return {
@@ -164,6 +165,24 @@ def _assert_the_pick(ids: dict[str, str], args: dict[str, Any], basis: str = "in
 
 
 # ------------------------------------------------------------------ the owner's turns
+
+
+def _owner_t2() -> dict[str, Any]:
+    """The owner's turn 2 parse, field for field (console trace, prompt v70): the option's name typed-as-current, its
+    code beside it, `replace_combine` and the pick."""
+    return _parser_output(
+        message_type="business_query", domain_hint="order", intent_hint="check_order", order_status="sales_report",
+        group_by=None, basis=None, sales_channel="dealer", domain_in_message=False, entity_op="replace_combine",
+        reference_target="dym", reference_positions=[1], open_question_answer=_pick(1),
+        entities=[{"raw": DEALER_A, "hint": "customer", "canonical_code": SHARED_CODE, "current_message": True, "confident": True}],
+        **OCT_2026,
+    )
+
+
+def test_p0_the_owner_s_exact_turn_2_parse_keeps_the_picked_customer(chat, session_factory):
+    ids, args = _three_turns(chat, session_factory, "p0", _owner_t2())
+    assert ids["stranger"] not in (args.get("customer_ids") or []), "a different customer sharing the code, never picked"
+    _assert_the_pick(ids, args)
 
 
 @pytest.mark.parametrize("current", [True, False], ids=["said-current", "said-carried"])
