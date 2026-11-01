@@ -133,6 +133,10 @@ of asking.
 Decided from that ruling (captain, 1 Nov): a stored create step without `_is_test` is a TEST idea (fail safe).
 Steps stored before this deploy were proposed while ideas were test-only, and an unknown origin is never treated as
 live.
+Decided from the same rulings (captain, 1 Nov, security delta note): the flag follows the turn that PROPOSED the
+idea, not the one that confirms it. A step a live WhatsApp user proposed stays real when a console operator confirms
+it, because the live user asked for it and the operator already needs `ideation.ideas.manage` to confirm for someone
+else (I2, re-checked at confirm). A console-proposed step stays a test idea whoever confirms it.
 
 ## W2 - dealer writes (next lane, after AGENT-CONFIRM-GATE #2055), least risk first
 
