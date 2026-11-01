@@ -159,6 +159,9 @@ TOOL_LABELS: dict[str, str] = {
     "crm_purchase_request_decide": "approve or reject a purchase request",
     "crm_purchase_request_action_undo": "take back a purchase request action",
     "crm_agent_actions_recent": "recent changes",
+    "crm_idea_create": "record a suggestion or wish for what the system should have or do, an idea or a feature request",
+    "crm_idea_update": "change one of your ideas",
+    "crm_ideas_list": "your ideas",
     "confirm_action": "confirm the waiting change",
     "cancel_action": "cancel the waiting change",
 }
@@ -314,6 +317,13 @@ ANSWER_SCHEMA: dict[str, Any] = {
                 },
                 "not_checked": {"type": "array", "items": {"type": "string"}},
                 "answered": {"type": "array", "items": {"type": "string"}},
+                "asked_back": {
+                    "type": "boolean",
+                    "description": (
+                        "Set true only when the reply asks the user something you need to finish, "
+                        "so their next message is read as the answer."
+                    ),
+                },
             },
             "required": ["text"],
         },

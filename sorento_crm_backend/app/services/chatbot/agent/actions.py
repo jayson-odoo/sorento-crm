@@ -11,7 +11,7 @@ import dataclasses
 import logging
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import update
@@ -49,6 +49,8 @@ class ActionOutcome:
     status: str  # executed | partial | rejected | cancelled
     reply_text: str
     steps: list[dict]  # [{"summary", "status": done|failed|skipped|proposed, "error"}]
+    #: The notes of the steps that ran (a link, a waiting window), for the reply to repeat in code.
+    notes: list[str] = field(default_factory=list)
 
 
 def _now() -> datetime:
@@ -305,7 +307,13 @@ def _finish(
     db.commit()
     if not changed:
         raise ActionRefused("not_proposed")
-    return ActionOutcome(str(action.id), status, _reply(status, steps), _out_steps(steps))
+    # Only a write that opts in (`note_in_reply`) has its note repeated in a chat reply.
+    notes = [
+        s["note"] for s in steps
+        if s.get("status") == "done" and s.get("note")
+        and getattr(writes.WRITES.get(s.get("tool")), "note_in_reply", False)
+    ]
+    return ActionOutcome(str(action.id), status, _reply(status, steps), _out_steps(steps), notes)
 
 
 # ------------------------------------------------------------------ cancel
