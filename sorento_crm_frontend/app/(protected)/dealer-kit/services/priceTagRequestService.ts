@@ -163,6 +163,7 @@ export interface PriceTagRequestLine {
   name: string;
   code: string;
   show_promo_price: boolean;
+  combo_id?: string | null;
   quantity: number;
   included_accessories: string | null;
   /** Free-text note on the line (D6). Optional: absent on a request created

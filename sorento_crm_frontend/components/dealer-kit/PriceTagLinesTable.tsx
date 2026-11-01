@@ -21,7 +21,7 @@ import { SearchableSelect, type SearchableSelectOption } from '@/components/comm
 import { numberFieldError } from '@/lib/number-field';
 import { promotionOptionName, type LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { distinctName, sameDisplayText } from '@/lib/product-display';
-import type { LinePartCandidate, PriceMode } from '@/app/(auth)/portal/lib/price-tag-request-service';
+import type { LinePartCandidate, PriceMode, ProductComboOption } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { PriceTagLineEditor } from '@/hooks/usePriceTagLineEditor';
 import {
   formatRM,
@@ -185,18 +185,30 @@ function candidateOptionLabel(
   candidate: LinePartCandidate,
   pricing: LinePricingResult | null,
   priceMode: PriceMode,
-  isUpgrade = false,
+  upgradeTopup?: { topup: number | string | null | undefined },
 ): string {
   const code0 = candidate.code || candidate.name;
-  // An upgrade is offered at a top-up, not at its list price.
-  if (isUpgrade && candidate.topup_amount != null) {
-    return `${code0}  +${formatRM(Number(candidate.topup_amount))}`;
+  // An upgrade is offered at a top-up, never at its list price: the top-up when set,
+  // the bare code when blank (the tag prints no amount either).
+  if (upgradeTopup) {
+    const topup = upgradeTopup.topup;
+    return topup == null || topup === '' ? code0 : `${code0}  +${formatRM(Number(topup))}`;
   }
   const price = pricing?.candidates.find((c) => c.product_id === candidate.product_id);
   const code = candidate.code || candidate.name;
   if (!price) return code;
   const amount = priceMode === 'selling' ? price.sell_price : price.list_price;
   return `${code}  ${formatRM(amount)}`;
+}
+
+/** An upgrade's top-up from the line's reloaded package lookup (a reopened draft's candidates
+ *  carry none). */
+function comboTopup(combos: ProductComboOption[], productId: string): number | null {
+  for (const combo of combos) {
+    const part = combo.parts.find((p) => p.is_upgrade && p.product_id === productId);
+    if (part) return part.topup_amount ?? null;
+  }
+  return null;
 }
 
 /** One part row under a line: a fixed or hand-added product, or an open group. */
@@ -206,6 +218,7 @@ function PartRow({
   part,
   pricing,
   priceMode,
+  combos,
   colSpan,
   onResolvePart,
   onRemovePart,
@@ -215,6 +228,7 @@ function PartRow({
   part: DraftPart;
   pricing: LinePricingResult | null;
   priceMode: PriceMode;
+  combos: ProductComboOption[];
   /** Matches however many real columns the line's own row currently has
    *  (isMobile/priceMode dependent - see `subRowSpan` in `LineRow`). */
   colSpan: number;
@@ -226,7 +240,8 @@ function PartRow({
   // `candidates` still carries the one entry. A genuinely open row always
   // has two or more.
   // An upgrade is always a choice, even with one candidate: the dealer may take it or not.
-  const choosable = part.candidates.length > 1 || part.role === 'Upgrade';
+  const choosable =
+    part.candidates.length > 1 || (part.role === 'Upgrade' && part.candidates.length > 0);
   const label = part.role || part.code || part.name;
   return (
     <tr className="align-top">
@@ -242,7 +257,14 @@ function PartRow({
                   onChange={(value) => onResolvePart(lineKey, part.key, value)}
                   options={part.candidates.map((candidate) => ({
                     value: candidate.product_id,
-                    label: candidateOptionLabel(candidate, pricing, priceMode, part.role === 'Upgrade'),
+                    label: candidateOptionLabel(
+                      candidate,
+                      pricing,
+                      priceMode,
+                      part.role === 'Upgrade'
+                        ? { topup: candidate.topup_amount ?? comboTopup(combos, candidate.product_id) }
+                        : undefined,
+                    ),
                     description: candidate.code,
                   }))}
                   placeholder={
@@ -579,6 +601,7 @@ function LineRow({
             part={part}
             pricing={pricing}
             priceMode={priceMode}
+            combos={line.combos}
             colSpan={subRowSpan}
             onResolvePart={onResolvePart}
             onRemovePart={onRemovePart}
