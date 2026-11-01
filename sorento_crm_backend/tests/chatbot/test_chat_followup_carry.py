@@ -10,6 +10,7 @@ MCP faked), on the seed and turns of `test_chat_pick_carry`. Fake customers only
 """
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from typing import Any
 
@@ -623,3 +624,59 @@ def test_s16_a_customer_named_on_a_refine_is_not_narrowed_to_the_company_on_scre
 def test_s17_a_pick_answered_on_a_refine_is_that_customer_never_the_held_one():
     _outcome, args = _settled({**_verdict("reuse"), "ranking_refine": True, "ranking_pick": True}, RANKING, _row(U3))
     assert args.get("customer_ids") == [U3], args
+
+
+UNDELIVERED = {"sort": "desc", "basis": "outstanding", "customer_ids": [U1, U2]}
+
+
+@pytest.mark.parametrize(
+    "over", [{}, {"capability_from": "outstanding"}, {"self_reference": True}], ids=["the-frame-s-kind", "the-parser-s-kind", "my-sales"]
+)
+def test_s18_an_outstanding_ask_is_never_asked_the_company(over):
+    """Item 4 (owner, 29 Oct): never the company question on an outstanding ask, on a refine as on a fresh one."""
+    verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True, **over}
+    outcome, args = _settled(verdict, UNDELIVERED)
+    assert not args.get("customer_ids") or over.get("self_reference"), args
+    assert (outcome.slot or {}).get("asking") != "company", outcome.reply
+
+
+def test_s19_a_pick_that_lost_its_row_never_falls_back_to_the_held_customer():
+    """The pick reached the lane with no row (the parser repeats `top_selling`, found not fixed): it asks, and never runs X."""
+    outcome, args = _settled({**_verdict("reuse"), "ranking_refine": True, "ranking_pick": True}, RANKING)
+    assert not args.get("customer_ids"), args
+    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+
+
+def test_s20_a_company_the_contact_does_not_hold_is_said_on_a_refine_too():
+    verdict = {"message_type": "business_query", "topic_reset": False, "capability_from": "sales_report",
+               **_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True, "sales_company": "Elsewhere"}
+    stamped = report_ask.with_held(verdict, _focus(RANKING), open_ask=None, replaced=None)
+    outcome, line = report_ask.settle(None, {**stamped, "sales_ranking_frame": RANKING}, [], companies=TWO_COMPANIES)
+    assert outcome is None and line == report_ask.COMPANY_FORBIDDEN_LINE, (outcome, line)
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        {"sort": "desc", "basis": "delivered", "customer_ids": [U1, U2], "date_from": "2026-10-01", "date_to": "2026-10-31"},
+        RANKING,
+        {"sort": "desc", "basis": "delivered", "group_by": "product", "customer_ids": [U1, U2], "top_n": 100,
+         "date_from": "2026-10-01", "date_to": "2026-10-31"},
+    ],
+    ids=["total", "ranking", "breakdown"],
+)
+def test_s21_the_company_question_a_refine_opens_answers_on_the_next_turn(frame):
+    """Over the session's JSON: the company picked is on the run, the customer stays gone, and nothing more is asked."""
+    verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True}
+    outcome, _args = _settled(verdict, frame)
+    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+    slot = json.loads(json.dumps(outcome.slot))
+    answer = {
+        "message_type": "business_query", "order_status": report_ask.ASK_NAME, "entities": [], "sales_ranking_frame": frame,
+        "required_ask": slot, "required_ask_answer": {"mode": "pick", "picked": [1], "items": [], "qty_for_all": None},
+    }
+    done, line = report_ask.settle(None, answer, [], companies=TWO_COMPANIES)
+    assert done is not None and done.done, (line, done)
+    args = report_ask.route_args(done)
+    assert args.get("company") == COMPANY_A and not args.get("customer_ids"), args
+    assert args["date_from"] == "2026-10-01" and args["basis"] == "delivered", args
