@@ -224,7 +224,7 @@ function upgradePrice(amount: number | null): string | null {
 
 /**
  * Combo Choices (AC-4.5): a header per group, then one line per option. A pick narrows
- * the group to the picked line; a picked upgrade stands in as the first group's only line.
+ * the group to the picked line; on a one-group combo a picked upgrade stands in as its only line (AC-4.5).
  * Plain text, so the canvas, the preview and the PDF print the same words (AC-4.8).
  */
 function comboChoicesText(combo: TagCombo | null): string {
@@ -234,10 +234,12 @@ function comboChoicesText(combo: TagCombo | null): string {
     ? comboLine(upgrade.code, upgrade.description, upgradePrice(upgrade.topup_amount))
     : null;
   const out: string[] = [];
-  combo.choices.forEach((group, index) => {
+  combo.choices.forEach((group) => {
     const role = group.role.toUpperCase();
     const pick = group.options.find((option) => option.picked);
-    if (upgradeLine && index === 0) {
+    // One group: the picked upgrade stands in as its only line. More groups print as
+    // usual and the upgrade follows in its own section (AC-4.5).
+    if (upgradeLine && combo.choices.length === 1) {
       out.push(role, upgradeLine);
       return;
     }
@@ -259,7 +261,7 @@ function comboChoicesText(combo: TagCombo | null): string {
       );
     }
   });
-  if (upgradeLine && combo.choices.length === 0) out.push('UPGRADE', upgradeLine);
+  if (upgradeLine && combo.choices.length !== 1) out.push('UPGRADE', upgradeLine);
   return out.join('\n');
 }
 

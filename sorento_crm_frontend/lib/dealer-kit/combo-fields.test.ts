@@ -366,6 +366,27 @@ describe('Combo Choices (AC-4.5)', () => {
     expect(printed.filter((entry) => entry.startsWith('ZZ'))).toHaveLength(1);
   });
 
+  it('on a combo with several groups a picked upgrade follows in its own UPGRADE section (AC-4.5)', () => {
+    const data = lineData({
+      combo: combo({
+        upgrades: [{ ...STONE, picked: true }],
+        choices: [
+          { role: 'Basin', options: [WHITE, BLACK] },
+          { role: 'Tap', options: [{ ...BLACK, code: 'ZZT', description: 'Tap' }] },
+        ],
+      }),
+    });
+    expect(lines(text('combo_choices' as SlotBinding, data))).toEqual([
+      'BASIN: PICK ONE',
+      'ZZW  White basin  RM 280',
+      'ZZB  Black basin',
+      'TAP',
+      'ZZT  Tap',
+      'UPGRADE',
+      'ZZU  Stone basin  +RM 100',
+    ]);
+  });
+
   it('a picked upgrade with no top-up prints without an amount', () => {
     const data = lineData({
       combo: combo({ upgrades: [{ ...STONE, topup_amount: null, picked: true }] }),
@@ -536,11 +557,11 @@ describe('defaultTemplateFor with the two starter templates (AC-8.10)', () => {
   const comboLine = { line_type: 'product' as const, combo_id: 'combo-1' };
 
   it('a combo line on a bf product picks the furniture set starter', () => {
-    expect(defaultTemplateFor(comboLine, STARTERS, 'SRTBF11834')?.id).toBe('t-bf');
+    expect(defaultTemplateFor(comboLine, STARTERS, 'SRTBF99999')?.id).toBe('t-bf');
   });
 
   it('a line with no combo on a bf product picks the furniture set starter', () => {
-    expect(defaultTemplateFor(productLine, STARTERS, 'SRTBF11834')?.id).toBe('t-bf');
+    expect(defaultTemplateFor(productLine, STARTERS, 'SRTBF99999')?.id).toBe('t-bf');
   });
 
   it('a combo line on a ks product picks the sink combo starter', () => {
@@ -553,6 +574,6 @@ describe('defaultTemplateFor with the two starter templates (AC-8.10)', () => {
 
   it('a combo line never falls to the first ala carte template when its family exists', () => {
     const shuffled = [STARTERS[0], STARTERS[2], STARTERS[1]];
-    expect(defaultTemplateFor(comboLine, shuffled, 'SRTBF11834')?.id).toBe('t-bf');
+    expect(defaultTemplateFor(comboLine, shuffled, 'SRTBF99999')?.id).toBe('t-bf');
   });
 });

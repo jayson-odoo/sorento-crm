@@ -2378,10 +2378,11 @@ function TagRailRow({
   onTogglePrintExcluded: (tag: PriceTagRequestTag) => void;
 }) {
   const excluded = Boolean(tag.print_excluded);
-  // D6: every choice group is resolved into its own tag at submit now (the
-  // tag builder), so `open_groups` is always empty by the time a request
-  // reaches the designer - no Open pill, no Split, no Pick one anywhere in
-  // this rail (AC-S3-1).
+  // D6: a line with no combo is resolved into one tag per combination at submit
+  // (the tag builder), so its tags carry no open group - no Open pill, no Split,
+  // no Pick one in this rail (AC-S3-1). A line WITH a combo mints one tag that
+  // lists every option (AC-3.1): its `open_groups` stay set until the dealer
+  // picks, and this rail does not narrow it.
   const chosen = tag.choices_display.map((choice) => choice.code).join(', ');
   return (
     <div className={cn('relative border-b last:border-b-0', selected && 'bg-accent')}>
