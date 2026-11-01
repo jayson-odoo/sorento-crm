@@ -1795,9 +1795,10 @@ _IDEA_PROPS = {
 def _idea_is_test(args: dict) -> bool:
     """Is this create a test idea? The turn decides (the loop stores `_is_test` with the step, never the
     model): a console turn is a test turn and makes a test idea, a live (WhatsApp) turn a real one. A step
-    that carries no value (a caller outside the loop) follows the global default `IDEA_IS_TEST`."""
+    that carries no value is a test idea: fail safe, since a step stored before this existed came from the
+    console while ideas were test-only, and an unknown origin is never treated as live."""
     value = args.get("_is_test")
-    return value if isinstance(value, bool) else IDEA_IS_TEST
+    return value if isinstance(value, bool) else True
 
 
 def _idea_given(args: dict) -> dict:
