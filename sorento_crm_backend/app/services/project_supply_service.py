@@ -1035,9 +1035,19 @@ class _CapacityLedger:
             self._basis[key] = qty
         return self._left[key]
 
-    def take(self, product_id: Optional[str], warehouse_id: str, qty: Decimal) -> None:
+    def take(
+        self,
+        product_id: Optional[str],
+        warehouse_id: str,
+        qty: Decimal,
+        *,
+        from_back: Decimal = _ZERO,
+    ) -> None:
+        """`from_back` is the part a line's own add-back paid for: it does not come off the
+        balance, which never counted it (`_add_back_own_pool_demand`). The physical floor is
+        a separate ledger (`take_free`)."""
         key = (product_id or "", warehouse_id)
-        self._left[key] = max(self._left.get(key, _ZERO) - qty, _ZERO)
+        self._left[key] = max(self._left.get(key, _ZERO) - (qty - from_back), _ZERO)
 
 
 @dataclass
@@ -1058,6 +1068,8 @@ class _UnitCheck:
 
     fact: _LineFacts
     timely_left: Decimal
+    #: The unit's own add-back still unspent in this confirmation, spent before the ledger.
+    pool_back_left: Decimal = _ZERO
     #: Whether this unit's step-1 own-group slice has been added to the confirmation's
     #: capacity ledger yet (ladder v7.1). The slice belongs to the UNIT, so it is added
     #: once, on whichever of its member lines is checked first, and its members then share
@@ -2336,12 +2348,15 @@ class ProjectSupplyService:
         )
 
     def _own_pool_share_back(self, fact: _LineFacts) -> Decimal:
-        """How much of the pool's project share this line's own add-back is worth."""
+        """How much of the pool's project share this line's own add-back is worth: the spare
+        of what it stands on, with no net in the sum. The net binds later, on the line's own
+        read; differencing two net-bound figures grew the answer as the pools got shorter."""
         pct = self._fulfilment_settings().get("pool_share_pct")
-        back = fact.pool_book_back
-        return available_for_project(
-            fact.pool_available, fact.pools_net, pct
-        ) - available_for_project(fact.pool_available - back, fact.pools_net - back, pct)
+
+        def spare(available: Decimal) -> Decimal:
+            return available_for_project(available, max(available, _ZERO), pct)
+
+        return spare(fact.pool_available) - spare(fact.pool_available - fact.pool_book_back)
 
     def _member_fact(self, unit_fact: _LineFacts, member: _LineFacts) -> _LineFacts:
         """One contributing line of a unit, carrying the UNIT's own context (R-E).
@@ -2437,7 +2452,11 @@ class ProjectSupplyService:
         out: Dict[str, "_UnitCheck"] = {}
         for members in units.values():
             unit_fact = self._unit_fact(members)
-            check = _UnitCheck(fact=unit_fact, timely_left=unit_fact.timely_qty)
+            check = _UnitCheck(
+                fact=unit_fact,
+                timely_left=unit_fact.timely_qty,
+                pool_back_left=unit_fact.pool_book_back,
+            )
             for key, _fact in members:
                 out[str(key)] = check
         return out
@@ -5740,7 +5759,11 @@ class ProjectSupplyService:
                 # no reconciled AutoCount line: `_check_line` refuses it on its next
                 # statement, and reaching that refusal matters more than the seed does.
                 units.get(str(line.id))
-                or _UnitCheck(fact=fact, timely_left=fact.timely_qty),
+                or _UnitCheck(
+                    fact=fact,
+                    timely_left=fact.timely_qty,
+                    pool_back_left=fact.pool_book_back,
+                ),
                 capacity_left,
                 borrow_left,
                 stale,
@@ -6264,12 +6287,16 @@ class ProjectSupplyService:
         # LADDER V6: seeded from the UNIT's fact, which is the quantity the ladder walked
         # these rungs with. The ledger is shared across the whole confirmation, so the unit's
         # members draw the same seeded balance down between them in payload order.
+        #
+        # DEALER-PLANNING: the same rule as the walk. The ledger holds the true net, because
+        # one unit's add-back is not stock another unit may be promised, and the add-back
+        # joins this unit's own read only.
         pools = self._pool_chain(unit.fact, pool_free_left=None)
         capacity: Dict[str, Decimal] = {}
         location_ids: Dict[str, str] = {}
         for location, live_qty in pool_reserve_capacity(
             pools=pools,
-            pools_net=unit.fact.pools_net,
+            pools_net=unit.fact.pools_net - unit.fact.pool_book_back,
         ):
             source = self._warehouse_by_code(location)
             if source is None:
@@ -6279,6 +6306,10 @@ class ProjectSupplyService:
                 fact.product_id, str(source.id), live_qty,
                 own=(location == unit.fact.pool_code),
             )
+        if unit.pool_back_left > _ZERO and unit.fact.pool is not None:
+            own_pool = unit.fact.pool_code
+            location_ids[own_pool] = str(unit.fact.pool.id)
+            capacity[own_pool] = capacity.get(own_pool, _ZERO) + unit.pool_back_left
         # STEP 1's OWN half, read TWICE and reconciled into one pile.
         #
         # Ladder v4's `_group_take_candidates` is the UNDATED whole-pile reading: what the
@@ -6583,7 +6614,13 @@ class ProjectSupplyService:
             capacity[warehouse] -= qty
             warehouse_id = location_ids.get(warehouse)
             if warehouse_id:
-                capacity_left.take(fact.product_id, warehouse_id, qty)
+                from_back = (
+                    min(unit.pool_back_left, qty)
+                    if warehouse == unit.fact.pool_code
+                    else _ZERO
+                )
+                unit.pool_back_left -= from_back
+                capacity_left.take(fact.product_id, warehouse_id, qty, from_back=from_back)
             lender = sales_agent_service.group_of_warehouse_code(warehouse)
             if lender and lender != fact.group_code:
                 # R-M: and off the LENDING GROUP's budget, so the next line of this
