@@ -243,3 +243,87 @@ def test_a_report_run_switches_jit_off_with_set_local(db):
     params = {k: val for k, val in v.params.items() if k != "company"}
     engine.run(db, ASK_DEFINITION, params, v, company_grants=frozenset({DEFAULT_COMPANY_ID}))
     assert db.execute(sa.text("SHOW jit")).scalar_one() == "off"
+
+
+# ------------------------------------------------------------------------ once per document (round 3)
+
+
+def _line_channel():
+    from app.services.reports.datasets.billing_document_lines import DATASET
+
+    return DATASET.column("channel").expr(None)
+
+
+def test_the_line_datasets_channel_column_keeps_every_lines_value(db):
+    """The line dataset reads Channel from its per-document LATERAL; every line still gets the
+    value main's per-line expression gave it."""
+    _seed_sample(db)
+    stmt = line_base(None).add_columns(
+        BillingDocumentLine.id, ref.sales_type_label().label("old"), _line_channel().label("new")
+    )
+    rows = db.execute(stmt).all()
+    assert len(rows) > 60
+    assert [r for r in rows if r[1] != r[2]] == []
+    assert {r[1] for r in rows} == set(inv.SALES_TYPE_LABELS.values())
+
+
+def test_the_line_datasets_channel_filter_keeps_the_same_lines(db):
+    from app.services.reports.datasets.billing_document_lines import channel_condition
+
+    _seed_sample(db)
+    for value, _label in inv.SALES_TYPES:
+        old = set(db.execute(line_base(None).add_columns(BillingDocumentLine.id)
+                             .where(ref.sales_type().in_([value]))).scalars())
+        new = set(db.execute(line_base(None).add_columns(BillingDocumentLine.id)
+                             .where(channel_condition(None, [value]))).scalars())
+        assert old == new, value
+    # The order bases' words still read as the type they mean.
+    assert set(db.execute(line_base(None).add_columns(BillingDocumentLine.id)
+                          .where(channel_condition(None, ["retail"])))
+               .scalars()) == set(db.execute(line_base(None).add_columns(BillingDocumentLine.id)
+                                             .where(channel_condition(None, ["dealer"]))).scalars())
+
+
+def _sales_type_runs(db, stmt) -> int:
+    """How many times the executed plan computed the per-document sales type: the loops of the
+    LATERAL's subquery under its `Memoize` (0 when the plan has no such Memoize)."""
+    (plan,) = db.execute(_Explain(stmt)).scalar_one()
+    runs = 0
+    for node in _nodes(plan["Plan"]):
+        # The LATERAL's own Memoize: its child computes a value, it scans no table. Other
+        # Memoize nodes (a customer or product lookup) are the planner's ordinary index caches.
+        if node.get("Node Type") == "Memoize" and "Relation Name" not in node["Plans"][0]:
+            runs += node["Plans"][0].get("Actual Loops", 0)
+    return runs
+
+
+def _many_line_invoices(db, documents: int, lines_each: int) -> None:
+    when = date(2026, 1, 15)
+    for _ in range(documents):
+        _header, so_lines = so(db, demand_class="retail", lines=1)
+        doc(db, "invoice", "10.00", when,
+            lines=[line(net="1.00", so_line=so_lines[0]) for _ in range(lines_each)])
+    db.flush()
+    for table in ("billing_documents", "billing_document_lines", "sales_orders", "sales_order_lines"):
+        db.execute(sa.text(f"ANALYZE {table}"))
+
+
+def test_a_many_line_invoice_computes_its_channel_once_not_once_per_line(db):
+    """Three invoices of 120 lines: the sales type runs once per document (3), not per line (360).
+    Per line, each run read the document's own lines, so an n-line invoice cost n x n."""
+    _many_line_invoices(db, 3, 120)
+    # A parallel plan gives each worker its own cache (3 documents x 3 processes): still per
+    # document, but not a fixed number. One process keeps the count exact.
+    db.execute(sa.text("SET LOCAL max_parallel_workers_per_gather = 0"))
+    stmt = line_base(None).add_columns(BillingDocumentLine.id, _line_channel().label("channel"))
+    assert _sales_type_runs(db, stmt) == 3
+
+
+def test_a_line_query_that_does_not_read_channel_drops_the_lateral(db):
+    """The LATERAL is one row by construction (a SELECT with no FROM), so a query that does not
+    read it (the pivot, the row count, the totals) never computes it."""
+    _many_line_invoices(db, 2, 5)
+    stmt = line_base(None).add_columns(sa.func.count())
+    (plan,) = db.execute(_Explain(stmt)).scalar_one()
+    assert not any(n.get("Alias") == "doc_sales_type" for n in _nodes(plan["Plan"]))
+    assert not any(n.get("Node Type") == "Memoize" for n in _nodes(plan["Plan"]))

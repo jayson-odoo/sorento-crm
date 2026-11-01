@@ -304,15 +304,31 @@ def sales_type() -> Any:
     )
 
 
-def sales_type_label() -> Any:
-    """The sales type's label. A simple `CASE <type> WHEN ...`, so the type is computed once: a
-    searched `CASE WHEN <type> = ...` per type inlined (and ran) the whole subquery seven times
-    (INVOICED-CHANNEL-PERF)."""
+def label_of(value: Any) -> Any:
+    """The label of a sales type value. A simple `CASE <value> WHEN ...`, so the value is
+    computed once: a searched `CASE WHEN <type> = ...` per type inlined (and ran) the whole
+    subquery seven times (INVOICED-CHANNEL-PERF)."""
     return sa.case(
         {key: sa.literal(label) for key, label in SALES_TYPES},
-        value=sales_type(),
+        value=value,
         else_=sa.null(),
     )
+
+
+def sales_type_label() -> Any:
+    return label_of(sales_type())
+
+
+def document_sales_type() -> Any:
+    """`sales_type()` as a LATERAL of one row, column `value`, for a query over LINES.
+
+    The expression is per document, but in a line query Postgres runs a correlated subquery once
+    per LINE, and each run reads the document's own lines: an invoice of n lines cost n x n
+    (INVOICED-CHANNEL-PERF round 3). Joined as `LEFT JOIN LATERAL (...) ON true`, the planner
+    memoizes it per document (`Memoize` keyed on the document's columns). `OFFSET 0` keeps the
+    planner from folding it back into the line's select list; with no FROM it is one row, so a
+    query that does not read `value` drops the join."""
+    return sa.select(sales_type().label("value")).offset(0).lateral("doc_sales_type")
 
 
 def normalise_sales_types(values: List[str]) -> List[str]:

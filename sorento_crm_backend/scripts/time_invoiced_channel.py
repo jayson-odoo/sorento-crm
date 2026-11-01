@@ -10,7 +10,9 @@ Timing cases (`--cases`, comma separated; default ``all,channel,no_channel``):
 - ``channel``: the Channel column alone;
 - ``no_channel``: every detail column except Channel;
 - ``each``: every per-row detail column alone, one case per column (finds the slow one);
-- ``summary``: the summary (pivot) alone, no detail column;
+- ``summary``: the summary (pivot) alone, as the screen opens it (month down, all across); ``rows``
+  is its number of row values (a month is one row, so expect about zero seconds);
+- ``summary_channel``: the summary alone, grouped by Channel;
 - ``only:<column key>`` (e.g. ``only:sales_agent``): that column alone (``each`` prints these).
 
 Each case runs ``--runs`` times (default 3); the seconds are printed with the 1-minute load average.
@@ -77,14 +79,19 @@ def _view(definition, period: Dict[str, str], columns: List[str], pivot: Optiona
 def _time_case(db, definition, company: str, period: Dict[str, str], case: str, columns, runs: int):
     from app.services.reports import engine
 
-    view = _view(definition, period, columns or [])
+    pivot = None
+    if case == "summary_channel":
+        pivot = {"rows": "channel", "cols": "all", "measures": ["qty", "amount"]}
+    view = _view(definition, period, columns or [], pivot)
     grants = frozenset({company})
     seconds = []
     rows = 0
     for _ in range(runs):
         started = time.perf_counter()
-        if case == "summary":
-            engine.run_summary(db, definition, view.params, view, company_grants=grants)
+        if case in ("summary", "summary_channel"):
+            # The summary (pivot) alone; `rows` is its number of row values.
+            summary = engine.run_summary(db, definition, view.params, view, company_grants=grants)
+            rows = len(summary.row_values)
         else:
             rows = engine.run(db, definition, view.params, view, company_grants=grants).row_count
         seconds.append(time.perf_counter() - started)
@@ -156,6 +163,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         "channel": ["channel"],
         "no_channel": [k for k in all_columns if k != "channel"],
         "summary": None,
+        "summary_channel": None,
     }
     cases: List[tuple] = []
     for case in (c.strip() for c in args.cases.split(",") if c.strip()):

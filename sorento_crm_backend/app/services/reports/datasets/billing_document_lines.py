@@ -33,6 +33,10 @@ from app.services.reports.engine import month_label
 from app.services.sales import invoiced_sales as inv
 
 
+#: The line's document's sales type, a LATERAL the base joins (`inv.document_sales_type`).
+_DOC_TYPE = inv.document_sales_type()
+
+
 def _base(ctx: Any) -> sa.Select:
     return (
         sa.select()
@@ -42,6 +46,8 @@ def _base(ctx: Any) -> sa.Select:
         .outerjoin(Product, Product.id == BillingDocumentLine.product_id)
         .outerjoin(Brand, Brand.id == Product.brand_id)
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        # The sales type once per document, not per line (unused, the planner drops it).
+        .outerjoin(_DOC_TYPE, sa.true())
         .where(inv.posted())
     )
 
@@ -60,7 +66,7 @@ _ITEM = sa.case(
 _AMOUNT = inv.signed_line_amount()
 _QTY = inv.signed_line_quantity()
 _MONTH = sa.func.to_char(BillingDocument.doc_date, "YYYY-MM")
-_SALES_TYPE = inv.sales_type_label()
+_SALES_TYPE = inv.label_of(_DOC_TYPE.c.value)
 
 
 # ------------------------------------------------------------------------ filters
@@ -71,7 +77,7 @@ def company_condition(ctx: Any, values: List[str]) -> Optional[Any]:
 
 
 def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return inv.sales_type_filter(values)
+    return _DOC_TYPE.c.value.in_(inv.normalise_sales_types(values))
 
 
 def customer_condition(ctx: Any, values: List[str]) -> Optional[Any]:
