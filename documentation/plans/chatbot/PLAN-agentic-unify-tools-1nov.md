@@ -64,7 +64,7 @@ Merge with #2053: it rewrites `agent_tool_labels(db, user)` and adds `CONTACT_TO
 
 ## Jev gate (AC-17)
 
-Baseline A is today's text with today's labels, fixed; B adds the labels. Baseline rows are the existing panel and WhatsApp set (68/75 on A). New rows are fresh paraphrases across complaints, SLA, projects, analytics and the three writes, written before any run and never tuned against. **Bar:** no fewer than A on the baseline rows, and at least 80 percent Agent on the new rows. Below the bar, stop and report, no rewording. Runner stops on two busy replies or any 429. Jev only, cheap, and budget asked of crew first: the 1 Nov cap is spent.
+Baseline A is today's text with today's labels, fixed; B adds the labels. Run each arm as a full-permission user and as a low-permission one: since #2053 merged, `agent_tool_labels(db, user)` sends a low-permission user a short or empty `tools` list, and rounds 6 and 7 of #2060 only measured the full list. Baseline rows are the existing panel and WhatsApp set (68/75 on A). New rows are fresh paraphrases across complaints, SLA, projects, analytics and the three writes, written before any run and never tuned against. **Bar:** no fewer than A on the baseline rows, and at least 80 percent Agent on the new rows. Below the bar, stop and report, no rewording. Runner stops on two busy replies or any 429. Jev only, cheap, and budget asked of crew first: the 1 Nov cap is spent.
 
 ## Crew rulings, 1 Nov (ask a29175772)
 
