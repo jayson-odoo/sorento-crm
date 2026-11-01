@@ -31,6 +31,19 @@ EXPECTED = {
     # AGENTIC-KNOWLEDGE P1: the document search (local) and the guide reader (open to every linked user).
     "crm_knowledge_search": "resource.attachments.view",
     "user_guides_read": "",
+    # AGENTIC-UNIFY PR 4: the panel's reads.
+    "crm_complaints_list": "complaint_management.complaints.view",
+    "crm_complaint_analytics": "complaint_management.complaints.view",
+    "crm_sla_conversation_tracking_dashboard": "sla_management.conversation_sla_tracking.view",
+    "crm_sla_conversation_tracking_list": "sla_management.conversation_sla_tracking.view",
+    "crm_sla_conversation_event_logs_list": "sla_management.conversation_sla_tracking.view",
+    "crm_projects_list": "projects.projects.view",
+    "crm_project_detail": "projects.projects.view",
+    "crm_project_quotations_list": "projects.projects.view",
+    "crm_project_forecast": "projects.projects.view",
+    "crm_order_analytics": "order_management.orders.view",
+    "crm_find": "master_data.products.view",
+    "crm_system_tool_capabilities_summary": "",
 }
 
 STOCK = "crm_inventory_stock_balance_list"

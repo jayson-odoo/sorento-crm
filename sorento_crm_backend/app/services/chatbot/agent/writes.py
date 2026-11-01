@@ -1610,6 +1610,146 @@ USER_READS[LIST_PRS] = UserRead(
 )
 
 
+# ------------------------------------------------------------------ PR 4 finds by number or code
+
+FIND_COMPLAINTS = "crm_complaints_find"
+FIND_PROJECTS = "crm_projects_find"
+COMPLAINT_READ = ("complaint_management.complaints.view", "complaint_management.complaints.view_own")
+PROJECT_READ = ("projects.projects.view", "projects.projects.view_own")
+COMPLAINTS_PATH = "/api/v1/complaints-management/complaints"
+
+
+def _find_query(ctx, args: dict) -> tuple[str | None, ToolResult | None]:
+    """The search text, or the refusal. A scope naming a brand gets no project or complaint-number lookup
+    through the screen's list: projects carry no brand (`brand_scope_allows_tool`), and the find reads the list."""
+    from app.services.contact_brand_scope import limits_brands
+
+    unknown = sorted(k for k in args if k != "query")
+    query = args.get("query")
+    if unknown or not isinstance(query, str) or not query.strip():
+        return None, ToolResult("invalid", message="Give the number or code to find, as text, and nothing else.")
+    if limits_brands(getattr(ctx, "brand_scope", None)):
+        return None, ToolResult("denied", message="This lookup is outside this contact's access.")
+    return query.strip(), None
+
+
+def _found(key: str, rows: list[dict]) -> ToolResult:
+    from app.services.chatbot.agent.tools import NO_ROWS_MESSAGE
+
+    if not rows:
+        return ToolResult("empty", message=NO_ROWS_MESSAGE)
+    data, more = cap_result({key: rows})
+    return ToolResult("ok", data=data, more=more)
+
+
+def _complaints_find(db, ctx, args: dict) -> ToolResult:
+    from app.api.v1._request_own_scope import check
+    from app.api.v1.complaints.complaints import get_complaints
+
+    query, refused = _find_query(ctx, args)
+    if refused is not None:
+        return refused
+
+    def run(user: dict) -> list[dict]:
+        _module_open(user, db, "complaints")
+        payload = get_complaints(
+            page=1, limit=MAX_LIST, query=query, assigned_to=None, status=None, root_cause_ids=None,
+            resolution_ids=None, sort="complaint_date", dir="desc", contact_id=None, space_id=None,
+            current_user=user, db=db, own=check(db, str(user["id"]), "complaint", "GET", COMPLAINTS_PATH, {}),
+        )
+        return [
+            {
+                "id": str(r.get("id") or r.get("system_id") or ""),
+                "complaint_number": r.get("complaint_number"),
+                "status": r.get("status"),
+                "customer": _line(r.get("customer_name")),
+            }
+            for r in payload["data"]
+        ]
+
+    try:
+        rows = run_as_user(db, ctx, run, tool_name=FIND_COMPLAINTS)
+    except Exception as exc:  # noqa: BLE001
+        return _route_failure(exc)
+    return _found("complaints", rows)
+
+
+def _projects_find(db, ctx, args: dict) -> ToolResult:
+    from app.api.v1.projects.projects import list_projects
+
+    query, refused = _find_query(ctx, args)
+    if refused is not None:
+        return refused
+
+    def run(user: dict) -> list[dict]:
+        _module_open(user, db, "projects")
+        payload = list_projects(
+            query=query, status_id=None, outcome=None, owner_user_id=None, developer_party_id=None, type_id=None,
+            only_critical=False, project_ids=None, owner_user_ids=None, developer_party_ids=None, status_key=None,
+            approval_state=None, approved_only=False, page=1, limit=MAX_LIST, sort="created_at", dir="desc",
+            current_user=user, db=db,
+        )
+        return [
+            {
+                "id": str(r.get("id") or ""),
+                "project_code": r.get("project_code"),
+                "title": _line(r.get("title")),
+                "status": r.get("status_label"),
+                "customer": _line(r.get("customer_name")),
+            }
+            for r in payload["data"]
+        ]
+
+    try:
+        rows = run_as_user(db, ctx, run, tool_name=FIND_PROJECTS)
+    except Exception as exc:  # noqa: BLE001
+        return _route_failure(exc)
+    return _found("projects", rows)
+
+
+def _combine_found(key: str, id_key: str):
+    def combine(mine: ToolResult, theirs: ToolResult) -> ToolResult:
+        ids = {r[id_key] for r in theirs.data[key]}
+        rows = [r for r in mine.data[key] if r[id_key] in ids]
+        return _found(key, rows)
+
+    return combine
+
+
+def _find_schema(name: str, what: str, example: str) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": (
+                f"Find {what} by its number or code, as typed by the user (for example {example}). Returns the "
+                "matching rows with their number, status, name and id, so the id can be used in a later call."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    }
+
+
+USER_READS[FIND_COMPLAINTS] = UserRead(
+    name=FIND_COMPLAINTS,
+    user_permission=COMPLAINT_READ,
+    schema=_find_schema(FIND_COMPLAINTS, "a complaint", "CMP-0123"),
+    run=_complaints_find,
+    combine=_combine_found("complaints", "id"),
+)
+USER_READS[FIND_PROJECTS] = UserRead(
+    name=FIND_PROJECTS,
+    user_permission=PROJECT_READ,
+    schema=_find_schema(FIND_PROJECTS, "a project", "PRJ-0042"),
+    run=_projects_find,
+    combine=_combine_found("projects", "id"),
+)
+
+
 # ------------------------------------------------------------------ W3 taking an action back
 
 UNDO_PR = "crm_purchase_request_action_undo"

@@ -214,7 +214,9 @@ def _class_code_col():
 
 #: Tools that return money with no product dimension (project and quotation figures), so a
 #: brand-scoped contact cannot be given a figure limited to its brands: they do not run for it.
-_TOOLS_DENIED_WHEN_SCOPED = frozenset({"crm_project_forecast"})
+_TOOLS_DENIED_WHEN_SCOPED = frozenset(
+    {"crm_project_forecast", "crm_projects_list", "crm_project_detail", "crm_project_quotations_list"}
+)
 
 
 def brand_scope_allows_tool(tool_name: str, scope: Optional[frozenset[str]]) -> bool:

@@ -51,7 +51,20 @@ EXPECTED_LABELS = [
     "opportunity stages",
     "finding dealer contacts",
     "purchase requests and sponsorship forms",
+    # AGENTIC-UNIFY PR 4: the two finds (user reads), then the ported reads (PORTED_READS, in registry order).
+    "finding a complaint by its number",
+    "finding a project by its code",
     "your ideas",
+    "the complaints list",
+    "complaint counts and trends",
+    "conversation response-time summary",
+    "tracked conversations and their deadlines",
+    "conversation response-time events",
+    "the projects list",
+    "one project's details",
+    "a project's quotations",
+    "the project pipeline forecast",
+    "order totals and trends",
 ]
 
 

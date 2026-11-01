@@ -40,18 +40,31 @@ class ToolDef:
     #: Both were checked in the MCP catalogue: neither declares `restricted_fields`, so there
     #: is no field-level drop to lose by skipping the render view for them.
     render: bool = True
+    #: The slug of the screen's "only mine" rows, honoured on a panel turn only (`staff_principal.current()`):
+    #: there the read runs as the user and the route narrows to their own rows. On a console or WhatsApp turn
+    #: it runs as the shared key's user, whom the route does not narrow to this one, so this slug opens nothing.
+    own_permission: str | None = None
 
 
-def _defs(*rows: tuple[str, str, str | None]) -> dict[str, ToolDef]:
+def _defs(*rows: tuple) -> dict[str, ToolDef]:
+    """Rows of (name, slug, contact grant) or (name, slug, contact grant, own slug)."""
     return {
-        name: ToolDef(name, slug, grant, render=name not in NON_RENDER_TOOLS)
-        for name, slug, grant in rows
+        row[0]: ToolDef(row[0], row[1], row[2], render=row[0] not in NON_RENDER_TOOLS, own_permission=row[3] if len(row) > 3 else None)
+        for row in rows
     }
 
 
 #: `crm_resolve` is local (the bot's resolver, in process); the GRN summary is a plain route.
 NON_RENDER_TOOLS = frozenset(
-    {"crm_resolve", "crm_products_find", "crm_procurement_grn_summary", "crm_knowledge_search", "user_guides_read", "crm_knowledge_handoff"}
+    {
+        "crm_resolve", "crm_products_find", "crm_procurement_grn_summary", "crm_knowledge_search", "user_guides_read",
+        "crm_knowledge_handoff",
+        # AGENTIC-UNIFY PR 4: plain routes, no presenter. `crm_find` alone answers a render envelope.
+        "crm_complaints_list", "crm_complaint_analytics", "crm_sla_conversation_tracking_dashboard",
+        "crm_sla_conversation_tracking_list", "crm_sla_conversation_event_logs_list", "crm_projects_list",
+        "crm_project_detail", "crm_project_quotations_list", "crm_project_forecast", "crm_order_analytics",
+        "crm_system_tool_capabilities_summary",
+    }
 )
 RESOLVE = "crm_resolve"
 FIND = "crm_products_find"
@@ -59,6 +72,17 @@ FIND = "crm_products_find"
 KNOWLEDGE = "crm_knowledge_search"
 #: The Outline guide reader. Open to every linked user; its call carries only `query`.
 GUIDES = "user_guides_read"
+#: Open to every signed-in staff user, like the guides. Not a domain, so Jev is not told of it.
+CAPABILITIES = "crm_system_tool_capabilities_summary"
+#: AGENTIC-UNIFY PR 4: the panel's reads that no chat lane answers. Jev is told of them (`router.agent_tool_labels`)
+#: and a console operator must hold the slug too. `crm_find` and the capabilities summary are left out on purpose.
+PORTED_READS = frozenset(
+    {
+        "crm_complaints_list", "crm_complaint_analytics", "crm_sla_conversation_tracking_dashboard",
+        "crm_sla_conversation_tracking_list", "crm_sla_conversation_event_logs_list", "crm_projects_list",
+        "crm_project_detail", "crm_project_quotations_list", "crm_project_forecast", "crm_order_analytics",
+    }
+)
 #: AGENTIC-KNOWLEDGE W1 S4: local, contact principal only. Not in REGISTRY or CONTACT_TOOLS (those
 #: are the plan's table): the loop adds its schema for a contact and `_dispatch_inner` answers it.
 HANDOFF = "crm_knowledge_handoff"
@@ -87,6 +111,19 @@ REGISTRY: dict[str, ToolDef] = _defs(
     ("crm_knowledge_search", "resource.attachments.view", None),
     # No slug: guides are for any signed-in staff user (every agent caller is an active CRM user).
     ("user_guides_read", "", None),
+    # AGENTIC-UNIFY PR 4: the panel's reads. `.view_own` counts on a panel turn only (`ToolDef.own_permission`).
+    ("crm_complaints_list", "complaint_management.complaints.view", None, "complaint_management.complaints.view_own"),
+    ("crm_complaint_analytics", "complaint_management.complaints.view", None),
+    ("crm_sla_conversation_tracking_dashboard", "sla_management.conversation_sla_tracking.view", None),
+    ("crm_sla_conversation_tracking_list", "sla_management.conversation_sla_tracking.view", None),
+    ("crm_sla_conversation_event_logs_list", "sla_management.conversation_sla_tracking.view", None),
+    ("crm_projects_list", "projects.projects.view", None, "projects.projects.view_own"),
+    ("crm_project_detail", "projects.projects.view", None, "projects.projects.view_own"),
+    ("crm_project_quotations_list", "projects.projects.view", None, "projects.projects.view_own"),
+    ("crm_project_forecast", "projects.projects.view", None),
+    ("crm_order_analytics", "order_management.orders.view", None),
+    ("crm_find", "master_data.products.view", None),
+    ("crm_system_tool_capabilities_summary", "", None),
 )
 
 #: The contact principal's gate (AGENTIC-KNOWLEDGE W1 S1): tool -> the reveal key the contact must
@@ -170,6 +207,20 @@ TOOL_LABELS: dict[str, str] = {
     "crm_knowledge_search": "searching company documents",
     "crm_knowledge_handoff": "passing a question to the marketing product team",
     "user_guides_read": "reading the CRM user guides",
+    "crm_complaints_list": "the complaints list",
+    "crm_complaint_analytics": "complaint counts and trends",
+    "crm_sla_conversation_tracking_dashboard": "conversation response-time summary",
+    "crm_sla_conversation_tracking_list": "tracked conversations and their deadlines",
+    "crm_sla_conversation_event_logs_list": "conversation response-time events",
+    "crm_projects_list": "the projects list",
+    "crm_project_detail": "one project's details",
+    "crm_project_quotations_list": "a project's quotations",
+    "crm_project_forecast": "the project pipeline forecast",
+    "crm_order_analytics": "order totals and trends",
+    "crm_find": "finding records across the CRM",
+    "crm_system_tool_capabilities_summary": "what the assistant can do",
+    "crm_complaints_find": "finding a complaint by its number",
+    "crm_projects_find": "finding a project by its code",
     "crm_customer_asks_list": "your customer asks",
     "crm_customer_ask_update": "change a customer ask",
     "crm_opportunities_list": "your sales opportunities",
@@ -391,13 +442,29 @@ def user_may_use(db: Any, ctx: Any, tool: ToolDef) -> bool:
         return True
     if tool.name == RESOLVE:
         return bool(searchable_kinds(db, ctx, list(KIND_SLUGS))[0])
-    if tool.name == GUIDES:
+    if tool.name in (GUIDES, CAPABILITIES):
         return True
-    if not _permitted(db, ctx.user_id, tool.user_permission):
+    if not _tool_permitted(db, ctx, tool):
         return False
     if tool.name == KNOWLEDGE:
         return _operator_may_read(db, ctx, tool.user_permission)
     return True
+
+
+def own_slug_counts(tool: ToolDef) -> bool:
+    """The tool's `.view_own` slug is honoured only on a panel turn."""
+    return tool.own_permission is not None and staff_principal.current() is not None
+
+
+def _tool_permitted(db: Any, ctx: Any, tool: ToolDef) -> bool:
+    """The linked user holds the tool's slug (or, on a panel turn, its own slug); for a ported read the console
+    operator must hold the full slug as well."""
+    if not (
+        _permitted(db, ctx.user_id, tool.user_permission)
+        or (own_slug_counts(tool) and _permitted(db, ctx.user_id, tool.own_permission))
+    ):
+        return False
+    return tool.name not in PORTED_READS or _operator_may_read(db, ctx, tool.user_permission)
 
 
 def _operator_may_read(db: Any, ctx: Any, slug: str) -> bool:
@@ -1072,7 +1139,7 @@ def _dispatch_inner(
     if is_contact_principal(ctx):
         if not contact_tool_open(ctx, tool):
             return ToolResult("denied", message=f"{name} is outside this contact's access.")
-    elif tool.name not in (RESOLVE, GUIDES) and not _permitted(db, ctx.user_id, tool.user_permission):
+    elif tool.name not in (RESOLVE, GUIDES, CAPABILITIES) and not _tool_permitted(db, ctx, tool):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not contact_allows(ctx, tool):
         return ToolResult("denied", message=f"{name} is outside this contact's access.")

@@ -297,10 +297,27 @@ def agent_tool_labels(db=None, user=None) -> list[str]:
 
     With `db` the labels are the ones THIS contact's agent could do (AGENTIC-KNOWLEDGE W1): a contact with
     no linked user (`user` None) has no writes or user reads, and a linked user only the tools whose slug it
-    holds. Called with nothing, it lists every tool (the guard tests)."""
+    holds. Called with nothing, it lists every tool (the guard tests). The panel's ported reads
+    (`agent_tools.PORTED_READS`) follow the same filter."""
     labels: list[str] = []
     for name, definition in [*agent_writes.WRITES.items(), *agent_writes.USER_READS.items()]:
         if db is not None and (user is None or not agent_writes.holds(db, str(user.id), definition.user_permission)):
+            continue
+        label = agent_tools.TOOL_LABELS.get(name)
+        if label and label not in labels:
+            labels.append(label)
+    # AGENTIC-UNIFY PR 4: the panel's reads no chat lane answers, through the same per-user filter. A `.view_own`
+    # slug counts on a panel turn only, as at dispatch.
+    for name, tool in agent_tools.REGISTRY.items():
+        if name not in agent_tools.PORTED_READS:
+            continue
+        if db is not None and (
+            user is None
+            or not (
+                agent_writes.holds(db, str(user.id), tool.user_permission)
+                or (agent_tools.own_slug_counts(tool) and agent_writes.holds(db, str(user.id), tool.own_permission))
+            )
+        ):
             continue
         label = agent_tools.TOOL_LABELS.get(name)
         if label and label not in labels:
