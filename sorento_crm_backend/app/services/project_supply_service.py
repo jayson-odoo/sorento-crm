@@ -769,9 +769,6 @@ class _LineFacts:
     #: see `_group_offer`, where un-netting the plan quantity would add back more than was
     #: ever subtracted.
     owed_qty: Decimal = _ZERO
-    #: What `_add_back_own_pool_demand` put back into `pools_net` and `pool_available`: this
-    #: line's quantity in the book of the site pool it stands on, zero for any other line.
-    pool_book_back: Decimal = _ZERO
     required_date: Optional[date] = None
     warehouse: Optional[Warehouse] = None
     pool: Optional[Warehouse] = None
@@ -1035,19 +1032,9 @@ class _CapacityLedger:
             self._basis[key] = qty
         return self._left[key]
 
-    def take(
-        self,
-        product_id: Optional[str],
-        warehouse_id: str,
-        qty: Decimal,
-        *,
-        from_back: Decimal = _ZERO,
-    ) -> None:
-        """`from_back` is the part a line's own add-back paid for: it does not come off the
-        balance, which never counted it (`_add_back_own_pool_demand`). The physical floor is
-        a separate ledger (`take_free`)."""
+    def take(self, product_id: Optional[str], warehouse_id: str, qty: Decimal) -> None:
         key = (product_id or "", warehouse_id)
-        self._left[key] = max(self._left.get(key, _ZERO) - (qty - from_back), _ZERO)
+        self._left[key] = max(self._left.get(key, _ZERO) - qty, _ZERO)
 
 
 @dataclass
@@ -1068,8 +1055,6 @@ class _UnitCheck:
 
     fact: _LineFacts
     timely_left: Decimal
-    #: The unit's own add-back still unspent in this confirmation, spent before the ledger.
-    pool_back_left: Decimal = _ZERO
     #: Whether this unit's step-1 own-group slice has been added to the confirmation's
     #: capacity ledger yet (ladder v7.1). The slice belongs to the UNIT, so it is added
     #: once, on whichever of its member lines is checked first, and its members then share
@@ -1186,7 +1171,6 @@ def _location_only(candidate: Mapping[str, Any]) -> Dict[str, Any]:
         "same_agent": False,
         "location_only": True,
     }
-
 
 
 class ProjectSupplyService:
@@ -2066,8 +2050,7 @@ class ProjectSupplyService:
             # `pool_warehouse_id` (BRW-IB on the live book) still draws BRW through them.
             product_id = unit_fact.product_id
             if product_id and product_id not in net_left:
-                # Free of any line's add-back, which is that line's alone (read below).
-                net_left[product_id] = _dec(unit_fact.pools_net) - unit_fact.pool_book_back
+                net_left[product_id] = _dec(unit_fact.pools_net)
             if product_id:
                 # Seeded off the CHAIN, which is what the walk itself reads (`_pool_chain`:
                 # this line's own site pool first, then the others by on hand), one entry per
@@ -2083,15 +2066,8 @@ class ProjectSupplyService:
                     if not code:
                         continue
                     if code not in shares:
-                        back = (
-                            unit_fact.pool_book_back
-                            if code == unit_fact.pool_code
-                            else _ZERO
-                        )
                         shares[code] = available_for_project(
-                            _dec(entry.get("available")) - back,
-                            unit_fact.pools_net - unit_fact.pool_book_back,
-                            pct,
+                            entry.get("available"), unit_fact.pools_net, pct
                         )
                     # The FLOOR beside the share, off the same chain and for the same
                     # reason (AC-N.12): the share is what the policy lets a pool lend and
@@ -2156,19 +2132,8 @@ class ProjectSupplyService:
                 # when the LINE was reached, and reading it back afterwards would state what
                 # was left instead.
                 floors_open = pool_free_left.get(product_id) if product_id else None
-                # This line's own add-back joins the two pool ledgers for this line only: a
-                # draw spends it first, and only what goes beyond it comes off the pile.
-                raw_net = net_left.get(product_id) if product_id else None
-                net_open = None if raw_net is None else raw_net + fact.pool_book_back
-                share_ledger = share_left.get(product_id) if product_id else None
-                share_open = share_ledger
-                share_back = _ZERO
-                if share_ledger is not None and fact.pool_book_back and fact.pool_code:
-                    share_back = self._own_pool_share_back(fact)
-                    share_open = dict(share_ledger)
-                    share_open[fact.pool_code] = (
-                        share_ledger.get(fact.pool_code, _ZERO) + share_back
-                    )
+                net_open = net_left.get(product_id) if product_id else None
+                share_open = share_left.get(product_id) if product_id else None
                 borrow_open = dict(donors) if donors is not None else {}
                 other_group_open = dict(other_group) if other_group is not None else {}
                 supply_open = dict(supply) if supply is not None else {}
@@ -2219,12 +2184,8 @@ class ProjectSupplyService:
                         ),
                         _ZERO,
                     )
-                    # Not floored at zero: a later line's add-back is measured from the true
-                    # net, and the engine floors what it reads (`pool_share_capacity`).
-                    net_left[product_id] = raw_net - max(
-                        drawn_net - fact.pool_book_back, _ZERO
-                    )
-                if share_ledger is not None:
+                    net_left[product_id] = max(net_open - drawn_net, _ZERO)
+                if share_open is not None:
                     # Per POOL, off what each one actually gave (R-L): a draw at MWH does
                     # not spend BRW's share, and the free half is what the share bounds -
                     # a pool BORROW (R34) is a later order's stock, not the pile's share.
@@ -2234,13 +2195,8 @@ class ProjectSupplyService:
                         code = component.source_location
                         if not code:
                             continue
-                        taken = component.qty
-                        if code == fact.pool_code:
-                            spent_back = min(share_back, taken)
-                            share_back -= spent_back
-                            taken -= spent_back
-                        share_ledger[code] = max(
-                            share_ledger.get(code, _ZERO) - taken, _ZERO
+                        share_open[code] = max(
+                            share_open.get(code, _ZERO) - component.qty, _ZERO
                         )
                 if donors is not None:
                     self._draw_donors(donors, fact, components)
@@ -2347,17 +2303,6 @@ class ProjectSupplyService:
             ),
         )
 
-    def _own_pool_share_back(self, fact: _LineFacts) -> Decimal:
-        """How much of the pool's project share this line's own add-back is worth: the spare
-        of what it stands on, with no net in the sum. The net binds later, on the line's own
-        read; differencing two net-bound figures grew the answer as the pools got shorter."""
-        pct = self._fulfilment_settings().get("pool_share_pct")
-
-        def spare(available: Decimal) -> Decimal:
-            return available_for_project(available, max(available, _ZERO), pct)
-
-        return spare(fact.pool_available) - spare(fact.pool_available - fact.pool_book_back)
-
     def _member_fact(self, unit_fact: _LineFacts, member: _LineFacts) -> _LineFacts:
         """One contributing line of a unit, carrying the UNIT's own context (R-E).
 
@@ -2452,11 +2397,7 @@ class ProjectSupplyService:
         out: Dict[str, "_UnitCheck"] = {}
         for members in units.values():
             unit_fact = self._unit_fact(members)
-            check = _UnitCheck(
-                fact=unit_fact,
-                timely_left=unit_fact.timely_qty,
-                pool_back_left=unit_fact.pool_book_back,
-            )
+            check = _UnitCheck(fact=unit_fact, timely_left=unit_fact.timely_qty)
             for key, _fact in members:
                 out[str(key)] = check
         return out
@@ -2495,9 +2436,6 @@ class ProjectSupplyService:
         # one and not the ask, for the reason its docstring gives. On a unit whose members
         # have no delivery the two are the same number, which is nearly every unit.
         owed_total = sum((max(_dec(fact.owed_qty), _ZERO) for _key, fact in members), _ZERO)
-        # `first` carries only its own add-back, and the unit stands on all of its lines'.
-        unit_book_back = sum((fact.pool_book_back for _key, fact in members), _ZERO)
-        more_back = unit_book_back - first.pool_book_back
         unit = dataclass_replace(
             first,
             open_qty=total,
@@ -2508,9 +2446,6 @@ class ProjectSupplyService:
                 if first.group_code
                 else first.group_offer
             ),
-            pools_net=first.pools_net + more_back,
-            pool_available=first.pool_available + more_back,
-            pool_book_back=unit_book_back,
         )
         if unit.group_code:
             # The unit's share of what the group has arriving in time, exactly as
@@ -5047,55 +4982,7 @@ class ProjectSupplyService:
                 doc_type=row.get("so_doc_type"),
             )
             self._apply_group_nets(facts[str(row["key"])])
-        self._add_back_own_pool_demand(facts.values())
         return facts
-
-    def _add_back_own_pool_demand(self, facts: Iterable[_LineFacts]) -> None:
-        """A line standing on its own site pool gets back what that pool's book counted for it
-        (a dealer location such as BRW, DEALER-PLANNING).
-
-        Such a line is inside the pool's book, so its own demand is netted against the stock
-        it stands on: 10 on hand and 10 ordered reads a net of zero and buys all 10. This is
-        the arithmetic `_group_offer` does for a group, and every other line's demand stays
-        netted. A line at a project bin that merely draws the pool is booked at its own bin,
-        so it has nothing in the pool to put back.
-
-        WHAT GOES BACK IS WHAT THE BOOK COUNTED, read with `_pile_read`'s own predicate. A
-        closed order, a Transferable = F order or a covered line was never subtracted, so
-        adding it would offer stock the pool does not have, and `owed_qty` cannot say so.
-
-        One line's figures only. The walk keeps the ledgers it shares between lines free of
-        this, because one line's add-back is not stock any other line may be promised.
-        """
-        pools = self._site_pool_warehouses()
-        standing = {
-            self._core_id_of(fact): fact
-            for fact in facts
-            if fact.warehouse is not None
-            and fact.pool is not None
-            and str(fact.warehouse.id) == str(fact.pool.id)
-            and str(fact.pool.id) in pools
-            and self._core_id_of(fact)
-        }
-        if not standing:
-            return
-        rows = (
-            self.db.query(SalesOrderLine.id, demand_qty().label("owed"))
-            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-            .filter(
-                SalesOrderLine.id.in_(list(standing)),
-                SalesOrder.status == "open",
-                is_open_demand(),
-                is_transferable_order(),
-            )
-            .all()
-        )
-        for row in rows:
-            fact = standing[str(row.id)]
-            back = max(_dec(row.owed), _ZERO)
-            fact.pool_book_back = back
-            fact.pools_net += back
-            fact.pool_available += back
 
     def _apply_group_nets(self, fact: _LineFacts) -> None:
         """Ladder v4 (section 1d): stamp the two piles on the line, and net rung 1 against
@@ -5759,11 +5646,7 @@ class ProjectSupplyService:
                 # no reconciled AutoCount line: `_check_line` refuses it on its next
                 # statement, and reaching that refusal matters more than the seed does.
                 units.get(str(line.id))
-                or _UnitCheck(
-                    fact=fact,
-                    timely_left=fact.timely_qty,
-                    pool_back_left=fact.pool_book_back,
-                ),
+                or _UnitCheck(fact=fact, timely_left=fact.timely_qty),
                 capacity_left,
                 borrow_left,
                 stale,
@@ -6287,20 +6170,12 @@ class ProjectSupplyService:
         # LADDER V6: seeded from the UNIT's fact, which is the quantity the ladder walked
         # these rungs with. The ledger is shared across the whole confirmation, so the unit's
         # members draw the same seeded balance down between them in payload order.
-        #
-        # DEALER-PLANNING: the same rule as the walk. The ledger holds the true net, because
-        # one unit's add-back is not stock another unit may be promised. A unit standing on its
-        # pool reads that pool apart from the chain: its draw there is paid for by its add-back
-        # first, so it must not use up the net the other pools are measured by. Where the true
-        # net is negative the add-back only cancels it, so another order's stock stays theirs.
         pools = self._pool_chain(unit.fact, pool_free_left=None)
-        true_net = unit.fact.pools_net - unit.fact.pool_book_back
-        stands_on = unit.fact.pool_code if unit.fact.pool_book_back > _ZERO else None
         capacity: Dict[str, Decimal] = {}
         location_ids: Dict[str, str] = {}
         for location, live_qty in pool_reserve_capacity(
-            pools=[entry for entry in pools if entry.get("location") != stands_on],
-            pools_net=true_net,
+            pools=pools,
+            pools_net=unit.fact.pools_net,
         ):
             source = self._warehouse_by_code(location)
             if source is None:
@@ -6310,14 +6185,6 @@ class ProjectSupplyService:
                 fact.product_id, str(source.id), live_qty,
                 own=(location == unit.fact.pool_code),
             )
-        if stands_on:
-            own_pool_id = str(unit.fact.pool.id)
-            free = max(_dec(unit.fact.pool_free), _ZERO)
-            capacity_left.capacity(
-                fact.product_id, own_pool_id, min(free, max(true_net, _ZERO)), own=True
-            )
-            location_ids[stands_on] = own_pool_id
-            capacity[stands_on] = min(free, max(true_net + unit.pool_back_left, _ZERO))
         # STEP 1's OWN half, read TWICE and reconciled into one pile.
         #
         # Ladder v4's `_group_take_candidates` is the UNDATED whole-pile reading: what the
@@ -6622,13 +6489,7 @@ class ProjectSupplyService:
             capacity[warehouse] -= qty
             warehouse_id = location_ids.get(warehouse)
             if warehouse_id:
-                from_back = (
-                    min(unit.pool_back_left, qty)
-                    if warehouse == unit.fact.pool_code
-                    else _ZERO
-                )
-                unit.pool_back_left -= from_back
-                capacity_left.take(fact.product_id, warehouse_id, qty, from_back=from_back)
+                capacity_left.take(fact.product_id, warehouse_id, qty)
             lender = sales_agent_service.group_of_warehouse_code(warehouse)
             if lender and lender != fact.group_code:
                 # R-M: and off the LENDING GROUP's budget, so the next line of this
@@ -9722,7 +9583,6 @@ class ProjectSupplyService:
                 else None,
             )
             self._apply_group_nets(facts[str(line.id)])
-        self._add_back_own_pool_demand(facts.values())
         return facts
 
     # -------------------------------------------------------------- fact readers
