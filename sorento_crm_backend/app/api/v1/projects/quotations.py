@@ -392,7 +392,7 @@ def judge_draft_line(
 @router.get("/quotation-line-verdict", response_model=QuotationLineVerdictResponse)
 def judge_new_scope_line(
     series_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
-    product_id: Optional[str] = Query(None),
+    product_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
     product_set_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
     unit_price: Optional[str] = Query(None),
     _user: dict = Depends(require_any_permission(READ)),

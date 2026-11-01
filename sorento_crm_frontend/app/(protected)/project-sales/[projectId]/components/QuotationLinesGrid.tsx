@@ -102,7 +102,7 @@ type MenuAction = 'below' | 'section' | 'remove';
 interface GridContextValue {
   editing: boolean;
   quotationId: string | null;
-  seriesId: string | null;
+  seriesId?: string | null;
   fetchProducts: (query: string) => Promise<SearchableSelectOption[]>;
   resolveProduct: (
     line: QuotationLine | null,
@@ -1225,7 +1225,7 @@ export function QuotationLinesGrid({
   lines,
   editing,
   quotationId,
-  seriesId = null,
+  seriesId,
   rowFilter,
   emptyHint,
   filterEmptyHint,

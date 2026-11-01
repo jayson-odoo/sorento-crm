@@ -32,7 +32,7 @@ const FLOOR_LEVEL_LABELS: Record<string, string> = {
  */
 function useLineFacts(
   quotationId: string | null,
-  seriesId: string | null,
+  seriesId: string | null | undefined,
   line: QuotationLine | null,
   draft: LineDraft,
 ) {
@@ -75,13 +75,13 @@ function useLineFacts(
 /** The Product cell's flag: Non-standard, once. */
 export function LineFlags({
   quotationId,
-  seriesId = null,
+  seriesId,
   line,
   draft,
 }: {
   /** Null on a scope not saved yet: the verdict is then asked by `seriesId`. */
   quotationId: string | null;
-  /** The series the editor is quoting from (null for none). */
+  /** The series the editor is quoting from (null for none); undefined asks by quotation. */
   seriesId?: string | null;
   line: QuotationLine | null;
   draft: LineDraft;
@@ -109,7 +109,7 @@ export function LineFlags({
  */
 export function MinimumPriceFlag({
   quotationId,
-  seriesId = null,
+  seriesId,
   line,
   draft,
 }: {

@@ -1013,7 +1013,7 @@ class ProjectSeriesSet(Base):
         nullable=False,
     )
     selling_price = Column(Numeric(12, 2), nullable=True)
-    #: A PERCENT, ``6`` means 6%. NULL is silence, never zero (see ``ProjectSeriesProduct``).
+    #: A PERCENT, ``6`` means 6%. NULL with a selling price means no discount (owner ruling Q2).
     max_discount_pct = Column(Numeric(5, 2), nullable=True)
 
 

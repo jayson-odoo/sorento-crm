@@ -205,3 +205,38 @@ def test_q1_removing_a_product_the_series_never_had_is_404(world):
     s = _series(world, world.a.id, [world.parent.id])
     r = world.client.delete(f"{BASE}/config/series/{s['id']}/products/{world.b1.id}")
     assert r.status_code == 404, r.text
+
+
+def test_a7_another_company_series_judges_like_no_series(world):
+    """The series id is the caller's input: one the company scope cannot see must not lend its
+    prices or its allowlist to the verdict."""
+    import uuid
+
+    from app.models.company import Company
+
+    other = Company(id=str(uuid.uuid4()), name="zzt-other co", code=f"ZZT{uuid.uuid4().hex[:6].upper()}")
+    world.db.add(other)
+    world.db.flush()
+    from app.models.projects import ProjectSeries, ProjectSeriesProduct
+
+    series_id = str(uuid.uuid4())
+    world.db.add(ProjectSeries(id=series_id, company_id=other.id, name=f"zzt foreign {series_id[:6]}"))
+    world.db.flush()
+    world.db.add(
+        ProjectSeriesProduct(series_id=series_id, product_id=world.a1.id, selling_price=Decimal("5000"))
+    )
+    world.db.commit()
+
+    body = world.client.get(
+        VERDICT, params={"series_id": series_id, "product_id": world.b1.id, "unit_price": "1"}
+    ).json()
+    assert body["is_non_standard"] is False  # no allowlist of ours to breach
+    priced = world.client.get(
+        VERDICT, params={"series_id": series_id, "product_id": world.a1.id, "unit_price": "1"}
+    ).json()
+    assert priced["floor_level"] != "series"
+
+
+def test_a8_a_junk_product_id_is_a_422_not_a_500(world):
+    r = world.client.get(VERDICT, params={"product_id": "not-a-uuid"})
+    assert r.status_code == 422, r.text

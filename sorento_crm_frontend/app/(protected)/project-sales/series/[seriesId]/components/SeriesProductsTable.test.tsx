@@ -70,6 +70,7 @@ const toast = vi.hoisted(() => ({
   error: vi.fn(),
   warning: vi.fn(),
   info: vi.fn(),
+  custom: vi.fn(),
 }));
 vi.mock('@/lib/toast', () => ({ toast }));
 
@@ -493,6 +494,60 @@ describe('SeriesProductsTable', () => {
       expect.objectContaining({ query: 'oth' }),
     );
     expect(screen.getByDisplayValue('150')).toBeInTheDocument();
+    // The box goes back to what the list shows, so the two never disagree.
+    await waitFor(() =>
+      expect(screen.getByLabelText(/search products in this series/i)).toHaveValue(''),
+    );
+  });
+
+  it('a search waits for a save already running, and warns when that save fails', async () => {
+    getSeriesProductRows.mockResolvedValue(serverPage([
+      row({ product_id: 'p1', product_code: 'SAVED-1', product_name: 'Saved item' }),
+    ]));
+    let fail: (error: Error) => void = () => {};
+    updateSeriesProductPricing.mockImplementation(
+      () => new Promise((_resolve, reject) => { fail = reject; }),
+    );
+    renderTable();
+
+    await screen.findByText('Saved item');
+    fireEvent.change(screen.getByRole('textbox', { name: /^Selling price on SAVED-1/ }), {
+      target: { value: '99.00' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Save SAVED-1/ }));
+    await waitFor(() => expect(updateSeriesProductPricing).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText(/search products in this series/i), {
+      target: { value: 'oth' },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(getSeriesProductRows).not.toHaveBeenCalledWith('s1', expect.objectContaining({ query: 'oth' }));
+    fail(new Error('Server said no'));
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
+    expect(String(toast.warning.mock.calls[0][0])).toContain('SAVED-1');
+    expect(getSeriesProductRows).not.toHaveBeenCalledWith('s1', expect.objectContaining({ query: 'oth' }));
+    expect(screen.getByDisplayValue('99.00')).toBeInTheDocument();
+  });
+
+  it('a page change saves edited rows on the page first', async () => {
+    getSeriesProductRows.mockImplementation(async (_id: string, opts?: { page?: number }) =>
+      serverPage(
+        [row({ product_id: `p${opts?.page}`, product_code: `C${opts?.page}`, product_name: `Item page ${opts?.page}` })],
+        120,
+      ),
+    );
+    updateSeriesProductPricing.mockResolvedValue(row());
+    renderTable();
+    await screen.findByText('Item page 1');
+    fireEvent.change(screen.getByRole('textbox', { name: /^Selling price on C1/ }), {
+      target: { value: '77.00' },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /next page/i }));
+    await screen.findByText('Item page 2');
+    expect(updateSeriesProductPricing).toHaveBeenCalledWith(
+      's1',
+      'p1',
+      expect.objectContaining({ selling_price: '77.00' }),
+    );
   });
 
   it('asks before the browser leaves the page with an unsaved row', async () => {

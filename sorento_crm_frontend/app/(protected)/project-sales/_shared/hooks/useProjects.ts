@@ -1477,7 +1477,7 @@ export function useImportJobStatus(jobId: string | null) {
  * runs); this hook only decides WHEN to ask.
  */
 export function useLineVerdict(
-  target: { quotationId: string | null; seriesId: string | null },
+  target: { quotationId: string | null; seriesId?: string | null },
   draft: { product_id?: string; product_set_id?: string; unit_price?: string },
   enabled: boolean,
 ) {

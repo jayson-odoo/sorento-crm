@@ -46,6 +46,7 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
     value: searchInput,
     setValue: setSearchInput,
     debouncedValue: search,
+    reset: resetSearch,
   } = useDebouncedSearch();
   const control = React.useRef<InlineLineTableControl | null>(null);
   /**
@@ -66,12 +67,15 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
     if (typed === query) return;
     let live = true;
     void flushEdits().then((ok) => {
-      if (live && ok) setQuery(typed);
+      if (!live) return;
+      if (ok) setQuery(typed);
+      // Blocked: the box goes back to the search the list shows, so the two never disagree.
+      else resetSearch(query);
     });
     return () => {
       live = false;
     };
-  }, [flushEdits, query, typed]);
+  }, [flushEdits, query, resetSearch, typed]);
   // Leaving the page (reload, close, typed URL) with an edit not saved asks first.
   React.useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {

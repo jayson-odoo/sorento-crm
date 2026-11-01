@@ -323,11 +323,14 @@ function Harness({
   projectOverrides,
   editing,
   unsaved = false,
+  seriesId,
 }: {
   projectOverrides: Partial<Project>;
   editing: boolean;
   /** A scope added on the quotation form and not saved yet (#1341, round 3). */
   unsaved?: boolean;
+  /** The series the form has picked for the scope (undefined: the quotation's own). */
+  seriesId?: string | null;
 }) {
   const held = useQuotationEditSession();
   session = held;
@@ -356,18 +359,29 @@ function Harness({
     <QuotationVersionEditor
       project={project(projectOverrides)}
       quotation={unsaved ? null : QUOTATION}
+      seriesId={seriesId}
       edit={edit}
     />
   );
 }
 
-function renderEditor(overrides: Partial<Project> = {}, editing = false, unsaved = false) {
+function renderEditor(
+  overrides: Partial<Project> = {},
+  editing = false,
+  unsaved = false,
+  seriesId?: string | null,
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <Harness projectOverrides={overrides} editing={editing} unsaved={unsaved} />
+      <Harness
+        projectOverrides={overrides}
+        editing={editing}
+        unsaved={unsaved}
+        seriesId={seriesId}
+      />
     </QueryClientProvider>,
   );
 }
@@ -1318,7 +1332,7 @@ describe('describeRecompute', () => {
  */
 describe('QuotationVersionEditor on a scope not saved yet (AC-QF073)', () => {
   it('starts with no lines, stages an added line, reads no version, and judges the line by series', async () => {
-    renderEditor({}, true, true);
+    renderEditor({}, true, true, 's-new');
 
     await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines).toEqual([]));
     fireEvent.click(await screen.findByRole('button', { name: 'Add a line' }));
@@ -1341,7 +1355,7 @@ describe('QuotationVersionEditor on a scope not saved yet (AC-QF073)', () => {
     await waitFor(
       () =>
         expect(judgeQuotationLine).toHaveBeenCalledWith(
-          expect.objectContaining({ quotationId: null }),
+          { quotationId: null, seriesId: 's-new' },
           expect.objectContaining({ product_id: 'p9' }),
         ),
       { timeout: 5000 },
