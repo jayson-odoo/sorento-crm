@@ -791,6 +791,38 @@ describe('StockDocumentsPanel: the site pool ledger (R-K, AC-2.6b)', () => {
     expect(balancesOf()).toEqual(['51', '50', '305']);
   });
 
+  it('R12: on a line standing on its pool the footer states the subtotal the Stock tab prints', async () => {
+    getStockDetail.mockResolvedValue(poolsPosition());
+
+    renderPanel('pools', { poolSubtotal: '30' });
+    await screen.findByRole('table');
+
+    const footer = [...(screen.getByRole('table').querySelector('tfoot')?.querySelectorAll('td') ?? [])];
+    expect(footer.map((entry) => entry.textContent)).toContain('30');
+  });
+
+  it('R12: a retail line on its own pool reads for this line, and its last row is the footer', async () => {
+    getStockDetail.mockResolvedValue(poolsPosition());
+
+    renderPanel('pools', { poolSubtotal: '30', ownPoolNoShare: true });
+    await screen.findByRole('table');
+
+    expect(screen.getByText('Available for this line')).toBeTruthy();
+    expect(screen.queryByText('Available for Project')).toBeNull();
+    // Nothing is held back from it, so the rows are the plain running balance, not a share of it.
+    expect(balancesOf()).toEqual(['102', '101', '30']);
+  });
+
+  it('R12: a project line on its own pool keeps the share, and its last row is the footer', async () => {
+    getStockDetail.mockResolvedValue(poolsPosition());
+
+    renderPanel('pools', { poolSubtotal: '15' });
+    await screen.findByRole('table');
+
+    expect(screen.getByText('Available for Project')).toBeTruthy();
+    expect(balancesOf()).toEqual(['51', '50', '15']);
+  });
+
   it('caps every shared balance by the five-pool net, so the ledger cannot promise past the pile', async () => {
     getStockDetail.mockResolvedValue({ ...poolsPosition(), five_pool_net: '52' });
 
