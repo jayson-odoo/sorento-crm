@@ -6289,14 +6289,18 @@ class ProjectSupplyService:
         # members draw the same seeded balance down between them in payload order.
         #
         # DEALER-PLANNING: the same rule as the walk. The ledger holds the true net, because
-        # one unit's add-back is not stock another unit may be promised, and the add-back
-        # joins this unit's own read only.
+        # one unit's add-back is not stock another unit may be promised. A unit standing on its
+        # pool reads that pool apart from the chain: its draw there is paid for by its add-back
+        # first, so it must not use up the net the other pools are measured by. Where the true
+        # net is negative the add-back only cancels it, so another order's stock stays theirs.
         pools = self._pool_chain(unit.fact, pool_free_left=None)
+        true_net = unit.fact.pools_net - unit.fact.pool_book_back
+        stands_on = unit.fact.pool_code if unit.fact.pool_book_back > _ZERO else None
         capacity: Dict[str, Decimal] = {}
         location_ids: Dict[str, str] = {}
         for location, live_qty in pool_reserve_capacity(
-            pools=pools,
-            pools_net=unit.fact.pools_net - unit.fact.pool_book_back,
+            pools=[entry for entry in pools if entry.get("location") != stands_on],
+            pools_net=true_net,
         ):
             source = self._warehouse_by_code(location)
             if source is None:
@@ -6306,10 +6310,14 @@ class ProjectSupplyService:
                 fact.product_id, str(source.id), live_qty,
                 own=(location == unit.fact.pool_code),
             )
-        if unit.pool_back_left > _ZERO and unit.fact.pool is not None:
-            own_pool = unit.fact.pool_code
-            location_ids[own_pool] = str(unit.fact.pool.id)
-            capacity[own_pool] = capacity.get(own_pool, _ZERO) + unit.pool_back_left
+        if stands_on:
+            own_pool_id = str(unit.fact.pool.id)
+            free = max(_dec(unit.fact.pool_free), _ZERO)
+            capacity_left.capacity(
+                fact.product_id, own_pool_id, min(free, max(true_net, _ZERO)), own=True
+            )
+            location_ids[stands_on] = own_pool_id
+            capacity[stands_on] = min(free, max(true_net + unit.pool_back_left, _ZERO))
         # STEP 1's OWN half, read TWICE and reconciled into one pile.
         #
         # Ladder v4's `_group_take_candidates` is the UNDATED whole-pile reading: what the
