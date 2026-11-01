@@ -489,7 +489,18 @@ def test_at_16_the_tie_out_against_the_autocount_report_figures_to_the_cent(clie
 # ================================================================ AT-18
 
 
-def test_at_18_the_six_sales_and_outstanding_definitions_hide_the_param_and_the_column():
+SIX_KEYS = ["sales_invoiced_ask", "sales_order_lines_ask_delivered", "sales_order_lines_ask_ordered",
+            "sales_order_lines_ask_outstanding", "delivery_order_lines_pending", "unpaid_documents"]
+
+
+def _meta_param(client, key, name):
+    resp = client.get(f"/api/v1/reports/{key}")
+    assert resp.status_code == 200, resp.text
+    found = [p for p in resp.json()["params"] if p["key"] == name]
+    return found[0] if found else None
+
+
+def test_at_18_the_six_sales_and_outstanding_definitions_show_the_param_and_the_column():
     from app.main import app  # noqa: F401  (import order)
     from app.services.reports.definitions.sales_and_outstanding import DEFINITIONS
 
@@ -497,11 +508,48 @@ def test_at_18_the_six_sales_and_outstanding_definitions_hide_the_param_and_the_
     for definition in DEFINITIONS:
         params = {p.key: p for p in definition.params if hasattr(p, "key")}
         assert "account_type" in params, (definition.key, sorted(params))
-        assert params["account_type"].hidden is True, definition.key
+        assert params["account_type"].hidden is False, definition.key
+        assert params["account_type"].label == "Account type", definition.key
         for dataset in definition.datasets():
             col = dataset.column("account_type")
             assert col is not None, (definition.key, dataset)
-            assert col.hidden is True, (definition.key, col)
+            assert col.hidden is False, (definition.key, col)
+            assert col.label == "Account type", (definition.key, col)
+
+
+@pytest.mark.parametrize("key", SIX_KEYS)
+def test_at_18_the_reports_metadata_lists_the_param_labelled_account_type(client, db, key):
+    param = _meta_param(client, key, "account_type")
+    assert param is not None, f"{key} metadata has no account_type param"
+    assert param["label"] == "Account type", param
+
+
+def test_at_18_the_options_are_the_stored_types_of_the_callers_company_only(client, db):
+    mocha = seed_mocha(db)
+    _anchors(db, project=False)
+    _ledger(db, "V", "ZZT TYPE B", company_id=mocha.id)
+    db.commit()
+    param = _meta_param(client, "sales_invoiced_ask", "account_type")
+    assert param is not None, "no account_type param in the metadata"
+    assert {o["value"] for o in param["options"]} == {"SORENTO", "CERAMIC", "CABANA"}, param["options"]
+
+
+def test_at_18_running_the_definition_with_account_type_equals_the_routes_account_types(client, db):
+    _anchors(db)
+    _sale(db, "invoiced", _ledger(db, "IV", "CABANA"), "100.00")
+    _sale(db, "invoiced", _ledger(db, "III", "CERAMIC"), "55.00")
+    db.commit()
+    params = {"date_basis": "order_date", "period": {"kind": "custom", "from": "2026-09-01", "to": "2026-09-30"},
+              "account_type": ["CABANA"]}
+    body = {"params": params,
+            "view": {"params": params, "detail": {"columns": [], "order": []},
+                     "pivot": {"rows": "month", "cols": "all", "measures": ["qty", "amount"]}}}
+    resp = client.post("/api/v1/reports/sales_invoiced_ask/run", json=body)
+    assert resp.status_code == 200, resp.text
+    grand = resp.json()["layouts"]["summary"]["grand_total"] or {}
+    from_screen = money(grand.get("amount") or 0)
+    from_route = _amount(client, _staff(db), account_types="CABANA")
+    assert from_screen == from_route == D("100.00"), (from_screen, from_route)
 
 
 def test_at_18_sales_by_debtor_type_keeps_its_visible_debtor_type_param():
