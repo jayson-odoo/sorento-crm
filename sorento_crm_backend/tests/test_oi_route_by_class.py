@@ -692,3 +692,18 @@ def test_a_stand_in_line_with_no_header_keeps_its_orders_class():
         own, {"pso_id": "p2", "sales_order_class": "retail", "line": {}}
     )
     assert own["sales_order_class"] == "project"
+
+
+def test_detail_carries_the_condition_in_words():
+    """Browser pass gap: the automation detail page shows a row's class read-only."""
+    from app.api.v1.system.automation import _hydrate
+
+    with blank_session() as db:
+        creator = _user(db, "creator")
+        template = _template(db)
+        row = _automation(db, template, creator, name="retail", conditions=_class_rule("retail"))
+        db.commit()
+        assert _hydrate(row, db).conditions_text == "Sales order class is Retail"
+        plain = _automation(db, template, creator, name="plain")
+        db.commit()
+        assert _hydrate(plain, db).conditions_text is None

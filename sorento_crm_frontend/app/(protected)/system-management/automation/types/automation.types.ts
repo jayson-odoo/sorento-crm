@@ -39,6 +39,8 @@ export interface Automation {
   /** Optional condition tree filtering which trigger matches this automation
    * acts on. Null = match all. Wire shape mirrors the rule engine. */
   conditions_json: RuleGroup | null;
+  /** The conditions in words, read-only on the detail page; null when there are none. */
+  conditions_text?: string | null;
   action_type: string;
   email_template_id: string;
   email_template_name?: string | null;

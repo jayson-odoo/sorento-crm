@@ -86,6 +86,8 @@ class AutomationResponse(BaseModel):
     recipient_config: dict[str, Any]
     group_matches: bool = True
     conditions_json: Optional[dict[str, Any]] = None
+    #: The conditions in words, for the read-only detail page (DEALER-OI-ROUTE).
+    conditions_text: Optional[str] = None
     schedule_type: str
     run_time: Optional[time]
     timezone: str

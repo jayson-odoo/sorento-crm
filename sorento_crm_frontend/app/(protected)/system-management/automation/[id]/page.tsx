@@ -118,6 +118,18 @@ export default function AutomationDetailPage() {
                 <>
                   <Row label="Type" value={<Badge variant="secondary">{automation.trigger_type}</Badge>} />
                   <Row
+                    label="Conditions"
+                    value={
+                      automation.conditions_text ? (
+                        <span className="break-words" data-testid="automation-conditions">
+                          {automation.conditions_text}
+                        </span>
+                      ) : (
+                        <Empty />
+                      )
+                    }
+                  />
+                  <Row
                     label="Config"
                     value={
                       <pre className="text-xs bg-muted rounded p-2 max-w-full overflow-x-auto">
