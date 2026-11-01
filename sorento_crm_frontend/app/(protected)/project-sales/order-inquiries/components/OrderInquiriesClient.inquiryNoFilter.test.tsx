@@ -380,7 +380,7 @@ describe('AC-RF-90 a chip session never changes the remembered Lines view', () =
 
 describe('AC-RF-90 removing the chip then remounting from that URL (reload, Back from an SO line)', () => {
   it('writes no ack=all, keeps the stored view, and the plain remount opens as a plain visit', async () => {
-    const seedFilters = { ack: 'to_confirm', location: 'ZZT-WH-A', supplier_id: 'sup-1' };
+    const seedFilters = { ack: 'to_confirm', location: ['ZZT-WH-A'], supplier_id: 'sup-1' };
     getUserListColumnConfig.mockResolvedValue({
       listing_key: 'projects.projects.view::order-inquiry-worklist',
       config: { version: 1, sorting: null, filtersVersion: 1, filters: seedFilters },
