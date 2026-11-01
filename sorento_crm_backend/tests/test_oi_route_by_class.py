@@ -589,3 +589,24 @@ def test_preview_names_every_to():
         )
         assert email["to"] == {"name": "A, B"}
         assert email["cc"] == [{"name": "C"}]
+
+
+def test_resend_never_borrows_the_other_class_row():
+    """Security review: an enabled retail-only row and an older switched-off row; a project
+    OI must not fall back to either."""
+    from datetime import datetime, timedelta
+
+    from app.services.oi_handover_resend import handover_automation
+
+    with blank_session() as db:
+        creator = _user(db, "creator")
+        template = _template(db)
+        now = datetime.utcnow()
+        _automation(db, template, creator, name="old-off", enabled=False,
+                    created_at=now - timedelta(days=3))
+        retail = _automation(db, template, creator, name="retail",
+                             conditions=_class_rule("retail"), created_at=now - timedelta(days=1))
+        db.commit()
+
+        assert handover_automation(db, "retail").id == retail.id
+        assert handover_automation(db, "project") is None

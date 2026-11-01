@@ -47,7 +47,9 @@ def handover_automation(
 ) -> Optional[Automation]:
     """The handover automation for an OI of this sales order class (DEALER-OI-ROUTE): the
     oldest ENABLED row whose conditions pass for the class (a row with none passes for
-    every class), else the oldest row of the trigger, switched on or off."""
+    every class). When no row is enabled at all, the oldest row of the trigger (an explicit
+    send a switched-off automation must not swallow). When rows are enabled but none is for
+    this class, `None`: the OI is skipped rather than sent to the other class's people."""
     from app.rule_engine.evaluator import evaluate
     from app.rule_engine.registry import resolve_facts
     from app.services.automation_triggers import context_fact_sources
@@ -65,6 +67,8 @@ def handover_automation(
             return automation
         if evaluate(tree, resolve_facts(db, sources)):
             return automation
+    if enabled:
+        return None
     return (
         db.query(Automation)
         .filter(Automation.trigger_type == TRIGGER_TYPE)
