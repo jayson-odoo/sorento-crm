@@ -172,7 +172,7 @@ describe('MinimumPriceFlag', () => {
     ...extra,
   });
 
-  it('reads Minimum price RM x for a line priced below its floor, with where it was set', () => {
+  it('reads Minimum price RM x for a line priced below its floor, with no "Set on" line (PRICING-UX-FIXES)', () => {
     render(
       <MinimumPriceFlag
         quotationId="q1"
@@ -187,7 +187,7 @@ describe('MinimumPriceFlag', () => {
       />,
     );
     expect(screen.getByText('Minimum price RM 700.00')).toBeInTheDocument();
-    expect(screen.getByText('Set on a parent category.')).toBeInTheDocument();
+    expect(screen.queryByText(/Set on/)).toBeNull();
     expect(screen.queryByText(/below floor/i)).toBeNull();
     expect(screen.queryByText(/\bfloor\b/i)).toBeNull();
   });
@@ -201,7 +201,48 @@ describe('MinimumPriceFlag', () => {
       />,
     );
     expect(screen.getByText('Minimum price')).toBeInTheDocument();
-    expect(screen.getByText('Below the minimum price for this item.')).toBeInTheDocument();
+    expect(screen.queryByText('Below the minimum price for this item.')).toBeNull();
+  });
+
+  it('never prints "Set on series" under a live verdict either', () => {
+    useLineVerdict.mockReturnValue({
+      data: { is_below_floor: true, is_non_standard: false, floor_value: '900.00', floor_level: 'series' },
+    });
+    render(
+      <MinimumPriceFlag
+        quotationId="q1"
+        seriesId="s1"
+        line={null}
+        draft={draftOf({ product_id: 'p1' })}
+      />,
+    );
+    expect(screen.getByText('Minimum price RM 900.00')).toBeInTheDocument();
+    expect(screen.queryByText(/Set on/)).toBeNull();
+    useLineVerdict.mockReturnValue({ data: undefined });
+  });
+
+  it('asks the series verdict live on a NEW scope that has no quotation id yet', () => {
+    useLineVerdict.mockClear();
+    useLineVerdict.mockReturnValue({
+      data: { is_below_floor: true, is_non_standard: true, floor_value: '900.00', floor_level: 'series' },
+    });
+    render(
+      <>
+        <MinimumPriceFlag
+          quotationId={null}
+          seriesId="s1"
+          line={null}
+          draft={draftOf({ product_id: 'p1' })}
+        />
+        <LineFlags quotationId={null} seriesId="s1" line={null} draft={draftOf({ product_id: 'p1' })} />
+      </>,
+    );
+    expect(screen.getByText('Minimum price RM 900.00')).toBeInTheDocument();
+    expect(screen.getByText('Non-standard')).toBeInTheDocument();
+    const call = useLineVerdict.mock.calls.at(-1)!;
+    expect(call[0]).toEqual({ quotationId: null, seriesId: 's1' });
+    expect(call[2]).toBe(true);
+    useLineVerdict.mockReturnValue({ data: undefined });
   });
 
   it('renders nothing for a line at or above its floor', () => {

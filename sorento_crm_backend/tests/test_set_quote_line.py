@@ -722,7 +722,8 @@ def test_b3_the_series_row_sets_the_floor_at_level_series():
         assert floor.level == "series"
 
 
-def test_b3_a_series_row_missing_one_number_falls_to_the_company_default_on_the_set_list_price():
+def test_b3_a_series_set_row_with_a_price_and_no_discount_floors_at_that_price():
+    """Owner ruling Q2 (1 Nov 2026): the series price with no max discount allows no discount."""
     from app.services import project_pricing_service as pricing
 
     with blank_session() as db:
@@ -741,8 +742,8 @@ def test_b3_a_series_row_missing_one_number_falls_to_the_company_default_on_the_
         )
 
         assert floor is not None
-        assert floor.value == Decimal("300.00")
-        assert floor.level != "series"
+        assert floor.value == Decimal("1000.00")
+        assert floor.level == "series"
 
 
 def test_b3_product_and_category_rules_never_apply_to_a_set():
@@ -936,7 +937,7 @@ def test_c1_a_series_set_is_added_priced_listed_and_removed():
         assert pricing.series_set_rows(db, series.id) == []
 
 
-def test_c1_a_set_without_both_numbers_has_no_derived_floor():
+def test_c1_a_set_with_a_price_and_no_discount_derives_the_price_as_floor():
     from app.services import project_pricing_service as pricing
 
     with blank_session() as db:
@@ -952,7 +953,8 @@ def test_c1_a_set_without_both_numbers_has_no_derived_floor():
             max_discount_pct=None,
         )
 
-        assert row["derived_floor"] is None
+        # Owner ruling Q2 (1 Nov 2026): no max discount means no discount.
+        assert row["derived_floor"] == Decimal("1000.00")
 
 
 def test_c5_another_companys_set_cannot_be_put_on_a_series():
