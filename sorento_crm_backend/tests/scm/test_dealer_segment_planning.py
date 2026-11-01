@@ -807,6 +807,113 @@ def test_a_project_line_in_the_same_confirmation_reads_the_true_net():
     assert short == Decimal("3")
 
 
+def _confirm_reserve(db, order, line, pool, actor, qty, *, buy="0", reason=None):
+    """One press, one line: Reserve at the pool and Buy the rest. Returns what came up short."""
+    service = ProjectSupplyService(db)
+    service.confirm(
+        order,
+        ConfirmSupplyBody(
+            lines=[
+                ConfirmLine(
+                    project_line_id=str(line.id),
+                    reserve=[{"warehouse_id": str(pool.id), "qty": Decimal(qty)}],
+                    buy_qty=Decimal(buy),
+                    **({"amend_reason": reason} if reason else {}),
+                )
+            ]
+        ),
+        actor_user_id=actor,
+    )
+    db.commit()
+    return sum(
+        (entry["short"] for entries in service._stock_short.values() for entry in entries),
+        Decimal("0"),
+    )
+
+
+def test_confirming_a_proposal_that_draws_two_pools_takes_what_was_proposed():
+    """10 here, 40 at another pool, nobody else, a line of 30 here. The own pool's draw is paid
+    for by the add-back, so it must not use up the net the other pool's draw is measured by."""
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=10, product=product)
+        _dealer_pool(db, on_hand=40, product=product)
+        order, _line, _core_so, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="30", required_date=_far(10),
+        )
+        reserved, buy, bought, short = _confirm_the_proposal(db, order, actor)
+
+    assert (reserved, buy) == (Decimal("25"), Decimal("5"))
+    assert (bought, short) == (Decimal("5"), Decimal("0"))
+
+
+def test_a_line_cannot_reserve_stock_the_book_already_holds_for_another_order():
+    """10 on hand, all 10 owed to another order: the proposal is Buy. Asking for the shelf anyway
+    is short by all of it, as it is at any other location."""
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=10, product=product)
+        _seed_line(db, company_id, project, product, pool, qty_ordered="50", line_no=30)
+        order, line, _core_so, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10",
+        )
+        short = _confirm_reserve(db, order, line, pool, actor, "10")
+
+    assert short == Decimal("10")
+
+
+def test_two_orders_pressed_separately_cannot_reserve_the_same_stock():
+    """10 on hand, two orders of 10. The second press must not take what the first holds."""
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=10, product=product)
+        order_x, line_x, _so, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10", line_no=10,
+        )
+        order_y, line_y, _so, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10", line_no=20,
+        )
+        first = _confirm_reserve(db, order_x, line_x, pool, actor, "10")
+        second = _confirm_reserve(db, order_y, line_y, pool, actor, "10")
+
+    assert first + second >= Decimal("10"), (first, second)
+
+
+def test_a_units_add_back_is_spent_once():
+    """30 on hand, 15 owed to another order, one unit of 10 and 10: a true net of -5, so the
+    unit can have 15 of its 20. The second line reads what the first left of the add-back."""
+    with blank_session() as db:
+        company_id, actor, project, product = _world(db)
+        pool = _dealer_pool(db, on_hand=30, product=product)
+        _seed_line(db, company_id, project, product, pool, qty_ordered="15", line_no=30)
+        order, line, core_so, _core = _seed_line(
+            db, company_id, project, product, pool, qty_ordered="10", line_no=10,
+        )
+        second_core = _core_line(
+            db, core_so, product, pool, qty_ordered="10", required_date=REQUIRED_DATE,
+        )
+        second = _project_line(db, order, line_no=20, product=product, core_line=second_core)
+        db.commit()
+        ask = [{"warehouse_id": str(pool.id), "qty": Decimal("10")}]
+        service = ProjectSupplyService(db)
+        service.confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(project_line_id=str(line.id), reserve=ask),
+                    ConfirmLine(project_line_id=str(second.id), reserve=ask),
+                ]
+            ),
+            actor_user_id=actor,
+        )
+        short = sum(
+            (entry["short"] for entries in service._stock_short.values() for entry in entries),
+            Decimal("0"),
+        )
+
+    assert short == Decimal("5")
+
+
 def test_the_confirm_preview_of_a_line_at_the_pool_raises_its_order_row():
     """AC-7 on the path the board's preview calls. Nothing is refused, and the Buy is listed."""
     with blank_session() as db:
