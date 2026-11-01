@@ -145,14 +145,15 @@ written by the list) and a request id (written by the one-OI email link, includi
   those lines are already answered and the tab would read "No line matches the filter". `needs_reserve`, `parked` and a
   request id still preselect it.
 - **AC-RF-84** Documents to Lines with `inquiry_no` in the URL keeps `inquiry_no`. Lines shows a removable chip naming the OIs,
-  and every row of exactly those OIs: no default narrowing (acknowledge, link horizon, or any other default) hides one, as
-  state All does on Documents. Lines to Documents keeps `inquiry_no` too.
+  and every row of exactly those OIs: no default narrowing (`ack=to_confirm`, the remembered saved view) hides one, as
+  state All does on Documents. The user can still narrow by hand after arriving. Lines to Documents keeps `inquiry_no` too.
 - **AC-RF-85** The Documents state chosen with that filter (Outstanding, All, Completed) comes back when the user returns from
   Lines. It is never sent to the Lines API as a row state, because Lines' `state` means something else.
 - **AC-RF-86** The Lines API takes `inquiry_no` with the same rule as Documents: exact, multi-value, no 200-value cap, company
   scoped. Every Lines route sharing that filter set honours it (list, schedule, and any count or export from that screen).
 - **AC-RF-87** Removing the Lines chip, or "Clear filters", drops `inquiry_no` from the URL. A filter change, sort or page change
-  on Lines keeps it. A detail page opened from Lines returns to Lines with the filter on.
+  on Lines keeps it. (A Lines row opens the SO line page, not an OI page, `orderInquiryWorklistColumns.tsx:1129`, so
+  there is no OI detail return from Lines to cover.)
 - **AC-RF-88** With no `inquiry_no`, the toggle stays as it is: a clean URL, since the two screens' other filters mean different
   things.
 
