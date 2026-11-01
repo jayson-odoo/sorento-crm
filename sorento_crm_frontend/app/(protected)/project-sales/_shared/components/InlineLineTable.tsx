@@ -137,6 +137,22 @@ export interface InlineLineColumn<TRow> {
    * string the API wants (`900.00`), but a frozen version should still say `RM 900.00`.
    */
   formatReadOnly?: (value: string, row: TRow | null) => string;
+  /**
+   * Read-only on a SAVED row: the value is what identifies the row (a series' product), so it
+   * is not cleared or swapped in place. A new row still edits it.
+   */
+  lockOnSavedRow?: boolean;
+}
+
+/** What a screen can ask of the table before it changes the rows it hands in. */
+export interface InlineLineTableControl {
+  /**
+   * Save every edited row that can be saved, and name the ones that cannot (they fail their
+   * checks), so the screen can warn instead of dropping them.
+   */
+  flush: () => Promise<string[]>;
+  /** Whether any row holds an edit that is not saved. */
+  hasUnsaved: () => boolean;
 }
 
 /** A field that deserves keeping but not a column of its own. */
@@ -253,6 +269,8 @@ export interface InlineLineTableProps<TRow> {
   rowFilter?: (row: TRow | null, draft: InlineDraft) => boolean;
   /** Shown in place of rows when the filter hides all of them. */
   filterEmptyHint?: string;
+  /** Filled with this table's `InlineLineTableControl` (a paged screen flushes before paging). */
+  controlRef?: React.MutableRefObject<InlineLineTableControl | null>;
 }
 
 interface RowState {
@@ -347,6 +365,7 @@ export function InlineLineTable<TRow>({
   onDraftsChange,
   rowFilter,
   filterEmptyHint,
+  controlRef,
 }: InlineLineTableProps<TRow>) {
   const [states, setStates] = React.useState<Record<string, RowState>>({});
   const [newRowKeys, setNewRowKeys] = React.useState<string[]>([]);
@@ -650,6 +669,45 @@ export function InlineLineTable<TRow>({
     },
     [collectErrors, dropRow, emptyDraft, isStaged, onCreate, onUpdate, rowByKey],
   );
+
+  /** Rows holding an edit not saved yet; a new row nobody typed into does not count. */
+  const unsavedKeys = React.useCallback(
+    () =>
+      Object.entries(statesRef.current)
+        .filter(([key, held]) =>
+          key.startsWith(NEW_ROW_PREFIX)
+            ? !sameDraft(held.draft, emptyDraft())
+            : !sameDraft(held.draft, held.committed),
+        )
+        .map(([key]) => key),
+    [emptyDraft],
+  );
+
+  React.useEffect(() => {
+    if (!controlRef) return;
+    controlRef.current = {
+      hasUnsaved: () => !isStaged && unsavedKeys().length > 0,
+      flush: async () => {
+        if (isStaged) return [];
+        const blocked: string[] = [];
+        const saves: Promise<void>[] = [];
+        unsavedKeys().forEach((key) => {
+          const held = statesRef.current[key];
+          if (!held) return;
+          if (Object.keys(collectErrors(held.draft)).length > 0) {
+            const row = rowByKey.get(key) ?? null;
+            blocked.push(describeRow(row, rowKeys.indexOf(key)));
+            // Marked, so the cell says what is wrong.
+            void commitRow(key);
+            return;
+          }
+          saves.push(commitRow(key));
+        });
+        await Promise.all(saves);
+        return blocked;
+      },
+    };
+  }, [collectErrors, commitRow, controlRef, describeRow, isStaged, rowByKey, rowKeys, unsavedKeys]);
 
   /**
    * A new row at the bottom, with the caret in it.
@@ -1014,7 +1072,7 @@ export function InlineLineTable<TRow>({
                               invalid={Boolean(message)}
                               describedBy={describedBy}
                               label={`${column.header} on ${label}`}
-                              readOnly={cellsReadOnly}
+                              readOnly={cellsReadOnly || Boolean(column.lockOnSavedRow && row)}
                               onChange={(next) => setDraftValue(rowKey, column.key, next)}
                               onOptionChange={(option) =>
                                 applyOptionFill(rowKey, column, option)

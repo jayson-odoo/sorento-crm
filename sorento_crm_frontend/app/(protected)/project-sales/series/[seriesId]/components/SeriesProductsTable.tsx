@@ -11,7 +11,9 @@ import {
   InlineLineTable,
   type InlineDraft,
   type InlineLineColumn,
+  type InlineLineTableControl,
 } from '../../../_shared/components/InlineLineTable';
+import { toast } from '@/lib/toast';
 import {
   useSeriesProductMutations,
   useSeriesProductRowMutations,
@@ -45,7 +47,41 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
     setValue: setSearchInput,
     debouncedValue: search,
   } = useDebouncedSearch();
-  const query = search.trim();
+  const control = React.useRef<InlineLineTableControl | null>(null);
+  /**
+   * The search the list is showing. It moves to the typed search only once every edited row
+   * is saved: a row on this page that cannot save keeps the list where it is, with a warning,
+   * instead of vanishing with the page (PRICING-UX-FIXES B).
+   */
+  const [query, setQuery] = React.useState('');
+  const typed = search.trim();
+  /** Save what can be saved; false (with a warning naming the rows) if anything cannot. */
+  const flushEdits = React.useCallback(async () => {
+    const blocked = (await control.current?.flush()) ?? [];
+    if (blocked.length === 0) return true;
+    toast.warning(`Not saved: ${blocked.join(', ')}. Fix or remove ${blocked.length === 1 ? 'it' : 'them'} first.`);
+    return false;
+  }, []);
+  React.useEffect(() => {
+    if (typed === query) return;
+    let live = true;
+    void flushEdits().then((ok) => {
+      if (live && ok) setQuery(typed);
+    });
+    return () => {
+      live = false;
+    };
+  }, [flushEdits, query, typed]);
+  // Leaving the page (reload, close, typed URL) with an edit not saved asks first.
+  React.useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!control.current?.hasUnsaved()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
   // The page belongs to the search it was chosen under: a new search reads as page 1 without
   // an extra request for the old page number.
   const [pager, setPager] = React.useState({ pageIndex: 0, pageSize: 50, query: '' });
@@ -87,6 +123,8 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
         kind: 'searchable-select',
         placeholder: 'Pick a product',
         fetchOptions: fetchProducts,
+        // A saved row IS its product: no clear X to empty it, no swap that would be ignored.
+        lockOnSavedRow: true,
         resolveSelected: (row) =>
           row?.product_id
             ? {
@@ -197,12 +235,14 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
     data: visible,
     columns: [],
     state: { pagination },
-    onPaginationChange: (updater) =>
-      setPager((prev) => {
-        const current = { pageIndex: prev.query === query ? prev.pageIndex : 0, pageSize: prev.pageSize };
-        const next = typeof updater === 'function' ? updater(current) : updater;
-        return { ...next, query };
-      }),
+    onPaginationChange: (updater) => {
+      const current = { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize };
+      const next = typeof updater === 'function' ? updater(current) : updater;
+      // Edited rows on this page are saved before it is left, never dropped with it.
+      void flushEdits().then((ok) => {
+        if (ok) setPager({ ...next, query });
+      });
+    },
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     pageCount: Math.ceil(total / pagination.pageSize) || 1,
@@ -228,7 +268,7 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
       <InlineLineTable<SeriesProductRow>
         rows={visible}
         getRowId={(row) => row.product_id}
-        canDeleteRow={(row) => !row.in_scope}
+        controlRef={control}
         columns={columns}
         toDraft={toDraft}
         emptyDraft={emptyDraft}
@@ -242,7 +282,7 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
         describeRow={(row, index) => row?.product_code || `row ${index + 1}`}
         validateRow={(draft) => {
           const errors: Record<string, string> = {};
-          if (!draft.product_id) errors.product_id = 'Pick a product';
+          if (!draft.product_id) errors.product_id = 'Pick a product to save this row';
           const pct = Number(draft.max_discount_pct);
           if (draft.max_discount_pct && (Number.isNaN(pct) || pct < 0 || pct > 100)) {
             errors.max_discount_pct = 'A percentage between 0 and 100';
@@ -270,6 +310,7 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
               },
             });
           }
+          toast.success('Saved');
         }}
         onUpdate={async (row, draft) => {
           await setPricing.mutateAsync({
@@ -279,12 +320,13 @@ export function SeriesProductsTable({ seriesId }: { seriesId: string }) {
               max_discount_pct: money(draft.max_discount_pct),
             },
           });
+          toast.success('Saved');
         }}
         onDelete={async (row) => {
           await remove.mutateAsync(row.product_id);
         }}
         deleteDescription={(row) =>
-          `Remove ${row.product_code ?? 'this product'} from the series? This action cannot be undone.`
+          `Remove ${row.product_code ?? 'this product'} from the series?`
         }
       />
 

@@ -545,7 +545,8 @@ describe('QuotationVersionEditor', () => {
     const pill = await screen.findByText('Minimum price RM 700.00');
     const list = screen.getByText('List RM 1,000.00');
     expect(pill.closest('td')).toBe(list.closest('td'));
-    expect(screen.getByText('Set on a parent category.').closest('td')).toBe(list.closest('td'));
+    // PRICING-UX-FIXES (owner, 1 Nov): no printed "Set on ..." line under the rate.
+    expect(screen.queryByText(/Set on/)).toBeNull();
     expect(screen.queryByText('Below floor')).toBeNull();
   });
 
@@ -622,7 +623,7 @@ describe('QuotationVersionEditor', () => {
     // Debounced 400ms, then judged. NOTHING was saved on the way to the badge.
     expect(await screen.findByText('Non-standard', {}, { timeout: 5000 })).toBeInTheDocument();
     expect(judgeQuotationLine).toHaveBeenCalledWith(
-      QUOTATION.id,
+      expect.objectContaining({ quotationId: QUOTATION.id }),
       expect.objectContaining({ product_id: 'p9' }),
     );
     expect(replaceQuotationLines).not.toHaveBeenCalled();
@@ -650,7 +651,7 @@ describe('QuotationVersionEditor', () => {
     expect(pill.closest('td')).toBe(priceInput.closest('td'));
     expect(screen.queryByText('Below floor')).toBeNull();
     expect(judgeQuotationLine).toHaveBeenCalledWith(
-      QUOTATION.id,
+      expect.objectContaining({ quotationId: QUOTATION.id }),
       expect.objectContaining({ unit_price: '90.00' }),
     );
   });
@@ -1316,7 +1317,7 @@ describe('describeRecompute', () => {
  * like a saved scope, asking the server for nothing it cannot answer.
  */
 describe('QuotationVersionEditor on a scope not saved yet (AC-QF073)', () => {
-  it('starts with no lines, stages an added line, and reads no version or verdict', async () => {
+  it('starts with no lines, stages an added line, reads no version, and judges the line by series', async () => {
     renderEditor({}, true, true);
 
     await waitFor(() => expect(session?.scopes[QUOTATION.id]?.lines).toEqual([]));
@@ -1335,7 +1336,16 @@ describe('QuotationVersionEditor on a scope not saved yet (AC-QF073)', () => {
     expect(screen.queryByTitle('Not a catalogue product')).toBeNull();
     expect(listQuotationVersions).not.toHaveBeenCalled();
     expect(listQuotationLines).not.toHaveBeenCalled();
-    expect(judgeQuotationLine).not.toHaveBeenCalled();
+    // PRICING-UX-FIXES A: the minimum-price and non-standard alerts are live on a new scope
+    // too, judged against the series the editor holds (no quotation id to ask by).
+    await waitFor(
+      () =>
+        expect(judgeQuotationLine).toHaveBeenCalledWith(
+          expect.objectContaining({ quotationId: null }),
+          expect.objectContaining({ product_id: 'p9' }),
+        ),
+      { timeout: 5000 },
+    );
     // A revise would write at once; the form never offers it.
     expect(screen.queryByRole('button', { name: /Revise to/ })).toBeNull();
     expectNothingWritten();
