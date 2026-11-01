@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-WA-W2 - safe dealer writes on WhatsApp, each with a confirm
 
-Status: CARD v1 posted as crew-ask on #2072 (1 Nov), waiting on owner. No code before the answer. Track: L.
+Status: CARD v1 ANSWERED 1 Nov (Q1-Q3, Q5 by crew from standing rulings; Q4 by the owner). Slice 1 in build on #2072. Track: L.
 UAC: `agentic-wa-w2-acceptance-criteria.md` (written after the owner answers the card).
 
 Parent: `PLAN-agentic-knowledge-p2-31oct.md` section "W2 - writes on WhatsApp". W1 merged in #2053
@@ -97,7 +97,23 @@ bot's media lane today, `router.py:73`); 4 carries money and approvals; 5 has it
 Write 1 (note on own request, with undo) + write 2 (stock / lead-time inquiry) + the own-submissions read, on
 the general portal seam above. Slice 2: write 3 with WhatsApp photos attached. Slice 3: writes 4-5.
 
-### Questions (owner)
+### Decisions (1 Nov)
+
+- W2-Q1 (a): slice 1 = note on own request (+ undo) and stock / lead-time inquiry (+ 10-minute withdraw), plus the
+  my-requests read.
+- W2-Q2 (a): "undo" within 10 minutes hard-deletes an untouched submission; after that "It is with the team now,
+  so I can't withdraw it. I can add a note to it instead."
+- W2-Q3 (a): console = test; a console confirm writes nothing.
+- W2-Q4 (a) (owner): no router change; any open bot question, the escalation offer included, keeps the next
+  message on the bot. The agent's OWN pending proposal keeps the next message on the agent (the R3 rule, a
+  question stays with the side that asked it), which needs `router.py:75` to see a contact's proposal too.
+- W2-Q5 (a): no extra cap. Trigger to revisit: the first repeated-submission case.
+- Build simplification (captain): slice 1 serves the CONTACT principal only. Linked staff keep their CRM writes and
+  /my-requests unchanged, so the five dealer tools live in their own registry (`agent/portal_writes.py`) and the
+  user-principal write lists do not change. A linked staff contact gets them when a staff member asks for it.
+- Known limit: the team email sent on submit cannot be recalled; after a withdraw its link opens "not found".
+
+### Questions (answered)
 
 - **W2-Q1 Slice 1 scope.** (a) notes + stock inquiry; (b) warranty claim first (the earlier W-Q4 default);
   (c) all portal kinds at once. Recommendation (a): least risk first, fewest required fields, and the
