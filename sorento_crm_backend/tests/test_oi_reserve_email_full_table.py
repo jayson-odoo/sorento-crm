@@ -1114,6 +1114,15 @@ def _columns(db):
     ).all()
 
 
+NEW_RESERVED_DESCRIPTION = "Tells the requester what CS reserved or rejected, line by line."
+
+
+def _desc(db, code):
+    return db.execute(
+        sa.text("SELECT description FROM email_templates WHERE code = :c"), {"c": code}
+    ).scalar()
+
+
 def test_ac_rf_50_seeded_templates_are_updated_in_place(sn):
     _client, world = sn
     mods = _chain_to_0001(world)
@@ -1123,8 +1132,12 @@ def test_ac_rf_50_seeded_templates_are_updated_in_place(sn):
     for code in before:
         assert before[code][0] == old._bulk_subject(code), "precondition: still oisn_0001's template"
     columns = _columns(world.db)
+    desc_before = {c: _desc(world.db, c) for c in before}
+    assert desc_before[RESERVED_CODE] != NEW_RESERVED_DESCRIPTION, "precondition: the old description"
     _run(mods[NEW_REV], world.db)
     world.db.commit()
+    assert _desc(world.db, RESERVED_CODE) == NEW_RESERVED_DESCRIPTION
+    assert _desc(world.db, REQUEST_CODE) == desc_before[REQUEST_CODE], "the request template's description is unchanged"
     for code in before:
         after = _tpl(world.db, code)
         assert after[0] != before[code][0], f"{code} subject"
@@ -1176,6 +1189,7 @@ def test_ac_rf_52_upgrade_is_idempotent_downgrade_restores_only_untouched_rows(s
     assert NEW_REV in mods, f"migration {NEW_REV} does not exist yet"
     module = mods[NEW_REV]
     seeded = {c: _tpl(world.db, c) for c in (REQUEST_CODE, RESERVED_CODE)}
+    seeded_desc = _desc(world.db, RESERVED_CODE)
     _run(module, world.db)
     once = {c: _tpl(world.db, c) for c in seeded}
     _run(module, world.db)
@@ -1188,6 +1202,21 @@ def test_ac_rf_52_upgrade_is_idempotent_downgrade_restores_only_untouched_rows(s
     _run(module, world.db, "downgrade")
     assert _tpl(world.db, REQUEST_CODE)[0] == "ADMIN EDIT", "an edited row is left alone on downgrade"
     assert _tpl(world.db, RESERVED_CODE) == seeded[RESERVED_CODE], "an untouched row goes back to oisn_0001"
+    assert _desc(world.db, RESERVED_CODE) == seeded_desc, "downgrade restores the old description"
+
+
+def test_ac_rf_54_admin_edited_description_is_left_alone_on_upgrade_and_downgrade(sn):
+    _client, world = sn
+    mods = _chain_to_0001(world)
+    module = mods[NEW_REV]
+    world.db.execute(
+        sa.text("UPDATE email_templates SET description = 'Admin wording' WHERE code = :c"),
+        {"c": RESERVED_CODE},
+    )
+    _run(module, world.db)
+    assert _desc(world.db, RESERVED_CODE) == "Admin wording", "upgrade keeps an edited description"
+    _run(module, world.db, "downgrade")
+    assert _desc(world.db, RESERVED_CODE) == "Admin wording", "downgrade keeps an edited description"
 
 
 def test_ac_rf_53_revision_id_length_and_no_full_template_code_in_the_file():
@@ -1296,14 +1325,24 @@ def test_ac_rf_86_summary_matrix_and_export_honour_inquiry_no(sn):
     one = client.get(f"{LIST}/summary", params={"inquiry_no": "OI-2610-910"})
     assert one.status_code == 200 and one.json()["total_rows"] == 2, one.text
 
-    matrix = client.get(f"{LIST}/matrix", params={"axis": "product", "inquiry_no": "OI-2610-910"})
+    # axis=sales_order: the fixture rows carry a free-text item_code and no Product, so a
+    # product-axis matrix is empty with or without the filter and would prove nothing.
+    whole = client.get(f"{LIST}/matrix", params={"axis": "sales_order"})
+    assert whole.status_code == 200, whole.text
+    assert sum(int(cell["rows"]) for cell in whole.json()["data"]) == 5, "both OIs without the filter"
+    matrix = client.get(f"{LIST}/matrix", params={"axis": "sales_order", "inquiry_no": "OI-2610-910"})
     assert matrix.status_code == 200, matrix.text
     assert sum(int(cell["rows"]) for cell in matrix.json()["data"]) == 2
 
     export = client.get(f"{LIST}/export", params={"inquiry_no": "OI-2610-910"})
     assert export.status_code == 200, export.text[:200]
     sheet = openpyxl.load_workbook(io.BytesIO(export.content)).worksheets[0]
-    assert sheet.max_row - 1 == 2, "the download holds exactly the OI's two rows"
+    items = [r[2] for r in sheet.iter_rows(values_only=True) if str(r[2] or "").startswith(MARKER)]
+    assert len(items) == 2, "the download holds exactly the OI's two rows (title and header rows aside)"
+    whole_export = client.get(f"{LIST}/export")
+    whole_sheet = openpyxl.load_workbook(io.BytesIO(whole_export.content)).worksheets[0]
+    whole_items = [r[2] for r in whole_sheet.iter_rows(values_only=True) if str(r[2] or "").startswith(MARKER)]
+    assert len(whole_items) == 5, "without the filter the download holds both OIs"
 
 
 def test_ac_rf_86_async_export_request_carries_inquiry_no():

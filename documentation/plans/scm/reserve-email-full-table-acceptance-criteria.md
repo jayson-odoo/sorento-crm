@@ -122,6 +122,8 @@ only non-zero counts in this order: `1 partial`, `1 rejected`. "line" is singula
   templates read (`reserve.requests`, `oi_count`, `line_count`, `more_count`, `rows`, `ordinal`, `link`).
 - **AC-RF-52** Upgrade is idempotent. Downgrade restores `oisn_0001`'s values only on a row still holding
   this revision's values.
+- **AC-RF-54** The reserved template's `description` no longer mentions the balance: upgrade sets it, downgrade restores
+  it, and an admin-edited description is left alone both ways.
 - **AC-RF-53** The revision id is at most 32 characters. The file never contains either full template code as
   one token (built from two halves, as `oisn_0001` does: other OI tests scan for that token).
 
