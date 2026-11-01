@@ -241,6 +241,14 @@ def apply_crossdomain_hit(
     try:
         if not answer.text or not isinstance(envelope, Mapping):
             return answer
+        # A read that failed is not a read that found nothing. Its figures are empty, so
+        # `crossdomain_zeroset` would count every code as zero and the ladder would print
+        # "No stock and no incoming for X" over a read that never answered (owner, 1 Nov
+        # 2026: "when the stock lookup fails, the bot shouldnt say no stock").
+        if envelope.get("error"):
+            if trace is not None:
+                trace.add("crossdomain", {"skipped": "primary_read_failed"})
+            return answer
         figures = envelope.get("figures")
         item = {"answers": [r for r in figures if isinstance(r, dict)]} if isinstance(figures, list) else {}
         # Ported from PR #1118 (feat/chatbot-dealer-stock-verdict, not merged, owner

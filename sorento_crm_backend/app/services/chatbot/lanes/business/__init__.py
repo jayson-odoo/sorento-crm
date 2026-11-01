@@ -2491,8 +2491,15 @@ def run_fetch(
             f"MCP tool {tool_name} failed: {exc}", outcome=_fetch_failure_outcome(tool_name, exc)
         )
 
+    parsed = fetch_mod.parse_mcp_content(raw)
+    if isinstance(parsed, str):
+        # Plain text is no envelope: the MCP server hands back a 2xx body it cannot parse
+        # unchanged (`presenters.present_response`). Read as an answer it has no rows, and
+        # would be told to the customer as a real empty result ("No stock and no incoming").
+        logger.warning("chatbot: MCP tool %s answered with no readable result", tool_name)
+        return _error_fragment(f"MCP tool {tool_name} answered with no readable result")
     envelope = brand_guard.guard_result(
-        tool_name, fetch_mod.parse_mcp_content(raw), semantic_input.get("scope_brand_ids"), db
+        tool_name, parsed, semantic_input.get("scope_brand_ids"), db
     )
     second_group = semantic_input.get("report_ask_second_group") if tool_name == report_ask.TOOL else None
     if second_group and isinstance(envelope, dict) and envelope.get("response"):
