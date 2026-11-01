@@ -213,7 +213,9 @@ export function comboOf(data: TagBindingData | null | undefined): TagCombo | nul
 /** A line of a combo listing: `CODE  Description  RM 999`, the description only when it
  *  says more than the code. */
 function comboLine(code: string, description: string, price: string | null): string {
-  return [code, description && description !== code ? description : '', price ?? '']
+  // A product description often ends with its own code; the line already leads with it.
+  const rest = code ? description.split(code).join(' ').replace(/\s+/g, ' ').trim() : description;
+  return [code, rest && rest !== code ? rest : '', price ?? '']
     .filter(Boolean)
     .join('  ');
 }

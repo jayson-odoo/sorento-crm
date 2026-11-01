@@ -387,6 +387,18 @@ describe('Combo Choices (AC-4.5)', () => {
     ]);
   });
 
+  it('does not repeat the code a description already ends with', () => {
+    const long = { ...WHITE, code: 'ZZWB1-BL', description: 'ZZWB1-BL WASH BASIN ONLY (440x440mm) ZZWB1-BL' };
+    const data = lineData({ combo: combo({ upgrades: [], choices: [{ role: 'Basin', options: [long, BLACK] }] }) });
+    expect(lines(text('combo_choices' as SlotBinding, data))[1]).toBe('ZZWB1-BL  WASH BASIN ONLY (440x440mm)  RM 280');
+  });
+
+  it('a description that is only the code prints the code once, in the top-ups too', () => {
+    const only = { ...STONE, code: 'ZZUP1', description: 'ZZUP1', topup_amount: 100 };
+    const data = lineData({ combo: combo({ upgrades: [only] }) });
+    expect(lines(text('combo_topups' as SlotBinding, data))[1]).toBe('ZZUP1  +RM 100');
+  });
+
   it('a picked upgrade with no top-up prints without an amount', () => {
     const data = lineData({
       combo: combo({ upgrades: [{ ...STONE, topup_amount: null, picked: true }] }),
