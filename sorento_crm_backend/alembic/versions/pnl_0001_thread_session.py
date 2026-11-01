@@ -8,7 +8,7 @@ Panel turns stay out of the analytics connector's turn views (AC-17), so the vie
 with the new filter, as `analytics_connector/views.py` asks of a later view change.
 
 Revision ID: pnl_0001_thread_session
-Revises: oisn_0002_full_table
+Revises: dp_0001_cs_planning_access
 Create Date: 2026-10-31
 """
 from __future__ import annotations
@@ -18,7 +18,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "pnl_0001_thread_session"
-down_revision = "oisn_0002_full_table"
+down_revision = "dp_0001_cs_planning_access"
 branch_labels = None
 depends_on = None
 
