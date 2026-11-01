@@ -84,8 +84,8 @@ export function matrixFor(contact: PreviewContact = CONTACT_BLOCK) {
 
 export const DOCS = {
   items: [
-    { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', original_filename: 'Cabana Warranty.pdf', access_levels: ['dealer'], company_name: null, ai_read_status: 'done', verdict: null },
-    { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', original_filename: 'Tile Care.docx', access_levels: ['dealer', 'end_user'], company_name: 'Sorento', ai_read_status: 'queued', verdict: null },
+    { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', original_filename: 'Cabana Warranty.pdf', access_levels: ['dealer'], company_name: null, ai_read_status: 'done', verdict: null, can_edit_levels: true },
+    { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', original_filename: 'Tile Care.docx', access_levels: ['dealer', 'end_user'], company_name: 'Sorento', ai_read_status: 'queued', verdict: null, can_edit_levels: false },
   ],
   total: 2,
   page: 1,

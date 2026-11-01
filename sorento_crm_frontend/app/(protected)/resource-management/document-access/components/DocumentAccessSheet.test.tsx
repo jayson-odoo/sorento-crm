@@ -159,6 +159,28 @@ describe('DocumentAccessSheet (DAS-FE-5)', () => {
     );
   });
 
+  it('only documents with can_edit_levels get an editable levels control (R5)', async () => {
+    const dialog = await openSheet();
+    await within(dialog).findByText('Cabana Warranty.pdf');
+
+    expect(within(dialog).getAllByTestId('levels')).toHaveLength(1);
+    expect(within(dialog).getAllByRole('button', { name: 'add level End User' })).toHaveLength(1);
+    // The read-only document still shows its levels, as plain text.
+    expect(within(dialog).getByText('Tile Care.docx')).toBeInTheDocument();
+  });
+
+  it('disables the sheet chips while a tick save is pending (R3)', async () => {
+    svc.updateAttachmentType.mockImplementation(() => new Promise(() => {}));
+    const dialog = await openSheet();
+
+    fireEvent.click(within(dialog).getByText('End User'));
+
+    await waitFor(() => expect(within(dialog).getByText('End User').closest('button')).toBeDisabled());
+    expect(within(dialog).getByText('Dealer').closest('button')).toBeDisabled();
+    expect(within(dialog).getByText('Staff').closest('button')).toBeDisabled();
+    expect(svc.updateAttachmentType).toHaveBeenCalledTimes(1);
+  });
+
   it('shows the Direct access switch and "Granted to N contacts"; flipping it saves is_direct_access', async () => {
     const dialog = await openSheet('Direct Access');
 

@@ -244,6 +244,39 @@ describe('DocumentAccessView - ticks (DAS-FE-3)', () => {
   });
 });
 
+describe('DocumentAccessView - a pending tick save (R3)', () => {
+  it('disables that row\'s ticks until the save resolves and the row refreshes; the next tick builds on the saved list', async () => {
+    let saved = ['dealer'];
+    let release: (v?: unknown) => void = () => {};
+    svc.getDocumentAccess.mockImplementation(async () =>
+      matrix({ rows: matrix().rows.map((r) => (r.id === TECH ? { ...r, ai_read_codes: saved } : r)) }),
+    );
+    svc.updateAttachmentType.mockImplementationOnce(
+      (_id: string, body: { ai_read_codes: string[] }) =>
+        new Promise((resolve) => {
+          release = () => {
+            saved = body.ai_read_codes;
+            resolve({});
+          };
+        }),
+    );
+    await renderView();
+
+    fireEvent.click(ticks('Technical Specifications')[1]); // untick Dealer: [] , pending
+
+    await waitFor(() => ticks('Technical Specifications').forEach((cb) => expect(cb).toBeDisabled()));
+    ticks('Direct Access').forEach((cb) => expect(cb).not.toBeDisabled());
+    expect(svc.updateAttachmentType).toHaveBeenCalledTimes(1);
+
+    release();
+
+    await waitFor(() => ticks('Technical Specifications').forEach((cb) => expect(cb).not.toBeDisabled()));
+    fireEvent.click(ticks('Technical Specifications')[2]); // End User, on top of the SAVED []
+    await waitFor(() => expect(svc.updateAttachmentType).toHaveBeenCalledTimes(2));
+    expect(svc.updateAttachmentType).toHaveBeenLastCalledWith(TECH, { ai_read_codes: ['end_user'] });
+  });
+});
+
 describe('DocumentAccessView - Preview as (DAS-FE-4)', () => {
   async function pickContact() {
     fireEvent.click(screen.getByRole('combobox', { name: /Preview as/i }));
@@ -281,6 +314,24 @@ describe('DocumentAccessView - Preview as (DAS-FE-4)', () => {
     // The contact holds End User only: that column header carries data-contact-access="true", the others do not.
     expect(screen.getByRole('columnheader', { name: /^End User$/ })).toHaveAttribute('data-contact-access', 'true');
     expect(screen.getByRole('columnheader', { name: /^Dealer$/ })).not.toHaveAttribute('data-contact-access', 'true');
+  });
+
+  it('highlights the contact\'s access-type columns with a class on the header AND the cells (R4)', async () => {
+    svc.getDocumentAccess.mockImplementation(async (arg?: { contactId?: string }) =>
+      arg?.contactId ? matrixFor() : matrix(),
+    );
+    await renderView();
+    await pickContact();
+    await screen.findByText(/Runs as/);
+
+    expect(screen.getByRole('columnheader', { name: /^End User$/ }).className).toMatch(/bg-primary\/5/);
+    expect(screen.getByRole('columnheader', { name: /^Dealer$/ }).className).not.toMatch(/bg-primary\/5/);
+    // Cells: the End User tick sits in a highlighted cell on every row; the Dealer tick does not.
+    for (const name of ['Technical Specifications', 'Direct Access']) {
+      const [, dealer, endUser] = ticks(name);
+      expect(endUser.closest('td')?.className).toMatch(/bg-primary\/5/);
+      expect(dealer.closest('td')?.className ?? '').not.toMatch(/bg-primary\/5/);
+    }
   });
 
   it('a blocked contact reads "No access type" on every row', async () => {

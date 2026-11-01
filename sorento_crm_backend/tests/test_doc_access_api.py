@@ -54,9 +54,16 @@ def api(monkeypatch):
                     "resource.attachment_types.edit",
                     "resource.attachment_types.add",
                     "user_management.contacts.view",
+                    "resource.attachments.view",
+                    "resource.attachments.upload",
                 ),
             )
             viewer = seed_reader(db, slugs=("resource.attachment_types.view",))
+            viewer_docs = seed_reader(db, slugs=("resource.attachment_types.view", "resource.attachments.view"))
+            promo_viewer = seed_reader(db, slugs=("resource.attachment_types.view", "marketing.promotions.view"))
+            reader_no_edit = seed_reader(
+                db, slugs=("resource.attachment_types.view", "resource.attachments.view", "user_management.contacts.view")
+            )
             contacts_only = seed_reader(db, slugs=("user_management.contacts.view",))
             nobody = seed_reader(db, slugs=())
             who = {"id": manager}
@@ -77,6 +84,8 @@ def api(monkeypatch):
                         "Api",
                         (),
                         {"c": c, "db": db, "who": who, "manager": manager, "viewer": viewer,
+                         "viewer_docs": viewer_docs, "promo_viewer": promo_viewer,
+                         "reader_no_edit": reader_no_edit,
                          "contacts_only": contacts_only, "nobody": nobody},
                     )
             finally:
@@ -465,5 +474,171 @@ def test_documents_permissions(api):
     api.who["id"] = api.contacts_only
     assert _docs(api, t.id).status_code == 403
     api.who["id"] = api.viewer
+    assert _docs(api, t.id).status_code == 403, "attachment_types.view alone is not enough for file names (S2)"
+    assert api.c.get(MATRIX).status_code == 200, "the matrix (counts only) stays on attachment_types.view"
+    api.who["id"] = api.viewer_docs
     assert _docs(api, t.id).status_code == 200
     assert _docs(api, t.id, contact_id=contact["pk"]).status_code == 403
+    api.who["id"] = api.promo_viewer
+    assert _docs(api, t.id).status_code == 200, "any attachment catalogue reader counts, not only resource.attachments.view"
+
+
+# ---------------------------------------------------------------- fix round: security
+
+
+def test_preview_contact_companies_limited_to_callers_grants(api):
+    """S1: the contact block names only companies the CALLER is granted, even if the contact has more."""
+    db = api.db
+    other = seed_company(db, "Other Co")
+    _grant(db, api.manager, SORENTO_COMPANY_ID)
+    contact = _contact(db, "CONTACT A", ["dealer"], [SORENTO_COMPANY_ID, other])
+    t = seed_type(db, staff=False, codes=["dealer"])
+    _file(db, t, "mine.pdf", ["dealer"])
+    _file(db, t, "theirs.pdf", ["dealer"], company_id=other)
+
+    for params in ({}, {"company_scope": "grants"}):
+        res = api.c.get(MATRIX, params={"contact_id": contact["pk"], **params})
+        assert res.status_code == 200, res.text
+        assert [c["id"] for c in res.json()["contact"]["companies"]] == [SORENTO_COMPANY_ID], params
+        pv = _rows(res)[str(t.id)]["preview"]
+        assert (pv["reads"], pv["total"]) == (1, 1), "files outside the caller's companies are not counted"
+
+    _grant(db, api.manager, other)
+    res = api.c.get(MATRIX, params={"contact_id": contact["pk"], "company_scope": "grants"})
+    assert sorted(c["id"] for c in res.json()["contact"]["companies"]) == sorted([SORENTO_COMPANY_ID, other])
+
+
+def test_grant_count_only_counts_contacts_in_callers_companies(api):
+    """S3: a document-type grant held by a contact outside the caller's companies is not counted."""
+    from app.models.access import ContactAttachmentType
+
+    db = api.db
+    other = seed_company(db, "Other Co")
+    _grant(db, api.manager, SORENTO_COMPANY_ID)
+    t = seed_type(db, staff=False, codes=[])
+    mine = _contact(db, "CONTACT A", [], [SORENTO_COMPANY_ID])
+    both = _contact(db, "CONTACT B", [], [SORENTO_COMPANY_ID, other])
+    elsewhere = _contact(db, "CONTACT C", [], [other])
+    no_company = _contact(db, "CONTACT D", [], [])
+    for c in (mine, both, elsewhere, no_company):
+        db.add(ContactAttachmentType(contact_id=c["pk"], attachment_type_id=str(t.id)))
+    db.flush()
+
+    row = _rows(api.c.get(MATRIX))[str(t.id)]
+
+    assert row["grant_count"] == 2
+
+
+def test_carryover_script_leaves_the_database_unchanged(db_script):
+    """S4: the proof seeds audiences and backfills inside one transaction, then rolls it back."""
+    import importlib.util
+    from contextlib import contextmanager
+    from pathlib import Path
+
+    from sqlalchemy import text as sql
+    from sqlalchemy.orm import Session
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "doc_access_carryover_check.py"
+    spec = importlib.util.spec_from_file_location("doc_access_carryover_check_under_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    db, monkeypatch = db_script
+    conn = db.connection()
+    t = seed_type(db, staff=False, codes=[])
+    db.execute(sql("UPDATE attachment_types SET ai_audience = 'off' WHERE id = :i"), {"i": str(t.id)})
+    db.flush()
+
+    class _Tx:
+        def __init__(self, sp):
+            self.sp = sp
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            if self.sp.is_active:
+                (self.sp.rollback if exc[0] else self.sp.commit)()
+
+        def commit(self):
+            self.sp.commit()
+
+        def rollback(self):
+            self.sp.rollback()
+
+    class _Conn:
+        """The test's connection; begin() is a savepoint so the outer test transaction survives a rollback."""
+
+        def begin(self):
+            return _Tx(conn.begin_nested())
+
+        def __getattr__(self, name):
+            return getattr(conn, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class _Engine:
+        @contextmanager
+        def begin(self):
+            sp = conn.begin_nested()
+            try:
+                yield conn
+            except BaseException:
+                sp.rollback()
+                raise
+            else:
+                sp.commit()
+
+        def connect(self):
+            return _Conn()
+
+    monkeypatch.setattr(mod, "create_engine", lambda url, **kw: _Engine())
+    monkeypatch.setattr(mod, "Session", lambda engine, **kw: Session(bind=conn))
+
+    code = mod.main(["--database-url", "postgresql://u:p@localhost/scratch_doc_access", "--seed-audiences", f"{t.type_name}=dealer"])
+
+    assert code in (0, 1)
+    row = db.execute(
+        sql("SELECT ai_audience, ai_read_staff, ai_read_codes FROM attachment_types WHERE id = :i"), {"i": str(t.id)}
+    ).one()
+    assert (row[0], bool(row[1]), list(row[2])) == ("off", False, []), "the proof left the seeded audience or ticks behind"
+
+
+@pytest.fixture
+def db_script(api, monkeypatch):
+    return api.db, monkeypatch
+
+
+@pytest.mark.parametrize("url_tail", ["", "/documents"])
+def test_non_uuid_contact_id_is_refused_not_500(api, url_tail):
+    t = seed_type(api.db, staff=True)
+    url = MATRIX if not url_tail else f"{MATRIX}/{t.id}/documents"
+
+    res = api.c.get(url, params={"contact_id": "not-a-uuid"})
+
+    assert res.status_code in (400, 422), res.text
+
+
+def test_documents_can_edit_levels_needs_write_permission_and_active_company_or_shared(api):
+    db = api.db
+    other = seed_company(db, "Other Co")
+    _grant(db, api.manager, SORENTO_COMPANY_ID)
+    _grant(db, api.manager, other)
+    _grant(db, api.reader_no_edit, SORENTO_COMPANY_ID)
+    t = seed_type(db, staff=True, codes=["dealer"])
+    _file(db, t, "a_mine.pdf", ["dealer"])
+    _file(db, t, "b_shared.pdf", ["dealer"], company_id=None)
+    _file(db, t, "c_other.pdf", ["dealer"], company_id=other)
+
+    def flags(user):
+        api.who["id"] = user
+        res = _docs(api, t.id, company_scope="grants")
+        assert res.status_code == 200, res.text
+        return {i["original_filename"]: i["can_edit_levels"] for i in res.json()["items"]}
+
+    assert flags(api.manager) == {"a_mine.pdf": True, "b_shared.pdf": True, "c_other.pdf": False}
+    assert flags(api.reader_no_edit) == {"a_mine.pdf": False, "b_shared.pdf": False, "c_other.pdf": False}
