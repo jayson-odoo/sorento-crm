@@ -390,7 +390,9 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
                 return True
         return False
     if entry["name"] in PORTED_READS and entry["status"] == "empty":
-        return True  # a plain read that came back empty backs "none found", whatever the filters were
+        # Only an unfiltered empty read says "none found": one narrowed by an id or an assignee says nothing
+        # about the whole, even when the id was found this turn.
+        return not _id_args(entry["args"]) and not entry["args"].get("assigned_to")
     if entry["name"] in (writes.FIND_COMPLAINTS, writes.FIND_PROJECTS):
         # An empty find backs a claim for the term it searched, and only that term.
         term = _fold_text(str(entry["args"].get("query") or ""))
@@ -602,7 +604,10 @@ def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str]) -> To
         from app.models.chatbot_agent import AgentAction
 
         row = db.get(AgentAction, outcome.action_id)
-        tools = {s.get("tool") for s in (row.steps if row is not None else []) if s.get("note")}
+        tools = {
+            s.get("tool") for s in (row.steps if row is not None else [])
+            if s.get("note") and getattr(writes.WRITES.get(s.get("tool")), "note_in_reply", False)
+        }
         message = (
             "The ticket link is added to your reply automatically. Do not write it."
             if tools == {writes.CREATE_TICKET}
