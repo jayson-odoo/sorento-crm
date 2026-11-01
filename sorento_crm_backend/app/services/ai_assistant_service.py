@@ -55,6 +55,12 @@ from app.services.user_service import UserPermissionService
 
 logger = logging.getLogger(__name__)
 
+# The MCP server's `required_missing` lets a staff read through without a contact for the panel's brain; this
+# path keeps these four refused until `respond()` retires.
+TOOLS_NEEDING_A_CONTACT = frozenset(
+    {"crm_low_stock_report", "crm_sales_analysis", "crm_report_ask", "crm_sales_opportunity_customer_options"}
+)
+
 
 def _mask_key(raw: str | None) -> str | None:
     if not raw:
@@ -2808,7 +2814,7 @@ class AIAssistantChatService:
                         payload_obj["source_message_id"] = user_message_id
                     str_args["payload_json"] = json.dumps(payload_obj)
 
-                if tool_name not in available:
+                if tool_name not in available or tool_name in TOOLS_NEEDING_A_CONTACT:
                     output = json.dumps({"error": "tool_not_available", "tool_name": tool_name})
                     tool_calls_log.append(MCPToolCallResult(tool_name or "unknown", False, output))
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
