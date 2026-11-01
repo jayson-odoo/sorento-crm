@@ -1138,7 +1138,8 @@ class BoardCellLocation(BaseModel):
     #: and `stock-detail` bound a pool-share composition by the net WITHOUT that addition
     #: (`fact.pools_net`). `poolShareLimitsOf` (D5) read `net` and so admitted a split the
     #: server's own guard would refuse the instant this line's own demand padded the figure
-    #: past what the raw pile actually carries. Absent wherever `net` is.
+    #: past what the raw pile actually carries. Absent wherever `net` is. For a line standing
+    #: on its own pool `fact.pools_net` holds that line's add-back, and so does this.
     net_raw: Optional[str] = None
     #: LADDER V8 (R-K): what a SITE POOL row may give a project line once the dealers' share
     #: is kept back - `min(floor(available_qty x (100 - pool_share_pct) / 100), max(net, 0))`,
@@ -1146,6 +1147,12 @@ class BoardCellLocation(BaseModel):
     #: an addressable pool row; absent on `own` / `group` / `other_group`, which keep no
     #: dealer share and where a zero would read as an empty location.
     available_for_project: Optional[str] = None
+    #: DEALER-PLANNING R12: the asking line stands on this pool, so `available_for_project` is
+    #: what the walk reads for it, and `pool_subtotal_for_project` is what the pools' subtotal
+    #: prints. `own_pool_no_share` says no dealer share is held back from it here (R9).
+    stands_on_pool: bool = False
+    own_pool_no_share: bool = False
+    pool_subtotal_for_project: Optional[str] = None
     incoming: List["BoardIncoming"] = []
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"
@@ -1289,6 +1296,13 @@ class BoardPolicy(BaseModel):
     discriminates_nothing: bool = False
 
 
+class BoardUnplannedOrder(BaseModel):
+    """A selected order the board does not carry because it is not admitted to planning."""
+
+    so_number: str
+    reason: str
+
+
 class PlanningBoard(BaseModel):
     """`GET /project-sales/fulfilment-planning/board`. A pure read: opening it claims nothing."""
 
@@ -1311,6 +1325,9 @@ class PlanningBoard(BaseModel):
     #: confirm-all call all need EVERY decidable line, not only the ones currently rendered in
     #: the grid, so they read this list rather than flattening `cells`.
     contributions: List[BoardContribution] = []
+    #: DEALER-PLANNING R3: selected orders left out with the true reason, so the empty state
+    #: never tells a planner an open order's lines are all cancelled.
+    unplanned_orders: List[BoardUnplannedOrder] = []
 
     # ---- selection-scoped totals -------------------------------------------------
     #

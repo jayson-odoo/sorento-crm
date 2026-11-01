@@ -1519,6 +1519,14 @@ def run_fetch(
     }
     for key, values in narrow.items():
         semantic_input[key] = list(values)
+    if parse_output.get("domain_hint") == "portal_link":
+        from app.services.chatbot import principal as staff_principal
+
+        if staff_principal.current() is not None:
+            # Whether or not the parser named a form: the panel has no contact to send a link to.
+            if trace is not None:
+                trace.add("portal_link", {"refused": "panel"})
+            return _fixed_reply(fetch_mod.PANEL_NO_PORTAL_LINK, refused=True)
     submission_type = fetch_mod.portal_submission_type(parse_output)
     if submission_type and db is not None and not fetch_mod.portal_form_granted(
         db, contact_id, space_id, submission_type
@@ -2159,6 +2167,9 @@ def run_fetch(
                 order_status_raw == report_ask.ASK_NAME
                 and parse_output.get("capability_from") == "sales_analysis"
                 and jsc.js_string(parse_output.get("group_by") or "") in ("", "year")
+                # A follow-up over a held customer is that customer's report, not a company total: the report ask reads
+                # it whole, and its slot holds the customer across any question it still owes.
+                and not (parse_output.get(report_ask.HELD_KEY) or {}).get("customer_ids")
             )
         )
     ):

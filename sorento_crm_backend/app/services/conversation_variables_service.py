@@ -134,6 +134,37 @@ def overwrite_for_contact(
     return state
 
 
+def lock_panel_thread(db: Session, *, conversation_id: str) -> None:
+    """The row lock `overwrite_for_contact` takes on a contact, on a panel thread."""
+    db.execute(
+        text("SELECT id FROM ai_assistant_conversations WHERE id = CAST(:cid AS uuid) FOR UPDATE"),
+        {"cid": conversation_id},
+    )
+
+
+def get_for_panel_thread(db: Session, *, conversation_id: str) -> dict[str, Any]:
+    """A panel thread's `session_vars` (AGENTIC-UNIFY PR 3): `{}` until its first turn writes."""
+    row = db.execute(
+        text("SELECT session_vars FROM ai_assistant_conversations WHERE id = CAST(:cid AS uuid)"),
+        {"cid": conversation_id},
+    ).first()
+    return _coerce_to_dict(row.session_vars) if row is not None else {}
+
+
+def overwrite_for_panel_thread(db: Session, *, conversation_id: str, state: dict[str, Any]) -> dict[str, Any]:
+    """Replace a panel thread's `session_vars` with `state`, under the row lock."""
+    lock_panel_thread(db, conversation_id=conversation_id)
+    db.execute(
+        text(
+            "UPDATE ai_assistant_conversations SET session_vars = CAST(:s AS jsonb) "
+            "WHERE id = CAST(:cid AS uuid)"
+        ),
+        {"s": json.dumps(state), "cid": conversation_id},
+    )
+    db.commit()
+    return state
+
+
 _REFERENCED_STATE_SQL = """
 WITH anchor AS (
     SELECT turn_id

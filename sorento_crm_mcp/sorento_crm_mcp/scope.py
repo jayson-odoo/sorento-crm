@@ -132,6 +132,16 @@ def check_scope(spec: Any, query: dict[str, Any] | None, body: Any, ctx: Any) ->
     return scope_refusal(spec, query, body, staff=staff)
 
 
+def required_missing(spec: Any, required: Any, query: dict[str, Any], ctx: Any) -> list[str]:
+    """The required query parameters a call left blank. A staff-marked read the opt-out allows is not held
+    to the contact pair (`SCOPE_PARAMS`): `check_scope` answers for it, with `scope_required` when the
+    staff id is missing. Every other caller, and a scoped write, keeps the plain check."""
+    missing = [k for k in required if query.get(k) in (None, "")]
+    if missing and is_staff_request(ctx) and staff_may_skip(spec):
+        return [k for k in missing if k not in SCOPE_PARAMS]
+    return missing
+
+
 def staff_may_skip(spec: Any) -> bool:
     """The staff opt-out covers reads only: a GET, or a POST the catalog marks `read_only`.
     A scoped write (`crm_sales_opportunity_log`) still needs the contact, even from staff."""
