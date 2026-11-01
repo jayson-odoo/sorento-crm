@@ -1039,8 +1039,10 @@ def _unscoped(ctx: QueryContext):
     a report statement's per-row subqueries give it a planner cost far above
     `jit_above_cost`, and Postgres then spent seconds compiling a query that executes in a
     fraction of one (INVOICED-CHANNEL-PERF: an invoiced month, 5.2 s of JIT on 0.3 s of
-    execution). `SET LOCAL` ends with the transaction, so nothing outside the report sees it."""
-    _jit_off(ctx.db)
+    execution). `SET LOCAL` lasts until the caller's transaction ends (the rest of that request or
+    chat turn runs without JIT too, harmless for short statements); the next transaction has it
+    back."""
+    _jit_off(ctx.db)  # every report statement runs in here: see the docstring
     if ctx.dataset.scope == "company":
         return company_scope(ctx.db, None)
     from contextlib import nullcontext

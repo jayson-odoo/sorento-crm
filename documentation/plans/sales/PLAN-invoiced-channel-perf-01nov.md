@@ -11,7 +11,7 @@ Sales & outstanding > Invoiced asks for every detail column (`ReportPage.tsx` se
 `app/services/sales/invoiced_sales.py` `sales_type_label()`) takes minutes on a real-size month while
 every other column takes seconds.
 
-## Cause (to be confirmed on a synthetic seed with EXPLAIN)
+## Cause (confirmed on a synthetic seed with EXPLAIN ANALYZE)
 
 1. `sales_type_label()` builds `CASE WHEN st = 'dealer' ... WHEN st = 'project' ...` over the
    `sales_type()` expression, so the whole sales type subquery is inlined once per WHEN (7 times);
@@ -19,12 +19,16 @@ every other column takes seconds.
 2. `_sales_order_class_kind()` scans `sales_orders` and tests each row with `so.id IN (traced ids)`,
    so every evaluation reads the whole sales order table rather than looking up the few orders the
    document traces to.
+3. The resulting planner cost is far above `jit_above_cost`, so Postgres JIT-compiles the query:
+   even after 1 and 2, the compile took about 5 s of a month's run while execution took 0.3 s.
 
 ## Fix
 
 - The label is a simple `CASE <value> WHEN ...`, the value computed once.
 - The class kind aggregates over the traced ids joined to `sales_orders` (index lookups), the
   inherited fallback (a note with no traced line takes its invoice's orders) kept as is.
+- The report engine runs its statements with `SET LOCAL jit = off` (`engine._unscoped`, the one
+  context every engine entry uses).
 - Same rules, same values: an equality test pins old vs new expression on a seeded sample.
 - `scripts/time_invoiced_channel.py` times one day and one month, all columns vs Channel only.
 

@@ -186,6 +186,11 @@ def _seed_sample(db) -> None:
         made = doc(db, kind, "10.00", when, customer=customer, against=against, lines=lines)
         if kind == "invoice":
             invoices.append(made)
+    # Fixed: a note's own traced line wins over its invoice's orders (never both, never mixed).
+    _p, (project_line,) = so(db, demand_class="project")
+    _r, (retail_line,) = so(db, demand_class="retail")
+    project_invoice = doc(db, "invoice", "10.00", date(2026, 1, 5), lines=[line(so_line=project_line)])
+    doc(db, "credit_note", "10.00", date(2026, 1, 6), against=project_invoice, lines=[line(so_line=retail_line)])
     db.flush()
 
 
@@ -224,7 +229,7 @@ def test_the_channel_filter_keeps_the_same_documents(db):
         assert old == new, value
 
 
-def test_a_report_run_switches_jit_off_for_its_transaction_only(db):
+def test_a_report_run_switches_jit_off_with_set_local(db):
     """The invoiced statements cost far above `jit_above_cost`, and the JIT compile took longer
     than the query (5 s on 0.3 s for a seeded month). The engine runs them with JIT off, for the
     report's own transaction."""
