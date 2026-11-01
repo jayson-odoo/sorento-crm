@@ -77,6 +77,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--company", default=None)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--skip-month", action="store_true", help="time the day only")
+    parser.add_argument("--skip-day", action="store_true", help="time the month only")
     args = parser.parse_args(argv)
 
     from app.main import app  # noqa: F401  (import order: resolves the guards cycle)
@@ -94,7 +95,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         "channel": ["channel"],
         "no_channel": [k for k in all_columns if k != "channel"],
     }
-    periods = [("day", _period(day, day))]
+    periods = [] if args.skip_day else [("day", _period(day, day))]
     if not args.skip_month:
         periods.append(("month", _period(month_start, month_end)))
 
