@@ -329,3 +329,74 @@ def test_ac26_the_settings_tool_list_with_no_token_is_503_with_a_detail(env, mon
     resp = env.client.get("/api/v1/system/ai-assistant/tools", headers=env.session(viewer))
     assert resp.status_code == 503, f"{resp.status_code} {resp.text[:200]}"
     assert resp.json().get("detail"), "the page shows this where the tool list would be"
+
+
+# --- AC-26 (round 3): the old panel path stays refused on the four contact tools -----------------
+# The old path has no contact and no way to run these as the staff member, so the tool loop
+# answers `tool_not_available` for them and never calls the MCP. The confirm-write call site
+# (`confirm_pending_action`) only runs stored WRITES and `_call_tool_cached` is the loop's own
+# caller, so the loop is the one path a chat turn takes to these four GET tools.
+FOUR_CONTACT_TOOLS = (
+    "crm_low_stock_report",
+    "crm_sales_analysis",
+    "crm_report_ask",
+    "crm_sales_opportunity_customer_options",
+)
+CONTROL_TOOL = "crm_master_products_list"
+
+
+class _CatalogMCP(_RecordingMCP):
+    def list_tools_with_schema(self):
+        schema = {"description": "t", "inputSchema": {"type": "object", "properties": {}}}
+        return {name: schema for name in (*FOUR_CONTACT_TOOLS, CONTROL_TOOL)}
+
+
+class _AsksFor(_Provider):
+    def __init__(self, tool_name):
+        super().__init__()
+        self.tool_name = tool_name
+
+    def chat(self, messages, tools=None, **_k):
+        self.messages_seen.append([dict(m) for m in messages])
+        self._n += 1
+        if self._n == 1 and tools:
+            return ChatResult(
+                content="", prompt_tokens=1, completion_tokens=1, total_tokens=2,
+                tool_calls=[{"id": "c1", "name": self.tool_name, "arguments": {}}],
+            )
+        return ChatResult(content="final answer", prompt_tokens=1, completion_tokens=1, total_tokens=2, tool_calls=[])
+
+
+def _ask_loop(db_session, monkeypatch, tool_name):
+    _RecordingMCP.instances.clear()
+    provider = _AsksFor(tool_name)
+    svc, cfg = _loop_service(db_session, monkeypatch, _CatalogMCP, provider)
+    svc._run_agent_loop(
+        config=cfg, history=[], user_message="report", standalone_query="report",
+        selected_tools=[{"tool_name": tool_name}], sources=[], user_id=STAFF_ID,
+        turn_cache=_TurnToolCache(user_id=STAFF_ID, conversation_id="c1", turn_id="t1"),
+    )
+    calls = [c for inst in _RecordingMCP.instances for c in inst.calls]
+    tool_msgs = [m for m in provider.messages_seen[-1] if m.get("role") == "tool"]
+    return calls, tool_msgs
+
+
+@pytest.mark.parametrize("tool_name", FOUR_CONTACT_TOOLS)
+def test_ac26_the_old_path_never_calls_mcp_for_a_contact_tool(db_session, monkeypatch, tool_name):
+    calls, tool_msgs = _ask_loop(db_session, monkeypatch, tool_name)
+    assert [c for c in calls if c[0] == tool_name] == [], "AC-26: no call_tool for this tool"
+    assert tool_msgs and json.loads(tool_msgs[-1]["content"]) == {
+        "error": "tool_not_available", "tool_name": tool_name,
+    }
+
+
+def test_ac26_a_tool_outside_the_four_still_reaches_call_tool(db_session, monkeypatch):
+    calls, _ = _ask_loop(db_session, monkeypatch, CONTROL_TOOL)
+    assert [c[0] for c in calls] == [CONTROL_TOOL]
+
+
+def test_ac26_the_backend_list_is_the_four_tools_the_mcp_server_hints():
+    """The MCP server's TOOL_REQUIRED_QUERY_HINTS keys. Copied literally: the backend venv's
+    editable `sorento_crm_mcp` resolves to another checkout, so importing it here would compare
+    with the wrong tree."""
+    assert svc_module.TOOLS_NEEDING_A_CONTACT == frozenset(FOUR_CONTACT_TOOLS)

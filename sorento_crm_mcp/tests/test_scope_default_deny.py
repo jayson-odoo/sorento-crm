@@ -460,12 +460,9 @@ def test_no_staff_header_with_a_blank_pair_stays_refused(name):
 def test_staff_scope_without_a_staff_user_and_a_blank_pair_stays_refused(name):
     path, extra = HINTED[name]
     client = _Client()
-    try:
-        out = _run(name, client, headers={"X-MCP-Scope": "staff"}, **BLANK_PAIR, **extra)
-    except ValueError as exc:
-        assert "Missing required query parameter" in str(exc)
-    else:
-        assert out["error"] == "scope_required"
+    out = _run(name, client, headers={"X-MCP-Scope": "staff"}, **BLANK_PAIR, **extra)
+    assert out["error"] == "scope_required"
+    assert out["missing"] == ["x-mcp-staff-user"]
     assert client.calls == []
 
 
