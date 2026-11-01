@@ -134,8 +134,10 @@ def _normal(token: str) -> str:
 _UUID_TEXT = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.I)
 #: A URL is ASCII URL characters only (no comma, no space), so the text around it is never taken with it.
 _URL = re.compile(r"https?://[A-Za-z0-9\-._~:/?#@!$&'*+;=%\[\]()]*", re.I)
-#: Label and URL are bounded, so a long run of `[x](http://` cannot make the scan quadratic.
-_MARKDOWN_LINK = re.compile(r"\[([^\[\]]{0,200})\]\((https?://[^\s)]{0,2048})\)", re.I)
+#: Label and URL are bounded, so a long run of `[x](http://` cannot make the scan quadratic. Both runs are
+#: possessive: their class excludes the bracket that must follow, so giving characters back could never find a
+#: match, and not trying halves the scan (the 100k-character guard in test_agent_ideas_review AC-RC-9).
+_MARKDOWN_LINK = re.compile(r"\[([^\[\]]{0,200}+)\]\((https?://[^\s)]{0,2048}+)\)", re.I)
 _URL_TAIL = ".,;:!?)]}'\""
 
 
