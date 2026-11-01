@@ -86,6 +86,7 @@ export function StockDocumentsPanel({
   filterText,
   jumpTarget,
   autoCount = null,
+  poolSubtotal,
 }: {
   productId: string;
   /** One bin. Omitted for a group read, where the set is the answer. */
