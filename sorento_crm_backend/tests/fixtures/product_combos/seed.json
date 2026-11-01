@@ -1,0 +1,87 @@
+[
+  {
+    "id": "C1",
+    "family": "bf",
+    "title": "ZZT Alpha cabinet set",
+    "combo_name": "ZZT 3 in 1",
+    "host_code": "ZZTH1",
+    "combo_description": "Cabinet, mirror and basin set",
+    "free_items": [
+      {"code": "ZZTTAP1", "label": "Tap", "note": ""},
+      {"code": "", "label": "Waste", "note": "chrome"}
+    ],
+    "components": [
+      {"code": "ZZTM1", "role": "Mirror", "dimensions": "500x700", "lp": 111},
+      {"code": "ZZTM2", "role": "Shelf", "dimensions": "", "lp": 99}
+    ],
+    "choice_groups": [
+      {
+        "role": "Basin",
+        "note": "pick one",
+        "options": [
+          {"code": "ZZTBW", "lp": 300, "sp": 250, "descr": "White basin"},
+          {"code": "ZZTBB", "lp": 320, "sp": 270, "descr": "Black basin"}
+        ]
+      }
+    ],
+    "topups": [
+      {"code": "ZZTU1", "lp": 500, "topup": 100, "descr": "Stone basin"}
+    ],
+    "photo": "c1.jpg",
+    "lp": 1500,
+    "sp": 1200,
+    "guess": ""
+  },
+  {
+    "id": "C2",
+    "family": "bf",
+    "title": "ZZT Host missing",
+    "combo_name": "ZZT Orphan",
+    "host_code": "ZZTNOHOST",
+    "combo_description": "No such host",
+    "free_items": [],
+    "components": [{"code": "ZZTM1", "role": "Mirror", "dimensions": "", "lp": 1}],
+    "choice_groups": [],
+    "topups": [],
+    "photo": "c1.jpg",
+    "lp": 10,
+    "sp": 9,
+    "guess": ""
+  },
+  {
+    "id": "C3",
+    "family": "ks",
+    "title": "ZZT Smudged card",
+    "combo_name": "ZZT 2 in 1",
+    "host_code": "ZZTH3",
+    "combo_description": "Sink and tap",
+    "free_items": [],
+    "components": [
+      {"code": "ZZTGONE", "role": "Tap", "dimensions": "", "lp": 5},
+      {"code": "", "role": "Shelf", "dimensions": "", "lp": 5},
+      {"code": "ZZTM1", "role": "Mirror", "dimensions": "", "lp": 5}
+    ],
+    "choice_groups": [],
+    "topups": [],
+    "photo": "absent.jpg",
+    "lp": 700,
+    "sp": 600,
+    "guess": "read as 2 in 1, the flyer is smudged"
+  },
+  {
+    "id": "C4",
+    "family": "bf",
+    "title": "ZZT Other company host",
+    "combo_name": "ZZT Foreign",
+    "host_code": "ZZTMOCHAHOST",
+    "combo_description": "Host belongs to another company",
+    "free_items": [],
+    "components": [],
+    "choice_groups": [],
+    "topups": [],
+    "photo": "c1.jpg",
+    "lp": 1,
+    "sp": 1,
+    "guess": ""
+  }
+]
