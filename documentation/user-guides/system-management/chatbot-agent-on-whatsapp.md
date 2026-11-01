@@ -41,7 +41,7 @@ for the contact on its page is not offered over WhatsApp either.
 
 | The dealer asks | What happens | Undo |
 | --- | --- | --- |
-| "Can I get 40 pcs of SRT5733 by mid December?" | A **Stock Inquiry** goes to the project sales team, requested by the contact itself, with the product, quantity and any date, project or note the dealer gave. | "undo" within 10 minutes withdraws (deletes) it, as long as nobody on the team has responded to it, taken it, commented on it or moved it on. After that the agent replies *"It is with the team now, so I can't withdraw it. I can add a note to it instead."* |
+| "Please send a stock inquiry for 40 pcs of SRT5733, needed by mid December." (A plain "can I get 40 pcs?" is a stock check: the bot answers it.) | A **Stock Inquiry** goes to the project sales team, requested by the contact itself, with the product, quantity and any date, project or note the dealer gave. | "undo" within 10 minutes withdraws (deletes) it, as long as nobody on the team has responded to it, taken it, commented on it or moved it on. After that the agent replies *"It is with the team now, so I can't withdraw it. I can add a note to it instead."* |
 | "For my inquiry last week, the customer can only take delivery on Tuesday" | A note on one of the dealer's own submitted requests (stock inquiry, complaint, purchase request or sponsorship form). The team sees it on the form's comments. | The dealer can ask to remove their own note. |
 | "What did I send you?" | A list of the dealer's own submitted requests with their numbers and statuses. | - |
 
