@@ -51,12 +51,16 @@ MEANING_PARAGRAPH = (
 )
 SUPPLIER_TYPE_LINE = '- supplier: a company we buy goods from, a supplier, vendor or factory (e.g. "Xiamen ABC Technology")'
 NAME_MEANING_SENTENCE = (
-    'When the span is a company name written in Chinese characters, "meaning" is its pinyin without tones (the form '
-    "the business keeps such names in), not a translation of its words."
+    'When the span is a company name written in Chinese characters, "meaning" is its pinyin without tones, the '
+    'syllables of each word of the name joined the way company records write it ("太阳" is "Taiyang", not "tai yang"), '
+    "never a translation of its words."
 )
 PARSER_SUPPLIER_LINE = (
-    'A "Supplier candidates" line is a company we buy goods from: the entity is hint "supplier" with canonical_code '
-    "that line's name. What is outstanding with a supplier is our open purchase orders to it (domain purchase_order)."
+    'A "Supplier candidates" line is a company we buy goods from: the entity is hint "supplier". When one line is the '
+    "supplier the message means, canonical_code is that line's name. When several lines fit the message's word "
+    "equally (they share the name word the message names), canonical_code is that shared word as the lines write "
+    "it, so the assistant asks which supplier; never pick one of them. What is outstanding with a supplier is our "
+    "open purchase orders to it (domain purchase_order)."
 )
 _SPAN_LINE_RE = re.compile(r"^[ \t]*" + re.escape(SPAN_MARKER) + r"[ \t]*$", re.MULTILINE)
 
@@ -141,10 +145,16 @@ def publish_span(session: Session):
     return added.id, added.version
 
 
+def _ours(template: str | None) -> bool:
+    """A version this migration published (any wording of it): it carries a supplier line after the marker."""
+    return 'A "Supplier candidates" line' in (template or "")
+
+
 def _span_parser_base(session: Session):
-    """The production parser when it runs the span pass, else the newest version that does."""
+    """The production parser when it runs the span pass, else the newest version that does. A version this
+    migration published is never a base, so a re-run with new wording never stacks a second supplier line."""
     row = _production(session, PARSER)
-    if row is not None and _SPAN_LINE_RE.search(row[1] or ""):
+    if row is not None and _SPAN_LINE_RE.search(row[1] or "") and not _ours(row[1]):
         return row
     for candidate in session.execute(
         sa.text(
@@ -153,7 +163,7 @@ def _span_parser_base(session: Session):
         ),
         {"n": PARSER},
     ):
-        if _SPAN_LINE_RE.search(candidate[1] or ""):
+        if _SPAN_LINE_RE.search(candidate[1] or "") and not _ours(candidate[1]):
             return candidate
     return None
 

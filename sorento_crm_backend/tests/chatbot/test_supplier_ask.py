@@ -608,3 +608,80 @@ def test_a_pick_from_the_supplier_roster_lists_that_suppliers_open_pos(session_f
     _reply, captured = _turn(session_factory, monkeypatch, pick, "1")
     calls = _po_calls(captured)
     assert calls and calls[0].get("supplier_ids") == [expected], captured
+
+
+# --------------------------------------------------------------------------- #
+# Console pass 2 (crew, e04e8ebb9d): the three failures, red first
+# --------------------------------------------------------------------------- #
+
+
+def test_a_spaced_pinyin_meaning_does_not_reach_the_record_but_the_joined_one_does(session_factory):
+    """The span model answered "tai yang"; the records keep "TAIYANG". Code scores spans, it does not guess
+    a join, so the prompt must ask for the name as written in the records: one word per name word."""
+    _seed_suppliers(session_factory)
+    spaced = _resolve(session_factory, list_resolver.Span(NATIVE, "supplier", meaning="tai yang"))
+    joined = _resolve(session_factory, list_resolver.Span(NATIVE, "supplier", meaning="Taiyang"))
+    assert not (spaced.status == "resolved" and spaced.candidates[0].row.label == SUPPLIER)
+    assert joined.status == "resolved" and joined.candidates[0].row.label == SUPPLIER
+
+
+def test_the_span_prompt_asks_for_pinyin_joined_the_way_records_write_the_name():
+    sask = _migration("sask_0002_span_supplier")
+    sentence = sask.NAME_MEANING_SENTENCE
+    assert "Taiyang" in sentence and "tai yang" in sentence, sentence
+    assert "joined" in sentence or "one word" in sentence, sentence
+
+
+def test_the_parser_line_says_several_equal_supplier_lines_are_a_question_not_a_pick():
+    """Console pass 2 step 3: three Supplier candidates fitted "taiyang" equally and the parser picked one."""
+    line = _migration("sask_0002_span_supplier").PARSER_SUPPLIER_LINE
+    assert "several" in line and "canonical_code" in line, line
+    assert "share" in line, "the shared name word is the token, so the resolver finds every supplier it names"
+
+
+def test_the_native_name_read_as_the_shared_word_asks_which_supplier(session_factory, monkeypatch):
+    """What the parser answers under the new line for "太阳" with several TAIYANG suppliers listed: hint
+    supplier, canonical_code the shared word. The resolver finds every supplier it names and the turn asks."""
+    _seed_suppliers(session_factory)
+    _seed_twin(session_factory)
+    _seed_contact(session_factory, variables={})
+    _make_staff(session_factory)
+    reply, captured = _turn(session_factory, monkeypatch, _ask(NATIVE, "TAIYANG"), OWNER_MESSAGE)
+    # The roster question, in the asker's language (this message is Chinese: 您指的是哪一个？).
+    lines = reply.splitlines()
+    assert f"1. {SUPPLIER}" in lines or f"2. {SUPPLIER}" in lines, reply
+    assert any(ln.endswith("ZZT TAIYANG SANITARY CO LTD") for ln in lines), reply
+    assert not _po_calls(captured), captured
+
+
+def test_republishing_never_stacks_a_second_supplier_line(session_factory, monkeypatch):
+    """Crew republishes sask_0002 on a copy that already holds this migration's earlier parser version: the
+    new version is built from the span-pass parser this migration did NOT publish."""
+    from app.models.ai_prompt import AIPromptVersion
+
+    from app.models.ai_prompt import AIPromptLabel
+
+    db = session_factory()
+    _seed_prompts(db)
+    # As on the copy: production is a parser WITHOUT the span pass, a newer version has it.
+    plain = AIPromptVersion(
+        name="chatbot_semantic_parser", version=900001, type="text", template="ZZT plain parser",
+        variables=["current_date"], config_json={},
+    )
+    db.add(plain)
+    db.flush()
+    db.query(AIPromptLabel).filter(
+        AIPromptLabel.name == "chatbot_semantic_parser", AIPromptLabel.label == "production"
+    ).one().version_id = plain.id
+    db.flush()
+    sask = _migration("sask_0002_span_supplier")
+    sask.publish(db)
+    monkeypatch.setattr(sask, "PARSER_SUPPLIER_LINE", "A changed supplier line.")
+    monkeypatch.setattr(sask, "NAME_MEANING_SENTENCE", "A changed name sentence.")
+    _span_v, parser_v = sask.publish(db)
+    row = db.query(AIPromptVersion).filter(
+        AIPromptVersion.name == "chatbot_semantic_parser", AIPromptVersion.version == parser_v
+    ).one()
+    assert "A changed supplier line." in row.template
+    assert 'A "Supplier candidates" line' not in row.template, "the earlier line rode in from its own version"
+    assert row.template.count("== LOOKUP SPANS ==") == 1
