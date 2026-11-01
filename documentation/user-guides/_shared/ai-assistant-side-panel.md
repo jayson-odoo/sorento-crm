@@ -29,7 +29,7 @@ Records and figures follow your own permissions and your active company: if you 
 
 If the question is vague, it may ask you back.
 
-Not on this path yet: complaints, SLA tracking, projects and order analytics. Ask about these on their own screens for now. To capture a product idea, use the Ideas board at `/ideas`: the assistant points you there and does not record the idea itself.
+Not on this path yet: complaints, SLA tracking, projects and order analytics. Ask about these on their own screens for now. To capture a product idea, use **Ideas > All ideas**: the assistant points you there and does not record the idea itself.
 
 ## Making a change
 
