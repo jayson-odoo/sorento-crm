@@ -55,12 +55,16 @@ def _norm(value: Any) -> str:
 
 
 def probe_rows(probe: Any) -> list[Any] | None:
-    """`answers`, else `items`, else None. Neither being an array is the FAILURE signal.
+    """`answers`, else `items`, else None. Neither being an array is the FAILURE signal, and
+    so is an `error` on the envelope: the MCP presenter's error envelope carries an empty
+    `answers`, and reading that as a result stamped "no incoming" over a failed read.
 
     `sub-get-results` emits one of the two on every successful read, so "neither" can only
     mean the probe did not run or errored out - which every caller reads as NOT MEASURED
     rather than as an empty result set.
     """
+    if jsc.truthy(jsc.get(probe, "error")):
+        return None
     if isinstance(jsc.get(probe, "answers"), list):
         return probe["answers"]
     if isinstance(jsc.get(probe, "items"), list):
@@ -91,9 +95,11 @@ def annotate_incoming(gate: dict[str, Any] | None, *, probe: Any) -> dict[str, A
     # Codes WITH incoming from the probe's answers (`crm_incoming_stock_list` returns a row
     # per product that HAS incoming; title / "Product Code" field = the code). Absent = none.
     answers = probe_rows(probe)
-    if answers is None:
-        answers = []
-    if any(jsc.truthy(a) and jsc.get(jsc.get(a, "flags"), "dealer_view") is True for a in answers):
+    # A probe that failed measured nothing, so the roster stays as the gate wrote it: every
+    # line reading "- no incoming" would be a claim nobody checked.
+    if answers is None or any(
+        jsc.truthy(a) and jsc.get(jsc.get(a, "flags"), "dealer_view") is True for a in answers
+    ):
         # AVAIL-MODE-REPLIES (cloud live-parser pass at 2ff7f5e9, "eta SRTWC286"): a dealer
         # is told nothing about a variant's incoming before picking it, and the dealer view
         # lists every asked code ("CODE: No ETA" included), so every line read "has

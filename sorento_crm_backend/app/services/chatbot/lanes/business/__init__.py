@@ -2578,6 +2578,11 @@ def run_fetch(
     # The ERROR check comes BEFORE the render: an error envelope has no rows, and rendering
     # it first would build a "No matching results found." message for a turn that failed.
     if isinstance(envelope, dict) and isinstance(envelope.get("error"), str):
+        if tool_name == _LOW_STOCK_TOOL:
+            # A 502 from the MCP server is the same failure as the raise above: this tool
+            # says its own line and names its filters.
+            filters = semantic_input.get("low_stock_filters")
+            return _low_stock_unavailable(filters.get("header") if isinstance(filters, dict) else None)
         # REPORT-ENGINE slice 1b: the route's own refusal (the audience check is the
         # route's) is said as its message, a 404 as one line.
         refusal = report_ask.error_line(envelope) if tool_name == report_ask.TOOL else None

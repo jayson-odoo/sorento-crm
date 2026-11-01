@@ -187,6 +187,9 @@ def extract_chat_report(
             temperature=0.0,
             max_tokens=256,
             timeout=llm_call.ATTEMPT_TIMEOUT_SECONDS,
+            # It runs after the parser on a staff turn, and it already answers None on a
+            # failure, so it does not spend a second try of the turn's model budget.
+            deadline_seconds=llm_call.ATTEMPT_TIMEOUT_SECONDS,
             json_schema=_schema(codes),
             json_schema_name=SCHEMA_NAME,
         )

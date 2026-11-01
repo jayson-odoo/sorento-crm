@@ -5148,8 +5148,14 @@ def build_suggest_offer(
                 # in punctuation or case.
                 sibs.sort(key=lambda s: ((0 if s["has"] else 1), jsc.js_string(s["code"])))
                 exact_list = ", ".join(c.upper() for c in exact_codes)
+                # A probe that failed measured nothing: the codes are still worth offering,
+                # but "- no incoming" beside them would be a claim nobody checked.
+                from app.services.chatbot.lanes.business import pickers
+
+                measured = pickers.probe_rows(probe) is not None
                 numbered = "\n".join(
-                    f"{i + 1}. {s['code']} - {'has incoming' if s['has'] else 'no incoming'}"
+                    f"{i + 1}. {s['code']}"
+                    + (f" - {'has incoming' if s['has'] else 'no incoming'}" if measured else "")
                     for i, s in enumerate(sibs)
                 )
                 out["suggest_offer"] = True
