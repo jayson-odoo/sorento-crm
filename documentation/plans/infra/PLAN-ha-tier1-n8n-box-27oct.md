@@ -781,7 +781,7 @@ A Malaysia-wide outage is NOT covered while everything is in Malaysia (section 1
 | 6 | monthly | `scripts/ops/restore-test.sh` + a WAL-G PITR restore to a chosen minute in a throwaway container | restore finishes; row counts match |
 | 7 | monthly | `ha-checks.sh` with a lowered threshold | Healthchecks alert reaches the owner |
 | 8 | after drill 2, at the next 04:00 MYT past 24 h | leave `switchback.sh` alone | primary back on node A with a write pause under 15 s; LB, workers and n8n follow |
-| 9 | before go-live, then after every infra change | from INSIDE an n8n container: `curl -m 3` to 8008, 2379, 2380 and 5432 on each of the three tunnel addresses | every one times out; only the HAProxy address answers on 443, 8765 and 6432 |
+| 9 | before go-live, then after every infra change | (amended 1 Nov: witness only) from INSIDE a shared-service app container on the witness: `curl -m 3` to 443, 8000, 6432, 8765, 8008, 2379, 2380 and 5432 on each of the three tunnel addresses; then the app's own database check | every tunnel port times out; the app still reaches its own database |
 | 10 | quarterly | tabletop of "Forced promotion when two voters are down" and "Disaster restore", plus the etcd `--force-new-cluster` step and a WAL-G restore onto a throwaway VPS outside Malaysia | the on-call person can run both from the runbook alone; nothing is tried on prod |
 
 Each drill's numbers go into `documentation/runbooks/` (follow-up runbook `ha-failover.md`).
