@@ -72,6 +72,7 @@ def env(tmp_path):
         p.chmod(0o755)
     log = tmp_path / "calls.log"
     log.touch()
+    (tmp_path / ".ha-image-tag").write_text("sha-test\n")
     e = {
         "PATH": f"{bindir}:{os.environ['PATH']}",
         "FAKE_LOG": str(log),
@@ -175,6 +176,7 @@ def test_watcher_leader_starts_workers_on_the_recorded_image_tag(env):
 
 def test_watcher_leader_without_a_recorded_tag_starts_nothing_but_replica_still_stops(env):
     e, log, tmp = env
+    (tmp / ".ha-image-tag").unlink()
     r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
     assert not _ups(log), calls(log)
     assert "no image tag" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr

@@ -41,6 +41,7 @@ compose() {
 }
 
 # True while a deploy (or the restore test) holds the deploy lock. No lock file: not held.
+# Relies on `flock` from util-linux (always installed on the Ubuntu nodes).
 deploy_lock_held() {
   [ -r "$DEPLOY_LOCK_PATH" ] || return 1
   ( exec 8<"$DEPLOY_LOCK_PATH"; flock -n 8 ) && return 1
