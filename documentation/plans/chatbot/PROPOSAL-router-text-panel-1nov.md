@@ -52,13 +52,15 @@ Decision: leave the published text alone. The two panel lines in code do the job
 
 ## If it is ever published: the label step
 
-1. AI Assistant settings > Prompts > `chatbot_router`.
-2. Switch the editor to the JSON text, paste the block above, save. That makes a new version; production does not change yet.
-3. Test this version on a few real messages.
-4. Publish it to Production, keeping the model `jev-1.14.0`. The next turn reads it, with no release.
-5. To undo: Version history, publish version 1 to Production.
+Prod is on v1 (owner, 1 Nov). The baseline measured is the copy's v1, md5 `355002bd`; the two were not compared character for character.
 
-This needs `system.ai_assistant_settings.edit`.
+1. Sidebar: AI Assistant > Prompts. Open `chatbot_router` (`/system-management/ai-assistant/prompts/chatbot_router`).
+2. On the Edit tab, replace all the text with the JSON block above.
+3. Fill in "Commit message (required)", then press **Save as new version**. That makes v2. Production stays on v1.
+4. With v2 showing, press **Publish v2**. The dialog asks "Publish chatbot_router v2 to production?" and warns that the very next chat turn uses it. Confirm. No release is needed.
+5. To undo: under Version history pick v1, press **Publish v1**, and confirm. It takes effect on the next turn.
+
+This needs `system.ai_assistant_settings.edit`. Today it changes the console and the panel only, since only they call the router. The two code lines are still sent on the panel until a PR removes them, and that mix was not measured.
 
 ## After publishing
 
