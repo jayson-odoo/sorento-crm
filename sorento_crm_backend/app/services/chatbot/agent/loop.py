@@ -567,11 +567,14 @@ def _propose(
     )
 
 
-def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str]) -> ToolResult:
-    """`confirm_action` / `cancel_action`: the model read the user's message; the server limits are `actions`."""
+def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str], waiting=None) -> ToolResult:
+    """`confirm_action` / `cancel_action`: the model read the user's message; the server limits are `actions`.
+    Only the change this turn is waiting on may be decided (never another id the model names)."""
     action_id = args.get("action_id") if isinstance(args, dict) else None
     if not isinstance(action_id, str) or not action_id.strip():
         return ToolResult("invalid", message="action_id is required.")
+    if waiting is None or action_id.strip() != str(waiting.id):
+        return ToolResult("invalid", message="Not done: that is not the waiting change.")
     try:
         if name == CONFIRM_ACTION:
             outcome = actions.confirm(
@@ -1280,7 +1283,7 @@ def _run(
                         "before any tool runs this turn. Ask the user to confirm in their next message.",
                     )
                 elif name in (CONFIRM_ACTION, CANCEL_ACTION):
-                    out = _decide(db, ctx, name, args, turn_id, confirm_notes)
+                    out = _decide(db, ctx, name, args, turn_id, confirm_notes, waiting)
                 else:
                     out = dispatch(
                         db, ctx, name, args,

@@ -832,3 +832,25 @@ def test_s2_a_console_proposal_leaves_the_live_one_and_neither_answers_the_other
     assert actions.confirm(db, contact["respond_id"], str(live.id), via="chat", turn_id=str(uuid.uuid4())).status == "executed"
     decision = decide_route(db, contact_respond_id=contact["respond_id"], text="hi", session_vars=None, has_media=False)
     assert decision.reason != "pending_action", "a console test proposal never holds the WhatsApp message"
+
+
+def test_s3_a_turn_decides_only_the_change_it_is_waiting_on(db):
+    """A test turn with no operator (no caller does this today) still cannot confirm the live proposal by id."""
+    from app.models.procurement import StockInquiry
+    from app.services.chatbot.agent import actions
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    contact = _dealer(db)
+    ctx = _ctx(db, contact)
+    code = _product(db)
+    live = _live_action(db, ctx, SI_CREATE, {"product_code": code, "quantity": "4"})
+    _out, step = _propose(db, ctx, SI_CREATE, {"product_code": code, "quantity": "9"}, is_test=True)
+    actions.store_proposal(db, ctx, conversation_id=str(uuid.uuid4()), turn_id=str(uuid.uuid4()), steps=[step])
+    provider = _scripted(_asks({"id": "c1", "name": "confirm_action", "arguments": {"action_id": str(live.id)}}), _says("ok"))
+
+    run_agent_turn(db, contact_respond_id=contact["respond_id"], text="yes", provider=provider, mcp_call=_forbidden,
+                   catalog={}, is_test=True)
+
+    assert db.query(StockInquiry).filter(StockInquiry.contact_id == contact["pk"]).count() == 0
+    db.refresh(live)
+    assert live.status == "proposed"

@@ -284,7 +284,7 @@ def confirm(
             .order_by(AgentAction.created_at.desc(), AgentAction.id.desc())
             .first()
         )
-    if newest is not None and str(newest.id) != str(action.id):
+    if newest is None or str(newest.id) != str(action.id):
         raise ActionRefused("not_newest")
     if _expires_at(action) < (now or _now()):
         raise ActionRefused("expired")

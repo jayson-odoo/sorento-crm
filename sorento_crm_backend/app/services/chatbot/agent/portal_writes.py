@@ -559,8 +559,10 @@ def _withdraw_execute(db, token, args: dict, confirmed: dict) -> dict:
     db.query(PortalFormRevision).filter(
         PortalFormRevision.source_entity_type == STOCK_INQUIRY, PortalFormRevision.source_entity_id == sid
     ).delete(synchronize_session=False)
+    # Only the contact's own notes: a staff comment racing the delete is never removed with them.
     db.query(Msg).filter(
-        Msg.scope == FORM_COMMENT_SCOPE, Msg.entity_type == STOCK_INQUIRY, Msg.entity_id == sid
+        Msg.scope == FORM_COMMENT_SCOPE, Msg.entity_type == STOCK_INQUIRY, Msg.entity_id == sid,
+        Msg.author_contact_id == token.contact_id,
     ).delete(synchronize_session=False)
     db.delete(row)
     db.commit()
