@@ -55,7 +55,40 @@ total 694,104.16.
 YMH January, CABANA account crossed with item brand: CABANA 77,010.91, NO LOGO 19,405.89. CABANA brand across accounts:
 A/C III 76,877.71 + A/C IV 77,010.91 = 153,888.62, the bot's figure.
 
-## 4. Plan
+Word collisions on the copy (`account-type-check-2-output.txt`): SORENTO, BRAVAT and CABANA are Sorento brands; CERAMIC is
+no Sorento brand or category; PROJECT and SAMPLE are Sorento categories. Mocha has no 2026 documents on the copy, so every
+tie-out is Sorento. Production parser prompt on the copy: v70, md5 `0e52eb27f27a6bd51d754ae34c43f4f0`.
 
-To be completed from the behaviour card. Open parts: the partner shared service change, the report ask param and axis, the
-parser's account word and brand-or-account question, the "in Jan" period bug.
+YMH January, SORENTO: account 282,203.77, brand 520,609.65.
+
+## 4. Behaviour card (filed to crew; answers go here)
+
+Mock: `documentation/mockups/SALES-ACCOUNT-TYPE/index.html`.
+
+Rules:
+
+1. Account type is the customer's AutoCount `DebtorType`, stored in `customers.autocount_debtor_type`, its current value.
+   Never the agent code's suffix, never the name tag.
+2. One filter and one split in the shared report ask, on all six bases: invoiced, delivered, ordered, undelivered, pending
+   delivery, unpaid. The bot, the AI panel (MCP) and Sales & outstanding all read it. Label "Account type" (the label
+   "Debtor type" is already the CRM's own project / cash concept, `app/models/order.py:184-190`); the report "Sales by debtor
+   type" keeps AutoCount's name.
+3. The parser reads "account 4", "A/C IV", "cabana account", "CABANA debtor type" from a Known accounts line built from data.
+   No regex or word list on the user's words.
+4. A bare word that is both a brand and an account asks "brand or account?", and the answer resumes the same ask. A word
+   on the accounts line only (CERAMIC on Sorento) reads as the account. "project" stays the channel, and "top accounts" stays
+   customers, unless the message says account type.
+5. A month alone is that month of this year. A month or year split never prints "Top N".
+6. Nothing loaded: "Account types are not loaded from AutoCount yet", never RM 0. Unknown ("account 9"): says so and lists
+   the accounts. A customer with no type is the blank row, so rows add up to all sales.
+
+## 5. Plan
+
+- **Partner lane, shared service:** `DebtorType -> market_segment_code` on the customer task (mapping row, `SINK_FIELDS`,
+  backfill like module Alembic 0029); each customer re-stages once. No CRM migration. Can ship before or after the CRM PRs.
+- **PR 1, CRM, no prompt:** param and axis on the six datasets, route, MCP catalog, screen, rule 6's replies.
+- **PR 2, CRM, prompt gate:** Known accounts line, parser hint, the question, the period fix, `crm_resolve` kind, user guide.
+  Prompt gate with v70 as the fixed baseline; only the owner moves the production label.
+
+The "in Jan" cause is not reproduced yet. `TEMPLATE` already states the month rule (`head/parser_template.py:37`). First Build
+step on PR 2: replay the message on pinned v70, fresh and with a held 2026 period, then fix where it falls.
