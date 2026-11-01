@@ -39,8 +39,28 @@ export function OrderInquiryHeadersOrLinesView() {
   // meaning under the reader rather than one that reset. `OrderInquiryHeadersList`'s own
   // URL-sync effect already rebuilds its query string from scratch for the same reason;
   // this is the same rule at the one place both screens are chosen between.
+  //
+  // The one exception is `inquiry_no` (the reserve emails' button): the same exact OI
+  // numbers mean the same thing on both screens, so it travels both ways. The Documents
+  // state chosen with it rides on Lines as `doc_state` (Lines' own `state` is a row state)
+  // and comes back as `state`.
   function setView(next: OrderInquiryTopView) {
-    router.push(next === 'lines' ? `${pathname}?display=lines` : pathname);
+    const inquiryNo = searchParams.get('inquiry_no');
+    if (!inquiryNo) {
+      router.push(next === 'lines' ? `${pathname}?display=lines` : pathname);
+      return;
+    }
+    const carried = new URLSearchParams();
+    if (next === 'lines') {
+      carried.set('display', 'lines');
+      carried.set('inquiry_no', inquiryNo);
+      carried.set('doc_state', searchParams.get('state') ?? 'all');
+    } else {
+      carried.set('inquiry_no', inquiryNo);
+      const docState = searchParams.get('doc_state');
+      if (docState) carried.set('state', docState);
+    }
+    router.push(`${pathname}?${carried.toString()}`);
   }
 
   const toggle = (
