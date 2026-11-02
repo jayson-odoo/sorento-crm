@@ -9,12 +9,12 @@ Plan: documentation/plans/projects/PLAN-quote-cover-design-02nov.md. Additive an
 re-run, or a dev DB built by create_all, is harmless.
 
 Revision ID: qcd_0001_cover_designs
-Revises: qcp_0001_cover_page_fields
+Revises: join_0003_qiv_bnsp
 """
 from alembic import op
 
 revision = "qcd_0001_cover_designs"
-down_revision = "qcp_0001_cover_page_fields"
+down_revision = "join_0003_qiv_bnsp"
 branch_labels = None
 depends_on = None
 
