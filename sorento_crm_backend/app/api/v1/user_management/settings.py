@@ -282,6 +282,9 @@ class AppConfigResponse(BaseModel):
     #: SR-CORE: a salesperson's sample request form must know whether to require a
     #: registered project, and holds no `user_management.settings.view`.
     sample_request_require_project: bool = False
+    #: Seconds a destructive action waits before it commits; the quotation column-removal
+    #: countdown reads it. Not sensitive.
+    deferred_delete_seconds: Optional[int] = None
 
 
 @router.get("/")
