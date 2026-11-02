@@ -1,8 +1,8 @@
-# CARD: PS-QUOTE-MATRIX v2 (2 Nov 2026)
+# CARD: PS-QUOTE-MATRIX v3 (2 Nov 2026)
 
-Status: Plan. Card v2 + mock v2 (`mockups/quote-matrix.html`) after the owner's answers. Code starts after
+Status: Plan. Card v3 + mock v3 (`mockups/quote-matrix.html`) after the owner's Lavish notes on v2. Code starts after
 PS-PROPOSAL-QUOTATION #2097 merges (same services and models; #2097 acked: `copy_line` stays the single line-copy
-point). Track: full (L): migration, grid editor, PDF + Excel + sign page, amendment change.
+point). Track: full (L): migration, grid editor, PDF + Excel + sign page, customer suggestions become feedback notes.
 
 Owner, 2 Nov ~21:55: "they have this quotation format where they define the level and the type. I need us to be able
 to cater that. We can handle multiple sheets with a scope, but I need us to handle this kind of two-dimensional table
@@ -15,6 +15,16 @@ on several rows: yes, summed by product for PO / SO / spec sheet. Q4 sign page: 
 Excel import, users use the system. And: "I want our quotation to be backward compatible with what we have now. It is a
 very generic engine." So a plain scope IS a grid with one quantity column; existing quotations render and behave exactly
 as today with no data conversion.
+
+**Owner notes on mock v2 (2 Nov 23:11), applied below:** (1) "All these are configurable right?" Yes: headers and
+columns are set per scope (answered on the mock page). (2) "brand product code rate only complete set all those need to
+retain": every existing line column stays around the grid (rule 4). (3) "These are sections in our system right?
+Existing": yes, "Bathroom" is today's `band_label` section heading (answered on the page). (4) "Can this configuration be
+on the same table, dont need separate screen": columns are edited in the table header itself; the Columns dialog is
+gone (rule 11). (5) "Dont need accept anymore, it is a feedback mechanism, the salesperson will act on it in a very
+flexible way, not like accept or reject": the customer leaves feedback notes per item or per cell; the salesperson
+reads them and edits the draft however they like, at most ticking a note as handled (rules 19-22). This replaces
+today's Accept / Reject / Apply for EVERY quotation, not only grid scopes: one mechanism.
 
 Paths: BE = `sorento_crm_backend/app`, FE = `sorento_crm_frontend/app/(protected)/project-sales`. Code read on
 origin/main 6f1d3027 and #2097 head 9275c753. The real case is the owner's workbook, anonymised (public repo): no
@@ -54,8 +64,10 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
    one quantity column under its own label (`BREAK TANK`).
 3. Columns belong to the scope's **version**: a revision freezes its columns with its lines; a draft revision may add,
    rename, reorder or delete columns. Revise and make-quotation copy them.
-4. Rows stay product lines exactly as today: product or set, photo, optional drawing, description, rate, band heading,
-   rate-only, item #.
+4. Rows stay product lines exactly as today, and EVERY existing line column stays where it is around the grid (owner
+   note 2): #, photo, drawing, product code, description, technical spec, brand, UOM, rate, complete set, rate only,
+   section heading (`band_label`, owner note 3). Only the single Qty column is replaced by the quantity columns. The
+   existing column picker still hides any of them for the screen; the PDF keeps today's printed columns.
 
 **Quantities and totals (always the same rules, no switch)**
 5. Each cell is the real quantity of that line in that column, punched in as needed (120, 250 ...). Blank = 0.
@@ -75,9 +87,12 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
 10. A rate-only line prints its rate and cells and adds to no total, as today.
 
 **Editing**
-11. **Columns** button on every scope's Lines tab opens a dialog: ordered headers, each with ordered shoulders; add,
-    rename, drag to reorder, delete. **Copy from scope** copies another scope's columns (not quantities) in this
-    document. Delete is a deferred action (countdown + Cancel, no confirm); its line says how many quantities it clears.
+11. **Columns are edited in the table header itself** (owner note 4), on a draft version: click a header or column
+    label to rename it in place; drag a header's handle to reorder headers, drag a column label to reorder within its
+    header; the x on a label removes it; a narrow "+" after a header's columns adds a column; "+ Column header" at the
+    far right adds a header. Removal is a deferred action shown in the header itself (it turns red, counts down, Undo
+    in place; no confirm); its quantities leave the totals when it commits. "Copy columns from" on the table toolbar
+    copies another scope's headers and columns (not quantities). No separate screen or dialog.
 12. Adding the first column moves each line's current quantity into it, so no total changes. Deleting the last column
     leaves each line with its summed quantity: back to today's layout.
 13. Column keys are generated ids, never the label, so a rename keeps the cells.
@@ -96,17 +111,20 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
 18. Sign page: the section card is unchanged (items, total, then document total). A section with columns expands to the
     grid, read-only, first column pinned, sideways scroll on a phone.
 
-**Customer suggestions (Q4: per row AND per cell)**
-19. On a row of a scope with columns, the customer may suggest: a new quantity for any cell, a new total quantity for
-    the row, a new unit price, or removal. On a scope without columns, as today.
-20. Data: `QuotationAmendmentRequestRow` gains `cell_key` (nullable). `field = quantity` with a `cell_key` is a cell
-    suggestion; without one it is a row total suggestion. One open suggestion per (line, field, cell_key).
-21. Accepting a cell suggestion writes that cell on Apply (the line quantity re-sums). Accepting a ROW total suggestion
-    on a line with 2 or more cells asks the salesperson to split it: the row's cells open prefilled with today's
-    values and the suggested total shown; Accept stays disabled until the cells add up to it; the split is what Apply
-    writes. A line with one cell takes the total directly.
-22. A row total and a cell suggestion on the same line: the salesperson answers both; accepting both is refused
-    ("Accept the row total or the cells, not both") because they would fight over the same cells.
+**Customer feedback (owner Q4 + note 5: per item AND per cell, no accept / reject)**
+19. On the sign page the customer can leave a feedback note on a whole item or on one cell (tap the cell). A note may
+    carry an optional hint: suggested quantity (item or cell), suggested price (item), or "remove this item". Scopes
+    without columns: item notes as today's per-line suggestions, plus the free note.
+20. Nothing is accepted, rejected or applied. The salesperson sees a **Customer feedback** tab: each note with where it
+    points (scope, item, cell), the hint next to today's value, and "Show in Lines". The only action is **Handled**
+    (who and when recorded, unticking reopens). The tab badge counts open notes. Open notes mark their cell / item
+    in the Lines grid (amber corner / dot).
+21. The salesperson acts by editing: Revise to edit, change whatever they see fit, issue the next revision (today's
+    flow). Issuing a revision does not close notes; they stay until ticked handled.
+22. Data: the existing `QuotationAmendmentRequestRow` becomes a feedback row: add `cell_key` (nullable) and `note`
+    (text); `handled_at` / `handled_by` replace the pending / accepted / rejected decision; `field` gains `note`
+    (a note without a hint). Apply (`apply_request`), the decision endpoints and the Accept / Reject UI are retired.
+    Existing rows read as open feedback with their value as the hint; existing decided rows read as handled.
 
 **Out of scope (owner: no import)**
 - Excel import of existing workbooks: not built (owner Q5). Paste from Excel (rule 14) covers the quantity block.
@@ -122,7 +140,7 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
 | E3 | LEVEL 9 scope, headers LEVEL 9 (11 shoulders), LOBBY A (LEVEL 1) (4), LOBBY B (LEVEL 2) (4), BREAK TANK (none). Row "WC" rate 600.00: 7 in LEVEL 9 rooms, 3 in LOBBY A, 3 in LOBBY B. | Pairs LEVEL 9 7 / 4,200.00, LOBBY A 3 / 1,800.00, LOBBY B 3 / 1,800.00; BREAK TANK gets no pair (one column); Total qty 13, Amount 7,800.00. |
 | E4 | GUARD HOUSE and RECYCLE & BIN, no columns (and every quotation already in the system). | Byte-for-byte today's screen, PDF and Excel; grand total = sum of all four scopes. |
 | E5 | Angle valve on three UNIT rows (bath inlets, basin group, sink inlet). PO orders more than the three rows together. | #2097 qty-over compares with the SUM of the three rows. |
-| E6 | Customer suggests TYPE C KITCHEN = 140 on the sink row, and on the floor trap row a total of 1,600. | Cell: accept writes 140. Row total: Accept opens the floor trap's 12 cells prefilled; salesperson raises C BALCONY to 211; cells add up to 1,600; Accept enabled. |
+| E6 | Customer leaves a note on the sink row's TYPE C / KITCHEN cell ("needs 140", hint 140) and a note on the whole floor trap item. | Both appear on Customer feedback, open, with an amber mark in Lines; no total changes. The salesperson revises, types 140 in the cell, issues Rev B, ticks the first note Handled. |
 
 ## Edge cases
 
@@ -130,8 +148,8 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
   countdown said how many).
 - A version issued with columns, then revised: columns + cells copied; editing columns in the draft never touches the
   issued version or the customer's link.
-- An open suggestion on a cell whose column was deleted in the draft: Apply refuses it with the column's name (same
-  path as today's "line no longer exists").
+- A note on a cell whose column was later removed in a draft: the note stays and says "(column removed)" next to
+  where it pointed.
 - 375 px: grid scrolls inside its card, # / item pinned; no page-level horizontal scroll.
 - Very wide scopes (LEVEL 9: 20 quantity columns + 3 pairs + 2 totals = 28 numeric columns): screen scrolls; PDF uses
   vertical headings and minimum widths (rule 16).
@@ -151,13 +169,15 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
 - `projects.quotation_versions.matrix_columns` JSONB NULL: `[{"key", "label", "cols": [{"key", "label"}]}]`.
   NULL or `[]` = no columns (today).
 - `projects.quotation_lines.qty_cells` JSONB NULL: `{"<shoulder key, or header key for a one-column header>": "<decimal>"}`.
-- `projects.quotation_amendment_request_rows.cell_key` VARCHAR(40) NULL (rule 20).
+- `projects.quotation_amendment_request_rows`: `cell_key` VARCHAR(40) NULL, `note` TEXT NULL, `handled_at` TIMESTAMP
+  NULL, `handled_by` FK users NULL (rule 22). The decision column is left in place, no longer written.
 - `quantity` stays and is derived from the cells when columns exist (rule 6). The line field joins `LINE_FIELDS` and
   `copy_line`; the version field joins the revise and make-quotation copies. Issues point at versions, so nothing new
   to snapshot.
 - One migration, three nullable columns, no backfill.
 
-## Questions left (none blocking the mock)
+## Questions left
 
-None. Owner answered Q1-Q5; rules 21-22 (how a row total suggestion on a multi-cell row is applied) are my call from
-"per row and per cell", flagged in the mock for the owner to see.
+- Q6. The customer's feedback note may carry an optional hint (suggested quantity / price / remove), shown next to
+  today's value. (a) keep the optional hints; (b) free text only. **Recommend (a)**: "140" next to "now 133" is faster
+  to act on than reading it out of a sentence, and today's sign page already collects these values.

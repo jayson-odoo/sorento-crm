@@ -4,8 +4,10 @@ Plan: `PLAN-ps-quote-matrix-02nov.md`. Card rules R1-R22: `CARD-ps-quote-matrix-
 
 - AC-1 A scope with no columns (every existing quotation) shows, prints, exports and totals exactly as before; no data
   is converted.
-- AC-2 A salesperson can add column headers and shoulders to a scope's draft version, rename, reorder, delete
-  (deferred action), and copy them from another scope of the same document.
+- AC-2 A salesperson can add column headers and columns to a scope's draft version in the table header itself (no
+  separate screen): rename in place, reorder, remove (deferred action), and copy them from another scope.
+- AC-2b Every existing line column (product code, description, brand, UOM, rate, complete set, rate only, photo,
+  drawing, section heading) stays on screen, PDF and Excel around the grid.
 - AC-3 Adding the first column keeps every line's quantity (moved into it); deleting the last column keeps each line's
   summed quantity.
 - AC-4 Each cell takes a quantity (blank = 0, no negatives); the line quantity = sum of its cells and every total,
@@ -20,8 +22,8 @@ Plan: `PLAN-ps-quote-matrix-02nov.md`. Card rules R1-R22: `CARD-ps-quote-matrix-
 - AC-9 Revise and make-quotation copy columns and cells; editing a draft's columns never changes an issued version.
 - AC-10 PDF: 2-row header repeated per page, vertical headings when wide; Excel: merged 2-row header, numbers, live
   SUM formulas.
-- AC-11 Sign page: a scope with columns expands to a read-only grid; the customer can suggest a cell quantity, a row
-  total, a price or removal.
-- AC-12 Accepting a row total on a multi-cell row requires a split that adds up to it; accepting a row total and a cell
-  suggestion on the same row is refused.
+- AC-11 Sign page: a scope with columns expands to a read-only grid; the customer can leave a feedback note on an item
+  or a cell, optionally with a suggested quantity, price or removal.
+- AC-12 Staff see the notes on a Customer feedback tab and as marks in the grid; the only action is Handled; nothing is
+  accepted, rejected or applied automatically, for any quotation.
 - AC-13 Usable and unclipped at 375 px and 1280 px.
