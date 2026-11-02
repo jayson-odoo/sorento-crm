@@ -47,7 +47,8 @@ The fake parser returns the object the owner expects at each turn; the assertion
 
 - SC-8 "srt102-rg dealer sales may 2026" (basis answered "invoiced" when asked) runs product srt102-rg, channel
   dealer, May 2026; then "srt102-rg sales 2026" runs product srt102-rg, 2026, invoiced, every channel, and the reply
-  header names the channel (all).
+  header names the channel (all). Crew-set; the live prompt keeps dealer (2 of 2 runs): known limit for PR A, crew
+  ruling 2 Nov (the header shows "Channel: dealer"). The engine test SC-8 still holds with the expected object.
 
 ## D. Value checks (code, no language rules)
 
@@ -58,6 +59,10 @@ The fake parser returns the object the owner expects at each turn; the assertion
 - SC-11 Dealer: a dealer contact's object asking outside its own customer -> the existing refusal.
 - SC-12 A word in both the brand and the account type tables left in `brand_or_account_type` -> "brand or account
   type?"; a word in one table only goes to that one with no question.
+- SC-12b (refined 2 Nov from the prototype) A both-table word the object put in brands or account_types asks when
+  this message's entity for it has kind_said null (V4a); kind_said "brand" / "account type" settles it with no
+  question (V4b); a settled word carried with no entity this turn never asks (V4c); while the question is open, the
+  declared pick of an offered option answers it and keeps every other held slot (V4d).
 - SC-13 An agent name matching several agents -> the agent pick; no period -> the period question; a ranking with no
   count -> the count question.
 - SC-14 A drill, a list pick and "more" over rows on screen behave as today.

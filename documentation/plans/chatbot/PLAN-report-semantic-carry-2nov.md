@@ -1,6 +1,6 @@
 # PLAN: the parser writes the whole report ask each turn (semantic carry, 2 Nov 2026)
 
-**Status:** Build (PR A; split ruled by crew 2 Nov). Track: full (L-ish: parser prompt + schema + the lane's report path; no migration, no route change,
+**Status:** Build (PR A: red 194174a4f4 + 2a6e449d22, green 819f45105e; review next; split ruled by crew 2 Nov). Track: full (L-ish: parser prompt + schema + the lane's report path; no migration, no route change,
 no auth change). Branch `crew/sales-account-type-semantic` from origin/main 46de2f6d77. Lane SALES-ACCOUNT-TYPE,
 follow-up of #2067 / #2074. Supersedes `PLAN-report-multiturn-carry-2nov.md` (PR #2092, coded carry rules, closed
 unmerged). UAC: `report-semantic-carry-acceptance-criteria.md`.
@@ -41,8 +41,12 @@ Investigation (crew/state/files/sales-check-1nov/agentic-vs-chat-2nov.md, file:l
     two or more companies and nothing in the ask that says which -> the company question (`_owes_company` :2396-2400,
     unchanged).
   - V3 dealer refusal over the final args (`_dealer_outside` :1408-1429 and the route's own refusal).
-  - V4 data questions stay: a word in both the brand and the account type tables that the object left in
-    `brand_or_account_type` -> "brand or account type?" (`_account_plan` :1542-1633); an agent name matching
+  - V4 data questions stay: a word in both the brand and the account type tables -> "brand or account type?"
+    (`_account_plan` :1542-1633) when the object left it in `brand_or_account_type`, or this message has an entity
+    for it with `kind_said` null (the model's own reading of whether the user said which); a word carried from the
+    held report with no entity this turn never asks. While that question is open, the parse's declared pick of an
+    offered option answers it (the list-pick class, V5), whatever list the object put the word in. Refined 2 Nov from
+    the prototype: flash-lite never fills `brand_or_account_type` (4 of 4 runs); an agent name matching
     several -> the agent pick; no period -> PERIOD; a ranking with no count -> TOP_N (`rf.collect`).
   - V5 rows on screen stay as they are: drill (`_drill` :2591-2682), list picks (`_detail_outcome` :1918-1937,
     `so_list_outcome` :1952, `more_outcome` :1969), scope answers.
@@ -106,6 +110,21 @@ the flag stays only if another lane still serves a text without the marker.
 Split reason: production serves an unmarked text until the owner moves the label; deleting the old carry with PR A
 would leave production with no carry at all between the release and the label move. Crew ruled the split (a), 2 Nov
 (ask a26467083): PR A first, PR B only after the owner moves the parser label in production.
+
+## Prototype results (2 Nov, crew-approved spend, ledger lines 22:12 and 22:24)
+
+Prompt text: `PROMPT-report-semantic-carry-e4aa6d43.md` (one anchored section on 99b5fc65, no gold-message examples, no
+word lists). 16 gold rows x1 on gemini-3.5-flash-lite: round 1 D 11 of 16, round 2 D3 13 of 16; table in the prompt doc.
+The misses: sc-01 and sc-03 (both-table word) are handled by V4 in code; sc-16 is a known limit (below). The no-op
+control on parser-gold TRAIN is recorded below when it finishes.
+
+## Known limits (PR A)
+
+- sc-16, crew ruling 2 Nov: "<code> sales 2026" after "<code> dealer sales may 2026" keeps channel dealer (the model
+  reads it as a period change, 2 of 2 runs). The reply header names the channel, so the user sees it and can say
+  "all channels". Crew-set expectation (all channels) marked FAIL / known limit.
+- Not object slots, so they stay this message's own and do not carry: sort direction, compare_to, mine, locations,
+  specs.
 
 ## Deletion (PR B; origin/main line numbers)
 
