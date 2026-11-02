@@ -179,6 +179,19 @@ function lineErrorToast(fields: string[], message: string): void {
   toast.error(`Line ${index + 1}: ${message}`);
 }
 
+/**
+ * A service call that may not exist (PRICETAG-TEMPLATE-PER-PRODUCT's two
+ * lookups on an injected client that predates them). Reading a missing
+ * export off a strict module mock throws rather than answering undefined.
+ */
+function optionalCall<T>(read: () => T | undefined): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
 /** Bring the first complaint into view, after the render that drew it. */
 function scrollToFirstProblem(): void {
   setTimeout(() => {
@@ -238,14 +251,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // PRICETAG-TEMPLATE-PER-PRODUCT. Read at call time and guarded: a
       // service without it (an older mock) answers "no templates".
       lookupProductTagTemplates: (productId) => {
-        const fn = svc().lookupProductTagTemplates;
+        const fn = optionalCall(() => svc().lookupProductTagTemplates);
         return fn ? fn(productId) : Promise.resolve([]);
       },
     };
   }, [client]);
   const previewLookup = useCallback(
     (mode: PriceMode, previewRows: TagPreviewLineInput[]) => {
-      const fn = clientService(client, 'priceTagRequest', portalPriceTagRequest).lookupTagPreview;
+      const fn = optionalCall(
+        () => clientService(client, 'priceTagRequest', portalPriceTagRequest).lookupTagPreview,
+      );
       return fn ? fn(mode, previewRows) : Promise.reject(new Error('Preview unavailable'));
     },
     [client],
