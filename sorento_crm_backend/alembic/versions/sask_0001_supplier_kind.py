@@ -14,7 +14,7 @@ and one "Entity kind" line on the next turn after this runs. Idempotent: a kind 
 is left alone, so bootstrap calls `insert_kind(bind)` too.
 
 Revision ID: sask_0001_supplier_kind
-Revises: join_0003_qiv_bnsp
+Revises: psr3_0001_party_contacts
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "sask_0001_supplier_kind"
-down_revision = "join_0003_qiv_bnsp"
+down_revision = "psr3_0001_party_contacts"
 branch_labels = None
 depends_on = None
 
