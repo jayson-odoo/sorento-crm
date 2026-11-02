@@ -56,3 +56,13 @@ script, not a committed spec, per the standing order). Result:
 
 The tab test `QuotationSpecSheetTab.dnd.test.tsx` (real `Sortable`) pins the structure: it fails
 on the old tab and passes on the fix.
+
+## Sandbox browser pass on steps 3 and 14 at 07c5618bca (3 Nov)
+
+- `08-step3-insert-field-1280.png`, `09-step3-insert-field-375.png`: Tag Templates > the spec page
+  template > a text layer > Insert field: a "SPEC SHEET" group; search "Project title" finds
+  `{{doc.project_title}}`. No sideways scroll at 375.
+- `10-step14-reordered-1280.png`, `11-step14-375.png`: the page strip after reordering. At both widths
+  a real mouse drag (agent-browser `drag`, basin onto WC) gave `2 basin, 3 WC`, and the keyboard
+  (Space, ArrowLeft, Space on the WC handle) moved it back; each order survived a reload and was
+  stored in the document's rows.
