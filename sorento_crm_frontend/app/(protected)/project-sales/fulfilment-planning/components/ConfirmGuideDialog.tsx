@@ -46,6 +46,11 @@ export interface ConfirmGuidePage {
   soDate?: string | null;
   /** FULFIL-SO-REMARK: `Sponsorship` / `Purchase Request` from the order's Shipping Info. */
   remarkType?: string | null;
+  /**
+   * FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026): this order's press carries a change, so its
+   * Remark starts empty and must be keyed in before the guide moves on (R1, R2).
+   */
+  hasChange?: boolean;
   /** The lines this Confirm covers on the order, as the board states them (UAC F2, F10). */
   covered: ConfirmGuideLine[];
 }
@@ -234,8 +239,13 @@ export function ConfirmGuideDialog({
     close();
   };
 
+  // R2: a change order starts empty; a new-only one reads its default as before.
   const remarkOf = (entry: ConfirmGuidePage) =>
-    remarkEdits.get(entry.salesOrderId) ?? mockupFactsOf(entry).defaultRemark;
+    remarkEdits.get(entry.salesOrderId) ??
+    (entry.hasChange ? '' : mockupFactsOf(entry).defaultRemark);
+  // R1: a change order's Remark is required.
+  const remarkMissing = (entry: ConfirmGuidePage) =>
+    Boolean(entry.hasChange) && remarkOf(entry).trim() === '';
   const setRemark = (salesOrderId: string, value: string) =>
     setRemarkEdits((current) => new Map(current).set(salesOrderId, value));
   const pageFacts = React.useMemo(() => (page ? mockupFactsOf(page) : null), [page]);
@@ -273,7 +283,13 @@ export function ConfirmGuideDialog({
       : null;
   // UAC F14: a page is never "seen" before its split read has loaded.
   const nextEnabled =
-    step.kind === 'review' && Boolean(page) && !reading && !readFailed && !unready && !dirty;
+    step.kind === 'review' &&
+    Boolean(page) &&
+    !reading &&
+    !readFailed &&
+    !unready &&
+    !dirty &&
+    !(page && remarkMissing(page));
 
   return (
     <Dialog
@@ -341,6 +357,7 @@ export function ConfirmGuideDialog({
                     id={`confirm-guide-remark-${page.salesOrderId}`}
                     data-testid="confirm-guide-so-remark"
                     value={remarkOf(page)}
+                    required={Boolean(page.hasChange)}
                     maxLength={SO_REMARK_MAX}
                     onChange={(event) => setRemark(page.salesOrderId, event.target.value)}
                   />
@@ -359,6 +376,14 @@ export function ConfirmGuideDialog({
                     </Button>
                   ) : null}
                 </InputWrapper>
+                {remarkMissing(page) ? (
+                  <p
+                    data-testid="confirm-guide-so-remark-needed"
+                    className="mt-1 text-xs text-destructive"
+                  >
+                    Key in a remark for this change.
+                  </p>
+                ) : null}
               </div>
               {prepareFailed ? (
                 <div
@@ -540,7 +565,7 @@ export function ConfirmGuideDialog({
             <Button
               type="button"
               data-testid="confirm-guide-confirm"
-              disabled={posting}
+              disabled={posting || pages.some(remarkMissing)}
               onClick={() => void pressConfirm()}
             >
               {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}

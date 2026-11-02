@@ -30,12 +30,25 @@ export async function guideControl(): Promise<HTMLElement | null> {
 }
 
 /**
+ * FULFIL-SO-REMARK-CHANGES (R1): a change order's Remark is required, so a walk that only cares
+ * about the post keys one in wherever the page's field is required and still empty.
+ */
+export function fillRequiredRemark(text = 'ZZT change remark') {
+  for (const input of screen.queryAllByTestId('confirm-guide-so-remark') as HTMLInputElement[]) {
+    if (input.required && input.value.trim() === '') {
+      fireEvent.change(input, { target: { value: text } });
+    }
+  }
+}
+
+/**
  * Walks Next until the Confirm step shows (it stays open; nothing is posted yet). Returns null
  * if the guide is not open.
  */
 export async function walkToConfirmStep() {
   await openConfirmGuide();
   for (let i = 0; i < 12; i += 1) {
+    fillRequiredRemark();
     const control = await guideControl();
     if (control === null) return null;
     if (control.getAttribute('data-testid') === 'confirm-guide-confirm') return control;

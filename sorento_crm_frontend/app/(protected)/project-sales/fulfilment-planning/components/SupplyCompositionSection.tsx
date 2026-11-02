@@ -27,7 +27,7 @@ import {
 } from '../../_shared/lib/supplyComposition';
 import { poolShareLimitsFromLine } from '../../_shared/lib/poolShare';
 import { soLineNoText } from '../../_shared/lib/fulfilmentBoard';
-import { ConfirmProjectSoDialog } from './ConfirmProjectSoDialog';
+import { ConfirmGuideDialog, type ConfirmGuidePage } from './ConfirmGuideDialog';
 import { SupplyLineCard } from './SupplyLineCard';
 
 /**
@@ -162,18 +162,64 @@ export function SupplyCompositionSection({
     [frozen, locationBlockers, plannableLines, draftFor],
   );
 
-  async function submit() {
+  /**
+   * FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R3): this Confirm opens the board's Confirm
+   * popup, one page for this order. An order confirmed before is a change (a re-confirm
+   * supersedes its revision), so its Remark starts empty and is required (R1, R2). A first
+   * Confirm prefills the words the email would print (`default_so_remark`, R5): the guide reads
+   * a set `remarkType` as the order's default.
+   */
+  const salesOrderKey = proposal?.sales_order_id ?? psoId;
+  const hasChange = Boolean(decision);
+  const defaultRemark = proposal?.default_so_remark ?? '';
+  const guidePages = React.useMemo<ConfirmGuidePage[]>(
+    () => [
+      {
+        psoId,
+        salesOrderId: salesOrderKey,
+        soNumber: reference,
+        remarkType: defaultRemark || null,
+        hasChange,
+        covered: plannableLines.map((line) => ({
+          lineId: line.project_line_id,
+          key: line.project_line_id,
+          lineNo: line.so_line_no ?? line.line_no,
+          itemCode: line.item_code ?? '',
+          location: line.fulfilment_location ?? '',
+          qty: Number(line.open_qty),
+          date: line.required_date ?? null,
+          savedRemark: null,
+          ownRemark: null,
+          remarkEditable: false,
+        })),
+      },
+    ],
+    [psoId, salesOrderKey, reference, defaultRemark, hasChange, plannableLines],
+  );
+
+  /**
+   * The popup's Confirm: the page's Remark rides as `so_remark` (R4), as on the board. A refusal
+   * closes the popup onto the sheet, where its failing lines are named.
+   */
+  async function submit(soRemarks: ReadonlyMap<string, string>): Promise<boolean> {
     setFailingLines([]);
+    const remark = soRemarks.get(salesOrderKey)?.trim() ?? '';
     try {
       await confirm.mutateAsync({
         psoId,
-        body: { lines: activeDrafts.map(confirmLineFromDraft) },
+        body: {
+          lines: activeDrafts.map(confirmLineFromDraft),
+          so_remark: remark,
+        },
       });
-      setConfirming(false);
       setComposingAgain(false);
+      return true;
     } catch (error) {
-      setConfirming(false);
-      if (error instanceof ConfirmSupplyError) setFailingLines(error.failingLines);
+      if (error instanceof ConfirmSupplyError) {
+        setFailingLines(error.failingLines);
+        return true;
+      }
+      return false;
     }
   }
 
@@ -369,13 +415,11 @@ export function SupplyCompositionSection({
       )}
 
       {confirming && (
-        <ConfirmProjectSoDialog
-          reference={reference}
-          lineCount={plannableLines.length}
-          currentRevision={isConfirmed ? (decision?.revision_no ?? null) : null}
-          submitting={confirm.isPending}
-          onDone={() => setConfirming(false)}
-          onConfirm={() => void submit()}
+        <ConfirmGuideDialog
+          pages={guidePages}
+          runConfirm={submit}
+          saveRemarks={async () => {}}
+          onClose={() => setConfirming(false)}
         />
       )}
     </section>
