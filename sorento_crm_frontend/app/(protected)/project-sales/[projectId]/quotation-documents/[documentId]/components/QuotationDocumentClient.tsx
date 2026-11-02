@@ -159,6 +159,7 @@ export function QuotationDocumentClient({
     onDeleted: () => router.push(`/project-sales/${projectId}?tab=quotations`),
     surface: 'inline',
     projectOutcome: project.data?.outcome ?? null,
+    projectHasQuotation: (siblingDocuments.data ?? []).some((row) => row.kind === 'quotation'),
   });
 
   if (document.isLoading || project.isLoading) {

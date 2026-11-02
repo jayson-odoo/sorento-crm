@@ -239,25 +239,59 @@ def qty_over_quotation(db: Session, project_id: str) -> List[Dict[str, Any]]:
     ]
 
 
+def _po_over_rows(
+    db: Session, po: ProjectPurchaseOrder, over: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """The over-quoted products THIS PO contributes to, when it is checked against the
+    quotation. A PO bound to a proposal, or one with none of the over products on it, is not
+    asked: the reason belongs on the PO that orders the extra."""
+    if not over or not po.quotation_version_id:
+        return []
+    quotation = project_quotation_document(db, po.project_id)
+    if quotation is None:
+        return []
+    bound_document = (
+        db.query(ProjectQuotation.document_id)
+        .join(ProjectQuotationVersion, ProjectQuotationVersion.quotation_id == ProjectQuotation.id)
+        .filter(ProjectQuotationVersion.id == po.quotation_version_id)
+        .scalar()
+    )
+    if str(bound_document) != str(quotation.id):
+        return []
+    from app.models.project_so import PO_STATUS_SUPERSEDED
+
+    if po.status == PO_STATUS_SUPERSEDED:
+        return []
+    keys = {_po_line_key(line) for line in list_lines(db, po_id=str(po.id))}
+    return [
+        row
+        for row in over
+        if row["key"] in keys
+        or f"code:{(row.get('product_code') or '').strip().upper()}" in keys
+    ]
+
+
 def enforce_qty_over(
     db: Session,
     po: ProjectPurchaseOrder,
     *,
     reason: Optional[str],
     actor_user_id: Optional[str],
-) -> None:
+) -> List[Dict[str, Any]]:
     """The soft stop (rule 6, owner Q5 a): one reason per PO, never a hard block.
 
-    Called after a save or a confirm has written the PO's lines. Nothing over, or the PO already
-    carries a reason: nothing to do. Over with a reason: it is stored and management is told.
-    Over without one: 409 ``po_qty_over_quoted`` naming the products; the route's rollback undoes
-    the save and the screen sends it again with the reason.
+    Called after a save or a confirm has written the PO's lines. Asked only when THIS PO is
+    checked against the quotation and orders one of the products the project's POs now order
+    above the quoted quantity. The PO already carries a reason: nothing to do. With a reason:
+    stored, and the products are returned so the route can alert management AFTER its commit
+    (``alert_qty_over``). Without one: 409 ``po_qty_over_quoted`` naming the products; the route's
+    rollback undoes the save and the screen sends it again with the reason.
     """
     if (po.qty_over_reason or "").strip():
-        return
-    over = qty_over_quotation(db, po.project_id)
+        return []
+    over = _po_over_rows(db, po, qty_over_quotation(db, po.project_id))
     if not over:
-        return
+        return []
     text_reason = (reason or "").strip()
     products = [
         {
@@ -284,28 +318,45 @@ def enforce_qty_over(
     po.qty_over_reason_by = actor_user_id
     po.qty_over_reason_at = datetime.utcnow()
     db.flush()
+    return products
 
-    project = db.query(Project).filter(Project.id == po.project_id).first()
-    if project is None:
+
+def alert_qty_over(
+    db: Session,
+    po: ProjectPurchaseOrder,
+    products: List[Dict[str, Any]],
+    actor_user_id: Optional[str],
+) -> None:
+    """Tell management and the owner, AFTER the route committed the PO and its reason: the
+    notification service commits per recipient. Best-effort."""
+    if not products or not (po.qty_over_reason or "").strip():
         return
-    from app.services import project_notify_service as notify
-    from app.services.project_service import resolve_user_names
-
-    actor_name = (
-        resolve_user_names(db, [actor_user_id]).get(str(actor_user_id)) if actor_user_id else None
-    )
     try:
-        with db.begin_nested():
-            notify.notify_po_qty_over(
-                db,
-                project=project,
-                po=po,
-                products=products,
-                reason=po.qty_over_reason,
-                actor_name=actor_name,
-            )
+        project = db.query(Project).filter(Project.id == po.project_id).first()
+        if project is None:
+            return
+        from app.services import project_notify_service as notify
+        from app.services.project_service import resolve_user_names
+
+        actor_name = (
+            resolve_user_names(db, [actor_user_id]).get(str(actor_user_id))
+            if actor_user_id
+            else None
+        )
+        notify.notify_po_qty_over(
+            db,
+            project=project,
+            po=po,
+            products=products,
+            reason=po.qty_over_reason,
+            actor_name=actor_name,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("PO qty-over alert not sent: po=%s (%s)", po.id, exc)
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def create_po(

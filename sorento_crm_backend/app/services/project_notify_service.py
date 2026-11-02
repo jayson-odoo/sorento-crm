@@ -354,6 +354,18 @@ def _whatsapp_for(db: Session, project: Project, document, text: str):
     return build
 
 
+def approval_reason_text(below: int, below_proposal: int = 0) -> str:
+    """"2 lines below the minimum price and 1 line below the proposal": what needs the manager."""
+    parts = []
+    if below or not below_proposal:
+        parts.append(f"{below} line{'' if below == 1 else 's'} below the minimum price")
+    if below_proposal:
+        parts.append(
+            f"{below_proposal} line{'' if below_proposal == 1 else 's'} below the proposal"
+        )
+    return " and ".join(parts)
+
+
 def notify_quotation_approval_requested(
     db: Session,
     *,
@@ -364,9 +376,10 @@ def notify_quotation_approval_requested(
     requester_id: Optional[str],
     requester_name: str,
     resubmitted: bool = False,
+    below_proposal: int = 0,
 ) -> int:
     """A quotation was sent for approval: tell every approver but the sender. One per press."""
-    lines = f"{below} line{'' if below == 1 else 's'} below the minimum price"
+    lines = approval_reason_text(below, below_proposal)
     verb = "appealed" if resubmitted else "sent"
     text = (
         f"{requester_name} {verb} quotation {document.document_no} ({project_label(project)}) "

@@ -41,17 +41,20 @@ function QuotationRowActions({
   document,
   canEdit,
   projectOutcome,
+  projectHasQuotation,
 }: {
   projectId: string;
   document: QuotationDocument;
   canEdit: boolean;
   projectOutcome?: string | null;
+  projectHasQuotation?: boolean;
 }) {
   const { actions, dialogs } = useQuotationDocumentActions({
     projectId,
     document,
     canEdit,
     projectOutcome,
+    projectHasQuotation,
   });
   return (
     <div onClick={(event) => event.stopPropagation()}>
@@ -93,6 +96,7 @@ export function QuotationsPanel({ project }: { project: Project }) {
     );
   }, [documents.data, search]);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const hasQuotation = (documents.data ?? []).some((row) => row.kind === 'quotation');
 
   // One countdown over the ticked drafts. An issued quotation is refused by the server, so it is
   // left out and counted in a closing sentence rather than swallowed.
@@ -263,11 +267,12 @@ export function QuotationsPanel({ project }: { project: Project }) {
             document={row.original}
             canEdit={canWorkOnProject(project)}
             projectOutcome={project.outcome}
+            projectHasQuotation={hasQuotation}
           />
         ),
       },
     ],
-    [project.id, project.can_edit, project.approval_state, project.outcome],
+    [project.id, project.can_edit, project.approval_state, project.outcome, hasQuotation],
   );
 
   const ticked = rows.filter((row) => rowSelection[row.id]);

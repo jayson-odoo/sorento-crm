@@ -471,16 +471,19 @@ def move(
 
     if target.key in AWAITING_KEYS:
         below = below_floor_line_count(db, document)
+        below_proposal = below_proposal_line_count(db, document)
+        from app.services.project_notify_service import approval_reason_text
+
         _record(
             db,
             document,
             template="quotation_approval_requested",
             body_text=(
                 f"{_actor_name(db, actor_user_id)} asked for approval on quotation "
-                f"{document.document_no} ({below} line{'' if below == 1 else 's'} below minimum price)."
+                f"{document.document_no} ({approval_reason_text(below, below_proposal)})."
             ),
             actor_user_id=actor_user_id,
-            payload={"below_floor_line_count": below},
+            payload={"below_floor_line_count": below, "below_proposal_count": below_proposal},
         )
     return document
 
@@ -647,6 +650,7 @@ def notify_requested(
             resubmitted=current_key(db, document) == STATUS_RESUBMITTED,
             press=str(_press_count(db, document)),
             below=below_floor_line_count(db, document),
+            below_proposal=below_proposal_line_count(db, document),
             requester_id=actor_user_id,
             requester_name=_actor_name(db, actor_user_id),
         )

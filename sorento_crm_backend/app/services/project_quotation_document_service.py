@@ -19,6 +19,7 @@ wrong once somewhere in this codebase:
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -153,6 +154,9 @@ def document_noun(document: Optional[ProjectQuotationDocument]) -> str:
     return "Quotation" if getattr(document, "kind", None) == KIND_QUOTATION else "Proposal"
 
 
+_LEGACY_LABEL = re.compile(r"^R\d+$")
+
+
 def _next_label(db: Session, document: ProjectQuotationDocument, issue_no: int) -> str:
     """A quotation counts R1, R2. A proposal counts A, B, C - unless it already went out as R1
     before this lane, in which case it keeps counting R so the customer's paper stays in order."""
@@ -164,7 +168,7 @@ def _next_label(db: Session, document: ProjectQuotationDocument, issue_no: int) 
         .filter(ProjectQuotationIssue.document_id == document.id)
         .all()
     ]
-    if any(label.startswith("R") for label in earlier):
+    if any(_LEGACY_LABEL.match(label) for label in earlier):
         return f"R{issue_no}"
     return revision_letter(issue_no)
 
@@ -672,8 +676,14 @@ def issue(
     # `approved` and the next revision that dips below the floor has to be approved on its own
     # merits. A no-op on a quotation that was never on the graph.
     approvals.mark_issued(db, document)
-    if document.kind != KIND_QUOTATION and previous is not None:
-        _alert_price_changes(db, document, previous, record)
+    # Rule 3. Worked out here, SENT by the route after its commit: the notification service
+    # commits per recipient, so sending inside this transaction would commit the issue early and
+    # leave every recipient after the first unsent (and no email queued at all).
+    record.price_changes = (
+        price_changes(db, previous, record)
+        if document.kind != KIND_QUOTATION and previous is not None
+        else []
+    )
     return record
 
 
@@ -744,29 +754,32 @@ def price_changes(
     return changes
 
 
-def _alert_price_changes(
-    db: Session,
-    document: ProjectQuotationDocument,
-    previous: ProjectQuotationIssue,
-    record: ProjectQuotationIssue,
+def alert_price_changes(
+    db: Session, document: ProjectQuotationDocument, record: ProjectQuotationIssue
 ) -> None:
-    """Rule 3: a PRICE change between two revisions of one proposal tells management. Best-effort:
-    the revision has already gone out and an alert that fails must not take it back."""
-    changes = price_changes(db, previous, record)
+    """Rule 3: a PRICE change between two revisions of one proposal tells management.
+
+    Called by the route AFTER the issue is committed, with the changes `issue()` worked out.
+    Best-effort: the revision has already gone out and an alert that fails must not take it back.
+    """
+    changes = getattr(record, "price_changes", None) or []
     if not changes:
         return
-    project = db.query(Project).filter(Project.id == document.project_id).first()
-    if project is None:
-        return
-    from app.services import project_notify_service as notify
-
     try:
-        with db.begin_nested():
-            notify.notify_proposal_price_changed(
-                db, project=project, document=document, record=record, changes=changes
-            )
+        project = db.query(Project).filter(Project.id == document.project_id).first()
+        if project is None:
+            return
+        from app.services import project_notify_service as notify
+
+        notify.notify_proposal_price_changed(
+            db, project=project, document=document, record=record, changes=changes
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("proposal price alert not sent: document=%s (%s)", document.id, exc)
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def project_quotation(db: Session, project_id: str) -> Optional[ProjectQuotationDocument]:

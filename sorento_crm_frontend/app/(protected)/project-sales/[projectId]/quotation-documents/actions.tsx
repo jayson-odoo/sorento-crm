@@ -59,6 +59,7 @@ export function useQuotationDocumentActions({
   onDeleted,
   surface = 'toast',
   projectOutcome,
+  projectHasQuotation = false,
 }: {
   projectId: string;
   /** Undefined while the record is still loading: no actions yet. */
@@ -73,6 +74,8 @@ export function useQuotationDocumentActions({
   surface?: 'inline' | 'toast';
   /** The project's outcome: "Make quotation" is offered only on a won project. */
   projectOutcome?: string | null;
+  /** The project already holds a quotation (made from any proposal): no second one. */
+  projectHasQuotation?: boolean;
 }): QuotationDocumentActionSet {
   const router = useRouter();
   const documentId = document?.id ?? '';
@@ -150,6 +153,7 @@ export function useQuotationDocumentActions({
     document.kind !== 'quotation' &&
     issued &&
     !document.quotation_document_id &&
+    !projectHasQuotation &&
     projectOutcome === 'won'
   ) {
     actions.push({

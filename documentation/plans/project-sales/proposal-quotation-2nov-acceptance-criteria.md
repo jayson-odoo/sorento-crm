@@ -9,7 +9,9 @@ Plan: `PLAN-proposal-quotation-2nov.md`. Card: `CARD-proposal-quotation-2nov.md`
 - AC-3 Issuing a proposal revision whose unit price for any product differs from the previous revision of the
   same proposal alerts management (in-app + email) with product, old and new price. A quantity-only change, or
   only added/removed lines, alerts nobody. The issue always goes out.
-- AC-4 A proposal is addressed to a party of the project; Tender party and Subcontractor exist as party types.
+- AC-4 MOVED to PS-REGISTRATION-V3 (#2099), agreed 2 Nov: #2099 owns every new party type (tender
+  party, subcontractor, interior designer) and the project-parties read; this lane wires the proposal
+  "To" picker to it after #2099 merges. Not shipped in #2097.
 - AC-5 "Make quotation" is available only on an issued proposal of a Won project with no quotation yet; it
   creates a quotation numbered from its own rule (QT-YYYY-NNNN by default), linked to the picked revision, with
   that revision's party, letter, terms and lines; lost scopes left out.

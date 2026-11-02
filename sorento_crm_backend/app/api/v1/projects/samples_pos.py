@@ -261,9 +261,10 @@ def update_purchase_order(
         lines = po_svc.save_po_document(db, po=po, payload=body)
         # PS-PROPOSAL-QUOTATION soft stop: a 409 here rolls the save back and the screen sends
         # it again with the reason; with one, it saves and management is told.
-        po_svc.enforce_qty_over(db, po, reason=reason, actor_user_id=current_user["id"])
+        over = po_svc.enforce_qty_over(db, po, reason=reason, actor_user_id=current_user["id"])
         db.commit()
         db.refresh(po)
+        po_svc.alert_qty_over(db, po, over, current_user["id"])
         # Mismatch alerts on a whole-set save are raised ONCE for the PO, not once per line:
         # a 90-line PO would otherwise send the owner 90 notifications for one button press.
         if body.get("lines") is not None:

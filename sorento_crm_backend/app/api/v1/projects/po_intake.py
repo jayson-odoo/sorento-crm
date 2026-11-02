@@ -355,9 +355,10 @@ def confirm_purchase_order_version(
         # here rolls the confirm back; the screen asks for the reason and confirms again.
         from app.services import project_po_service as po_svc
 
-        po_svc.enforce_qty_over(
+        po = po_svc.get_po(db, result["purchase_order_id"])
+        over = po_svc.enforce_qty_over(
             db,
-            po_svc.get_po(db, result["purchase_order_id"]),
+            po,
             reason=payload.qty_over_reason if payload is not None else None,
             actor_user_id=current_user["id"],
         )
@@ -369,6 +370,8 @@ def confirm_purchase_order_version(
             "price_mismatch_count": result["price_mismatch_count"],
         }
         db.commit()
+        # After the commit: the notification service commits per recipient.
+        po_svc.alert_qty_over(db, po, over, current_user["id"])
         return body
     except Exception as exc:
         db.rollback()

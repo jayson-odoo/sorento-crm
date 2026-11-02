@@ -129,3 +129,200 @@ def test_po_save_over_the_quoted_qty_asks_for_a_reason_then_saves_with_it(env, m
     # The PO carries its reason, so the next save is not asked again.
     again = client.put(f"{BASE}/purchase-orders/{po_id}", json={"lines": lines})
     assert again.status_code == 200, again.text
+
+
+# --------------------------------------------- review round 1 (B1, B2, S1, S2)
+
+
+def _manager(db, company_id: str, name: str) -> str:
+    import uuid
+
+    from app.models.company import UserCompany
+    from app.models.user import User, UserStatus
+
+    from .test_project_quotation_approval_routes import _grant
+
+    user_id = str(uuid.uuid4())
+    db.add(
+        User(id=user_id, email=f"{user_id}@zzt.test", name=name, status=UserStatus.ACTIVE.value)
+    )
+    db.flush()
+    _grant(db, user_id, "projects.projects.manage")
+    db.add(UserCompany(id=str(uuid.uuid4()), user_id=user_id, company_id=company_id))
+    db.flush()
+    return user_id
+
+
+def test_b1_a_price_change_reaches_every_manager_in_app_and_by_email(env, monkeypatch):
+    """The real notification service, not a stub: it commits per recipient, so sending inside
+    the issue's transaction reached one manager and queued no email at all."""
+    from app.models.notification import Notification, NotificationDelivery
+
+    from .test_project_proposal_quotation import _reprice, _sign
+
+    # Nothing leaves the sandbox: the email job is enqueued, never run.
+    monkeypatch.setattr("app.services.queue_service.enqueue_job", lambda *a, **k: None)
+    client, db, owner, product, project, document, scope, _ = env
+    managers = {_manager(db, project.company_id, f"{MARKER} Boss {n}") for n in (1, 2)}
+    _reprice(db, scope, product, owner, unit_price="90.00")
+    _sign(db, document, owner)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/projects/{project.id}/quotation-documents/{document.id}/issue"
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["revision_label"] == "B"
+
+    rows = (
+        db.query(Notification)
+        .filter(Notification.type == "project_proposal_price_changed")
+        .all()
+    )
+    assert {row.user_id for row in rows} >= managers
+    emails = (
+        db.query(NotificationDelivery)
+        .filter(
+            NotificationDelivery.notification_id.in_([row.id for row in rows]),
+            NotificationDelivery.channel == "email",
+        )
+        .all()
+    )
+    assert {d.notification_id for d in emails} == {row.id for row in rows}
+
+
+def test_b2_a_scanned_po_auto_binds_to_the_quotation_not_the_won_proposal(env):
+    from app.services import project_po_service as pos
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_service as quotes
+    from app.services.project_po_extraction_service import ProjectPOExtractionService
+
+    client, db, owner, _, project, document, scope, record = env
+    _win(db, scope)  # the proposal scope is won too: without the filter, two equal candidates
+    db.commit()
+    quotation = _make(client, project, document, record).json()
+    q_scope = qdocs.list_scopes(db, qdocs.get_document(db, quotation["id"]))[0]
+
+    po = pos.create_po(
+        db,
+        project=project,
+        actor_user_id=owner,
+        payload={"po_number": f"{MARKER}-SCAN", "po_source": "contractor_direct"},
+    )
+    assert po.quotation_version_id is None
+    ProjectPOExtractionService(db)._bind_quotation_version(po)
+    assert po.quotation_version_id == quotes.current_version(db, q_scope.id).id
+
+
+def test_s1_only_the_po_checked_against_the_quotation_with_the_product_is_asked(env):
+    from app.services import project_po_service as pos
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_service as quotes
+
+    client, db, owner, product, project, document, scope, record = env
+    early = pos.create_po(
+        db,
+        project=project,
+        actor_user_id=owner,
+        payload={
+            "po_number": f"{MARKER}-EARLY",
+            "po_source": "contractor_direct",
+            "quotation_version_id": quotes.current_version(db, scope.id).id,
+        },
+    )
+    _win(db, scope)
+    db.commit()
+    quotation = _make(client, project, document, record).json()
+    q_scope = qdocs.list_scopes(db, qdocs.get_document(db, quotation["id"]))[0]
+    version_id = quotes.current_version(db, q_scope.id).id
+    over = pos.create_po(
+        db,
+        project=project,
+        actor_user_id=owner,
+        payload={
+            "po_number": f"{MARKER}-OVER",
+            "po_source": "contractor_direct",
+            "quotation_version_id": version_id,
+        },
+    )
+    pos.replace_lines(
+        db, po=over, lines=[{"product_id": product.id, "unit_price": "100.00", "quantity": 12}]
+    )
+    pos.enforce_qty_over(db, over, reason="VO-1", actor_user_id=owner)
+    db.commit()
+
+    # A legacy PO bound to the proposal, and a header-only save of it, is never asked.
+    saved = client.put(f"{BASE}/purchase-orders/{early.id}", json={"notes": "called them"})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["qty_over_reason"] is None
+
+
+def test_s2_confirming_a_scan_over_the_quotation_asks_then_confirms_with_the_reason(env):
+    from app.models.project_so import ProjectPOVersion
+    from app.services import project_po_service as pos
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_service as quotes
+    from app.services.document_extraction import PageResult
+    from app.services.project_po_extraction_service import (
+        STATE_QUEUED,
+        ProjectPOExtractionService,
+    )
+
+    client, db, owner, product, project, document, scope, record = env
+    _win(db, scope)
+    db.commit()
+    quotation = _make(client, project, document, record).json()
+    q_scope = qdocs.list_scopes(db, qdocs.get_document(db, quotation["id"]))[0]
+    po = pos.create_po(
+        db,
+        project=project,
+        actor_user_id=owner,
+        payload={
+            "po_number": f"{MARKER}-SCAN2",
+            "po_source": "contractor_direct",
+            "quotation_version_id": quotes.current_version(db, q_scope.id).id,
+        },
+    )
+    version = ProjectPOVersion(
+        company_id=po.company_id,
+        purchase_order_id=po.id,
+        version_no=1,
+        source_filename=f"{MARKER}.pdf",
+        page_count=1,
+        extraction_state=STATE_QUEUED,
+    )
+    db.add(version)
+    db.flush()
+    ProjectPOExtractionService(db).persist_pages(
+        version,
+        [
+            PageResult(
+                page_no=1,
+                data={
+                    "header": {"po_number": f"{MARKER}-SCAN2"},
+                    "lines": [
+                        {
+                            "no": 1,
+                            "stock_code": product.product_code,
+                            "qty": 12,
+                            "unit_price": 100.00,
+                            "amount": 1200.00,
+                        }
+                    ],
+                },
+            )
+        ],
+    )
+    db.commit()
+    url = f"{BASE}/purchase-order-versions/{version.id}/confirm"
+
+    refused = client.post(url)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["code"] == "po_qty_over_quoted"
+    db.expire_all()
+    assert db.query(ProjectPOVersion).get(version.id).confirmed_at is None  # rolled back
+
+    confirmed = client.post(url, json={"qty_over_reason": "Extra block"})
+    assert confirmed.status_code == 200, confirmed.text
+    db.expire_all()
+    assert pos.get_po(db, po.id).qty_over_reason == "Extra block"

@@ -387,9 +387,14 @@ def issue_quotation_document(
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
         record = svc.issue(db, document=document, actor_user_id=current_user["id"])
+        changes = list(getattr(record, "price_changes", None) or [])
         db.commit()
         db.refresh(record)
-        return svc.serialize_issue(db, record)
+        payload = svc.serialize_issue(db, record)
+        # After the commit: the notification service commits per recipient (PS-PROPOSAL-QUOTATION).
+        record.price_changes = changes
+        svc.alert_price_changes(db, document, record)
+        return payload
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

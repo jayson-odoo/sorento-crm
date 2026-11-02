@@ -250,6 +250,7 @@ def test_2_a_document_whose_first_issue_is_r1_keeps_r_labels():
 
 def test_3_a_changed_unit_price_alerts_management_and_a_qty_only_change_does_not(monkeypatch):
     from app.services import project_notify_service
+    from app.services import project_quotation_document_service as qdocs
 
     calls = []
 
@@ -263,11 +264,15 @@ def test_3_a_changed_unit_price_alerts_management_and_a_qty_only_change_does_not
     with blank_session() as db:
         _, owner, product, project, document, scope = _setup(db)
         _price(db, scope, product, owner, "100.00", 2)
-        _issue(db, document, owner)
+        first = _issue(db, document, owner)
+        qdocs.alert_price_changes(db, document, first)
         assert calls == []  # nothing to compare against on the first issue
 
         _reprice(db, scope, product, owner, unit_price="90.00")
         record_b = _issue(db, document, owner)
+        # Worked out inside issue(), sent by the route after its commit.
+        assert calls == []
+        qdocs.alert_price_changes(db, document, record_b)
         assert len(calls) == 1
         assert record_b.issue_no == 2  # the issue always goes out
         call = calls[0]
@@ -282,7 +287,9 @@ def test_3_a_changed_unit_price_alerts_management_and_a_qty_only_change_does_not
 
         # Quantity only: no new alert.
         _reprice(db, scope, product, owner, quantity=9)
-        _issue(db, document, owner)
+        record_c = _issue(db, document, owner)
+        assert record_c.price_changes == []
+        qdocs.alert_price_changes(db, document, record_c)
         assert len(calls) == 1
 
 
@@ -641,16 +648,18 @@ def test_8b_qty_over_the_quotation_with_a_reason_saves_and_stores_the_reason(mon
         _po_with_qty(db, project, owner, version, "A", 6, product)
         second = _po_with_qty(db, project, owner, version, "B", 6, product)
 
-        pos.enforce_qty_over(
+        over = pos.enforce_qty_over(
             db, second, reason="  Client added two floors.  ", actor_user_id=owner
         )
         assert second.qty_over_reason == "Client added two floors."
         assert second.qty_over_reason_by == owner
         assert second.qty_over_reason_at is not None
+        assert alerts == []  # sent by the route after its commit, never inside the save
+        pos.alert_qty_over(db, second, over, owner)
         assert len(alerts) == 1  # management + owner alerted once
 
         # A PO that already carries a reason is not asked again.
-        pos.enforce_qty_over(db, second, reason=None, actor_user_id=owner)
+        assert pos.enforce_qty_over(db, second, reason=None, actor_user_id=owner) == []
         assert second.qty_over_reason == "Client added two floors."
         assert len(alerts) == 1
 
