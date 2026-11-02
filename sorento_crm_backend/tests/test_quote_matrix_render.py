@@ -22,6 +22,14 @@ from ._pg_fixture import blank_session
 from .test_project_proposal_quotation import MARKER, _issue, _price, _setup
 from .test_quote_matrix_service import COLUMNS, grid_world, set_grid
 
+from app.services import quotation_columns
+
+# Today's printed column set for a scope with no photo: the one shared definition
+# (`quotation_columns`, QUOTE-SIGN-COLUMNS) minus PRODUCT IMAGE.
+_TODAY_NO_IMAGE = [
+    label for key, label in quotation_columns.COLUMNS if key != quotation_columns.IMAGE
+]
+
 UNIT_LABEL = f"{MARKER} Townhouse"
 GUARD_LABEL = f"{MARKER} GUARD HOUSE"
 
@@ -75,7 +83,7 @@ def test_pdf_a_plain_scope_prints_exactly_todays_columns_beside_a_grid_scope():
         block = _scope_block(_html(db, w.record), GUARD_LABEL)
         rows = _thead_rows(block)
         assert len(rows) == 1
-        today = [c for c in qpdf._COLUMNS if c != qpdf._IMAGE_COLUMN]
+        today = list(_TODAY_NO_IMAGE)
         assert [text for _, text in rows[0]] == today
         assert not any("rowspan" in attrs or "colspan" in attrs for attrs, _ in rows[0])
         assert "vert" not in block.split("<tbody")[0]
@@ -178,7 +186,7 @@ def test_pdf_a_scope_whose_columns_were_removed_prints_as_a_plain_scope():
         record = _issue(db, document, owner)
         rows = _thead_rows(_scope_block(_html(db, record), UNIT_LABEL))
         assert [text for _, text in rows[0]] == [
-            c for c in qpdf._COLUMNS if c != qpdf._IMAGE_COLUMN
+            label for key, label in quotation_columns.COLUMNS if key != quotation_columns.IMAGE
         ]
         assert len(rows) == 1
 
@@ -221,7 +229,7 @@ def test_excel_a_plain_scope_keeps_todays_header_and_has_no_merges():
         sheet = book.worksheets[1]
         item = _find(sheet, "ITEM")
         header = [c.value for c in sheet[item.row] if c.value is not None]
-        assert header == [c for c in qpdf._COLUMNS if c != qpdf._IMAGE_COLUMN]
+        assert header == _TODAY_NO_IMAGE
         assert not sheet.merged_cells.ranges
 
 
