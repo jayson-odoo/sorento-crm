@@ -374,16 +374,16 @@ def test_stock_ask_and_incoming_agree_for_one_contact_and_product(client, db):
         assert listed == told
 
 
-# ============================================================== the today floor (STOCK-INCOMING-FLOOR)
+# ============================================================== one shared incoming answer (STOCK-INCOMING-FLOOR, Fix B)
 #
 # Production, 2 Nov 2026: a dealer's stock check said "No stock and no incoming" for a product
-# whose ETA ask then told 03/11. The stock check floored today on the PROMISED date (20/10)
-# before adding the dealer's 14-day padding; the ETA ask told the padded date. The floor is on
-# the date the dealer is TOLD. UAC `stock-incoming-floor-2nov-acceptance-criteria.md`; fake
-# codes and dates. A shipment whose told date has already passed is Fix B (owner) and is not
-# pinned here.
+# whose ETA ask then told 03/11. Owner rule: the stock check (no stock) and the ETA ask show ONE
+# list of told dates per product code: distinct, ascending, dd/mm/yyyy, joined with ", ", a date
+# before today (MYT) followed by " (delayed)". UAC `stock-incoming-floor-2nov-acceptance-criteria.md`
+# AC-SIF1..12; fake codes and dates.
 
 FLOOR_TODAY = date(2026, 11, 2)
+PL_NAME = "packing-list.pdf"
 
 
 @pytest.fixture
@@ -393,79 +393,227 @@ def floor_today(monkeypatch):
     monkeypatch.setattr(incoming, "today_myt", lambda: FLOOR_TODAY)
 
 
-def _padded_product(db, *, offset, promised, code=None, company_id=DEFAULT_COMPANY_ID):
-    """A product whose own category pads `offset` days, with one packing-list shipment per
-    `promised` date."""
+def _padded_product(
+    db, *, offset, promised, code=None, company_id=DEFAULT_COMPANY_ID, attach=True, revised=None
+):
+    """A product whose own category pads `offset` days, with one shipment per `promised` date
+    (None = a shipment with no ETA). `attach`: the shipment carries a packing list. `revised`:
+    {promised date: revised date}."""
     p = product(db, company_id=company_id, code=code)
     category = _category_of(db, p)
     category.chatbot_max_qty = 200
     category.chatbot_eta_offset_days = offset
     for day in promised:
         shipment = _incoming_shipment(
-            db, eta=day, attachment_id=_attachment(db).id, company_id=company_id
+            db,
+            eta=day,
+            attachment_id=_attachment(db).id if attach else None,
+            company_id=company_id,
         )
+        if revised and day in revised:
+            shipment.eta_delay_date = revised[day]
         _incoming_line(db, shipment_id=shipment.id, product_id=p.id, company_id=company_id)
     db.flush()
     return p
 
 
-def _stock_check(db, contact, p, *, also=()):
-    """The dealer's stock check with a quantity, nothing on hand: `(branch, eta)`. `also`:
-    more product ids asked in the same call (a code two companies carry)."""
+def _ask_both(client, db, contact, p, *, also=(), qty=1):
+    """The dealer's stock check with a quantity (nothing on hand) and the ETA ask on both
+    routes: `(stock_entry, list_row, by_product_row)`. The contact is put on the availability
+    policy once, so both routes answer it with the dealer view."""
     brw = _wh(db, unique_code("ZZTW")[:20])
     stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
     _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
     db.flush()
     result = StockService(db).list_stock(
-        product_ids=[p.id, *also], contact_id=contact.id, requested_quantities={p.id: 1}
+        product_ids=[p.id, *also], contact_id=contact.id, requested_quantities={p.id: qty}
     )
     entry = _entry(result, p.id)
-    return entry["branch"], entry["eta"]
+    listed = _list(client, p, contact)
+    assert listed.get("dealer_view") is True, listed
+    by_product = _by_product(client, p, contact)
+    assert by_product.get("dealer_view") is True, by_product
+    (by_row,) = by_product["data"]
+    return entry, listed["data"][0], by_row
 
 
-def test_the_stock_check_tells_the_padded_date_the_eta_ask_tells(client, db, floor_today):
+def _assert_told(entry, listed, by_row, *, dates):
+    """Stock check string and both ETA lists carry the same dates, in the same order."""
+    assert entry["branch"] == "incoming"
+    assert entry["eta"] == ", ".join(dates)
+    assert listed["etas"] == list(dates)
+    assert by_row["etas"] == list(dates)
+
+
+def test_delayed_mark_is_one_constant():
+    """AC-SIF11 (constant half)."""
+    from app.services.eta_policy import DELAYED_MARK
+
+    assert DELAYED_MARK == "(delayed)"
+
+
+def test_the_stock_check_tells_every_padded_date_the_eta_ask_tells(client, db, floor_today):
     """AC-SIF1 + AC-SIF2, the production case: promised 20/10 and 23/10, padded 14 days, asked
-    on 02/11. The stock check is incoming 03/11, and the ETA ask's first date is the same."""
+    on 02/11. Stock check incoming `03/11/2026, 06/11/2026`, and `/list` and `/by-product` list
+    the same two dates in the same order."""
     p = _padded_product(db, offset=14, promised=(date(2026, 10, 20), date(2026, 10, 23)))
-    dealer = _contact(db, offset_applied=True)
-
-    assert _stock_check(db, dealer, p) == ("incoming", "03/11/2026")
-    (row,) = _by_product(client, p, dealer)["data"]
-    assert row["etas"] == ["03/11/2026", "06/11/2026"]
+    entry, listed, by_row = _ask_both(client, db, _contact(db, offset_applied=True), p)
+    _assert_told(entry, listed, by_row, dates=("03/11/2026", "06/11/2026"))
+    assert listed["product_code"] == p.product_code
 
 
-def test_a_told_date_of_today_is_incoming(db, floor_today):
-    """AC-SIF3: promised 19/10 + 14 days is told today."""
+def test_a_told_date_of_today_is_plain(client, db, floor_today):
+    """AC-SIF3: promised 19/10 + 14 days is told today, no marker."""
     p = _padded_product(db, offset=14, promised=(date(2026, 10, 19),))
-    assert _stock_check(db, _contact(db), p) == ("incoming", "02/11/2026")
+    entry, listed, by_row = _ask_both(client, db, _contact(db), p)
+    _assert_told(entry, listed, by_row, dates=("02/11/2026",))
 
 
-def test_the_earliest_shipment_whose_told_date_is_still_ahead_answers(db, floor_today):
-    """AC-SIF4: told 15/10 is past and does not answer; told 03/11 does, ahead of told 24/11."""
-    p = _padded_product(
-        db, offset=14, promised=(date(2026, 10, 1), date(2026, 10, 20), date(2026, 11, 10))
-    )
-    assert _stock_check(db, _contact(db), p) == ("incoming", "03/11/2026")
+def test_a_past_told_date_is_incoming_marked_delayed_in_date_order(client, db, floor_today):
+    """AC-SIF4: promised 01/10 + 14 = 15/10, past: still incoming, marked, listed ahead of
+    the 03/11 one."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 1), date(2026, 10, 20)))
+    entry, listed, by_row = _ask_both(client, db, _contact(db), p)
+    _assert_told(entry, listed, by_row, dates=("15/10/2026 (delayed)", "03/11/2026"))
 
 
-def test_padding_off_floors_on_the_real_date_and_tells_it(db, floor_today):
-    """AC-SIF5: a contact told exact dates is never told the padded 03/11; the next real date
-    still ahead (10/11) answers."""
+def test_padding_off_tells_the_promised_dates(client, db, floor_today):
+    """AC-SIF5: a contact told exact dates is never told the padded 03/11."""
     p = _padded_product(db, offset=14, promised=(date(2026, 10, 20), date(2026, 11, 10)))
-    assert _stock_check(db, _contact(db, offset_applied=False), p) == ("incoming", "10/11/2026")
+    entry, listed, by_row = _ask_both(client, db, _contact(db, offset_applied=False), p)
+    _assert_told(entry, listed, by_row, dates=("20/10/2026 (delayed)", "10/11/2026"))
+    assert "03/11/2026" not in entry["eta"]
 
 
-def test_a_code_two_companies_carry_is_padded_by_the_larger_offset(db, floor_today):
-    """AC-SIF6: the ETA ask pads a code by the larger of its products' offsets
-    (`eta_policy._offsets_by_product_code`); the stock check now reads the same offsets.
-    Promised 25/10: + 14 is 08/11 (ahead); the asked product's own + 3 would be 28/10 (past)."""
+def test_a_code_two_companies_carry_is_padded_by_the_larger_offset_and_unions_dates(
+    client, db, floor_today
+):
+    """AC-SIF6: asked product pads 3, its twin 14, so the code pads 14. Sorento promised 25/10
+    (+14 = 08/11), Mocha promised 05/11 (+14 = 19/11): both dates on both paths."""
     seed_mocha(db)
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+
+    async def _wide_scope():
+        scope = frozenset({DEFAULT_COMPANY_ID, MOCHA_ID})
+        set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _wide_scope
     code = unique_code("ZZTFLR")[:50]
     asked = _padded_product(db, offset=3, promised=(date(2026, 10, 25),), code=code)
-    twin = _padded_product(db, offset=14, promised=(), code=code, company_id=MOCHA_ID)
+    twin = _padded_product(
+        db, offset=14, promised=(date(2026, 11, 5),), code=code, company_id=MOCHA_ID
+    )
+    entry, listed, by_row = _ask_both(client, db, _contact(db), asked, also=(twin.id,))
+    _assert_told(entry, listed, by_row, dates=("08/11/2026", "19/11/2026"))
 
-    assert _stock_check(db, _contact(db), asked, also=(twin.id,)) == ("incoming", "08/11/2026")
+
+def test_a_shipment_without_a_packing_list_is_told_and_the_file_goes_with_the_toggle(
+    client, db, floor_today
+):
+    """AC-SIF7: the 25/10 shipment has no packing list and the 10/11 one has. Both dates are
+    told on both paths. The file (stock check only) is the earliest shipment that has one,
+    and only when the contact's toggle is on."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 25),), attach=False)
+    with_file = _incoming_shipment(db, eta=date(2026, 11, 10), attachment_id=_attachment(db).id)
+    _incoming_line(db, shipment_id=with_file.id, product_id=p.id)
+    db.flush()
+    dates = ("08/11/2026", "24/11/2026")
+
+    allowed = _contact(db, packing_list_allowed=True)
+    entry, listed, by_row = _ask_both(client, db, allowed, p)
+    _assert_told(entry, listed, by_row, dates=dates)
+    assert entry["packing_list"]["filename"] == PL_NAME
+    assert "attachment" not in listed and "attachment" not in by_row
+
+    denied = _contact(db, packing_list_allowed=False)
+    entry, listed, by_row = _ask_both(client, db, denied, p)
+    _assert_told(entry, listed, by_row, dates=dates)
+    assert entry["packing_list"] is None
+
+
+def test_a_lone_shipment_without_a_packing_list_is_incoming_with_no_file(client, db, floor_today):
+    """AC-SIF7: no packing list on any shipment is still incoming, told, and no file."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 25),), attach=False)
+    entry, listed, by_row = _ask_both(client, db, _contact(db, packing_list_allowed=True), p)
+    _assert_told(entry, listed, by_row, dates=("08/11/2026",))
+    assert entry["packing_list"] is None
+
+
+def test_a_revised_date_is_told_on_both_paths_without_the_eta_delay_grant(client, db, floor_today):
+    """AC-SIF8: ETA 13/09 revised to 05/11 is told `05/11/2026`, never `13/09/2026`, though the
+    contact holds no "ETA delay" grant (none seeded here)."""
+    p = _padded_product(
+        db,
+        offset=None,
+        promised=(date(2026, 9, 13),),
+        revised={date(2026, 9, 13): date(2026, 11, 5)},
+    )
+    entry, listed, by_row = _ask_both(client, db, _contact(db), p)
+    _assert_told(entry, listed, by_row, dates=("05/11/2026",))
+    assert "13/09/2026" not in entry["eta"]
+
+
+def test_two_shipments_told_the_same_date_print_it_once(client, db, floor_today):
+    """AC-SIF9."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 20), date(2026, 10, 20)))
+    entry, listed, by_row = _ask_both(client, db, _contact(db), p)
+    _assert_told(entry, listed, by_row, dates=("03/11/2026",))
+
+
+def test_a_shipment_with_no_eta_is_no_incoming_and_no_eta(client, db, floor_today):
+    """AC-SIF10 (guard, unchanged): the only shipment has no ETA."""
+    p = _padded_product(db, offset=14, promised=(None,))
+    brw = _wh(db, unique_code("ZZTW")[:20])
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
+    dealer = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=dealer)
+    db.flush()
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=dealer.id, requested_quantities={p.id: 1}
+    )
+    assert _entry(result, p.id)["branch"] == "no_incoming"
+    res = client.get(
+        "/api/v1/incoming-stock/list",
+        params={"product_ids": p.product_code, "contact_id": dealer.id},
+    )
+    assert res.status_code == 200, res.text
+    for row in res.json()["data"]:
+        assert row["etas"] == []
+
+
+def test_a_non_dealer_contact_and_staff_keep_full_rows_with_no_marker(client, db, floor_today):
+    """AC-SIF12 (guard): past promised dates; a non-dealer contact and staff read the raw
+    shipment rows, no dealer view and no marker."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 1), date(2026, 10, 20)))
+    for contact in (_contact(db), None):
+        params = {"product_ids": p.product_code}
+        if contact is not None:
+            params["contact_id"] = contact.id
+        body = client.get("/api/v1/incoming-stock/list", params=params).json()
+        assert "dealer_view" not in body
+        assert len(body["data"]) == 2
+        assert all(row["lines"] for row in body["data"])
+        assert "(delayed)" not in str(body)
+
+
+def test_a_windowed_dealer_ask_is_unchanged(client, db, floor_today):
+    """AC-SIF12 (guard): an eta_from/eta_to ask keeps its rows and window, with no marker."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 1), date(2026, 10, 20)))
+    dealer = _dealer(db)
+    res = client.get(
+        "/api/v1/incoming-stock/list",
+        params={
+            "product_ids": p.product_code,
+            "contact_id": dealer.id,
+            "eta_from": "2026-11-01",
+            "eta_to": "2026-11-30",
+        },
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "(delayed)" not in str(body)
+    assert len(body["data"]) == 1
 
 
 # ============================================================== packing list gate
