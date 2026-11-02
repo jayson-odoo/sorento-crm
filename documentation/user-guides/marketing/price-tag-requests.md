@@ -267,6 +267,13 @@ value within a kind). The dialog counts the products that match and how many alr
 template. **Add to N** links it to the rest. **Remove from N** unlinks it, with a countdown and
 **Cancel** before it happens.
 
+**Before salespeople approve their own tags, link templates to products.** A product with no
+template cannot be approved by the salesperson: the request has to be escalated to you. So
+before release, publish the templates you use and run **Assign to products** once per template
+(pick the brands, categories, item classes or model families it serves, check the count, **Add**).
+A product two templates cover gets a picker on the request; a product none cover shows *"No tag
+template yet for <code>."* on the salesperson's Preview and reaches you as an escalation.
+
 In the designer, a line whose request named a template opens on that template. **Use template...**
 still lists every template if you want a different one.
 
