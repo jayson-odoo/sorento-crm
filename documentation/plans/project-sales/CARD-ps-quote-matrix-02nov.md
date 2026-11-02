@@ -159,6 +159,11 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
 - #2097 PS-PROPOSAL-QUOTATION: `copy_line` + `make_quotation` version copy (add the two JSONB fields),
   `project_quotation_document_service.py`, PDF / Excel services, `models/projects.py`. No change to `qty_over_quotation`
   is needed any more (no per-unit scopes). Build after it merges.
+  #2097 agreed (2 Nov) the feedback rework is this lane's; it builds nothing on Accept/Apply, and its price-change alert
+  fires on `issue()`, not on an applied suggestion, so retiring `apply_request` leaves it alone. #2097 also changes the
+  sign page noun Proposal / Quotation (`QuotationSignClient.tsx`, from `document_kind`) and the "replaced by" banner,
+  and may change the "Sign and accept" block for proposals (its F1): the feedback UI sits beside that block, so merge
+  #2097's version and add to it.
 - #2103 PS-SPEC-SHEET: reads line quantity only. Later nice-to-have: prefill its per-page "Area" from the shoulders
   where the line has a quantity. Not in this lane.
 - #2094 QUOTE-COVER-DESIGN: shares the PDF service and the migration queue (one migration PR at a time).
