@@ -208,7 +208,11 @@ import { toast } from '@/lib/toast';
 import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationScopesTab } from './QuotationScopesTab';
-import { QuotationHeaderTab, QuotationSignaturesTab } from './QuotationDocumentTabPanels';
+import {
+  QuotationHeaderTab,
+  QuotationSignaturesTab,
+  QuotationTermsTab,
+} from './QuotationDocumentTabPanels';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -1932,5 +1936,57 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
     await waitFor(() => expect(issueQuotationDocument).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(screen.queryByText('Send R1 via WhatsApp')).toBeNull();
+  });
+});
+
+/**
+ * QUOTE-COVER-PAGE (UAC B1): the view page shows the four new fields where the edit form has them.
+ * Header tab: Email, Quotation Purpose, Prepared By (the project salesperson). Terms tab: Payment
+ * Terms and Validity above the terms.
+ */
+describe('QuotationDocumentClient cover page fields', () => {
+  const coverDocument = () =>
+    quotationDocument({
+      terms_html: '<p>CLAUSE A</p>',
+      ...({
+        recipient_email_snapshot: 'kelly@example.test',
+        quotation_purpose: 'Supply of sanitary ware',
+        payment_terms: '30 days net',
+        validity: '60 days',
+      } as unknown as Partial<QuotationDocument>),
+    });
+
+  it('the Header tab shows Email, Quotation Purpose and Prepared By', async () => {
+    getQuotationDocument.mockResolvedValue(coverDocument());
+    getProject.mockResolvedValue(project({ owner_name: 'Ahmad Faizal' }));
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await screen.findByTestId('quotation-header-card');
+    await waitFor(() => expect(card).toHaveTextContent('kelly@example.test'));
+    expect(card).toHaveTextContent('Email');
+    expect(card).toHaveTextContent('Quotation Purpose');
+    expect(card).toHaveTextContent('Supply of sanitary ware');
+    expect(card).toHaveTextContent('Prepared By');
+    expect(card).toHaveTextContent('Ahmad Faizal');
+  });
+
+  it('the Terms tab shows Payment Terms and Validity with the terms', async () => {
+    getQuotationDocument.mockResolvedValue(coverDocument());
+    renderScreen(<QuotationTermsTab />);
+
+    expect(await screen.findByText('Payment Terms')).toBeInTheDocument();
+    expect(screen.getByText('30 days net')).toBeInTheDocument();
+    expect(screen.getByText('Validity')).toBeInTheDocument();
+    expect(screen.getByText('60 days')).toBeInTheDocument();
+    expect(screen.getByText('CLAUSE A')).toBeInTheDocument();
+  });
+
+  it('an old quotation with none of the fields shows no empty Email or Validity row', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ terms_html: '<p>CLAUSE A</p>' }));
+    renderScreen(<QuotationTermsTab />);
+
+    expect(await screen.findByText('CLAUSE A')).toBeInTheDocument();
+    expect(screen.queryByText('Validity')).toBeNull();
+    expect(screen.queryByText('Payment Terms')).toBeNull();
   });
 });
