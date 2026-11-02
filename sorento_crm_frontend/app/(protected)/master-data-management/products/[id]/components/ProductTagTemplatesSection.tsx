@@ -4,7 +4,8 @@
  * Product page > Overview > "Price tag templates" (PRICETAG-TEMPLATE-PER-PRODUCT R2).
  *
  * The templates this product may print with: one = a price tag request uses it
- * on its own, several = the salesperson picks, none = the code's family rule.
+ * on its own, several = the salesperson picks, none = no template: the request
+ * goes to marketing (no fallback, #2101).
  * Marketing (`dealer_kit.tag_templates.manage`) edits the set in place; anyone
  * who can see templates reads it. Not drawn at all without that read.
  */
@@ -129,9 +130,9 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
         )}
         {!linked.isLoading && !linked.isError && rows.length === 0 ? (
           <div>
-            <p className="text-sm font-medium">No price tag templates</p>
+            <p className="text-sm font-medium">No tag template yet</p>
             <p className="text-sm text-muted-foreground">
-              Requests for this product use the template that matches its code.
+              Price tag requests for this product go to marketing to pick one.
             </p>
           </div>
         ) : null}
