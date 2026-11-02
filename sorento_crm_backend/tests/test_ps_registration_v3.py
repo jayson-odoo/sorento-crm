@@ -259,9 +259,9 @@ def test_r4_contacts_crud_on_a_party(v2):
     cid = made.json()["id"]
     listed = c.get(f"{PARTIES}/{party.id}/contacts")
     assert [r["name"] for r in listed.json()["data"]] == ["Example Two"]
-    edited = c.put(f"{PARTIES}/{party.id}/contacts/{cid}", json={"phone": "+60130002222"})
+    edited = c.put(f"{PARTIES}/{party.id}/contacts/{cid}", json={"phone": "+60130000222"})
     assert edited.status_code == 200, edited.text
-    assert edited.json()["phone"] == "+60130002222"
+    assert edited.json()["phone"] == "+60130000222"
     gone = c.delete(f"{PARTIES}/{party.id}/contacts/{cid}")
     assert gone.status_code == 200, gone.text
     assert c.get(f"{PARTIES}/{party.id}/contacts").json()["data"] == []
@@ -301,7 +301,7 @@ def test_r4_contacts_of_another_companys_party_are_not_found(v2):
 def test_r6_picked_contacts_become_stakeholders(v2):
     arch = _party(v2, "architect")
     mc = _party(v2, "main_contractor")
-    one = _contact(v2, arch, name="Ar. Example One", phone="+60120001111", job_title="Principal")
+    one = _contact(v2, arch, name="Ar. Example One", phone="+60120000111", job_title="Principal")
     two = _contact(v2, mc, name="Example Two", job_title="QS")
     res = _register(
         v2, architect_party_id=arch.id, main_contractor_party_id=mc.id, contact_ids=[one.id, two.id]
@@ -311,7 +311,7 @@ def test_r6_picked_contacts_become_stakeholders(v2):
     assert set(rows) == {"Ar. Example One", "Example Two"}
     assert rows["Ar. Example One"].party_id == arch.id
     assert rows["Ar. Example One"].party_contact_id == one.id
-    assert rows["Ar. Example One"].phone == "+60120001111"
+    assert rows["Ar. Example One"].phone == "+60120000111"
     assert rows["Ar. Example One"].job_title == "Principal"
     assert rows["Example Two"].phone is None
 
@@ -352,9 +352,9 @@ def test_r6_the_developer_contacts_can_be_picked_too(v2):
 
 
 def _project_with_parties(w):
-    dev = _party(w, "developer", phone="+60300001000")
+    dev = _party(w, "developer", phone="+60300000100")
     mc = _party(w, "main_contractor")
-    two = _contact(w, mc, name="Example Two", phone="+60130002222")
+    two = _contact(w, mc, name="Example Two", phone="+60130000222")
     three = _contact(w, mc, name="Example Three")
     res = _register(w, developer_party_id=dev.id, main_contractor_party_id=mc.id, contact_ids=[two.id, three.id])
     assert res.status_code == 201, res.text
@@ -366,32 +366,32 @@ def test_r10_the_project_parties_read_lists_roles_and_contacts(v2):
     res = as_user(v2, v2.sales_b).get(f"{PROJECTS}/{pid}/parties")
     assert res.status_code == 200, res.text
     rows = {r["party_id"]: r for r in res.json()["data"]}
-    assert rows[dev.id]["role"] == "developer" and rows[dev.id]["phone"] == "+60300001000"
+    assert rows[dev.id]["role"] == "developer" and rows[dev.id]["phone"] == "+60300000100"
     assert rows[mc.id]["role"] == "main_contractor"
     people = {c["name"]: c for c in rows[mc.id]["contacts"]}
-    assert people["Example Two"]["phone"] == "+60130002222"
+    assert people["Example Two"]["phone"] == "+60130000222"
     assert people["Example Three"]["phone"] is None
 
 
 def test_r11_a_blank_party_phone_is_filled_and_saved(v2):
     pid, dev, mc, two, three = _project_with_parties(v2)
-    res = as_user(v2, v2.owner).post(f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "+60135550000"})
+    res = as_user(v2, v2.owner).post(f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "+60130000000"})
     assert res.status_code == 200, res.text
     v2.db.refresh(mc)
-    assert mc.phone == "+60135550000"
+    assert mc.phone == "+60130000000"
 
 
 def test_r11_a_blank_contact_phone_is_saved_to_the_contact_and_its_stakeholder(v2):
     pid, dev, mc, two, three = _project_with_parties(v2)
     stake = next(s for s in _stakeholders(v2, pid) if s.party_contact_id == three.id)
     res = as_user(v2, v2.owner).post(
-        f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "+60140003333", "stakeholder_id": stake.id}
+        f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "+60140000333", "stakeholder_id": stake.id}
     )
     assert res.status_code == 200, res.text
     v2.db.refresh(three)
     v2.db.refresh(stake)
     v2.db.refresh(mc)
-    assert three.phone == "+60140003333" and stake.phone == "+60140003333"
+    assert three.phone == "+60140000333" and stake.phone == "+60140000333"
     assert mc.phone is None  # the firm's own line is not touched
 
 
@@ -401,7 +401,7 @@ def test_r11_a_number_on_file_is_never_overwritten(v2):
     assert res.status_code == 409, res.text
     assert res.json()["code"] == "project_party_phone_on_file"
     v2.db.refresh(dev)
-    assert dev.phone == "+60300001000"
+    assert dev.phone == "+60300000100"
 
 
 def test_r12_a_party_not_on_the_project_is_refused(v2):
@@ -532,12 +532,12 @@ def test_r4_the_parked_delete_removes_the_contact_and_keeps_the_stakeholder_copy
 
 def test_sec_a_picker_without_parties_view_gets_names_only(v2):
     party = _party(v2, "architect")
-    _contact(v2, party, name="Ar. Private", phone="+60120009999")
+    _contact(v2, party, name="Ar. Private", phone="+60120000999")
     row = as_user(v2, v2.sub_a).get(f"{PARTIES}/{party.id}/contacts").json()["data"][0]
     assert row["name"] == "Ar. Private"
     assert "phone" not in row and "email" not in row
     full = as_user(v2, v2.owner).get(f"{PARTIES}/{party.id}/contacts").json()["data"][0]
-    assert full["phone"] == "+60120009999"
+    assert full["phone"] == "+60120000999"
 
 
 def test_sec_contact_ids_are_capped(v2):
@@ -585,10 +585,10 @@ def test_sec_the_phone_fill_is_audited(v2):
     from app.models.audit import AuditLog
 
     pid, dev, mc, *_ = _project_with_parties(v2)
-    res = as_user(v2, v2.owner).post(f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "+60135551111"})
+    res = as_user(v2, v2.owner).post(f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "+60130000111"})
     assert res.status_code == 200, res.text
     rows = v2.db.query(AuditLog).filter(AuditLog.entity_id == mc.id, AuditLog.action == "UPDATE").all()
-    assert any((r.new_values or {}).get("phone") == "+60135551111" for r in rows), [
+    assert any((r.new_values or {}).get("phone") == "+60130000111" for r in rows), [
         (r.action, r.new_values) for r in rows
     ]
 

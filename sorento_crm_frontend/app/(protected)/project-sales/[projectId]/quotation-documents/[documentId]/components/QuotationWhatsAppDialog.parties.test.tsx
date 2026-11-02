@@ -85,7 +85,7 @@ const PARTIES = [
     party_type: 'developer',
     role: 'developer',
     name: 'Pembangunan Contoh',
-    phone: '+60 12-000 1000',
+    phone: '+60 120000000',
     contacts: [],
   },
   {
@@ -100,7 +100,7 @@ const PARTIES = [
         party_contact_id: 'k2',
         name: 'Example Two',
         job_title: 'QS',
-        phone: '+60130002222',
+        phone: '+60130000222',
         email: null,
       },
       {
@@ -133,7 +133,7 @@ beforeEach(() => {
   createQuotationSignLink.mockResolvedValue({ token: 't', path: '/quotation-sign/t', expires_at: null });
   logQuotationWhatsAppOpened.mockResolvedValue(undefined);
   getPartiesOnProject.mockResolvedValue(PARTIES);
-  fillPartyPhone.mockResolvedValue({ party_id: 'mc1', stakeholder_id: 'st3', phone: '+60140003333' });
+  fillPartyPhone.mockResolvedValue({ party_id: 'mc1', stakeholder_id: 'st3', phone: '+60140000333' });
 });
 
 describe('QuotationWhatsAppDialog: send to a party of the project', () => {
@@ -150,7 +150,7 @@ describe('QuotationWhatsAppDialog: send to a party of the project', () => {
     renderDialog();
     await waitFor(() => expect(sendTo().options.length).toBe(5));
     fireEvent.change(sendTo(), { target: { value: 'person:st2' } });
-    expect(toBox().value).toBe('+60130002222');
+    expect(toBox().value).toBe('+60130000222');
   });
 
   it('a pick with no number says so, and the typed number is saved to that person on open', async () => {
@@ -159,12 +159,12 @@ describe('QuotationWhatsAppDialog: send to a party of the project', () => {
     fireEvent.change(sendTo(), { target: { value: 'person:st3' } });
     expect(toBox().value).toBe('');
     expect(screen.getByText(/No number on file/)).toBeInTheDocument();
-    fireEvent.change(toBox(), { target: { value: '+60140003333' } });
+    fireEvent.change(toBox(), { target: { value: '+60140000333' } });
     await waitFor(() => expect(openLink()).not.toHaveAttribute('aria-disabled'));
     fireEvent.click(openLink());
     await waitFor(() =>
       expect(fillPartyPhone).toHaveBeenCalledWith('p1', 'mc1', {
-        phone: '+60140003333',
+        phone: '+60140000333',
         stakeholder_id: 'st3',
       }),
     );
@@ -174,12 +174,12 @@ describe('QuotationWhatsAppDialog: send to a party of the project', () => {
     renderDialog();
     await waitFor(() => expect(sendTo().options.length).toBe(5));
     fireEvent.change(sendTo(), { target: { value: 'party:main_contractor:mc1' } });
-    fireEvent.change(toBox(), { target: { value: '0135550000' } });
+    fireEvent.change(toBox(), { target: { value: '0130000000' } });
     await waitFor(() => expect(openLink()).not.toHaveAttribute('aria-disabled'));
     fireEvent.click(openLink());
     await waitFor(() =>
       expect(fillPartyPhone).toHaveBeenCalledWith('p1', 'mc1', {
-        phone: '+60135550000', // saved normalised, as WhatsApp dialled it
+        phone: '+60130000000', // saved normalised, as WhatsApp dialled it
         stakeholder_id: null,
       }),
     );

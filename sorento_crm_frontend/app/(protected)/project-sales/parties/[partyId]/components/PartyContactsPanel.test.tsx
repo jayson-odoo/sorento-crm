@@ -76,12 +76,12 @@ describe('PartyContactsPanel', () => {
 
   it('lists each contact with its phone, a blank phone as a dash', async () => {
     listPartyContacts.mockResolvedValue([
-      { id: 'c1', party_id: 'pt1', name: 'Example Two', job_title: 'QS', phone: '+60130002222', is_active: true },
+      { id: 'c1', party_id: 'pt1', name: 'Example Two', job_title: 'QS', phone: '+60130000222', is_active: true },
       { id: 'c2', party_id: 'pt1', name: 'Example Three', job_title: null, phone: null, is_active: true },
     ]);
     renderPanel();
     expect(await screen.findByText('Example Two')).toBeInTheDocument();
-    expect(screen.getByText('+60130002222')).toBeInTheDocument();
+    expect(screen.getByText('+60130000222')).toBeInTheDocument();
     expect(screen.getByText('Example Three')).toBeInTheDocument();
   });
 
