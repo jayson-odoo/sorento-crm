@@ -65,8 +65,8 @@ EXACT = "2026-10-28"
 
 
 def _ask_eta() -> date:
-    """A shipment ETA for the stock ask, which only reads shipments due today or later
-    (MYT): three days before the end of next month, so the 5-day pad still crosses it."""
+    """A shipment ETA for the stock ask, computed off the real today (MYT) so it never reads
+    "(delayed)": three days before the end of next month, so the 5-day pad still crosses it."""
     month_after_next = (today_myt().replace(day=1) + timedelta(days=62)).replace(day=1)
     return month_after_next - timedelta(days=3)
 
@@ -444,6 +444,21 @@ def _assert_told(entry, listed, by_row, *, dates):
     assert entry["eta"] == ", ".join(dates)
     assert listed["etas"] == list(dates)
     assert by_row["etas"] == list(dates)
+
+
+def test_a_draft_shipment_and_a_received_line_are_not_told(client, db, floor_today):
+    """Q1: only a non-draft, still-incoming shipment is told. Draft 05/11 and fully received
+    04/11 are left out; the normal 10/11 one is the only date, on all three reads."""
+    p = _padded_product(db, offset=None, promised=(date(2026, 11, 10),))
+    draft = _incoming_shipment(
+        db, eta=date(2026, 11, 5), attachment_id=_attachment(db).id, status="draft"
+    )
+    _incoming_line(db, shipment_id=draft.id, product_id=p.id)
+    done = _incoming_shipment(db, eta=date(2026, 11, 4), attachment_id=_attachment(db).id)
+    _incoming_line(db, shipment_id=done.id, product_id=p.id, shipped=10, received=10, status="received")
+    db.flush()
+    entry, listed, by_row = _ask_both(client, db, _contact(db), p)
+    _assert_told(entry, listed, by_row, dates=("10/11/2026",))
 
 
 def test_delayed_mark_is_one_constant():

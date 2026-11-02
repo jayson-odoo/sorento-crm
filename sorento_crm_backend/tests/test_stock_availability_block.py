@@ -58,8 +58,8 @@ WRITE_PERM = "inventory.stock.edit"
 
 @pytest.fixture(autouse=True)
 def _fixed_today(monkeypatch):
-    """The dealer read only takes shipments due today or later (CHAT-FIND round 3); these tests
-    date their shipments in 2026, so today is pinned before every one of them."""
+    """These tests date their shipments in 2026, so today is pinned before every one of them
+    and the "(delayed)" marker a past told date carries is deterministic."""
     import app.services.incoming_stock_service as incoming
 
     monkeypatch.setattr(incoming, "today_myt", lambda: date(2026, 1, 1))
@@ -887,7 +887,7 @@ def test_merged_entry_takes_the_earliest_qualifying_shipment_across_the_group(db
     _incoming_line(
         db, shipment_id=mocha_shipment.id, product_id=mocha_p.id, company_id=MOCHA_ID
     )
-    contact = _contact(db)
+    contact = _contact(db, packing_list_allowed=True)
     _policy_row(
         db,
         mode="availability",
@@ -908,6 +908,8 @@ def test_merged_entry_takes_the_earliest_qualifying_shipment_across_the_group(db
     assert entry["branch"] == "incoming"
     # Fix B (owner, 2 Nov 2026): the entry tells every date of the code, not only the earliest.
     assert entry["eta"] == "01/02/2026, 01/03/2026"
+    # AC-SIF7: the file is the EARLIEST shipment's (Mocha, 01/02), not the Sorento one.
+    assert entry["packing_list"]["file_path"] == mocha_att.file_path
 
 
 # ================================ review round 6, the asked order (unchanged)
