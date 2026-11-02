@@ -197,6 +197,18 @@ describe('SampleRequestDetail consignment', () => {
     expect(screen.queryByText('Voided in AutoCount')).toBeNull();
   });
 
+  it('drops the source label when the live source no longer gives the stored date', () => {
+    state.data = {
+      ...(state.data as Detail),
+      status: 'delivered',
+      status_label: 'Delivered',
+      delivered_at: '2026-11-22',
+      consignment: { ...CG, delivered_on: '2026-11-20', delivered_source: 'consignment' },
+    };
+    render(<Page />);
+    expect(screen.queryByText(/\((Order Tracking|consignment date)\)$/)).toBeNull();
+  });
+
   it('does not offer Link consignment to a salesperson or before processing', () => {
     state.perms = new Set();
     render(<Page />);

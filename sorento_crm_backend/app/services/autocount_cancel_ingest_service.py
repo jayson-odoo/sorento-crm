@@ -1139,9 +1139,9 @@ class AutocountCancelIngestService:
             self.consignment_numbers.add(doc.doc_no)
             # PS-SAMPLE-TRACKING: a linked sample request follows its consignment (voided ->
             # back to Stage 1, live -> Delivered on the CG date).
-            from app.services.sample_request_service import sync_consignment
+            from app.services.sample_request_service import sync_consignment_safely
 
-            sync_consignment(self.db, self.company_id, doc.doc_no)
+            sync_consignment_safely(self.db, self.company_id, doc.doc_no)
             # CONSIGN-DELIVERED-FIX: the CG's TransferedQty is its returned qty.
             line_ids = [r[0] for r in self.db.query(SalesOrderLine.id)
                         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)

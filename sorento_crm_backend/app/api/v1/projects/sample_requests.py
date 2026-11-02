@@ -147,16 +147,16 @@ def list_requests(
     db: Session = Depends(get_db),
 ):
     actor = _list_actor(db, user)
+    stages = multi_values(stage)
     return svc.list_for(
         db,
         actor=actor,
         # A stage filter replaces the open-set default: "Delivery" must find Delivered rows.
+        # A bare `?stage=` is no stage filter at all.
         statuses=(
-            multi_values(status_filter) or None
-            if stage and status_filter is None
-            else _statuses(status_filter, actor)
+            None if stages and status_filter is None else _statuses(status_filter, actor)
         ),
-        stages=multi_values(stage) or None,
+        stages=stages or None,
         project_id=validate_uuid_path(project_id, resource="Project") if project_id else None,
         salesperson_id=multi_uuids(salesperson_id, "salesperson_id"),
         q=q,

@@ -129,19 +129,40 @@ def test_link_needs_processing_first(world):
     assert _code(res) == "SAMPLE_REQUEST_CONSIGNMENT_CLOSED"
 
 
-def test_link_refuses_what_is_not_a_live_consignment_of_the_company(world):
+@pytest.mark.parametrize("bad", ["cancelled", "sales_order", "other_company", "unknown"])
+def test_link_refuses_what_is_not_a_live_consignment_of_the_company(world, bad):
+    """Review B2: each row is visible to the request's session; the refusal is the rule's."""
+    from contextlib import nullcontext
+
+    from app.models.base import company_scope
+    from app.models.order import SalesOrder
+
     rid = _processing(world)
-    for bad in (
-        _cg(world, status="cancelled"),
-        _cg(world, doc_type="sales_order"),
-        _cg(world, company_id=second_company(world.db)),
-    ):
-        res = _link(world, rid, bad.id)
-        assert res.status_code == 422, res.text
-        assert _code(res) == "SAMPLE_REQUEST_CONSIGNMENT_INVALID"
-    res = _link(world, rid, str(uuid.uuid4()))
+    scope = nullcontext()
+    if bad == "unknown":
+        target = str(uuid.uuid4())
+    else:
+        row = (
+            _cg(world, status="cancelled")
+            if bad == "cancelled"
+            else _cg(world, doc_type="sales_order")
+            if bad == "sales_order"
+            else _cg(world, company_id=(other := second_company(world.db)))
+        )
+        target = row.id
+        if bad == "other_company":
+            # A user scoped to both companies: only the request's own company may be linked.
+            scope = company_scope(world.db, frozenset({world.company_id, other}))
+    with scope:
+        if bad != "unknown":
+            # The rule must be what refuses it, not the session failing to see the row.
+            world.db.expire_all()
+            assert world.db.query(SalesOrder).filter(SalesOrder.id == target).first()
+        res = _link(world, rid, target)
     assert res.status_code == 422, res.text
-    assert _get(world, rid)["status"] == "processing"
+    assert _code(res) == "SAMPLE_REQUEST_CONSIGNMENT_INVALID"
+    after = _get(world, rid)
+    assert after["status"] == "processing" and after["consignment"] is None
 
 
 # ------------------------------------------------------------------ no manual Delivered with a CG
@@ -275,7 +296,7 @@ def _tracking(w, number, delivered, *, company_id=None, cancelled=False, deleted
 def test_tracked_delivery_date_wins_over_the_cg_date(world):
     rid = _processing(world)
     cg = _cg(world)
-    _tracking(world, cg.so_number.lower(), date(2026, 11, 22))  # case does not matter
+    _tracking(world, cg.so_number, date(2026, 11, 22))  # AutoCount's own DocNo, exactly
     body = _link(world, rid, cg.id).json()
     assert body["delivered_at"] == "2026-11-22"
     assert body["return_due"] == "2027-01-22"
@@ -327,3 +348,16 @@ def test_tracking_sync_leaves_unrelated_orders_alone(world):
     other = _tracking(world, "DO-ZZT-NOTACG", date(2026, 11, 24))
     assert svc.sync_tracked_orders(world.db, [other]) == 0
     assert _get(world, rid)["delivered_at"] == "2026-11-20"
+
+
+def test_a_linked_consignment_keeps_its_number_on_internal_save(world):
+    """`Set consignment / PO no` cannot overwrite the linked CG's number; PO no still saves."""
+    rid = _processing(world)
+    cg = _cg(world)
+    assert _link(world, rid, cg.id).status_code == 200
+    res = world.api.as_(world.coord).put(
+        f"{SR}/{rid}/internal", json={"consignment_no": "TYPED-123", "po_no": "PO-9"}
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["consignment_no"] == cg.so_number
+    assert res.json()["po_no"] == "PO-9"

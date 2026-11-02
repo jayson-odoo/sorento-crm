@@ -12,6 +12,8 @@ admin who edits the graph changes them; the permission rules are by status KEY.
 """
 from __future__ import annotations
 
+import logging
+
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -29,6 +31,8 @@ from app.models.user import SystemSetting, User
 from app.services.error_handler import AppException, handle_not_found
 from app.utils.multi_value import multi_values
 from app.services.pdf_render import today_in_malaysia
+
+logger = logging.getLogger(__name__)
 
 ENTITY = "sample_request"
 
@@ -748,8 +752,8 @@ def consignment_delivery(db: Session, cg) -> Optional[tuple]:
     the Overall Tracking `actual_delivery_date` of the `orders` row the tracking import keeps
     under the CG's number (crew b: 375 CGs since 29 Apr carry one, 0-46 days after the CG,
     never before), else the CG's own date (its goods leave at issue, CONSIGN-DELIVERED-FIX).
-    The number is matched exactly (case aside) inside the CG's company: it is AutoCount's own
-    DocNo on both sides, never a guess."""
+    The number is matched exactly inside the CG's company (the unique index): it is AutoCount's
+    own DocNo on both sides, never a guess."""
     if cg is None or cg.status == CONSIGNMENT_CANCELLED:
         return None
     from app.models.order import Order
@@ -758,7 +762,7 @@ def consignment_delivery(db: Session, cg) -> Optional[tuple]:
         db.query(Order.actual_delivery_date)
         .filter(
             Order.company_id == cg.company_id,
-            func.lower(Order.order_number) == (cg.so_number or "").lower(),
+            Order.order_number == cg.so_number,
             Order.deleted_at.is_(None),
             Order.is_cancelled.is_(False),
             Order.actual_delivery_date.isnot(None),
@@ -897,7 +901,9 @@ def link_consignment(
 
 
 def _resync(db: Session, req: SampleRequest, cg) -> None:
-    if status_key(db, req) == CANCELLED:
+    # Only a request still where a consignment can act follows it (review S2): a Cancelled
+    # request, or any status an admin adds after Delivered, is never pulled back.
+    if status_key(db, req) not in CONSIGNMENT_OPEN:
         return
     delivery = consignment_delivery(db, cg)
     if delivery is None:
@@ -921,6 +927,25 @@ def sync_consignment(db: Session, company_id: str, so_number: str) -> int:
     return len(reqs)
 
 
+def _isolated(db: Session, what: str, fn, *args) -> int:
+    """Run a re-sync in its own savepoint: a sample-request error (an admin removed a status
+    from the graph, say) is logged and undone, and never fails the host import / ingest."""
+    try:
+        with db.begin_nested():
+            return fn(db, *args)
+    except Exception:
+        logger.exception("Sample request %s re-sync failed; host write kept", what)
+        return 0
+
+
+def sync_consignment_safely(db: Session, company_id: str, so_number: str) -> int:
+    return _isolated(db, "consignment", sync_consignment, company_id, so_number)
+
+
+def sync_tracked_orders_safely(db: Session, orders: Iterable[Any]) -> int:
+    return _isolated(db, "order tracking", sync_tracked_orders, list(orders))
+
+
 def sync_tracked_orders(db: Session, orders: Iterable[Any]) -> int:
     """After the order tracking import wrote `orders`, refresh the delivered date of every
     request whose linked CG carries one of those numbers (a tracking date that lands after the
@@ -928,7 +953,7 @@ def sync_tracked_orders(db: Session, orders: Iterable[Any]) -> int:
     from app.models.order import SalesOrder
 
     keys = {
-        (str(o.company_id), (o.order_number or "").lower())
+        (str(o.company_id), o.order_number)
         for o in orders
         if getattr(o, "order_number", None) and getattr(o, "company_id", None)
     }
@@ -938,12 +963,12 @@ def sync_tracked_orders(db: Session, orders: Iterable[Any]) -> int:
     linked = (
         db.query(SampleRequest, SalesOrder)
         .join(SalesOrder, SalesOrder.id == SampleRequest.consignment_order_id)
-        .filter(func.lower(SalesOrder.so_number).in_(numbers))
+        .filter(SalesOrder.so_number.in_(numbers))
         .all()
     )
     count = 0
     for req, cg in linked:
-        if (str(cg.company_id), (cg.so_number or "").lower()) not in keys:
+        if (str(cg.company_id), cg.so_number) not in keys:
             continue
         _resync(db, req, cg)
         count += 1
@@ -1503,6 +1528,18 @@ def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
         }
     )
     return row
+
+
+#: Staff-side facts a portal contact never gets (review S3): which staff member answered and
+#: when, and the AutoCount consignment record behind the delivery (its id and AutoCount status).
+PORTAL_HIDDEN = ("consignment", "date_answered_at", "date_answered_by_name")
+
+
+def serialize_portal_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
+    out = serialize_detail(db, req)
+    for key in PORTAL_HIDDEN:
+        out.pop(key, None)
+    return out
 
 
 def render_pdf(db: Session, req: SampleRequest) -> bytes:

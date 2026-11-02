@@ -813,7 +813,9 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
             {r.delivered_at && (
               <Field label="Delivered">
                 {day(r.delivered_at)}
-                {r.consignment?.delivered_source
+                {/* The source is worked out live; name it only while it still gives the stored date. */}
+                {r.consignment?.delivered_source &&
+                r.consignment.delivered_on === r.delivered_at
                   ? ` (${DELIVERED_SOURCE_LABELS[r.consignment.delivered_source]})`
                   : ''}
               </Field>

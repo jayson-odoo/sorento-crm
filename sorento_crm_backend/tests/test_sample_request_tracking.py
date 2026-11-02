@@ -241,3 +241,11 @@ def test_delivery_date_sort_follows_the_proposed_date(world):
 
     ids = [r["id"] for r in _rows(world, sort="delivery_date", dir="asc", limit=200)]
     assert ids.index(late) < ids.index(early)
+
+
+def test_a_bare_stage_param_keeps_the_open_default(world):
+    """Review nit: `?stage=` with no value is no stage filter; drafts stay out."""
+    draft = _draft(world)["id"]
+    open_one = _submitted(world)
+    ids = {r["id"] for r in _rows(world, stage="", limit=200)}
+    assert open_one in ids and draft not in ids
