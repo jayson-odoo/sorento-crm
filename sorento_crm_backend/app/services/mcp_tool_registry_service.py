@@ -1,6 +1,6 @@
 """Sync the persisted MCP tool catalog (`mcp_tools` table) from the code
-catalog (`sorento_crm_mcp.catalog.CATALOG` + `merged_catalog` per-module
-overlay).
+catalog: the backend's verbatim copy `app/services/mcp_catalog_copy.py` of
+`sorento_crm_mcp/sorento_crm_mcp/catalog.py`.
 
 Contract:
 - Idempotent. Re-running with the same code catalog leaves rows untouched
@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.access import McpTool
@@ -41,18 +42,30 @@ def _restricted_fields(spec) -> list[dict[str, str]]:
 
 
 def _load_specs() -> Iterable:
-    """Return every `ToolSpec` from the code catalog (base + per-module overlay).
+    """Return every `ToolSpec` from the code catalog.
 
-    Isolated as a function so tests can monkeypatch it without importing the
-    real MCP catalog.
+    Read from the backend's own copy because the backend image has no
+    `sorento_crm_mcp` package (built from `./sorento_crm_backend` alone): the
+    old `from sorento_crm_mcp.catalog import CATALOG` failed on every production
+    boot and the table was never synced (MCP-REGISTRY-IMAGE, 2 Nov 2026).
+    `tests/test_mcp_catalog_in_image.py` keeps the copy byte-identical.
+
+    No per-module `tools.json` overlay: no module ships one, and production's
+    MCP server (its own image) cannot see the backend's modules either, so this
+    is the catalog it serves from.
+
+    Isolated as a function so tests can monkeypatch it.
     """
-    from sorento_crm_mcp.catalog import CATALOG
-    from sorento_crm_mcp.module_loader import merged_catalog
+    from app.services.mcp_catalog_copy import CATALOG
 
-    return tuple(merged_catalog(CATALOG))
+    return CATALOG
 
 
 def sync_catalog(db: Session) -> SyncReport:
+    # Each gunicorn worker runs `startup_event`, so several syncs start at once on
+    # every boot. Without the lock they insert the same new names and all but one
+    # fail on the unique `tool_name`; this makes them queue. Released at commit.
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext('mcp_tools.sync_catalog'))"))
     sync_started_at = datetime.utcnow()
     specs = list(_load_specs())
     # `CHATBOT_TOOL_DOMAINS` is stamped onto `mcp_tools.chatbot_domain`, which nothing
