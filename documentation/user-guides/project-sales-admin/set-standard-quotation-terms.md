@@ -36,6 +36,7 @@ Use this to set how page 1 of every quotation looks (the cover page), for the PD
 5. Write the **Intro text** (above the rows) and **Closing text** (below the rows). Use **Insert field** to add a field such as the project name; it is filled in on each quotation.
 6. Watch the preview on the right: it shows page 1 with a sample quotation. Save.
 7. The first design you add becomes active. To switch, select **Activate** on another design. One design is active at a time; the terms template is not affected.
+8. To go back to the standard cover page, select **Deactivate** on the active design. An inactive design can then be deleted.
 
 * New quotations copy the active design's intro and closing text; sales can change them per quotation on the **Cover letter** tab.
 * Each sent quotation keeps the design it was sent with. Editing or switching the design never changes a quotation already sent.

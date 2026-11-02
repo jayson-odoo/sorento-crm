@@ -1,8 +1,9 @@
 # PLAN: Quotation cover page designer (QUOTE-COVER-DESIGN, follow-up to #2088)
 
-**Status:** Build. Owner answered card v3 on 2 Nov 19:46 (Q1 a, Q2 a + "see if we can reuse anything", Q3 as listed,
-Q4 a, Q5 a). Track: L (migration, new admin editor, draft preview endpoint, public sign payload change). UAC:
-`quote-cover-design-02nov-acceptance-criteria.md`. Mock: `documentation/mockups/QUOTE-COVER-DESIGN/index.html`.
+**Status:** Review. PR #2094 open (ready). Rounds: main (red 293ba35f70), fix round 1 (crew browser FAILs +
+security should-fix), round 2 (reviewer findings), round 3 (render cap), round 4 (test gaps). Security PASS at
+7c9e02444e. Track: L. UAC: `quote-cover-design-02nov-acceptance-criteria.md`. Mock:
+`documentation/mockups/QUOTE-COVER-DESIGN/index.html`.
 
 ## Journey
 
@@ -65,6 +66,23 @@ tab, edits the intro and closing for that customer, and the sent PDF and sign li
 - **Migration** `qcd_0001_cover_designs` on `qcp_0001_cover_page_fields`: `quotation_templates.design JSONB NULL`,
   `quotation_documents.cover_closing_html TEXT NULL`, `quotation_issues.cover_design JSONB NULL`,
   `quotation_issues.cover_closing_rendered TEXT NULL`. Additive, IF NOT EXISTS.
+
+## Added during review (2 Nov)
+
+- **Deactivate** POST `/config/quotation-templates/{id}/deactivate`, cover_page only (terms keep the refusal to delete or
+  deactivate their only active template), gated like activate. With no active design the default design applies.
+- **Default design endpoint** GET `/config/quotation-templates/cover-default` (gated like the list): the one source of
+  the 12 rows, labels and title; the frontend holds no copy.
+- **Merge fields filled on every save**: `{{tokens}}` in cover_letter_html, cover_closing_html and terms_html are filled
+  on create AND PATCH and in both previews (crew saw a raw token because the form pre-fills the template's raw text).
+  An unknown token is refused with 422 everywhere.
+- **Size limits** (security review): every HTML input capped at 50000 characters on create/update/preview (not on
+  responses); the filled-in result of `render()` is sized before it is built and refused over 50000 with a 422
+  (`quotation_template_rendered_too_long`); the HTML cleaner and the token scan are linear.
+- **Shared helpers** (reviewer, reuse requirement): `sender_of` (name + logo for the sign page and previews; the PDF's
+  `_sender` adds address and Tel from system settings), `_cover_row_html` (one row renderer for #2088 and designed
+  covers), `next_issue_no` (send and preview).
+- **Drag**: rows are direct children of `Sortable`; an extra wrapper left the DragOverlay clone empty.
 
 ## Test list (tester, red first)
 
