@@ -1,6 +1,6 @@
 # PLAN: Simulate confirm speed
 
-Status: In build. Track: small fix (no migration, no auth/RBAC change, no new ingest; diff well
+Status: Review READY, PR #2115 open, awaiting CI and owner merge. Track: small fix (no migration, no auth/RBAC change, no new ingest; diff well
 under 300 lines). Lane SIMULATE-CONFIRM-SPEED.
 UAC: `simulate-confirm-speed-03nov-acceptance-criteria.md`.
 
