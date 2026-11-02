@@ -731,6 +731,17 @@ def _squash(value: Any) -> str:
     return " ".join(jsc.js_string(value).split()).casefold()
 
 
+def _kind_word(e: dict[str, Any]) -> bool:
+    """A brand or account type entity whose word IS its own `kind_said` ("account type", "brand"): it names the kind,
+    not a value. An absent or null `kind_said` never matches."""
+    said = e.get("kind_said")
+    return (
+        jsc.js_string(e.get("hint") or "").strip().lower() in ("brand", "account_type")
+        and isinstance(said, str) and bool(_squash(said))
+        and _squash(said) == _squash(e.get("raw"))
+    )
+
+
 def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     """Engine seam, a FRESH `sales_ranking` ask: this message's brand, sales agent and
     category words move off the entity list onto `report_ask_words` (raw words per hint).
@@ -765,7 +776,7 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
         if hint not in WORD_HINTS:
             kept.append(e)
             continue
-        if hint in ("brand", "account_type") and _squash(e.get("kind_said")) == _squash(typed) != "":
+        if _kind_word(e):
             continue  # the word is the kind word itself ("account type"): it names no value
         if raw and e.get("current_message") is not False and raw not in words.setdefault(hint, []):
             words[hint].append(raw)
@@ -1018,8 +1029,8 @@ def as_kind_answer(verdict: dict[str, Any], slot: Any) -> tuple[dict[str, Any], 
     def held_word(e: dict[str, Any]) -> bool:
         return bool({" ".join(jsc.js_string(e.get(k) or "").split()).casefold() for k in ("raw", "canonical_code")} & asked)
 
-    words = [e for e in current if held_word(e) and hint_of(e) in options]
-    numbers = [e for e in current if hint_of(e) == "account_type" and not held_word(e)]
+    words = [e for e in current if (held_word(e) or _kind_word(e)) and hint_of(e) in options]
+    numbers = [e for e in current if hint_of(e) == "account_type" and not held_word(e) and not _kind_word(e)]
     other_subject = verdict.get("domain_in_message") is True and (
         (status and status not in (*SALES_STATUSES, ASK_NAME)) or (domain and domain not in contracts.ORDER_OR_SALES_DOMAINS)
     )
@@ -2238,7 +2249,12 @@ def _settle(
     not_applied = args.pop("_unbound", [])
     kind_ask = args.pop("_kind_ask", None)
     covered = args.pop("_covered", False)
-    if holding and source.get("company") and not set(args) - _NON_FILTER_ARGS - {"channel", "account_types"}:
+    from app.services.reports.ask_params import _asked_number
+
+    own_book = {"channel"}
+    if args.get("account_types") and all(_asked_number(str(v).strip().upper()) is not None for v in args["account_types"]):
+        own_book.add("account_types")  # an account number names no company; a type word may be in the other one
+    if holding and source.get("company") and not set(args) - _NON_FILTER_ARGS - own_book:
         # The company it ran in stays, unless this message has a subject of its own: that may be in the other company.
         args["company"] = source["company"]
     named = {
