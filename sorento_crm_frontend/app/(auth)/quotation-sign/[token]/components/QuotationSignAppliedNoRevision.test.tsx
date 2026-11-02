@@ -23,6 +23,7 @@ vi.mock('../../services/quotationSignService', async (importOriginal) => {
 });
 
 import { QuotationSignClient } from './QuotationSignClient';
+import { SIGN_COLUMNS } from './signColumns.fixture';
 
 const PAGE = {
   our_ref: 'PRJQ-0000-R1',
@@ -42,6 +43,7 @@ const PAGE = {
     {
       scope_label: 'Sanitary ware',
       scope_total: '19200.00',
+      columns: SIGN_COLUMNS,
       lines: [
         {
           id: 'line-1',

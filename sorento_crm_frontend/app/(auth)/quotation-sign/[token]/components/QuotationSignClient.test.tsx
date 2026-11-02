@@ -39,6 +39,7 @@ vi.mock('../../services/quotationSignService', async (importOriginal) => {
 
 import { QuotationSignClient } from './QuotationSignClient';
 import { QuotationSignError } from '../../services/quotationSignService';
+import { SIGN_COLUMNS } from './signColumns.fixture';
 
 function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
   return {
@@ -63,6 +64,7 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
       {
         scope_label: 'Townhouse',
         scope_total: '235000.00',
+        columns: SIGN_COLUMNS,
         lines: [
           {
             id: 'line-1',
@@ -153,6 +155,7 @@ describe('QuotationSignClient reading the quotation', () => {
           {
             scope_label: 'Type A',
             scope_total: '102000.00',
+            columns: SIGN_COLUMNS,
             lines: [
               {
                 id: 'line-3',
@@ -423,6 +426,7 @@ function scopeOf(label: string, total: string, descriptions: string[]) {
   return {
     scope_label: label,
     scope_total: total,
+    columns: SIGN_COLUMNS,
     lines: descriptions.map((description, index) => ({
       id: `line-${index}`,
       item_label: String(index + 1),

@@ -8,7 +8,7 @@
  * `submitAmendmentRequest(token, body)`. Every value here is invented.
  *
  * What these pin, from the approved mock v3 (documentation/mockups/QUOTE-CUSTOMER-AMEND):
- * the page's own nine columns plus ONE narrow icon column; Qty and Unit rate become inputs in
+ * the quotation's own columns (sent by the server) plus ONE narrow icon column; Qty and Unit rate become inputs in
  * suggest mode; a staged removal is struck through; only changed lines are sent; Sign says why it
  * is off, once; an answered request shows its answers in the cells the customer changed.
  */
@@ -41,6 +41,7 @@ vi.mock('../../services/quotationSignService', async (importOriginal) => {
 });
 
 import { QuotationSignClient } from './QuotationSignClient';
+import { SIGN_COLUMNS } from './signColumns.fixture';
 
 // ------------------------------------------------------------------ fixtures
 
@@ -120,7 +121,7 @@ function page(overrides: Record<string, unknown> = {}): QuotationSignPage {
     cover_letter: null,
     terms: null,
     signatory_name: 'Ahmad Faizal',
-    scopes: [{ scope_label: 'Sanitary ware', scope_total: '67450.00', lines: LINES }],
+    scopes: [{ scope_label: 'Sanitary ware', scope_total: '67450.00', columns: SIGN_COLUMNS, lines: LINES }],
     grand_total: '67450.00',
     sorento_signature: {
       id: 's1',
@@ -249,17 +250,8 @@ describe('the entry point and the edit mode', () => {
     const headers = Array.from(document.querySelectorAll('thead th')).map(
       (th) => th.textContent?.trim() ?? '',
     );
-    expect(headers.slice(0, 9)).toEqual([
-      'Item',
-      'Technical spec',
-      'Description',
-      'Brand',
-      'Product code',
-      'Qty',
-      'Unit rate',
-      'Complete set',
-      'Amount',
-    ]);
+    // The server's column set, verbatim (QUOTE-SIGN-COLUMNS): the page adds only the icon column.
+    expect(headers.slice(0, 9)).toEqual(SIGN_COLUMNS.map((column) => column.label));
     expect(headers).toHaveLength(10);
   });
 
@@ -403,6 +395,7 @@ describe('every money figure shows the change, with "quoted X" beneath', () => {
         {
           scope_label: 'Sanitary ware',
           scope_total: '1280.00',
+          columns: SIGN_COLUMNS,
           lines: [
             line('m-1', '1', {
               description: 'Fake WC',

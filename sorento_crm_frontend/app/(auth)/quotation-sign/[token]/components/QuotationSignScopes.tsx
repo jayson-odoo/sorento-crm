@@ -25,6 +25,7 @@ import {
 import type {
   QuotationSignAmendment,
   QuotationSignAmendmentRow,
+  QuotationSignColumn,
   QuotationSignLine,
   QuotationSignScope,
 } from '../../services/quotationSignService';
@@ -69,8 +70,93 @@ function MoneyChange({
   );
 }
 
-/** The sample workbook's column set, minus the product image. */
-const COLUMNS = 9;
+/**
+ * How each column the server sends is drawn. The SET, order and labels are the server's
+ * (`scope.columns`, the PDF's own definition); only width and alignment live here. An unknown key
+ * still gets its header and an empty cell, so a column added on the server is never dropped.
+ */
+const PRESENTATION: Record<string, { th: string; td: string }> = {
+  item: { th: 'min-w-[60px] text-left', td: '' },
+  image: { th: 'min-w-[84px] text-left', td: '' },
+  spec: { th: 'min-w-[84px] text-left', td: '' },
+  description: { th: 'min-w-[200px] text-left', td: '' },
+  brand: { th: 'min-w-[100px] text-left', td: '' },
+  product_code: { th: 'min-w-[120px] text-left', td: '' },
+  qty: { th: 'min-w-[70px] text-right', td: 'text-right tabular-nums' },
+  unit_rate: { th: 'min-w-[120px] text-right', td: 'text-right tabular-nums' },
+  complete_set: { th: 'min-w-[140px] text-left', td: 'text-muted-foreground' },
+  amount: { th: 'min-w-[120px] text-right', td: 'text-right' },
+};
+
+function presentation(key: string) {
+  return PRESENTATION[key] ?? { th: 'text-left', td: '' };
+}
+
+/** A picture cell: the photo or the drawing, inline, at the PDF's scale. Empty when there is none. */
+function Picture({ src, alt }: { src?: string | null; alt: string }) {
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="size-16 max-w-none rounded-sm object-contain"
+    />
+  );
+}
+
+/** Description, with any typed technical-spec text from before drawings beneath it, as the PDF. */
+function Description({ line }: { line: QuotationSignLine }) {
+  return (
+    <>
+      {text(line.description)}
+      {line.technical_spec?.trim() ? (
+        <span className="mt-1 block whitespace-pre-line text-xs text-muted-foreground">
+          {line.technical_spec}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+/** The cells every mode shares, by column key. Qty, rate and amount are each mode's own. */
+function commonCells(
+  line: QuotationSignLine,
+  position: number,
+): Record<string, React.ReactNode> {
+  const name = line.item_label?.trim() || String(position + 1);
+  return {
+    item: text(line.item_label),
+    image: <Picture src={line.image_url} alt={`Product photo, line ${name}`} />,
+    spec: (
+      <Picture src={line.drawing_url} alt={`Technical drawing, line ${name}`} />
+    ),
+    description: <Description line={line} />,
+    brand: text(line.brand),
+    product_code: text(line.product_code),
+    complete_set: text(line.complete_set),
+  };
+}
+
+function Cells({
+  columns,
+  cells,
+}: {
+  columns: QuotationSignColumn[];
+  cells: Record<string, React.ReactNode>;
+}) {
+  return (
+    <>
+      {columns.map((column) => (
+        <td
+          key={column.key}
+          className={cn('px-2 py-2', presentation(column.key).td)}
+        >
+          {cells[column.key] ?? null}
+        </td>
+      ))}
+    </>
+  );
+}
 
 /** Suggest mode: Qty and Unit rate become inputs, and one narrow column holds Remove / Restore. */
 export type QuotationSignSuggest = {
@@ -233,16 +319,18 @@ function LineAmount({ line }: { line: QuotationSignLine }) {
 }
 
 function ScopeTable({
+  columns,
   lines,
   suggest,
   amendment,
 }: {
+  columns: QuotationSignColumn[];
   lines: QuotationSignLine[];
   suggest?: QuotationSignSuggest;
   amendment?: QuotationSignAmendment | null;
 }) {
   const answers = React.useMemo(() => answersOf(amendment), [amendment]);
-  const columns = suggest ? COLUMNS + 1 : COLUMNS;
+  const span = suggest ? columns.length + 1 : columns.length;
   // A band label heads its section ONCE, above the line that opens it. Repeating it on every row
   // is how the printed quotation stops being readable.
   let currentBand: string | null = null;
@@ -251,7 +339,8 @@ function ScopeTable({
     // Hand-rolled and read-only on purpose: this is a printed quotation being read by a stranger
     // on a phone, with nothing to sort, page or select, so DataGrid's toolbar and pagination
     // would be furniture in the way. `overflow-x-auto` + `min-w-0` keep the wide table scrolling
-    // inside its own gutter instead of dragging the whole PAGE sideways at 375px.
+    // inside its own gutter instead of dragging the whole PAGE sideways at 375px, and every
+    // column stays: a phone scrolls the quotation, it never reads a shorter one.
     // `relative` so the sr-only header label (position: absolute) is clipped by this scroller
     // instead of escaping it and widening the whole page at 375px.
     <div
@@ -261,33 +350,17 @@ function ScopeTable({
       <table className="w-full text-sm">
         <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
-            <th className="min-w-[140px] px-2 py-2 text-left font-semibold">
-              Item
-            </th>
-            <th className="min-w-[160px] px-2 py-2 text-left font-semibold">
-              Technical spec
-            </th>
-            <th className="min-w-[200px] px-2 py-2 text-left font-semibold">
-              Description
-            </th>
-            <th className="min-w-[100px] px-2 py-2 text-left font-semibold">
-              Brand
-            </th>
-            <th className="min-w-[120px] px-2 py-2 text-left font-semibold">
-              Product code
-            </th>
-            <th className="min-w-[70px] px-2 py-2 text-right font-semibold">
-              Qty
-            </th>
-            <th className="min-w-[120px] px-2 py-2 text-right font-semibold">
-              Unit rate
-            </th>
-            <th className="min-w-[140px] px-2 py-2 text-left font-semibold">
-              Complete set
-            </th>
-            <th className="min-w-[120px] px-2 py-2 text-right font-semibold">
-              Amount
-            </th>
+            {columns.map((column) => (
+              <th
+                key={column.key}
+                className={cn(
+                  'px-2 py-2 font-semibold',
+                  presentation(column.key).th,
+                )}
+              >
+                {column.label}
+              </th>
+            ))}
             {suggest && (
               <th className="w-10 px-1 py-2">
                 <span className="sr-only">Remove</span>
@@ -307,7 +380,7 @@ function ScopeTable({
                 {opensBand && (
                   <tr className="bg-muted/60">
                     <td
-                      colSpan={columns}
+                      colSpan={span}
                       className="px-2 py-2 text-xs font-semibold uppercase tracking-wide"
                     >
                       {band}
@@ -315,65 +388,66 @@ function ScopeTable({
                   </tr>
                 )}
                 {suggest ? (
-                  <SuggestRow line={line} position={index} suggest={suggest} />
+                  <SuggestRow
+                    columns={columns}
+                    line={line}
+                    position={index}
+                    suggest={suggest}
+                  />
                 ) : (
                   <tr className="border-t border-border align-top">
-                    <td className="px-2 py-2">{text(line.item_label)}</td>
-                    <td className="px-2 py-2 text-muted-foreground">
-                      {text(line.technical_spec)}
-                    </td>
-                    <td className="px-2 py-2">{text(line.description)}</td>
-                    <td className="px-2 py-2">{text(line.brand)}</td>
-                    <td className="px-2 py-2">{text(line.product_code)}</td>
-                    <td className="px-2 py-2 text-right tabular-nums">
-                      {amendment && answers.get(`${line.id}:quantity`) ? (
-                        <SentValue
-                          row={answers.get(`${line.id}:quantity`)!}
-                          status={amendment.status}
-                          issued={line.quantity}
-                          format={formatQty}
-                        />
-                      ) : (
-                        formatQty(line.quantity)
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-right tabular-nums">
-                      {amendment && answers.get(`${line.id}:unit_price`) ? (
-                        <SentValue
-                          row={answers.get(`${line.id}:unit_price`)!}
-                          status={amendment.status}
-                          issued={line.unit_price}
-                          format={formatMyrExact}
-                        />
-                      ) : (
-                        lineMoney(line.unit_price)
-                      )}
-                    </td>
-                    <td className="px-2 py-2 text-muted-foreground">
-                      {text(line.complete_set)}
-                    </td>
-                    <td className="px-2 py-2 text-right">
-                      {amendment && answers.get(`${line.id}:remove`) ? (
-                        <span className="flex flex-col items-end gap-0.5">
-                          {/* An accepted removal leaves no amount; any other keeps the issued one. */}
-                          {!(
-                            amendment.status === 'applied' &&
-                            answers.get(`${line.id}:remove`)!.decision ===
-                              'accepted'
-                          ) && <LineAmount line={line} />}
-                          <RemovalAnswer
-                            row={answers.get(`${line.id}:remove`)!}
-                            status={amendment.status}
-                          />
-                        </span>
-                      ) : answeredAmount(line, answers, amendment) !== null ? (
-                        <span className="tabular-nums">
-                          {lineMoney(answeredAmount(line, answers, amendment))}
-                        </span>
-                      ) : (
-                        <LineAmount line={line} />
-                      )}
-                    </td>
+                    <Cells
+                      columns={columns}
+                      cells={{
+                        ...commonCells(line, index),
+                        qty:
+                          amendment && answers.get(`${line.id}:quantity`) ? (
+                            <SentValue
+                              row={answers.get(`${line.id}:quantity`)!}
+                              status={amendment.status}
+                              issued={line.quantity}
+                              format={formatQty}
+                            />
+                          ) : (
+                            formatQty(line.quantity)
+                          ),
+                        unit_rate:
+                          amendment && answers.get(`${line.id}:unit_price`) ? (
+                            <SentValue
+                              row={answers.get(`${line.id}:unit_price`)!}
+                              status={amendment.status}
+                              issued={line.unit_price}
+                              format={formatMyrExact}
+                            />
+                          ) : (
+                            lineMoney(line.unit_price)
+                          ),
+                        amount:
+                          amendment && answers.get(`${line.id}:remove`) ? (
+                            <span className="flex flex-col items-end gap-0.5">
+                              {/* An accepted removal leaves no amount; any other keeps the issued one. */}
+                              {!(
+                                amendment.status === 'applied' &&
+                                answers.get(`${line.id}:remove`)!.decision ===
+                                  'accepted'
+                              ) && <LineAmount line={line} />}
+                              <RemovalAnswer
+                                row={answers.get(`${line.id}:remove`)!}
+                                status={amendment.status}
+                              />
+                            </span>
+                          ) : answeredAmount(line, answers, amendment) !==
+                            null ? (
+                            <span className="tabular-nums">
+                              {lineMoney(
+                                answeredAmount(line, answers, amendment),
+                              )}
+                            </span>
+                          ) : (
+                            <LineAmount line={line} />
+                          ),
+                      }}
+                    />
                   </tr>
                 )}
               </React.Fragment>
@@ -387,10 +461,12 @@ function ScopeTable({
 
 /** One line in suggest mode: the page's own cells, with Qty and Unit rate as inputs. */
 function SuggestRow({
+  columns,
   line,
   position,
   suggest,
 }: {
+  columns: QuotationSignColumn[];
   line: QuotationSignLine;
   position: number;
   suggest: QuotationSignSuggest;
@@ -416,88 +492,83 @@ function SuggestRow({
         removed && 'text-muted-foreground line-through',
       )}
     >
-      <td className="px-2 py-2">{text(line.item_label)}</td>
-      <td className="px-2 py-2 text-muted-foreground">
-        {text(line.technical_spec)}
-      </td>
-      <td className="px-2 py-2">{text(line.description)}</td>
-      <td className="px-2 py-2">{text(line.brand)}</td>
-      <td className="px-2 py-2">{text(line.product_code)}</td>
-      <td className="px-2 py-2 text-right">
-        <Input
-          variant="sm"
-          value={edit.quantity}
-          inputMode="decimal"
-          aria-label={`Quantity on line ${name}`}
-          aria-invalid={qtyError ? true : undefined}
-          disabled={inputs}
-          className={cn(
-            'w-20 text-end tabular-nums',
-            qtyChanged && 'border-warning bg-warning/10',
-          )}
-          onChange={(event) =>
-            suggest.onEdit(line, { quantity: event.target.value })
-          }
-        />
-        {qtyError ? (
-          <p className="mt-1 max-w-[120px] whitespace-normal text-xs text-destructive">
-            {qtyError}
-          </p>
-        ) : qtyChanged ? (
-          <p className="mt-1 text-xs text-muted-foreground">{`quoted ${formatQty(line.quantity)}`}</p>
-        ) : null}
-      </td>
-      <td className="px-2 py-2 text-right">
-        {pricing ? (
-          <>
-            <Input
-              variant="sm"
-              value={edit.unit_price}
-              inputMode="decimal"
-              aria-label={`Unit rate on line ${name}`}
-              aria-invalid={rateError ? true : undefined}
-              disabled={inputs}
-              className={cn(
-                'w-28 text-end tabular-nums',
-                rateChanged && 'border-warning bg-warning/10',
-              )}
-              onChange={(event) =>
-                suggest.onEdit(line, { unit_price: event.target.value })
-              }
-            />
-            {rateError ? (
-              <p className="mt-1 max-w-[140px] whitespace-normal text-xs text-destructive">
-                {rateError}
-              </p>
-            ) : rateChanged ? (
-              <p className="mt-1 whitespace-nowrap text-xs text-muted-foreground">{`quoted ${formatMyrExact(line.unit_price)}`}</p>
-            ) : null}
-          </>
-        ) : (
-          <span className="tabular-nums">{lineMoney(line.unit_price)}</span>
-        )}
-      </td>
-      <td className="px-2 py-2 text-muted-foreground">
-        {text(line.complete_set)}
-      </td>
-      <td className="px-2 py-2 text-right">
-        {/* A removed line keeps its issued amount, struck through with the row; it drops out of
-            the subtotal and the total instead. */}
-        {removed ||
-        line.is_rate_only ||
-        compareMoney(editedAmount(line, edit), line.amount ?? '0') === 0 ? (
-          <LineAmount line={line} />
-        ) : (
-          <>
-            <span className="block tabular-nums">
-              {lineMoney(editedAmount(line, edit))}
-            </span>
-            <span className="block whitespace-nowrap text-xs text-muted-foreground">
-              {`quoted ${formatMyrExact(line.amount ?? '0')}`}
-            </span>
-          </>
-        )}
-      </td>
+      <Cells
+        columns={columns}
+        cells={{
+          ...commonCells(line, position),
+          qty: (
+            <>
+              <Input
+                variant="sm"
+                value={edit.quantity}
+                inputMode="decimal"
+                aria-label={`Quantity on line ${name}`}
+                aria-invalid={qtyError ? true : undefined}
+                disabled={inputs}
+                className={cn(
+                  'w-20 text-end tabular-nums',
+                  qtyChanged && 'border-warning bg-warning/10',
+                )}
+                onChange={(event) =>
+                  suggest.onEdit(line, { quantity: event.target.value })
+                }
+              />
+              {qtyError ? (
+                <p className="mt-1 max-w-[120px] whitespace-normal text-xs text-destructive">
+                  {qtyError}
+                </p>
+              ) : qtyChanged ? (
+                <p className="mt-1 text-xs text-muted-foreground">{`quoted ${formatQty(line.quantity)}`}</p>
+              ) : null}
+            </>
+          ),
+          unit_rate: pricing ? (
+            <>
+              <Input
+                variant="sm"
+                value={edit.unit_price}
+                inputMode="decimal"
+                aria-label={`Unit rate on line ${name}`}
+                aria-invalid={rateError ? true : undefined}
+                disabled={inputs}
+                className={cn(
+                  'w-28 text-end tabular-nums',
+                  rateChanged && 'border-warning bg-warning/10',
+                )}
+                onChange={(event) =>
+                  suggest.onEdit(line, { unit_price: event.target.value })
+                }
+              />
+              {rateError ? (
+                <p className="mt-1 max-w-[140px] whitespace-normal text-xs text-destructive">
+                  {rateError}
+                </p>
+              ) : rateChanged ? (
+                <p className="mt-1 whitespace-nowrap text-xs text-muted-foreground">{`quoted ${formatMyrExact(line.unit_price)}`}</p>
+              ) : null}
+            </>
+          ) : (
+            <span className="tabular-nums">{lineMoney(line.unit_price)}</span>
+          ),
+          // A removed line keeps its issued amount, struck through with the row; it drops out of
+          // the subtotal and the total instead.
+          amount:
+            removed ||
+            line.is_rate_only ||
+            compareMoney(editedAmount(line, edit), line.amount ?? '0') === 0 ? (
+              <LineAmount line={line} />
+            ) : (
+              <>
+                <span className="block tabular-nums">
+                  {lineMoney(editedAmount(line, edit))}
+                </span>
+                <span className="block whitespace-nowrap text-xs text-muted-foreground">
+                  {`quoted ${formatMyrExact(line.amount ?? '0')}`}
+                </span>
+              </>
+            ),
+        }}
+      />
       <td className="px-1 py-1.5 text-center">
         <Button
           type="button"
@@ -607,6 +678,7 @@ export function QuotationSignScopes({
                     </p>
                   ) : (
                     <ScopeTable
+                      columns={scope.columns}
                       lines={scope.lines}
                       suggest={suggest}
                       amendment={amendment}
