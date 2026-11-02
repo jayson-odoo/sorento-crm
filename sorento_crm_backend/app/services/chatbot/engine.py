@@ -4437,10 +4437,18 @@ def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
     B1 / S1): a question the focus holds (`chat_state._focus_questions`: a set clarify, the count
     question, the other-brands offer) or a set being listed is open too,
     and a family widening (`broaden_to` other than all, `family` true) is stated; round 12c:
-    `family` false is the exact code alone, no widening."""
+    `family` false is the exact code alone, no widening.
+
+    CHAT-RESET-CAPABILITY: the held subject is REQUIRED, beyond what a reset keeps (RESET_KEEPS).
+    Over a new chat or a session a Reset already emptied there is nothing to clear, so the
+    parser's all-broaden (it flips to it on a capability question, read as clarification) is no
+    reset and the message takes today's path."""
     if state is None:
         return False
     focus = state.focus
+    kept = turn_state.Focus(**{k: getattr(focus, k) for k in RESET_KEEPS})
+    if chat_state._subject(focus) == chat_state._subject(kept):
+        return False
     return (
         (verdict.get("entity_op") == "clear" or verdict.get("broaden_axis") == "all")
         and not verdict.get("scope_intent")
