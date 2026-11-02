@@ -16,6 +16,7 @@ import logging
 from typing import List
 
 from fastapi import APIRouter, Depends, Request, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -417,7 +418,17 @@ def make_quotation_from_proposal(
         quotation = svc.make_quotation(
             db, proposal=proposal, issue_id=payload.issue_id, actor_user_id=current_user["id"]
         )
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Two presses racing past the service check: the one-quotation-per-project index
+            # refuses the second, which is the same answer the check gives.
+            db.rollback()
+            raise AppException(
+                status_code=409,
+                message="This project already has a quotation.",
+                code="project_has_quotation",
+            )
         db.refresh(quotation)
         return svc.serialize_document(db, quotation)
     except Exception as exc:
