@@ -1,8 +1,9 @@
 # PLAN: the stock check and the ETA ask tell one shipment the same date (STOCK-INCOMING-FLOOR)
 
-Status: Fix B built, in review (size M since the owner's 2 Nov ruling: new wording, one shared rule; no
-migration, no auth/RBAC change, no screen change so no mock). Fix A built and reviewed READY at 02f3c71c78;
-Fix B supersedes its today floor.
+Status: built, reviewer READY + security PASS at 0d9be4c1ab; console pass and owner hand test next.
+Size M since the owner's 2 Nov ruling (new wording, one shared rule). No migration, no new permission, no
+screen change (no mock). The dealer stock check now applies the existing incoming field gate
+(`estimated_arrival_date`), so a security review ran. Fix A (02f3c71c78) was superseded by Fix B.
 UAC: `stock-incoming-floor-2nov-acceptance-criteria.md`.
 
 ## Problem (production WhatsApp, 2 Nov 2026)

@@ -23,6 +23,9 @@ scroll to the **Chatbot** card.
   ETA, are told the same dates: every shipment still coming, earliest first, for example
   "No stock, ETA 03/11/2026, 06/11/2026." A date that has already passed while the shipment is
   still coming is shown with "(delayed)" after it.
+  If the contact's ETA field is turned off for them (field access on the incoming stock agent),
+  they are told no date on either question: "No ETA" when they ask for the ETA, and
+  "No stock, No ETA." when they ask for stock that is still on its way.
 * **Episode recall** - whether the bot may pull details back in from an earlier closed topic in
   this same conversation when the contact refers back to it (e.g. "same report as yesterday"),
   instead of asking everything over again. This overrides the system-wide default set on
