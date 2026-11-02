@@ -179,7 +179,7 @@ describe('QuotationWhatsAppDialog: send to a party of the project', () => {
     fireEvent.click(openLink());
     await waitFor(() =>
       expect(fillPartyPhone).toHaveBeenCalledWith('p1', 'mc1', {
-        phone: '0135550000',
+        phone: '+60135550000', // saved normalised, as WhatsApp dialled it
         stakeholder_id: null,
       }),
     );

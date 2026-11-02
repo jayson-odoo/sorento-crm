@@ -292,7 +292,7 @@ function WhatsAppBody({
               if (recipient && noNumberOnFile && toWaDigits(to)) {
                 fillPhone.mutate({
                   partyId: recipient.partyId,
-                  phone: to.trim(),
+                  phone: `+${toWaDigits(to)}`,
                   stakeholderId: recipient.stakeholderId,
                 });
               }

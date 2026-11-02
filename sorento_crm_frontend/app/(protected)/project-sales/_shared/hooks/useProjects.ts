@@ -12,6 +12,7 @@ import { formatMyrExact } from '../lib/money';
 import { getProductSetsForLineSelect } from '@/app/(protected)/master-data-management/product-sets/services/productSetService';
 import {
   createPartyContact,
+  getParty,
   fillPartyPhone,
   getPartiesOnProject,
   listPartyContacts,
@@ -1748,6 +1749,14 @@ export function useProjectDashboard() {
 export const partyContactsKey = (partyId: string) => [PARTIES_KEY, 'contacts', partyId];
 export const partiesOnProjectKey = (projectId: string) => [PROJECTS_KEY, 'parties', projectId];
 
+export function useParty(partyId: string | null | undefined) {
+  return useQuery({
+    queryKey: [PARTIES_KEY, 'detail', partyId ?? ''],
+    queryFn: () => getParty(partyId as string),
+    enabled: Boolean(partyId),
+  });
+}
+
 export function usePartyContacts(partyId: string | null | undefined) {
   return useQuery({
     queryKey: partyContactsKey(partyId ?? ''),
@@ -1807,7 +1816,7 @@ export function useFillPartyPhone(projectId: string) {
       void queryClient.invalidateQueries({ queryKey: partiesOnProjectKey(projectId) });
       void queryClient.invalidateQueries({ queryKey: stakeholdersKey(projectId) });
       void queryClient.invalidateQueries({ queryKey: [PARTIES_KEY] });
-      toast.success('Number saved to the party');
+      toast.success('Number saved');
     },
     onError: (error: Error) => toast.error(error.message),
   });

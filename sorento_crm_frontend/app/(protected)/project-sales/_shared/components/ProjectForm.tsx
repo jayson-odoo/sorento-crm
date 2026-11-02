@@ -833,7 +833,8 @@ export function ProjectForm(props: ProjectFormProps) {
                   value={mukim}
                   onChange={setMukim}
                   clearable
-                  disabled={!state}
+                  // An old project can hold an Area with no State: it stays clearable.
+                  disabled={!state && !mukim}
                   loadError={state ? districts.error : undefined}
                   onRetry={() => void districts.refetch()}
                   options={[
@@ -984,7 +985,7 @@ export function ProjectForm(props: ProjectFormProps) {
                 const picks = linkPicks[role];
                 const setPicks = (next: PickOption[]) =>
                   setLinkPicks((prev) => ({ ...prev, [role]: next }));
-                const id = `project-${role.replace('_', '-')}`;
+                const id = `project-${role.replaceAll('_', '-')}`;
                 const noun = label.toLowerCase();
                 return (
                   <div key={role} className="space-y-1.5">
@@ -1011,6 +1012,15 @@ export function ProjectForm(props: ProjectFormProps) {
                         clearable
                         placeholder={`Search ${label.toLowerCase()}`}
                         emptyMessage={`No ${label.toLowerCase()} found`}
+                        createOption={(() => {
+                          const create = partyCreateOption(role, noun.replace(/s$/, '').replace(/ie$/, 'y'), (pid, option) => {
+                            linkOptionCache.current[pid] = { ...option, value: pid };
+                            setPicks([...picks, { ...option, value: pid }]);
+                          });
+                          return create
+                            ? { label: create.label, onCreate: (q: string) => void create.onCreate(q) }
+                            : undefined;
+                        })()}
                       />
                     ) : (
                       <SearchableSelect

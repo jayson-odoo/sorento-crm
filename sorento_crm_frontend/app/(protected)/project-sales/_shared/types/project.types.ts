@@ -547,13 +547,10 @@ export interface TaskHistoryEntry {
  */
 export type LeadOutcome = 'open' | 'qualified' | 'disqualified';
 
-export type LeadSource =
-  | 'site_visit'
-  | 'architect'
-  | 'contractor'
-  | 'dealer'
-  | 'inbound'
-  | 'other';
+/** A value of the editable lookup set `project_lead_source` (PS-REGISTRATION-V3 Q4); the
+ * seed is site_visit, architect, contractor, dealer, inbound, bci, referral, tender_notice,
+ * existing_customer, interior_designer, other, and Settings may add more. */
+export type LeadSource = string;
 
 export interface LeadDuplicateHint {
   lead_id: string;

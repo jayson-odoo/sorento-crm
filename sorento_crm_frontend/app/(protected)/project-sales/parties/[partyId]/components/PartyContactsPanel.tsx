@@ -9,6 +9,7 @@ import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import {
+  PARTIES_KEY,
   partyContactsKey,
   usePartyContacts,
 } from '../../../_shared/hooks/useProjects';
@@ -30,7 +31,8 @@ export function PartyContactsPanel({ partyId }: { partyId: string }) {
     entityType: 'project_party_contact',
     verb: 'Deleting',
     successMessage: 'Contact deleted',
-    invalidateKeys: [partyContactsKey(partyId)],
+    // The Parties grid's Contacts count changes with it.
+    invalidateKeys: [partyContactsKey(partyId), [PARTIES_KEY]],
   });
 
   const columns = React.useMemo<ColumnDef<PartyContact>[]>(() => {

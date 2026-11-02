@@ -1,7 +1,7 @@
 'use client';
 
-import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 import * as React from 'react';
+import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -840,7 +840,6 @@ function formatMyr(value: string): string {
   return `RM ${amount.toLocaleString('en-MY', { maximumFractionDigits: 2 })}`;
 }
 
-/** A stored code ("tender_notice") as a readable phrase. No dictionary to drift. */
 /** The roles a project links beyond architect and main contractor, in display order. */
 const LINKED_ROLES: [string, string][] = [
   ['subcontractor', 'Subcontractors'],
@@ -850,6 +849,7 @@ const LINKED_ROLES: [string, string][] = [
   ['interior_designer', 'Interior designer'],
 ];
 
+/** A stored code ("tender_notice") as a readable phrase. No dictionary to drift. */
 function labelise(value?: string | null): string | null {
   if (!value) return null;
   const words = value.replace(/[_-]+/g, ' ').trim();

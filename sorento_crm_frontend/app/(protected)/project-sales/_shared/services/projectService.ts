@@ -445,16 +445,18 @@ export async function listParties(
     dir?: 'asc' | 'desc';
   } = {},
 ): Promise<ListEnvelope<ProjectParty>> {
-  const sp = new URLSearchParams();
-  if (params.party_type) sp.set('party_type', params.party_type);
-  if (params.query) sp.set('query', params.query);
-  if (params.include_inactive) sp.set('include_inactive', 'true');
-  if (params.page) sp.set('page', String(params.page));
-  if (params.limit) sp.set('limit', String(params.limit));
-  if (params.sort) {
-    sp.set('sort', params.sort);
-    sp.set('dir', params.dir ?? 'asc');
-  }
+  const sp = buildDataGridParams(
+    {
+      pageIndex: (params.page ?? 1) - 1,
+      pageSize: params.limit ?? 50,
+      sorting: params.sort ? [{ id: params.sort, desc: params.dir === 'desc' }] : [],
+      searchQuery: params.query,
+    },
+    {
+      party_type: params.party_type,
+      include_inactive: params.include_inactive ? 'true' : undefined,
+    },
+  );
   const query = sp.toString();
   const response = await apiFetch(`${BASE}/parties/${query ? `?${query}` : ''}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load parties'));
@@ -1469,6 +1471,14 @@ export async function removeSeriesProduct(
 
 
 // ------------------------------------------------------------ party contacts (PS-REGISTRATION-V3)
+
+/** One party by id (the party page; the list reads only its first page). Null when gone. */
+export async function getParty(partyId: string): Promise<ProjectParty | null> {
+  const response = await apiFetch(`${BASE}/parties/${partyId}`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the party'));
+  return response.json();
+}
 
 export async function listPartyContacts(partyId: string): Promise<PartyContact[]> {
   const response = await apiFetch(`${BASE}/parties/${partyId}/contacts`);
