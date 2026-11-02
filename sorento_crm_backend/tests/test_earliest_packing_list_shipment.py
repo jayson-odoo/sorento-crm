@@ -276,16 +276,19 @@ def test_the_dealer_availability_read_passes_today(monkeypatch):
 
     seen = {}
 
-    def _fake(db, product_ids, regions=None, not_before=None):
+    def _fake(db, product_ids, regions=None, not_before=None, offsets=None):
         seen["not_before"] = not_before
+        seen["offsets"] = offsets
         return {}
 
     monkeypatch.setattr(incoming, "earliest_packing_list_shipment", _fake)
     monkeypatch.setattr(incoming, "today_myt", lambda: date(2026, 10, 13))
     from app.services.inventory_service import StockService
 
-    assert StockService._shipments_from_today(None, ["x"], None) == {}
-    assert seen["not_before"] == date(2026, 10, 13)
+    # STOCK-INCOMING-FLOOR: the contact's told-date offsets ride along, so today is
+    # compared with the date the dealer is told.
+    assert StockService._shipments_from_today(None, ["x"], None, {"x": 14}) == {}
+    assert seen == {"not_before": date(2026, 10, 13), "offsets": {"x": 14}}
 
 
 # Crew answer (b) then (a), 13 Oct 2026: the revised date first, then the today floor on it.
@@ -316,3 +319,37 @@ def test_a_past_revised_date_alone_is_no_incoming(db):
     _line(db, _shipment(db, eta=date(2026, 9, 1), number="S-PAST-2", attachment_id=_attachment(db), delay=date(2026, 10, 1)), p)
     db.commit()
     assert p not in earliest_packing_list_shipment(db, [p], not_before=date(2026, 10, 13))
+
+
+# STOCK-INCOMING-FLOOR (production, 2 Nov 2026): `offsets` is how many days the asking contact's
+# told date adds to each product's promised date, and the floor compares the TOLD date. A product
+# missing from `offsets` is told its promised date. The PROMISED date is still what is returned:
+# the caller pads it with the same offset.
+
+
+def test_offsets_floor_each_product_on_its_own_told_date(db):
+    padded, bare = _product(db, "FLOORPAD"), _product(db, "FLOORBARE")
+    for p, number in ((padded, "S-FLOOR-PAD"), (bare, "S-FLOOR-BARE")):
+        _line(db, _shipment(db, eta=date(2026, 10, 20), number=number, attachment_id=_attachment(db)), p)
+    db.commit()
+
+    got = earliest_packing_list_shipment(
+        db, [padded, bare], not_before=date(2026, 11, 2), offsets={padded: 14}
+    )
+    assert got[padded][1] == date(2026, 10, 20)
+    assert bare not in got
+
+
+def test_offsets_pick_the_earliest_shipment_still_ahead_once_told(db):
+    p = _product(db, "FLOORNEXT")
+    a1, a2, a3 = _attachment(db), _attachment(db), _attachment(db)
+    _line(db, _shipment(db, eta=date(2026, 10, 1), number="S-FLOOR-1", attachment_id=a1), p)
+    s_ahead = _shipment(db, eta=date(2026, 10, 20), number="S-FLOOR-2", attachment_id=a2)
+    _line(db, s_ahead, p)
+    _line(db, _shipment(db, eta=date(2026, 11, 10), number="S-FLOOR-3", attachment_id=a3), p)
+    db.commit()
+
+    shipment_id, eta, _ = earliest_packing_list_shipment(
+        db, [p], not_before=date(2026, 11, 2), offsets={p: 14}
+    )[p]
+    assert (shipment_id, eta) == (s_ahead, date(2026, 10, 20))

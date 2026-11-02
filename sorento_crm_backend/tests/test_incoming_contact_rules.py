@@ -44,7 +44,7 @@ from app.services.incoming_stock_service import CLEARANCE_KEYS, today_myt
 from app.services.inventory_service import StockService
 from app.services.user_service import UserPermissionService
 
-from tests._mc_lookup_seed import customer, product, stock
+from tests._mc_lookup_seed import MOCHA_ID, customer, product, seed_mocha, stock
 from tests._pg_fixture import blank_session, unique_code
 from tests.test_stock_availability_block import (
     _attachment,
@@ -372,6 +372,100 @@ def test_stock_ask_and_incoming_agree_for_one_contact_and_product(client, db):
         (listed,) = _list(client, p, contact)["data"][0]["etas"]
         # AVAIL-MODE-REPLIES: the dealer view tells dd/mm/yyyy, the stock ask's format.
         assert listed == told
+
+
+# ============================================================== the today floor (STOCK-INCOMING-FLOOR)
+#
+# Production, 2 Nov 2026: a dealer's stock check said "No stock and no incoming" for a product
+# whose ETA ask then told 03/11. The stock check floored today on the PROMISED date (20/10)
+# before adding the dealer's 14-day padding; the ETA ask told the padded date. The floor is on
+# the date the dealer is TOLD. UAC `stock-incoming-floor-2nov-acceptance-criteria.md`; fake
+# codes and dates. A shipment whose told date has already passed is Fix B (owner) and is not
+# pinned here.
+
+FLOOR_TODAY = date(2026, 11, 2)
+
+
+@pytest.fixture
+def floor_today(monkeypatch):
+    import app.services.incoming_stock_service as incoming
+
+    monkeypatch.setattr(incoming, "today_myt", lambda: FLOOR_TODAY)
+
+
+def _padded_product(db, *, offset, promised, code=None, company_id=DEFAULT_COMPANY_ID):
+    """A product whose own category pads `offset` days, with one packing-list shipment per
+    `promised` date."""
+    p = product(db, company_id=company_id, code=code)
+    category = _category_of(db, p)
+    category.chatbot_max_qty = 200
+    category.chatbot_eta_offset_days = offset
+    for day in promised:
+        shipment = _incoming_shipment(
+            db, eta=day, attachment_id=_attachment(db).id, company_id=company_id
+        )
+        _incoming_line(db, shipment_id=shipment.id, product_id=p.id, company_id=company_id)
+    db.flush()
+    return p
+
+
+def _stock_check(db, contact, p, *, also=()):
+    """The dealer's stock check with a quantity, nothing on hand: `(branch, eta)`. `also`:
+    more product ids asked in the same call (a code two companies carry)."""
+    brw = _wh(db, unique_code("ZZTW")[:20])
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+    result = StockService(db).list_stock(
+        product_ids=[p.id, *also], contact_id=contact.id, requested_quantities={p.id: 1}
+    )
+    entry = _entry(result, p.id)
+    return entry["branch"], entry["eta"]
+
+
+def test_the_stock_check_tells_the_padded_date_the_eta_ask_tells(client, db, floor_today):
+    """AC-SIF1 + AC-SIF2, the production case: promised 20/10 and 23/10, padded 14 days, asked
+    on 02/11. The stock check is incoming 03/11, and the ETA ask's first date is the same."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 20), date(2026, 10, 23)))
+    dealer = _contact(db, offset_applied=True)
+
+    assert _stock_check(db, dealer, p) == ("incoming", "03/11/2026")
+    (row,) = _by_product(client, p, dealer)["data"]
+    assert row["etas"] == ["03/11/2026", "06/11/2026"]
+
+
+def test_a_told_date_of_today_is_incoming(db, floor_today):
+    """AC-SIF3: promised 19/10 + 14 days is told today."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 19),))
+    assert _stock_check(db, _contact(db), p) == ("incoming", "02/11/2026")
+
+
+def test_the_earliest_shipment_whose_told_date_is_still_ahead_answers(db, floor_today):
+    """AC-SIF4: told 15/10 is past and does not answer; told 03/11 does, ahead of told 24/11."""
+    p = _padded_product(
+        db, offset=14, promised=(date(2026, 10, 1), date(2026, 10, 20), date(2026, 11, 10))
+    )
+    assert _stock_check(db, _contact(db), p) == ("incoming", "03/11/2026")
+
+
+def test_padding_off_floors_on_the_real_date_and_tells_it(db, floor_today):
+    """AC-SIF5: a contact told exact dates is never told the padded 03/11; the next real date
+    still ahead (10/11) answers."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 20), date(2026, 11, 10)))
+    assert _stock_check(db, _contact(db, offset_applied=False), p) == ("incoming", "10/11/2026")
+
+
+def test_a_code_two_companies_carry_is_padded_by_the_larger_offset(db, floor_today):
+    """AC-SIF6: the ETA ask pads a code by the larger of its products' offsets
+    (`eta_policy._offsets_by_product_code`); the stock check now reads the same offsets.
+    Promised 25/10: + 14 is 08/11 (ahead); the asked product's own + 3 would be 28/10 (past)."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    code = unique_code("ZZTFLR")[:50]
+    asked = _padded_product(db, offset=3, promised=(date(2026, 10, 25),), code=code)
+    twin = _padded_product(db, offset=14, promised=(), code=code, company_id=MOCHA_ID)
+
+    assert _stock_check(db, _contact(db), asked, also=(twin.id,)) == ("incoming", "08/11/2026")
 
 
 # ============================================================== packing list gate
