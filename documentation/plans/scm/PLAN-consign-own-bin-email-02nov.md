@@ -50,3 +50,14 @@ gave one `ORDER 4` row and an `ORDER BACK 6 & ORDER 4` email.
 assert the ORDER_BACK row.
 
 Kill test: put the exemption back, the consignment tests fail again.
+
+## Browser-pass fix (crew, 2 Nov 2026)
+
+The guided Confirm review said "Delivered in full: nothing goes to purchasing" beside REMARK
+ORDER BACK on a consignment line (`LineSplitSheet.tsx`, UAC F28). A consignment is always
+delivered in full, but Confirm keeps it (its open qty is ordered less returned), so the line now
+reads "Consignment: goes to purchasing" (or "Consignment: nothing goes to purchasing" when its
+saved words are empty). Sales order lines keep the F28 words; `deliveredInFull` (which also locks
+splitting) is unchanged. The consignment fact is the board's `so_doc_type`, read through one
+predicate (`isConsignment`, `scm/lib/docType.tsx`). Tests F28b, F28c in
+`FulfilmentBoardPanel.confirmGuide.test.tsx`, red first.
