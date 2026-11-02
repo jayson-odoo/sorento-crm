@@ -632,7 +632,9 @@ def test_every_company_id_table_is_registered():
     #   company exactly as `item_types` = 173.
     # + 2 (QUOTE-CUSTOMER-AMEND): `quotation_amendment_requests` and
     #   `quotation_amendment_request_rows`, one company's customer suggestions on its quotation = 175.
-    expected_owned = 175
+    # + 1 (PS-QUOTE-VIEWS): `quotation_issue_views`, one company's counted opens of its sign
+    #   links = 176.
+    expected_owned = 176
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
