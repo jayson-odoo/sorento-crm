@@ -14,7 +14,7 @@ per product; one = automatic, many = salesperson picks, with preview).
   Marketing can swap it with "Use template..." (`TemplatePickDialog.tsx`). Nothing about the
   choice is stored on the request line (`app/models/price_tag.py:188-262`); it lives only inside
   the saved tag sheet document.
-- The salesperson sees the design only from `proof_ready` (`PriceTagRequestForm.tsx:129`,
+- The salesperson sees the design only from `proof_ready` (`PriceTagRequestForm.tsx:132`,
   `portal_price_tag.py:196`). Before that the form has no picture of the tag at all.
 - Products have `brand_id` and `category_id` (`app/models/product.py:277-278`), `item_class_id`
   (`:285`) and `family_code` (the model family from the code, `:309`). There is NO "series"
