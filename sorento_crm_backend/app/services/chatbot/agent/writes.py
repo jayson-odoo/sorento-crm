@@ -1529,9 +1529,11 @@ def _refuse_ids_in(**texts: Any) -> None:
     from app.services.error_handler import handle_validation_error
 
     for label, text in texts.items():
-        # An invisible format character (category Cf) could hide an id from the pattern; accents, Chinese and
-        # emoji are not Cf and stay allowed.
-        if text and (_UUID_TEXT.search(str(text)) or any(unicodedata.category(c) == "Cf" for c in str(text))):
+        # An id hidden by invisible marks is still an id: look at the text as it reads (NFKC) with every format
+        # character (Cf) and combining mark (Mn) removed. Accents, Chinese and emoji elsewhere stay allowed.
+        seen = unicodedata.normalize("NFKC", str(text or ""))
+        seen = "".join(c for c in seen if unicodedata.category(c) not in ("Cf", "Mn"))
+        if _UUID_TEXT.search(seen):
             raise handle_validation_error(f"The {label} holds a record id. Say it in words and propose again.")
 
 

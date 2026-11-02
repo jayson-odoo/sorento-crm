@@ -441,7 +441,32 @@ def _found_ids(ledger: dict[str, dict]) -> set[str]:
             for r in entry["data"].get("results") or []:
                 if r.get("status") == "found":
                     ids.update(str(m.get("id")).lower() for m in r.get("matches") or [])
+        elif entry["status"] == "ok":
+            ids |= _record_ids(entry["data"])
     return ids
+
+
+def _record_ids(data: Any) -> set[str]:
+    """The `id` of each record an ok read returned: a row of a list (top level, or a list value of the top-level
+    dict), or the detail record itself (the dict's own `id`, or a nested record dict's `id`). Never `*_id`."""
+    found: set[str] = set()
+
+    def take(record: Any) -> None:
+        if isinstance(record, dict) and isinstance(record.get("id"), str) and record["id"].strip():
+            found.add(record["id"].strip().lower())
+
+    if isinstance(data, list):
+        for row in data:
+            take(row)
+    elif isinstance(data, dict):
+        take(data)
+        for value in data.values():
+            if isinstance(value, list):
+                for row in value:
+                    take(row)
+            else:
+                take(value)
+    return found
 
 
 def _fold_text(value: str) -> str:
