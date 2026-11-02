@@ -29,3 +29,27 @@ join projects.quotation_lines l on l.version_id = v.id
 group by d.document_no, st.key, pr.is_critical, a.key
 having sum(case when l.is_non_standard or l.is_below_floor then 1 else 0 end) > 0
 order by d.document_no desc limit 10;
+
+-- 4. Reporting lines among users who own projects or can approve (Q6). Mask names.
+select u.name as owner, s.name as superior, s2.name as superiors_superior,
+       (select count(*) from projects.projects p where p.owner_user_id = u.id) as projects_owned
+from users u
+left join users s on s.id = u.superior_id
+left join users s2 on s2.id = s.superior_id
+where u.status = 'active' and not u.is_trashed and exists (select 1 from projects.projects p where p.owner_user_id = u.id)
+order by projects_owned desc limit 20;
+
+-- 5. Users who hold the approve permission through a role (who can sit in the routing table).
+select distinct u.name, r.name as role_name
+from users u
+join user_role_assignments ura on ura.user_id = u.id
+join user_role_permissions rp on rp.role_id = ura.role_id
+join user_permissions p on p.id = rp.permission_id and p.slug = 'projects.quotations.approve'
+join user_roles r on r.id = ura.role_id
+where u.status = 'active' and not u.is_trashed order by u.name;
+
+-- 6. How often a line is priced below its list price today (Q8 volume).
+select count(*) filter (where l.unit_price < l.list_price_snapshot) as below_list,
+       count(*) filter (where l.is_below_floor) as below_floor,
+       count(*) as lines
+from projects.quotation_lines l;
