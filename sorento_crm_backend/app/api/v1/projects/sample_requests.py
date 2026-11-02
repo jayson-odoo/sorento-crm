@@ -17,6 +17,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.schemas.sample_request import (
     SampleRequestInternal,
+    SampleRequestConsignmentLink,
     SampleRequestDateAnswer,
     SampleRequestMove,
     SampleRequestWrite,
@@ -316,6 +317,43 @@ def answer_date(
             feasible=payload.date_feasible,
             proposed=payload.proposed_delivery_date,
             note=payload.date_note,
+        )
+        db.commit()
+        db.refresh(req)
+        return svc.serialize_detail(db, req)
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.get("/sample-requests/{request_id}/consignments")
+def search_consignments(
+    request_id: str,
+    q: Optional[str] = Query(None),
+    user: dict = Depends(require_permission(PROCESS)),
+    db: Session = Depends(get_db),
+):
+    """PS-SAMPLE-TRACKING Stage 2: the live consignments the sample team can link."""
+    req = _load(db, request_id)
+    actor = _actor(db, user)
+    svc.assert_can_view(req, actor)
+    return svc.search_consignments(db, req, actor=actor, q=q or "")
+
+
+@router.put("/sample-requests/{request_id}/consignment")
+def link_consignment(
+    request_id: str,
+    payload: SampleRequestConsignmentLink,
+    user: dict = Depends(require_permission(PROCESS)),
+    db: Session = Depends(get_db),
+):
+    """PS-SAMPLE-TRACKING Stage 2: the linked consignment is the delivery."""
+    try:
+        req = _load(db, request_id)
+        actor = _actor(db, user)
+        svc.assert_can_view(req, actor)
+        svc.link_consignment(
+            db, req, actor=actor, consignment_order_id=payload.consignment_order_id
         )
         db.commit()
         db.refresh(req)

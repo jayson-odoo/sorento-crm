@@ -536,7 +536,9 @@ def update_internal(
             message="A cancelled request cannot be changed.",
             code="SAMPLE_REQUEST_CANCELLED",
         )
-    req.consignment_no = _clean(consignment_no)
+    # A linked consignment owns the number (PS-SAMPLE-TRACKING); free text is for the rest.
+    if not req.consignment_order_id:
+        req.consignment_no = _clean(consignment_no)
     req.po_no = _clean(po_no)
     db.flush()
 
@@ -682,6 +684,13 @@ def move(
     if to == SUBMITTED or not _edge_exists(db, frm, to):
         raise illegal_move(frm, to)
 
+    if to == DELIVERED and req.consignment_order_id:
+        raise AppException(
+            status_code=409,
+            message="This request is delivered by its linked consignment, not by hand.",
+            code="SAMPLE_REQUEST_DELIVERED_BY_CONSIGNMENT",
+        )
+
     reason = _clean(reason)
     if to in (CUSTOMER_CONFIRMED, DELIVERED) and on is None:
         raise AppException(
@@ -719,6 +728,169 @@ def move(
         req.cancel_reason = reason
     db.flush()
     _record(db, req, actor=actor, label=_label(db, to))
+
+
+# ------------------------------------------------------------------ Stage 2: the consignment
+
+#: Where the sample team may link (or change) the consignment: after Start processing.
+CONSIGNMENT_OPEN = (PROCESSING, CUSTOMER_CONFIRMED, DELIVERED)
+CONSIGNMENT_CANCELLED = "cancelled"
+
+
+def consignment_delivered_on(cg) -> Optional[date]:
+    """THE delivery source (owner, 2 Nov: "The sample delivery document is the consignment").
+    A live AutoCount CG is the delivery, on its document date: its goods are at the customer
+    when it is issued (CONSIGN-DELIVERED-FIX, 14 Oct). None for a voided / vanished one."""
+    if cg is None or cg.status == CONSIGNMENT_CANCELLED or cg.order_date is None:
+        return None
+    return cg.order_date
+
+
+def _consignment_query(db: Session, company_id: str):
+    from app.models.order import DOC_TYPE_CONSIGNMENT, SalesOrder
+
+    return db.query(SalesOrder).filter(
+        SalesOrder.company_id == company_id,
+        SalesOrder.doc_type == DOC_TYPE_CONSIGNMENT,
+    )
+
+
+def _linked_consignment(db: Session, req: SampleRequest):
+    if not req.consignment_order_id:
+        return None
+    from app.models.order import SalesOrder
+
+    return db.query(SalesOrder).filter(SalesOrder.id == req.consignment_order_id).first()
+
+
+def _deliver_by(db: Session, req: SampleRequest, on: date, *, actor_id: Optional[str], no: str) -> None:
+    """Delivered from the consignment: the graph edge is not asked, the CG is the fact."""
+    changed = status_key(db, req) != DELIVERED or req.delivered_at != on
+    _set_status(db, req, DELIVERED)
+    req.delivered_at = on
+    req.return_due = _add_loan(on, req.loan_value, req.loan_unit)
+    db.flush()
+    if changed:
+        _record(
+            db, req, actor=Actor(user_id=actor_id), label=f"{_label(db, DELIVERED)} by {no}"
+        )
+
+
+def _undeliver(db: Session, req: SampleRequest, *, actor_id: Optional[str], why: str) -> None:
+    """Back to the last Stage 1 step it reached (owner Q4 a)."""
+    if status_key(db, req) != DELIVERED:
+        return
+    back = CUSTOMER_CONFIRMED if req.confirmed_at else PROCESSING
+    _set_status(db, req, back)
+    req.delivered_at = None
+    req.return_due = None
+    db.flush()
+    _record(db, req, actor=Actor(user_id=actor_id), label=f"{_label(db, back)} ({why})")
+
+
+def search_consignments(
+    db: Session, req: SampleRequest, *, actor: Actor, q: str = "", limit: int = 20
+) -> List[Dict[str, Any]]:
+    """The live consignments of the request's company the sample team can pick from."""
+    if not actor.can_process:
+        raise _forbidden("Only the sample team can link a consignment.")
+    from app.models.order import SalesOrder
+
+    query = _consignment_query(db, req.company_id).filter(
+        SalesOrder.status != CONSIGNMENT_CANCELLED
+    )
+    needle = (q or "").strip()
+    if needle:
+        like = f"%{needle}%"
+        query = query.filter(
+            or_(
+                SalesOrder.so_number.ilike(like),
+                SalesOrder.debtor_name.ilike(like),
+                SalesOrder.debtor_code.ilike(like),
+            )
+        )
+    rows = (
+        query.order_by(SalesOrder.order_date.desc().nulls_last(), SalesOrder.so_number.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "so_number": r.so_number,
+            "debtor_code": r.debtor_code,
+            "debtor_name": r.debtor_name,
+            "order_date": r.order_date,
+        }
+        for r in rows
+    ]
+
+
+def link_consignment(
+    db: Session, req: SampleRequest, *, actor: Actor, consignment_order_id: Optional[str]
+) -> None:
+    """Link (or, with None, unlink) the consignment that delivers the request."""
+    if not actor.can_process:
+        raise _forbidden("Only the sample team can link a consignment.")
+    if status_key(db, req) not in CONSIGNMENT_OPEN:
+        raise AppException(
+            status_code=409,
+            message="A consignment can be linked once the request is being processed.",
+            code="SAMPLE_REQUEST_CONSIGNMENT_CLOSED",
+        )
+    if consignment_order_id is None:
+        if req.consignment_order_id:
+            req.consignment_order_id = None
+            req.consignment_no = None
+            _undeliver(db, req, actor_id=actor.user_id, why="consignment unlinked")
+        db.flush()
+        return
+
+    from app.models.order import SalesOrder
+
+    cg = (
+        _consignment_query(db, req.company_id)
+        .filter(SalesOrder.id == consignment_order_id)
+        .first()
+        if _is_uuid(consignment_order_id)
+        else None
+    )
+    on = consignment_delivered_on(cg)
+    if on is None:
+        raise AppException(
+            status_code=422,
+            message="Choose a live AutoCount consignment of this company.",
+            code="SAMPLE_REQUEST_CONSIGNMENT_INVALID",
+            details={"field": "consignment_order_id"},
+        )
+    req.consignment_order_id = cg.id
+    req.consignment_no = cg.so_number
+    _deliver_by(db, req, on, actor_id=actor.user_id, no=cg.so_number)
+
+
+def sync_consignment(db: Session, company_id: str, so_number: str) -> int:
+    """Re-read every request linked to this CG after the consignment ingest wrote it: a voided
+    or vanished CG undoes the delivery, a live (or restored) one delivers on its date. Returns
+    how many requests it looked at. Called by `AutocountCancelIngestService`."""
+    from app.models.order import SalesOrder
+
+    cg = _consignment_query(db, company_id).filter(SalesOrder.so_number == so_number).first()
+    if cg is None:
+        return 0
+    reqs = (
+        db.query(SampleRequest)
+        .filter(SampleRequest.consignment_order_id == cg.id)
+        .all()
+    )
+    on = consignment_delivered_on(cg)
+    for req in reqs:
+        if status_key(db, req) == CANCELLED:
+            continue
+        if on is None:
+            _undeliver(db, req, actor_id=None, why=f"{cg.so_number} voided")
+        else:
+            _deliver_by(db, req, on, actor_id=None, no=cg.so_number)
+    return len(reqs)
 
 
 # ------------------------------------------------------------------ reads
@@ -1189,6 +1361,13 @@ def _source_ref(db: Session, req: SampleRequest) -> Optional[str]:
     return quotation_label(doc_no, issue_no)
 
 
+def _consignment_block(db: Session, req: SampleRequest) -> Optional[Dict[str, Any]]:
+    cg = _linked_consignment(db, req)
+    if cg is None:
+        return None
+    return {"id": cg.id, "so_number": cg.so_number, "order_date": cg.order_date, "status": cg.status}
+
+
 def _user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
     if not user_id:
         return None
@@ -1247,6 +1426,7 @@ def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
             "return_due": req.return_due,
             "cancelled_at": req.cancelled_at,
             "cancel_reason": req.cancel_reason,
+            "consignment": _consignment_block(db, req),
             "date_note": req.date_note,
             "date_answered_at": req.date_answered_at,
             "date_answered_by_name": _user_name(db, req.date_answered_by),

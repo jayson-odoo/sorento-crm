@@ -128,9 +128,10 @@ class SampleRequest(Base, CompanyScopedMixin):
     date_answered_by = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
-    #: PS-SAMPLE-TRACKING Stage 2: the AutoCount DO that delivered it, when one is linked.
-    delivery_order_id = Column(
-        UUID(as_uuid=False), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True
+    #: PS-SAMPLE-TRACKING Stage 2: the AutoCount consignment (CG) the sample team linked as the
+    #: delivery. Chosen explicitly, never matched from `consignment_no` text (owner, 2 Nov).
+    consignment_order_id = Column(
+        UUID(as_uuid=False), ForeignKey("sales_orders.id", ondelete="SET NULL"), nullable=True
     )
 
     submitted_at = Column(DateTime(timezone=False), nullable=True)
@@ -170,6 +171,7 @@ class SampleRequest(Base, CompanyScopedMixin):
         Index("ix_sample_requests_project", "project_id"),
         Index("ix_sample_requests_salesperson", "salesperson_id"),
         Index("ix_sample_requests_contact", "contact_id"),
+        Index("ix_sample_requests_consignment_order", "consignment_order_id"),
         {"schema": "projects"},
     )
 

@@ -52,6 +52,11 @@ class SampleRequestMove(BaseModel):
     date_note: Optional[str] = Field(None, max_length=255)
 
 
+class SampleRequestConsignmentLink(BaseModel):
+    #: The AutoCount consignment (`sales_orders.id`, doc_type consignment); null unlinks.
+    consignment_order_id: Optional[str] = None
+
+
 class SampleRequestDateAnswer(BaseModel):
     date_feasible: Optional[bool] = None
     proposed_delivery_date: Optional[Date] = None

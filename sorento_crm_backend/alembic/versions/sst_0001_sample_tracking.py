@@ -5,8 +5,9 @@ Additive, nullable columns on `projects.sample_requests`:
 - `date_feasible` / `proposed_delivery_date` / `date_note` / `date_answered_at` /
   `date_answered_by`: the sample team's answer to "can we meet the requested date?", given on
   Start processing (PLAN-sample-tracking-02nov.md rule 2).
-- `delivery_order_id`: the AutoCount DO that delivered it (rule 4). `ON DELETE SET NULL`: the
-  request outlives a deleted DO row.
+- `consignment_order_id`: the AutoCount consignment (CG, a `sales_orders` row with
+  `doc_type = 'consignment'`) the sample team linked as the delivery (owner, 2 Nov: "The sample
+  delivery document is the consignment"). `ON DELETE SET NULL`: the request outlives the row.
 
 Idempotent (`IF NOT EXISTS`) so the shared dev DB, which converges through `create_all`, can
 take it in any order.
@@ -35,18 +36,19 @@ def upgrade() -> None:
         "REFERENCES users(id) ON DELETE SET NULL"
     )
     op.execute(
-        f"ALTER TABLE {_T} ADD COLUMN IF NOT EXISTS delivery_order_id UUID "
-        "REFERENCES orders(id) ON DELETE SET NULL"
+        f"ALTER TABLE {_T} ADD COLUMN IF NOT EXISTS consignment_order_id UUID "
+        "REFERENCES sales_orders(id) ON DELETE SET NULL"
     )
     op.execute(
-        f"CREATE INDEX IF NOT EXISTS ix_sample_requests_delivery_order ON {_T} (delivery_order_id)"
+        f"CREATE INDEX IF NOT EXISTS ix_sample_requests_consignment_order "
+        f"ON {_T} (consignment_order_id)"
     )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS projects.ix_sample_requests_delivery_order")
+    op.execute("DROP INDEX IF EXISTS projects.ix_sample_requests_consignment_order")
     for col in (
-        "delivery_order_id",
+        "consignment_order_id",
         "date_answered_by",
         "date_answered_at",
         "date_note",
