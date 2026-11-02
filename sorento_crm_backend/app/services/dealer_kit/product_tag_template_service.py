@@ -176,6 +176,33 @@ def set_product_templates(
     return linked_templates(db, product.id)
 
 
+def product_exists(db: Session, product_id: str) -> bool:
+    """In this session's scope: a product in another company reads as missing."""
+    pid = _uuid_or_none(product_id)
+    return bool(pid) and _scoped(db, Product).filter(Product.id == pid).first() is not None
+
+
+def unlink_product_templates(db: Session, product_id: str, template_ids: list[str]) -> dict:
+    """The product page's Remove, committed after its countdown (an unlink, so
+    it parks: ``product_tag_template.unlink``). Only links of a product in
+    scope are touched; ids it does not hold are ignored."""
+    if not product_exists(db, product_id):
+        raise _not_found("Product")
+    ids = [tid for tid in (_uuid_or_none(t) for t in template_ids or []) if tid]
+    if not ids:
+        return {"changed": 0}
+    changed = (
+        db.query(ProductTagTemplate)
+        .filter(
+            ProductTagTemplate.product_id == _uuid_or_none(product_id),
+            ProductTagTemplate.template_id.in_(ids),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.flush()
+    return {"changed": changed}
+
+
 # ---------------------------------------------------------------------------
 # Bulk assignment (Tag Templates list)
 # ---------------------------------------------------------------------------

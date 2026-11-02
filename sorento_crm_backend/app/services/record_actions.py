@@ -1737,6 +1737,27 @@ register(
 )
 
 
+def _unlink_product_tag_templates(db: Session, payload: dict):
+    """PRICETAG-TEMPLATE-PER-PRODUCT: unticking templates on the product page."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.unlink_product_templates(
+        db, _entity_id(payload), [str(t) for t in payload.get("template_ids") or []]
+    )
+
+
+register(
+    FormAction(
+        key="product_tag_template.unlink",
+        entity_types=("product",),
+        execute=_unlink_product_tag_templates,
+        window=WINDOW_REVERSIBLE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Unlink tag templates from product",
+    )
+)
+
+
 def _delete_tag_size_preset(db: Session, payload: dict):
     """Both callers - the `/dealer-kit/tag-sizes` listing's row menu and the
     request designer's Tag Size control (the saved-size `x`) - park through

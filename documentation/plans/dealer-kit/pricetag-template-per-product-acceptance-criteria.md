@@ -9,8 +9,10 @@ Plan: `PLAN-pricetag-template-per-product-02nov.md`. Card: `CARD-pricetag-templa
   (id, name, family, print size, published flag); needs `dealer_kit.tag_templates.view`.
 - AC-3 `PUT /api/v1/dealer-kit/products/{id}/tag-templates {template_ids}` replaces the set; needs
   `dealer_kit.tag_templates.manage`; 403 without it; 404 for an unknown product or template.
-- AC-4 The product page Overview shows a "Price tag templates" card: chips + SearchableMultiSelect
-  for a manager, chips only for a viewer, heading + hint when empty.
+- AC-4 The product page Overview shows a "Price tag templates" card to anyone holding
+  `dealer_kit.tag_templates.view`: SearchableMultiSelect for a manager (an add saves at once, an
+  untick parks `product_tag_template.unlink` with a countdown), chips only for a viewer, heading +
+  hint when empty.
 
 ## Bulk assignment
 
@@ -34,8 +36,9 @@ Plan: `PLAN-pricetag-template-per-product-02nov.md`. Card: `CARD-pricetag-templa
   whose product has two or more published links and no valid pick.
 - AC-11 A product with exactly one published link: the line is given that template on save when
   the client sent none.
-- AC-12 Any save refuses a `tag_template_id` that is not one of the product's published links
-  (422 `INVALID_TAG_TEMPLATE`), and refuses any `tag_template_id` on a set line.
+- AC-12 Any save DROPS a `tag_template_id` that is not one of the product's published links
+  (stored as no pick, so Submit asks again; card R4: no own error, so no way to probe whether
+  another template id exists), and drops any `tag_template_id` on a set line.
 - AC-13 A product with no published link: no field, no refusal, behaviour as today.
 - AC-14 The line row shows "Template: <name>" for one, a required SearchableSelect for many,
   nothing for none.

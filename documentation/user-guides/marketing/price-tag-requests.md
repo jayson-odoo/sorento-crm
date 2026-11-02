@@ -254,7 +254,8 @@ Only a **Live** (published) template counts. A linked template you unpublish sta
 not offered until you publish it again. Spec sheet templates are never offered here.
 
 **On one product**: open the product, **Overview** tab, card **Price tag templates**. Search and
-tick templates to link them, untick to unlink; each change saves at once. Without the Tag
+tick templates to link them; each one saves at once. Unticking one unlinks it after a short
+countdown with **Cancel**. Without the Tag
 Templates manage permission the card lists the templates read-only.
 
 **On many products at once**: open

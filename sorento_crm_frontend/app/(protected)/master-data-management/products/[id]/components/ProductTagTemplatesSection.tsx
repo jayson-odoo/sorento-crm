@@ -9,13 +9,15 @@
  * who can see templates reads it. Not drawn at all without that read.
  */
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
+  productTagTemplatesKey,
   usePriceTagTemplateOptions,
   useProductTagTemplates,
   useSetProductTagTemplates,
@@ -31,6 +33,26 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
   const linked = useProductTagTemplates(productId, canView);
   const options = usePriceTagTemplateOptions(canManage);
   const save = useSetProductTagTemplates(productId);
+  // Adding a template saves at once; unticking one is an unlink, so it parks
+  // with a countdown and a Cancel (D7) and the server commits it.
+  const [unlink, setUnlink] = useState<{ batchId: string; ids: string[]; subject: string } | null>(
+    null,
+  );
+  const unlinking = useDeferredAction({
+    actionKey: 'product_tag_template.unlink',
+    entityType: 'product',
+    entityId: unlink ? productId : null,
+    verb: 'Unlinking',
+    subject: unlink?.subject ?? '',
+    surface: 'toast',
+    successMessage: 'Template unlinked',
+    payload: { template_ids: unlink?.ids ?? [] },
+    invalidateKeys: [productTagTemplatesKey(productId)],
+  });
+  useEffect(() => {
+    if (unlink) unlinking.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unlink?.batchId]);
 
   const selectOptions = useMemo(
     () =>
@@ -71,11 +93,26 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
               label: row.name,
               description: sizeText(row.width_mm, row.height_mm),
             }))}
-            onChange={(ids) => save.mutate(ids)}
+            onChange={(ids) => {
+              const current = rows.map((row) => row.id);
+              const added = ids.filter((id) => !current.includes(id));
+              const removed = current.filter((id) => !ids.includes(id));
+              // Keep every current link on the add: the removed ones go through
+              // the countdown below, not this save.
+              if (added.length > 0) save.mutate([...current, ...added]);
+              if (removed.length > 0) {
+                const names = rows.filter((row) => removed.includes(row.id)).map((row) => row.name);
+                setUnlink({
+                  batchId: crypto.randomUUID(),
+                  ids: removed,
+                  subject: names.length === 1 ? names[0] : `${names.length} templates`,
+                });
+              }
+            }}
             options={selectOptions}
             loadError={options.error ?? undefined}
             onRetry={() => void options.refetch()}
-            disabled={save.isPending}
+            disabled={save.isPending || unlinking.isPending}
             placeholder="Search templates"
             emptyMessage="No templates."
           />

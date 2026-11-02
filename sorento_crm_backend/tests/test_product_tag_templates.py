@@ -683,3 +683,36 @@ def test_preview_never_prices_a_promotion_outside_the_contacts_audience(env, pri
     assert out["lines"], out
     assert float(out["lines"][0]["sell_price"] or 100) != 40.0
     assert "40" not in str(out["lines"][0].get("sell_price"))
+
+
+def test_deferred_product_unlink_removes_only_the_named_links(env):
+    """`product_tag_template.unlink` (the product card's untick, a parked unlink)."""
+    from app.models.dealer_kit import ProductTagTemplate
+    import app.services.record_actions  # noqa: F401  (registers the actions)
+    from app.services.form_action_registry import get_action
+
+    db, c, _ = env
+    ref = _reference(db)
+    product = _product(db, ref)
+    a = _template(db, "A")
+    b = _template(db, "B")
+    _link(db, product, a, b)
+
+    action = get_action("product_tag_template.unlink")
+    assert action.permission == "dealer_kit.tag_templates.manage"
+    assert action.execute(db, {"entity_id": product, "template_ids": [a]}) == {"changed": 1}
+    assert {r.template_id for r in db.query(ProductTagTemplate).filter_by(product_id=product)} == {b}
+
+
+def test_product_lookup_is_scoped(env):
+    from app.models.base import set_company_scope
+
+    db, c, _ = env
+    ref = _reference(db)
+    product = _product(db, ref)
+    assert c.get(f"{DK}/products/{product}/tag-templates").status_code == 200
+    from app.services.dealer_kit import product_tag_template_service
+
+    set_company_scope(db, frozenset({"11111111-1111-1111-1111-111111111111"}))
+    assert product_tag_template_service.product_exists(db, product) is False
+    set_company_scope(db, frozenset({SORENTO}))
