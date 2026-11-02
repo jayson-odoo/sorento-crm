@@ -1,6 +1,6 @@
 # PLAN: PS-QUOTE-RULES (off-series line needs approval; discount request moves project to Final Negotiation)
 
-Status: Build. Track: standard, size L (migration + security review), per crew 2 Nov.
+Status: Review done (reviewer + security fixed), awaiting owner hand test and CI. Track: standard, size L (migration + security review), per crew 2 Nov.
 
 ## Scope
 
