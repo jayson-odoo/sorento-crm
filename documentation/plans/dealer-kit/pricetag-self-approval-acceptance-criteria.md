@@ -2,7 +2,7 @@
 
 Plan: `PLAN-pricetag-self-approval-02nov.md`.
 
-- AC1 Submit lands at `proof_ready`, `escalated_at` NULL, no form SLA tracker opened, `assigned_to_id` NULL.
+- AC1 Submit lands at `proof_ready`, no form SLA tracker opened, `assigned_to_id` NULL.
 - AC2 Approve (normal flow) with a valid doc writes a new `PageVersion`, pins tag data, moves to `approved`,
   queues one export whose requesting user is the contact when nobody is assigned.
 - AC3 Approve (normal flow) without a doc: 422 `DOC_REQUIRED`, nothing written.
@@ -16,7 +16,7 @@ Plan: `PLAN-pricetag-self-approval-02nov.md`.
   review comment; with an active form SLA config the request ends at `designing` under the config's assignee.
 - AC10 Escalate with no active config leaves the request `new`, unassigned and claimable.
 - AC11 Escalate refused from `ready_for_collection` / `collected` / `void` / already escalated.
-- AC12 Claim and design save refused (409 `NOT_ESCALATED`) for a normal-flow request.
+- AC12 Claim and design save refused (409) for his own proof; the CRM offers no Design action on it.
 - AC13 No data change at deploy: a submitted `new` / `designing` / `changes_requested` request, or a
   `proof_ready` with an assignee, reads as with marketing; an `approved` one is his to edit or escalate.
 - AC14 Portal form: at `proof_ready` (normal flow) shows the generated tag with Approve, Edit, Escalate; at

@@ -86,7 +86,7 @@ R7. **After escalation** it is today's loop exactly: marketing designs, marks pr
    approves (no `doc`; marketing's saved version is what gets approved and printed) or requests changes.
 
 R8. **Marketing's side.** Claim and the designer are refused for a request that is not escalated
-   (409 `NOT_ESCALATED`): in the normal flow there is nothing for marketing to do. The CRM list still shows
+   (409): in the normal flow there is nothing for marketing to do. The CRM list still shows
    every request, with an Escalated marker, so the office can see what exists.
 
 R9. **Audit trail.** Every status, `escalated_at` and line change is captured by the ORM audit listeners
