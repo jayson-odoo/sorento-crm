@@ -35,7 +35,7 @@ The fake parser returns the object the owner expects at each turn; the assertion
 | 9 | for slaes agent b | ran: same as 8; no basis question |
 | 10 | invoiced | ran: same as 8; CERAMIC kept |
 | 11 | for ceramic account ty[e | ran: account type CERAMIC, Sorento kept; no company question |
-| 12 | sorento | ran: same as 11; no "brand or account type?" |
+| 12 | sorento | ran: same as 11 when read as the company; read as a brand (nothing open, SORENTO is a brand and an account type) it asks "Sorento: brand or account type?" (crew ruling 2 Nov) |
 | 13 | ceramic accoutn type | ran: CERAMIC, AGENT B, by month, Sorento, 2026, invoiced |
 | 14 | breakd down by month, only sales agent b | ran: by month, AGENT B, 2026, invoiced, Sorento, CERAMIC |
 

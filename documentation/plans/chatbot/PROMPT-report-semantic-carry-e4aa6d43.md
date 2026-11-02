@@ -49,4 +49,6 @@ Round 1 D: 11 of 16, USD 0.055. Round 2 D3: 13 of 16, USD 0.056 (ledger lines 2 
 | sc-15 | ZZT102-RG dealer sales may 2026 | PASS | PASS |  |
 | sc-16 | ZZT102-RG sales 2026 | FAIL report_ask.channel 'dealer' != None | FAIL report_ask.channel 'dealer' != None | KNOWN LIMIT, crew-set expectation (crew ruling 2 Nov): the reply header names Channel: dealer |
 
-No-op control (BASE 99b5fc65 vs D3 on parser-gold TRAIN, 118 lane ids x1 per arm): see the plan.
+Graded on the full object (gold bacfd008cb, offline regrade, no spend): D3 12 of 16 (sc-12 adds brand SORENTO, the
+question path by crew ruling). No-op control on parser-gold TRAIN (113 common lane ids x1): BASE 90, D3 91, 4 wins / 5
+losses, p=1.00, USD 0.688.

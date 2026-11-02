@@ -1,6 +1,6 @@
 # PLAN: the parser writes the whole report ask each turn (semantic carry, 2 Nov 2026)
 
-**Status:** Build (PR A: red 194174a4f4 + 2a6e449d22, green 819f45105e; review next; split ruled by crew 2 Nov). Track: full (L-ish: parser prompt + schema + the lane's report path; no migration, no route change,
+**Status:** Review (PR A: red 194174a4f4 + 2a6e449d22 + 847771fcd2, green 819f45105e + ac6116db6d; re-review next; split ruled by crew 2 Nov). Track: full (L-ish: parser prompt + schema + the lane's report path; no migration, no route change,
 no auth change). Branch `crew/sales-account-type-semantic` from origin/main 46de2f6d77. Lane SALES-ACCOUNT-TYPE,
 follow-up of #2067 / #2074. Supersedes `PLAN-report-multiturn-carry-2nov.md` (PR #2092, coded carry rules, closed
 unmerged). UAC: `report-semantic-carry-acceptance-criteria.md`.
@@ -115,8 +115,12 @@ would leave production with no carry at all between the release and the label mo
 
 Prompt text: `PROMPT-report-semantic-carry-e4aa6d43.md` (one anchored section on 99b5fc65, no gold-message examples, no
 word lists). 16 gold rows x1 on gemini-3.5-flash-lite: round 1 D 11 of 16, round 2 D3 13 of 16; table in the prompt doc.
-The misses: sc-01 and sc-03 (both-table word) are handled by V4 in code; sc-16 is a known limit (below). The no-op
-control on parser-gold TRAIN is recorded below when it finishes.
+Graded on the FULL object (every slot, bacfd008cb), D3 is 12 of 16: sc-01 (an invented agent code no candidate list
+names, read as a customer; the both-table word is V4 in code), sc-03 (V4: the declared pick answers in production; the
+gold harness shows no options line), sc-12 (question path, crew ruling below), sc-16 (known limit). No-op control
+(ledger 2 Nov 22:3x / 22:57, USD 0.688): parser-gold TRAIN, 113 lane ids both arms completed x1, whole parse BASE
+99b5fc65 90 vs D3 e4aa6d43 91, 4 wins / 5 losses, p=1.00 (score_bakeoff): the section and schema flip no unrelated row
+beyond run-to-run noise.
 
 ## Known limits (PR A)
 
@@ -125,6 +129,12 @@ control on parser-gold TRAIN is recorded below when it finishes.
   "all channels". Crew-set expectation (all channels) marked FAIL / known limit.
 - Not object slots, so they stay this message's own and do not carry: sort direction, compare_to, mine, locations,
   specs.
+- Owner turn 12, crew ruling 2 Nov: a bare both-table word with nothing open ("sorento" with company Sorento held)
+  may be read as a brand; the code then asks "Sorento: brand or account type?" (owner 1 Nov ambiguity rule), never a
+  wrong figure.
+- Review round 2 Nov: a held name maps back to its held id only inside the ask's company (else it is resolved in the
+  named company; a subject not there goes on the "Not applied:" line); the declared pick of an offered basis / kind
+  option answers V1; a ranking is marked by this message's own rank_direction / top_n, never by a carried measure.
 
 ## Deletion (PR B; origin/main line numbers)
 
