@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from .test_project_quotation_document_routes import (  # noqa: F401  (api is a fixture)
     BASE,
+    MARKER as DOC_MARKER,
     _create_document,
     api,
 )
@@ -142,9 +143,9 @@ def test_template_free_text_fields_cap_at_2000_characters(api, field):
 def test_document_response_carries_prepared_by_the_project_owner(api):
     client, _db, _company_id, _user_id, project, _party = api
     created = _create_document(client, project.id)
-    assert created["prepared_by"] == f"{MARKER} Baser"
+    assert created["prepared_by"] == f"{DOC_MARKER} Baser"
     got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/{created['id']}").json()
-    assert got["prepared_by"] == f"{MARKER} Baser"
+    assert got["prepared_by"] == f"{DOC_MARKER} Baser"
 
 
 def test_document_prepared_by_falls_back_to_the_creator_when_the_project_has_no_owner(api):
@@ -156,4 +157,4 @@ def test_document_prepared_by_falls_back_to_the_creator_when_the_project_has_no_
     db.commit()
     got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/{created['id']}").json()
     assert "prepared_by" in got
-    assert got["prepared_by"] == f"{MARKER} Baser"
+    assert got["prepared_by"] == f"{DOC_MARKER} Baser"
