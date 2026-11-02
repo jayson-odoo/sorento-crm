@@ -7,6 +7,7 @@
  * "New Template" button opens TagTemplateDialog.
  */
 
+import { clickToken } from '@/lib/click-token';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '@/lib/toast';
 import { useRouter } from 'next/navigation';
@@ -18,7 +19,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Link2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -37,6 +38,11 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { familyLabel, type TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 import { listTemplates } from '../../services/tagTemplateService';
 import { TagTemplateDialog } from './TagTemplateDialog';
+import { AssignTemplateDialog } from './AssignTemplateDialog';
+import {
+  isPriceTagFamily,
+  type TemplateAssignFilter,
+} from '../../services/productTagTemplateService';
 
 export function TagTemplatesList() {
   const router = useRouter();
@@ -49,6 +55,30 @@ export function TagTemplatesList() {
     pageSize: 50,
   });
   const [createOpen, setCreateOpen] = useState(false);
+  // PRICETAG-TEMPLATE-PER-PRODUCT: the row's "Assign to products" dialog, and
+  // its Remove, which parks here (an unlink) so the countdown outlives the dialog.
+  const [assignTarget, setAssignTarget] = useState<{ id: string; name: string } | null>(null);
+  const [unassign, setUnassign] = useState<{
+    batchId: string;
+    templateId: string;
+    subject: string;
+    filter: TemplateAssignFilter;
+  } | null>(null);
+  const unassignment = useDeferredAction({
+    actionKey: 'tag_template.unassign_products',
+    entityType: 'tag_template',
+    entityId: unassign?.templateId ?? null,
+    verb: 'Removing',
+    subject: unassign?.subject ?? '',
+    surface: 'toast',
+    successMessage: 'Template removed from products',
+    payload: { ...(unassign?.filter ?? {}) },
+    invalidateKeys: [['product-tag-templates'], ['tag-template-assign-preview']],
+  });
+  useEffect(() => {
+    if (unassign) unassignment.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unassign?.batchId]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Whether rows are on screen, read by the load callback without re-creating it.
@@ -217,6 +247,21 @@ export function TagTemplatesList() {
             >
               <Pencil className="size-3.5" />
             </Button>
+            {isPriceTagFamily(row.original.family) ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAssignTarget({ id: row.original.id, name: row.original.name });
+                }}
+                title="Assign to products"
+                aria-label="Assign to products"
+              >
+                <Link2 className="size-3.5" />
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               size="sm"
@@ -257,7 +302,7 @@ export function TagTemplatesList() {
     // cleared on the next line, and the toast's own copy is read again when the
     // window lapses - live state would have it saying "0 templates" by then.
     setBulkDelete({
-      batchId: crypto.randomUUID(),
+      batchId: clickToken(),
       ids,
       noun: `${ids.length} template${ids.length === 1 ? '' : 's'}`,
     });
@@ -316,6 +361,19 @@ export function TagTemplatesList() {
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreated={fetchData}
+      />
+      <AssignTemplateDialog
+        template={assignTarget}
+        onClose={() => setAssignTarget(null)}
+        onRemove={(filter, count) => {
+          if (!assignTarget) return;
+          setUnassign({
+            batchId: clickToken(),
+            templateId: assignTarget.id,
+            subject: `${assignTarget.name} from ${count} ${count === 1 ? 'product' : 'products'}`,
+            filter,
+          });
+        }}
       />
     </>
   );

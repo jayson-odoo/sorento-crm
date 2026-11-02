@@ -333,6 +333,7 @@ class PriceTagRequestService:
         ``promotion_id`` may be validated and priced against - see
         ``create_request``'s own docstring for who passes what.
         """
+        from app.services.dealer_kit import product_tag_template_service
         from app.services.dealer_kit.pricing import line_pricing
         from app.services.dealer_kit.tag_data_service import staff_viewer
 
@@ -513,6 +514,15 @@ class PriceTagRequestService:
                     sort_order=idx if sort_order is None else sort_order,
                     promotion_id=promotion_id,
                     manual_sell_price=manual_sell_price,
+                    # PRICETAG-TEMPLATE-PER-PRODUCT: the pick when it is one of
+                    # the product's published links, the single link when there
+                    # is exactly one, else NULL (family rule, as before).
+                    tag_template_id=product_tag_template_service.line_template_id(
+                        db,
+                        line_type=line_data["line_type"],
+                        product_id=product_id,
+                        sent=line_data.get("tag_template_id"),
+                    ),
                 )
             )
             db.add(line)
@@ -2242,6 +2252,16 @@ Marketing's own work is not part of the form's payload, so it is captured
             if line.promotion_id:
                 line.promotion_name = promotion_names.get(line.promotion_id)
                 line.promotion_expired_on = promotion_ends.get(line.promotion_id)
+
+        # PRICETAG-TEMPLATE-PER-PRODUCT: the template pick, by name.
+        from app.services.dealer_kit import product_tag_template_service
+
+        template_names = product_tag_template_service.template_names(
+            db, [line.tag_template_id for line in request.lines if line.tag_template_id]
+        )
+        for line in response.lines:
+            if line.tag_template_id:
+                line.tag_template_name = template_names.get(line.tag_template_id)
 
         PriceTagRequestService._fill_line_parts(db, request, response)
 

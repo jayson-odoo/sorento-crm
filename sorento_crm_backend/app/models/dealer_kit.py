@@ -796,6 +796,44 @@ class TagTemplateVersion(Base):
     created_at = _created_at()
 
 
+class ProductTagTemplate(Base):
+    """A tag template a product is allowed to print with (PRICETAG-TEMPLATE-PER-PRODUCT).
+
+    Zero, one or many per product. On a price tag request a product with ONE
+    published link uses it automatically; with several the salesperson picks one
+    (``PriceTagRequestLine.tag_template_id``). A product with none keeps the
+    family rule (``lib/dealer-kit/line-family.ts``).
+
+    Not company-scoped itself, same as ``TagTemplateVersion``: it is reachable
+    only through its product and its template, and both carry the partition.
+    CASCADE on both sides: the link is meaningless without either end.
+    """
+
+    __tablename__ = "product_tag_template"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id", "template_id", name="uq_dealer_kit_product_tag_template"
+        ),
+        Index("ix_dealer_kit_product_tag_template_template_id", "template_id"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    product_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    template_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.tag_template.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # String, not UUID - same reason as ``TagTemplateVersion.created_by``.
+    created_by = Column(String, nullable=True)
+    created_at = _created_at()
+
+
 class TagSizePreset(Base, CompanyScopedMixin):
     """A saved, named tag size (S4, PLAN D2) - a shortcut the request
     designer's Tag Size dropdown offers under "Saved sizes", editable at

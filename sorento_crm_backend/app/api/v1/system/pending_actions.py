@@ -351,6 +351,11 @@ _PARK_SCOPED_MODELS: dict = {
     "supplier_code_alias.forget": SupplierProductCodeAlias,
     "tag_size_preset.delete": TagSizePreset,
     "tag_template.delete": TagTemplate,
+    # PRICETAG-TEMPLATE-PER-PRODUCT: parked on the template the products are
+    # unlinked from; the filter rides in the payload.
+    "tag_template.unassign_products": TagTemplate,
+    # PRICETAG-TEMPLATE-PER-PRODUCT: parked on the product; the template ids ride in the payload.
+    "product.unlink_tag_templates": Product,
     "team.delete": Team,
     "uom.delete": UnitOfMeasure,
     "warehouse.delete": Warehouse,
