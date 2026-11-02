@@ -263,7 +263,7 @@ export function LineSplitEditor({
    */
   lineRemarks?: ReadonlyMap<
     string,
-    { words: string | null; own: string | null; editable: boolean }
+    { words: string | null; own: string | null; editable: boolean; consignment?: boolean }
   >;
   /** Saves the edited remarks of `lineRemarks` lines (line id -> remark, '' = the default). */
   onSaveRemarks?: (changes: ReadonlyMap<string, string>) => Promise<void>;
@@ -872,6 +872,7 @@ export function LineSplitEditor({
               ...line,
               savedRemark: entry.words,
               remarkInDraft: entry.editable,
+              consignment: entry.consignment,
               remarkStored: savedLines
                 .find((saved) => saved.lineId === line.lineId)
                 ?.splits.some((split) => Boolean(split.remark)),

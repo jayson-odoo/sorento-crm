@@ -33,6 +33,8 @@ export type ConfirmGuideLine = CoveredSheetLine & {
   remarkEditable: boolean;
   /** FULFIL-SO-REMARK: the board says this line reads as a mockup line. */
   isMockup?: boolean;
+  /** The line's order is a consignment (`so_doc_type`). */
+  consignment?: boolean;
 };
 
 /** One page of the guide (UAC F2): an order this Confirm covers, and the lines it covers. */
@@ -191,12 +193,17 @@ export function ConfirmGuideDialog({
             ? [
                 [
                   line.lineId,
-                  { words: line.savedRemark, own: line.ownRemark, editable: line.remarkEditable },
+                  {
+                    words: line.savedRemark,
+                    own: line.ownRemark,
+                    editable: line.remarkEditable,
+                    consignment: line.consignment,
+                  },
                 ] as const,
               ]
             : [],
         ),
-      ) as ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>,
+      ) as ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean; consignment?: boolean }>,
       keyOf: new Map(
         page.covered.flatMap((line) => (line.lineId ? [[line.lineId, line.key] as const] : [])),
       ) as ReadonlyMap<string, string>,

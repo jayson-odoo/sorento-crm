@@ -64,6 +64,8 @@ export interface SplitLine {
    * remark (`ownRemark`, '' = the default words) and that it is edited there.
    */
   remarkInDraft?: boolean;
+  /** Set with `remarkInDraft`: the line's order is a consignment. */
+  consignment?: boolean;
   ownRemark?: string | null;
   /** The line carried a stored split remark when loaded (not the live draft). */
   remarkStored?: boolean;

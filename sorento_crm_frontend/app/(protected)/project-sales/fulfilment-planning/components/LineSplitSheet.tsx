@@ -676,14 +676,17 @@ const LineBlock = React.memo(function LineBlock({
   let body: React.ReactNode;
   if (delivered && line.remarkInDraft) {
     // UAC F28: Confirm drops a line delivered in full, so nothing of it reaches purchasing:
-    // its remark stays read-only and the row says why.
+    // its remark stays read-only and the row says why. A consignment is the exception: its
+    // open qty is ordered less returned, so Confirm keeps it and its words go to purchasing.
     body = (
       <TableRow className="border-0 hover:bg-transparent">
         {emptyGrip}
         {baseCells}
         <TableCell colSpan={2} className={cn(changeCell, 'ps-2 text-start')}>
           <span className="text-2xs text-muted-foreground">
-            Delivered in full: nothing goes to purchasing
+            {line.consignment
+              ? `Consignment: ${savedRemark ? 'goes to' : 'nothing goes to'} purchasing`
+              : 'Delivered in full: nothing goes to purchasing'}
           </span>
         </TableCell>
         <TableCell className={changeCell}>

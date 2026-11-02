@@ -5,6 +5,10 @@
  */
 import { Badge } from '@/components/ui/badge';
 
+/** True for a consignment order document (`so_doc_type`). */
+export const isConsignment = (docType: string | null | undefined): boolean =>
+  docType === 'consignment';
+
 export function ConsignmentBadge({
   docType,
   size = 'sm',
@@ -12,7 +16,7 @@ export function ConsignmentBadge({
   docType: string | null | undefined;
   size?: 'xs' | 'sm' | 'md';
 }) {
-  if (docType !== 'consignment') return null;
+  if (!isConsignment(docType)) return null;
   return (
     <Badge variant="info" appearance="light" size={size} className="w-fit">
       Consignment

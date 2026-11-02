@@ -147,6 +147,7 @@ import {
   rejectedLineCount,
 } from '../../_shared/lib/decisionStrip';
 import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
+import { isConsignment } from '@/app/(protected)/scm/lib/docType';
 
 /**
  * Persisted in the URL as `?view=grid` (S6, PLAN-scm-oi-worklist-excel-parity.md R-J).
@@ -2269,6 +2270,7 @@ export function FulfilmentBoardPanel({
               ownRemark: facts.own,
               remarkEditable: facts.editable,
               isMockup: Boolean(line.is_mockup),
+              consignment: isConsignment(line.so_doc_type),
             };
           }),
         },
