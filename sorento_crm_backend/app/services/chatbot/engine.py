@@ -950,8 +950,16 @@ def _with_the_engine_pick(verdict: dict[str, Any], pending: Any, message: str) -
     if _bare_both_over_not_two(pending, message):
         # SUPPLIER-ASK fix round 4 (crew sweep 'both-over-three'): "both" names two options; over three it picks
         # none, so it is no answer and the question stays open (v194 read it as every position).
+        # Fix round 8 (crew turns a058af76 / dcf048aa / 5f0c3d6c / 10d8d75c): v195 also echoes two of the options as
+        # supplier entities beside picked [1, 2]; they are the options, not words of the message, and go with the pick.
+        offered = set().union(*(_option_words(o) for o in pending.options if isinstance(o, dict)))
+        kept = [
+            e for e in jsc.array(verdict.get("entities"))
+            if not (isinstance(e, dict) and str(e.get("raw") or "").strip().lower().replace("_", " ") in offered)
+        ]
         return {
             **verdict,
+            "entities": kept,
             "reference_positions": [],
             "open_question_answer": None,
             "broaden_axis": None,
@@ -1708,6 +1716,18 @@ def _span_kinds(resolutions: list[list_resolver.Resolution]) -> dict[str, frozen
     return {k: frozenset(v) for k, v in out.items()}
 
 
+def _typed_here(raw: Any, prep: Any) -> bool:
+    """Fix round 8 (crew pick turns f733c7c5 / 3e907f1b / 236c70fb): whether the user TYPED this word in this message.
+    The parser repeats the asked word ("orionis") as a current entity on the turn that only answers "1"; read as a
+    party word it was turned back into the supplier the pick had just dropped. The reconciliation's kind pick has the
+    same rule (`typed`). A prep with no message (a bare one) types every word."""
+    message = getattr(prep, "message", None) if prep is not None else None
+    if not isinstance(message, str):
+        return True
+    word = lookup_lists._fold(str(raw or ""))
+    return bool(word) and f" {word} " in f" {lookup_lists._fold(message)} "
+
+
 def _both_side_words(verdict: dict[str, Any], prep: Any) -> dict[str, Any]:
     """Fix round 6: a party word on both sides (`party_suppliers`), hinted customer or supplier, is bound as its best
     supplier id unless it already carries a grouped supplier id, so `resolve_gate.bind_span_suppliers` binds it with
@@ -1721,7 +1741,10 @@ def _both_side_words(verdict: dict[str, Any], prep: Any) -> dict[str, Any]:
     for e in jsc.array(verdict.get("entities")):
         text = jsc.nullish_str(e.get("raw")).strip() if isinstance(e, dict) else ""
         key = next((k for t, k in both.items() if text and t.casefold() == text.casefold()), None)
-        if key is not None and e.get("hint") in ("customer", "supplier") and e.get("current_message") is not False:
+        if (
+            key is not None and e.get("hint") in ("customer", "supplier") and e.get("current_message") is not False
+            and _typed_here(text, prep)
+        ):
             # Either hint (review S1: "kimlan" hinted customer, also a supplier): bound as the supplier with the same
             # name's customers beside it, so the kind pick asks. A supplier already carrying a grouped id keeps it.
             held = jsc.nullish_str(e.get("canonical_code")).strip()
@@ -1739,7 +1762,9 @@ def _both_side_words(verdict: dict[str, Any], prep: Any) -> dict[str, Any]:
     return {**verdict, "entities": out} if changed else verdict
 
 
-def _customer_only_words(verdict: dict[str, Any], kinds_of: dict[str, frozenset[str]]) -> dict[str, Any]:
+def _customer_only_words(
+    verdict: dict[str, Any], kinds_of: dict[str, frozenset[str]], prep: Any = None
+) -> dict[str, Any]:
     """Fix round 6: a word the parser hinted supplier that the lookup placed on customers alone (no supplier row) is
     the customer: the sales side. Returns a new verdict when one changed."""
     changed = False
@@ -1747,7 +1772,10 @@ def _customer_only_words(verdict: dict[str, Any], kinds_of: dict[str, frozenset[
     for e in jsc.array(verdict.get("entities")):
         text = jsc.nullish_str(e.get("raw")).strip() if isinstance(e, dict) else ""
         kinds = next((k for t, k in kinds_of.items() if text and t.casefold() == text.casefold()), None)
-        if isinstance(e, dict) and e.get("hint") == "supplier" and e.get("current_message") is not False and kinds == {"customer"}:
+        if (
+            isinstance(e, dict) and e.get("hint") == "supplier" and e.get("current_message") is not False
+            and kinds == {"customer"} and _typed_here(text, prep)
+        ):
             out.append({**e, "hint": "customer", "canonical_code": None})
             changed = True
         else:
@@ -1769,6 +1797,7 @@ def _with_party_readings(verdict: dict[str, Any], prep: "_SpanPrep | None") -> N
     words = [
         jsc.nullish_str(e.get("raw")).strip() for e in jsc.array(verdict.get("entities"))
         if isinstance(e, dict) and e.get("current_message") is not False and e.get("hint") in ("customer", "supplier")
+        and _typed_here(e.get("raw"), prep)
     ]
     # Every party word, also one a span reading covers: a TYPED span keeps only rows of its type
     # (`list_resolver.TYPE_MARGIN`), so "orionis" typed customer hid the supplier of the same name. The untyped read
@@ -1779,6 +1808,7 @@ def _with_party_readings(verdict: dict[str, Any], prep: "_SpanPrep | None") -> N
     codes = [
         jsc.nullish_str(e.get("raw")).strip() for e in jsc.array(verdict.get("entities"))
         if isinstance(e, dict) and e.get("current_message") is not False and e.get("hint") == "product"
+        and _typed_here(e.get("raw"), prep)
     ]
     spans += [list_resolver.Span(w, "product_code") for w in dict.fromkeys(codes) if w]
     if not spans:
@@ -1830,7 +1860,7 @@ def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> d
     An entity already carrying an id of the span's group is left as it is."""
     spans = prep.supplier_spans if prep is not None else {}
     kinds_of = (getattr(prep, "span_kinds", None) or {}) if prep is not None else {}
-    verdict = _customer_only_words(verdict, kinds_of)
+    verdict = _customer_only_words(verdict, kinds_of, prep)
     verdict = _both_side_words(verdict, prep)
     if not spans:
         return verdict

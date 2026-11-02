@@ -1719,3 +1719,148 @@ def test_a_customer_kind_pick_on_the_purchase_side_moves_to_sales_and_drops_the_
     focus.document = ["PO"]
     apply_mod._documents_of_the_side(focus, "purchase_order")
     assert focus.document == ["PO"]
+
+
+# Fix round 8: crew's exact v195 emissions at edf38ba5 (pick turns f733c7c5 / 3e907f1b / 236c70fb, "Pending delivery"
+# turns fe876b64 / 5f7b1567 / 37efd0f3 / ef59bc58 / 066890a3).
+
+#: The owner's contact's reveals (office staff: the outstanding AND sales report reveals beside the supplier ones).
+OWNER_GRANTS = (*STAFF_GRANTS, "sales_orders.sales_report")
+
+_PICK_EMISSION = dict(
+    message_type="business_query", intent_hint="check_order", domain_hint="order", order_status="outstanding",
+    status="outstanding", document=[], entity_op="replace_combine", reference_positions=[1],
+    open_question_answer={"mode": "pick", "items": [], "picked": [1], "qty_for_all": None}, reference_target="dym",
+)
+_PEND_EMISSIONS = {
+    "empty-DO": dict(entities=[], document=["DO"], order_status="outstanding", status="outstanding"),
+    "empty-nodoc": dict(entities=[], document=[], order_status="outstanding", status="outstanding"),
+    "carried-do_outstanding": dict(
+        entities=[{"raw": "orionis", "hint": "customer", "canonical_code": None, "current_message": False, "confident": True}],
+        document=["DO"], order_status="do_outstanding", status="do_outstanding",
+    ),
+}
+
+
+@pytest.mark.parametrize("thread", [False, True])
+@pytest.mark.parametrize("pend", sorted(_PEND_EMISSIONS))
+def test_crews_emissions_customer_pick_then_pending_delivery_is_that_customers_do_report(
+    session_factory, monkeypatch, thread, pend
+):
+    _office_world(session_factory)
+    customer = _seed_customer(session_factory, f"{ORIONIS} (PROJECT)")
+    _seed_named(session_factory, ORIONIS, "ZZTSUP-OR01")
+    if thread:
+        _span_turn(session_factory, monkeypatch, "outstanding PO for jinbai", list_resolver.Span("jinbai", "supplier"), {"jinbai", OTHER})
+    owner = _parser_output(
+        domain_hint="purchase_order", intent_hint="check_po", order_status="outstanding", status="outstanding",
+        entities=[{"raw": "orionis", "hint": "supplier", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, _c, _s = _span_turn(
+        session_factory, monkeypatch, "Outstandinf for orionis", list_resolver.Span("orionis", "product_code"), set(), qf=owner,
+    )
+    position = next(int(ln.split(". ", 1)[0]) for ln in reply.splitlines() if "(customer)" in ln)
+    pick = _parser_output(**{**_PICK_EMISSION, "reference_positions": [position],
+        "open_question_answer": {"mode": "pick", "items": [], "picked": [position], "qty_for_all": None},
+        "entities": [{"raw": "orionis", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}]})
+    reply, _c, _s = _span_turn(session_factory, monkeypatch, str(position), list_resolver.Span(str(position)), set(), qf=pick)
+    assert "Undelivered orders or pending delivery?" in reply, reply
+    pend_qf = _parser_output(
+        message_type="business_query", intent_hint="check_order", domain_hint="order", entity_op="reuse",
+        reference_positions=[2], open_question_answer={"mode": "pick", "items": [], "picked": [2], "qty_for_all": None},
+        reference_target="dym", domain_in_message=True, **_PEND_EMISSIONS[pend],
+    )
+    reply, captured, _s = _span_turn(
+        session_factory, monkeypatch, "Pending delivery", list_resolver.Span("Pending delivery"), set(), qf=pend_qf,
+        attributes=OWNER_GRANTS,
+    )
+    asks = [a for n, a in captured if n in ORDER_TOOLS]
+    assert asks and asks[0].get("customer_ids") == [customer], (reply, captured)
+    assert "(supplier)" not in reply, reply
+
+
+@pytest.mark.parametrize("pend", sorted(_PEND_EMISSIONS))
+def test_baseline_a_typed_customer_then_pending_delivery_is_that_customers_do_report(session_factory, monkeypatch, pend):
+    """The same 'Pending delivery' emissions after a plain customer ask (no supplier anywhere): the baseline the kind
+    pick must match."""
+    _office_world(session_factory)
+    customer = _seed_customer(session_factory, f"{ORIONIS} (PROJECT)")
+    ask = _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        entities=[{"raw": "orionis", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, _c, _s = _span_turn(
+        session_factory, monkeypatch, "Outstanding order for orionis", list_resolver.Span("orionis", "customer"),
+        {"orionis", ORIONIS.casefold()}, qf=ask,
+    )
+    assert "Undelivered orders or pending delivery?" in reply, reply
+    pend_qf = _parser_output(
+        message_type="business_query", intent_hint="check_order", domain_hint="order", entity_op="reuse",
+        reference_positions=[2], open_question_answer={"mode": "pick", "items": [], "picked": [2], "qty_for_all": None},
+        reference_target="dym", domain_in_message=True, **_PEND_EMISSIONS[pend],
+    )
+    reply, captured, _s = _span_turn(
+        session_factory, monkeypatch, "Pending delivery", list_resolver.Span("Pending delivery"), set(), qf=pend_qf,
+        attributes=OWNER_GRANTS,
+    )
+    asks = [a for n, a in captured if n in ORDER_TOOLS]
+    assert asks and asks[0].get("customer_ids") == [customer], (reply, captured)
+
+
+@pytest.mark.parametrize("current", [True, False])
+def test_both_over_three_with_the_parser_echoing_two_options_still_asks_again(session_factory, monkeypatch, current):
+    """Crew turns a058af76 / dcf048aa / 5f0c3d6c (and 10d8d75c, the echo carried): v195 answered 'both' over the three
+    supplier lines with picked [1, 2] AND the two lines as supplier entities. The PO list ran for two of three, or, with
+    the echo carried, the turn fell to an order list with no supplier. The question is asked again; nothing is listed."""
+    _three_taiyang(session_factory, monkeypatch)
+    echo = [
+        {"raw": f"{SUPPLIER} (ZZTSUP-TY01)", "hint": "supplier", "canonical_code": "ZZTSUP-TY01", "current_message": current, "confident": True},
+        {"raw": "ZZT TAIYANG SANITARY CO LTD (ZZTSUP-TY02)", "hint": "supplier", "canonical_code": "ZZTSUP-TY02", "current_message": current, "confident": True},
+    ]
+    both = _parser_output(
+        message_type="business_query", intent_hint="check_po", domain_hint="purchase_order", entities=echo,
+        reference_positions=[1, 2], open_question_answer={"mode": "pick", "items": [], "picked": [1, 2], "qty_for_all": None},
+    )
+    again, captured, _s = _span_turn(session_factory, monkeypatch, "both", list_resolver.Span("both"), set(), qf=both)
+    assert not _fetch_calls(captured), (again, captured)
+    assert len([ln for ln in again.splitlines() if ln[:1].isdigit()]) == 3, again
+
+
+def test_a_new_span_sentence_republishes_the_span_and_re_pairs_the_same_parser_text(session_factory, monkeypatch):
+    """Fix round 8 (金百川 'meaning' null 7/12): the span version gains one sentence (a non-Latin span always carries a
+    meaning). The parser text is unchanged, so its version is kept and re-paired to the new span version, which the
+    console pin then runs."""
+    from app.models.ai_prompt import AIPromptVersion
+
+    db = session_factory()
+    _seed_prompts(db)
+    sask = _migration("sask_0002_span_supplier")
+    assert "never null" in sask.NAME_MEANING_SENTENCE
+    span_v, parser_v = sask.publish(db)
+    monkeypatch.setattr(sask, "NAME_MEANING_SENTENCE", sask.NAME_MEANING_SENTENCE + " ZZT newer wording.")
+    span_v2, parser_v2 = sask.publish(db)
+    assert span_v2 != span_v and parser_v2 == parser_v, "a new span version, the same parser version"
+    span_row = db.query(AIPromptVersion).filter(AIPromptVersion.name == "chatbot_span_extractor", AIPromptVersion.version == span_v2).one()
+    parser_row = db.query(AIPromptVersion).filter(AIPromptVersion.name == "chatbot_semantic_parser", AIPromptVersion.version == parser_v).one()
+    db.refresh(parser_row)
+    assert parser_row.config_json["span_prompt_version_id"] == str(span_row.id)
+
+
+def test_a_fresh_process_reads_the_stored_vectors_on_the_turn_before_falling_back(monkeypatch):
+    """Fix round 8: a large gap (a fresh process) loads the stored vectors first (one SELECT, no provider call)."""
+    ll._cache.clear()
+    calls: list[int] = []
+    embed = ll._vector_embedder("gemini-embedding-001", lambda chunk: calls.append(len(chunk)) or [[1.0, 0.0] for _ in chunk], 10)
+    rows = [ll.LookupRow("customer", f"c{i}", f"ZZT CUSTOMER {i}", (f"ZZT CUSTOMER {i}",), homes=("label",)) for i in range(80)]
+
+    def load_stored(texts):
+        embed(list(texts))  # stands in for the stored vectors arriving in the cache
+        return len(texts)
+
+    monkeypatch.setattr(embed, "load_stored", load_stored, raising=False)
+    assert ll.usable_embedder(rows, embed) is embed
+    calls.clear()
+    monkeypatch.setattr(embed, "load_stored", lambda texts: (_ for _ in ()).throw(RuntimeError("db down")), raising=False)
+    ll._cache.clear()
+    usable = ll.usable_embedder(rows, embed)
+    assert usable is not embed and not calls, "a failed load falls back to the cached rows; no row is embedded"

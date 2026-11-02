@@ -61,6 +61,8 @@ SUPPLIER_TYPE_LINE = '- supplier: a company we buy goods from, a supplier, vendo
 NAME_MEANING_SENTENCE = (
     'When the span is a company name written in another script, "meaning" is that name as the company writes it in '
     "Latin letters."
+    # Fix round 8 (crew sweep at edf38ba5: 金百川 came back with "meaning" null on 7 of 12 sends, and no candidate):
+    ' A span written in any script other than Latin letters always carries a "meaning"; it is never null.'
 )
 #: The parser's id rule is `parser.SUPPLIER_ID_ASK` (frozen copy): the id binds the supplier, and the suppliers the
 #: span pass scored within the runner-up margin bind with it, so a near tie is asked. No name is compared.
@@ -211,6 +213,24 @@ def publish_parser(session: Session, span_version_id) -> int | None:
         raise RuntimeError("sask_0002: the parser text did not take the after-year sentence")
     existing = _existing(session, PARSER, template)
     if existing is not None:
+        # Fix round 8: the same parser text over a NEW span version (its sentence changed) is re-paired in place; the
+        # version is this migration's own and unlabelled, so no live turn reads the change.
+        if span_version_id:
+            import json
+
+            held = session.execute(
+                sa.text("SELECT config_json FROM ai_prompt_versions WHERE id = :id"), {"id": existing[0]}
+            ).scalar()
+            config = dict(held or {})
+            if config.get(PAIRING_KEY) != str(span_version_id):
+                config[PAIRING_KEY] = str(span_version_id)
+                session.execute(
+                    sa.text(
+                        "UPDATE ai_prompt_versions SET config_json = CAST(:cfg AS jsonb) WHERE id = :id "
+                        "AND id NOT IN (SELECT version_id FROM ai_prompt_labels)"
+                    ),
+                    {"cfg": json.dumps(config), "id": existing[0]},
+                )
         return int(existing[1])
     config = {**(base[3] or {}), PAIRING_KEY: str(span_version_id) if span_version_id else None}
     return int(_add(session, PARSER, template, base[2], config, PARSER_MESSAGE).version)

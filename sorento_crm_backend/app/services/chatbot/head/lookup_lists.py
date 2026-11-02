@@ -1080,7 +1080,17 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
         zero = np.zeros_like(present)
         return np.stack([v if v is not None else zero for v in vectors])
 
+    def load_stored(texts: list[str]) -> int:
+        """Fix round 8 (crew: the first turn of a fresh process read 金百川 by spelling while the warm ran): the
+        stored vectors of `texts` (`lookup_word` chunks of this model) into the cache, one SELECT, no provider call."""
+        from app.database import SessionLocal
+        from app.services.chatbot.head import lookup_word_store
+
+        with SessionLocal() as s:
+            return lookup_word_store.load_lookup_vectors(s, model, list(texts))
+
     embed.fill = fill  # type: ignore[attr-defined]
+    embed.load_stored = load_stored  # type: ignore[attr-defined]
     embed.cached_matrix = cached_matrix  # type: ignore[attr-defined]
     embed.matrix = matrix  # type: ignore[attr-defined]
     embed.pieces = pieces_matrix  # type: ignore[attr-defined]
@@ -1232,6 +1242,15 @@ def usable_embedder(rows: list[LookupRow], embed: Embedder | None) -> Embedder |
     spelling only for the WHOLE turn, as soon as one row text was not cached. Any other embedder as given."""
     if embed is not None and getattr(embed, "needs_warm", False) and not embed.is_cached(row_texts(rows)):  # type: ignore[attr-defined]
         missing = embed.missing(row_texts(rows)) if hasattr(embed, "missing") else None  # type: ignore[attr-defined]
+        if missing is not None and len(missing) > TURN_EMBED_GAP and hasattr(embed, "load_stored"):
+            # A large gap (a fresh process, the warm still running): the vectors already stored are read first.
+            try:
+                embed.load_stored(sorted(missing))  # type: ignore[attr-defined]
+                missing = embed.missing(row_texts(rows))  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 - advisory: the cached rows still read by meaning
+                logger.warning("lookup: stored vectors not loaded on the turn", exc_info=True)
+            if not missing:
+                return embed
         if missing is not None and len(missing) <= TURN_EMBED_GAP:
             # A small gap (a new customer, a held value) is embedded now, inside the embedder's own time budget,
             # so the turn keeps every row's meaning; on a failure the cached rows still read by meaning.
