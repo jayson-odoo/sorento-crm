@@ -20,8 +20,10 @@ from app.models.product import Brand
 from app.models.sales_agent import SalesAgent
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import MOCHA_ID
+from tests.chatbot.test_report_ask_lane import _e
 from tests.chatbot.test_report_unify_company_lane import _two_companies
 from tests.chatbot.test_report_unify_routing import (
+    PRODUCT_CODE,
     YEAR,
     Routing,
     _status,
@@ -504,3 +506,50 @@ def test_mc9b_a_declared_company_pick_with_another_filter_word_does_not_drop_the
     assert not any(
         n == TOOL and args.get("company") == MOCHA_ID and args.get("account_types") != ["CERAMIC"] for n, args in calls
     ), f"turn 2: Mocha ran without CERAMIC: {calls}\n" + "\n".join(c.log)
+
+
+# ------------------------------------------------------------------------------------------ MC-13 (carry review, product)
+
+
+def _product_ranking_slots(args: dict[str, Any]) -> list[str]:
+    return [k for k in ("product_code", "product_ids", "product") if args.get(k)]
+
+
+def test_mc13_a_ranking_held_for_a_product_does_not_carry_the_product_onto_a_product_ranking(bot) -> None:
+    """A ranking held with a product ("top 5 agents for the product", invoiced, 2026), then "top 10 products" (entity_op
+    reuse, a product axis): the product is the held ranking's own filter, and kept on a product axis it ranks one row.
+    The route runs group_by product with no product slot, the period and basis carried."""
+    c = Convo(bot)
+    bot.extra_body = {"rows": [], "total_count": 0}  # no rows on screen: the follow-up reads the stamped held frame
+    first = _status(
+        "sales_ranking", _e(PRODUCT_CODE, "product"), group_by="sales_agent", top_n=5, rank_direction="top",
+        measure="amount", basis="invoiced", entity_op="replace_combine", **YEAR,
+    )
+    text, calls = c.say(1, first, f"top 5 agents for {PRODUCT_CODE} invoiced 2026")
+    args = c.ran(1, text, calls, "setup, the agent ranking")
+    _slots(c, 1, args, group_by="sales_agent", product_code=PRODUCT_CODE)
+    bot.extra_body = {}
+    follow = _status(
+        "sales_ranking", group_by="product", top_n=10, rank_direction="top", measure="amount", basis=None,
+        entity_op="reuse", continuation=True, ranking_refine=False, **NO_DATES,
+    )
+    text, calls = c.say(2, follow, "top 10 products")
+    args = c.ran(2, text, calls)
+    assert not _product_ranking_slots(args), f"turn 2: the held product {_product_ranking_slots(args)} ranks one row: {args}\n" + "\n".join(c.log)
+    _slots(c, 2, args, group_by="product", top_n=10, basis="invoiced", date_from="2026-01-01", date_to="2026-12-31")
+
+
+def test_mc13b_a_total_held_for_a_product_keeps_the_product_on_another_axis(bot) -> None:
+    """The counterpart: a TOTAL held for a product, then "by agent": the total has no rows to rank across, so the
+    product it was for stays."""
+    c = Convo(bot)
+    first = _status("sales_report", _e(PRODUCT_CODE, "product"), basis="invoiced", entity_op="replace_combine", **YEAR)
+    text, calls = c.say(1, first, f"sales for {PRODUCT_CODE} invoiced 2026")
+    c.ran(1, text, calls, "setup, the product total")
+    follow = _status(
+        "sales_ranking", group_by="sales_agent", top_n=5, rank_direction="top", measure="amount", basis=None,
+        entity_op="reuse", continuation=True, ranking_refine=False, **NO_DATES,
+    )
+    text, calls = c.say(2, follow, "by agent")
+    args = c.ran(2, text, calls)
+    _slots(c, 2, args, group_by="sales_agent", product_code=PRODUCT_CODE, basis="invoiced", date_from="2026-01-01", date_to="2026-12-31")
