@@ -46,6 +46,12 @@ from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_image_service as quotation_images
 from app.services import project_quotation_service as scope_service
 from app.services.error_handler import AppException
+from app.services.quotation_cover_service import (
+    COVER_LAYOUT,
+    cover_reference,
+    cover_rows,
+    layout_of,
+)
 from app.services.numbering_service import NumberingService
 
 logger = logging.getLogger(__name__)
@@ -190,6 +196,10 @@ def create_document(
         your_ref=payload.get("your_ref"),
         doc_date=payload.get("doc_date") or date.today(),
         attn_name=payload.get("attn_name"),
+        recipient_email_snapshot=payload.get("recipient_email_snapshot"),
+        quotation_purpose=payload.get("quotation_purpose"),
+        payment_terms=payload.get("payment_terms"),
+        validity=payload.get("validity"),
         subject_title=payload.get("subject_title") or project.title,
         cover_letter_html=payload.get("cover_letter_html"),
         terms_html=payload.get("terms_html"),
@@ -391,6 +401,9 @@ def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str
     ):
         template = templates.active_template(db, company_id=project.company_id, kind=kind)
         out[field] = template.body_html if template is not None else None
+        if kind == templates.TEMPLATE_KIND_TERMS:
+            out["payment_terms"] = template.payment_terms if template is not None else None
+            out["validity"] = template.validity if template is not None else None
     return out
 
 
@@ -565,6 +578,9 @@ def issue(
         issued_by=actor_user_id,
         cover_letter_rendered=document.cover_letter_html,
         terms_rendered=document.terms_html,
+        layout_version=COVER_LAYOUT,
+        payment_terms=document.payment_terms,
+        validity=document.validity,
         grand_total=ZERO,
         # Copied, not referenced: re-signing the draft later must not change the signature this
         # revision went out with.
@@ -682,6 +698,14 @@ def _customer_decision(latest: Optional[ProjectQuotationIssue]) -> Optional[str]
     return None
 
 
+def _prepared_by(db: Session, document: ProjectQuotationDocument) -> Optional[str]:
+    """The project's salesperson, the same name the cover page prints."""
+    from app.services.project_quotation_template_service import salesperson_of
+
+    project = db.query(Project).filter(Project.id == document.project_id).first()
+    return salesperson_of(db, project, document)
+
+
 def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
     """One document, with its tabs and its money.
 
@@ -724,6 +748,11 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
         "recipient_name_snapshot": document.recipient_name_snapshot,
         "recipient_address_snapshot": document.recipient_address_snapshot,
         "recipient_phone_snapshot": document.recipient_phone_snapshot,
+        "recipient_email_snapshot": document.recipient_email_snapshot,
+        "quotation_purpose": document.quotation_purpose,
+        "payment_terms": document.payment_terms,
+        "validity": document.validity,
+        "prepared_by": _prepared_by(db, document),
         "attn_name": document.attn_name,
         "subject_title": document.subject_title,
         "cover_letter_html": document.cover_letter_html,
@@ -859,6 +888,10 @@ def update_document(
         "recipient_name_snapshot",
         "recipient_address_snapshot",
         "recipient_phone_snapshot",
+        "recipient_email_snapshot",
+        "quotation_purpose",
+        "payment_terms",
+        "validity",
     ):
         if field in payload:
             setattr(document, field, payload[field])
@@ -1513,12 +1546,23 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
     else:
         blocked = amendments.blocks_issue(asked)
 
+    cover = None
+    our_ref = (
+        quotation_no(document.document_no, record.issue_no)
+        if document is not None
+        else record.our_ref_text
+    )
+    if document is not None and layout_of(record) >= COVER_LAYOUT:
+        project = (
+            db.query(Project).filter(Project.id == document.project_id).first()
+            if document.project_id
+            else None
+        )
+        cover = cover_rows(db, document, record, project)
+        our_ref = cover_reference(document, record, project)
     return {
-        "our_ref": (
-            quotation_no(document.document_no, record.issue_no)
-            if document is not None
-            else record.our_ref_text
-        ),
+        "our_ref": our_ref,
+        "cover_rows": cover,
         "issue_no": record.issue_no,
         "doc_date": document.doc_date if document else None,
         "subject_title": document.subject_title if document else None,

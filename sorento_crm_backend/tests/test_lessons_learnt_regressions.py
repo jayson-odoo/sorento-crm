@@ -101,3 +101,26 @@ def test_conversation_scope_admits_null_source_entity_type():
         "conversation_tracking_scope() must explicitly admit NULL source_entity_type "
         "or n8n-created conversation rows are excluded"
     )
+
+
+# ---------------------------------------------------------------------------
+# LESSON: "do not read the source-of-truth file at request time if it is not in
+# the deployed image" (LESSONS-LEARNT.md, the chatbot allow-list entry). The
+# backend image is built from ./sorento_crm_backend alone, so the monorepo's
+# sorento_crm_mcp/ is not in it. On 2 Nov 2026 the AI panel's tool pick read the
+# MCP catalog from there and every panel data question returned 500
+# (FileNotFoundError: '/sorento_crm_mcp/sorento_crm_mcp/catalog.py').
+# CI's `validate-backend` job runs this file INSIDE the built image ("Pytest
+# regression guards"), the only place the missing directory is real; a lean
+# release skips that job and runs it on the full checkout instead, so
+# tests/test_mcp_catalog_in_image.py also pins the mechanism directly.
+# ---------------------------------------------------------------------------
+
+def test_mcp_tool_catalog_is_readable_from_the_backend_alone():
+    """The panel's keyword tool pick and the capability summary build with no monorepo around."""
+    from app.services.mcp_tool_capability_service import build_capability_documents, build_live_capability_summary
+    from app.services.tool_keyword_rank import rank_tools
+
+    assert len(build_capability_documents(include_planned=False)) > 50
+    assert build_live_capability_summary(include_tools=False)["summary"]["total_tools"] > 50
+    assert len(rank_tools("stock balance in the warehouse", [], 3)) == 3

@@ -288,14 +288,14 @@ def notify_floor_breach(
     floor = event.get("floor_value")
     price = event.get("unit_price")
     body = (
-        f"{project.title}: a line was priced at {price}, below the "
-        f"{event.get('floor_level')} floor of {floor}. Approve it or ask for a re-price."
+        f"{project.title}: a line was priced at {price}, below the minimum price of "
+        f"{floor}. Approve it or ask for a re-price."
     )
     return _send(
         db,
         user_ids=management_user_ids(db, project.company_id),
         notif_type="project_price_floor_breach",
-        title=f"{project_label(project)} priced below floor",
+        title=f"{project_label(project)} priced below minimum price",
         body=body,
         data={
             "project_id": str(project.id),
@@ -366,7 +366,7 @@ def notify_quotation_approval_requested(
     resubmitted: bool = False,
 ) -> int:
     """A quotation was sent for approval: tell every approver but the sender. One per press."""
-    lines = f"{below} line{'' if below == 1 else 's'} below the price floor"
+    lines = f"{below} line{'' if below == 1 else 's'} below the minimum price"
     verb = "appealed" if resubmitted else "sent"
     text = (
         f"{requester_name} {verb} quotation {document.document_no} ({project_label(project)}) "

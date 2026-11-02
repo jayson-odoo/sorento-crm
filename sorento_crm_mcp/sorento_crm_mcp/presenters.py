@@ -1599,6 +1599,9 @@ def _verdict_tail(entry: dict) -> str:
     if branch == "incoming":
         # AVAIL-RENDER fix round (owner hand test, 6 Oct 2026): the cross says the stock
         # state too, not the date alone. Still no refer: the ETA is the answer.
+        if not entry.get("eta"):
+            # The dealer's ETA field is revoked: incoming, no date, no refer.
+            return f"{STOCK_NO} No stock, No ETA."
         return f"{STOCK_NO} No stock, ETA {entry.get('eta')}."
     available = entry.get("available_qty")
     if (
@@ -3401,6 +3404,7 @@ _REPORT_ASK_PLURALS = {
     "sales_agent": "sales agents",
     "location": "locations",
     "channel": "channels",
+    "account_type": "account types",
     "month": "months",
     "year": "years",
     "sales_order": "sales orders",
@@ -3709,7 +3713,9 @@ def _report_ask(body: dict) -> str:
     count = int(body.get("total_count") or (raw_rows + more)) - (raw_rows - len(rows))
     of = f" of {count:,}" if count > len(rows) else ""
     by = f"{measure}, {basis}" if measure in _ASK_COUNT_UNITS else basis
-    lines = [f"{lead} {len(rows)}{of} {plural} by {by}", *facts]
+    # A month or year split is a trend, not a ranking: it opens "By month, invoiced", never "Top N".
+    opening = f"By {group_by}, {basis}" if group_by in ("month", "year") else f"{lead} {len(rows)}{of} {plural} by {by}"
+    lines = [opening, *facts]
     items = group_by in ("product", "category")
     if items and body.get("sort") == "asc":
         # REPORT-SMART-L R3a: what the top selling reply said of a least sold ranking (an item that sold nothing is never ranked).

@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Edit, Info, MessageSquareText, Receipt, Store } from 'lucide-react';
@@ -17,6 +16,7 @@ import { useCustomerActions } from '../actions';
 import { CustomerAsksTab } from './CustomerAsksTab';
 import { CustomerBranchesTab } from './CustomerBranchesTab';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import CustomerLinkedContactsSection from './CustomerLinkedContactsSection';
 import CustomerOpportunitiesSection from './CustomerOpportunitiesSection';
 import CustomerGroupLedgersCard from './CustomerGroupLedgersCard';
@@ -60,8 +60,11 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
     `/order-management/customers/${customerId}/edit`,
   );
   const { data: customer, isLoading } = useCustomer(customerId);
-  const [tab, setTab] = useState<CustomerTab>('details');
   const tabs = useCustomerTabs();
+  const [tab, setTab] = useUrlTab<CustomerTab>({
+    tabs: tabs.map((t) => t.value),
+    defaultTab: 'details',
+  });
   const { actions, dialogs } = useCustomerActions(customer, {
     onDeleted: () => router.push(backHref),
   });
@@ -128,7 +131,7 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
 
       {/* Chatbot stock ask v2 S5 (AC-SA508): line tabs, Details first (the two cards,
           unchanged), then the customer's stock asks. */}
-      <Tabs value={tab} onValueChange={(v) => setTab(v as CustomerTab)}>
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line" className="mb-5">
           {tabs.map((t) => (
             <TabsTrigger key={t.value} value={t.value} onClick={() => setTab(t.value)}>

@@ -83,19 +83,37 @@ def eligible_contact(db, contact_respond_id: str):
         if not chatbot_allowed_service.is_allowed(db, contact_respond_id):
             return contact, None, "ai_replies_off"
         # The agent switch follows the AI gate: EVERY row sharing the id must have it on.
-        flags = db.query(RespondContact.chatbot_agent_enabled).filter(
-            RespondContact.respond_io_id == contact_respond_id
-        ).all()
-        if not contact.chatbot_agent_enabled or not all(f[0] for f in flags):
+        if not agent_switch_on(db, contact):
             return contact, None, "switch_off"
-        user = (
+        user = linked_active_user(db, str(contact.id))
+        # No linked active user is no longer a refusal: the contact runs as itself (W1).
+        return contact, user, None
+
+
+def agent_switch_on(db, contact) -> bool:
+    """The agent switch: the contact AND every row sharing its respond.io id have it on."""
+    from app.models.access import RespondContact
+    from app.models.base import company_scope
+
+    with company_scope(db, None):
+        flags = db.query(RespondContact.chatbot_agent_enabled).filter(
+            RespondContact.respond_io_id == contact.respond_io_id
+        ).all()
+    return bool(contact.chatbot_agent_enabled) and all(f[0] for f in flags)
+
+
+def linked_active_user(db, contact_pk: str):
+    """The active CRM user linked to the contact (the contact then runs as staff), or None."""
+    from app.models.base import company_scope
+    from app.models.user import User, UserStatus
+
+    with company_scope(db, None):
+        return (
             db.query(User)
-            .filter(User.respond_contact_id == contact.id, User.status == UserStatus.ACTIVE.value)
+            .filter(User.respond_contact_id == contact_pk, User.status == UserStatus.ACTIVE.value)
             .order_by(User.created_at, User.id)
             .first()
         )
-        # No linked active user is no longer a refusal: the contact runs as itself (W1).
-        return contact, user, None
 
 
 def agent_eligibility(db, contact_respond_id: str) -> str | None:

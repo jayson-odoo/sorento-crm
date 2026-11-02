@@ -458,6 +458,32 @@ def test_r1_a_planned_retail_order_that_closes_can_still_apply_its_pending_chang
     assert applied.json()["applied_orders"] == [core.so_number], applied.text
 
 
+def test_r1_a_planned_retail_order_stays_admitted_after_its_dealer_location_retires(api):
+    """The planning record admits on its own. A retail order adopted while its dealer bin was
+    active stays planning work once the bin retires, so its decided rows do not vanish; the
+    control, an unplanned order at the same retired bin, stays out."""
+    from app.services.scm.planning_predicate import admitted_to_planning
+
+    client, world = api
+    planned, _lines = _planned_retail_order(client, world)
+    unplanned, _other = _retail_order(world)
+    world.pool_wh.is_active = False
+    world.db.commit()
+
+    admitted = {
+        row.so_number
+        for row in world.db.query(SalesOrder.so_number)
+        .filter(SalesOrder.id.in_((planned.id, unplanned.id)), admitted_to_planning())
+        .all()
+    }
+    board = _board_of(client, planned)
+    rows = [row for row in board["contributions"] if row["so_number"] == planned.so_number]
+
+    assert admitted == {planned.so_number}
+    assert len(rows) == 1, board.get("unplanned_orders")
+    assert rows[0]["decision"], rows[0]
+
+
 # --------------------------------------------------------------------------- an adopted mirror
 
 
@@ -748,23 +774,23 @@ _VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 _GRANTED = ("projects.projects.view", "projects.projects.edit", "scm.dashboard.view")
 
 
-def _head_migration():
-    """The lane's one new migration is the alembic head (CI proves there is exactly one)."""
+def _lane_migration():
+    """The lane's migration, loaded by its revision id. It was the alembic head when the lane
+    merged, but any later migration (#2060's `pnl_0002_agent_slug` was the first) moves the
+    head, so asking for "the head" made these tests fail on the next merge."""
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
     config = Config()
     config.set_main_option("script_location", str(_VERSIONS.parent))
     script = ScriptDirectory.from_config(config)
-    heads = script.get_heads()
-    assert len(heads) == 1, heads
-    path = Path(script.get_revision(heads[0]).path)
+    path = Path(script.get_revision("dp_0001_cs_planning_access").path)
     source = path.read_text()
     assert "customer_service" in source and all(slug in source for slug in _GRANTED), (
-        f"the head migration {path.name} does not grant the Customer Service role "
+        f"the migration {path.name} does not grant the Customer Service role "
         f"{_GRANTED}"
     )
-    spec = importlib.util.spec_from_file_location("zzt_r16_head", path)
+    spec = importlib.util.spec_from_file_location("zzt_r16_lane", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -774,7 +800,7 @@ def _run(db, direction="upgrade"):
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
 
-    module = _head_migration()
+    module = _lane_migration()
     context = MigrationContext.configure(connection=db.connection())
     with Operations.context(context):
         getattr(module, direction)()

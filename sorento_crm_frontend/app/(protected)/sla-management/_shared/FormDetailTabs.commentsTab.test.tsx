@@ -133,7 +133,11 @@ describe('Comments tab on the complaint shell (FormDetailWithSLATabs)', () => {
     await userEvent.click(screen.getByRole('tab', { name: 'Comments (2)' }));
 
     expect(await screen.findByText('first comment')).toBeInTheDocument();
-    expect(screen.queryByText('Details content')).toBeNull();
+    // Details stays mounted (it owns the record card portalled above the strip, NAV-KEEP-TAB)
+    // but its panel is inactive, hidden, while Comments is open.
+    expect(
+      screen.getByText('Details content').closest('[role="tabpanel"]')?.getAttribute('data-state'),
+    ).toBe('inactive');
   });
 
   it('reads "Comments (0)" for an empty thread', async () => {

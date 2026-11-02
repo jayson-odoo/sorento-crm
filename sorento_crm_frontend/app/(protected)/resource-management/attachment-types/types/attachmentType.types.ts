@@ -1,4 +1,4 @@
-import type { AiAudience, AttachmentType } from '../../attachments/types/attachment.types';
+import type { AttachmentType } from '../../attachments/types/attachment.types';
 
 export type { AttachmentType };
 
@@ -19,8 +19,12 @@ export interface AttachmentTypeFormData {
   is_shared?: boolean;
   /** Folder an upload of this type files into by default; null = no default. */
   default_directory_id?: string | null;
-  /** Who the AI may answer from files of this type for. */
-  ai_audience?: AiAudience;
+  /** Staff may be answered from files of this type by the AI. */
+  ai_read_staff?: boolean;
+  /** Access codes the AI may answer from files of this type for. */
+  ai_read_codes?: string[];
+  /** The type is offered to contacts as a file. */
+  is_direct_access?: boolean;
   /** Team a question the documents do not cover is referred to; null = none. */
   ai_escalate_team_id?: string | null;
 }

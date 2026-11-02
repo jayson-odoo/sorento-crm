@@ -445,7 +445,7 @@ describe('mergeFieldCatalog', () => {
 
   it('offers the fixed groups plus one entry per registry key', () => {
     const groups = new Set(catalog.map((field) => field.group));
-    expect(groups).toEqual(new Set(['Product', 'Specs', 'Set', 'Line']));
+    expect(groups).toEqual(new Set(['Product', 'Specs', 'Set', 'Line', 'Combo']));
 
     const specs = catalog.filter((field) => field.group === 'Specs');
     expect(specs.map((field) => field.token)).toEqual([

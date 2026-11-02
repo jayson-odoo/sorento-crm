@@ -208,7 +208,7 @@ def assert_issuable(db: Session, document: ProjectQuotationDocument) -> None:
         status_code=422,
         message=(
             f"{'One line is' if below == 1 else f'{below} lines are'} priced below the "
-            "floor, so this quotation needs a manager's approval before it can be sent "
+            "minimum price, so this quotation needs a manager's approval before it can be sent "
             "to the customer."
         ),
         code="quotation_below_floor_pending_approval",
@@ -424,7 +424,7 @@ def move(
             template="quotation_approval_requested",
             body_text=(
                 f"{_actor_name(db, actor_user_id)} asked for approval on quotation "
-                f"{document.document_no} ({below} line{'' if below == 1 else 's'} below floor)."
+                f"{document.document_no} ({below} line{'' if below == 1 else 's'} below minimum price)."
             ),
             actor_user_id=actor_user_id,
             payload={"below_floor_line_count": below},
@@ -437,8 +437,8 @@ def _assert_can_decide(permissions: Iterable[str]) -> None:
         raise AppException(
             status_code=403,
             message=(
-                "Only a sales manager can approve or reject below-floor pricing on a "
-                "quotation."
+                "Only a sales manager can approve or reject pricing below the minimum price "
+                "on a quotation."
             ),
             code="quotation_approval_forbidden",
         )
@@ -463,7 +463,7 @@ def approve(
         document,
         template="quotation_approval_granted",
         body_text=(
-            f"{_actor_name(db, actor_user_id)} approved the below-floor pricing on "
+            f"{_actor_name(db, actor_user_id)} approved the pricing below minimum price on "
             f"quotation {document.document_no}."
         ),
         actor_user_id=actor_user_id,

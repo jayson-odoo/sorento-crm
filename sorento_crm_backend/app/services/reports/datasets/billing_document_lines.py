@@ -33,6 +33,10 @@ from app.services.reports.engine import month_label
 from app.services.sales import invoiced_sales as inv
 
 
+#: The line's document's sales type, a LATERAL the base joins (`inv.document_sales_type`).
+_DOC_TYPE = inv.document_sales_type()
+
+
 def _base(ctx: Any) -> sa.Select:
     return (
         sa.select()
@@ -42,6 +46,8 @@ def _base(ctx: Any) -> sa.Select:
         .outerjoin(Product, Product.id == BillingDocumentLine.product_id)
         .outerjoin(Brand, Brand.id == Product.brand_id)
         .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        # The sales type once per document, not per line (unread, it is never computed).
+        .outerjoin(_DOC_TYPE, sa.true())
         .where(inv.posted())
     )
 
@@ -60,7 +66,7 @@ _ITEM = sa.case(
 _AMOUNT = inv.signed_line_amount()
 _QTY = inv.signed_line_quantity()
 _MONTH = sa.func.to_char(BillingDocument.doc_date, "YYYY-MM")
-_SALES_TYPE = inv.sales_type_label()
+_SALES_TYPE = inv.label_of(_DOC_TYPE.c.value)
 
 
 # ------------------------------------------------------------------------ filters
@@ -71,7 +77,7 @@ def company_condition(ctx: Any, values: List[str]) -> Optional[Any]:
 
 
 def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return inv.sales_type_filter(values)
+    return _DOC_TYPE.c.value.in_(inv.normalise_sales_types(values))
 
 
 def customer_condition(ctx: Any, values: List[str]) -> Optional[Any]:
@@ -184,12 +190,15 @@ COLUMNS = (
 #: The invoiced ask's own copy of the catalog for the "Sales & outstanding" screen: the report ask's keys replace the
 #: Top selling items report's twins (quantity, RM and documents are the same figures as qty, amount and orders), and an
 #: invoice line has no location. They stay resolvable, only out of the Columns menu; the other report is unchanged.
-_ASK_HIDDEN = frozenset({"quantity", "sales_value", "documents", "location"})
+_ASK_HIDDEN = frozenset({"quantity", "sales_value", "documents", "location", "debtor_type"})
 ASK_COLUMNS = tuple(
     dataclasses.replace(c, hidden=True) if c.key in _ASK_HIDDEN
     else dataclasses.replace(c, label="Month of the year") if c.key == "month_of_year"
     else c
     for c in COLUMNS
+) + (
+    # The account type split and filter (SALES-ACCOUNT-TYPE): the ask's copy only, so Top selling items is unchanged.
+    reg.Column("account_type", "Account type", "text", "dimension", lambda c: Customer.autocount_debtor_type, size=140),
 )
 
 DATASET = reg.Dataset(
@@ -227,6 +236,7 @@ ASK_DEFINITION = reg.ReportDefinition(
         reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
         reg.PeriodParam(key="period", label="Period", default=reg.current_year_period),
         reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
+        reg.SelectParam("account_type", "Account type", True, (), ap.account_type_options, ap.account_type_condition),
         reg.SelectParam("product", "Product", True, (), _no_options, product_condition, hidden=True),
         reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),
         reg.SelectParam("category", "Category", True, (), ap.category_options, category_condition),

@@ -9,6 +9,7 @@ Postgres only, blank schema, every row seeded here (CI's database has none).
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, timedelta
 
@@ -44,7 +45,7 @@ from app.services.incoming_stock_service import CLEARANCE_KEYS, today_myt
 from app.services.inventory_service import StockService
 from app.services.user_service import UserPermissionService
 
-from tests._mc_lookup_seed import customer, product, stock
+from tests._mc_lookup_seed import MOCHA_ID, customer, product, seed_mocha, stock
 from tests._pg_fixture import blank_session, unique_code
 from tests.test_stock_availability_block import (
     _attachment,
@@ -64,8 +65,8 @@ EXACT = "2026-10-28"
 
 
 def _ask_eta() -> date:
-    """A shipment ETA for the stock ask, which only reads shipments due today or later
-    (MYT): three days before the end of next month, so the 5-day pad still crosses it."""
+    """A shipment ETA for the stock ask, computed off the real today (MYT) so it never reads
+    "(delayed)": three days before the end of next month, so the 5-day pad still crosses it."""
     month_after_next = (today_myt().replace(day=1) + timedelta(days=62)).replace(day=1)
     return month_after_next - timedelta(days=3)
 
@@ -374,6 +375,263 @@ def test_stock_ask_and_incoming_agree_for_one_contact_and_product(client, db):
         assert listed == told
 
 
+# ============================================================== one shared incoming answer (STOCK-INCOMING-FLOOR, Fix B)
+#
+# Production, 2 Nov 2026: a dealer's stock check said "No stock and no incoming" for a product
+# whose ETA ask then told 03/11. Owner rule: the stock check (no stock) and the ETA ask show ONE
+# list of told dates per product code: distinct, ascending, dd/mm/yyyy, joined with ", ", a date
+# before today (MYT) followed by " (delayed)". UAC `stock-incoming-floor-2nov-acceptance-criteria.md`
+# AC-SIF1..12; fake codes and dates.
+
+FLOOR_TODAY = date(2026, 11, 2)
+PL_NAME = "packing-list.pdf"
+
+
+@pytest.fixture
+def floor_today(monkeypatch):
+    import app.services.incoming_stock_service as incoming
+
+    monkeypatch.setattr(incoming, "today_myt", lambda: FLOOR_TODAY)
+
+
+def _padded_product(
+    db, *, offset, promised, code=None, company_id=DEFAULT_COMPANY_ID, attach=True, revised=None
+):
+    """A product whose own category pads `offset` days, with one shipment per `promised` date
+    (None = a shipment with no ETA). `attach`: the shipment carries a packing list. `revised`:
+    {promised date: revised date}."""
+    p = product(db, company_id=company_id, code=code)
+    category = _category_of(db, p)
+    category.chatbot_max_qty = 200
+    category.chatbot_eta_offset_days = offset
+    for day in promised:
+        shipment = _incoming_shipment(
+            db,
+            eta=day,
+            attachment_id=_attachment(db).id if attach else None,
+            company_id=company_id,
+        )
+        if revised and day in revised:
+            shipment.eta_delay_date = revised[day]
+        _incoming_line(db, shipment_id=shipment.id, product_id=p.id, company_id=company_id)
+    db.flush()
+    return p
+
+
+def _ask_both(client, db, contact, p, *, also=(), qty=1):
+    """The dealer's stock check with a quantity (nothing on hand) and the ETA ask on both
+    routes: `(stock_entry, list_row, by_product_row)`. The contact is put on the availability
+    policy once, so both routes answer it with the dealer view."""
+    brw = _wh(db, unique_code("ZZTW")[:20])
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=contact)
+    db.flush()
+    result = StockService(db).list_stock(
+        product_ids=[p.id, *also], contact_id=contact.id, requested_quantities={p.id: qty}
+    )
+    entry = _entry(result, p.id)
+    listed = _list(client, p, contact)
+    assert listed.get("dealer_view") is True, listed
+    by_product = _by_product(client, p, contact)
+    assert by_product.get("dealer_view") is True, by_product
+    (by_row,) = by_product["data"]
+    return entry, listed["data"][0], by_row
+
+
+def _assert_told(entry, listed, by_row, *, dates):
+    """Stock check string and both ETA lists carry the same dates, in the same order."""
+    assert entry["branch"] == "incoming"
+    assert entry["eta"] == ", ".join(dates)
+    assert listed["etas"] == list(dates)
+    assert by_row["etas"] == list(dates)
+
+
+def test_a_draft_shipment_and_a_received_line_are_not_told(client, db, floor_today):
+    """Q1: only a non-draft, still-incoming shipment is told. Draft 05/11 and fully received
+    04/11 are left out; the normal 10/11 one is the only date, on all three reads."""
+    p = _padded_product(db, offset=None, promised=(date(2026, 11, 10),))
+    draft = _incoming_shipment(
+        db, eta=date(2026, 11, 5), attachment_id=_attachment(db).id, status="draft"
+    )
+    _incoming_line(db, shipment_id=draft.id, product_id=p.id)
+    done = _incoming_shipment(db, eta=date(2026, 11, 4), attachment_id=_attachment(db).id)
+    _incoming_line(db, shipment_id=done.id, product_id=p.id, shipped=10, received=10, status="received")
+    db.flush()
+    entry, listed, by_row = _ask_both(client, db, _contact(db), p)
+    _assert_told(entry, listed, by_row, dates=("10/11/2026",))
+
+
+def test_delayed_mark_is_one_constant():
+    """AC-SIF11 (constant half)."""
+    from app.services.eta_policy import DELAYED_MARK
+
+    assert DELAYED_MARK == "(delayed)"
+
+
+def test_the_stock_check_tells_every_padded_date_the_eta_ask_tells(client, db, floor_today):
+    """AC-SIF1 + AC-SIF2, the production case: promised 20/10 and 23/10, padded 14 days, asked
+    on 02/11. Stock check incoming `03/11/2026, 06/11/2026`, and `/list` and `/by-product` list
+    the same two dates in the same order."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 20), date(2026, 10, 23)))
+    entry, listed, by_row = _ask_both(client, db, _contact(db, offset_applied=True), p)
+    _assert_told(entry, listed, by_row, dates=("03/11/2026", "06/11/2026"))
+    assert listed["product_code"] == p.product_code
+
+
+def test_a_told_date_of_today_is_plain(client, db, floor_today):
+    """AC-SIF3: promised 19/10 + 14 days is told today, no marker."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 19),))
+    entry, listed, by_row = _ask_both(client, db, _contact(db), p)
+    _assert_told(entry, listed, by_row, dates=("02/11/2026",))
+
+
+def test_a_past_told_date_is_incoming_marked_delayed_in_date_order(client, db, floor_today):
+    """AC-SIF4: promised 01/10 + 14 = 15/10, past: still incoming, marked, listed ahead of
+    the 03/11 one."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 1), date(2026, 10, 20)))
+    entry, listed, by_row = _ask_both(client, db, _contact(db), p)
+    _assert_told(entry, listed, by_row, dates=("15/10/2026 (delayed)", "03/11/2026"))
+
+
+def test_padding_off_tells_the_promised_dates(client, db, floor_today):
+    """AC-SIF5: a contact told exact dates is never told the padded 03/11."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 20), date(2026, 11, 10)))
+    entry, listed, by_row = _ask_both(client, db, _contact(db, offset_applied=False), p)
+    _assert_told(entry, listed, by_row, dates=("20/10/2026 (delayed)", "10/11/2026"))
+    assert "03/11/2026" not in entry["eta"]
+
+
+def test_a_code_two_companies_carry_is_padded_by_the_larger_offset_and_unions_dates(
+    client, db, floor_today
+):
+    """AC-SIF6: asked product pads 3, its twin 14, so the code pads 14. Sorento promised 25/10
+    (+14 = 08/11), Mocha promised 05/11 (+14 = 19/11): both dates on both paths."""
+    seed_mocha(db)
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+
+    async def _wide_scope():
+        scope = frozenset({DEFAULT_COMPANY_ID, MOCHA_ID})
+        set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _wide_scope
+    code = unique_code("ZZTFLR")[:50]
+    asked = _padded_product(db, offset=3, promised=(date(2026, 10, 25),), code=code)
+    twin = _padded_product(
+        db, offset=14, promised=(date(2026, 11, 5),), code=code, company_id=MOCHA_ID
+    )
+    entry, listed, by_row = _ask_both(client, db, _contact(db), asked, also=(twin.id,))
+    _assert_told(entry, listed, by_row, dates=("08/11/2026", "19/11/2026"))
+
+
+def test_a_shipment_without_a_packing_list_is_told_and_the_file_goes_with_the_toggle(
+    client, db, floor_today
+):
+    """AC-SIF7: the 25/10 shipment has no packing list and the 10/11 one has. Both dates are
+    told on both paths. The file (stock check only) is the earliest shipment that has one,
+    and only when the contact's toggle is on."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 25),), attach=False)
+    with_file = _incoming_shipment(db, eta=date(2026, 11, 10), attachment_id=_attachment(db).id)
+    _incoming_line(db, shipment_id=with_file.id, product_id=p.id)
+    db.flush()
+    dates = ("08/11/2026", "24/11/2026")
+
+    allowed = _contact(db, packing_list_allowed=True)
+    entry, listed, by_row = _ask_both(client, db, allowed, p)
+    _assert_told(entry, listed, by_row, dates=dates)
+    assert entry["packing_list"]["filename"] == PL_NAME
+    assert "attachment" not in listed and "attachment" not in by_row
+
+    denied = _contact(db, packing_list_allowed=False)
+    entry, listed, by_row = _ask_both(client, db, denied, p)
+    _assert_told(entry, listed, by_row, dates=dates)
+    assert entry["packing_list"] is None
+
+
+def test_a_lone_shipment_without_a_packing_list_is_incoming_with_no_file(client, db, floor_today):
+    """AC-SIF7: no packing list on any shipment is still incoming, told, and no file."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 25),), attach=False)
+    entry, listed, by_row = _ask_both(client, db, _contact(db, packing_list_allowed=True), p)
+    _assert_told(entry, listed, by_row, dates=("08/11/2026",))
+    assert entry["packing_list"] is None
+
+
+def test_a_revised_date_is_told_on_both_paths_without_the_eta_delay_grant(client, db, floor_today):
+    """AC-SIF8: ETA 13/09 revised to 05/11 is told `05/11/2026`, never `13/09/2026`, though the
+    contact holds no "ETA delay" grant (none seeded here)."""
+    p = _padded_product(
+        db,
+        offset=None,
+        promised=(date(2026, 9, 13),),
+        revised={date(2026, 9, 13): date(2026, 11, 5)},
+    )
+    entry, listed, by_row = _ask_both(client, db, _contact(db), p)
+    _assert_told(entry, listed, by_row, dates=("05/11/2026",))
+    assert "13/09/2026" not in entry["eta"]
+
+
+def test_two_shipments_told_the_same_date_print_it_once(client, db, floor_today):
+    """AC-SIF9."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 20), date(2026, 10, 20)))
+    entry, listed, by_row = _ask_both(client, db, _contact(db), p)
+    _assert_told(entry, listed, by_row, dates=("03/11/2026",))
+
+
+def test_a_shipment_with_no_eta_is_no_incoming_and_no_eta(client, db, floor_today):
+    """AC-SIF10 (guard, unchanged): the only shipment has no ETA."""
+    p = _padded_product(db, offset=14, promised=(None,))
+    brw = _wh(db, unique_code("ZZTW")[:20])
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
+    dealer = _contact(db)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=dealer)
+    db.flush()
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=dealer.id, requested_quantities={p.id: 1}
+    )
+    assert _entry(result, p.id)["branch"] == "no_incoming"
+    res = client.get(
+        "/api/v1/incoming-stock/list",
+        params={"product_ids": p.product_code, "contact_id": dealer.id},
+    )
+    assert res.status_code == 200, res.text
+    for row in res.json()["data"]:
+        assert row["etas"] == []
+
+
+def test_a_non_dealer_contact_and_staff_keep_full_rows_with_no_marker(client, db, floor_today):
+    """AC-SIF12 (guard): past promised dates; a non-dealer contact and staff read the raw
+    shipment rows, no dealer view and no marker."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 1), date(2026, 10, 20)))
+    for contact in (_contact(db), None):
+        params = {"product_ids": p.product_code}
+        if contact is not None:
+            params["contact_id"] = contact.id
+        body = client.get("/api/v1/incoming-stock/list", params=params).json()
+        assert "dealer_view" not in body
+        assert len(body["data"]) == 2
+        assert all(row["lines"] for row in body["data"])
+        assert "(delayed)" not in str(body)
+
+
+def test_a_windowed_dealer_ask_is_unchanged(client, db, floor_today):
+    """AC-SIF12 (guard): an eta_from/eta_to ask keeps its rows and window, with no marker."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 10, 1), date(2026, 10, 20)))
+    dealer = _dealer(db)
+    res = client.get(
+        "/api/v1/incoming-stock/list",
+        params={
+            "product_ids": p.product_code,
+            "contact_id": dealer.id,
+            "eta_from": "2026-11-01",
+            "eta_to": "2026-11-30",
+        },
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "(delayed)" not in str(body)
+    assert len(body["data"]) == 1
+
+
 # ============================================================== packing list gate
 
 
@@ -494,6 +752,57 @@ def test_a_revoked_eta_also_takes_the_nearest_eta_on_by_product(client, db):
     keys = set(_walk_keys(_by_product(client, p, dealer)["data"]))
     assert "estimated_arrival_date" not in keys
     assert "nearest_estimated_arrival_date" not in keys
+
+
+def test_a_dealer_with_the_eta_revoked_is_told_no_eta_on_both_routes(client, db, floor_today):
+    """Security review of Fix B: a per-contact deny on the gated `estimated_arrival_date` hides
+    the dealer's dates on `/list` and `/by-product` (`etas == []`), as it did before the shared
+    read. The stock check's handling of the revoke is not pinned here."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 11, 20),))
+    dealer = _contact(db)
+    _policy_row(db, mode="availability", contact=dealer)
+    _deny_on_agent(db, "estimated_arrival_date", contact=dealer)
+    listed = _list(client, p, dealer)
+    assert listed.get("dealer_view") is True, listed
+    assert listed["data"][0]["etas"] == []
+    by_product = _by_product(client, p, dealer)
+    assert by_product.get("dealer_view") is True, by_product
+    assert by_product["data"][0]["etas"] == []
+
+
+def _revoked_stock_entry(db, *, promised, contact_deny=True):
+    p = _padded_product(db, offset=14, promised=promised)
+    dealer = _contact(db)
+    _deny_on_agent(db, "estimated_arrival_date", contact=dealer if contact_deny else None)
+    brw = _wh(db, unique_code("ZZTW")[:20])
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=dealer)
+    db.flush()
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=dealer.id, requested_quantities={p.id: 2}
+    )
+    return _entry(result, p.id)
+
+
+def test_a_dealer_with_the_eta_revoked_gets_no_date_on_the_stock_check(db, floor_today):
+    """AC-SIF14: incoming, no date anywhere in the entry."""
+    entry = _revoked_stock_entry(db, promised=(date(2026, 11, 20),))
+    assert entry["branch"] == "incoming"
+    assert entry["eta"] is None
+    assert not re.search(r"\d{2}/\d{2}/\d{4}", str(entry)), entry
+
+
+def test_an_agent_level_eta_revoke_gives_the_stock_check_no_date(db, floor_today):
+    """AC-SIF14, agent-level revoke (no contact)."""
+    entry = _revoked_stock_entry(db, promised=(date(2026, 11, 20),), contact_deny=False)
+    assert entry["branch"] == "incoming"
+    assert entry["eta"] is None
+
+
+def test_a_revoked_dealer_with_nothing_coming_is_no_incoming(db, floor_today):
+    """AC-SIF14 guard: nothing coming still reads no_incoming."""
+    entry = _revoked_stock_entry(db, promised=())
+    assert entry["branch"] == "no_incoming"
 
 
 def _list_window(client, p, contact, **window):
@@ -783,7 +1092,16 @@ def _twin_shipment(db, p, *, eta=SHIP_ETA):
     return shipment
 
 
-def test_dealer_list_is_one_row_per_product_with_deduped_padded_etas(client, db):
+@pytest.fixture
+def _jan_today(monkeypatch):
+    """These tests date shipments in Oct to Dec 2026: today is pinned before them so a past
+    date is not marked delayed (Fix B) and the test is not a time bomb."""
+    import app.services.incoming_stock_service as incoming
+
+    monkeypatch.setattr(incoming, "today_myt", lambda: date(2026, 1, 1))
+
+
+def test_dealer_list_is_one_row_per_product_with_deduped_padded_etas(client, db, _jan_today):
     p, _ = _seed(db)
     _twin_shipment(db, p)  # same ETA, another container: the owner's duplicate
     _twin_shipment(db, p, eta=date(2026, 12, 1))
@@ -797,7 +1115,7 @@ def test_dealer_list_is_one_row_per_product_with_deduped_padded_etas(client, db)
     assert "salesperson_name" not in body
 
 
-def test_dealer_list_carries_no_container_quantity_allocation_or_file(client, db):
+def test_dealer_list_carries_no_container_quantity_allocation_or_file(client, db, _jan_today):
     p, _ = _seed(db)
     _twin_shipment(db, p)
     body = _list(client, p, _dealer(db))
@@ -807,13 +1125,13 @@ def test_dealer_list_carries_no_container_quantity_allocation_or_file(client, db
     assert "attachment" not in set(_walk_keys(body))
 
 
-def test_dealer_list_with_the_offset_off_reads_the_exact_date(client, db):
+def test_dealer_list_with_the_offset_off_reads_the_exact_date(client, db, _jan_today):
     p, _ = _seed(db)
     body = _list(client, p, _dealer(db, offset_applied=False))
     assert body["data"][0]["etas"] == [_told(EXACT)]
 
 
-def test_dealer_by_product_is_the_same_view(client, db):
+def test_dealer_by_product_is_the_same_view(client, db, _jan_today):
     p, _ = _seed(db)
     _twin_shipment(db, p)
     body = _by_product(client, p, _dealer(db, salesperson="ZZT Sean"))

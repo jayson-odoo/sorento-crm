@@ -5,9 +5,10 @@ Wire shapes match the contract comment at the top of
 committed) exactly - that file is the contract this was built to satisfy.
 """
 from datetime import datetime
+from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ProductComboPartOut(BaseModel):
@@ -22,6 +23,9 @@ class ProductComboPartOut(BaseModel):
     #: Null = fixed part. A label = one of the options for that label.
     choice_group: Optional[str] = None
     sort_order: int
+    sell_price: Optional[Decimal] = None
+    topup_amount: Optional[Decimal] = None
+    is_upgrade: bool = False
 
 
 class ProductComboImageOut(BaseModel):
@@ -34,6 +38,10 @@ class ProductComboOut(BaseModel):
     host_product_id: str
     name: str
     sort_order: int
+    description: Optional[str] = None
+    free_items: Optional[str] = None
+    list_price: Optional[Decimal] = None
+    sell_price: Optional[Decimal] = None
     parts: List[ProductComboPartOut] = []
     #: The combo's own cover picture (S5), null with none uploaded yet.
     image: Optional[ProductComboImageOut] = None
@@ -64,6 +72,11 @@ class ProductComboCreate(BaseModel):
 class ProductComboUpdate(BaseModel):
     name: Optional[str] = None
     sort_order: Optional[int] = None
+    #: Omitted = left alone, explicit null = cleared (`model_fields_set`).
+    description: Optional[str] = Field(default=None, max_length=5000)
+    free_items: Optional[str] = Field(default=None, max_length=2000)
+    list_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    sell_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
 
 
 class ProductComboPartCreate(BaseModel):
@@ -81,3 +94,6 @@ class ProductComboPartUpdate(BaseModel):
 
     choice_group: Optional[str] = None
     sort_order: Optional[int] = None
+    sell_price: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    topup_amount: Optional[Decimal] = Field(default=None, ge=0, max_digits=12, decimal_places=2)
+    is_upgrade: Optional[bool] = None

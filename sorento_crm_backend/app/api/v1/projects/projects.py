@@ -211,19 +211,11 @@ def ai_extract_project(
             )
         if not payload:
             raise handle_unprocessable("Add the project title or a photo to read.")
-        try:
-            result = AIExtractService(db).extract(
-                "portal.project_registration", payload, user_id=str(current_user["id"])
-            )
-        except AppException as exc:
-            if exc.status_code == 502:
-                # The provider's own error text can carry keys and traces: never echo it.
-                raise AppException(
-                    status_code=502,
-                    message="The AI reader could not be reached. Fill the form in by hand.",
-                    code="ai_extract_provider_failed",
-                ) from exc
-            raise
+        # The extract service answers every upstream failure with a plain 503 message and
+        # keeps the provider's own text in the server log (AI-EXTRACT-502), so nothing to rewrite.
+        result = AIExtractService(db).extract(
+            "portal.project_registration", payload, user_id=str(current_user["id"])
+        )
         return project_ai_extract_service.propose(
             db, company_id=acting_company_id(db), values=result.values
         )

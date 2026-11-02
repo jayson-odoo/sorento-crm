@@ -142,3 +142,11 @@ def test_an_in_stock_line_never_refers():
         assert "Please refer" not in line, line
         # "Got stock." covering the ask, "Only 2 got stock." short of it (AVAIL-ONHAND-BASIS).
         assert "got stock" in line.lower(), line
+
+
+def test_incoming_sentence_with_no_date_reads_no_eta():
+    # AC-SIF14: the dealer's ETA field is revoked, so the entry is incoming with no date.
+    line = _availability_line(
+        _entry(product_code="CODE", requested_qty=2, branch="incoming", eta=None)
+    )
+    assert line == "CODE x 2: ❌ No stock, No ETA."

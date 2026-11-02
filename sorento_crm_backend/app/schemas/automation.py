@@ -27,6 +27,13 @@ class RecipientConfig(BaseModel):
     #: original one-per-recipient shape.
     one_email: bool = False
     extra_emails: list[str] = Field(default_factory=list)
+    #: DEALER-OI-ROUTE: explicit Cc. `user_ids` / `role_ids` / `extra_emails` are To.
+    cc_user_ids: list[str] = Field(default_factory=list)
+    cc_role_ids: list[str] = Field(default_factory=list)
+    cc_emails: list[str] = Field(default_factory=list)
+    #: Card Q2 (b): set by the To/Cc picker on save. Unset = the row sends as before
+    #: (first address To, the rest Cc).
+    explicit_to_cc: bool = False
 
 
 class AutomationBase(BaseModel):
@@ -79,6 +86,8 @@ class AutomationResponse(BaseModel):
     recipient_config: dict[str, Any]
     group_matches: bool = True
     conditions_json: Optional[dict[str, Any]] = None
+    #: The conditions in words, for the read-only detail page (DEALER-OI-ROUTE).
+    conditions_text: Optional[str] = None
     schedule_type: str
     run_time: Optional[time]
     timezone: str

@@ -286,6 +286,9 @@ def test_a_below_floor_quotation_is_refused_at_issue_with_a_code_the_screen_can_
             qdocs.issue(db, document=document, actor_user_id=owner)
         assert refused.value.status_code == 422
         assert refused.value.detail["code"] == "quotation_below_floor_pending_approval"
+        # Owner ruling 1 Nov: the refusal a salesperson reads says "minimum price", not "floor".
+        assert "below the minimum price" in refused.value.message
+        assert "floor" not in refused.value.message.lower()
 
         # Nothing was written: a refused issue must not leave half a revision behind.
         assert qdocs.current_issue(db, document) is None

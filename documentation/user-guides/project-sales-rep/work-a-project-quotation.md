@@ -16,6 +16,31 @@ Quotations** screen is a different module.
 
 To start a new one, use **New quotation** from the project's **Quotation** tab.
 
+## Fill the cover page
+
+Every quotation sent from now on starts with a cover page: page 1 of the PDF (portrait) and the
+first card on the customer's sign link. It replaces the separate Excel cover sheet. It shows, in
+this order: **Reference No.**, **Date**, **Attn**, **Company**, **Contact**, **Add**, **Email**,
+**Quotation Purpose**, **Terms & Conditions**, **Payment Terms**, **Validity**, **Prepared By**.
+
+* **Reference No.** is the quotation number with its revision and the project name (for example
+  `PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES`). The same reference shows on the price pages and
+  on the sign link. You do not type your own code any more.
+* On the **Header** tab: **Email** sits under **Phone** and fills from the customer's main contact
+  on a new quotation. **Quotation Purpose** sits under **Subject** and is optional.
+  **Prepared By** is the project's salesperson and cannot be edited here.
+* On the **Terms** tab: **Payment Terms** and **Validity** sit above the terms. A new quotation
+  fills them from the company's active terms template; change them for this quotation if needed.
+* **Validity** is printed for the customer only. The sign link keeps working after it.
+* An empty field is left off the cover page rather than printed blank.
+* **Your Ref** (the customer's own reference) stays on the **Header** tab and prints on the price
+  pages as before.
+
+The terms print the way you wrote them: a heading stays a heading, a blank line keeps its gap,
+bullets and indented bullets print as bullets, and nothing is numbered for you. They print once,
+on the cover page. Quotations sent before this change keep their old layout when downloaded
+again.
+
 ## Every line must be a catalogue product or set
 
 A quotation line must name a product or a product set from the catalogue. You cannot type a
@@ -26,6 +51,15 @@ free-text description as a line.
 * On the quotation form the refusal reads *One line still needs a catalogue product or set.*
 * A **Non-standard** flag on a line means the product is real but outside the series this scope
   is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed.
+
+### Minimum price, while you type
+
+* Under a line's rate, **Minimum price RM x** appears as soon as the price you type is below the
+  lowest price allowed for that item. It shows on a new quotation too, before the first save.
+* **Non-standard** also appears while you pick, on a new quotation as on a saved one.
+* A quotation with a line below the minimum price says *One line is priced below minimum price*
+  (or *N lines are priced below minimum price*) and needs a manager's approval before it can be
+  sent.
 
 ### The customer wants something we do not sell yet (bespoke item)
 
@@ -74,13 +108,17 @@ The project's activity log records *Quotation ... link opened in WhatsApp by ...
 
 The link opens a sign page that matches the PDF:
 
-* Your company logo, **Quotation No.**, **Revision**, **Date** and **Sales contact** (your name and
-  phone).
+* First, the cover page card: your company logo and name, then the same rows as PDF page 1,
+  including the terms written the same way.
+* Then **Quotation No.** (the same reference as the PDF), **Revision**, **Date** and **Sales
+  contact** (your name and phone).
 * One **Quotation** card. Each section is a row with its item count and total; with more than one
   section they start closed. The last row is **Total amount**.
 * To accept, the customer types **Your name**, ticks *I have read and agree to the Terms and
   conditions.*, signs in **Sign here** and clicks **Sign and accept**. If they skip a step, the
-  page tells them which one.
+  page tells them which one. The terms they agree to are the ones on the cover page card.
+* A link for a quotation sent before the cover page existed looks as it did then, with the terms
+  at the bottom.
 * After signing, both signatures show side by side: **Prepared by** (you) and **Accepted by**
   (the customer).
 * An old or replaced link shows *This link is no longer valid*, or *This quotation has been

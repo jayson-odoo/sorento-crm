@@ -80,4 +80,6 @@ export interface LinePricingLineInput {
   part_product_ids: string[];
   candidate_product_ids: string[];
   promotion_id?: string | null;
+  /** The package the line is asked for, so the lookup answers the combo's price. */
+  combo_id?: string | null;
 }

@@ -204,7 +204,7 @@ def _combo(db, host, name: str, parts) -> ProductCombo:
     return combo
 
 
-def _open_basin_request(db, *, candidates: int = 4):
+def _open_basin_request(db, *, candidates: int = 4, link_combo: bool = True):
     """A submitted request whose one line leaves a 4-candidate Basin group open.
 
     The journey's own case: the salesperson asks for the cabinet and does not
@@ -231,7 +231,9 @@ def _open_basin_request(db, *, candidates: int = 4):
                 {
                     "line_type": "product",
                     "product_id": cabinet.id,
-                    "combo_id": combo.id,
+                    # PRICETAG-COMBO AC-3.1/AC-3.3: a line WITH a combo mints one tag, a
+                    # line without one keeps one tag per combination.
+                    "combo_id": combo.id if link_combo else None,
                     "quantity": 3,
                     "parts": [
                         {"product_id": mirror.id},
@@ -244,6 +246,12 @@ def _open_basin_request(db, *, candidates: int = 4):
             ],
         },
     )
+    if link_combo:
+        # PRICETAG-COMBO AC-3.4: these tests start from the per-candidate tag set a
+        # request in flight (or a hand split) already holds.
+        from tests._ptag_combo_seed import resplit_per_combination
+
+        resplit_per_combination(db, request)
     db.commit()
     return request, cabinet, mirror, basins
 
@@ -461,7 +469,7 @@ def test_print_payload_one_row_per_tag(api):
 
 def test_ac_s6_2_submit_with_a_3_candidate_open_group_still_mints_three_tags(api):
     _client, db = api
-    request, _cabinet, _mirror, basins = _open_basin_request(db, candidates=3)
+    request, _cabinet, _mirror, basins = _open_basin_request(db, candidates=3, link_combo=False)
 
     tags = _tags_of(db, request.lines[0].id)
 

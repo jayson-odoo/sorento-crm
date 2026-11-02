@@ -36,6 +36,7 @@ from app.schemas.report_ask import ReportAskChatResponse, ReportAskResponse
 from app.services.contact_brand_scope import contact_brand_scope, limits_brands
 from app.services.error_handler import AppException, handle_not_found
 from app.services.reports import ask, spec_set
+from app.services.reports import ask_params as ap
 from app.services.sales_report_service import TOP_SELLING_N_CEILING, _resolve_products
 from app.services.uuid_list_param import parse_uuid_list
 
@@ -63,7 +64,7 @@ _PARAMS = frozenset(
         "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
         "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to", "mine", "spec", "company",
-        "group_offset",
+        "group_offset", "account_types",
     }
 )
 #: The chat dataset's own query keys (CA-3); any other is 422 `unknown_param`.
@@ -79,7 +80,7 @@ _CHAT_DEFAULT_MEASURE = "asks"
 #: The filter params: present but resolving to nothing is 422 `empty_filter`, never "no filter".
 _FILTER_PARAMS = (
     "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids",
-    "warehouse_codes", "channel", "customer_agent_ids",
+    "warehouse_codes", "channel", "customer_agent_ids", "account_types",
 )
 #: The echo's name for the "(no agent)" key in an agent filter (REPORT-DRILLDOWN).
 _NO_AGENT_NAME = "(no agent)"
@@ -161,6 +162,7 @@ def _echo(
     warehouse_codes: list[str],
     channel: Optional[str],
     card_agents: Optional[list[str]] = None,
+    account_types: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
     """The filters the caller named, by name, in the catalogue's word order. Looks every id
     up, so an id naming no row is 404 here."""
@@ -188,6 +190,8 @@ def _echo(
         out.append(("location", list(warehouse_codes)))
     if channel:
         out.append(("channel", [_CHANNELS[channel]]))
+    if account_types:
+        out.append(("account_type", list(account_types)))
     return [{"key": key, "label": ask.FILTER_LABELS[key], "values": values} for key, values in out if values]
 
 
@@ -242,7 +246,7 @@ def report_ask(
     ),
     group_by: Optional[str] = Query(
         None,
-        description="customer | product | brand | category | sales_agent | location | channel | month | spec:<key>. "
+        description="customer | product | brand | category | sales_agent | location | channel | account_type | month | spec:<key>. "
         "Absent = one total.",
     ),
     top_n: Optional[int] = Query(None, description=f"1 to {TOP_SELLING_N_CEILING}. Required with group_by."),
@@ -259,6 +263,9 @@ def report_ask(
     ),
     warehouse_codes: Optional[list[str]] = Query(None),
     channel: Optional[str] = Query(None, description="dealer | project"),
+    account_types: Optional[list[str]] = Query(
+        None, description="The customer account: a number (4), a numeral (IV), a tag (A/C IV) or a type name."
+    ),
     dataset: str = Query("sales", description="sales (default) | chat."),
     compare_to: Optional[str] = Query(
         None, description="previous_period (the same number of days just before) | last_year (the same dates)."
@@ -376,6 +383,7 @@ def report_ask(
     agents = _agent_values(sales_agent_ids, "sales_agent_ids")
     card_agents = _agent_values(customer_agent_ids, "customer_agent_ids")
     codes = _normalize_entities(warehouse_codes) or []
+    account_values = [v.strip().upper() for v in (_normalize_entities(account_types) or []) if v and v.strip()]
     if basis_norm == "invoiced":
         # Finance data: the reports' own slug on the act-as principal, not only orders.view
         # (SALES-UNIFIED security review M1).
@@ -398,13 +406,16 @@ def report_ask(
         "warehouse_codes": codes,
         "channel": channel_norm,
         "customer_agent_ids": card_agents,
+        "account_types": account_values,
     }
     for name in _FILTER_PARAMS:
         if name in request.query_params.keys() and not resolved_filters[name]:
             raise _unprocessable(f"'{name}' was given but names nothing", "empty_filter", name)
+    if any(len(v) > 50 for v in account_values):
+        raise _unprocessable("An account type value is at most 50 characters", "value_too_long", "account_types")
     for name in (
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
-        "customer_agent_ids",
+        "customer_agent_ids", "account_types",
     ):
         if len(resolved_filters[name] or []) > _MAX_VALUES:
             raise _unprocessable(f"Too many values for '{name}' (max {_MAX_VALUES})", "too_many_values", name)
@@ -524,6 +535,7 @@ def report_ask(
             or bool(agents)
             or bool(card_agents)
             or (bool(codes) and "location" not in dealer_keys)
+            or bool(account_values)
             or channel_norm is not None
         )
         if outside:
@@ -558,6 +570,16 @@ def report_ask(
             raise AppException(403, "You do not have access to that company", code="COMPANY_FORBIDDEN")
         grants = {chosen}
         company_name = next(str(n) for i, n, _c in everyone if str(i) == chosen)
+
+    if account_values or group_norm == "account_type":
+        # SALES-ACCOUNT-TYPE: types are read from the contact's own companies' ledgers; a number means each company's
+        # own type. Nothing loaded, or a value meaning nothing in any of them, is a refusal that names what exists.
+        book = ap.account_book(db, sorted(grants))
+        if not book.loaded:
+            return _response({**ask._empty("refused", "Account types are not loaded from AutoCount yet"), **common, "filters": []})
+        _resolved_types, unknown = ap.resolve_account_types(book, account_values)
+        if unknown:
+            return _response({**ask._empty("refused", ap.unknown_account_message(book, unknown)), **common, "filters": []})
 
     if brands:
         # A brand named by id that belongs to a company outside the contact's own is dropped
@@ -610,6 +632,7 @@ def report_ask(
         warehouse_codes=codes,
         channel=channel_norm,
         card_agents=card_agents,
+        account_types=account_values,
     )
     if company_name:
         echo.insert(0, {"key": "company", "label": ask.FILTER_LABELS["company"], "values": [company_name]})
@@ -651,6 +674,8 @@ def report_ask(
         filters["customer_agent"] = card_agents
     if channel_norm and not per_document:
         filters["channel"] = [channel_norm]
+    if account_values:
+        filters["account_type"] = account_values
 
     from app.services.stock_visibility import resolve_policy
 

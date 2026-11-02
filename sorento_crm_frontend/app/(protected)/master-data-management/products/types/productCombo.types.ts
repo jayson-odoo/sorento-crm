@@ -26,6 +26,11 @@ export interface ProductComboPartRow {
   /** Null = fixed part. A label = one of the options for that label. */
   choice_group: string | null;
   sort_order: number;
+  /** PRICETAG-COMBO: this option's own selling price. Decimals arrive as strings. */
+  sell_price?: number | string | null;
+  topup_amount?: number | string | null;
+  /** Upgrade rows are drawn in their own block, after the choice groups. */
+  is_upgrade?: boolean;
 }
 
 /** The combo's own cover picture (S5), null with none uploaded yet. */
@@ -40,6 +45,11 @@ export interface ProductComboRow {
   /** The catalogue's own wording, e.g. "3 in 1". Unique per host product. */
   name: string;
   sort_order: number;
+  /** PRICETAG-COMBO: printed on the tag; a blank price means the summed price. */
+  description?: string | null;
+  free_items?: string | null;
+  list_price?: number | string | null;
+  sell_price?: number | string | null;
   parts: ProductComboPartRow[];
   /** Optional so an older fixture/mock omitting it still type-checks;
    *  the backend always sends the key (null with no picture). */
@@ -69,4 +79,17 @@ export interface ProductComboPartCreate {
 export interface ProductComboPartUpdate {
   choice_group?: string | null;
   sort_order?: number;
+  sell_price?: number | null;
+  topup_amount?: number | null;
+  is_upgrade?: boolean;
+}
+
+/** Omitted = left alone, null = cleared. */
+export interface ProductComboUpdate {
+  name?: string;
+  sort_order?: number;
+  description?: string | null;
+  free_items?: string | null;
+  list_price?: number | null;
+  sell_price?: number | null;
 }

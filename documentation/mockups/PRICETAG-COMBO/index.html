@@ -1,0 +1,114 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Price tag combo mock v1</title>
+<style>
+:root{--fg:#18181b;--mut:#71717a;--line:#e4e4e7;--soft:#f4f4f5;--pri:#1b84ff;--new:#b45309;--newbg:#fffbeb;--r:8px}
+*{box-sizing:border-box}body{margin:0;background:#fafafa;color:var(--fg);font:13px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:16px}.note{font-size:12px;color:var(--mut);margin:0 0 12px}
+h2{font-size:15px;margin:28px 0 8px}.new{display:inline-block;font-size:9px;font-weight:700;color:var(--new);background:var(--newbg);border:1px solid #fcd34d;border-radius:4px;padding:0 4px;margin-left:6px;vertical-align:1px}
+.hdr{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:var(--r) var(--r) 0 0;padding:10px 14px}
+.hdr b{font-size:15px}.chip{font-size:11px;border:1px solid var(--line);border-radius:999px;padding:0 8px;color:var(--mut)}.sp{flex:1}
+.btn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 12px;font:inherit;cursor:default}.btn.p{background:var(--pri);color:#fff;border-color:var(--pri)}
+.ed{display:grid;grid-template-columns:210px minmax(0,1fr) 260px;background:#fff;border:1px solid var(--line);border-top:0;border-radius:0 0 var(--r) var(--r)}
+.pane{padding:12px;min-width:0}.pane+.pane{border-left:1px solid var(--line)}.pane h4{margin:0 0 6px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut)}
+.layer-row{display:flex;justify-content:space-between;gap:6px;padding:5px 8px;border-radius:6px;cursor:pointer}.layer-row:hover{background:var(--soft)}.layer-row.on{background:#eff6ff;color:#1d4ed8}.layer-row small{color:var(--mut);white-space:nowrap}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin-bottom:10px}.bar label{display:block;font-size:11px;color:var(--mut);margin-bottom:2px}
+select,.in{font:inherit;border:1px solid var(--line);border-radius:6px;padding:5px 8px;background:#fff;min-width:0;width:100%}.bar select{min-width:230px}
+.stage{background:var(--soft);border-radius:var(--r);padding:16px;display:flex;justify-content:center;overflow:auto}
+.tag{position:relative;width:444px;height:630px;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18);flex:none;overflow:hidden}
+.ly{position:absolute;overflow:hidden;outline:1px dashed transparent;cursor:pointer}.ly:hover{outline-color:#93c5fd}.ly.on{outline:2px solid var(--pri);outline-offset:1px}
+.ly img{width:100%;height:100%;object-fit:contain;display:block}.ph{width:100%;height:100%;background:var(--soft);display:flex;align-items:center;justify-content:center;color:var(--mut);font-size:11px}
+.t-name{font-weight:700;font-size:15px;line-height:1.2}.t-desc{font-size:10.5px;line-height:1.35;white-space:pre-line;color:#3f3f46}.t-lp{font-size:12px;color:#3f3f46}.t-lp b{font-weight:600}
+.t-sp{font-weight:700;font-size:40px;line-height:1;color:#8c7355;display:flex;align-items:flex-end;gap:6px}.t-sp small{font-size:10px;line-height:1.05;font-weight:700}
+.t-free{font-size:10.5px}.t-free b{font-size:11px}.t-tb{width:100%;border-collapse:collapse;font-size:10px}.t-tb td{padding:2.5px 4px;border-top:1px solid var(--line);vertical-align:top}.t-tb td.c{font-weight:700;white-space:nowrap}.t-tb td.r{text-align:right;white-space:nowrap}.t-tb td.r b{font-size:14px;color:#8c7355}.t-h{font-size:10px;font-weight:700;margin-bottom:2px;letter-spacing:.03em}
+.opt{padding:4px 8px;border-radius:5px;cursor:pointer}.opt:hover{background:var(--soft)}.opt.on{background:#eff6ff;color:#1d4ed8;font-weight:600}.gh{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);padding:6px 8px 2px}
+.list{border:1px solid var(--line);border-radius:6px;padding:4px;margin-bottom:10px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px}.lbl{font-size:11px;color:var(--mut);display:block;margin-bottom:2px}
+.card{background:#fff;border:1px solid var(--line);border-radius:var(--r);padding:14px}.cc{display:grid;grid-template-columns:130px minmax(0,1fr);gap:14px}.cc img,.cc .ph{width:130px;height:130px;object-fit:contain;border:1px solid var(--line);border-radius:6px}
+.fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.fields .full{grid-column:1/-1}textarea.in{min-height:72px;resize:vertical}
+.pt{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}.pt th{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);text-align:left;padding:4px 6px}.pt td{border-top:1px solid var(--line);padding:4px 6px}.ghead td{background:var(--soft);font-weight:600}
+.tw{overflow:auto;background:#fff;border:1px solid var(--line);border-radius:var(--r)}.tw table{width:100%;border-collapse:collapse;min-width:640px}.tw th{font-size:11px;color:var(--mut);text-align:left;padding:6px 10px;background:var(--soft)}.tw td{padding:5px 10px;border-top:1px solid var(--line)}
+.b{font-size:11px;border-radius:999px;padding:0 8px;background:#ecfdf5;color:#047857}.b.w{background:#fffbeb;color:#b45309}
+ul.map{background:#fff;border:1px solid var(--line);border-radius:var(--r);margin:0;padding:10px 10px 10px 26px;font-size:12px}ul.map li{margin:3px 0}code{font:11px ui-monospace,Menlo,monospace;background:var(--soft);border-radius:3px;padding:0 3px}
+@media(max-width:1000px){.ed{grid-template-columns:1fr}.pane+.pane{border-left:0;border-top:1px solid var(--line)}.fields{grid-template-columns:1fr}.cc{grid-template-columns:1fr}.bar select{min-width:0}.bar>div{width:100%}.stage{justify-content:flex-start}}
+</style></head><body><div class="wrap">
+<p class="note">Public repo copy with made-up codes, prices and text, no photos. The owner reviewed a private copy. <span class="new">NEW</span> marks what this lane adds; everything else exists today.</p>
+<h2>1. Template designer</h2>
+<div class="hdr"><b id="tname"></b><span class="chip" id="tfam"></span><span class="sp"></span><button class="btn">Save</button><button class="btn p">Publish</button></div>
+<div class="ed">
+<div class="pane"><h4>Tag size</h4><select class="in"><option>A5 portrait (148 x 210 mm)</option></select><h4 style="margin-top:14px">Layers</h4><div id="layers"></div></div>
+<div class="pane"><div class="bar">
+<div><label>Preview combo<span class="new">NEW</span></label><select id="pick"></select></div>
+<div id="dpw"><label id="dpl">Dealer picked</label><select id="dp"></select></div></div>
+<div class="stage"><div class="tag" id="tag"></div></div>
+<p class="note" id="src" style="margin:8px 0 0"></p></div>
+<div class="pane"><h4>Binding</h4><span class="lbl">Field</span><div class="list" id="fields"></div>
+<h4>Position</h4><div class="grid2" id="pos"></div></div>
+</div>
+
+<h2>2. Product page, Overview tab, Combos card</h2>
+<div class="card" id="ccard"></div>
+
+<h2>3. Each element and what it reuses</h2>
+<ul class="map">
+<li>Page frame, Save, Publish: <code>app/(protected)/dealer-kit/tag-templates/[id]/page.tsx</code>, <code>components/common/PageHeader</code></li>
+<li>Canvas, layers, inspector: <code>tag-templates/components/TagCanvasEditor.tsx</code>, <code>LayersPanel.tsx</code>, <code>InspectorPanel.tsx</code></li>
+<li>Field list: <code>SLOT_BINDING_OPTIONS</code> in <code>InspectorPanel.tsx:58</code> gains a Combo group; tokens in <code>lib/dealer-kit/merge-fields.ts:42</code>, shown by <code>InsertFieldDialog.tsx</code></li>
+<li>Preview combo: <code>SearchableSelect</code>; data through <code>useTagBindings.ts</code> and <code>api/v1/dealer_kit/tag_data.py</code>, combo added beside product and set</li>
+<li>Combo picture: <code>ComboImageControl</code> in <code>ProductCombosSection.tsx:138</code>, <code>product_combo_service.upload_image</code>, column <code>product_combos.image_attachment_id</code> (all exist)</li>
+<li>Combo description: <code>PriceTagDescriptionBlock</code> in <code>ProductSpecificationsTab.tsx:179</code>; new column <code>product_combos.description</code></li>
+<li>OR choices: <code>product_combo_parts.choice_group</code>, the picker on the portal line (<code>PriceTagLinesTable.tsx</code>) (exist)</li>
+<li>Free items: prints through the existing Accessories field, <code>price_tag_request_lines.included_accessories</code> (<code>tag_data_service.py:940</code>); new column <code>product_combos.free_items</code></li>
+<li>Top-ups and per-option price: part rows on <code>ProductCombosSection.tsx</code>; new columns <code>product_combo_parts.topup_amount</code>, <code>sell_price</code></li>
+<li>Combo price (question 1): existing List Price and Sell Price fields; new columns <code>product_combos.list_price</code>, <code>sell_price</code>; tag override still wins (<code>tag_data_service.py:875</code>, <code>:910</code>)</li>
+<li>Rendered PDF: unchanged path, <code>TagSheetRenderer.tsx</code> and <code>tag_sheet_export_service.py</code></li>
+<li>Seed import: <code>scripts/import_product_combos.py</code>, same shape as <code>scripts/import_price_tag_descriptions.py</code></li>
+</ul>
+</div>
+<script>
+const C=[{"id": "a", "family": "bathroom_furniture", "title": "ZZTBF100 + ZZTMR200", "page": 0, "section": "", "photo": null, "lp": 1000, "sp": 800, "description": "ZZTBF100 (CABINET)\nL800xW500xH300mm\nZZTMR200 (MIRROR)\nL800xH600mm\nZZTWT300 (TAP)\nZZTWS400 (POP UP WASTE)", "groups": [{"role": "BASIN", "options": [{"code": "ZZTWB501", "lp": 100, "sp": null, "descr": "Black"}, {"code": "ZZTWB502", "lp": 100, "sp": null, "descr": "White"}]}], "free": [], "topups": []}, {"id": "b", "family": "kitchen_sink", "title": "ZZTKS600", "page": 0, "section": "", "photo": null, "lp": 500, "sp": null, "description": "1 KITCHEN SINK + 1 KITCHEN TAP\nL600xW470xH250mm", "groups": [{"role": "TAP", "options": [{"code": "ZZTKT701", "lp": 100, "sp": 450, "descr": "Wall mounted tap"}, {"code": "ZZTKT702", "lp": 200, "sp": 550, "descr": "Pillar mounted tap"}]}], "free": ["ZZTBK800 DRAINER", "CHOPPING BOARD"], "topups": []}, {"id": "c", "family": "kitchen_sink", "title": "ZZTKS900", "page": 0, "section": "", "photo": null, "lp": 700, "sp": 650, "description": "1 KITCHEN SINK + 1 KITCHEN TAP\nL850xW470xH230mm", "groups": [{"role": "TAP", "options": [{"code": "ZZTKT703", "lp": 100, "sp": null, "descr": "Pillar mounted tap"}, {"code": "ZZTKT704", "lp": 120, "sp": null, "descr": "Wall mounted tap"}]}], "free": ["ZZTBK800 DRAINER"], "topups": [{"code": "ZZTKT705", "lp": 300, "topup": 50, "descr": "Mixer tap with pull out shower"}]}],R=[];const $=i=>document.getElementById(i);const rm=v=>v==null?'':Number(v).toLocaleString('en-US');
+const PRODUCT=['Product Image','Code','Name','Dimensions','Spec Lines','Accessories','List Price','Sell Price','Badges','Alternatives','Set Members','Barcode'];
+const COMBO=['Combo Photo','Combo Name','Combo Description','Combo Choices','Combo Top-ups'];
+const BATH=[['Combo Photo',6,6,70,110],['Combo Name',80,8,62,14],['Combo Description',80,24,62,62],['List Price',80,90,62,8],['Sell Price',80,99,62,16],['Combo Choices',6,120,136,46],['Accessories',6,168,136,10],['Combo Top-ups',6,180,136,24]];
+const KIT=[['Combo Photo',6,6,64,42],['Combo Name',74,8,68,8],['Combo Description',74,17,68,16],['List Price',74,35,68,8],['Sell Price',74,43,68,14],['Combo Choices',6,60,136,76],['Accessories',6,138,136,12],['Combo Top-ups',6,152,136,54]];
+let cur=C[0],sel='Combo Photo',pick='';
+function opts(c){return c.groups.flatMap(g=>g.options.map(o=>({...o,role:g.role})))}
+function priced(c){return opts(c).some(o=>o.sp!=null)}
+function chosen(c){return opts(c).find(o=>o.code===pick)||null}
+function chosenUp(c){return c.topups.find(t=>t.code===pick)||null}
+function sellPrice(c){const o=chosen(c),t=chosenUp(c);if(o&&o.sp!=null)return o.sp;if(t)return (c.sp||0)+t.topup;if(c.sp!=null)return c.sp;return null}
+function content(n){const c=cur;switch(n){
+case'Combo Photo':return c.photo?`<img alt="" src="${c.photo}">`:'<div class="ph">Combo photo</div>';
+case'Combo Name':return `<div class="t-name">${c.title}</div>`;
+case'Combo Description':return `<div class="t-desc">${c.description}</div>`;
+case'List Price':return `<div class="t-lp">LP: <b>RM ${rm(c.lp)}</b></div>`;
+case'Sell Price':{const v=sellPrice(c);return v==null?'':`<div class="t-sp"><small>SP<br>RM</small>${rm(v)}</div>`}
+case'Accessories':return c.free.length?`<div class="t-free"><b>FREE:</b> ${c.free.join(', ')}</div>`:'';
+case'Combo Choices':{if(!c.groups.length)return'';const o=chosen(c),u=chosenUp(c);
+ return c.groups.map(g=>{let list=g.options;if(o)list=list.filter(x=>x.code===o.code);if(u)list=[];
+ const rows=list.map(x=>`<tr><td class="c">${x.code}</td><td>${x.descr||''}${x.lp!=null?` <span style="color:#71717a">LP RM ${rm(x.lp)}</span>`:''}</td><td class="r">${x.sp!=null&&!o?`<b>${rm(x.sp)}</b>`:''}</td></tr>`).join('');
+ const up=u?`<tr><td class="c">${u.code}</td><td>${u.descr||''} <span style="color:#71717a">LP RM ${rm(u.lp)}</span></td><td class="r">+RM ${rm(u.topup)}</td></tr>`:'';
+ return `<div class="t-h">${g.role}${(o||u)?'':(g.options.length>1?': PICK ONE':'')}</div><table class="t-tb">${rows}${up}</table>`}).join('')}
+case'Combo Top-ups':{if(!c.topups.length||chosenUp(c))return'';return `<div class="t-h">UPGRADE</div><table class="t-tb">${c.topups.map(t=>`<tr><td class="c">${t.code}</td><td>${t.descr||''}</td><td class="r">+RM ${rm(t.topup)}</td></tr>`).join('')}</table>`}
+}return''}
+function tpl(){return cur.family==='kitchen_sink'?KIT:BATH}
+function draw(){const L=tpl();$('tname').textContent=cur.family==='kitchen_sink'?'Kitchen sink combo':'Bathroom furniture combo';$('tfam').textContent=cur.family==='kitchen_sink'?'sink_combo':'furniture_set';
+ if(!L.some(l=>l[0]===sel))sel=L[0][0];
+ $('layers').innerHTML=L.map(l=>`<div class="layer-row ${l[0]===sel?'on':''}" data-l="${l[0]}"><span>${l[0]}</span>${COMBO.includes(l[0])?'<span class="new">NEW</span>':''}</div>`).join('');
+ const s=444/148;$('tag').innerHTML=L.map(l=>`<div class="ly ${l[0]===sel?'on':''}" data-l="${l[0]}" style="left:${l[1]*s}px;top:${l[2]*s}px;width:${l[3]*s}px;height:${l[4]*s}px">${content(l[0])}</div>`).join('');
+ $('fields').innerHTML='<div class="gh">Combo<span class="new">NEW</span></div>'+COMBO.map(f=>`<div class="opt ${f===sel?'on':''}">${f}</div>`).join('')+'<div class="gh">Product</div>'+PRODUCT.map(f=>`<div class="opt ${f===sel?'on':''}">${f}</div>`).join('');
+ const p=L.find(l=>l[0]===sel);$('pos').innerHTML=['X (mm)','Y (mm)','W (mm)','H (mm)'].map((n,i)=>`<div><span class="lbl">${n}</span><input class="in" value="${p[i+1]}" readonly></div>`).join('');
+ $('src').textContent='';
+ document.querySelectorAll('[data-l]').forEach(n=>n.onclick=()=>{sel=n.dataset.l;draw()});card()}
+function fillPick(){const op=[...opts(cur)],up=cur.topups;$('dpw').style.display=(op.length||up.length)?'':'none';
+ $('dpl').textContent='Dealer picked';
+ $('dp').innerHTML='<option value="">Nothing picked: list every option</option>'+op.map(o=>`<option value="${o.code}">${o.code}</option>`).join('')+up.map(t=>`<option value="${t.code}">${t.code} (upgrade, +RM ${rm(t.topup)})</option>`).join('');$('dp').value=pick}
+function card(){const c=cur;const groups=c.groups.map(g=>`<tr class="ghead"><td colspan="4">${g.role}: pick one</td></tr>`+g.options.map(o=>`<tr><td>${o.code}</td><td>${o.descr}</td><td>${o.sp!=null?rm(o.sp):''}</td><td></td></tr>`).join('')).join('');
+ const ups=c.topups.length?'<tr class="ghead"><td colspan="4">Upgrade</td></tr>'+c.topups.map(t=>`<tr><td>${t.code}</td><td>${t.descr}</td><td></td><td>${rm(t.topup)}</td></tr>`).join(''):'';
+ $('ccard').innerHTML=`<div class="cc"><div>${c.photo?`<img alt="" src="${c.photo}">`:'<div class="ph">Combo photo</div>'}<div style="margin-top:6px;display:flex;gap:6px"><button class="btn">Replace</button><button class="btn">Clear</button></div></div>
+ <div><div class="fields"><div><span class="lbl">Name</span><input class="in" readonly value="${c.title}"></div><div><span class="lbl">List price (RM)<span class="new">NEW</span></span><input class="in" readonly value="${rm(c.lp)}"></div><div><span class="lbl">Sell price (RM)<span class="new">NEW</span></span><input class="in" readonly value="${rm(c.sp)}"></div>
+ <div class="full"><span class="lbl">Description<span class="new">NEW</span></span><textarea class="in" readonly>${c.description}</textarea></div>
+ <div class="full"><span class="lbl">Free items<span class="new">NEW</span></span><input class="in" readonly value="${c.free.join(', ')}"></div></div>
+ <table class="pt"><thead><tr><th>Part</th><th>Description</th><th>Sell price if picked<span class="new">NEW</span></th><th>Top-up RM<span class="new">NEW</span></th></tr></thead><tbody>${groups}${ups||''}${(!groups&&!ups)?'<tr><td colspan="4" style="color:#71717a">Fixed parts only, listed in the description above.</td></tr>':''}</tbody></table></div></div>`}
+$('pick').innerHTML=C.map(c=>`<option value="${c.id}">${c.title}</option>`).join('');
+$('pick').onchange=e=>{cur=C.find(c=>c.id===e.target.value);pick='';fillPick();draw()};$('dp').onchange=e=>{pick=e.target.value;draw()};
+
+fillPick();draw();
+</script></body></html>

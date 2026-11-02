@@ -208,7 +208,12 @@ import { toast } from '@/lib/toast';
 import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationScopesTab } from './QuotationScopesTab';
-import { QuotationHeaderTab, QuotationSignaturesTab } from './QuotationDocumentTabPanels';
+import {
+  QuotationHeaderTab,
+  QuotationSignaturesTab,
+  QuotationCoverLetterTab,
+  QuotationTermsTab,
+} from './QuotationDocumentTabPanels';
 
 function project(overrides: Partial<Project> = {}): Project {
   return {
@@ -1580,7 +1585,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     getQuotationDocument.mockResolvedValue(belowFloor('pending_approval'));
     renderScreen();
 
-    const sentence = await screen.findByText(/2 lines are priced below their floor/i);
+    const sentence = await screen.findByText(/2 lines are priced below minimum price/i);
     const banner = sentence.closest('div.rounded-lg') as HTMLElement;
     expect(banner).not.toBeNull();
     expect(within(banner).queryByRole('button')).toBeNull();
@@ -1934,3 +1939,128 @@ describe('QuotationDocumentClient Send to Customer channel menu (QUOTE-SEND-WHAT
     expect(screen.queryByText('Send R1 via WhatsApp')).toBeNull();
   });
 });
+
+/**
+ * QUOTE-COVER-PAGE (UAC B1): the view page shows the four new fields where the edit form has them.
+ * Header tab: Email, Quotation Purpose, Prepared By (the project salesperson). Terms tab: Payment
+ * Terms and Validity above the terms.
+ */
+describe('QuotationDocumentClient cover page fields', () => {
+  const coverDocument = () =>
+    quotationDocument({
+      terms_html: '<p>CLAUSE A</p>',
+      ...({
+        recipient_email_snapshot: 'kelly@example.test',
+        quotation_purpose: 'Supply of sanitary ware',
+        payment_terms: '30 days net',
+        validity: '60 days',
+        prepared_by: 'Ahmad Faizal',
+      } as unknown as Partial<QuotationDocument>),
+    });
+
+  it('the Header tab shows Email, Quotation Purpose and Prepared By', async () => {
+    getQuotationDocument.mockResolvedValue(coverDocument());
+    getProject.mockResolvedValue(project({ owner_name: 'Wrong Project Owner' }));
+    renderScreen(<QuotationHeaderTab />);
+
+    const card = await screen.findByTestId('quotation-header-card');
+    await waitFor(() => expect(card).toHaveTextContent('kelly@example.test'));
+    expect(card).toHaveTextContent('Email');
+    expect(card).toHaveTextContent('Quotation Purpose');
+    expect(card).toHaveTextContent('Supply of sanitary ware');
+    expect(card).toHaveTextContent('Prepared By');
+    expect(card).toHaveTextContent('Ahmad Faizal');
+    expect(card).not.toHaveTextContent('Wrong Project Owner');
+  });
+
+  it('the Terms tab shows Payment Terms and Validity with the terms', async () => {
+    getQuotationDocument.mockResolvedValue(coverDocument());
+    renderScreen(<QuotationTermsTab />);
+
+    expect(await screen.findByText('Payment Terms')).toBeInTheDocument();
+    expect(screen.getByText('30 days net')).toBeInTheDocument();
+    expect(screen.getByText('Validity')).toBeInTheDocument();
+    expect(screen.getByText('60 days')).toBeInTheDocument();
+    expect(screen.getByText('CLAUSE A')).toBeInTheDocument();
+  });
+
+  it('an old quotation with none of the fields shows no empty Email or Validity row', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ terms_html: '<p>CLAUSE A</p>' }));
+    renderScreen(<QuotationTermsTab />);
+
+    expect(await screen.findByText('CLAUSE A')).toBeInTheDocument();
+    expect(screen.queryByText('Validity')).toBeNull();
+    expect(screen.queryByText('Payment Terms')).toBeNull();
+  });
+
+  it('polish: the read Terms panel carries every TERMS_HTML_CLASS token and no prose', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        terms_html: '<p>CLAUSE A</p><p></p><ul><li>OUTER ITEM<ul><li>INNER ITEM</li></ul></li></ul>',
+      }),
+    );
+    renderScreen(<QuotationTermsTab />);
+
+    const inner = await screen.findByText('INNER ITEM');
+    await expectTermsClass(inner);
+  });
+
+  it('polish 2: the Cover letter read panel keeps prose and not the terms class', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ cover_letter_html: '<p>LETTER ONE</p><p>LETTER TWO</p>' }),
+    );
+    renderScreen(<QuotationCoverLetterTab />);
+
+    const one = await screen.findByText('LETTER ONE');
+    const loaders = import.meta.glob('/lib/terms-html.ts') as Record<
+      string,
+      () => Promise<{ TERMS_HTML_CLASS: string }>
+    >;
+    const { TERMS_HTML_CLASS } = await loaders['/lib/terms-html.ts']();
+    const tokens = String(TERMS_HTML_CLASS).split(/\s+/).filter(Boolean);
+    const chain: HTMLElement[] = [];
+    for (let el = one.parentElement; el && el !== document.body && chain.length < 6; el = el.parentElement) {
+      chain.push(el);
+    }
+    expect(chain.some((el) => el.classList.contains('prose'))).toBe(true);
+    expect(chain.some((el) => tokens.every((t) => el.classList.contains(t)))).toBe(false);
+  });
+
+  it('polish 2: the Email line comes before the Attn line in the To block', async () => {
+    getQuotationDocument.mockResolvedValue(coverDocument());
+    renderScreen(<QuotationHeaderTab />);
+
+    const email = await screen.findByText('Email:');
+    const attn = screen.getByText('Attn:');
+    expect(
+      email.compareDocumentPosition(attn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('polish: Email shows inline in the To block as "Email:" then the address, like Attn', async () => {
+    getQuotationDocument.mockResolvedValue(coverDocument());
+    renderScreen(<QuotationHeaderTab />);
+
+    const label = await screen.findByText('Email:');
+    expect(label.parentElement).toHaveTextContent('Email: kelly@example.test');
+    expect(screen.queryByText('Email')).toBeNull();
+  });
+});
+
+/** The countersign terms row and the read view share one class constant (QUOTE-COVER-PAGE polish). */
+async function expectTermsClass(inner: HTMLElement) {
+  const loaders = import.meta.glob('/lib/terms-html.ts') as Record<string, () => Promise<{ TERMS_HTML_CLASS: string }>>;
+  const load = loaders['/lib/terms-html.ts'];
+  expect(load, 'lib/terms-html.ts must export TERMS_HTML_CLASS').toBeDefined();
+  const { TERMS_HTML_CLASS } = await load();
+  const tokens = String(TERMS_HTML_CLASS).split(/\s+/).filter(Boolean);
+  expect(tokens.length).toBeGreaterThan(0);
+  const chain: HTMLElement[] = [];
+  for (let el = inner.parentElement; el && el !== document.body && chain.length < 6; el = el.parentElement) {
+    chain.push(el);
+  }
+  expect(
+    chain.some((el) => tokens.every((token) => el.classList.contains(token))),
+  ).toBe(true);
+  expect(chain.some((el) => el.classList.contains('prose'))).toBe(false);
+}

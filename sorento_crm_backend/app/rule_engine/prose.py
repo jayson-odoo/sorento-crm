@@ -69,6 +69,9 @@ def _value_text(node: Dict[str, Any], facts: Dict[str, FactDef]) -> str:
         return other.label if other else str(value)
     if operator == "between" and isinstance(value, list) and len(value) == 2:
         return f"{value[0]} and {value[1]}"
+    fact = facts.get(node.get("fact"))
+    options = fact.options if fact is not None and isinstance(fact.options, list) else []
+    labels = {str(o.get("value")): str(o.get("label")) for o in options}
     if isinstance(value, list):
-        return ", ".join(str(item) for item in value)
-    return str(value) if value is not None else ""
+        return ", ".join(labels.get(str(item), str(item)) for item in value)
+    return labels.get(str(value), str(value)) if value is not None else ""

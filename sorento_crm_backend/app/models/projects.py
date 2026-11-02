@@ -52,6 +52,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -968,12 +969,13 @@ class ProjectSeriesProduct(Base):
     #: ``6`` means 6%. The sheet's DISTRIBUTORS column, which writes it as ``6 % MAX`` in one
     #: tab and ``0.06`` in another; both normalise to ``6`` on the way in.
     max_discount_pct = Column(Numeric(5, 2), nullable=True)
+    #: A row that takes a product OUT of the series (owner ruling Q1, 1 Nov 2026): the brand /
+    #: category scope would list it, the admin removed it. Not listed, not standard, not
+    #: priced, until it is added back (which clears the flag).
+    excluded = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
-    #: **NULL is silence, never zero.** Of the client's 151 codes, 95 carry a price and 56 a
-    #: discount, and the whole `shower` tab carries neither. A line whose series gives no
-    #: discount therefore falls through to ``price_floor_rules`` rather than acquiring a hard
-    #: floor at the selling price, which would put 56 products in breach the moment anybody
-    #: discounted a cent. See PLAN-series-catalogue-and-pricing-pages.md.
+    #: A price with no max discount means NO discount (owner ruling Q2, 1 Nov 2026): the floor
+    #: is the selling price itself. See ``series_floor``.
 
 
 class ProjectSeriesSet(Base):
@@ -1012,7 +1014,7 @@ class ProjectSeriesSet(Base):
         nullable=False,
     )
     selling_price = Column(Numeric(12, 2), nullable=True)
-    #: A PERCENT, ``6`` means 6%. NULL is silence, never zero (see ``ProjectSeriesProduct``).
+    #: A PERCENT, ``6`` means 6%. NULL with a selling price means no discount (owner ruling Q2).
     max_discount_pct = Column(Numeric(5, 2), nullable=True)
 
 
@@ -1111,7 +1113,12 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     recipient_name_snapshot = Column(String(200), nullable=True)
     recipient_address_snapshot = Column(Text, nullable=True)
     recipient_phone_snapshot = Column(String(200), nullable=True)
+    recipient_email_snapshot = Column(Text, nullable=True)
     attn_name = Column(String(120), nullable=True)
+    # Cover page (QUOTE-COVER-PAGE): free text, per quotation.
+    quotation_purpose = Column(Text, nullable=True)
+    payment_terms = Column(Text, nullable=True)
+    validity = Column(Text, nullable=True)
     subject_title = Column(Text, nullable=True)
 
     # The document's OWN editable copy, rendered from the company template at create. Editing it
@@ -1191,6 +1198,9 @@ class QuotationTemplate(Base, CompanyScopedMixin):
     kind = Column(String(32), nullable=False)
     name = Column(String(150), nullable=False)
     body_html = Column(Text, nullable=False)
+    # Defaults beside the terms template, copied onto a new quotation (kind terms only).
+    payment_terms = Column(Text, nullable=True)
+    validity = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="false", default=False)
 
     created_by = Column(String(100), nullable=True)
@@ -1249,6 +1259,12 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     cover_letter_rendered = Column(Text, nullable=True)
     terms_rendered = Column(Text, nullable=True)
+    # 1 = the layout before the cover page, 2 = cover page first. No python default on purpose:
+    # only issue() opts in, so every other path keeps layout 1.
+    layout_version = Column(SmallInteger, nullable=False, server_default="1")
+    # Frozen with the terms at issue.
+    payment_terms = Column(Text, nullable=True)
+    validity = Column(Text, nullable=True)
     grand_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
 
     pdf_attachment_id = Column(

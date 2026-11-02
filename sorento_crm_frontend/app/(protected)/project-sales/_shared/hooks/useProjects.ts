@@ -1477,7 +1477,7 @@ export function useImportJobStatus(jobId: string | null) {
  * runs); this hook only decides WHEN to ask.
  */
 export function useLineVerdict(
-  quotationId: string,
+  target: { quotationId: string | null; seriesId?: string | null },
   draft: { product_id?: string; product_set_id?: string; unit_price?: string },
   enabled: boolean,
 ) {
@@ -1503,13 +1503,14 @@ export function useLineVerdict(
     ...LIST_QUERY_OPTIONS,
     queryKey: [
       'quotation-line-verdict',
-      quotationId,
+      target.quotationId ?? '',
+      target.seriesId ?? '',
       settled.product_id ?? '',
       settled.product_set_id ?? '',
       settled.unit_price ?? '',
     ],
     queryFn: () =>
-      judgeQuotationLine(quotationId, {
+      judgeQuotationLine(target, {
         product_id: settled.product_id,
         product_set_id: settled.product_set_id,
         unit_price: settled.unit_price,

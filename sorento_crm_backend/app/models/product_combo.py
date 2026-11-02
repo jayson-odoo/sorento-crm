@@ -19,12 +19,15 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -65,6 +68,12 @@ class ProductCombo(Base):
     image_attachment_id = Column(
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
     )
+    # PRICETAG-COMBO: the combo's own text and prices. A blank price means the
+    # tag's summed price, so a combo with none set behaves as before.
+    description = Column(Text, nullable=True)
+    free_items = Column(Text, nullable=True)
+    list_price = Column(Numeric(12, 2), nullable=True)
+    sell_price = Column(Numeric(12, 2), nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -117,6 +126,11 @@ class ProductComboPart(Base):
     )
     choice_group = Column(String(100), nullable=True)
     sort_order = Column(Integer, nullable=False, server_default="0")
+    # PRICETAG-COMBO: this option's own selling price, a top-up for an upgrade, and the
+    # upgrade marker (a blank top-up cannot mean "upgrade").
+    sell_price = Column(Numeric(12, 2), nullable=True)
+    topup_amount = Column(Numeric(12, 2), nullable=True)
+    is_upgrade = Column(Boolean, nullable=False, server_default="false", default=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

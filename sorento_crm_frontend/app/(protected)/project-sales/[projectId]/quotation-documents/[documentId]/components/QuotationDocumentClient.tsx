@@ -4,7 +4,7 @@ import { APPEAL_VERB } from '@/lib/submission-status';
 import * as React from 'react';
 import Link from 'next/link';
 import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { ChevronDown, Mail, MessageCircle, PenLine } from 'lucide-react';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { toast } from '@/lib/toast';
@@ -46,7 +46,7 @@ import { QuotationRejectDialog } from './QuotationRejectDialog';
 import { ReviseApprovalDialog } from './ReviseApprovalDialog';
 import { QuotationChangesRequestedPanel } from './QuotationChangesRequestedPanel';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
-import { QuotationDocumentTabs } from './QuotationDocumentTabs';
+import { QuotationDocumentTabs, quotationSiblingHref } from './QuotationDocumentTabs';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
 
 /**
@@ -76,6 +76,7 @@ export function QuotationDocumentClient({
   children?: React.ReactNode;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const document = useQuotationDocument(projectId, documentId);
   const project = useProject(projectId);
   // Newest first, so [0] is the revision the customer currently holds - the one whose PDF and
@@ -345,16 +346,22 @@ export function QuotationDocumentClient({
                   }
                   onPrevious={() =>
                     router.push(
-                      `/project-sales/${projectId}/quotation-documents/${
-                        (siblingDocuments.data ?? [])[documentIndex - 1].id
-                      }`,
+                      quotationSiblingHref(
+                        projectId,
+                        documentId,
+                        (siblingDocuments.data ?? [])[documentIndex - 1].id,
+                        pathname,
+                      ),
                     )
                   }
                   onNext={() =>
                     router.push(
-                      `/project-sales/${projectId}/quotation-documents/${
-                        (siblingDocuments.data ?? [])[documentIndex + 1].id
-                      }`,
+                      quotationSiblingHref(
+                        projectId,
+                        documentId,
+                        (siblingDocuments.data ?? [])[documentIndex + 1].id,
+                        pathname,
+                      ),
                     )
                   }
                   ariaLabel="quotation"

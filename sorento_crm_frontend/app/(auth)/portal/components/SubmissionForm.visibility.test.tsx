@@ -12,6 +12,7 @@ import { render, screen } from '@testing-library/react';
 import type { PortalContact } from '../lib/portal-client';
 
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 

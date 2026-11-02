@@ -125,7 +125,8 @@ def test_ac_w13_a_type_switched_to_staff_hides_an_already_read_file_at_once(db):
     _file(db, "dealer", ["dealer"], "was dealer visible", att_type=att_type)
     assert _texts(_ask(db, {"dealer"})) == ["was dealer visible"]
 
-    att_type.ai_audience = "staff"
+    att_type.ai_read_codes = []  # the codes untick; Staff stays ticked: the contact no longer reads it
+    att_type.ai_read_staff = True
     db.flush()
 
     assert _texts(_ask(db, {"dealer"})) == []

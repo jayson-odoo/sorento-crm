@@ -1578,9 +1578,13 @@ class OrderInquiryReserveService:
             recipients = park_send.resolve_ordered(self.db, automation, context)
         if not recipients:
             return {"to": None, "cc": []}
+        # DEALER-OI-ROUTE: every To address, as the send addresses them.
+        from app.services.automation_recipients import to_count
+
+        n_to = to_count(recipients)
         return {
-            "to": {"name": recipients[0].get("name") or recipients[0]["email"]},
-            "cc": [{"name": r.get("name") or r["email"]} for r in recipients[1:]],
+            "to": {"name": ", ".join(r.get("name") or r["email"] for r in recipients[:n_to])},
+            "cc": [{"name": r.get("name") or r["email"]} for r in recipients[n_to:]],
         }
 
     def _add_event(

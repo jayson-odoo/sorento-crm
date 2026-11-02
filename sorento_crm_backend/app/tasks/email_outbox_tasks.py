@@ -167,7 +167,9 @@ def _attachments_for(row: EmailOutbox) -> Optional[list]:
 def _attempt_send(row: EmailOutbox, smtp_config: Optional[dict]) -> Optional[str]:
     """Send one outbox row via SMTP. Returns None on success, error string on failure."""
     recipients_json = row.recipients_json or {}
-    to_list = [row.recipient_email]
+    to_list = (
+        recipients_json.get("to") if isinstance(recipients_json, dict) else None
+    ) or [row.recipient_email]
     cc_list = recipients_json.get("cc") if isinstance(recipients_json, dict) else None
     bcc_list = recipients_json.get("bcc") if isinstance(recipients_json, dict) else None
     try:

@@ -17,6 +17,7 @@ import type { PortalContact } from '../lib/portal-client';
 // One stable object, as Next returns at runtime (a fresh one per render re-runs the form's seed effect).
 const stableRouter = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => stableRouter,
 }));
 

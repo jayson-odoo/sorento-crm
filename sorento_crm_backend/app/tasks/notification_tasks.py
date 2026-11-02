@@ -48,6 +48,12 @@ _NOTIFICATION_TYPE_TO_EVENT_KEY: dict[str, str] = {
     "user_invitation": "user_invitation",
     "daily_sla_summary": "daily_sla_summary",
     "workflow_form_transition": "workflow_form_state_transition",
+    # Project sales (PROJECT-EMAIL-SWITCHES): each has its own switch on Email Event Configs
+    # instead of sharing the generic `notification_delivery` one. Email only: the bell, web
+    # push, WhatsApp and the approval gate do not read these keys.
+    "project_price_floor_breach": "project_below_minimum_price",
+    "project_quotation_approval_requested": "project_quotation_approval_requested",
+    "project_interest_registered": "project_interest_registered",
 }
 
 
@@ -240,6 +246,19 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
             db.rollback()
 
 
+def _split_to_cc(data: dict) -> tuple[list[str], list[str]]:
+    """`(to, cc)` for a one-email-to-all notification. `to_count` (DEALER-OI-ROUTE, set by
+    `AutomationService._send_per_match` one_email) says how many leading addresses are To;
+    without it, the first address is To and the rest Cc, as every other sender expects."""
+    recipients = [str(e) for e in data.get("recipient_emails", []) if e]
+    try:
+        n = int(data.get("to_count") or 1)
+    except (TypeError, ValueError):
+        n = 1
+    n = max(1, min(n, len(recipients)))
+    return recipients[:n], recipients[n:]
+
+
 def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: NotificationDelivery, event_key: str) -> None:
     """Hand the email off to email_outbox_service. Marks delivery as 'queued'."""
     raw_data = getattr(notification, "data", None)
@@ -294,8 +313,9 @@ def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: 
             delivery.error_message = "No recipients"
             db.commit()
             return
-        primary = recipients[0]
-        cc_rest = recipients[1:] if len(recipients) > 1 else None
+        to_list, cc_list = _split_to_cc(data)
+        primary = to_list[0]
+        cc_rest = cc_list or None
         try:
             from app.services.email_outbox_service import enqueue as enqueue_email
 
@@ -303,6 +323,7 @@ def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: 
                 db,
                 event_key=event_key,
                 to=primary,
+                extra_to=to_list[1:] or None,
                 cc=cc_rest,
                 subject=notification_title,
                 body_text=body_text,

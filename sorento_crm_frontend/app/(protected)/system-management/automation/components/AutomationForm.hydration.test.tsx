@@ -142,4 +142,12 @@ describe('AutomationForm - edit-open hydration (AC-H16)', () => {
     expect(payload.recipient_config.include_assigned_cs_pic).toBe(true);
     expect(payload.group_matches).toBe(false);
   });
+
+  it('a save through the To/Cc picker marks the row explicit (DEALER-OI-ROUTE card Q2 (b))', async () => {
+    renderEditForm();
+    await screen.findByLabelText(/Cc the person who raised it/i);
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
+    expect(updateMutateAsync.mock.calls[0][0].recipient_config.explicit_to_cc).toBe(true);
+  });
 });

@@ -39,9 +39,6 @@ KNOWLEDGE_MODEL_VERSION = "1"
 KNOWLEDGE_TOOL = "crm_knowledge_search"
 KNOWLEDGE_PROTOCOL_HEADER = "KNOWLEDGE PROTOCOL"
 READ_PERMISSION = "resource.attachments.view"
-AI_AUDIENCES = ("off", "staff", "dealer", "public")
-#: Audiences a staff caller may read in P1 (everything that is not off).
-READABLE_AUDIENCES = ("staff", "dealer", "public")
 MAX_REQUEUE_PER_SAVE = 500
 #: Most chunks one document may produce; a longer one fails with a readable error and writes nothing.
 MAX_CHUNKS = 2000
@@ -94,6 +91,37 @@ class Chunk:
     page: int
     heading: Optional[str]
     text: str
+
+
+# ---------------------------------------------------------------- the rule (DOC-ACCESS-SIMPLE)
+
+
+def is_readable_filename(name: Optional[str]) -> bool:
+    """True for a file the reader can read: a PDF or a DOCX."""
+    return os.path.splitext(name or "")[1].lower().lstrip(".") in ("pdf", "docx")
+
+
+def type_ai_on_clause():
+    """SQL: the type is read by the AI at all (Staff ticked, or any access code ticked)."""
+    from sqlalchemy import func, or_
+
+    from app.models.resources import AttachmentType
+
+    return or_(AttachmentType.ai_read_staff.is_(True), func.jsonb_array_length(AttachmentType.ai_read_codes) > 0)
+
+
+def contact_readable_clause(codes):
+    """SQL over AttachmentType + Attachment: some ONE code of `codes` is ticked on the type AND in the
+    file's access levels. The single predicate behind `search_for_contact` and the Document Access preview;
+    the company rule is the session's scope, not part of it."""
+    from sqlalchemy import and_, false, or_
+
+    from app.models.resources import Attachment, AttachmentType
+
+    codes = sorted({str(c) for c in (codes or ()) if c})
+    if not codes:
+        return false()
+    return or_(*[and_(AttachmentType.ai_read_codes.has_key(c), Attachment.access_levels.has_key(c)) for c in codes])
 
 
 # ---------------------------------------------------------------- extraction
@@ -339,7 +367,7 @@ def read_attachment(
         if attachment is None:
             return
         ext = os.path.splitext(attachment.original_filename or "")[1].lower().lstrip(".")
-        if ext not in ("pdf", "docx"):
+        if not is_readable_filename(attachment.original_filename):
             _finish(db, attachment, "unsupported")
             return
         started_hash = attachment.file_hash
@@ -498,8 +526,7 @@ def queue_read(db: Session, attachment, *, check_pending: bool = True) -> bool:
     type_id = getattr(attachment, "attachment_type_id", None)
     if not type_id:
         return False
-    audience = db.query(AttachmentType.ai_audience).filter(AttachmentType.id == type_id).scalar()
-    if audience not in READABLE_AUDIENCES:
+    if not db.query(AttachmentType.id).filter(AttachmentType.id == type_id, type_ai_on_clause()).first():
         return False
     attachment.ai_read_status = "queued"
     attachment.ai_read_error = None
@@ -512,10 +539,11 @@ def read_block_reason(db: Session, attachment) -> Optional[str]:
     """Why Read again must not queue this file now (a sentence for the user), or None."""
     from app.models.resources import AttachmentType
 
-    audience = None
-    if getattr(attachment, "attachment_type_id", None):
-        audience = db.query(AttachmentType.ai_audience).filter(AttachmentType.id == attachment.attachment_type_id).scalar()
-    if audience not in READABLE_AUDIENCES:
+    type_on = bool(
+        getattr(attachment, "attachment_type_id", None)
+        and db.query(AttachmentType.id).filter(AttachmentType.id == attachment.attachment_type_id, type_ai_on_clause()).first()
+    )
+    if not type_on:
         return "The AI does not read files of this type."
     status = attachment.ai_read_status
     if status == "queued":
@@ -656,12 +684,12 @@ def search(
         logger.warning("knowledge: query embedding failed: %s", _readable_error(exc))
         return {"status": "error", "passages": [], "handoff_teams": []}
 
-    passages = _best_passages(db, vector, AttachmentType.ai_audience.in_(READABLE_AUDIENCES), top_k)
+    passages = _best_passages(db, vector, AttachmentType.ai_read_staff.is_(True), top_k)
     with company_scope(db, None):  # types are not company scoped, so neither is their hand-off team
         teams = (
             db.query(Team.name)
             .join(AttachmentType, AttachmentType.ai_escalate_team_id == Team.id)
-            .filter(AttachmentType.ai_audience.in_(READABLE_AUDIENCES))
+            .filter(AttachmentType.ai_read_staff.is_(True))
             .distinct()
             .all()
         )
@@ -678,29 +706,13 @@ def search_for_contact(
 ) -> dict:
     """Passages a WhatsApp contact may read, best first (AGENTIC-KNOWLEDGE W1 S2).
 
-    The same query as `search`, but the gate is the contact's ACTIVE access codes against the file's
-    `access_levels`, by the type's audience: `dealer` needs an overlap with the codes other than
-    `end_user`, `public` needs an overlap with any code, `staff` and `off` are never read. Company
-    scope is the session's. No hand-off teams (team names are staff data).
+    The same query as `search`, but the gate is `contact_readable_clause`: one of the contact's ACTIVE
+    access codes is ticked on the type AND in the file's `access_levels`. Company scope is the session's. No hand-off teams (team names are staff data).
 
     `{"status": "ok" | "error", "passages": [...]}`."""
-    from sqlalchemy import and_, or_
-    from sqlalchemy.dialects.postgresql import ARRAY
-
-    from app.models.resources import Attachment, AttachmentType
-
     codes = sorted({str(c) for c in (access_codes or ()) if c})
     if not codes:
         return {"status": "ok", "passages": []}
-    dealer_codes = [c for c in codes if c != "end_user"]
-
-    def overlaps(values: list[str]):
-        # jsonb `?|`: the file's levels hold at least one of the codes.
-        return Attachment.access_levels.op("?|")(cast(values, ARRAY(String)))
-
-    audience = [and_(AttachmentType.ai_audience == "public", overlaps(codes))]
-    if dealer_codes:
-        audience.append(and_(AttachmentType.ai_audience == "dealer", overlaps(dealer_codes)))
 
     top_k = max(1, min(int(top_k or 5), MAX_TOP_K))
     try:
@@ -709,7 +721,7 @@ def search_for_contact(
         logger.warning("knowledge: query embedding failed: %s", _readable_error(exc))
         return {"status": "error", "passages": []}
 
-    passages = _best_passages(db, vector, or_(*audience), top_k)
+    passages = _best_passages(db, vector, contact_readable_clause(codes), top_k)
     return {"status": "ok", "passages": passages}
 
 
@@ -719,11 +731,9 @@ def search_for_contact(
 KNOWLEDGE_MISS_SOURCE = "knowledge_miss"
 KNOWLEDGE_MISS_LINE = "I couldn't find that in our product documents."
 KNOWLEDGE_MISS_OFFER = "Would you like me to pass this to our marketing product team?"
-_MISS_TEAM = "marketing_product"
-_MISS_AGENT = "general_enquiries"
 
 
-def _offerable_contact(db: Session, contact_pk: str):
+def offerable_contact(db: Session, contact_pk: str):
     """The contact row when it may be offered the hand-off, else None: not barred (no row sharing the
     respond.io id is barred, as `load_profile`'s ambiguity rule) and not a staff-tier profile."""
     from app.models.access import RespondContact
@@ -743,34 +753,9 @@ def _offerable_contact(db: Session, contact_pk: str):
 
 
 def may_offer_knowledge_miss(db: Session, contact_pk: str) -> bool:
-    """Would `arm_knowledge_miss_offer` arm the offer now? Reads only."""
+    """Would `chatbot.agent.knowledge_miss.arm_knowledge_miss_offer` arm the offer now? Reads only."""
     with company_scope(db, None):
-        return _offerable_contact(db, contact_pk) is not None
-
-
-def arm_knowledge_miss_offer(db: Session, contact_pk: str) -> bool:
-    """Arm the bot's single-team offer as the contact's open question, so the contact's own next
-    "yes" reaches today's escalation lane (no ticket is made here). False, writing nothing, for a
-    barred contact, a staff-tier profile, or a missing contact."""
-    from app.services.chatbot.turn import pending as turn_pending
-
-    with company_scope(db, None):
-        contact = _offerable_contact(db, contact_pk)
-        if contact is None:
-            return False
-        option = {
-            "position": 1, "label": "Marketing product team", "entity_type": "team",
-            "payload": {"team": _MISS_TEAM, "agent": _MISS_AGENT, "brand_code": None},
-        }
-        pending = turn_pending.ask(
-            "team_pick", [option], team=_MISS_TEAM, expects="yes_no",
-            payload={"source": KNOWLEDGE_MISS_SOURCE, "agent": _MISS_AGENT},
-        )
-        session_vars = dict(contact.session_vars) if isinstance(contact.session_vars, dict) else {}
-        session_vars["open_question"] = turn_pending.to_wire(pending)
-        contact.session_vars = session_vars  # a new dict, so the JSONB change is seen
-        db.flush()
-    return True
+        return offerable_contact(db, contact_pk) is not None
 
 
 # ---------------------------------------------------------------- the prompt paragraph

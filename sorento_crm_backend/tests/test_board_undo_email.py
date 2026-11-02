@@ -633,3 +633,26 @@ def test_the_undone_email_lists_only_this_orders_rows(api, monkeypatch):
         "the donor's own row must never appear in the undone order's email"
     )
     assert item_codes, "the undone order's OWN rows must still be listed"
+
+
+# --------------------------------------------------------------- DEALER-OI-ROUTE AC-R5
+
+
+@pytest.mark.parametrize("stored, expected", [("retail", "retail"), ("project", "project")])
+def test_the_undone_email_carries_the_orders_class(api, monkeypatch, stored, expected):
+    """Reviewer kill M2: the undo item reads its class off the order's own core SO."""
+    _register()
+    calls = _captured_dispatches(monkeypatch)
+    fixture = _seed_undo_world(api)
+    db = fixture["db"]
+    fixture["core_so"].demand_class = stored
+    db.commit()
+
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    undo_last_confirm(db, fixture["order"], actor_user_id=fixture["world"].eling)
+    db.commit()
+
+    matches = _undo_calls(calls)
+    assert len(matches) == 1
+    assert matches[0]["context"]["sales_order_class"] == expected

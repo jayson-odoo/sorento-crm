@@ -33,8 +33,8 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
 
   const priced =
     belowFloor === 1
-      ? 'One line is priced below its floor'
-      : `${belowFloor} lines are priced below their floor`;
+      ? 'One line is priced below minimum price'
+      : `${belowFloor} lines are priced below minimum price`;
 
   const tone = blocked
     ? 'border-amber-500/40 bg-amber-500/5'
@@ -57,7 +57,7 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
           {statusKey === 'rejected' && (
             <>
               <BlockLine>
-                A manager sent this back. Re-price the lines below the floor, then ask again.
+                A manager sent this back. Re-price the lines below the minimum price, then ask again.
               </BlockLine>
               {document.approval_rejected_reason && (
                 <p className="min-w-0 break-words text-sm text-muted-foreground">
