@@ -3,7 +3,7 @@
  * newer save, and a saved decision that differs from AutoCount's pending suggestion is said.
  */
 import { describe, expect, it } from 'vitest';
-import { newerServerDraftKeys, suggestionMovedOf } from './confirmPreviewFresh';
+import { newerServerDraftKeys, queuedPerKey, suggestionMovedOf } from './confirmPreviewFresh';
 import { annotationOf, type BoardChangeAnnotation } from './boardChangeAnnotations';
 import type { PlanningChangeRow } from '../types/planningChange.types';
 import type { BoardContribution, BoardDecision } from '../types/fulfilmentPlanning.types';
@@ -140,3 +140,44 @@ describe('suggestionMovedOf against a real change row', () => {
   });
 });
 
+
+describe('queuedPerKey', () => {
+  it('a second task on one key starts only after the first settles; other keys do not wait', async () => {
+    const queue = new Map<string, Promise<void>>();
+    const order: string[] = [];
+    let release: () => void = () => {};
+    const first = queuedPerKey(queue, 'a', () => new Promise<void>((resolve) => {
+      order.push('a1 start');
+      release = () => {
+        order.push('a1 end');
+        resolve();
+      };
+    }));
+    const second = queuedPerKey(queue, 'a', async () => {
+      order.push('a2 start');
+    });
+    const other = queuedPerKey(queue, 'b', async () => {
+      order.push('b start');
+    });
+    await other;
+    await Promise.resolve();
+    expect(order).toEqual(['a1 start', 'b start']);
+    release();
+    await first;
+    await second;
+    expect(order).toEqual(['a1 start', 'b start', 'a1 end', 'a2 start']);
+    expect(queue.size).toBe(0);
+  });
+
+  it('a failed task still lets the next one run, and onIdle runs once, after the last', async () => {
+    const queue = new Map<string, Promise<void>>();
+    const idle: string[] = [];
+    const failing = queuedPerKey(queue, 'a', async () => {
+      throw new Error('refused');
+    }, () => idle.push('idle'));
+    const next = queuedPerKey(queue, 'a', async () => 'ran', () => idle.push('idle'));
+    await expect(failing).rejects.toThrow('refused');
+    await expect(next).resolves.toBe('ran');
+    expect(idle).toEqual(['idle']);
+  });
+});

@@ -147,6 +147,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 
 import { toast } from '@/lib/toast';
 import { LineDraftNewerError } from '../../_shared/lib/confirmPreviewFresh';
+import * as planningService from '../../_shared/services/fulfilmentPlanningService';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
@@ -529,6 +530,57 @@ describe('AC-B13: Undo on a pre-marked line returns to "Change proposed", not "S
     await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
     // The mocked save reply's own saved_at.
     expect(deleteLineDraft.mock.calls[0][1]).toBe('2026-09-03T00:00:00Z');
+  });
+
+  it('an Undo on a line this tab holds no draft record for says so (null), so a draft saved elsewhere is refused', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+    // A save reply that carries no saved_at leaves this tab with no record of the draft.
+    vi.mocked(planningService.putLineDraft).mockResolvedValueOnce({
+      decision: { verdict: 'approved' },
+      saved_by: 'Test Planner',
+      saved_at: '',
+    } as never);
+    renderOnBatch(['SO381895']);
+    await saveThenUndo('SO381895', 1, 'Change proposed');
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
+    expect(deleteLineDraft.mock.calls[0][1]).toBeNull();
+  });
+
+  it('saves and an Undo on one line wait for the save on the wire, and stand on its saved_at', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+    let answer: (value: unknown) => void = () => {};
+    const put = vi.mocked(planningService.putLineDraft);
+    put.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }) as never,
+    );
+    renderOnBatch(['SO381895']);
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SO381895');
+    const row = () => screen.getByText('SO381895').closest('tr') as HTMLElement;
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    await waitFor(() => expect(within(row()).getByText('Saved')).toBeInTheDocument());
+    const calls = put.mock.calls.length;
+    // A second save and an Undo while the first save is still on the wire.
+    const again = screen.queryByRole('button', { name: 'Save decision' });
+    if (again) fireEvent.click(again);
+    fireEvent.click(within(row()).getByRole('button', { name: 'Undo SO381895 line 1' }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(put.mock.calls.length).toBe(calls);
+    expect(deleteLineDraft).not.toHaveBeenCalled();
+    answer({ decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-11-02T05:00:00' });
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
+    if (put.mock.calls.length > calls) {
+      expect(put.mock.calls[calls][3]).toBe('2026-11-02T05:00:00');
+    }
+    expect(deleteLineDraft.mock.calls[0][1]).toBe('2026-11-02T05:00:00');
   });
 
   it('an Undo the server refuses as stale keeps the line saved and reads the board again', async () => {

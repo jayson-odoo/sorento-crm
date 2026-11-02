@@ -113,3 +113,32 @@ export function suggestionMovedOf(
     return null;
   return { suggestion, kept };
 }
+
+/**
+ * Runs `task` once every earlier task queued under the same key has settled, so writes on one
+ * line go one at a time (review round 2, S3). `onIdle` runs when the LAST queued task for the
+ * key settles; `queue` is the caller's own map (key -> the latest task's settling).
+ */
+export async function queuedPerKey<T>(
+  queue: Map<string, Promise<void>>,
+  key: string,
+  task: () => Promise<T>,
+  onIdle?: () => void,
+): Promise<T> {
+  const prior = queue.get(key);
+  let settle: () => void = () => {};
+  const mine = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  queue.set(key, mine);
+  if (prior) await prior;
+  try {
+    return await task();
+  } finally {
+    settle();
+    if (queue.get(key) === mine) {
+      queue.delete(key);
+      onIdle?.();
+    }
+  }
+}

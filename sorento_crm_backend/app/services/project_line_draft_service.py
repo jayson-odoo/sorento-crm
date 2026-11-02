@@ -19,7 +19,7 @@ back, and deleted when the line it belongs to is confirmed.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, Iterable, Optional, Tuple
 
@@ -379,6 +379,9 @@ def _line_snapshot(line: SalesOrderLine) -> Dict[str, Any]:
     }
 
 
+#: The planners' clock, for the stale-write refusal's time (as `stock_ask_service`).
+_MALAYSIA = timezone(timedelta(hours=8))
+
 #: CONFIRM-PREVIEW-STALE: "the caller did not say what it stands on" (last writer wins).
 NOT_GIVEN: Any = object()
 
@@ -389,8 +392,6 @@ def _as_naive_utc(value: Any) -> Optional[datetime]:
     if isinstance(value, str):
         value = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if value.tzinfo is not None:
-        from datetime import timezone
-
         value = value.astimezone(timezone.utc).replace(tzinfo=None)
     return value
 
@@ -422,10 +423,8 @@ def _refuse_newer(db: Session, row: Any, based_on_saved_at: Any) -> None:
     based = _as_naive_utc(based_on_saved_at)
     if based is not None and row.saved_at <= based:
         return
-    # Said in Malaysia time (UTC+8, no daylight saving), the planners' own clock.
-    from datetime import timedelta
-
-    when = (row.saved_at + timedelta(hours=8)).strftime("%d/%m/%Y %H:%M")
+    # Said in Malaysia time, the planners' own clock (`saved_at` is stored as naive UTC).
+    when = row.saved_at.replace(tzinfo=timezone.utc).astimezone(_MALAYSIA).strftime("%d/%m/%Y %H:%M")
     who = _saver_name(db, row.saved_by) or "another planner"
     raise AppException(
         status_code=409,

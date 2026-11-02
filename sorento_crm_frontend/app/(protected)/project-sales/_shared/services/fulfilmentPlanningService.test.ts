@@ -520,6 +520,10 @@ describe('fulfilmentPlanningService: saved decisions (S4)', () => {
     expect(apiFetch.mock.calls[1][0]).toBe(`${ENCODED}?based_on_saved_at=none`);
     apiFetch.mockResolvedValueOnce(conflict('board_line_draft_newer'));
     await expect(deleteLineDraft(KEY, 'T1')).rejects.toBeInstanceOf(LineDraftNewerError);
+    apiFetch.mockResolvedValueOnce(conflict('board_contribution_line_ambiguous'));
+    const other = deleteLineDraft(KEY, 'T1');
+    await expect(other).rejects.toThrow();
+    await expect(other).rejects.not.toBeInstanceOf(LineDraftNewerError);
   });
 
   it('undoes through the documented DELETE on the same encoded path', async () => {

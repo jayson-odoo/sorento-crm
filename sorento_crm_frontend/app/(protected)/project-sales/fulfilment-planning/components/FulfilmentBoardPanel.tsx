@@ -141,6 +141,7 @@ import { ConfirmGuideDialog, type ConfirmGuidePage } from './ConfirmGuideDialog'
 import {
   LineDraftNewerError,
   newerServerDraftKeys,
+  queuedPerKey,
   suggestionMovedOf,
 } from '../../_shared/lib/confirmPreviewFresh';
 import { VERB_LABEL } from '../../_shared/components/OrderInquiryVerbPill';
@@ -1032,6 +1033,10 @@ export function FulfilmentBoardPanel({
     async (key: string): Promise<void> => {
       pendingDeletes.current.add(key);
       try {
+        // Review round 3 S1: a Save on this line still on the wire answers first, so the Undo
+        // stands on that save's saved_at and is never refused against this tab's own save.
+        const inFlight = savesInFlight.current.get(key);
+        if (inFlight) await inFlight;
         // CONFIRM-PREVIEW-STALE: the server refuses the Undo when the line was saved again
         // after the draft this tab holds; the board re-reads so the newer one shows.
         // `null`: this tab holds no draft for the line, so one saved elsewhere is refused too.
@@ -1125,37 +1130,29 @@ export function FulfilmentBoardPanel({
           pendingSaves.current.add(key);
           // CONFIRM-PREVIEW-STALE (review round 2, S3): one save per line at a time, so a
           // second edit reads the saved_at the first one answered with and is never refused
-          // against this tab's own save.
-          const prior = savesInFlight.current.get(key);
-          let done: () => void = () => {};
-          const mine = new Promise<void>((resolve) => {
-            done = resolve;
-          });
-          savesInFlight.current.set(key, mine);
-          if (prior) await prior;
-          try {
-            // CONFIRM-PREVIEW-STALE: the draft this decision stands on, so the server refuses a
-            // write over a newer save made elsewhere (null: this tab holds none).
-            const basedOnSavedAt = savedAtByKey.current.has(key)
-              ? savedAtByKey.current.get(key) || null
-              : (contribution?.draft?.saved_at ?? null);
-            const saved = await saveLineDraft(key, decision, contribution?.sources, {
-              silent: options?.silent,
-              basedOnSavedAt,
-            });
-            // CONFIRM-PREVIEW-STALE: the save this tab holds, so a later board read can tell
-            // a newer save made elsewhere from this one.
-            if (saved?.saved_at) savedAtByKey.current.set(key, saved.saved_at);
-            if (options?.adoptSaved && saved?.decision) {
-              setDraft((current) => ({ ...current, [key]: saved.decision }));
-            }
-          } finally {
-            done();
-            if (savesInFlight.current.get(key) === mine) {
-              savesInFlight.current.delete(key);
-              pendingSaves.current.delete(key);
-            }
-          }
+          // against this tab's own save (`queuedPerKey`).
+          await queuedPerKey(
+            savesInFlight.current,
+            key,
+            async () => {
+              // The draft this decision stands on, so the server refuses a write over a newer
+              // save made elsewhere (null: this tab holds none).
+              const basedOnSavedAt = savedAtByKey.current.has(key)
+                ? savedAtByKey.current.get(key) || null
+                : (contribution?.draft?.saved_at ?? null);
+              const saved = await saveLineDraft(key, decision, contribution?.sources, {
+                silent: options?.silent,
+                basedOnSavedAt,
+              });
+              // The save this tab holds, so a later board read can tell a newer save made
+              // elsewhere from this one.
+              if (saved?.saved_at) savedAtByKey.current.set(key, saved.saved_at);
+              if (options?.adoptSaved && saved?.decision) {
+                setDraft((current) => ({ ...current, [key]: saved.decision }));
+              }
+            },
+            () => pendingSaves.current.delete(key),
+          );
         } else {
           await removeDraftKey(key);
           savedAtByKey.current.delete(key);
