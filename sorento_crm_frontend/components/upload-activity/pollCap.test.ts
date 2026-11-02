@@ -11,7 +11,8 @@ beforeAll(() => {
   process.env.TZ = 'Asia/Kuala_Lumpur';
 });
 afterAll(() => {
-  process.env.TZ = previousTz;
+  if (previousTz === undefined) delete process.env.TZ;
+  else process.env.TZ = previousTz;
 });
 
 function session(
