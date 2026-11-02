@@ -229,12 +229,30 @@ def test_the_same_product_in_two_scopes_prints_once_at_its_first_position():
         second = _scope(db, env, document, "Block B")
         basin = _product(db, env["category"].id, env["uom"], description=f"{MARKER} basin")
         tap = _product(db, env["category"].id, env["uom"], description=f"{MARKER} tap")
-        _line(db, env, first, {"product_id": basin.id})
+        first_basin = _line(db, env, first, {"product_id": basin.id})
         _line(db, env, second, {"product_id": tap.id})
-        _line(db, env, second, {"product_id": basin.id})
+        later_basin = _line(db, env, second, {"product_id": basin.id})
         issue = _issue(db, document, env["owner"])
 
-        assert _codes(spec.pages(db, document, issue)) == [basin.product_code, tap.product_code]
+        pages = spec.pages(db, document, issue)
+        assert _codes(pages) == [basin.product_code, tap.product_code]
+        # The page is the FIRST line's, frozen media and all, not the repeat's.
+        assert pages[0]["line_id"] != later_basin.id
+        from app.models.projects import ProjectQuotationIssueScope, ProjectQuotationLine
+
+        first_scope_version = (
+            db.query(ProjectQuotationIssueScope)
+            .filter(
+                ProjectQuotationIssueScope.issue_id == issue.id,
+                ProjectQuotationIssueScope.quotation_id == first.id,
+            )
+            .one()
+            .version_id
+        )
+        assert (
+            db.get(ProjectQuotationLine, pages[0]["line_id"]).version_id == first_scope_version
+        )
+        assert first_basin is not None
 
 
 def test_latest_issue_is_the_default_and_no_issue_means_no_pages():
@@ -484,7 +502,16 @@ def test_resolved_rows_carry_product_parts_document_and_line_fields_and_no_price
         assert doc["quotation_no"] == quotation_no(c["document"].document_no, c["issue"].issue_no)
         assert doc["prepared_by"] == f"{MARKER} Signer"
         assert doc["prepared_by_phone"] == "012-000 0000"
+        # No doc date on this quotation: the issue date.
         assert doc["date"] == c["issue"].issued_at.strftime("%d %b %Y").upper()
+
+        import datetime
+
+        c["document"].doc_date = datetime.date(2026, 11, 2)
+        db.flush()
+        dated = spec.build_print_payload(db, c["document"], c["issue"])["resolvedData"]["cover"]
+        # The quotation's own date wins, as on its PDF and cover page.
+        assert dated["doc"]["date"] == "02 NOV 2026"
 
 
 def test_ref_falls_back_to_the_quotation_number_when_your_ref_is_blank():
@@ -782,3 +809,92 @@ def test_a_revision_of_another_document_is_not_found():
             assert other.status_code == 404
         finally:
             _restore(originals)
+
+
+# ------------------------------------------------------------------ review round 1
+
+
+def test_saving_rows_keeps_stored_rows_the_tab_does_not_show():
+    """An absorbed item's (or another revision's item's) stored Area must survive a save of the
+    rows the tab shows."""
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c = _chain(db)
+        set_key = f"set:{c['set'].id}"
+        basin = c["basin"].id
+        spec.save_settings(
+            db,
+            c["document"],
+            {"rows": [{"key": basin, "area": "Pantry"}, {"key": "set:from-r2", "area": "Guard house"}]},
+        )
+        # The basin goes under the WC; the tab then shows (and saves) the WC row only.
+        spec.save_settings(db, c["document"], {"rows": [{"key": set_key, "accessories": [basin]}]})
+        spec.save_settings(db, c["document"], {"rows": [{"key": set_key, "area": "Unit"}]})
+
+        stored = {r["key"]: r for r in spec.settings_of(c["document"])["rows"]}
+        assert stored[basin]["area"] == "Pantry"
+        assert stored["set:from-r2"]["area"] == "Guard house"
+        assert stored[set_key]["area"] == "Unit"
+        # Unpicked again: the basin's page comes back with its Area.
+        pages = {p["key"]: p for p in spec.pages(db, c["document"], c["issue"])}
+        assert pages[basin]["area"] == "Pantry"
+
+
+@pytest.mark.parametrize(
+    "body,code",
+    [
+        ({"cover_template_id": "not-a-uuid"}, "spec_sheet_template_invalid"),
+        ({"page_template_id": "1; drop"}, "spec_sheet_template_invalid"),
+        ({"issue_id": "nope"}, "spec_sheet_issue_invalid"),
+    ],
+)
+def test_malformed_ids_are_a_422_not_a_500(body, code):
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        c = _chain(db)
+        with pytest.raises(AppException) as raised:
+            spec.save_settings(db, c["document"], body)
+        assert raised.value.status_code == 422
+        assert raised.value.code == code
+
+
+@pytest.mark.parametrize("size", [(0, 190.5), (338.7, -5), (1e9, 190.5)])
+def test_a_template_page_size_chromium_cannot_print_is_refused(size):
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        c = _chain(db)
+        cover = _template(db, c["company_id"], "spec_cover", width=size[0], height=size[1])
+        page = _template(db, c["company_id"], "spec_page", width=size[0], height=size[1])
+        spec.save_settings(
+            db, c["document"], {"cover_template_id": cover.id, "page_template_id": page.id}
+        )
+        with pytest.raises(AppException) as raised:
+            spec.build_print_payload(db, c["document"], c["issue"])
+        assert raised.value.status_code == 422
+        assert raised.value.code == "spec_sheet_size_invalid"
+
+
+def test_the_layer_schema_accepts_the_drawing_slot_and_show_when():
+    from app.schemas.price_tag import TagLayerDoc
+
+    layer = TagLayerDoc.model_validate(
+        {
+            "id": "l1",
+            "type": "image",
+            "x_mm": 0,
+            "y_mm": 0,
+            "width_mm": 10,
+            "height_mm": 10,
+            "z_index": 0,
+            "slot_binding": "drawing",
+            "props": {"kind": "image", "source": None, "fit": "contain", "maskShape": "none"},
+            "show_when": {"part": 1, "spec": "is_rimless"},
+        }
+    )
+    assert layer.slot_binding == "drawing"
+    assert layer.show_when.part == 1 and layer.show_when.spec == "is_rimless"

@@ -55,6 +55,9 @@ the project, ref, area, salesperson and date). Today it is built by hand in Powe
 - Per-product default page template (#2100 links): when two item kinds need different layouts on
   one sheet.
 - Brand on price tags (`{{product.brand}}` for price tags): the first price tag that asks for it.
+- "2 of 3 accessories fit this template" on a row (card edge case): needs the template's accessory
+  row count read off its layers. Today the extra accessories simply do not print. Trigger: the
+  first item with more accessories than its template has rows.
 
 ## Coordination
 

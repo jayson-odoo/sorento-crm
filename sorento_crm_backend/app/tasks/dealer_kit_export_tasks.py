@@ -289,14 +289,13 @@ def generate_spec_sheet_pdf(download_id: str) -> dict:
             download = db.query(UserDownload).filter(UserDownload.id == download_id).first()
         if download is None:
             raise RuntimeError("download row not found")
-        payload = spec.print_payload_for_download(db, download)
-        size = payload["page_size"]
+        size_mm = spec.page_size_for_download(db, download)
 
         pdf_bytes = _render_pdf(
             _tag_sheet_print_url(download_id),
             landscape=False,
             paper="A4",
-            size_mm=(size["width_mm"], size["height_mm"]),
+            size_mm=size_mm,
         )
         filename = download.filename or f"spec-sheet-{download_id}.pdf"
         provider = default_provider()

@@ -17,6 +17,8 @@ No price is ever placed in a row: a spec sheet is a catalogue of what was quoted
 """
 from __future__ import annotations
 
+import math
+import uuid
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
@@ -45,6 +47,12 @@ COVER_KEY = "cover"
 AREA_MAX = 200
 COMMENT_MAX = 500
 MARKER_MAX = 10
+
+#: A template page outside this range (or not a finite number) is refused before Chromium sees
+#: it: zero or negative sizes fail obscurely in the worker, and a huge one ties up the shared
+#: render queue until the subprocess times out.
+PAGE_MM_MIN = 10.0
+PAGE_MM_MAX = 1500.0
 
 _TEMPLATE_FIELDS = {
     "cover_template_id": COVER_FAMILY,
@@ -124,19 +132,41 @@ def _published_template(db: Session, template_id: str, family: str) -> TagTempla
     return template
 
 
+def _is_uuid(value: Any) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
 def save_settings(db: Session, document: ProjectQuotationDocument, payload: dict) -> dict:
-    """Write the settings the payload names; a key it leaves out keeps its saved value."""
+    """Write the settings the payload names; a key it leaves out keeps its saved value.
+
+    ``rows`` MERGES: the payload's rows come first, in the payload's order, and every stored row
+    whose item the payload does not mention is kept after them. The tab only sends the rows it
+    shows, and it does not show an item printed as another page's accessory or an item of a
+    different revision; replacing the list would wipe their Area, Comment and order.
+    """
     current = settings_of(document)
     for field, family in _TEMPLATE_FIELDS.items():
         if field not in payload:
             continue
         value = payload.get(field) or None
         if value is not None:
+            if not _is_uuid(value):
+                raise AppException(
+                    status_code=422,
+                    message="Pick a published template.",
+                    code="spec_sheet_template_invalid",
+                )
             _published_template(db, value, family)
         current[field] = value
     if "issue_id" in payload:
         issue_id = payload.get("issue_id") or None
-        if issue_id is not None and _issue_of(db, document, issue_id) is None:
+        if issue_id is not None and (
+            not _is_uuid(issue_id) or _issue_of(db, document, issue_id) is None
+        ):
             raise AppException(
                 status_code=422,
                 message="That revision is not on this quotation.",
@@ -145,6 +175,10 @@ def save_settings(db: Session, document: ProjectQuotationDocument, payload: dict
         current["issue_id"] = issue_id
     if "rows" in payload:
         rows = [_row(r) for r in payload.get("rows") or [] if isinstance(r, dict)]
+        keys = [r["key"] for r in rows]
+        if any(not k for k in keys) or len(set(keys)) != len(keys):
+            raise _invalid_rows("Each item can appear once on the spec sheet.")
+        rows += [r for r in current["rows"] if r["key"] not in set(keys)]
         _check_rows(rows)
         current["rows"] = rows
     document.spec_sheet = current
@@ -419,7 +453,8 @@ def _doc_fields(db: Session, document, issue) -> dict:
         owner = db.query(User).filter(User.id == project.owner_user_id).first()
     number = quotation_no(document.document_no, issue.issue_no)
     your_ref = (document.your_ref or "").strip()
-    issued = issue.issued_at
+    # The quotation's own date, as its PDF and cover print it, else the day it was issued.
+    issued = document.doc_date or issue.issued_at
     return {
         "project_title": ((project.title if project is not None else "") or "").strip(),
         "your_ref": your_ref,
@@ -436,7 +471,20 @@ def _doc_fields(db: Session, document, issue) -> dict:
 
 def _template_size(template: TagTemplate) -> tuple:
     doc = template.published_version.doc or {}
-    return (float(doc.get("width_mm") or 0), float(doc.get("height_mm") or 0))
+    try:
+        size = (float(doc.get("width_mm") or 0), float(doc.get("height_mm") or 0))
+    except (TypeError, ValueError):
+        size = (0.0, 0.0)
+    if not all(math.isfinite(v) and PAGE_MM_MIN <= v <= PAGE_MM_MAX for v in size):
+        raise AppException(
+            status_code=422,
+            message=(
+                f"The template {template.name} has a page size the PDF cannot print "
+                f"({PAGE_MM_MIN:g} to {PAGE_MM_MAX:g} mm)."
+            ),
+            code="spec_sheet_size_invalid",
+        )
+    return size
 
 
 def _templates_for(db: Session, settings: dict) -> dict:
@@ -696,6 +744,20 @@ def print_payload_for_download(db: Session, download) -> dict:
 
     with company_scope(db, None):
         document, issue = source_of_download(db, download)
-    scope = frozenset({document.company_id}) if document.company_id else None
-    with company_scope(db, scope):
+    # Fail closed: a document with no company would otherwise be read with no company filter.
+    if not document.company_id:
+        raise AppException(status_code=404, message="Not found")
+    with company_scope(db, frozenset({document.company_id})):
         return build_print_payload(db, document, issue)
+
+
+def page_size_for_download(db: Session, download) -> tuple:
+    """The PDF page size (mm) a spec sheet download prints at, without building the payload."""
+    from app.models.base import company_scope
+
+    with company_scope(db, None):
+        document, _issue = source_of_download(db, download)
+    if not document.company_id:
+        raise AppException(status_code=404, message="Not found")
+    with company_scope(db, frozenset({document.company_id})):
+        return _templates_for(db, settings_of(document))["size"]

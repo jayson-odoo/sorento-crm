@@ -7,7 +7,7 @@ Card: ``documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md``.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -34,7 +34,9 @@ class SpecSheetRowIn(BaseModel):
     comment: Optional[str] = Field(None, max_length=spec.COMMENT_MAX)
     marker: Optional[str] = Field(None, max_length=spec.MARKER_MAX)
     hidden: bool = False
-    accessories: List[str] = Field(default_factory=list, max_length=20)
+    accessories: List[Annotated[str, Field(min_length=1, max_length=120)]] = Field(
+        default_factory=list, max_length=20
+    )
 
 
 class SpecSheetSettingsIn(BaseModel):
@@ -98,7 +100,8 @@ def _view(db: Session, document, issue) -> dict:
             {
                 "id": row.id,
                 "issue_no": row.issue_no,
-                "label": row.our_ref_text or qdocs.quotation_no(document.document_no, row.issue_no),
+                # Built, never read back from `our_ref_text`, as every other reader does.
+                "label": qdocs.quotation_no(document.document_no, row.issue_no),
                 "issued_at": row.issued_at.isoformat() if row.issued_at else None,
             }
             for row in issues

@@ -123,8 +123,8 @@ thin.
 
 - An issued line whose product was deleted: prints from the line's snapshot (code, description, frozen
   photo / drawing); specs and brand blank.
-- An item with 3+ accessories and a template with 2 accessory rows: the first two print; the tab shows
-  "2 of 3 accessories fit this template" on that row.
+- An item with 3+ accessories and a template with 2 accessory rows: the first two print. (The row hint
+  "2 of 3 fit" is deferred, see the plan.)
 - A template unpublished after it was picked: the tab shows "Pick a template" and export refuses (422).
 - The project title longer than its box: clipped at the box (the designer sets the font size, the sample
   uses ~7 pt). Shrink-to-fit is NOT built; trigger: the first real title that does not fit.

@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SpecSheetView } from '../../../../_shared/services/specSheetService';
@@ -150,9 +150,11 @@ describe('Spec sheet tab', () => {
     renderTab();
 
     expect(await screen.findByText('No issued revision yet')).toBeInTheDocument();
-    const exportButton = screen.getByTestId('spec-sheet-export');
-    expect(exportButton).toBeDisabled();
-    expect(exportButton).toHaveAttribute('title', 'Issue a revision first.');
+    expect(screen.getByTestId('spec-sheet-export')).toBeDisabled();
+    expect(screen.getByTestId('spec-sheet-export-reason')).toHaveAttribute(
+      'title',
+      'Issue a revision first.',
+    );
     expect(getSpecSheetPreview).not.toHaveBeenCalled();
   });
 
@@ -166,7 +168,8 @@ describe('Spec sheet tab', () => {
     renderTab();
 
     expect(await screen.findByText('No spec sheet templates')).toBeInTheDocument();
-    expect(screen.getByTestId('spec-sheet-export')).toHaveAttribute(
+    expect(screen.getByTestId('spec-sheet-export')).toBeDisabled();
+    expect(screen.getByTestId('spec-sheet-export-reason')).toHaveAttribute(
       'title',
       'Pick a cover template and a page template first.',
     );
@@ -194,6 +197,33 @@ describe('Spec sheet tab', () => {
 
     fireEvent.click(await screen.findByTestId('spec-sheet-export'));
     await waitFor(() => expect(queueSpecSheetPdf).toHaveBeenCalledWith('p1', 'd1', 'issue-1'));
+  });
+
+  it('offers other items as accessories, never the row itself or an item that hosts picks', async () => {
+    const base = view();
+    getSpecSheet.mockResolvedValue(
+      view({
+        pages: [
+          base.pages[0],
+          { ...base.pages[1], picked: ['prod-trap'], accessories: [...base.pages[1].accessories, { key: 'prod-trap', source: 'picked', product_id: 'trap', code: 'SRTBT0006', name: 'Bottle trap', brand: '' }] },
+        ],
+      }),
+    );
+    renderTab();
+
+    // The WC row's picker: the basin (another item with no picks of its own) and the trap it
+    // already picked; never the WC itself.
+    const wcRow = await screen.findByTestId('spec-sheet-page-SRTWC0001-RL');
+    fireEvent.click(within(wcRow).getAllByRole('combobox')[1]);
+    expect(await screen.findByRole('option', { name: /SRTWB0002/ })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /SRTBT0006/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /SRTWC0001-RL/ })).toBeNull();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+
+    // The basin row's picker: the WC hosts a pick, so it is not offered.
+    const basinRow = screen.getByTestId('spec-sheet-page-SRTWB0002');
+    fireEvent.click(within(basinRow).getAllByRole('combobox')[1]);
+    await waitFor(() => expect(screen.queryByRole('option', { name: /SRTWC0001-RL/ })).toBeNull());
   });
 
   it('a reader without the edit right sees the pages but cannot change them', async () => {

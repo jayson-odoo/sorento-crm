@@ -28,7 +28,7 @@ import { useQuotationDocumentScreen } from './QuotationDocumentContext';
 
 /**
  * PS-SPEC-SHEET: the project spec sheet of this quotation - a cover plus one page per quoted
- * item, drawn by the Spec sheet templates designed in Dealer Kit > Tag templates.
+ * item, drawn by the Spec sheet templates designed in Dealer Kit > Tag Templates.
  *
  * Prints an ISSUED revision (the latest unless another is picked). The per-page Area, Comment,
  * Marker, Print switch, hand-picked accessories and page order save on their own (on blur, on
@@ -79,28 +79,31 @@ export function QuotationSpecSheetTab() {
         }}
         onTemplates={(body) => save.mutate(body)}
         exportButton={
-          <Button
-            size="sm"
-            disabled={!ready || exportPdf.isPending}
-            title={exportReason}
-            onClick={() => exportPdf.mutate(effectiveIssueId)}
-            data-testid="spec-sheet-export"
-          >
-            <FileDown className="size-4" aria-hidden />
-            Export PDF
-          </Button>
+          // The reason sits on a wrapper: a disabled button receives no hover, so its own
+          // title would never show.
+          <span title={exportReason} data-testid="spec-sheet-export-reason" className="inline-flex">
+            <Button
+              size="sm"
+              disabled={!ready || exportPdf.isPending}
+              onClick={() => exportPdf.mutate(effectiveIssueId)}
+              data-testid="spec-sheet-export"
+            >
+              <FileDown className="size-4" aria-hidden />
+              Export PDF
+            </Button>
+          </span>
         }
       />
 
       {!effectiveIssueId ? (
         <EmptyState
           title="No issued revision yet"
-          hint="A spec sheet prints what the customer received. Issue a revision first."
+          hint="Issue a revision first."
         />
       ) : data.templates.cover.length === 0 || data.templates.page.length === 0 ? (
         <EmptyState
           title="No spec sheet templates"
-          hint="Publish a Spec sheet cover and a Spec sheet page template in Dealer Kit > Tag templates."
+          hint="Publish a Spec sheet cover and a Spec sheet page template in Dealer Kit > Tag Templates."
         />
       ) : null}
 
@@ -266,7 +269,7 @@ function SpecSheetPages({
     return (
       <EmptyState
         title="No items on this revision"
-        hint="Only lines with a product or a product set print a page."
+        hint="Add a product or product set line to the quotation."
       />
     );
   }
