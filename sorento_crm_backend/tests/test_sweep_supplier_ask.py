@@ -40,7 +40,7 @@ def test_turn_cost_reads_every_token_block_and_charges_unpriced_calls():
 
 
 def test_the_order_kind_clarifier_is_not_the_supplier_question_and_a_miss_runs_no_list():
-    from app.services.chatbot.lanes.business.report_ask import KIND_QUESTION
+    KIND_QUESTION = "Undelivered orders or pending delivery?"  # `report_ask.KIND_QUESTION`, the owner's turn-4 reply
 
     ask = sweep.Turn("outstaing for 太阳 for SRTW2600 in 2026", "ask")
     assert sweep._grade(ask, f"{KIND_QUESTION}\n1. Undelivered orders\n2. Pending delivery", [], True)[0] == "FAIL"
