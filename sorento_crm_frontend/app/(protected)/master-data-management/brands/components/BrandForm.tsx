@@ -52,6 +52,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
       access_levels: [],
       flows_to_purchasing: true,
       is_searchable: true,
+      no_promo_selling_price: false,
       dealer_company_id: null,
     },
     mode: 'onTouched',
@@ -71,6 +72,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
         access_levels: brand.access_levels ?? [],
         flows_to_purchasing: brand.flows_to_purchasing,
         is_searchable: brand.is_searchable ?? true,
+        no_promo_selling_price: brand.no_promo_selling_price ?? false,
         dealer_company_id: brand.dealer_company_id ?? null,
       });
     }
@@ -90,6 +92,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
         access_levels: data.access_levels ?? [],
         flows_to_purchasing: data.flows_to_purchasing,
         is_searchable: data.is_searchable,
+        no_promo_selling_price: data.no_promo_selling_price,
         dealer_company_id: data.dealer_company_id || null,
       };
       
@@ -268,6 +271,26 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
                     <div className="space-y-0.5">
                       <FormLabel className="text-base">
                         Customers can ask for this brand
+                      </FormLabel>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="no_promo_selling_price"
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base">
+                        Promotions carry no selling price
                       </FormLabel>
                     </div>
                     <FormControl>

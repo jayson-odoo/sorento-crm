@@ -157,6 +157,30 @@ The link opens a sign page that matches the PDF:
 * An old or replaced link shows *This link is no longer valid*, or *This quotation has been
   replaced by Quotation No. ...* when you sent a newer revision. Send them the new link.
 
+## See whether the customer opened it
+
+Under the customer's name at the top of the quotation page you see **Viewed 3 times, last
+02/11/2026, 9:41 pm** for the revision the customer holds now, or **Not viewed yet**. Nothing shows
+before the first time you send it. Managers see the same line.
+
+Click the line to open the **View log**: every open, newest first, with the time, the Quotation
+No. of the revision opened (R1, R2 ...) and the device (Phone, Tablet or Computer). After you send
+a new revision the line starts again at **Not viewed yet**; opens of the old link stay in the log
+under the old number.
+
+What counts as a view:
+
+* One open per browser every 30 minutes. Refreshing the page, or opening it again a few minutes
+  later on the same phone, counts once. A colleague of the customer opening it on another device
+  counts at once.
+* The preview WhatsApp or email shows under the link is not a view.
+* Opening the link in a browser where you are signed in to the CRM is not a view. **Opening it
+  anywhere else counts**, for example tapping the link in WhatsApp on your own phone, where you
+  are not signed in to the CRM. Check your own link from the CRM, not from your phone.
+
+Nothing that identifies the reader is kept: no IP address and no name, only the time, the
+revision and the kind of device.
+
 ## The customer suggests changes (quantity, price, remove a line)
 
 Instead of signing, the customer can click **Suggest changes** on the sign page. They can change a

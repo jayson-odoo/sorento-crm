@@ -233,7 +233,8 @@ export async function updatePromotionProductPrice(
   promotionId: string,
   lineId: string,
   args: {
-    promotionPrice: number;
+    /** Undefined leaves the stored price unchanged (the key is not sent). */
+    promotionPrice?: number;
     dealerDiscountPercent: number | null;
     listPrice: number;
   },
@@ -242,7 +243,7 @@ export async function updatePromotionProductPrice(
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      promotion_price: args.promotionPrice,
+      ...(args.promotionPrice !== undefined ? { promotion_price: args.promotionPrice } : {}),
       dealer_discount_percent: args.dealerDiscountPercent,
       list_price: args.listPrice,
     }),

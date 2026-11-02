@@ -117,6 +117,20 @@ vi.mock('@/services/userSelectService', () => ({
   getUserLookup: vi.fn(async () => []),
 }));
 
+// PS-REGISTRATION-V3 Q4: the Source filter reads the shared lookup set.
+vi.mock('@/hooks/useLookupSetOptions', () => ({
+  useLookupSetOptions: () => ({
+    data: [
+      { value: 'site_visit', label: 'Site visit' },
+      { value: 'architect', label: 'Architect' },
+      { value: 'dealer', label: 'Dealer' },
+      { value: 'referral', label: 'Referral' },
+    ],
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
+
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() },
 }));

@@ -9,10 +9,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { usePartyMutations, useProjectParties } from '../../../_shared/hooks/useProjects';
+import { useParty, usePartyMutations } from '../../../_shared/hooks/useProjects';
 import type { ProjectParty } from '../../../_shared/types/project.types';
 import { PartyFormDialog } from '../../components/PartyFormDialog';
 import { TYPE_HINT, TYPE_LABEL } from '../../components/partyTypes';
+import { PartyContactsPanel } from './PartyContactsPanel';
 
 /**
  * One organisation, read in full.
@@ -21,22 +22,18 @@ import { TYPE_HINT, TYPE_LABEL } from '../../components/partyTypes';
  * state saying what is missing and why it matters. A section that disappears on missing
  * data teaches people that the field does not exist.
  *
- * The record is read out of the parties LIST rather than a per-record endpoint: the
- * master is small, the list is already cached by the screen the user arrived from, and
- * there is no single-party route to call. Same query, same cache key, no extra request.
+ * The record is read by id (`GET /parties/{id}`): the list is paged on the server now, so a
+ * party past its first page would read as gone (PS-REGISTRATION-V3 review).
  */
 export function PartyDetailClient({ partyId }: { partyId: string }) {
   const router = useRouter();
   const [editing, setEditing] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
 
-  const parties = useProjectParties({ include_inactive: true, limit: 200 });
+  const parties = useParty(partyId);
   const { remove } = usePartyMutations();
 
-  const party: ProjectParty | null = React.useMemo(
-    () => (parties.data?.data ?? []).find((row) => row.id === partyId) ?? null,
-    [parties.data, partyId],
-  );
+  const party: ProjectParty | null = parties.data ?? null;
 
   if (parties.isLoading) {
     return (
@@ -198,6 +195,8 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
           </CardContent>
         </Card>
       </div>
+
+      <PartyContactsPanel partyId={party.id} />
 
       {editing && <PartyFormDialog party={party} onDone={() => setEditing(false)} />}
 

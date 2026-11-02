@@ -25,6 +25,7 @@ if (!window.matchMedia) {
 }
 
 const listParties = vi.fn();
+const getParty = vi.fn();
 const push = vi.fn();
 
 vi.mock('next/navigation', () => ({
@@ -47,6 +48,7 @@ vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
   return {
     ...actual,
     listParties: (...args: unknown[]) => listParties(...args),
+    getParty: (...args: unknown[]) => getParty(...args),
     createParty: vi.fn(),
     updateParty: vi.fn(),
     deleteParty: vi.fn(async () => undefined),
@@ -114,12 +116,12 @@ function renderDetail(partyId = 'pt1') {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listParties.mockResolvedValue(envelope([party()]));
+  getParty.mockResolvedValue(party());
 });
 
 describe('PartyDetailClient', () => {
   it('shows a loading skeleton rather than an empty page', () => {
-    listParties.mockReturnValue(new Promise(() => {}));
+    getParty.mockReturnValue(new Promise(() => {}));
 
     renderDetail();
 
@@ -127,7 +129,7 @@ describe('PartyDetailClient', () => {
   });
 
   it('reports a load failure and offers a retry', async () => {
-    listParties.mockRejectedValue(new Error('Backend is down'));
+    getParty.mockRejectedValue(new Error('Backend is down'));
 
     renderDetail();
 
@@ -136,7 +138,7 @@ describe('PartyDetailClient', () => {
   });
 
   it('says the record is gone rather than rendering a blank form', async () => {
-    listParties.mockResolvedValue(envelope([party({ id: 'other' })]));
+    getParty.mockResolvedValue(null);
 
     renderDetail('pt1');
 
@@ -145,8 +147,7 @@ describe('PartyDetailClient', () => {
   });
 
   it('renders every section with the record filled in', async () => {
-    listParties.mockResolvedValue(
-      envelope([
+    getParty.mockResolvedValue(
         party({
           registration_no: '199801012345',
           phone: '09-0000 0080',
@@ -156,7 +157,6 @@ describe('PartyDetailClient', () => {
           customer_name: 'Veritas Sdn Bhd',
           project_count: 4,
         }),
-      ]),
     );
 
     renderDetail();
@@ -180,7 +180,7 @@ describe('PartyDetailClient', () => {
   });
 
   it('renders every section on a bare record, each with its own empty state', async () => {
-    listParties.mockResolvedValue(envelope([party({ project_count: 0 })]));
+    getParty.mockResolvedValue(party({ project_count: 0 }));
 
     renderDetail();
 

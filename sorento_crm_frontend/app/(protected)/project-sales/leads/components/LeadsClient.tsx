@@ -20,6 +20,7 @@ import { LeadWizardDialog } from './LeadWizardDialog';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 
 const OUTCOME_OPTIONS = [
   { value: 'open', label: 'Open' },
@@ -27,14 +28,6 @@ const OUTCOME_OPTIONS = [
   { value: 'disqualified', label: 'Disqualified' },
 ];
 
-const SOURCE_OPTIONS = [
-  { value: 'site_visit', label: 'Site visit' },
-  { value: 'architect', label: 'Architect' },
-  { value: 'contractor', label: 'Contractor' },
-  { value: 'dealer', label: 'Dealer' },
-  { value: 'inbound', label: 'Inbound enquiry' },
-  { value: 'other', label: 'Other' },
-];
 
 /**
  * Leads: what we have heard about, before anybody owns it.
@@ -63,6 +56,12 @@ export function LeadsClient() {
   } = useDebouncedSearch();
   const [outcome, setOutcome] = React.useState('open');
   const [source, setSource] = React.useState('');
+  // One lead-source list with projects, editable in Settings (PS-REGISTRATION-V3 Q4).
+  const sourceSet = useLookupSetOptions('project_lead_source');
+  const sourceOptions = (Array.isArray(sourceSet.data) ? sourceSet.data : []).map((o) => ({
+    value: o.value,
+    label: o.label,
+  }));
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 25,
@@ -210,7 +209,7 @@ export function LeadsClient() {
                     value={splitMulti(source)}
                     onChange={(v) => setSource(joinMulti(v))}
                     clearable
-                    options={SOURCE_OPTIONS}
+                    options={sourceOptions}
                     placeholder="All sources"
                   />
                 </div>

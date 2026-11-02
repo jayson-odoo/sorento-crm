@@ -45,6 +45,7 @@ import { APPROVE_PERMISSION, QuotationApprovalPanel } from './QuotationApprovalP
 import { QuotationRejectDialog } from './QuotationRejectDialog';
 import { ReviseApprovalDialog } from './ReviseApprovalDialog';
 import { QuotationChangesRequestedPanel } from './QuotationChangesRequestedPanel';
+import { QuotationViewCount } from './QuotationViewCount';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs, quotationSiblingHref } from './QuotationDocumentTabs';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
@@ -327,6 +328,7 @@ export function QuotationDocumentClient({
           <p className="break-words text-sm text-muted-foreground">
             {record.recipient_name_snapshot ?? '-'}
           </p>
+          <QuotationViewCount projectId={projectId} document={record} />
         </div>
 
         {/* One CTA, then the gear. Issuing is the move; exports and the delete live behind the

@@ -14,13 +14,13 @@ Four nullable/defaulted columns and one permission rename, all additive:
    role that holds it keeps it.
 
 Revision ID: pqr_0001_quote_rules_routing
-Revises: qcp_0001_cover_page_fields
+Revises: psr3_0001_party_contacts
 """
 from alembic import op
 
 
 revision = "pqr_0001_quote_rules_routing"
-down_revision = "qcp_0001_cover_page_fields"
+down_revision = "psr3_0001_party_contacts"
 branch_labels = None
 depends_on = None
 

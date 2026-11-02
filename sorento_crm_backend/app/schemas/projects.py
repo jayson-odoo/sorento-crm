@@ -66,6 +66,7 @@ class ProjectPartyResponse(ProjectPartyBase):
     id: str
     customer_name: Optional[str] = None
     project_count: Optional[int] = None
+    contact_count: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -188,6 +189,19 @@ class ClashPreviewResponse(BaseModel):
 # ------------------------------------------------------------------- projects
 
 
+class ProjectPartyLinkIn(BaseModel):
+    """A party playing a role on the project (PS-REGISTRATION-V3 Q5): several per role allowed."""
+
+    role: str = Field(..., max_length=32)
+    party_id: str
+
+
+class ProjectPartyLinkOut(BaseModel):
+    role: str
+    party_id: str
+    name: Optional[str] = None
+
+
 class ProjectRegisterRequest(BaseModel):
     """AC-C3. Only title is structurally required.
 
@@ -207,11 +221,15 @@ class ProjectRegisterRequest(BaseModel):
     # lead another project already carries is refused.
     lead_id: Optional[str] = None
     admin_ref: Optional[str] = Field(None, max_length=64)
-    # Required to register or submit (422 project_customer_required); a draft and an edit
-    # may leave it out.
+    # Optional everywhere (owner 2 Nov, PS-REGISTRATION-V3 rule 9).
     customer_id: Optional[str] = None
     # A salesperson holding only the submit grant: false saves a draft, true submits it.
     submit: bool = False
+    # Required to register or submit (422 project_lead_source_required); a draft may leave it out.
+    lead_source: Optional[str] = Field(None, max_length=32)
+    party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
+    # Party contacts picked at registration, copied into the project's stakeholders (rule 6).
+    contact_ids: Optional[List[str]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -237,6 +255,9 @@ class ProjectUpdateRequest(BaseModel):
     # identity: it is the string written on every piece of paper for this job, and
     # without it nobody can tie a document back to the file it belongs to.
     admin_ref: Optional[str] = Field(None, max_length=64)
+    lead_source: Optional[str] = Field(None, max_length=32)
+    # Present = replace every link; absent = keep them.
+    party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -338,6 +359,7 @@ class ProjectResponse(BaseModel):
     # page renders as "registered directly" rather than as an empty section.
     lead_id: Optional[str] = None
     lead_code: Optional[str] = None
+    # The project's own lead source (PS-REGISTRATION-V3), else its lead's.
     lead_source: Optional[str] = None
     lead_created_at: Optional[datetime] = None
     lead_owner_user_id: Optional[str] = None
@@ -374,6 +396,7 @@ class ProjectResponse(BaseModel):
     architect_name: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
     main_contractor_name: Optional[str] = None
+    party_links: List[ProjectPartyLinkOut] = Field(default_factory=list)
     estimated_sales_value: Optional[Decimal] = None
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -2099,6 +2122,9 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     changes_requested_note: Optional[str] = None
     changes_requested_by_name: Optional[str] = None
     customer_decision: Optional[str] = None
+    # PS-QUOTE-VIEWS: counted customer opens of the LATEST issue's sign link.
+    view_count: int = 0
+    last_viewed_at: Optional[datetime] = None
 
     # AC-H1 gates issuing on the signature, so it has to survive a page refresh. Forward-declared
     # because the signature schema is defined further down; resolved by the model_rebuild below.
@@ -2226,6 +2252,29 @@ class QuotationSignatureRequest(BaseModel):
 class QuotationSignAcceptRequest(QuotationSignatureRequest):
     # The customer ticked "I have read and agree to the Terms and conditions."
     terms_accepted: bool = False
+
+
+class QuotationSignViewRequest(BaseModel):
+    """The sign page's beacon (PS-QUOTE-VIEWS): a random id the browser keeps, never a person.
+
+    Stored only as a digest, and only for the 30-minute de-duplication.
+    """
+
+    visitor_id: str = Field(min_length=8, max_length=128)
+
+
+class QuotationSignViewResponse(BaseModel):
+    counted: bool
+
+
+class QuotationIssueViewResponse(BaseModel):
+    """One row of a document's view log: when, which revision, what kind of device."""
+
+    id: str
+    viewed_at: datetime
+    issue_no: int
+    our_ref: str
+    device: str
 
 
 class QuotationSignChangesRequest(BaseModel):
@@ -2422,3 +2471,64 @@ class QuotationSignPageResponse(BaseModel):
     can_sign: bool = True
     # accepted | superseded | amendment_open | amendment_applied, or null when signable.
     sign_blocked_reason: Optional[str] = None
+
+
+# --------------------------------------------------------------- party contacts (PS-REGISTRATION-V3)
+
+
+class ProjectPartyContactCreate(BaseModel):
+    name: str = Field(..., max_length=255)
+    job_title: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=150)
+    is_active: bool = True
+
+
+class ProjectPartyContactUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    job_title: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=150)
+    is_active: Optional[bool] = None
+
+
+class ProjectPartyContactResponse(BaseModel):
+    id: str
+    party_id: str
+    name: str
+    job_title: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    is_active: bool = True
+
+
+class ProjectPartyPerson(BaseModel):
+    stakeholder_id: str
+    party_contact_id: Optional[str] = None
+    name: str
+    job_title: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
+
+class ProjectPartyOnProject(BaseModel):
+    """One (role, party) on a project, with the project's people at that party. Shape kept
+    stable for PS-PROPOSAL-QUOTATION's recipient picker."""
+
+    party_id: str
+    party_type: str
+    role: str
+    name: str
+    phone: Optional[str] = None
+    contacts: List[ProjectPartyPerson] = Field(default_factory=list)
+
+
+class ProjectPartyPhoneFill(BaseModel):
+    phone: str = Field(..., max_length=50)
+    stakeholder_id: Optional[str] = None
+
+
+class ProjectPartyPhoneFillResponse(BaseModel):
+    party_id: str
+    stakeholder_id: Optional[str] = None
+    phone: str
