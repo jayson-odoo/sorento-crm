@@ -56,6 +56,23 @@ BILLING_FROM_DOC_INDEXES: Tuple[Tuple[str, str, str], ...] = (
     ),
 )
 
+#: INTEGRATION-LOG-INDEXES: the five indexes `app.models.integration.IntegrationLog` declares,
+#: which no migration ever created (2 Nov 2026: a 20 Oct prod copy had only the PK and the
+#: unique partial one). The composite comes first: it is the one the upload-activity bell's
+#: latest-log query needs (`app/api/v1/resources/upload_activity.py`), so it gets the build
+#: budget before the others. Its name and shape are the ones crew built by hand on the dev DB.
+INTEGRATION_LOG_INDEXES: Tuple[Tuple[str, str, str], ...] = (
+    (
+        "integration_log",
+        "ix_integration_log_business_table_business_id",
+        "(business_table, business_id, created_at DESC)",
+    ),
+    ("integration_log", "ix_integration_log_status", "(status)"),
+    ("integration_log", "ix_integration_log_integration_channel", "(integration_channel)"),
+    ("integration_log", "ix_integration_log_created_at", "(created_at)"),
+    ("integration_log", "ix_integration_log_next_retry_at", "(next_retry_at)"),
+)
+
 #: pg_try_advisory_lock key `ensure_indexes_online` takes, so two builders (the migration, the
 #: retry, blue and green starting together) never build the same index at once.
 ADVISORY_LOCK_KEY = 0x6763_6964_7830  # "gcidx0"
