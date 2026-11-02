@@ -196,7 +196,7 @@ def seed_lead(w, user: str, customer_id=None):
 def register_body(w, *, user: str | None = None, no_lead: bool = False, **over) -> dict:
     """A register body. Unless `no_lead` or an explicit `lead_id`, it carries a fresh lead of
     `user` (default: the staff owner), so the project can be registered under the lead rule."""
-    body = {"title": title(), "customer_id": w.customer.id}
+    body = {"title": title(), "customer_id": w.customer.id, "lead_source": "site_visit"}
     body.update(over)
     if not no_lead and "lead_id" not in body:
         body["lead_id"] = seed_lead(w, user or w.owner).id

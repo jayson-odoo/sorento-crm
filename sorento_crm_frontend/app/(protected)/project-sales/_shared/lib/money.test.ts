@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   compareMoney,
+  formatFigureExact,
   formatMyrExact,
   formatQty,
   isDecimalString,
@@ -70,5 +71,15 @@ describe('money', () => {
     expect(formatQty('927')).toBe('927');
     expect(formatQty('927.0000')).toBe('927');
     expect(formatQty('1.50')).toBe('1.5');
+  });
+});
+
+describe('formatFigureExact', () => {
+  // The twin of the quotation PDF's `_money`: `f"{amount:,.2f}"`, no currency.
+  it('prints the figure alone, grouped, two decimals', () => {
+    expect(formatFigureExact('500')).toBe('500.00');
+    expect(formatFigureExact('1810640.62')).toBe('1,810,640.62');
+    expect(formatFigureExact('-10640.62')).toBe('-10,640.62');
+    expect(formatFigureExact('0.05')).toBe('0.05');
   });
 });

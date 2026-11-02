@@ -53,12 +53,12 @@ def _profile(w, project_id: str):
 # ------------------------------------------------------------------ A5 customer on register
 
 
-def test_a5_register_without_a_customer_is_422_project_customer_required(v2):
-    # A lead with no customer: the customer is then the one thing missing (E3).
+def test_a5_register_without_a_customer_is_201(v2):
+    # Flipped by PS-REGISTRATION-V3 rule 9 (owner 2 Nov): customer optional.
     lead = seed_lead(v2, v2.owner)
-    res = as_user(v2, v2.owner).post(LIST, json={"title": title(), "lead_id": lead.id})
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "project_customer_required"
+    res = as_user(v2, v2.owner).post(LIST, json={"lead_source": "site_visit", "title": title(), "lead_id": lead.id})
+    assert res.status_code == 201, res.text
+    assert res.json()["customer_id"] is None
 
 
 def test_a5_an_unknown_customer_id_is_422(v2):
@@ -88,7 +88,9 @@ def test_a5_a_refused_register_writes_no_project(v2):
 
     before = v2.db.query(Project).count()
     lead = seed_lead(v2, v2.owner)
-    as_user(v2, v2.owner).post(LIST, json={"title": title(), "lead_id": lead.id})
+    # Refused for the missing lead source now (PS-REGISTRATION-V3), not the customer.
+    res = as_user(v2, v2.owner).post(LIST, json={"title": title(), "lead_id": lead.id})
+    assert res.status_code == 422, res.text
     v2.db.expire_all()
     assert v2.db.query(Project).count() == before
 
