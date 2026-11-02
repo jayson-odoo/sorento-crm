@@ -1483,6 +1483,13 @@ class _SpanPrep:
     # Fix round 5: span text -> every list any reading of it placed rows on (`_with_span_suppliers` keeps a parser
     # hint the span list backs).
     span_kinds: dict[str, frozenset[str]] = field(default_factory=dict)
+    # Fix round 6 (owner: a name on both sides is asked): supplier row id -> the customer rows the same span NAMED
+    # beside it, as (id, name). `resolve_gate.bind_span_suppliers` puts them beside the supplier so the
+    # reconciliation's kind pick asks "customer or supplier?".
+    supplier_customers: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
+    # Fix round 6: a party word the untyped read placed on a supplier AND a customer -> its best supplier row id, so a
+    # supplier-hinted word with no id still binds (with its customers beside it) and is asked.
+    party_suppliers: dict[str, str] = field(default_factory=dict)
 
 
 def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | None:
@@ -1653,6 +1660,23 @@ def _supplier_spans(
     return out
 
 
+def _supplier_customers(resolutions: list[list_resolver.Resolution]) -> dict[str, list[tuple[str, str]]]:
+    """Fix round 6: per supplier row a span placed, the customer rows the same span named too (by `_names_rows`'s
+    rule): the span is a name on both sides."""
+    out: dict[str, list[tuple[str, str]]] = {}
+    for res in resolutions:
+        if not _names_rows(res):
+            continue
+        customers = [(str(c.row.key), c.row.label) for c in res.candidates if c.row.list_name == "customer"]
+        if not customers:
+            continue
+        for c in res.candidates:
+            if c.row.list_name == "supplier":
+                held = out.setdefault(str(c.row.key), [])
+                held.extend(x for x in customers if x not in held)
+    return out
+
+
 def _span_kinds(resolutions: list[list_resolver.Resolution]) -> dict[str, frozenset[str]]:
     """Fix round 5: span text -> the lists a reading of it NAMES rows of. A reading of the span's meaning that only
     finds its gloss as one word inside longer names (`partial`: "Sun" for 太阳 inside "SUN CREST TRANSPORT", crew trace
@@ -1667,6 +1691,94 @@ def _span_kinds(resolutions: list[list_resolver.Resolution]) -> dict[str, frozen
     return {k: frozenset(v) for k, v in out.items()}
 
 
+def _both_side_words(verdict: dict[str, Any], prep: Any) -> dict[str, Any]:
+    """Fix round 6: a supplier-hinted word on both sides with no grouped supplier id gets its best supplier id, so
+    `resolve_gate.bind_span_suppliers` binds it with the same name's customers beside it and the kind pick asks."""
+    both = (getattr(prep, "party_suppliers", None) or {}) if prep is not None else {}
+    groups = (getattr(prep, "supplier_groups", None) or {}) if prep is not None else {}
+    if not both:
+        return verdict
+    changed = False
+    out: list[Any] = []
+    for e in jsc.array(verdict.get("entities")):
+        text = jsc.nullish_str(e.get("raw")).strip() if isinstance(e, dict) else ""
+        key = next((k for t, k in both.items() if text and t.casefold() == text.casefold()), None)
+        if (
+            key is not None and e.get("hint") == "supplier" and e.get("current_message") is not False
+            and jsc.nullish_str(e.get("canonical_code")).strip() not in groups
+        ):
+            out.append({**e, "canonical_code": key})
+            changed = True
+        else:
+            out.append(e)
+    return {**verdict, "entities": out} if changed else verdict
+
+
+def _customer_only_words(verdict: dict[str, Any], kinds_of: dict[str, frozenset[str]]) -> dict[str, Any]:
+    """Fix round 6: a word the parser hinted supplier that the lookup placed on customers alone (no supplier row) is
+    the customer: the sales side. Returns a new verdict when one changed."""
+    changed = False
+    out: list[Any] = []
+    for e in jsc.array(verdict.get("entities")):
+        text = jsc.nullish_str(e.get("raw")).strip() if isinstance(e, dict) else ""
+        kinds = next((k for t, k in kinds_of.items() if text and t.casefold() == text.casefold()), None)
+        if isinstance(e, dict) and e.get("hint") == "supplier" and e.get("current_message") is not False and kinds == {"customer"}:
+            out.append({**e, "hint": "customer", "canonical_code": None})
+            changed = True
+        else:
+            out.append(e)
+    return {**verdict, "entities": out} if changed else verdict
+
+
+def _with_party_readings(verdict: dict[str, Any], prep: "_SpanPrep | None") -> None:
+    """SUPPLIER-ASK fix round 6 (owner hand test, turn 67b179ee "Outstandinf for orionis"): the span pass typed the
+    word `product_code` and skipped it, the parser hinted supplier off the carried PO thread, and the customer of the
+    same name was never offered. Every party word of this message (hinted customer or supplier) is read here against
+    the same lookup rows with NO type (a typed span keeps only rows of its type), by spelling and word match (no
+    embedder, no network call); a product-hinted word is read as a code, which only a supplier's own code places. The
+    readings join the prep's (`supplier_spans`, `supplier_groups`, `supplier_customers`, `party_suppliers`) and decide
+    those words' `span_kinds`: one kind is that side, both are asked (crew's reading, 2 Nov). A word the read places
+    on nothing keeps its span readings. In place."""
+    if prep is None or not prep.supplier_ids or not prep.rows:
+        return
+    words = [
+        jsc.nullish_str(e.get("raw")).strip() for e in jsc.array(verdict.get("entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False and e.get("hint") in ("customer", "supplier")
+    ]
+    # Every party word, also one a span reading covers: a TYPED span keeps only rows of its type
+    # (`list_resolver.TYPE_MARGIN`), so "orionis" typed customer hid the supplier of the same name. The untyped read
+    # is the data's own answer to "which kinds is this name", and it decides the word's kinds below.
+    spans = [list_resolver.Span(w) for w in dict.fromkeys(words) if w]
+    # A product-hinted word is read as a code: only a supplier's own code places it (crew trace 1b3b877b, "400-X008"
+    # hinted product with no span reading went to the sales ranking).
+    codes = [
+        jsc.nullish_str(e.get("raw")).strip() for e in jsc.array(verdict.get("entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False and e.get("hint") == "product"
+    ]
+    spans += [list_resolver.Span(w, "product_code") for w in dict.fromkeys(codes) if w]
+    if not spans:
+        return
+    party_rows = [r for r in prep.rows if r.list_name in ("customer", "supplier")]
+    readings = [r for r in list_resolver.resolve(spans, party_rows, embed=None) if r.status in ("resolved", "ambiguous")]
+    if not readings:
+        return
+    for key, group in _supplier_groups(readings).items():
+        prep.supplier_groups.setdefault(key, group)
+    for text, key in _supplier_spans(readings).items():
+        prep.supplier_spans.setdefault(text, key)
+    untyped = _span_kinds(readings)
+    prep.span_kinds = {
+        **{t: k for t, k in (prep.span_kinds or {}).items() if t.casefold() not in {u.casefold() for u in untyped}},
+        **untyped,
+    }
+    for key, customers in _supplier_customers(readings).items():
+        prep.supplier_customers.setdefault(key, customers)
+    for res in readings:
+        best = next((c for c in res.candidates if c.row.list_name == "supplier"), None)
+        if best is not None and _names_rows(res) and any(c.row.list_name == "customer" for c in res.candidates):
+            prep.party_suppliers.setdefault(res.span.text, str(best.row.key))
+
+
 def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> dict[str, Any]:
     """SUPPLIER-ASK: a span the lookup placed on supplier rows ALONE (no customer, product or brand row scored) is this
     message's supplier, whatever the parser made of it. The scores decide, never a word. Returns a new verdict.
@@ -1679,6 +1791,9 @@ def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> d
       no row id, so nothing bound it ("couldn't find a supplier"). That entity becomes the supplier with the row id.
     An entity already carrying an id of the span's group is left as it is."""
     spans = prep.supplier_spans if prep is not None else {}
+    kinds_of = (getattr(prep, "span_kinds", None) or {}) if prep is not None else {}
+    verdict = _customer_only_words(verdict, kinds_of)
+    verdict = _both_side_words(verdict, prep)
     if not spans:
         return verdict
     groups = prep.supplier_groups if prep is not None else {}
@@ -1778,6 +1893,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                     untyped=lambda span: next(iter(list_resolver.resolve([span], all_rows, embed=embed)), None),
                 )
                 prep.span_kinds = _span_kinds([*resolutions, *readings])
+                prep.supplier_customers = _supplier_customers([*resolutions, *readings])
                 span_keys = {h.row.key for hs in hits.values() for h in hs}
                 near_rows: list[dict[str, Any]] = []
                 # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
@@ -6318,6 +6434,7 @@ def _run_stages_body(  # noqa: PLR0915
         if asker_sees_suppliers:
             from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
 
+            _with_party_readings(verdict, span_prep)
             with_spans = _with_span_suppliers(verdict, span_prep)
             if with_spans is not verdict:
                 # The span list placed a phrase on suppliers alone; the parser named no supplier id for it (no entity,
@@ -7060,6 +7177,8 @@ def _run_stages_body(  # noqa: PLR0915
                 "supplier_visible": asker_sees_suppliers,
                 # SUPPLIER-ASK: the span pass's supplier groups; a parser-picked supplier id binds to its group.
                 "span_suppliers": dict(span_prep.supplier_groups) if span_prep is not None else {},
+                # Fix round 6: the customers a supplier's span also named (a name on both sides is asked).
+                "span_supplier_customers": dict(span_prep.supplier_customers) if span_prep is not None else {},
             }
             resolve_outcome = (
                 turn_runtime.resolve_kinds(

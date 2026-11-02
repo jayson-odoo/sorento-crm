@@ -1354,3 +1354,141 @@ def test_the_crew_sun_trace_asks_which_taiyang_supplier():
     entity = engine_mod._with_span_suppliers(verdict, prep)["entities"][0]
     assert entity["hint"] == "supplier" and entity["canonical_code"] in {"s1", "s2"}, entity
     assert {k for k, _n in prep.supplier_groups[entity["canonical_code"]]} == {"s1", "s2"}
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 6 (owner hand test, 2 Nov ~21:58): the RESOLVED party decides the side. "Outstandinf for orionis" listed
+# purchase orders though Orionis is a customer; a customer is the sales side, a supplier the purchase side, a name on
+# both sides (or none) is asked.
+# --------------------------------------------------------------------------- #
+
+ORIONIS = "ZZT ORIONIS TECHNOLOGY (M) SDN BHD"
+
+
+def _seed_customer(session_factory, name: str) -> str:
+    from app.models.order import Customer
+
+    db = session_factory()
+    row = Customer(id=str(uuid.uuid4()), customer_code=f"ZZT-C-{uuid.uuid4().hex[:6]}", customer_name=name,
+                   company_id=DEFAULT_COMPANY_ID)
+    db.add(row)
+    db.commit()
+    return row.id
+
+
+def _orionis_turn(session_factory, monkeypatch, hint: str, canonical: str | None, text: str = "Outstandinf for orionis"):
+    qf = _parser_output(
+        domain_hint="purchase_order" if hint == "supplier" else "order",
+        intent_hint="check_po" if hint == "supplier" else "check_order",
+        order_status="outstanding", status="outstanding",
+        entities=[{"raw": "orionis", "hint": hint, "canonical_code": canonical, "current_message": True, "confident": True}],
+    )
+    span = list_resolver.Span("orionis", "customer")
+    return _span_turn(session_factory, monkeypatch, text, span, {"orionis", ORIONIS.casefold()}, qf=qf)
+
+
+def test_a_name_on_both_sides_is_asked_customer_or_supplier(session_factory, monkeypatch):
+    """The owner's repro shape: 'orionis' names a customer AND a supplier of the same name; the parser bound the
+    supplier. Neither side is assumed: the turn asks which, and lists nothing."""
+    _office_world(session_factory)
+    _seed_customer(session_factory, ORIONIS)
+    sup = _seed_named(session_factory, ORIONIS, "ZZTSUP-OR01")
+    reply, captured, _seen = _orionis_turn(session_factory, monkeypatch, "supplier", sup)
+    assert not _fetch_calls(captured), (reply, captured)
+    assert "(customer)" in reply and "(supplier)" in reply, reply
+
+
+def test_a_customer_only_name_reads_the_sales_side_even_when_the_parser_said_supplier(session_factory, monkeypatch):
+    """Orionis a customer only: the outstanding ask is the sales side (the outstanding report and its kind question),
+    never purchase orders and never 'couldn't find a supplier'."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    _office_world(session_factory)
+    _seed_customer(session_factory, ORIONIS)
+    reply, captured, _seen = _orionis_turn(session_factory, monkeypatch, "supplier", None)
+    assert not _po_calls(captured), (reply, captured)
+    assert "couldn't find a supplier" not in reply and "purchase order" not in reply.lower(), reply
+    assert report_ask.KIND_QUESTION in reply or [n for n, _ in captured if n in ORDER_TOOLS], (reply, captured)
+
+
+def test_a_supplier_only_name_reads_the_purchase_side_even_when_the_parser_said_customer(session_factory, monkeypatch):
+    ids = _office_world(session_factory)
+    qf = _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        entities=[{"raw": "jinbai", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    span = list_resolver.Span("jinbai", "customer")
+    reply, captured, _seen = _span_turn(session_factory, monkeypatch, "outstanding for jinbai", span, {"jinbai", OTHER}, qf=qf)
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["other"]], (reply, captured)
+
+
+@pytest.mark.parametrize("kinds,domain,expect", [
+    ({"supplier"}, "order", "purchase_order"), ({"supplier"}, "sales", "purchase_order"),
+    ({"customer"}, "purchase_order", "order"), ({"customer", "supplier"}, "order", None),
+    (set(), "order", None), ({"customer"}, "order", None), ({"supplier"}, "inventory", None),
+])
+def test_the_resolved_party_decides_the_side(kinds, domain, expect):
+    from app.services.chatbot.turn.apply import _side_of_the_parties
+
+    entities = [{"raw": k, "hint": k, "current_message": True} for k in kinds]
+    assert _side_of_the_parties(entities, {"domain_hint": domain}) == expect
+
+
+@pytest.mark.parametrize("side", ["customer", "supplier"])
+def test_the_owner_orionis_turn_after_a_supplier_thread_asks_and_the_pick_decides_the_side(
+    session_factory, monkeypatch, side
+):
+    """Owner hand test 2 Nov (turn 67b179ee), after a PO thread for another supplier: the span pass typed 'orionis'
+    product_code (skipped), the parser carried the PO subject and hinted supplier with no id. 'orionis' names a
+    customer AND a supplier, so the turn asks which; the customer pick is the sales side (never a PO list), the
+    supplier pick lists that supplier's POs."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    ids = _office_world(session_factory)
+    customer = _seed_customer(session_factory, f"{ORIONIS} (PROJECT)")
+    sup = _seed_named(session_factory, ORIONIS, "ZZTSUP-OR01")
+    _r, captured, _s = _span_turn(
+        session_factory, monkeypatch, "outstanding PO for jinbai", list_resolver.Span("jinbai", "supplier"),
+        {"jinbai", OTHER},
+    )
+    assert _po_calls(captured) and _po_calls(captured)[0].get("supplier_ids") == [ids["other"]]
+    owner = _parser_output(
+        domain_hint="purchase_order", intent_hint="check_po", order_status="outstanding", status="outstanding",
+        document=["PO"], entity_op="replace_combine",
+        entities=[{"raw": "orionis", "hint": "supplier", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, captured, _s = _span_turn(
+        session_factory, monkeypatch, "Outstandinf for orionis", list_resolver.Span("orionis", "product_code"), set(),
+        qf=owner,
+    )
+    assert not _fetch_calls(captured), (reply, captured)
+    lines = {ln.split(". ", 1)[1]: int(ln.split(". ", 1)[0]) for ln in reply.splitlines() if ln[:1].isdigit() and ". " in ln}
+    position = next(p for label, p in lines.items() if f"({side})" in label)
+    pick = _parser_output(
+        message_type="answer", intent_hint=None, domain_hint=None, entities=[], reference_positions=[position],
+    )
+    reply, captured, _s = _span_turn(session_factory, monkeypatch, str(position), list_resolver.Span(str(position)), set(), qf=pick)
+    if side == "supplier":
+        calls = _po_calls(captured)
+        assert calls and calls[0].get("supplier_ids") == [sup], (reply, captured)
+    else:
+        assert not _po_calls(captured), (reply, captured)
+        assert report_ask.KIND_QUESTION in reply or [a for n, a in captured if n in ORDER_TOOLS], (reply, captured)
+        assert customer
+
+
+def test_a_word_the_resolver_retyped_to_a_supplier_moves_the_ask_to_the_purchase_side(session_factory, monkeypatch):
+    """Crew trace 1b3b877b: the resolver's reconciliation retyped '400-X008' product -> supplier, and the ask stayed on
+    the order side (no PO list). With no span reading at all, the reconciled kind alone decides the side."""
+    ids = _office_world(session_factory)
+    qf = _parser_output(
+        domain_hint="purchase_order", intent_hint="check_po", order_status=None, status="outstanding", document=["PO"],
+        entities=[{"raw": "ZZTSUP-JB02", "hint": "product", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstanding PO for ZZTSUP-JB02", list_resolver.Span("for", "brand"), set(), qf=qf,
+    )
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["other"]], (reply, captured)
+

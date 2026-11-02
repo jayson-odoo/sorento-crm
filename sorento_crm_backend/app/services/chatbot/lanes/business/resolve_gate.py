@@ -1810,15 +1810,26 @@ def bind_span_suppliers(parser: dict[str, Any], resolved: dict[str, Any], ctx: d
         if not group:
             continue
         token = jsc.nullish_str(jsc.get(e, "raw")).strip() or jsc.nullish_str(jsc.get(e, "canonical_code"))
+        # Fix round 6 (owner, 2 Nov 2026): a span that named customers too is a name on both sides; its customers sit
+        # beside the suppliers, so the reconciliation asks "customer or supplier?" and neither is assumed.
+        both = ctx.get("span_supplier_customers") if isinstance(ctx.get("span_supplier_customers"), dict) else {}
+        customers = list(dict.fromkeys(c for key, _n in group for c in (both.get(key) or [])))
         added.append({
             "raw": token,
             "token": token,
             "matches": [
                 {
                     "entity_type": "supplier", "uuid": key, "canonical_code": name, "match_field": "span",
-                    "match_tier": "exact" if len(group) == 1 else "span", "display": {"supplier_name": name},
+                    "match_tier": "exact" if len(group) == 1 and not customers else "span",
+                    "display": {"supplier_name": name},
                 }
                 for key, name in group
+            ] + [
+                {
+                    "entity_type": "customer", "uuid": key, "canonical_code": name, "match_field": "span",
+                    "match_tier": "span", "display": {"customer_name": name},
+                }
+                for key, name in customers
             ],
         })
     if added:

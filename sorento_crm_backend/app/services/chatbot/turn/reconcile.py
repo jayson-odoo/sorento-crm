@@ -102,6 +102,7 @@ def apply_reconciliation(
     resolved: dict[str, dict[str, int]] | None,
     exact: dict[str, dict[str, int]] | None = None,
     typed: str | None = None,
+    rows: dict[str, list[str]] | None = None,
 ) -> ReconcileResult:
     """`exact` is the same map counting only the resolver's EXACT whole-token hits (the token
     IS that row's code or name, `turn_runtime.resolve_kinds`); None treats every hit as one (a
@@ -174,7 +175,9 @@ def apply_reconciliation(
                     "raw": raw,
                     "code": raw,
                     "uuid": None,
-                    "uuids": [],
+                    # SUPPLIER-ASK fix round 6: a party kind carries the rows the resolve placed (`rows`), so the
+                    # pick binds the record; every other kind is resolved again from its word, as before.
+                    "uuids": list((rows or {}).get(k) or []),
                     "entity_type": k,
                     "payload": {"kind": k},
                 }

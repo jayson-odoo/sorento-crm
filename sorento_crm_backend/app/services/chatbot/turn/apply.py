@@ -969,6 +969,14 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
                 # Only a customer pick: the picked row is the held report ask's customer, a ranking's or an outstanding
                 # ask's (REPORT-UNIFY), (engine key, never the parser's).
                 verdict["ranking_pick"] = True
+        # SUPPLIER-ASK fix round 6: a picked party decides the side too ("orionis (customer)" over an outstanding ask
+        # the parser read as a supplier's: the sales side; the supplier: the purchase side).
+        picked_side = _side_of_the_parties(
+            [{"hint": kind_for_focus, "current_message": True}], {"domain_hint": (focus.domains or [None])[0]}
+        ) if kind_for_focus and len(set(focus.domains or [])) == 1 else None
+        if picked_side is not None:
+            focus.domains = [picked_side]
+            trace.rules_fired.append(f"party_side_{picked_side}")
         # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND ambiguous token
         # queued on THIS pick's own payload is asked NEXT, once this one is
         # answered - never the same options re-printed (`with_answered_positions`,
@@ -1528,8 +1536,9 @@ def _reconcile_step(
     turn_no: int,
     exact: dict[str, dict[str, int]] | None = None,
     typed: str | None = None,
+    candidates: dict[str, list[dict[str, Any]]] | None = None,
 ):
-    result = apply_reconciliation(entities, resolved, exact=exact, typed=typed)
+    result = apply_reconciliation(entities, resolved, exact=exact, typed=typed, rows=_party_uuids(candidates))
     trace.reconciled = result.reconciled
 
     if result.kind_pick_options is not None and _named_teams(verdict):
@@ -1559,8 +1568,48 @@ def _reconcile_step(
             if new_kind in row.narrowing:
                 domain_override = row.name
                 break
-
     return result.entities, domain_override, None
+
+
+def _party_uuids(candidates: dict[str, list[dict[str, Any]]] | None) -> dict[str, list[str]]:
+    """SUPPLIER-ASK fix round 6: per party kind, the row ids this turn's resolve placed, so a "customer or supplier?"
+    pick binds the record it names (a supplier picked by its word alone listed the PO book with no supplier)."""
+    out: dict[str, list[str]] = {}
+    for kind in _PARTY_KINDS:
+        ids = [c.get("uuid") for c in (candidates or {}).get(kind) or [] if isinstance(c, dict) and c.get("uuid")]
+        if ids:
+            out[kind] = list(dict.fromkeys(str(i) for i in ids))
+    return out
+
+
+#: SUPPLIER-ASK fix round 6 (owner, 2 Nov 2026: "when we identify the entity is a customer, it is obviously
+#: outstanding sales order or delivery order on the sales side; if it is a supplier, it is obviously the purchase
+#: side"): the order-side domains and the purchase side.
+_SALES_SIDE = frozenset({"order", "sales"})
+_PURCHASE_SIDE = "purchase_order"
+_PARTY_KINDS = frozenset({"customer", "supplier"})
+
+
+def _side_of_the_parties(entities: list[dict[str, Any]], verdict: dict[str, Any]) -> str | None:
+    """The side a PICKED party decides (the "customer or supplier?" kind pick, `_answer_pending`): a supplier reads
+    the purchase side, a customer the sales side (the outstanding report, which asks between the kinds the contact
+    may see). None for both kinds, neither, or several domains. Before the resolver the same rule runs on the span
+    readings (`engine._with_party_readings`, `_with_span_suppliers`, `resolve_gate.supplier_ask_reads_purchase_orders`).
+    Reads entity kinds only, never a word."""
+    asks = [a.get("domain") for a in (verdict.get("asks") or []) if isinstance(a, dict) and a.get("domain")]
+    domains = set(asks) if asks else {verdict.get("domain_hint")}
+    if len(domains) != 1:
+        return None
+    domain = next(iter(domains))
+    kinds = {
+        e.get("hint") for e in entities
+        if isinstance(e, dict) and e.get("current_message") is not False and e.get("hint") in _PARTY_KINDS
+    }
+    if kinds == {"supplier"} and domain in _SALES_SIDE:
+        return _PURCHASE_SIDE
+    if kinds == {"customer"} and domain == _PURCHASE_SIDE:
+        return "order"
+    return None
 
 
 # The message types that carry no business question of their own (contract 49, 51).
@@ -3202,7 +3251,7 @@ def _apply(
     # it runs on the state path too; the retype needs an exact whole-token hit (`exact`).
     entities, domain_override, reconcile_short_circuit = _reconcile_step(
         verdict_entities, resolved, policy, verdict, trace, turn_no=state.turn_no, exact=exact,
-        typed=typed,
+        typed=typed, candidates=candidates,
     )
     if reconcile_short_circuit is not None:
         # #1262 slice 8 (F1b siblings): a kind pick over ONE ambiguous token
