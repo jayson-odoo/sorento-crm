@@ -1241,15 +1241,22 @@ def _follows_up(verdict: dict[str, Any], frame: dict[str, Any], replaced: dict[s
     """Is this message a follow-up on the report held, by the parser's own `entity_op`? `reuse` always. Owner ruling, 1 Nov
     2026 (CHATBOT-FOLLOWUP-CARRY): the parser reads the same follow-up as `modify` on some runs and `replace_combine` on
     others (its own table: "a new product keeps the held customer"), so those count too when they name no customer (a
-    customer of its own is #2070's new subject). Crew ruling 2 Nov (multi-turn carry, R1, R2): `replace_combine` sets a
-    value of its own on a held sales report or the open ask it replaced, and only that slot changes; with neither held (a
-    carried date window alone) it stays what R8 ruled, a message naming its own value."""
+    customer of its own is #2070's new subject). `replace_combine` over a held customer keeps it (#2070). Crew ruling 2 Nov
+    (multi-turn carry, R1, R2): over any other held sales report, or the open ask it replaced, `replace_combine` sets a
+    value of its own and only that slot changes, unless the parser read a new ranking (`ranking_refine` false); with
+    neither held (a carried date window alone) it stays what R8 ruled, a message naming its own value."""
     entity_op = verdict.get("entity_op")
     if entity_op == "reuse":
         return True
     if entity_op not in ("modify", "replace_combine") or "customer" in _current_kinds(verdict):
         return False
-    return entity_op == "modify" or bool(frame) or replaced is not None
+    if entity_op == "modify":
+        return True
+    if replaced is not None:
+        customer = bool(_dict(_dict(_dict(replaced).get("extras")).get("args")).get("customer_ids"))
+    else:
+        customer = _holds_a_customer(frame)
+    return customer or (verdict.get("ranking_refine") is not False and (bool(frame) or replaced is not None))
 
 
 def _holds_a_customer(frame: dict[str, Any]) -> bool:
