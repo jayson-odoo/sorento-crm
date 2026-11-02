@@ -47,8 +47,11 @@ import type { StatusGraph } from '@/app/(protected)/system-management/status-gra
  *   POST   /projects/{projectId}/quotation-documents/{id}/amendment-requests/{requestId}/apply
  *                                                                         -> QuotationAmendmentApplied
  *
- * `/issue` gains one refusal: 422 `quotation_below_floor_pending_approval` when the document
- * carries a line priced below its floor and is not `approved`.
+ * `/issue` refuses with 422 `quotation_below_floor_pending_approval` (a line below its minimum
+ * price), `quotation_discount_pending_approval` (below its default price) or
+ * `quotation_off_series_pending_approval` (outside the series) while the document is not
+ * `approved`. Send for approval refuses with 422 `quotation_approver_not_configured` when nobody
+ * is set up to approve it.
  *
  * The two exports are QUEUED, not rendered in the response: a 50-page quotation held the
  * browser long enough to read as a broken button. The route answers with a `user_downloads`
@@ -158,6 +161,15 @@ export type QuotationDocument = {
   requires_approval?: boolean;
   /** How many such lines, so the block can say how much there is to look at. */
   below_floor_line_count?: number;
+  /** Lines priced below their default price: any discount needs approval (PS-QUOTE-RULES). */
+  discounted_line_count?: number;
+  /** Lines outside the project's series. */
+  off_series_line_count?: number;
+  /** The server's sentence naming every reason, e.g. "One line is outside the project's series". */
+  approval_reasons?: string | null;
+  /** Who the current request was routed to, frozen when it was sent. */
+  approver_user_id?: string | null;
+  approver_name?: string | null;
 
   /**
    * What the customer did with the revision they are CURRENTLY holding (S17).

@@ -1,12 +1,16 @@
 'use client';
 
 import * as React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Flame } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { getUserLookup } from '@/services/userSelectService';
 import { useUpdateProject } from '../../_shared/hooks/useProjects';
 import type { Project } from '../../_shared/types/project.types';
 import { InfoHint } from './InfoHint';
@@ -18,9 +22,19 @@ import { InfoHint } from './InfoHint';
  * corrupts every stage-duration number. As a flag it can be set at any stage, and the
  * date it was raised is what "days in final negotiation" counts from -- so re-saving
  * the notes must not restart that clock, which the server enforces.
+ *
+ * PS-QUOTE-RULES: a discount sent for approval raises it on its own (and moves the stage to
+ * Final Negotiation where the ladder has that rung). The discount approver override sits here
+ * because it is the same management decision: who signs off this project's price.
  */
 export function CriticalPanel({ project }: { project: Project }) {
   const update = useUpdateProject(project.id);
+  const canManage = useHasPermission('projects.projects.manage');
+  const users = useQuery({
+    queryKey: ['user-lookup', 'project-discount-approver'],
+    queryFn: () => getUserLookup(),
+    enabled: canManage,
+  });
   const [support, setSupport] = React.useState(project.management_support ?? '');
   const [notes, setNotes] = React.useState(project.management_notes ?? '');
 
@@ -71,6 +85,41 @@ export function CriticalPanel({ project }: { project: Project }) {
               : ''}
           </p>
         )}
+
+        <div className="space-y-1.5">
+          <Label htmlFor="discount-approver">Discount approver</Label>
+          {canManage ? (
+            <SearchableSelect
+              id="discount-approver"
+              value={project.discount_approver_user_id ?? ''}
+              onChange={(next) =>
+                update.mutate({ discount_approver_user_id: next ? next : null })
+              }
+              clearable
+              disabled={update.isPending}
+              loadError={users.error}
+              onRetry={() => void users.refetch()}
+              options={[
+                ...(project.discount_approver_user_id &&
+                !(users.data ?? []).some((u) => u.id === project.discount_approver_user_id)
+                  ? [
+                      {
+                        value: project.discount_approver_user_id,
+                        label: project.discount_approver_name || 'Saved approver',
+                      },
+                    ]
+                  : []),
+                ...(users.data ?? []).map((u) => ({ value: u.id, label: u.name || 'Unnamed user' })),
+              ]}
+              placeholder="Salesperson's superior"
+              emptyMessage="No match"
+            />
+          ) : (
+            <p id="discount-approver" className="text-sm text-foreground">
+              {project.discount_approver_name || "Salesperson's superior"}
+            </p>
+          )}
+        </div>
 
         <div className="space-y-1.5">
           <Label htmlFor="management-support">Management support committed</Label>

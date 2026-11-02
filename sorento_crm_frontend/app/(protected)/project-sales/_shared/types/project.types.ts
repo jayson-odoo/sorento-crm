@@ -163,6 +163,9 @@ export interface Project {
   critical_at?: string | null;
   management_support?: string | null;
   management_notes?: string | null;
+  /** PS-QUOTE-RULES: this project's discounts go to this person; null = owner's superior. */
+  discount_approver_user_id?: string | null;
+  discount_approver_name?: string | null;
 
   registered_company_name?: string | null;
   location?: string | null;
@@ -266,6 +269,7 @@ export interface ProjectUpdateBody extends Partial<ProjectRegisterBody> {
   is_critical?: boolean;
   management_support?: string | null;
   management_notes?: string | null;
+  discount_approver_user_id?: string | null;
   loss_reason?: string | null;
 }
 
