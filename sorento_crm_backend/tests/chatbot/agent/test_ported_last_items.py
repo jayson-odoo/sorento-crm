@@ -161,7 +161,9 @@ def test_a_non_panel_idea_confirm_says_exactly_what_main_says(db, monkeypatch):
     )
     monkeypatch.setattr(actions, "confirm", lambda *a, **k: outcome)
     ctx = type("C", (), {"contact_respond_id": "ZZT-R", "operator_user_id": None})()
-    out = agent_loop._decide(db, ctx, agent_loop.CONFIRM_ACTION, {"action_id": str(uuid.uuid4())}, "t1", [])
+    action_id = str(uuid.uuid4())
+    waiting = type("W", (), {"id": action_id})()
+    out = agent_loop._decide(db, ctx, agent_loop.CONFIRM_ACTION, {"action_id": action_id}, "t1", [], waiting=waiting)
     assert out.message == "The idea's number and link are added to your reply automatically. Do not write them.", (
         out.message
     )
@@ -289,7 +291,8 @@ IDEA_LINE = "The idea's number and link are added to your reply automatically. D
 def _decide_on_panel(db, w, action, notes):
     with panel(db, w):
         return agent_loop._decide(
-            db, panel_ctx_of(db, w), agent_loop.CONFIRM_ACTION, {"action_id": str(action.id)}, str(uuid.uuid4()), notes
+            db, panel_ctx_of(db, w), agent_loop.CONFIRM_ACTION, {"action_id": str(action.id)}, str(uuid.uuid4()), notes,
+            waiting=action,
         )
 
 
@@ -339,7 +342,8 @@ def test_an_idea_confirm_through_the_real_path_says_main_s_exact_text(db, monkey
     _, row = ideas.store(db, w, [(ideas.CREATE, ideas.FIELDS)])
     notes: list[str] = []
     out = agent_loop._decide(
-        db, ideas.ctx_of(db, w), agent_loop.CONFIRM_ACTION, {"action_id": str(row.id)}, str(uuid.uuid4()), notes
+        db, ideas.ctx_of(db, w), agent_loop.CONFIRM_ACTION, {"action_id": str(row.id)}, str(uuid.uuid4()), notes,
+        waiting=row,
     )
     assert fake is not None
     assert notes, "the idea's number and link are put in the reply by code"

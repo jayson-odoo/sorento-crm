@@ -316,6 +316,14 @@ def agent_tool_labels(db=None, user=None, *, contact_respond_id: str | None = No
         label = agent_tools.TOOL_LABELS.get(name)
         if label and label not in labels:
             labels.append(label)
+    if db is not None and user is None and contact_respond_id:
+        # A contact principal's dealer requests (AGENTIC-WA-W2), under the portal's own gates for that contact.
+        from app.services.chatbot.agent import portal_writes
+
+        for name in portal_writes.offered_for_contact(db, contact_respond_id):
+            label = agent_tools.TOOL_LABELS.get(name)
+            if label and label not in labels:
+                labels.append(label)
     if db is not None and staff_principal.current() is None:
         return labels  # a panel-only label is never sent off the panel, and nothing of the panel part runs
     # AGENTIC-UNIFY PR 4: the panel's reads no chat lane answers, through the tool gate itself (`user_may_use` and the
@@ -338,14 +346,6 @@ def agent_tool_labels(db=None, user=None, *, contact_respond_id: str | None = No
         label = agent_tools.TOOL_LABELS.get(name)
         if label and label not in labels:
             labels.append(label)
-    if db is not None and user is None and contact_respond_id:
-        # A contact principal's dealer requests (AGENTIC-WA-W2), under the portal's own gates for that contact.
-        from app.services.chatbot.agent import portal_writes
-
-        for name in portal_writes.offered_for_contact(db, contact_respond_id):
-            label = agent_tools.TOOL_LABELS.get(name)
-            if label and label not in labels:
-                labels.append(label)
     return labels
 
 

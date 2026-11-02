@@ -1376,7 +1376,8 @@ def test_SEC_confirming_a_ticket_does_not_tell_the_model_about_an_idea(db, no_ll
     notes: list[str] = []
     with panel(db, w):
         out = loop._decide(
-            db, ctx_of(db, w), loop.CONFIRM_ACTION, {"action_id": str(action.id)}, str(uuid.uuid4()), notes
+            db, ctx_of(db, w), loop.CONFIRM_ACTION, {"action_id": str(action.id)}, str(uuid.uuid4()), notes,
+            waiting=action,
         )
     assert out.status == "ok", (out.status, out.message)
     assert notes, "the draft link is still put in the reply by code"
