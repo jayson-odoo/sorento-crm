@@ -171,7 +171,8 @@ def _record_blocks(bot_: Routing, monkeypatch) -> None:
 
     def _run(*a, **k):
         current = parser_mod.parse
-        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: (bot_.blocks.append(user_block), current(config, user_block))[1])  # type: ignore[attr-defined]
+        hook = getattr(bot_, "on_block", None)
+        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: (bot_.blocks.append(user_block), hook(user_block) if hook else None, current(config, user_block))[2])  # type: ignore[attr-defined]
         return real(*a, **k)
 
     monkeypatch.setattr(console_service, "run_console_turn", _run)
@@ -782,22 +783,29 @@ def _twins(bot_: Routing) -> None:
         db.close()
 
 
-def test_b4_a_picked_agent_stays_the_one_picked_when_the_name_is_carried_back(rbot, world) -> None:
+def test_b4_a_held_agent_name_carried_back_maps_to_its_held_id_without_a_pick(rbot, world) -> None:
+    """Two agents of one company answer to "twin". Turn 1 names one by its unique code and runs. Turn 2's object copies
+    back whatever name the Held report line shows, with a new period: a fresh lookup of a shared name would be
+    ambiguous, so only the held name -> id map can answer it (SC-5)."""
     sorento, _mocha = world
     _twins(rbot)
-    ask = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=["twin"], **Y), _ent("twin", "sales_agent"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
-    text, calls = rbot.say(ask, "sorento sales agent twin 2026 invoiced")
-    assert not calls and "Which sales agent?" in text, f"setup: {text!r}"
-    m = re.search(r"(\d+)[.)]?\s[^\n]*ZZT-TWIN-2", text)
-    assert m, text
-    pick = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=["ZZT-TWIN-2"], **Y), entity_op="reuse", continuation=True, open_question_answer=_pick_of(int(m.group(1))), reference_positions=[int(m.group(1))])
-    text, calls = rbot.say(pick, "the second")
-    assert _ran(calls) and _ran(calls)[0].get("sales_agent_ids") == [rbot.ids["ZZT-TWIN-2"]], f"B4: the declared pick did not run with the second twin: {text!r}"
-    again = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=["twin"], date_from="2025-01-01", date_to="2025-12-31"), _ent("twin", "sales_agent", current=False), continuation=True, entity_op="reuse", date_filter_start="2025-01-01", date_filter_end="2025-12-31")
+    first = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=["ZZT-TWIN-2"], **Y), _ent("ZZT-TWIN-2", "sales_agent"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(first, "sorento sales for zzt-twin-2 2026 invoiced")
+    assert _ran(calls) and _ran(calls)[0].get("sales_agent_ids") == [rbot.ids["ZZT-TWIN-2"]], f"setup: {text!r}"
+    seen: dict[str, Any] = {}
+    again = _v("sales_report", _ra(basis="invoiced", company=sorento, date_from="2025-01-01", date_to="2025-12-31"), continuation=True, entity_op="reuse", date_filter_start="2025-01-01", date_filter_end="2025-12-31")
+
+    def _copy_back(block: str) -> None:  # the parser reads the Held report line and copies the agent name back
+        _prefix, held = _held_line(block)
+        seen["agents"] = held["sales_agents"]
+        again["report_ask"]["sales_agents"] = list(held["sales_agents"])
+
+    rbot.on_block = _copy_back  # type: ignore[attr-defined]
     text, calls = rbot.say(again, "and 2025")
-    assert "Which sales agent?" not in text, f"B4: the picked agent was asked again: {text!r}"
+    assert seen.get("agents"), f"B4: the Held report line names no agent: {seen}"
+    assert "Which sales agent?" not in text, f"B4: the held agent {seen['agents']} was asked again: {text!r}"
     ran = _ran(calls)
-    assert ran and ran[0].get("sales_agent_ids") == [rbot.ids["ZZT-TWIN-2"]], f"B4: want the picked id, got {ran[0].get('sales_agent_ids') if ran else text!r}"
+    assert ran and ran[0].get("sales_agent_ids") == [rbot.ids["ZZT-TWIN-2"]], f"B4: want the held id, got {ran[0].get('sales_agent_ids') if ran else text!r} (line showed {seen['agents']})"
 
 
 def test_s5_a_named_agent_outside_the_named_company_is_said_not_dropped(rbot, world) -> None:
