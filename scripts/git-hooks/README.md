@@ -6,7 +6,8 @@ Repo-owned git hooks (version-controlled, not `.git/hooks`).
 alembic head vs `origin/main`, `py_compile` of changed `.py` files under
 Python 3.12, `vitest run` on touched `*.test.ts(x)` (+ `components/ui/*.inventory.test.ts`
 if `components/ui/` changed), the em-dash/en-dash guard (which skips
-`sorento_crm_backend/alembic/data/*.txt`, verbatim owner text a data migration loads), and a 200 KB cap on
+`sorento_crm_backend/alembic/data/*.txt`, verbatim owner text a data migration loads, and the verbatim
+MCP catalog copy, whose source file is guarded instead), and a 200 KB cap on
 any added or modified `*.png` vs `origin/main` (compress with `pngquant`
 before pushing), and, when either file changed, that the backend copy
 `sorento_crm_backend/app/services/mcp_catalog_copy.py` still equals

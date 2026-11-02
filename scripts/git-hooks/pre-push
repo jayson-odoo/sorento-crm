@@ -142,6 +142,7 @@ DASH_HITS="$(git diff --unified=0 origin/main...HEAD -- \
     ':(exclude)*.lock' \
     ':(exclude)package-lock.json' \
     ':(exclude)sorento_crm_backend/alembic/data/*.txt' \
+    ':(exclude)sorento_crm_backend/app/services/mcp_catalog_copy.py' \
   | awk '
       /^\+\+\+ / { file=$0; sub(/^\+\+\+ b\//, "", file); next }
       /^@@ / {
