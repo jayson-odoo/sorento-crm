@@ -5,7 +5,8 @@
  *
  * Phase 2: real BE feed via React Query against
  * GET /api/v1/resources/upload-activity?scope=me. Polled every 5s while any
- * session is in-flight; stops when all terminal. Optimistic sessions from
+ * session is in-flight; stops when all terminal, or when the only in-flight
+ * backend sessions started over 30 minutes ago (pollCap.ts). Optimistic sessions from
  * UploadManagerContext layer on top - once the BE returns a session with
  * the same session_id the optimistic copy is dropped via the reducer.
  *
@@ -29,6 +30,7 @@ import {
   getDismissedSnapshot,
   subscribeDismissed,
 } from './dismissedSessions';
+import { shouldPollBackend } from './pollCap';
 import { UPLOAD_ACTIVITY_QUERY_KEY } from './queryKeys';
 import type { UploadActivitySession } from './types';
 import { useUploadManager } from './UploadManagerContext';
@@ -88,7 +90,8 @@ export function useUploadActivity(): UploadActivityFeed {
     refetchInterval: (q) => {
       const latest = (q.state.data as UploadActivityResponse | undefined)
         ?.sessions;
-      const beInFlight = latest ? computeHasInFlight(latest) : false;
+      // Capped: a session stuck `processing` past POLL_CAP_MINUTES stops the poll (pollCap.ts).
+      const beInFlight = latest ? shouldPollBackend(latest) : false;
       return optimisticInFlight || beInFlight ? 5_000 : false;
     },
     refetchIntervalInBackground: false,
