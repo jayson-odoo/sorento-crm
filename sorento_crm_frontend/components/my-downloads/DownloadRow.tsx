@@ -55,6 +55,20 @@ export const KIND_LABEL: Record<string, string> = {
   attachment_bulk_zip: 'Files archive (ZIP)',
 };
 
+/**
+ * The row's kind label. A project proposal exports under the quotation kinds, so its file name
+ * (`proposal-...`) is what says which one it is (PS-PROPOSAL-QUOTATION).
+ */
+export function downloadKindLabel(row: Pick<MyDownload, 'kind' | 'filename'>): string {
+  if (
+    (row.kind === 'quotation_pdf' || row.kind === 'quotation_xlsx') &&
+    (row.filename ?? '').toLowerCase().startsWith('proposal-')
+  ) {
+    return row.kind === 'quotation_pdf' ? 'Proposal PDF' : 'Proposal Excel';
+  }
+  return KIND_LABEL[row.kind] ?? row.kind;
+}
+
 export function StatusBadge({ status }: { status: MyDownload['status'] }) {
   if (status === 'ready') {
     return (
@@ -83,7 +97,7 @@ export function DownloadRow({ row }: { row: MyDownload }) {
   const [previewItem, setPreviewItem] = useState<AttachmentPreviewItem | null>(null);
 
   const ready = row.status === 'ready';
-  const name = row.filename ?? KIND_LABEL[row.kind] ?? row.kind;
+  const name = row.filename ?? downloadKindLabel(row);
 
   const onDownload = async () => {
     setBusy(true);
@@ -155,7 +169,7 @@ export function DownloadRow({ row }: { row: MyDownload }) {
               {name}
             </p>
             <p className="text-xs text-muted-foreground">
-              {KIND_LABEL[row.kind] ?? row.kind}
+              {downloadKindLabel(row)}
               {row.created_at ? ` · ${formatDateTimeInMalaysia(row.created_at)}` : ''}
             </p>
             <div className="mt-1 flex min-w-0 items-center gap-3">

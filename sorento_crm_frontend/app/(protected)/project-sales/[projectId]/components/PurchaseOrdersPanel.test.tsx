@@ -246,6 +246,18 @@ describe('PurchaseOrdersPanel', () => {
     expect(await screen.findByText(/2 not quoted.*1 price differs/)).toBeInTheDocument();
   });
 
+  it('PS-PROPOSAL-QUOTATION: the over-quantity reason is written out under the badge, not only on hover (phones)', async () => {
+    listPurchaseOrders.mockResolvedValue([
+      po({ qty_over_reason: 'Variation order VO-3', qty_over_reason_by_name: 'SALES REP A' }),
+    ]);
+
+    renderPos();
+
+    expect(await screen.findByText('Qty over quote')).toBeInTheDocument();
+    // Visible text, not a title attribute: a phone has no hover.
+    expect(screen.getByText('Variation order VO-3')).toBeVisible();
+  });
+
   it('shows erosion from v1 as a number, not as an alert', async () => {
     listPurchaseOrders.mockResolvedValue([
       po({ v1_total: '10000.00', drift_delta: '-2000.00', drift_percent: '-20.00' }),

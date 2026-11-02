@@ -137,6 +137,8 @@ export type QuotationCoverRow = {
 
 export type QuotationSignPage = {
   our_ref: string | null;
+  /** PS-PROPOSAL-QUOTATION: what the customer holds, a proposal or the quotation. */
+  document_kind?: 'proposal' | 'quotation';
   /** The cover page rows of a new-layout issue; null for an issue from before the cover page. */
   cover_rows?: QuotationCoverRow[] | null;
   issue_no: number;

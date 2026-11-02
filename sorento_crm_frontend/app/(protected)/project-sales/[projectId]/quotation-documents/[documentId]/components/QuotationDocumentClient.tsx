@@ -49,6 +49,7 @@ import { QuotationViewCount } from './QuotationViewCount';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs, quotationSiblingHref } from './QuotationDocumentTabs';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
+import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
 
 /**
  * One quotation DOCUMENT: the letterhead the customer receives, and the tabs it is read through.
@@ -159,6 +160,8 @@ export function QuotationDocumentClient({
     onEdit: startEditing,
     onDeleted: () => router.push(`/project-sales/${projectId}?tab=quotations`),
     surface: 'inline',
+    projectOutcome: project.data?.outcome ?? null,
+    projectHasQuotation: (siblingDocuments.data ?? []).some((row) => row.kind === 'quotation'),
   });
 
   if (document.isLoading || project.isLoading) {
@@ -372,7 +375,10 @@ export function QuotationDocumentClient({
             }
             pendingAction={gear.pending}
             gear={
-              <DetailActionsMenu actions={gear.actions} ariaLabel="Quotation actions" />
+              <DetailActionsMenu
+                actions={gear.actions}
+                ariaLabel={`${documentNoun(document.data)} actions`}
+              />
             }
             primary={
               <>
@@ -429,7 +435,7 @@ export function QuotationDocumentClient({
                       {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
                           stays in the label, as it did, because R2 is a different paper from R1. The
                           API and the status names keep "issue". */}
-                      {`Send to Customer R${nextIssueNo}`}
+                      {`Send to Customer ${record.next_revision_label ?? `R${nextIssueNo}`}`}
                       <ChevronDown className="size-4" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>
