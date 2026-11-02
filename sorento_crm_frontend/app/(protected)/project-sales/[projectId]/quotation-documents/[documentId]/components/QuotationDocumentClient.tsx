@@ -429,7 +429,7 @@ export function QuotationDocumentClient({
                       {/* The owner on "Issue R1": "call this Send to Customer" (#1341). The revision
                           stays in the label, as it did, because R2 is a different paper from R1. The
                           API and the status names keep "issue". */}
-                      {`Send to Customer R${nextIssueNo}`}
+                      {`Send to Customer ${record.next_revision_label ?? `R${nextIssueNo}`}`}
                       <ChevronDown className="size-4" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>

@@ -1086,6 +1086,10 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
             else document.document_no
         ),
         "current_revision_label": latest.revision_label if latest is not None else None,
+        # What the next Send will print, by the same rule issue() stamps it with.
+        "next_revision_label": _next_label(
+            db, document, (latest.issue_no if latest is not None else 0) + 1
+        ),
         **_kind_fields(db, document),
         "your_ref": document.your_ref,
         "doc_date": document.doc_date,

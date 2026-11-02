@@ -171,6 +171,8 @@ export type QuotationDocument = {
   quotation_document_id?: string | null;
   recipient_party_type?: string | null;
   current_revision_label?: string | null;
+  /** What the next Send prints: "C" on a proposal, "R2" on a quotation or a legacy proposal. */
+  next_revision_label?: string | null;
 
   /**
    * What the customer did with the revision they are CURRENTLY holding (S17).

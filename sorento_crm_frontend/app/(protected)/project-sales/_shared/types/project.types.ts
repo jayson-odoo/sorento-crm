@@ -621,6 +621,10 @@ export interface ProjectQuotation {
   id: string;
   project_id: string;
   scope_label: string;
+  /** PS-PROPOSAL-QUOTATION: the document this scope sits on, and its kind. */
+  document_id?: string | null;
+  document_no?: string | null;
+  document_kind?: 'proposal' | 'quotation' | null;
   series_id?: string | null;
   series_name?: string | null;
   notes?: string | null;

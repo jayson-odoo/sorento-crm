@@ -145,14 +145,14 @@ export function QuotationsPanel({ project }: { project: Project }) {
         cell: ({ row }) => {
           const noun = documentNoun(row.original);
           return (
-            <span className={`${STATUS_PILL_BASE} ${statusPillClass(noun)}`} title={
+            <span className={`${STATUS_PILL_BASE} ${statusPillClass(noun)} max-w-full truncate`} title={
               row.original.source_label ? `From ${row.original.source_label}` : noun
             }>
               {noun}
             </span>
           );
         },
-        size: 120,
+        size: 130,
         meta: { headerTitle: 'Kind' },
       },
       {

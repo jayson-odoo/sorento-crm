@@ -532,6 +532,19 @@ describe('QuotationDocumentClient signing gate', () => {
     expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
   });
 
+  it('PS-PROPOSAL-QUOTATION: the Send button names the next revision the server will stamp (C, not R3)', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        signatory_signature: signature(),
+        current_issue_no: 2,
+        next_revision_label: 'C',
+      }),
+    );
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Send to Customer C' })).toBeEnabled();
+  });
+
   it('E1: below-floor pricing nobody has asked a manager about leads with Send for approval, never Send to Customer', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({

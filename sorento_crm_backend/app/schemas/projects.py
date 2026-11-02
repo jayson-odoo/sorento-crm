@@ -2136,6 +2136,7 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     quotation_document_id: Optional[str] = None
     recipient_party_type: Optional[str] = None
     current_revision_label: Optional[str] = None
+    next_revision_label: Optional[str] = None
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

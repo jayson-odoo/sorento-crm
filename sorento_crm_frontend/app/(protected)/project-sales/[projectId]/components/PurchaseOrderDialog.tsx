@@ -89,8 +89,13 @@ export function PurchaseOrderDialog({
       scopes.flatMap((scope, index) =>
         (versionQueries[index]?.data ?? []).map((version) => ({
           value: version.id,
-          label: `${scope.scope_label} v${version.version_no}`,
-          description: version.is_current ? 'Current' : 'Superseded',
+          // The document number first: a scope label repeats across the proposals and the
+          // quotation, so "Townhouse v1" alone cannot say which one it is.
+          label: `${scope.document_no ? `${scope.document_no} ` : ''}${scope.scope_label} v${version.version_no}`,
+          description: [
+            scope.document_kind === 'quotation' ? 'Quotation' : 'Proposal',
+            version.is_current ? 'Current' : 'Superseded',
+          ].join(', '),
         })),
       ),
     [scopes, versionQueries],

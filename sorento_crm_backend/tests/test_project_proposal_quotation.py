@@ -214,6 +214,8 @@ def test_1_a_new_document_is_a_proposal_and_issues_label_a_then_b():
         assert first.issue_no == 1
         assert first.revision_label == "A"
         assert first.our_ref_text == f"{document.document_no}-A"
+        # The Send button reads what the server will stamp next.
+        assert qdocs.serialize_document(db, document)["next_revision_label"] == "B"
 
         _reprice(db, scope, product, owner, unit_price="100.00", quantity=3)
         second = _issue(db, document, owner)
