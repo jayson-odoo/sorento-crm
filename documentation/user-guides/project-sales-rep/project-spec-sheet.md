@@ -17,7 +17,7 @@ The pages are designed once by marketing as templates (see "Designing the templa
    - **Add accessory**: puts another quoted item on this page instead of its own page (for example a bottle trap under a basin). A product set (a WC with its angle valve and flexible hose) brings its other parts by itself.
    - Drag a thumbnail to change the page order.
    Every change saves by itself and stays with the quotation, so the next revision keeps it.
-6. Click **Export PDF**. The file is prepared in the background and appears in **My Downloads** as `spec-sheet-<quotation no>.pdf`.
+6. Click **Export PDF**. The file is prepared in the background and appears in **My Downloads** as `spec-sheet-<quotation no>-R<revision>.pdf`, for example `spec-sheet-PRJQ-2026-0027-R1.pdf`.
 
 ## What's printed
 

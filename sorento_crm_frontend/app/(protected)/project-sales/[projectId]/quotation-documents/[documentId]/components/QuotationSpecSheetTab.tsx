@@ -1,16 +1,32 @@
 'use client';
 
 import * as React from 'react';
-import { ChevronLeft, ChevronRight, EyeOff, FileDown, RotateCcw } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  EyeOff,
+  FileDown,
+  RotateCcw,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Sortable, SortableItem, SortableItemHandle } from '@/components/ui/sortable';
-import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import {
+  Sortable,
+  SortableItem,
+  SortableItemHandle,
+} from '@/components/ui/sortable';
+import {
+  SearchableSelect,
+  type SearchableSelectOption,
+} from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import ScaledSheet, { PX_PER_MM, sheetPixelSize } from '@/components/dealer-kit/ScaledSheet';
+import ScaledSheet, {
+  PX_PER_MM,
+  sheetPixelSize,
+} from '@/components/dealer-kit/ScaledSheet';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 
@@ -46,9 +62,16 @@ export function QuotationSpecSheetTab() {
   const effectiveIssueId = issueId ?? data?.issue_id ?? null;
   const settings = data?.settings;
   const ready = Boolean(
-    effectiveIssueId && settings?.cover_template_id && settings?.page_template_id,
+    effectiveIssueId &&
+    settings?.cover_template_id &&
+    settings?.page_template_id,
   );
-  const preview = useSpecSheetPreview(projectId, documentId, effectiveIssueId, ready);
+  const preview = useSpecSheetPreview(
+    projectId,
+    documentId,
+    effectiveIssueId,
+    ready,
+  );
 
   if (view.isLoading) {
     return (
@@ -62,7 +85,11 @@ export function QuotationSpecSheetTab() {
     return (
       <EmptyState
         title="The spec sheet could not load"
-        hint={view.error instanceof Error ? view.error.message : 'Try again in a moment.'}
+        hint={
+          view.error instanceof Error
+            ? view.error.message
+            : 'Try again in a moment.'
+        }
       />
     );
   }
@@ -87,7 +114,11 @@ export function QuotationSpecSheetTab() {
         exportButton={
           // The reason sits on a wrapper: a disabled button receives no hover, so its own
           // title would never show.
-          <span title={exportReason} data-testid="spec-sheet-export-reason" className="inline-flex">
+          <span
+            title={exportReason}
+            data-testid="spec-sheet-export-reason"
+            className="inline-flex"
+          >
             <Button
               size="sm"
               disabled={!ready || exportPdf.isPending}
@@ -102,8 +133,12 @@ export function QuotationSpecSheetTab() {
       />
 
       {!effectiveIssueId ? (
-        <EmptyState title="No issued revision yet" hint="Issue a revision first." />
-      ) : data.templates.cover.length === 0 || data.templates.page.length === 0 ? (
+        <EmptyState
+          title="No issued revision yet"
+          hint="Issue a revision first."
+        />
+      ) : data.templates.cover.length === 0 ||
+        data.templates.page.length === 0 ? (
         <EmptyState
           title="No spec sheet templates"
           hint="Publish a Spec sheet cover and a Spec sheet page template in Dealer Kit > Tag Templates."
@@ -123,7 +158,11 @@ export function QuotationSpecSheetTab() {
       ) : preview.error || !preview.data ? (
         <EmptyState
           title="The pages could not be drawn"
-          hint={preview.error instanceof Error ? preview.error.message : 'Try again in a moment.'}
+          hint={
+            preview.error instanceof Error
+              ? preview.error.message
+              : 'Try again in a moment.'
+          }
         />
       ) : (
         <SpecSheetPages
@@ -149,12 +188,19 @@ function EmptyState({ title, hint }: { title: string; hint: string }) {
 // ---------------------------------------------------------------------------- pickers
 
 function templateOptions(
-  rows: { id: string; name: string; width_mm: number | null; height_mm: number | null }[],
+  rows: {
+    id: string;
+    name: string;
+    width_mm: number | null;
+    height_mm: number | null;
+  }[],
 ) {
   return rows.map((row) => ({
     value: row.id,
     label:
-      row.width_mm && row.height_mm ? `${row.name} (${row.width_mm} x ${row.height_mm} mm)` : row.name,
+      row.width_mm && row.height_mm
+        ? `${row.name} (${row.width_mm} x ${row.height_mm} mm)`
+        : row.name,
   }));
 }
 
@@ -206,7 +252,9 @@ function SpecSheetPickers({
             id={ids.cover}
             clearable
             value={s.cover_template_id ?? ''}
-            onChange={(v: string) => onTemplates({ cover_template_id: v || null })}
+            onChange={(v: string) =>
+              onTemplates({ cover_template_id: v || null })
+            }
             options={cover}
             placeholder="Pick a cover"
             disabled={!canEdit}
@@ -218,7 +266,9 @@ function SpecSheetPickers({
             id={ids.page}
             clearable
             value={s.page_template_id ?? ''}
-            onChange={(v: string) => onTemplates({ page_template_id: v || null })}
+            onChange={(v: string) =>
+              onTemplates({ page_template_id: v || null })
+            }
             options={page}
             placeholder="Pick a page"
             disabled={!canEdit}
@@ -230,7 +280,9 @@ function SpecSheetPickers({
             id={ids.single}
             clearable
             value={s.single_page_template_id ?? ''}
-            onChange={(v: string) => onTemplates({ single_page_template_id: v || null })}
+            onChange={(v: string) =>
+              onTemplates({ single_page_template_id: v || null })
+            }
             options={page}
             placeholder="Same as page template"
             disabled={!canEdit}
@@ -275,7 +327,11 @@ const FIELD_LABELS: Record<EditableField, string> = {
 function editableField(layer: TagLayer): EditableField | null {
   if (layer.props.kind !== 'text') return null;
   const text = layer.text_override ?? layer.props.text ?? '';
-  return (Object.keys(FIELD_TOKENS) as EditableField[]).find((f) => FIELD_TOKENS[f].test(text)) ?? null;
+  return (
+    (Object.keys(FIELD_TOKENS) as EditableField[]).find((f) =>
+      FIELD_TOKENS[f].test(text),
+    ) ?? null
+  );
 }
 
 function SpecSheetPages({
@@ -307,7 +363,9 @@ function SpecSheetPages({
     onRows(next.map(rowOf));
   };
   const patch = (key: string, change: Partial<SpecSheetPage>) =>
-    commit(items.map((page) => (page.key === key ? { ...page, ...change } : page)));
+    commit(
+      items.map((page) => (page.key === key ? { ...page, ...change } : page)),
+    );
 
   // Page numbers count printed pages only; the cover is page 1.
   const numbers = new Map<string, number>();
@@ -317,16 +375,24 @@ function SpecSheetPages({
   const order = [COVER, ...items.map((p) => p.key)];
   const position = order.indexOf(selected);
   const current = items.find((p) => p.key === selected) ?? null;
-  const fullPayload = { ...payload, page_id: '', source: 'version' } as TagSheetDesignPayload;
+  const fullPayload = {
+    ...payload,
+    page_id: '',
+    source: 'version',
+  } as TagSheetDesignPayload;
   const natural = sheetPixelSize(payload.doc ?? null);
   const thumbScale = natural.width > 0 ? THUMB_WIDTH / natural.width : 0;
   // The template decides the page size (16:9 in the sample, any size allowed), so the
   // thumbnail and its drag handle follow it rather than assume 16:9.
-  const thumbHeight = natural.height > 0 ? natural.height * thumbScale : (THUMB_WIDTH * 9) / 16;
+  const thumbHeight =
+    natural.height > 0 ? natural.height * thumbScale : (THUMB_WIDTH * 9) / 16;
 
   return (
     <div className="flex min-w-0 flex-col gap-3" data-testid="spec-sheet-pages">
-      <div className="flex min-w-0 gap-2 overflow-x-auto pb-2" data-testid="spec-sheet-strip">
+      <div
+        className="flex min-w-0 gap-2 overflow-x-auto pb-2"
+        data-testid="spec-sheet-strip"
+      >
         <PageThumb
           label="1 Cover"
           active={selected === COVER}
@@ -341,48 +407,58 @@ function SpecSheetPages({
           onValueChange={(next) => commit(next as SpecSheetPage[])}
           getItemValue={(page) => page.key}
           strategy="horizontal"
+          // The pages are the Sortable's DIRECT children: its drag overlay clones the dragged
+          // child it finds there, and dnd-kit measures collisions with that overlay. Wrapped in
+          // a div, the overlay was empty (zero size), so no page was ever "over" and a drop did
+          // nothing (crew browser pass, step 14).
+          className="flex gap-2"
         >
-          <div className="flex gap-2">
-            {items.map((page) => (
-              <SortableItem key={page.key} value={page.key} disabled={!canEdit}>
-                <PageThumb
-                  label={`${numbers.get(page.key) ?? '-'} ${page.code}`}
-                  active={selected === page.key}
-                  hidden={page.hidden}
-                  onSelect={() => setSelected(page.key)}
-                  payload={fullPayload}
-                  sheet={sheetIndex.get(page.key)}
-                  scale={thumbScale}
-                  height={thumbHeight}
-                  handle={
-                    canEdit ? (
-                      <SortableItemHandle
-                        aria-label={`Drag ${page.code} to reorder`}
-                        // Focusable, so the shared Sortable's keyboard sensor can move a page too
-                        // (Space, arrows, Space).
-                        tabIndex={0}
-                        className="absolute left-1 top-1 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-                        style={{ width: THUMB_WIDTH, height: thumbHeight }}
-                        onClick={() => setSelected(page.key)}
-                      />
-                    ) : null
-                  }
-                />
-              </SortableItem>
-            ))}
-          </div>
+          {items.map((page) => (
+            <SortableItem key={page.key} value={page.key} disabled={!canEdit}>
+              <PageThumb
+                label={`${numbers.get(page.key) ?? '-'} ${page.code}`}
+                active={selected === page.key}
+                hidden={page.hidden}
+                onSelect={() => setSelected(page.key)}
+                payload={fullPayload}
+                sheet={sheetIndex.get(page.key)}
+                scale={thumbScale}
+                height={thumbHeight}
+                handle={
+                  canEdit ? (
+                    <SortableItemHandle
+                      aria-label={`Drag ${page.code} to reorder`}
+                      // Focusable, so the shared Sortable's keyboard sensor can move a page too
+                      // (Space, arrows, Space).
+                      tabIndex={0}
+                      className="absolute left-1 top-1 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+                      style={{ width: THUMB_WIDTH, height: thumbHeight }}
+                      onClick={() => setSelected(page.key)}
+                    />
+                  ) : null
+                }
+              />
+            </SortableItem>
+          ))}
         </Sortable>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold" data-testid="spec-sheet-open-page">
+          <span
+            className="text-sm font-semibold"
+            data-testid="spec-sheet-open-page"
+          >
             {current
               ? `${current.hidden ? 'Left out' : `Page ${numbers.get(current.key)}`}: ${current.code}`
               : 'Page 1: Cover'}
           </span>
           {current && canEdit && (
-            <PageActions page={current} pages={items} onChange={(c) => patch(current.key, c)} />
+            <PageActions
+              page={current}
+              pages={items}
+              onChange={(c) => patch(current.key, c)}
+            />
           )}
         </div>
         <div className="flex items-center gap-1">
@@ -488,10 +564,16 @@ function PageActions({
   const options: SearchableSelectOption[] = [
     ...pages
       .filter((other) => other.key !== page.key && other.picked.length === 0)
-      .map((other) => ({ value: other.key, label: `${other.code} ${other.name}`.trim() })),
+      .map((other) => ({
+        value: other.key,
+        label: `${other.code} ${other.name}`.trim(),
+      })),
     ...page.accessories
       .filter((a) => a.source === 'picked' && a.key)
-      .map((a) => ({ value: a.key as string, label: `${a.code} ${a.name}`.trim() })),
+      .map((a) => ({
+        value: a.key as string,
+        label: `${a.code} ${a.name}`.trim(),
+      })),
   ];
   return (
     <>
@@ -501,7 +583,11 @@ function PageActions({
         onClick={() => onChange({ hidden: !page.hidden })}
         data-testid="spec-sheet-leave-out"
       >
-        {page.hidden ? <RotateCcw className="size-4" aria-hidden /> : <EyeOff className="size-4" aria-hidden />}
+        {page.hidden ? (
+          <RotateCcw className="size-4" aria-hidden />
+        ) : (
+          <EyeOff className="size-4" aria-hidden />
+        )}
         {page.hidden ? 'Put back' : 'Leave out'}
       </Button>
       <div className="w-56 min-w-0">
@@ -553,15 +639,21 @@ function OpenPage({
   React.useEffect(() => setEditing(null), [page?.key]);
 
   const natural = sheetPixelSize(payload.doc ?? null);
-  const scale = natural.width > 0 && width > 0 ? Math.min(1, width / natural.width) : 0;
-  const tag = sheet !== undefined ? payload.doc?.sheets[sheet]?.tags[0] : undefined;
+  const scale =
+    natural.width > 0 && width > 0 ? Math.min(1, width / natural.width) : 0;
+  const tag =
+    sheet !== undefined ? payload.doc?.sheets[sheet]?.tags[0] : undefined;
   // The spots a page may type over: text layers of the template printing AREA / COMMENT / marker.
-  const spots = page && canEdit && tag
-    ? tag.layers
-        .filter((l) => l.visible !== false)
-        .map((layer) => ({ layer, field: editableField(layer) }))
-        .filter((s): s is { layer: TagLayer; field: EditableField } => s.field !== null)
-    : [];
+  const spots =
+    page && canEdit && tag
+      ? tag.layers
+          .filter((l) => l.visible !== false)
+          .map((layer) => ({ layer, field: editableField(layer) }))
+          .filter(
+            (s): s is { layer: TagLayer; field: EditableField } =>
+              s.field !== null,
+          )
+      : [];
   const px = (mm: number) => mm * PX_PER_MM * scale;
 
   const start = (field: EditableField) => {
@@ -580,7 +672,12 @@ function OpenPage({
   };
 
   if (page?.hidden) {
-    return <EmptyState title="Left out of the spec sheet" hint="Put back to print it." />;
+    return (
+      <EmptyState
+        title="Left out of the spec sheet"
+        hint="Put back to print it."
+      />
+    );
   }
 
   return (
@@ -602,7 +699,9 @@ function OpenPage({
                 autoFocus
                 aria-label={FIELD_LABELS[field]}
                 value={draft}
-                maxLength={field === 'marker' ? 10 : field === 'area' ? 200 : 500}
+                maxLength={
+                  field === 'marker' ? 10 : field === 'area' ? 200 : 500
+                }
                 onChange={(e) => setDraft(e.target.value)}
                 onBlur={finish}
                 onKeyDown={(e) => {

@@ -421,6 +421,9 @@ export function mergeFieldCatalog(
     ...fixed.filter((field) => field.group === 'Set'),
     ...fixed.filter((field) => field.group === 'Line'),
     ...fixed.filter((field) => field.group === 'Combo'),
+    // PS-SPEC-SHEET: offered on spec sheet templates; a price tag editor passes `groups`
+    // without it, so it never shows there.
+    ...fixed.filter((field) => field.group === 'Spec sheet'),
   ];
 
   return groups ? all.filter((field) => groups.includes(field.group)) : all;

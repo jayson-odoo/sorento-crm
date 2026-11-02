@@ -37,3 +37,22 @@ Notes:
 - Not verified in this browser: drag in the strip. A keyboard attempt did nothing because the handle
   was not focusable (fixed in 95f990d82f with `tabIndex={0}`), and the dev server then hit the
   sandbox's background time limit. Crew's browser pass should drag one thumbnail.
+
+## Strip drag fix (crew browser pass step 14, 3 Nov)
+
+Crew's pass at 5fc832fe4f: dragging a page in the strip did nothing (mouse or keyboard). Cause: the
+pages were wrapped in a `<div>` inside the shared `Sortable`, whose `DragOverlay` clones the dragged
+item from its DIRECT children; the overlay was empty (zero size), and dnd-kit measures collisions
+with the overlay, so no page was ever "over". Fix: the pages are direct children, the flex layout
+moves to `Sortable`'s `className`.
+
+`dnd/harness.tsx` renders the shared `Sortable` twice, once wrapped (old) and once direct (new);
+`dnd/drive.js` builds it with Vite and drags both in real Chromium (Playwright library, run as a
+script, not a committed spec, per the standing order). Result:
+
+    old mouse -> wc,basin,trap | keyboard -> wc,basin,trap      (nothing moves)
+    new mouse -> basin,wc,trap | keyboard -> basin,trap,wc      (both reorder)
+    page errors: none
+
+The tab test `QuotationSpecSheetTab.dnd.test.tsx` (real `Sortable`) pins the structure: it fails
+on the old tab and passes on the fix.
