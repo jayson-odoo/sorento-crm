@@ -397,8 +397,8 @@ def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str
         template = templates.active_template(db, company_id=project.company_id, kind=kind)
         out[field] = template.body_html if template is not None else None
         if kind == templates.TEMPLATE_KIND_TERMS:
-            out["payment_terms"] = getattr(template, "payment_terms", None)
-            out["validity"] = getattr(template, "validity", None)
+            out["payment_terms"] = template.payment_terms if template is not None else None
+            out["validity"] = template.validity if template is not None else None
     return out
 
 

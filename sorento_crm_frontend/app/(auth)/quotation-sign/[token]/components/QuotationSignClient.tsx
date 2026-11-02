@@ -206,12 +206,10 @@ function Letterhead({
               </span>
               <span className="font-medium">{`R${page.issue_no}`}</span>
             </div>
-            {withSender && (
-              <div className="flex gap-2 text-sm">
-                <span className="w-28 shrink-0 text-muted-foreground">Date</span>
-                <span className="font-medium">{docDate || '-'}</span>
-              </div>
-            )}
+            <div className="flex gap-2 text-sm">
+              <span className="w-28 shrink-0 text-muted-foreground">Date</span>
+              <span className="font-medium">{docDate || '-'}</span>
+            </div>
             {salesContact && (
               <div className="flex gap-2 text-sm">
                 <span className="w-28 shrink-0 text-muted-foreground">
