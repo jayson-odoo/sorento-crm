@@ -59,6 +59,8 @@ Status: written 1 Nov 2026. PR 4 of 4. Owner Q2 (a) on `CARD-agentic-unify-v2-31
 - `crm_complaints_find` and the three writes run in process and never ask the act-as user, so a find can answer while the list says no access.
 - Capabilities is not ported: its route loads the MCP catalog from a path the deployed backend image does not hold, and its answer does not fit a tool result. The agent answers "what can you do" from the tools it is given. AC-16 includes that question.
 - The ticket draft link shows the ticket's id in its URL, as the idea link does.
+- Note, reason and ticket text refuse an invisible format character other than the two joiners, so a subdivision flag emoji (built from tag characters) is refused; ordinary and joined emoji pass.
+- A staff report read (panel) is not capped by a contact location policy, as on the sales report screen; a contact read stays capped. The two panel figures "order totals" (orders table, with tax) and "sales" (AutoCount lines, without tax) are different measures.
 - **Prod check owed:** an identity read needs the user AND the shared key's act-as user to hold the route's slug (`gate_user_ids`). The act-as role's slugs at prod decide whether these reads answer there.
 
 - `owner_user_ids` and `assigned_to` take ids the agent has no resolver for, so "projects owned by X" lists and reads the rows. Trigger to fix: real questions in the pilot set.
