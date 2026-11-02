@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Quotation cover page (sample v1)</title>
+<title>Quotation cover page (sample v2)</title>
 <style>
 /* App tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/QUOTE-SIGN-PAGE.
    The PDF pages use the PDF's own stylesheet: _STYLE in sorento_crm_backend/app/services/project_quotation_pdf_service.py. */
@@ -22,6 +22,33 @@ section>.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:90
 .nb{display:inline-block;min-width:18px;height:18px;border-radius:9px;background:var(--primary);color:#fff;font-size:11px;line-height:18px;text-align:center;margin-right:6px;font-weight:600;vertical-align:middle}
 .newtag{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--new);background:var(--new-soft);border:1px solid #fcd34d;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
 .cap{font-size:11px;color:var(--muted-fg);text-align:center;padding:6px}
+.opentag{display:inline-block;font:600 10px/1.5 Inter,system-ui,sans-serif;letter-spacing:.04em;color:#6d28d9;background:#f5f3ff;border:1px solid #c4b5fd;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle;text-transform:none}
+.openbox{outline:2px dashed #a78bfa;outline-offset:3px;border-radius:6px}
+/* countersign page cover card: label/value rows reuse the refs row pattern (QuotationSignClient.tsx:138-143) */
+.cv-row{display:flex;gap:8px;font-size:13.5px;padding:7px 0;border-top:1px solid var(--border)}
+.cv-row:first-child,.sender-row+.cv-row{border-top:0}
+.cv-row .k{width:150px;flex:none;color:var(--muted-fg)}
+.cv-row .v{min-width:0;font-weight:500;word-break:break-word}
+.cv-row .v .terms-body{font-weight:400}
+.phone .cv-row{flex-direction:column;gap:2px}
+.phone .cv-row .k{width:auto;font-size:12px}
+.sender-row{display:flex;gap:12px;align-items:center;padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:6px}
+.slogo{width:48px;height:36px;border:1px dashed #a1a1aa;border-radius:6px;color:#71717a;font-size:9px;display:flex;align-items:center;justify-content:center;flex:none}
+.eyebrow{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-fg)}
+.ghost{border:1px dashed #c4b5fd;background:#faf5ff;border-radius:12px;padding:12px 16px;font-size:12.5px;color:#5b21b6}
+.chk{display:flex;gap:8px;align-items:flex-start;font-size:13px}
+.box{width:16px;height:16px;border:1px solid #a1a1aa;border-radius:4px;flex:none;margin-top:2px}
+.dlg{width:560px;max-width:100%;background:#fff;border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.08)}
+.dlg .dh{padding:16px 20px 4px;font-size:16px;font-weight:600}
+.dlg .db{padding:12px 20px;display:flex;flex-direction:column;gap:12px}
+.dlg .df{padding:12px 20px 16px;display:flex;justify-content:flex-end;gap:8px}
+.opt{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1100px}
+.opt .o{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 16px;font-size:12.5px}
+.opt .o h4{margin:0 0 6px;font-size:12.5px}
+.opt .o.rec{border-color:#a78bfa}
+.mini{border:1px solid #e4e4e7;border-radius:6px;padding:8px 10px;font:10.5px/1.45 'Helvetica Neue',Arial,sans-serif;background:#fff;margin-top:6px}
+.mini .ln{height:6px;border-radius:3px;background:#e4e4e7;margin:4px 0}
+@media (max-width:900px){.opt{grid-template-columns:1fr}}
 
 /* ---------- PDF pages (WeasyPrint stylesheet, scaled for screen) ---------- */
 .sheet{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12),0 0 0 1px #e4e4e7;font-family:'Helvetica Neue',Arial,sans-serif;color:#111;flex:none;overflow:hidden;position:relative}
@@ -120,24 +147,30 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
 </head>
 <body>
 <div class="doc">
-  <h1>Quotation cover page &middot; sample v1</h1>
+  <h1>Quotation cover page &middot; sample v2</h1>
   <p class="intro">Static sample, nothing built yet. All names, numbers and prices are made up. Shape taken from one real
     issued quotation on the dev copy (one scope, recipient phone filled, no address, no Attn, no terms) and from the sales
-    team's cover-page workbook (field order). Amber <span class="newtag">NEW</span> marks a field that does not exist today.</p>
+    team's cover-page workbook (field order). Amber <span class="newtag">NEW</span> marks a field that does not exist today;
+    violet <span class="opentag">OPEN</span> marks the two points still waiting on you (section 7).</p>
+  <p class="intro"><b>v2:</b> the customer countersign link now shows the same cover page (section 4). Your three answers are
+    in: Prepared By = the project's salesperson; Payment Terms and Validity defaults sit beside the company T&amp;C template
+    (section 5); the letterhead stays on page 1.</p>
   <nav class="nav">
     <a href="#pdf">1. PDF: cover page + price page</a>
     <a href="#terms">2. Terms print: today vs fixed</a>
     <a href="#form">3. Quotation form fields</a>
-    <a href="#sign">4. Sign page reference + terms</a>
-    <a href="#map">5. What each piece reuses</a>
-    <a href="#qs">6. Open questions</a>
+    <a href="#sign">4. Countersign link</a>
+    <a href="#tpl">5. Company T&amp;C template defaults</a>
+    <a href="#map">6. What each piece reuses</a>
+    <a href="#qs">7. Decided and still open</a>
   </nav>
 
   <!-- ================================================================ 1. PDF -->
   <section id="pdf">
     <h2><span class="nb">1</span>PDF: portrait cover page first, then the price pages as today</h2>
     <p class="why">One PDF. Page 1 is A4 portrait with the workbook's rows in the workbook's order (Fax dropped). Price pages
-      stay A4 landscape and unchanged, except the reference line and the terms block, which now lives on page 1 only.</p>
+      stay A4 landscape and unchanged, except the reference line. Shown with terms on page 1 only and Your Ref kept; both are
+      still open (section 7).</p>
     <div class="row">
       <div>
         <div class="sheet portrait">
@@ -162,7 +195,7 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
             <tr><th>ADD:</th><td>No. 21, Jalan Cempaka 7, Taman Seri Cempaka,<br>43000 Kajang, Selangor</td></tr>
             <tr><th>EMAIL:</th><td>farah@terasjaya.example</td></tr>
             <tr><th>QUOTATION PURPOSE:</th><td>Supply of sanitary ware for Block B show units (tender submission).</td></tr>
-            <tr><th>TERMS &amp; CONDITIONS:</th><td>
+            <tr><th>TERMS &amp; CONDITIONS:<br><span class="opentag">OPEN A</span></th><td>
               <div class="terms-body">
                 <p><strong>DELIVERY (WITH CONFIRMED FORECAST)</strong></p>
                 <p>8 to 10 weeks for vitreous china items</p>
@@ -203,7 +236,7 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
             </div>
             <table class="refs">
               <tr><th>Quotation No.</th><td>PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES</td></tr>
-              <tr><th>Your Ref</th><td></td></tr>
+              <tr><th>Your Ref <span class="opentag">OPEN B</span></th><td>TJB/PROC/118</td></tr>
               <tr><th>Date</th><td>30/10/2026</td></tr>
               <tr><th>Sales contact</th><td>Aina Rahman, 012-000 4417</td></tr>
             </table>
@@ -233,7 +266,7 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
           </div>
           <div class="pgno">Page 2</div>
         </div>
-        <div class="cap">Page 2 onward &middot; A4 landscape, as today &middot; terms block no longer repeated here</div>
+        <div class="cap">Page 2 onward &middot; A4 landscape, as today &middot; <span class="opentag">OPEN A</span> no terms block after the total (page 1 only)</div>
       </div>
     </div>
   </section>
@@ -290,7 +323,8 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
     <h2><span class="nb">3</span>Quotation form: three new fields on Header, two on Terms</h2>
     <p class="why">Same tabs as today (Header, Lines, Cover letter, Terms). The view page shows the same fields read-only in
       the same places. Email and Contact fill from the customer's main contact on a new quotation; Payment Terms and Validity
-      fill from the company defaults; every value stays editable per quotation.</p>
+      fill from the active company T&amp;C template (section 5); every value stays editable per quotation. Prepared By is the
+      project's salesperson, read-only here.</p>
     <div class="row">
       <div class="desk">
         <div class="shell">
@@ -309,9 +343,9 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
               <div class="col">
                 <div class="colhd">Quotation</div>
                 <div><div class="lbl">Reference</div><div class="ro">PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES</div></div>
-                <div><div class="lbl">Your Ref</div><div class="inp" style="color:var(--muted-fg)">&nbsp;</div></div>
+                <div><div class="lbl">Your Ref<span class="opentag">OPEN B</span></div><div class="inp">TJB/PROC/118</div></div>
                 <div><div class="lbl">Date</div><div class="inp">30/10/2026</div></div>
-                <div><div class="lbl">Prepared by</div><div class="ro">Aina Rahman<span class="sub">see question 1</span></div></div>
+                <div><div class="lbl">Prepared by</div><div class="ro">Aina Rahman<span class="sub">the project's salesperson</span></div></div>
               </div>
               <div class="span2"><div class="lbl">Subject</div><div class="inp">Seri Mutiara Residences</div></div>
               <div class="span2"><div class="lbl">Quotation Purpose<span class="newtag">NEW</span></div><div class="inp ta new">Supply of sanitary ware for Block B show units (tender submission).</div></div>
@@ -359,7 +393,7 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
                 <div class="col">
                   <div class="colhd">Quotation</div>
                   <div><div class="lbl">Reference</div><div class="ro">PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES</div></div>
-                  <div><div class="lbl">Your Ref</div><div class="inp">&nbsp;</div></div>
+                  <div><div class="lbl">Your Ref<span class="opentag">OPEN B</span></div><div class="inp">TJB/PROC/118</div></div>
                   <div><div class="lbl">Date</div><div class="inp">30/10/2026</div></div>
                   <div><div class="lbl">Prepared by</div><div class="ro">Aina Rahman</div></div>
                 </div>
@@ -384,59 +418,170 @@ table.map code{font-size:11.5px;background:var(--muted);padding:1px 4px;border-r
     </div>
   </section>
 
-  <!-- ================================================================ 4. SIGN -->
+  <!-- ================================================================ 4. COUNTERSIGN -->
   <section id="sign">
-    <h2><span class="nb">4</span>Sign page: one reference, terms printed the same way</h2>
-    <p class="why">The customer's sign link shows the same reference as the PDF (number + project name) and the same terms
-      layout, plus Payment Terms and Validity. Validity is shown, never enforced: the link still works after it.</p>
+    <h2><span class="nb">4</span>Customer countersign link: the same cover page, first</h2>
+    <p class="why">The link the customer opens to sign shows the cover page as its first card: same rows, same order, same
+      reference, same terms layout as PDF page 1. The rest of the page stays as today. Validity is shown, never enforced:
+      the link keeps working after it.</p>
     <div class="row">
-      <div class="card" style="width:640px;max-width:100%"><div class="bd" style="display:flex;flex-direction:column;gap:6px">
-        <div class="refline"><span>Quotation No.</span><span>PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES</span></div>
-        <div class="refline"><span>Date</span><span>30/10/2026</span></div>
-        <div class="refline"><span>Payment Terms</span><span>30 days from invoice date</span></div>
-        <div class="refline"><span>Validity</span><span>30 days from quotation date</span></div>
-      </div></div>
-      <div class="card" style="width:640px;max-width:100%"><div class="hd">Terms and conditions</div><div class="bd">
-        <div class="terms-body" style="font-family:Inter,system-ui,sans-serif;font-size:13px">
-          <p><strong>DELIVERY (WITH CONFIRMED FORECAST)</strong></p>
-          <p>8 to 10 weeks for vitreous china items</p>
-          <p class="gap"></p>
-          <p><strong>PRICING</strong></p>
-          <ul><li>Prices are in Ringgit Malaysia</li><li>Prices exclude:<ul><li>transport beyond the first drop point</li></ul></li></ul>
+      <div class="desk" style="width:900px">
+        <div class="shell">
+          <div class="card"><div class="bd">
+            <div class="sender-row"><div class="slogo">logo</div><div><div class="eyebrow">Quotation from</div><div style="font-weight:600">Company name (Company settings)</div></div></div>
+            <div class="cv-row"><span class="k">Reference No.</span><span class="v">PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES</span></div>
+            <div class="cv-row"><span class="k">Date</span><span class="v">30/10/2026</span></div>
+            <div class="cv-row"><span class="k">Attn</span><span class="v">Ms Farah Iskandar</span></div>
+            <div class="cv-row"><span class="k">Company</span><span class="v">TERAS JAYA BUILDERS SDN BHD</span></div>
+            <div class="cv-row"><span class="k">Contact</span><span class="v">012-345 6781</span></div>
+            <div class="cv-row"><span class="k">Add</span><span class="v">No. 21, Jalan Cempaka 7, Taman Seri Cempaka, 43000 Kajang, Selangor</span></div>
+            <div class="cv-row"><span class="k">Email</span><span class="v">farah@terasjaya.example</span></div>
+            <div class="cv-row"><span class="k">Quotation Purpose</span><span class="v">Supply of sanitary ware for Block B show units (tender submission).</span></div>
+            <div class="cv-row"><span class="k">Terms &amp; Conditions<br><span class="opentag" style="margin:2px 0 0">OPEN A</span></span><span class="v"><div class="terms-body">
+              <p><strong>DELIVERY (WITH CONFIRMED FORECAST)</strong></p>
+              <p>8 to 10 weeks for vitreous china items</p>
+              <p>4 to 6 weeks for mixers and accessories</p>
+              <p class="gap"></p>
+              <p><strong>PRICING</strong></p>
+              <ul><li>Prices are in Ringgit Malaysia</li><li>Prices exclude:<ul><li>transport beyond the first drop point</li><li>hoisting to upper floors</li></ul></li></ul>
+            </div></span></div>
+            <div class="cv-row"><span class="k">Payment Terms</span><span class="v">30 days from invoice date</span></div>
+            <div class="cv-row"><span class="k">Validity</span><span class="v">30 days from quotation date</span></div>
+            <div class="cv-row"><span class="k">Prepared By</span><span class="v">Aina Rahman</span></div>
+          </div></div>
+
+          <div class="card"><div class="bd">
+            <div class="g2">
+              <div><div class="eyebrow" style="margin-bottom:4px">To</div><div style="font-weight:500;font-size:13.5px">TERAS JAYA BUILDERS SDN BHD</div><div style="font-size:13px;color:var(--muted-fg)">No. 21, Jalan Cempaka 7, Taman Seri Cempaka, 43000 Kajang, Selangor</div><div style="font-size:13px;margin-top:6px"><span style="color:var(--muted-fg)">Attn: </span><b style="font-weight:500">Ms Farah Iskandar</b></div></div>
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <div class="refline"><span>Quotation No.</span><span>PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES</span></div>
+                <div class="refline"><span>Revision</span><span>R2</span></div>
+                <div class="refline"><span>Date</span><span>30/10/2026</span></div>
+                <div class="refline"><span>Sales contact</span><span>Aina Rahman, 012-000 4417</span></div>
+              </div>
+            </div>
+            <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;font-size:13px;font-weight:600;letter-spacing:.03em">SERI MUTIARA RESIDENCES</div>
+          </div></div>
+          <div class="cap" style="text-align:left;padding:0">Above: the To / refs card as today, with the same reference string; its "Quotation from" line moved up into the cover card.</div>
+
+          <div class="ghost">Cover letter, then the price sections with the customer's suggest-a-change controls: as today.</div>
+          <div class="ghost openbox"><span class="opentag" style="margin-left:0">OPEN A</span> Terms and conditions panel at the bottom: goes if terms are on page 1 only, stays if they repeat after the price table.</div>
+          <div class="card"><div class="bd" style="display:flex;flex-direction:column;gap:10px">
+            <div class="chk"><span class="box"></span><span>I have read and agree to the terms and conditions.</span></div>
+            <div style="height:90px;border:1px dashed var(--border);border-radius:8px;background:#fafafa;display:flex;align-items:center;justify-content:center;color:var(--muted-fg);font-size:12px">Sign here</div>
+            <div><span class="btn pri">Accept quotation</span></div>
+          </div></div>
+          <div class="cap" style="text-align:left;padding:0">Tick box, signature and Accept: as today.</div>
         </div>
-      </div></div>
+        <div class="cap">Desktop</div>
+      </div>
+
+      <div class="phone">
+        <div class="screen">
+          <div class="shell">
+            <div class="card"><div class="bd">
+              <div class="sender-row"><div class="slogo">logo</div><div><div class="eyebrow">Quotation from</div><div style="font-weight:600;font-size:13.5px">Company name</div></div></div>
+              <div class="cv-row"><span class="k">Reference No.</span><span class="v">PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES</span></div>
+              <div class="cv-row"><span class="k">Date</span><span class="v">30/10/2026</span></div>
+              <div class="cv-row"><span class="k">Attn</span><span class="v">Ms Farah Iskandar</span></div>
+              <div class="cv-row"><span class="k">Company</span><span class="v">TERAS JAYA BUILDERS SDN BHD</span></div>
+              <div class="cv-row"><span class="k">Contact</span><span class="v">012-345 6781</span></div>
+              <div class="cv-row"><span class="k">Add</span><span class="v">No. 21, Jalan Cempaka 7, Taman Seri Cempaka, 43000 Kajang, Selangor</span></div>
+              <div class="cv-row"><span class="k">Email</span><span class="v">farah@terasjaya.example</span></div>
+              <div class="cv-row"><span class="k">Quotation Purpose</span><span class="v">Supply of sanitary ware for Block B show units (tender submission).</span></div>
+              <div class="cv-row"><span class="k">Terms &amp; Conditions <span class="opentag">OPEN A</span></span><span class="v"><div class="terms-body">
+                <p><strong>DELIVERY (WITH CONFIRMED FORECAST)</strong></p>
+                <p>8 to 10 weeks for vitreous china items</p>
+                <p class="gap"></p>
+                <p><strong>PRICING</strong></p>
+                <ul><li>Prices are in Ringgit Malaysia</li><li>Prices exclude:<ul><li>transport beyond the first drop point</li></ul></li></ul>
+              </div></span></div>
+              <div class="cv-row"><span class="k">Payment Terms</span><span class="v">30 days from invoice date</span></div>
+              <div class="cv-row"><span class="k">Validity</span><span class="v">30 days from quotation date</span></div>
+              <div class="cv-row"><span class="k">Prepared By</span><span class="v">Aina Rahman</span></div>
+            </div></div>
+            <div class="ghost">To / refs card, cover letter, price sections: as today.</div>
+            <div class="ghost openbox"><span class="opentag" style="margin-left:0">OPEN A</span> Bottom terms panel: goes or stays.</div>
+            <div class="ghost">Tick box, signature, Accept: as today.</div>
+          </div>
+        </div>
+        <div class="cap">375px: label above value</div>
+      </div>
     </div>
   </section>
 
-  <!-- ================================================================ 5. MAP -->
+  <!-- ================================================================ 5. TEMPLATE DEFAULTS -->
+  <section id="tpl">
+    <h2><span class="nb">5</span>Company T&amp;C template: Payment Terms and Validity defaults beside it</h2>
+    <p class="why">Project Sales &gt; Quotation Templates, the existing add/edit dialog gains two fields between Name and the
+      terms text. The active template's values prefill every new quotation, the same way its terms text already does.
+      The template list is unchanged.</p>
+    <div class="row">
+      <div class="dlg">
+        <div class="dh">Edit Standard project terms</div>
+        <div class="db">
+          <div><div class="lbl">Name</div><div class="inp">Standard project terms</div></div>
+          <div class="g2" style="gap:12px">
+            <div><div class="lbl">Payment Terms<span class="newtag">NEW</span></div><div class="inp new">30 days from invoice date</div></div>
+            <div><div class="lbl">Validity<span class="newtag">NEW</span></div><div class="inp new">30 days from quotation date</div></div>
+          </div>
+          <div><div class="lbl">Terms</div>
+            <div class="rte"><div class="bar"><span><b>B</b></span><span><i>I</i></span><span>&bull; List</span><span>1. List</span></div>
+              <div class="body"><p><strong>DELIVERY (WITH CONFIRMED FORECAST)</strong></p><p>8 to 10 weeks for vitreous china items</p><p class="gap"></p><p><strong>PRICING</strong></p><ul><li>Prices are in Ringgit Malaysia</li></ul></div></div>
+          </div>
+        </div>
+        <div class="df"><span class="btn">Cancel</span><span class="btn pri">Save</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ 6. MAP -->
   <section id="map">
-    <h2><span class="nb">5</span>What each piece reuses</h2>
+    <h2><span class="nb">6</span>What each piece reuses</h2>
     <table class="map">
       <tr><th>Element</th><th>Reuses (repo path)</th><th>Change</th></tr>
-      <tr><td>Cover page (PDF page 1)</td><td><code>sorento_crm_backend/app/services/project_quotation_pdf_service.py</code> <code>build_issue_html</code>, <code>_STYLE</code>, <code>_cell</code>, <code>_date</code>, <code>_sender</code> letterhead</td><td>New portrait page via a WeasyPrint named <code>@page</code>; price pages keep <code>@page A4 landscape</code></td></tr>
-      <tr><td>Reference No.</td><td><code>quotation_no()</code> in <code>app/services/project_quotation_document_service.py:116</code> + project name</td><td>Same string on cover, price-page header and sign page</td></tr>
-      <tr><td>Date / Attn / Company / Address / Contact</td><td><code>quotation_documents</code> <code>doc_date</code>, <code>attn_name</code>, <code>recipient_name/address/phone_snapshot</code> (<code>app/models/projects.py:1107-1115</code>)</td><td>None; read as today</td></tr>
+      <tr><td>Cover page (PDF page 1)</td><td><code>sorento_crm_backend/app/services/project_quotation_pdf_service.py</code> <code>build_issue_html</code>, <code>_STYLE</code>, <code>_cell</code>, <code>_date</code>, <code>_sender</code> letterhead (as in <code>_header_html</code>)</td><td>New portrait page via a WeasyPrint named <code>@page</code>; price pages keep <code>@page A4 landscape</code></td></tr>
+      <tr><td>Reference No.</td><td><code>quotation_no()</code> in <code>app/services/project_quotation_document_service.py:116</code> + project name</td><td>Same string on cover, price-page header, countersign cover card and its refs card</td></tr>
+      <tr><td>Date / Attn / Company / Add / Contact</td><td><code>quotation_documents</code> <code>doc_date</code>, <code>attn_name</code>, <code>recipient_name/address/phone_snapshot</code> (<code>app/models/projects.py:1107-1115</code>)</td><td>None; read as today</td></tr>
       <tr><td>Email</td><td>Customer main contact <code>CustomerContact.email</code> (<code>app/models/order.py:305</code>), prefilled like phone in <code>QuotationFormClient.tsx:240-250</code></td><td>New snapshot column on the quotation</td></tr>
-      <tr><td>Quotation Purpose, Payment Terms, Validity</td><td><code>Textarea</code> / <code>Input</code> (<code>@/components/ui/textarea</code>, <code>@/components/ui/input</code>) inside the local <code>EditField</code></td><td>Three new free-text columns on the quotation</td></tr>
-      <tr><td>Header tab fields</td><td><code>QuotationDocumentHeader.tsx:186-325</code> (<code>Card</code>, two-column grid, <code>EditField</code> / <code>Field</code>)</td><td>Email under Phone, Purpose under Subject; view page picks them up through <code>QuotationDocumentTabPanels.tsx:21-35</code></td></tr>
+      <tr><td>Quotation Purpose, Payment Terms, Validity</td><td><code>Textarea</code> / <code>Input</code> (<code>@/components/ui/textarea</code>, <code>@/components/ui/input</code>) inside the local <code>EditField</code></td><td>Three new free-text columns on the quotation, copied onto the issue</td></tr>
+      <tr><td>Prepared By</td><td>Project salesperson, the value <code>{{salesperson_name}}</code> already resolves (<code>app/services/project_quotation_template_service.py</code>)</td><td>Read-only on the form; frozen on the issue</td></tr>
+      <tr><td>Header tab fields</td><td><code>QuotationDocumentHeader.tsx:186-325</code> (<code>Card</code>, two-column grid, <code>EditField</code> / <code>Field</code>)</td><td>Email under Phone, Purpose under Subject, Prepared By read-only; view page picks them up through <code>QuotationDocumentTabPanels.tsx:21-35</code></td></tr>
       <tr><td>Terms tab</td><td><code>QuotationLetterPanels.tsx</code> <code>QuotationTermsPanel</code> (:83) + <code>RichTextEditor</code> (<code>@/components/ui/rich-text-editor</code>)</td><td>Payment Terms + Validity inputs above the editor</td></tr>
-      <tr><td>Company T&amp;C template</td><td><code>quotation_templates</code> kind <code>terms</code>, one active per company; copied into a new quotation at <code>QuotationFormClient.tsx:278-286</code></td><td>None to the copy rule (question 2 for the defaults)</td></tr>
+      <tr><td>Countersign cover card</td><td><code>app/(auth)/quotation-sign/[token]/components/QuotationSignClient.tsx</code>: <code>Card</code>/<code>CardContent</code>, the "Quotation from" sender row (:92-107), the label/value row pattern of the refs block (:138-143), <code>sanitizedHtml</code> as in <code>ProsePanel</code> (:185-210)</td><td>New first card in <code>SignPageBody</code> (:778); label stacks above value under 640px</td></tr>
+      <tr><td>Countersign refs card</td><td><code>Letterhead</code> (:81) To block + refs rows</td><td>Quotation No. shows the reference string; sender row moves up to the cover card</td></tr>
+      <tr><td>Countersign terms panel</td><td><code>ProsePanel</code> "Terms and conditions" (:832)</td><td>OPEN A: goes or stays</td></tr>
+      <tr><td>Template defaults</td><td><code>QuotationTemplateDialog.tsx</code> (<code>Input</code> + <code>Label</code> :57-72, <code>RichTextEditor</code>); <code>quotation_templates</code> (<code>app/models/projects.py:1186</code>), one active per company and kind</td><td>Two new columns on the template; the active one prefills a new quotation next to its terms text (<code>QuotationFormClient.tsx:278-286</code>)</td></tr>
       <tr><td>Tabs, page header</td><td><code>@/components/ui/tabs</code> line variant (<code>QuotationFormClient.tsx:80-89</code>), <code>@/components/common/PageHeader</code></td><td>None</td></tr>
-      <tr><td>Sign page reference + terms</td><td><code>app/(auth)/quotation-sign/[token]/components/QuotationSignClient.tsx</code> header block (:137-165) and <code>ProsePanel</code> with <code>sanitizedHtml</code> (:180-210)</td><td>Reference string, two rows, terms through the same structure as the PDF</td></tr>
-      <tr><td>Old issues keep old layout</td><td>Issue snapshot rule (<code>project_quotation_pdf_service.py:13-14</code>)</td><td>New issues stamped with the new layout; older issues re-download exactly as sent</td></tr>
+      <tr><td>Old issues keep old layout</td><td>Issue snapshot rule (<code>project_quotation_pdf_service.py:13-14</code>)</td><td>New issues stamped with the new layout; older issues re-download and re-open exactly as sent</td></tr>
     </table>
   </section>
 
-  <!-- ================================================================ 6. QUESTIONS -->
+  <!-- ================================================================ 7. DECIDED / OPEN -->
   <section id="qs">
-    <h2><span class="nb">6</span>Open questions (also in the crew ask)</h2>
-    <ol class="qs">
-      <li><b>Prepared by.</b> No screen writes the quotation's own signatory name today. (a) the project's salesperson
-        (recommended: already on every project), (b) whoever issues the quotation, (c) a new typed field.</li>
-      <li><b>Where Payment Terms and Validity defaults come from.</b> (a) two fields beside the company T&amp;C template on
-        the Quotation templates page (recommended: one place for all company terms), (b) fixed system-wide text in System settings.</li>
-      <li><b>Letterhead on page 1.</b> The workbook has none. (a) keep the company letterhead on top (shown), (b) rows only.</li>
-    </ol>
+    <h2><span class="nb">7</span>Decided and still open</h2>
+    <ul class="qs">
+      <li><b>Decided:</b> Prepared By = the project's salesperson. Payment Terms and Validity defaults sit beside the company
+        T&amp;C template. The company letterhead stays on page 1.</li>
+    </ul>
+    <p class="why" style="margin-top:14px"><span class="opentag" style="margin-left:0">OPEN A</span> <b>Where the terms print.</b></p>
+    <div class="opt">
+      <div class="o rec"><h4>(a) Page 1 only (shown in this sample)</h4>
+        PDF: terms in the cover page rows, nothing after the price total. Countersign link: terms in the cover card, the bottom
+        terms panel goes; the tick box stays by the signature.
+        <div class="mini"><b>PAGE 1</b> rows ... TERMS &amp; CONDITIONS ... <div class="ln"></div><b>PAGE 2</b> price table, TOTAL AMOUNT, sign-off</div></div>
+      <div class="o"><h4>(b) Page 1 and again after the price table</h4>
+        PDF: terms on page 1 and repeated before the sign-off, as today. Countersign link: terms in the cover card and in the
+        bottom panel by the tick box.
+        <div class="mini"><b>PAGE 1</b> rows ... TERMS &amp; CONDITIONS ... <div class="ln"></div><b>PAGE 2</b> price table, TOTAL AMOUNT, <b>TERMS &amp; CONDITIONS</b>, sign-off</div></div>
+    </div>
+    <p class="why" style="margin-top:14px"><span class="opentag" style="margin-left:0">OPEN B</span> <b>Your Ref (the customer's own reference).</b></p>
+    <div class="opt">
+      <div class="o rec"><h4>(a) Stays (shown in this sample)</h4>
+        Typed on the Header tab and printed in the price-page refs as today. Not a cover page row, and not on the countersign link (it is not there today either).</div>
+      <div class="o"><h4>(b) Goes</h4>
+        Field removed from the Header tab and from the price-page refs; the reference is the only reference anywhere.</div>
+    </div>
   </section>
 </div>
 </body>
