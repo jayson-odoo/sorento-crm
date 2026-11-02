@@ -249,7 +249,8 @@ def test_c5_the_11th_call_in_ten_minutes_is_429_and_it_is_per_user(v2, extracted
         pass
 
 
-def test_c6_a_provider_failure_is_502_with_a_plain_message(v2, monkeypatch, clean_keys):
+def test_c6_a_provider_failure_is_503_with_a_plain_message(v2, monkeypatch, clean_keys):
+    """503, not 502: Cloudflare swaps an origin 502 for its own HTML page (AI-EXTRACT-502)."""
     from app.services.ai_extract import extract_service
 
     class Down:
@@ -260,7 +261,8 @@ def test_c6_a_provider_failure_is_502_with_a_plain_message(v2, monkeypatch, clea
         extract_service.AIExtractService, "_resolve_provider", lambda self: (Down(), "openai", "gpt-4")
     )
     res = _post(v2, v2.owner)
-    assert res.status_code == 502, res.text
+    assert res.status_code == 503, res.text
+    assert res.json()["code"] == "ai_extract_provider_failed"
     assert "zzt-provider-secret-trace" not in res.text
 
 
