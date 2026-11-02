@@ -593,6 +593,8 @@ def get_app_config(
             sample_request_require_project=bool(
                 getattr(settings, "sample_request_require_project", False)
             ),
+            # Same value and fallback as the admin GET above.
+            deferred_delete_seconds=getattr(settings, "deferred_delete_seconds", 10) or 10,
         )
     except Exception as e:
         raise handle_internal_error(str(e))
