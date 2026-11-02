@@ -375,25 +375,32 @@ def _data_strings(data: Any) -> set[str]:
     return found
 
 
-def _data_text_blank(ledger: dict[str, dict] | None) -> Any:
+def _data_text_blank(ledger: dict[str, dict] | None, text: str) -> Any:
     """A function blanking, in an answer, every span that repeats (letter case aside) a string value of
-    one of this turn's ok results (longest first, no overlap): data text is not a figure, so its digits
-    are neither checked nor redacted. None when the turn holds no such value."""
+    one of this turn's ok results (longest first, no overlap), where it stands whole: data text is not a
+    figure, so its digits are neither checked nor redacted. Only strings that occur in `text` are kept.
+    None when the answer repeats none."""
     values: set[str] = set()
     for entry in (ledger or {}).values():
         if entry["status"] == "ok":
             values |= _data_strings(entry["data"])
+    low = text.casefold()
+    values = {v for v in values if v.casefold() in low}
     if not values:
         return None
-    pattern = re.compile("|".join(re.escape(v) for v in sorted(values, key=len, reverse=True)), re.I)
+    alternation = "|".join(re.escape(v) for v in sorted(values, key=len, reverse=True))
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_])(?<!\d[.,])(?:{alternation})(?![A-Za-z0-9_])(?![.,]\d)", re.I
+    )
     return lambda text: pattern.sub(lambda m: " " * len(m.group(0)), text)
 
 
 def _rounded_backed(written: str, backed: set[str]) -> bool:
     """Is the written figure a source number rounded half up to its decimal places? The source must have
-    more places than the figure."""
+    more places than the figure and at least 3 (an unrounded computed number, not a price). A figure
+    with a unit multiplier ("1.2k") is exact only."""
     m = _NUMBER.search(written)
-    if not m:
+    if not m or (m.group("unit") or "").lower() == "k":
         return False
     dec = (m.group("dec") or "")[1:]
     places = len(dec)
@@ -402,7 +409,9 @@ def _rounded_backed(written: str, backed: set[str]) -> bool:
         quantum = Decimal(1).scaleb(-places)
         for src in backed:
             n = Decimal(src)
-            if -n.as_tuple().exponent > places and n.quantize(quantum, rounding=ROUND_HALF_UP) == target:
+            if not n.is_finite():
+                continue
+            if -n.as_tuple().exponent >= max(3, places + 1) and n.quantize(quantum, rounding=ROUND_HALF_UP) == target:
                 return True
     except (InvalidOperation, ValueError):
         return False
@@ -482,7 +491,7 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
             backed |= _number_leaves(entry["data"]) | _column_totals(entry["data"])
     user_forms = _supported_forms([user_text])
     bad_numbers: list[str] = []
-    for _, _, written, forms in _figures(text, _data_text_blank(ledger)):
+    for _, _, written, forms in _figures(text, _data_text_blank(ledger, text)):
         if not _figure_backed(written, forms, backed, user_forms) and written not in bad_numbers:
             bad_numbers.append(written)
     found = _found_ids(ledger)
@@ -529,7 +538,7 @@ def final_reply(
     """The user-facing text of an accepted answer, and whether the model named what it did not check."""
     text, _, _, not_checked = _answer_parts(args)
     if bad_numbers:
-        text = _redact_written(text, set(bad_numbers), _data_text_blank(ledger))
+        text = _redact_written(text, set(bad_numbers), _data_text_blank(ledger, text))
     if bad_not_found:
         text = f"I could not confirm that nothing exists for: {'; '.join(bad_not_found)}. {text}".strip()
     if not_checked:
