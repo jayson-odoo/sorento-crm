@@ -20,6 +20,15 @@ The second reviewer added, all checked: capabilities dropped (its route needs a 
 
 This supersedes below: fact 1's `own_permission` condition (no panel check needed), the operator check, fact 9's project brand denial, and the `combine` and brand refusal on the finds, all removed. Fact 2's labels hold on panel turns only. The `left_out` prompt line must not name these tools on other turns, because it would tell a slug holder "outside access".
 
+## Fix round after crew's browser pass, 2 Nov (a8ce39add7, crew-note 6578564043)
+
+Two of crew's findings are one seam: the agent's figure check (`CHAT/agent/loop.py` `verify_answer` and `_redact_written`, shared by every agent turn, not only the panel). It is for numbers the model states; it must never touch text that came from the data.
+
+- **F1, digits inside data text.** A project title "ZZT browser 1613 recheck" showed as "ZZT browser (not verified) recheck" (trace `unbacked_numbers: ["1613"]`). Cause: `_NOT_FIGURE_KEYS` (`loop.py:256`) keeps `name`, `title`, `label` and the like from backing a figure, on purpose ("Basin 600" is not 600 units), so the title's own digits were checked against nothing. Rule: a span of the answer that repeats, letter case aside, a string value from one of this turn's ok results that holds both a letter and a digit (3 characters or more) is data text, not a figure: its digits are neither checked nor redacted. Both `verify_answer` and `_redact_written` skip the same spans, so a bad "1613" elsewhere never redacts the title's. The key rule stays: such a value still never backs a figure elsewhere in the answer.
+- **F2, rounded figures.** The SLA rate and both averages showed "(not verified)": `get_dashboard_metrics` (`app/services/sla_service.py`) returns unrounded floats, and the check accepts an exact match only. Rule: a written figure is backed when a number in this turn's ok results (a value or a column total), rounded half up to the written figure's decimal places, equals it, and the source has more decimal places than the written figure. 3.456789 backs 3.46, 3.5 and 3, never 3.45 or 4; a whole 12 never backs 12.3. The user's own figures stay exact.
+- **Changes off the panel too, in the safe direction only:** fewer false "(not verified)" on WhatsApp and console agent turns. Nothing new is backed that a person could not read off the result.
+- **Waiting on crew's traces (crew-data-request, 2 Nov):** step 2 (complaint answer without its customer), step 10 (the reply said "I have created a draft" before Confirm), step 5's input-token limit (whether the reply named the 2 stages it skipped). The `proposed` message to the model stays as it is for every write (AC-RC-12, `test_agent_ideas_review.py:739`), so a step 10 fix is local to the ticket.
+
 ## ARCHITECTURE
 
 - **Layer.** Reads are rows in `REGISTRY` (`CHAT/agent/tools.py:69`), the one table of MCP reads, dispatched by `_dispatch_inner` (`:961`). Writes are `WriteDef`s in `WRITES` (`CHAT/agent/writes.py:283`), the one write path. No new registry, no new lane, no parser domain, no router text, no MCP tool.
