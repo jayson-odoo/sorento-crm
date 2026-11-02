@@ -1372,3 +1372,46 @@ def test_ac6_lookup_resolve_body_pair_is_403_and_a_blank_body_pair_passes(env):
     paired = env.client.post(path, json={**base, "contact_id": rid, "space_id": space}, headers=env.ident(staff))
     assert paired.status_code == 403, f"AC-6: body pair with the header got {paired.status_code}"
     assert INVALID_CODE in paired.text
+
+
+# =========================================================================== #
+# PR 4 H3  a staff report read has no contact, so no location policy to cap it #
+# Plan: PLAN-agentic-unify-tools-1nov.md, "Review of the post-READY should-fixes", H3.   #
+# =========================================================================== #
+def _staff_report(env, basis, *, seed):
+    """A superadmin on Sorento reads the report ask with the blank pair; `seed` adds its own chain first."""
+    from decimal import Decimal
+
+    from tests._report_ask_so_seed import seed_so_line
+    from tests._sales_report_do_seed import seed_customer
+
+    staff = mk_user(env.db, "h3staff", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO)
+    cust = seed_customer(env.db, name=unique_code("Cust"))
+    prod = product(env.db, company_id=SORENTO)
+    seed_so_line(env.db, cust=cust, prod=prod, qty=3, total="1234.50", order_date=date(2026, 9, 10),
+                 company_id=SORENTO, **seed)
+    env.db.commit()
+    resp = env.client.get(
+        "/api/v1/order-management/report-ask",
+        params={"contact_id": "", "space_id": "", "basis": basis, "date_from": "2026-09-01", "date_to": "2026-09-30"},
+        headers=env.ident(staff),
+    )
+    assert resp.status_code == 200, resp.text[:300]
+    return resp.json(), Decimal("1234.50")
+
+
+def test_h3_a_staff_ordered_read_totals_the_seeded_line(env):
+    body, amount = _staff_report(env, "ordered", seed={"delivered": 0})
+    assert body["total"]["amount"] and float(body["total"]["amount"]) == float(amount), body["total"]
+
+
+def test_h3_a_staff_delivered_read_totals_the_seeded_line(env):
+    """Delivered is the same SO line, fully delivered (the seed's default). Invoiced needs a billing chain
+    no helper seeds cheaply, so it is not repeated here."""
+    body, amount = _staff_report(env, "delivered", seed={})
+    assert body["total"]["amount"] and float(body["total"]["amount"]) == float(amount), body["total"]
+
+
+def test_h3_a_staff_outstanding_read_is_not_empty_for_an_open_line(env):
+    body, amount = _staff_report(env, "outstanding", seed={"delivered": 0})
+    assert body["total"]["amount"] and float(body["total"]["amount"]) == float(amount), body["total"]
