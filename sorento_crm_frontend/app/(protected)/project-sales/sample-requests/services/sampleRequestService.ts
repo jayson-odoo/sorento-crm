@@ -4,6 +4,7 @@ import { saveBlobAs } from '@/lib/save-blob';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   SampleRequestError,
+  type SampleRequestConsignmentHit,
   type SampleRequestDetail,
   type SampleRequestPage,
   type SampleRequestProductHit,
@@ -19,6 +20,8 @@ const BASE = '/api/v1/project-sales';
 export type SampleRequestListParams = DataGridApiFetchParams & {
   /** Comma list of status keys; empty means the server default (open requests). */
   status?: string;
+  /** Comma list of stages (`processing`, `delivery`); replaces the open-set default. */
+  stage?: string;
   projectId?: string;
   salespersonId?: string;
 };
@@ -52,6 +55,7 @@ export async function getSampleRequests(params: SampleRequestListParams): Promis
     {
       q: params.searchQuery,
       status: params.status,
+      stage: params.stage,
       project_id: params.projectId,
       salesperson_id: params.salespersonId,
     },
@@ -103,6 +107,52 @@ export interface SampleRequestMoveBody {
   to: SampleRequestStatus;
   date?: string;
   reason?: string;
+  /** Start processing only: can the requested delivery date be met (PS-SAMPLE-TRACKING). */
+  date_feasible?: boolean;
+  proposed_delivery_date?: string;
+  date_note?: string;
+}
+
+export interface SampleRequestDateAnswerBody {
+  date_feasible: boolean;
+  proposed_delivery_date?: string | null;
+  date_note?: string | null;
+}
+
+/** Stage 2: the live consignments of the company the sample team can link. */
+export async function searchSampleRequestConsignments(
+  id: string,
+  q: string,
+): Promise<SampleRequestConsignmentHit[]> {
+  const qs = q ? `?q=${encodeURIComponent(q)}` : '';
+  const res = await apiFetch(
+    `${BASE}/sample-requests/${encodeURIComponent(id)}/consignments${qs}`,
+  );
+  return read<SampleRequestConsignmentHit[]>(res, 'Failed to search consignments');
+}
+
+/** Stage 2: link the consignment that delivers the request (null unlinks). */
+export async function linkSampleRequestConsignment(
+  id: string,
+  consignmentOrderId: string | null,
+): Promise<SampleRequestDetail> {
+  const res = await apiFetch(`${BASE}/sample-requests/${encodeURIComponent(id)}/consignment`, {
+    method: 'PUT',
+    body: JSON.stringify({ consignment_order_id: consignmentOrderId }),
+  });
+  return read<SampleRequestDetail>(res, 'Failed to link the consignment');
+}
+
+/** Change the date answer while the request is being processed. */
+export async function answerSampleRequestDate(
+  id: string,
+  body: SampleRequestDateAnswerBody,
+): Promise<SampleRequestDetail> {
+  const res = await apiFetch(`${BASE}/sample-requests/${encodeURIComponent(id)}/date-answer`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  return read<SampleRequestDetail>(res, 'Failed to save the date answer');
 }
 
 export async function moveSampleRequest(

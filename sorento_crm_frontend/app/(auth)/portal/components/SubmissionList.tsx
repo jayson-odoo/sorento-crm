@@ -41,7 +41,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import type { ListBoardViewMode } from '@/hooks/useListBoardViewPreference';
-import { formatCurrency } from '@/lib/helpers';
+import { formatCurrency, formatDateInMalaysia } from '@/lib/helpers';
 import {
   complaintStatusLabel,
   complaintStatusPillClass,
@@ -704,6 +704,8 @@ function submissionTableColumns(
   // the field (today, price_tag_request only) - a synthetic descriptor for
   // every other kind gave every list a permanently blank "Need by" column.
   const needByField = fields.find((f) => f.key === 'needed_by_date');
+  // PS-SAMPLE-TRACKING: sample requests only.
+  const deliveryField = fields.find((f) => f.key === 'delivery_date');
 
   const dateCell = (value: string | null | undefined) =>
     value ? (
@@ -772,6 +774,17 @@ function submissionTableColumns(
           } satisfies ColumnDef<PortalSubmissionSummary>,
         ]
       : []),
+    ...(deliveryField
+      ? [
+          {
+            accessorKey: 'delivery_date',
+            header: header(deliveryField),
+            cell: ({ row }) => <DeliveryDate row={row.original} />,
+            size: 150,
+            minSize: 110,
+          } satisfies ColumnDef<PortalSubmissionSummary>,
+        ]
+      : []),
     {
       accessorKey: 'created_at',
       header: header(createdField),
@@ -781,6 +794,17 @@ function submissionTableColumns(
     },
   ];
   return columns;
+}
+
+/** A sample request's delivery date, flagged when it is the sample team's proposed one. */
+function DeliveryDate({ row }: { row: PortalSubmissionSummary }) {
+  if (!row.delivery_date) return <span className="text-muted-foreground">-</span>;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span className="tabular-nums">{formatDateInMalaysia(row.delivery_date)}</span>
+      {row.delivery_date_is_new && <Badge variant="warning">New date</Badge>}
+    </span>
+  );
 }
 
 function SubmissionTable({
@@ -934,6 +958,12 @@ function SubmissionCard({
             ).toLocaleDateString('en-GB', {
               dateStyle: 'medium',
             })}
+          </p>
+        )}
+        {row.delivery_date && (
+          <p className="text-sm text-foreground/80">
+            <span className="text-muted-foreground">Delivery: </span>
+            <DeliveryDate row={row} />
           </p>
         )}
         {row.needed_by_date && (

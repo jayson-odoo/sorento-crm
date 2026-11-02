@@ -118,6 +118,22 @@ class SampleRequest(Base, CompanyScopedMixin):
     consignment_no = Column(String(80), nullable=True)
     po_no = Column(String(80), nullable=True)
 
+    #: PS-SAMPLE-TRACKING Stage 1: the sample team's answer to "can we meet `delivery_date`?",
+    #: given on Start processing. NULL = not asked (no requested date) or not answered yet.
+    date_feasible = Column(Boolean, nullable=True)
+    #: The team's date when it cannot meet the requested one (NULL when `date_feasible`).
+    proposed_delivery_date = Column(Date, nullable=True)
+    date_note = Column(String(255), nullable=True)
+    date_answered_at = Column(DateTime(timezone=False), nullable=True)
+    date_answered_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: PS-SAMPLE-TRACKING Stage 2: the AutoCount consignment (CG) the sample team linked as the
+    #: delivery. Chosen explicitly, never matched from `consignment_no` text (owner, 2 Nov).
+    consignment_order_id = Column(
+        UUID(as_uuid=False), ForeignKey("sales_orders.id", ondelete="SET NULL"), nullable=True
+    )
+
     submitted_at = Column(DateTime(timezone=False), nullable=True)
     confirmed_at = Column(Date, nullable=True)
     delivered_at = Column(Date, nullable=True)
@@ -155,6 +171,7 @@ class SampleRequest(Base, CompanyScopedMixin):
         Index("ix_sample_requests_project", "project_id"),
         Index("ix_sample_requests_salesperson", "salesperson_id"),
         Index("ix_sample_requests_contact", "contact_id"),
+        Index("ix_sample_requests_consignment_order", "consignment_order_id"),
         {"schema": "projects"},
     )
 
@@ -220,3 +237,13 @@ def _stamp_request_no(_mapper, connection, target) -> None:
     if getattr(target, "request_no", None):
         return
     target.request_no = next_request_no(connection, target.company_id)
+
+
+# PS-SAMPLE-TRACKING (crew browser pass): the audit trail shows values, never ids. Who answered
+# the date is the audit row's own actor, and the linked consignment shows as its number through
+# `consignment_no`, so the two id columns stay out of the trail.
+SampleRequest.__audit_columns__ = [
+    c.key
+    for c in SampleRequest.__table__.columns
+    if c.key not in ("date_answered_by", "consignment_order_id")
+]
