@@ -1500,7 +1500,7 @@ def test_at34_a_brand_answer_keeps_a_held_account_filter(bot, seeded, answer) ->
         reply = _reply(domain_hint=None, intent_hint=None, entities=[_word(kind_said="brand")])
     text, calls = bot.say(reply, "brand")
     args = _only_report_ask(calls)
-    assert args["brand_ids"] == [seeded["CABANA"]] and args["account_types"] == ["3"], args
+    assert args.get("brand_ids") == [seeded["CABANA"]] and args["account_types"] == ["3"], args
 
 
 def test_at34_an_account_answer_keeps_a_held_brand(bot) -> None:
@@ -1530,7 +1530,7 @@ def test_at21_a_second_filter_of_the_first_message_survives_a_type_beside_the_br
     assert calls == [] and text.strip() == QUESTION, (text, calls)
     text, calls = bot.say(_pick(1), "brand")
     args = _only_report_ask(calls)
-    assert args["brand_ids"] == [seeded["CABANA"]] and args["account_types"] == ["CERAMIC"], args
+    assert args.get("brand_ids") == [seeded["CABANA"]] and args["account_types"] == ["CERAMIC"], args
 
 
 def test_at35_a_company_picked_at_the_question_narrows_the_book(bot, seeded) -> None:
@@ -1679,3 +1679,54 @@ def test_at_split_by_account_type_with_the_kind_word_as_an_entity_runs_the_split
     value = _word("4", "account_type", None, "account type")
     text, calls = bot.say(_sales(value), "account type 4 sales in Jan")
     assert _only_report_ask(calls)["account_types"] == ["4"], calls
+
+
+# ============================================================================================= round 5
+
+
+def _kind_entity(kind: str, hint: str) -> dict[str, Any]:
+    """The kind word itself as the live parser sends it for an answer: raw = kind_said = the kind."""
+    return _word(kind, hint, None, kind)
+
+
+def _answer_with_kind_entity(kind: str, hint: str, **over: Any) -> dict[str, Any]:
+    return _reply(domain_hint=None, intent_hint=None, entities=[_kind_entity(kind, hint)], entity_op="reuse", **over)
+
+
+def test_at21_kind_word_entity_as_the_answer_is_the_pick(bot, seeded) -> None:
+    _open_agent(bot)
+    text, calls = bot.say(_answer_with_kind_entity("brand", "brand"), "brand")
+    args = _only_report_ask(calls)
+    assert args.get("brand_ids") == [seeded["CABANA"]] and "account_types" not in args, args
+    assert args["sales_agent_ids"] == [bot.ids["agent"]], args
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-01-31", args
+    assert not args.get("group_by"), args
+
+
+def test_at21_kind_word_entity_beside_a_declared_pick_is_the_pick(bot, seeded) -> None:
+    _open_agent(bot)
+    verdict = _answer_with_kind_entity(
+        "brand", "brand", open_question_answer={"mode": "pick", "picked": [1], "items": [], "qty_for_all": None}
+    )
+    text, calls = bot.say(verdict, "brand")
+    args = _only_report_ask(calls)
+    assert args.get("brand_ids") == [seeded["CABANA"]] and "account_types" not in args, args
+    assert args["sales_agent_ids"] == [bot.ids["agent"]], args
+
+
+def test_at21_account_type_kind_word_entity_as_the_answer_runs_the_account_filter(bot, seeded) -> None:
+    """Control: must stay green."""
+    _open_agent(bot)
+    text, calls = bot.say(_answer_with_kind_entity("account type", "account_type"), "account type")
+    args = _only_report_ask(calls)
+    assert args["account_types"] == ["CABANA"] and "brand_ids" not in args, args
+    assert args["sales_agent_ids"] == [bot.ids["agent"]], args
+
+
+def test_at35_e_followup_naming_a_type_word_only_the_other_company_stores_asks_the_company(bot) -> None:
+    """Only a NUMBER names no company; a type WORD may be a type in the other company, so the held company is not kept."""
+    sorento, mocha = _brand_here_type_there(bot)
+    _held_default_total(bot, sorento)
+    follow = _sales(_word("cabana", "account_type", None, "account"), ranking_refine=False, entity_op="reuse")
+    text, calls = bot.say(follow, "and cabana account")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
