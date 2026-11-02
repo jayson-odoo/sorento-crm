@@ -310,6 +310,8 @@ def test_api_response_masks_selling_price_for_flagged_brand(db):
     rb = PromotionProductResponse.model_validate(db.get(PromotionProduct, b.id))
 
     assert (ra.promotion_price, ra.discount_amount, ra.discount_percent) == (None, None, None)
+    assert ra.no_selling_price is True
+    assert rb.no_selling_price is False
     assert rb.promotion_price == Decimal("800.00")
     assert rb.discount_percent == Decimal("20.00")
 
@@ -465,8 +467,10 @@ def test_promotion_detail_masks_flagged_lines_on_the_nested_path(db):
         for x in collection:
             if x.id in flagged_ids:
                 assert (x.promotion_price, x.discount_amount, x.discount_percent) == (None, None, None)
+                assert x.no_selling_price is True
             else:
                 assert x.promotion_price == Decimal("800.00")
+                assert x.no_selling_price is False
     # Masked on the response only: the stored row is untouched and nothing is dirty.
     assert not db.dirty
     db.expire_all()

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { displayPromoPrice } from '../lib/promoPrice';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Edit, Trash2, Plus, ExternalLink, Layers, ChevronDown } from 'lucide-react';
@@ -140,6 +141,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     id: string;
     product_id: string;
     promotion_price: number | null;
+    no_selling_price?: boolean;
     dealer_discount_percent: number | null;
     list_price: number | null;
   } | null>(null);
@@ -274,6 +276,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     id: string;
     product_id: string;
     promotion_price: number | null;
+    no_selling_price?: boolean;
     dealer_discount_percent: number | null;
     list_price: number | null;
   }) => {
@@ -441,7 +444,9 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
 
   const renderProductRow = (pp: PromotionProduct) => {
     const listPrice = Number(pp.product?.list_price) || 0;
-    const promoPrice = Number(pp.promotion_price) || listPrice;
+    const noSellingPrice = pp.no_selling_price === true;
+    const shownPromoPrice = displayPromoPrice(pp);
+    const promoPrice = shownPromoPrice ?? listPrice;
     const discount = listPrice - promoPrice;
     const discountPercent = listPrice > 0 ? (discount / listPrice) * 100 : 0;
 
@@ -470,7 +475,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           ) : null}
         </td>
         <td className="p-2 text-sm text-right">{fmtMoney(listPrice)}</td>
-        <td className="p-2 text-sm text-right">{fmtMoney(promoPrice)}</td>
+        <td className="p-2 text-sm text-right">{shownPromoPrice === null ? '-' : fmtMoney(shownPromoPrice)}</td>
         <td className="p-2 text-sm text-right">
           {discount > 0 ? <Badge variant="success">{fmtMoney(discount)}</Badge> : '-'}
         </td>
@@ -493,6 +498,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                   id: pp.id,
                   product_id: pp.product_id,
                   promotion_price: pp.promotion_price ?? null,
+                  no_selling_price: noSellingPrice,
                   dealer_discount_percent: pp.dealer_discount_percent ?? null,
                   list_price:
                     pp.product?.list_price != null ? Number(pp.product.list_price) : null,
@@ -1073,16 +1079,18 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                     error={priceErrorsShown ? numberFieldError(listPriceInput, { min: 0 }) : undefined}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>Promotion price (selling) *</Label>
-                  <NumberInput
-                    step="0.01"
-                    placeholder="Enter promotion price"
-                    value={promotionPrice}
-                    onChange={(e) => setPromotionPrice(e.target.value)}
-                    error={priceErrorsShown ? numberFieldError(promotionPrice, { min: 0, optional: true }) : undefined}
-                  />
-                </div>
+                {!editingProduct.no_selling_price && (
+                  <div className="space-y-2">
+                    <Label>Promotion price (selling)</Label>
+                    <NumberInput
+                      step="0.01"
+                      placeholder="Enter promotion price"
+                      value={promotionPrice}
+                      onChange={(e) => setPromotionPrice(e.target.value)}
+                      error={priceErrorsShown ? numberFieldError(promotionPrice, { min: 0, optional: true }) : undefined}
+                    />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label>Dealer discount (% off list)</Label>
                   <NumberInput

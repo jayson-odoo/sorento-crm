@@ -439,6 +439,9 @@ class PromotionProductResponse(BaseModel):
     promotion_type_name: Optional[str] = None
     # The parent promotion has ended and its TYPE says it still applies.
     expired_but_usable: bool = False
+    # CABANA-NO-SELLING-PRICE: the product's brand carries no promotion selling price, so
+    # the price and discount above are always null and a reader shows none (not list price).
+    no_selling_price: bool = False
 
     @field_validator("id", "promotion_id", "promotion_group_id", "product_id", "company_id", mode="before")
     @classmethod
@@ -457,6 +460,7 @@ class PromotionProductResponse(BaseModel):
             result.promotion_price = None
             result.discount_amount = None
             result.discount_percent = None
+            result.no_selling_price = True
         return result
 
     class Config:
@@ -491,6 +495,7 @@ class PromotionProductResponse(BaseModel):
             if brand_has_no_selling_price(product_obj):
                 # The dict path skips the wrap validator's ORM check: mask here too.
                 data['promotion_price'] = data['discount_amount'] = data['discount_percent'] = None
+                data['no_selling_price'] = True
             return cls(**data)
         return super().model_validate(obj, **kwargs)
 
