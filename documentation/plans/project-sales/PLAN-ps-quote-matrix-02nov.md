@@ -15,7 +15,7 @@ leave a feedback note on an item or a cell, which the salesperson reads and acts
 ## Slices (one branch, one PR)
 1. **Data** (migration `pqm_0001_quote_matrix`, after #2097's `ppq_0001`): `quotation_versions.matrix_columns`
    JSONB NULL, `quotation_lines.qty_cells` JSONB NULL, `quotation_amendment_request_rows` + `cell_key`, `note`,
-   `handled_at`, `handled_by` (all NULL).
+   `hint_text`, `handled_at`, `handled_by` (all NULL).
    Model + schema fields; `qty_cells` in `LINE_FIELDS`, `copy_line`; `matrix_columns` in revise and make-quotation
    version copies.
 2. **BE engine** (one pure module, `app/services/quotation_matrix.py`): validate columns (keys unique, labels

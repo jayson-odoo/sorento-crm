@@ -113,7 +113,8 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
 
 **Customer feedback (owner Q4 + note 5: per item AND per cell, no accept / reject)**
 19. On the sign page the customer can leave a feedback note on a whole item or on one cell (tap the cell). A note may
-    carry an optional hint: suggested quantity (item or cell), suggested price (item), or "remove this item". Scopes
+    carry an optional hint: suggested quantity (item or cell), suggested price (item), "remove this item", or another
+    model at a price (model swap by price: model name or code as typed, plus a price; item only). Scopes
     without columns: item notes as today's per-line suggestions, plus the free note.
 20. Nothing is accepted, rejected or applied. The salesperson sees a **Customer feedback** tab: each note with where it
     points (scope, item, cell), the hint next to today's value, and "Show in Lines". The only action is **Handled**
@@ -123,7 +124,8 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
     flow). Issuing a revision does not close notes; they stay until ticked handled.
 22. Data: the existing `QuotationAmendmentRequestRow` becomes a feedback row: add `cell_key` (nullable) and `note`
     (text); `handled_at` / `handled_by` replace the pending / accepted / rejected decision; `field` gains `note`
-    (a note without a hint). Apply (`apply_request`), the decision endpoints and the Accept / Reject UI are retired.
+    (a note without a hint) and `model_swap` (hint text in a new `hint_text` VARCHAR(200) NULL, price in the
+    existing value column). Apply (`apply_request`), the decision endpoints and the Accept / Reject UI are retired.
     Existing rows read as open feedback with their value as the hint; existing decided rows read as handled.
 
 **Out of scope (owner: no import)**
@@ -174,7 +176,7 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
 - `projects.quotation_versions.matrix_columns` JSONB NULL: `[{"key", "label", "cols": [{"key", "label"}]}]`.
   NULL or `[]` = no columns (today).
 - `projects.quotation_lines.qty_cells` JSONB NULL: `{"<shoulder key, or header key for a one-column header>": "<decimal>"}`.
-- `projects.quotation_amendment_request_rows`: `cell_key` VARCHAR(40) NULL, `note` TEXT NULL, `handled_at` TIMESTAMP
+- `projects.quotation_amendment_request_rows`: `cell_key` VARCHAR(40) NULL, `note` TEXT NULL, `hint_text` VARCHAR(200) NULL, `handled_at` TIMESTAMP
   NULL, `handled_by` FK users NULL (rule 22). The decision column is left in place, no longer written.
 - `quantity` stays and is derived from the cells when columns exist (rule 6). The line field joins `LINE_FIELDS` and
   `copy_line`; the version field joins the revise and make-quotation copies. Issues point at versions, so nothing new
@@ -183,6 +185,5 @@ reachable from this cloud sandbox, so the examples are the workbook's own shapes
 
 ## Questions left
 
-- Q6. The customer's feedback note may carry an optional hint (suggested quantity / price / remove), shown next to
-  today's value. (a) keep the optional hints; (b) free text only. **Recommend (a)**: "140" next to "now 133" is faster
-  to act on than reading it out of a sentence, and today's sign page already collects these values.
+None. Q6 answered by crew (2 Nov): (a) keep the optional hints (qty per item / cell, price, remove, model swap by
+price), shown next to today's value; nothing is ever accepted or applied.
