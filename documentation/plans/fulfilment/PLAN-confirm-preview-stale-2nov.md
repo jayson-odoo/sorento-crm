@@ -79,6 +79,10 @@ ruling 14 Sep, `project_supply_service.py:518-543`, `_facts_for` `:9766`), so th
 Confirm (pin: `test_a_delivered_line_s_saved_buy_on_a_plain_confirm_reaches_purchasing`). So no
 engine change: the sheet's F28 note was the only wrong part and is removed; the row prints the
 saved decision's words. The crew ruling "a Buy on a delivered line keeps the skip" rested on my
-earlier reading of the skip and is moot: the engine never skipped it. Own-bin Borrow emailing
-purchasing (owner, 2 Nov) is an engine rule `_borrow_shortfalls` does not apply today (own
-location is never a hole); not in this lane.
+earlier reading of the skip and is moot: the engine never skipped it. A Borrow on a delivered
+line raises its ORDER_BACK too (pin: `test_a_delivered_line_s_saved_borrow_on_a_plain_confirm_
+raises_its_order_back`): with "Borrow from another order" OFF (the default) `_location_order_backs`
+owes a borrow back on the borrowing line, its own location included. Only with that switch ON does
+an own-bin or own-group Borrow raise nothing (`_borrow_shortfalls`, "own location is never a
+hole"), delivered or not; whether the owner's 2 Nov ruling ("own-bin borrow emails purchasing")
+must hold with the switch ON too is a separate question, not this lane.
