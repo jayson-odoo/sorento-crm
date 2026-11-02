@@ -1126,6 +1126,12 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     cover_letter_html = Column(Text, nullable=True)
     terms_html = Column(Text, nullable=True)
 
+    # PS-SPEC-SHEET: the spec sheet's settings (templates, revision printed, and per item the page
+    # order, Area, Comment, Marker, Hide and hand-picked accessories). Keyed by product id or
+    # ``set:<id>`` rather than by line id, so they survive a new revision. Shape and validation in
+    # ``project_spec_sheet_service``. NULL = never set up.
+    spec_sheet = Column(JSONB(none_as_null=True), nullable=True)
+
     signatory_name = Column(String(120), nullable=True)
     signatory_phone = Column(String(60), nullable=True)
     # The internal signature held on the DRAFT, so signing and issuing are separate acts: a person

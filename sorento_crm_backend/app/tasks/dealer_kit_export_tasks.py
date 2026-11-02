@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Optional
 
 from app.config import settings
 from app.database import SessionLocal
@@ -73,7 +74,13 @@ def _tag_sheet_print_url(
     return url
 
 
-def _render_pdf(url: str, *, landscape: bool, paper: str) -> bytes:
+def _render_pdf(
+    url: str,
+    *,
+    landscape: bool,
+    paper: str,
+    size_mm: Optional[tuple[float, float]] = None,
+) -> bytes:
     """Render in a freshly SPAWNED subprocess, never in this process.
 
     RQ forks a work-horse per job, and driving Playwright's sync API inside that
@@ -100,6 +107,10 @@ def _render_pdf(url: str, *, landscape: bool, paper: str) -> bytes:
         ]
         if landscape:
             command.append("--landscape")
+        # PS-SPEC-SHEET: an explicit page size (mm) instead of the paper. Absent for every
+        # catalogue and tag sheet, whose commands are exactly what they were.
+        if size_mm is not None:
+            command += ["--width-mm", str(size_mm[0]), "--height-mm", str(size_mm[1])]
 
         result = subprocess.run(
             command,
@@ -252,6 +263,63 @@ def generate_tag_sheet_pdf(
             logger.exception(
                 "generate_tag_sheet_pdf: could not mark download %s failed",
                 download_id,
+            )
+        return {"download_id": download_id, "status": "failed", "error": str(exc)}
+    finally:
+        db.close()
+
+
+def generate_spec_sheet_pdf(download_id: str) -> dict:
+    """Render a project spec sheet (PS-SPEC-SHEET) behind ``download_id`` to PDF and store it.
+
+    The same print page and renderer as a tag sheet: the public payload route answers this
+    download's kind with the spec sheet's sheets. The page size is the templates' own (16:9 in
+    the owner's sample), passed to Chromium explicitly; nothing else about the tag sheet path
+    changes.
+    """
+    from app.models.base import company_scope
+    from app.models.download import UserDownload
+    from app.services import project_spec_sheet_service as spec
+
+    db = SessionLocal()
+    svc = DownloadService(db)
+    try:
+        svc.mark_processing(download_id)
+        with company_scope(db, None):
+            download = db.query(UserDownload).filter(UserDownload.id == download_id).first()
+        if download is None:
+            raise RuntimeError("download row not found")
+        payload = spec.print_payload_for_download(db, download)
+        size = payload["page_size"]
+
+        pdf_bytes = _render_pdf(
+            _tag_sheet_print_url(download_id),
+            landscape=False,
+            paper="A4",
+            size_mm=(size["width_mm"], size["height_mm"]),
+        )
+        filename = download.filename or f"spec-sheet-{download_id}.pdf"
+        provider = default_provider()
+        backend = get_backend(provider)
+        stored_key, _signed = backend.upload_file(
+            file_content=pdf_bytes,
+            file_path=f"exports/quotation-spec-sheet/{download_id}/{filename}",
+            content_type="application/pdf",
+        )
+        svc.mark_ready(
+            download_id,
+            storage_provider=provider,
+            storage_key=stored_key,
+            filename=filename,
+        )
+        return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
+    except Exception as exc:  # noqa: BLE001 - mark failed, never poison the queue
+        logger.exception("generate_spec_sheet_pdf failed for download %s", download_id)
+        try:
+            svc.mark_failed(download_id, str(exc))
+        except Exception:
+            logger.exception(
+                "generate_spec_sheet_pdf: could not mark download %s failed", download_id
             )
         return {"download_id": download_id, "status": "failed", "error": str(exc)}
     finally:

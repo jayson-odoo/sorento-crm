@@ -241,12 +241,12 @@ def test_latest_issue_is_the_default_and_no_issue_means_no_pages():
     from app.services import project_spec_sheet_service as spec
 
     with blank_session() as db:
-        env = _setup(db)
-        document = _document(db, env)
-        assert spec.issue_for(db, document) is None
-
         c = _chain(db)
         assert spec.issue_for(db, c["document"]).id == c["issue"].id
+
+        unissued = _document(db, c)
+        assert spec.issue_for(db, unissued) is None
+        assert spec.pages(db, unissued, None) == []
 
 
 # ------------------------------------------------------------------ settings (rules 4a, 12, 13)
