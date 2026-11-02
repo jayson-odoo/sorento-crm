@@ -48,8 +48,6 @@ interface Props {
    * every pin as live.
    */
   currentRound?: number;
-  /** PRICETAG-SELF-APPROVAL: the salesperson's own proof, nothing for marketing to claim. */
-  withSalesperson?: boolean;
 }
 
 export default function RequestDesignSection({
@@ -58,7 +56,6 @@ export default function RequestDesignSection({
   tagLabels,
   onCommentsChange,
   currentRound,
-  withSalesperson = false,
 }: Props) {
   const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -205,11 +202,7 @@ export default function RequestDesignSection({
         payload={payload}
         loading={loading}
         emptyMessage="No design yet"
-        emptyHint={
-          withSalesperson
-            ? 'With the salesperson for approval.'
-            : 'Claim the request and open the designer to draw the tags.'
-        }
+        emptyHint="Claim the request and open the designer to draw the tags."
         review={{ comments, drafts: [], currentRound }}
         footer={footer}
         headerActions={

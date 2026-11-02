@@ -943,7 +943,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
             tagLabels={tagLabels}
             onCommentsChange={setReviewComments}
             currentRound={request.review_round}
-            withSalesperson={request.status === 'proof_ready' && !request.assigned_to_id}
           />
 
           <Card>
