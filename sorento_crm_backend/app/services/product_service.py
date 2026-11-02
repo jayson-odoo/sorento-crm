@@ -2674,6 +2674,7 @@ class BrandService:
                 "flows_to_purchasing": b.flows_to_purchasing,
                 "chatbot_weight": float(b.chatbot_weight or 0),
                 "is_searchable": b.is_searchable,
+                "no_promo_selling_price": b.no_promo_selling_price,
                 "dealer_company_id": b.dealer_company_id,
                 "dealer_company_name": dealer_names.get(str(b.dealer_company_id)) if b.dealer_company_id else None,
                 "created_at": b.created_at,
