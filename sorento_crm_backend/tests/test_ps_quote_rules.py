@@ -704,3 +704,74 @@ def test_only_a_manager_may_set_the_project_override():
             permissions=EVERYTHING,
         )
         assert project.discount_approver_user_id == ck
+
+
+# ------------------------------------------------- security review: nobody decides their own
+
+
+def _own_request_refused(db, document, actor) -> None:
+    from app.services import project_quotation_approval_service as approval
+
+    with pytest.raises(AppException) as refused:
+        approval.approve(db, document=document, actor_user_id=actor, permissions=EVERYTHING)
+    assert refused.value.status_code == 403
+    assert refused.value.detail["code"] == "quotation_approval_own_request"
+
+
+def test_a_manager_who_routes_their_own_project_to_a_subordinate_cannot_approve_it():
+    with blank_session() as db:
+        _, owner, product, project, document, scope = _setup(db)
+        manager = _approver(db, "Manager")
+        subordinate = _approver(db, "Subordinate", superior=manager)
+        project.owner_user_id = manager
+        project.discount_approver_user_id = subordinate
+        db.flush()
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        _ask(db, document, manager)
+        assert document.approver_user_id == subordinate
+        _own_request_refused(db, document, manager)
+
+
+def test_a_superior_loop_does_not_let_the_requester_approve():
+    from app.models.user import User
+
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        rep = _approver(db, "Rep")
+        boss = _approver(db, "Boss", superior=rep)
+        db.query(User).filter(User.id == rep).update({"superior_id": boss})
+        db.query(User).filter(User.id == owner).update({"superior_id": boss})
+        db.flush()
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        _ask(db, document, rep)
+        assert document.approver_user_id == boss
+        _own_request_refused(db, document, rep)
+
+
+def test_an_admin_cannot_approve_their_own_request():
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        org = _org(db, owner)
+        admin = _admin(db)
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        _ask(db, document, admin)
+        assert document.approver_user_id == org["south"]
+        _own_request_refused(db, document, admin)
+
+
+def test_a_routed_request_whose_approver_was_deleted_goes_to_an_admin_not_to_every_holder():
+    from app.services import project_quotation_approval_service as approval
+
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        _org(db, owner)
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        _ask(db, document, owner)
+        document.approver_user_id = None  # what ON DELETE SET NULL leaves behind
+        db.flush()
+        anyone = _approver(db, "Any Holder")
+        with pytest.raises(AppException) as refused:
+            approval.approve(db, document=document, actor_user_id=anyone, permissions=EVERYTHING)
+        assert refused.value.status_code == 403
+        approval.approve(db, document=document, actor_user_id=_admin(db), permissions=EVERYTHING)
+        assert approval.current_key(db, document) == "approved"

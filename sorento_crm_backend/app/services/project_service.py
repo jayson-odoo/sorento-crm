@@ -1325,12 +1325,19 @@ def update_project(
                     code="project_discount_approver_forbidden",
                 )
             if wanted is not None:
-                from app.models.user import User
+                from app.models.user import User, UserStatus
 
-                if db.query(User.id).filter(User.id == str(wanted)).first() is None:
+                person = db.query(User).filter(User.id == str(wanted)).first()
+                if (
+                    person is None
+                    or person.is_integration
+                    or person.is_trashed
+                    or person.status != UserStatus.ACTIVE.value
+                ):
+                    # Routing would skip them silently, while the card named them.
                     raise AppException(
                         status_code=422,
-                        message="That approver does not exist.",
+                        message="Pick an active person as the discount approver.",
                         code="project_discount_approver_unknown",
                     )
             project.discount_approver_user_id = wanted

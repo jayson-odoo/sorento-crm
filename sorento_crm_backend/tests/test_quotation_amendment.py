@@ -180,6 +180,30 @@ def _price_line(db, scope, owner: str, key: str, tag: str):
     )
 
 
+def _project_manager(db) -> str:
+    from .test_project_quotation_approval import _manager
+
+    return _manager(db)
+
+
+def _approve_discounts(db, document, owner) -> None:
+    """PS-QUOTE-RULES (owner 2 Nov): ANY discount needs approval before Issue, and these lines
+    are priced below list. R1 went out approved: ask, and let the routed default approver say yes.
+    Issuing spends the approval, so the suite's own later gate checks are unaffected."""
+    from app.services import project_quotation_approval_service as approval
+
+    from .test_project_quotation_approval import EVERYTHING, _manager, _status
+
+    manager = _manager(db)
+    approval.move(
+        db,
+        document=document,
+        to_status_id=_status(db, "pending_approval").id,
+        actor_user_id=owner,
+    )
+    approval.approve(db, document=document, actor_user_id=manager, permissions=EVERYTHING)
+
+
 def _world(db, tag: str = "") -> SimpleNamespace:
     """A project, one document, two priced scopes, signed by Sorento and issued as R1."""
     from app.services.project_service import register_project
@@ -213,6 +237,7 @@ def _world(db, tag: str = "") -> SimpleNamespace:
         "TAP": _price_line(db, scope_b, owner, "TAP", tag),
     }
     _sign(db, document, owner)
+    _approve_discounts(db, document, owner)
     record = qdocs.issue(db, document=document, actor_user_id=owner)
     db.flush()
     return SimpleNamespace(
@@ -721,6 +746,7 @@ def test_ac10_an_accepted_issue_refuses_a_request():
 def test_ac11_a_superseded_issue_refuses_a_request_and_names_its_replacement():
     with blank_session() as db:
         w = _world(db)
+        _approve_discounts(db, w.document, w.owner)  # R2 still discounts: ask again
         r2 = qdocs.issue(db, document=w.document, actor_user_id=w.owner)
         db.flush()
 
@@ -1230,7 +1256,7 @@ def test_ac22_apply_makes_a_draft_and_issuing_an_accepted_below_floor_price_is_g
         )
         assert _issue_count(db, w.document) == 1
 
-        manager = _user(db, f"{MARKER} Manager")
+        manager = _project_manager(db)
         approval.move(
             db,
             document=w.document,
@@ -1346,6 +1372,7 @@ def test_ac25_issuing_a_newer_revision_closes_an_open_request_as_superseded():
         w = _world(db)
         request = _submit(db, w, [_change(w.lines["WC"], quantity="110.00")])
 
+        _approve_discounts(db, w.document, w.owner)  # R2 still discounts: ask again
         qdocs.issue(db, document=w.document, actor_user_id=w.owner)
         db.flush()
         db.refresh(request)
@@ -1363,6 +1390,7 @@ def test_ac25_issuing_a_newer_revision_leaves_an_applied_request_as_it_was():
         _decide(db, w, request, {})
         _svc().apply_request(db, request=request, actor_user_id=w.owner)
 
+        _approve_discounts(db, w.document, w.owner)  # R2 still discounts: ask again
         qdocs.issue(db, document=w.document, actor_user_id=w.owner)
         db.flush()
         db.refresh(request)
@@ -1509,6 +1537,7 @@ def test_ac10_wire_an_accepted_issue_answers_409(public):
 
 def test_ac11_wire_a_superseded_issue_refuses_a_request_and_a_signature(public):
     client, db, w, token, _hits = public
+    _approve_discounts(db, w.document, w.owner)  # R2 still discounts: ask again
     r2 = qdocs.issue(db, document=w.document, actor_user_id=w.owner)
     db.commit()
 

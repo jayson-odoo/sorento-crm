@@ -420,11 +420,11 @@ def test_actor_an_approver_who_sends_their_own_quotation_goes_to_their_superior(
     assert [c["user_id"] for c in _of_type(sent, REQUESTED)] == [other]
 
 
-def test_actor_an_approver_who_decides_their_own_quotation_gets_no_decided_notification(
+def test_actor_an_approver_cannot_decide_their_own_request_so_no_decided_notification(
     api, sent
 ):
-    """`me` sits above the routed approver, so may decide; the requester is `me` too, so the
-    decided notification has nobody to tell."""
+    """Security review: `me` sits above the routed approver but sent the request, so `me` may
+    not decide it (403), and nothing is decided or announced."""
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     me = _approver(db, f"{MARKER} Me", company_id)
@@ -435,7 +435,9 @@ def test_actor_an_approver_who_decides_their_own_quotation_gets_no_decided_notif
     assert _send(client, db, root).status_code == 200
     del sent[:]
 
-    assert client.post(f"{root}/approve").status_code == 200
+    refused = client.post(f"{root}/approve")
+    assert refused.status_code == 403, refused.text
+    assert refused.json().get("code") == "quotation_approval_own_request"
 
     assert _of_type(sent, APPROVED) == []
 
@@ -445,9 +447,8 @@ def test_actor_an_approver_who_decides_their_own_quotation_gets_no_decided_notif
 
 @pytest.mark.parametrize("length,ok", [(1000, True), (1001, False)])
 def test_reason_length_revise_and_reject_cap_at_1000(api, sent, length, ok):
-    client, db, company_id, actor, project, product = api
-    # The fixture's actor sends, revises AND rejects, so the routed approver reports to them.
-    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id, superior_id=actor))
+    client, db, company_id, _, project, product = api
+    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id))
     db.commit()
     reason = "x" * length
 
@@ -460,6 +461,7 @@ def test_reason_length_revise_and_reject_cap_at_1000(api, sent, length, ok):
     rejectable = _quotation(client, project.id, product.id, BELOW_FLOOR)
     root2 = _root(project, rejectable)
     assert _send(client, db, root2).status_code == 200
+    _act_as(manager)  # nobody decides their own request
     rejected = client.post(f"{root2}/reject", json={"reason": reason})
     assert rejected.status_code == (200 if ok else 422), rejected.text
 

@@ -397,17 +397,24 @@ def may_decide(
     actor_user_id: Optional[str],
     permissions: Iterable[str],
 ) -> bool:
-    """R5: the routed approver, anyone above them on the superior line, or an admin.
+    """R5: the routed approver, anyone above them on the superior line, or an admin, and in
+    every case NOT the person who asked (security review: being above the routed approver, an
+    admin, or in a superior loop must not let anyone approve their own discount).
 
-    A request routed to nobody (or raised before routing existed) is decided as before: any
-    holder of the grant.
+    A request with no routed approver is decided as before (any holder of the grant) only when
+    it was raised before routing existed. One that WAS routed and lost its approver (their
+    account deleted, the column set NULL) goes to an admin, never back to every grant holder.
     """
     if APPROVE_PERMISSION not in set(permissions or ()):
         return False
+    actor = str(actor_user_id or "")
+    event = _requested_event(db, document)
+    if event is not None and event.actor_id and str(event.actor_id) == actor:
+        return False
     routed = getattr(document, "approver_user_id", None)
     if not routed:
-        return True
-    actor = str(actor_user_id or "")
+        was_routed = event is not None and "approver_user_id" in (event.system_payload or {})
+        return _is_admin(db, actor_user_id) if was_routed else True
     if actor == str(routed) or actor in superior_chain(db, routed):
         return True
     return _is_admin(db, actor_user_id)
@@ -775,6 +782,13 @@ def _assert_can_decide(
             code="quotation_approval_forbidden",
         )
     if not may_decide(db, document, actor_user_id=actor_user_id, permissions=permissions):
+        event = _requested_event(db, document)
+        if event is not None and str(event.actor_id or "") == str(actor_user_id or ""):
+            raise AppException(
+                status_code=403,
+                message="You sent this for approval, so somebody else has to decide it.",
+                code="quotation_approval_own_request",
+            )
         approver = _user(db, document.approver_user_id)
         who = approver.name if approver is not None and approver.name else "another approver"
         raise AppException(
