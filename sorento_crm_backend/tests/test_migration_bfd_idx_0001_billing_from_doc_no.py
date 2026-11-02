@@ -184,6 +184,8 @@ def test_the_retry_script_builds_it(monkeypatch):
     # Keep the retry off public.embedding_chunks (covered in test_migration_lec_0002_online_build.py).
     monkeypatch.setattr(embedding_indexes, "MIGRATION_INDEXES", ())
     monkeypatch.setattr(embedding_indexes, "COVERAGE_INDEXES", ())
+    # Nor public.integration_log (covered in test_migration_il_0001_integration_log_indexes.py).
+    monkeypatch.setattr(online_index, "INTEGRATION_LOG_INDEXES", ())
     with _scratch(monkeypatch) as (schema, conn):
         assert retry.run(engine) is True
         assert _index(conn, schema)[1] is True
