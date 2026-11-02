@@ -501,6 +501,7 @@ def test_the_public_route_answers_the_customer_with_no_credential_but_the_link()
 
     from app.database import get_db
     from app.main import app
+    from app.services.quotation_cover_service import cover_reference
 
     with blank_session() as db:
         _project_row, _document, _owner, record = _issued(db)
@@ -532,7 +533,7 @@ def test_the_public_route_answers_the_customer_with_no_credential_but_the_link()
             # The response IS the page, so the browser can settle without a second fetch.
             assert body["is_changes_requested"] is True
             assert body["changes_requested_note"] == FEEDBACK
-            assert body["our_ref"] == record.our_ref_text
+            assert body["our_ref"] == cover_reference(_document, record, _project_row)
 
             # Signed afterwards, then asked again: accepted is final.
             client.post(

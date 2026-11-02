@@ -249,7 +249,7 @@ def test_cover_rows_in_uac_order_with_reference_and_cleaned_terms():
         assert by["email"]["text"] == f"{MARKER}@zzt.test"
         assert by["payment_terms"]["text"] == f"{MARKER} 30 days net"
         assert by["validity"]["text"] == f"{MARKER} 60 days"
-        assert by["prepared_by"]["text"] == f"{MARKER} Baser Ramli"
+        assert by["prepared_by"]["text"] == "zzt-qpdf Baser Ramli"
         assert "text" not in by["terms"] or by["terms"].get("text") is None
         assert by["terms"]["html"].count("<ul>") == 2
         assert "<ol" not in by["terms"]["html"]
