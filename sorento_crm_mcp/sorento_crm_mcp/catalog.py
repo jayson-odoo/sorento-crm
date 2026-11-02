@@ -1195,7 +1195,8 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- sla-management (conversation tracking) ---
     ToolSpec(
         "crm_sla_conversation_tracking_dashboard",
-        "SLA conversation-tracking dashboard metrics.",
+        "SLA conversation-tracking dashboard metrics. average_response_time and average_resolution_time are in "
+        "hours; escalation_rate is a percent (0 to 100).",
         "/api/v1/sla-management/conversation-sla-tracking/dashboard",
         (),
         (),

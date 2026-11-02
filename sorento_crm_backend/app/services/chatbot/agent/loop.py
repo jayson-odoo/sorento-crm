@@ -648,9 +648,13 @@ def _propose(
     if step is None:
         return out
     steps.append(step)
+    data = {"action_id": action_id, "step": len(steps), "summary": step["summary"]}
+    definition = writes.WRITES.get(name)
+    if definition is not None and definition.proposal_note:
+        data["note"] = definition.proposal_note
     return ToolResult(
         "proposed",
-        data={"action_id": action_id, "step": len(steps), "summary": step["summary"]},
+        data=data,
         message="Proposed, not done. The user must confirm in a later message.",
     )
 

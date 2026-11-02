@@ -55,6 +55,8 @@ class WriteDef:
     #: "user": read_before / execute get the user dict (`run_as_user`). "contact": they get the contact's transient
     #: portal token (`portal_writes.run_as_contact`); the portal's own gates decide (AGENTIC-WA-W2).
     runs_as: str = "user"
+    #: One plain note the model is given with the proposal (data `note`); the shared `message` stays as is.
+    proposal_note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2652,4 +2654,8 @@ WRITES[CREATE_TICKET] = WriteDef(
     execute=_ticket_execute,
     record_key="",
     note_in_reply=True,
+    proposal_note=(
+        "Nothing exists yet. If the user confirms, a draft IT support ticket is created; it is not submitted. "
+        "Say this is a proposal and that confirming creates a draft ticket."
+    ),
 )

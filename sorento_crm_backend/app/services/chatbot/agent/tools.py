@@ -10,8 +10,10 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Callable
 
 from app.services.ai_assistant_service import mcp_schema_to_openai_tool
@@ -1139,6 +1141,19 @@ def dispatch(
     return out
 
 
+def _round_computed_floats(node: Any) -> Any:
+    """A float with more than 5 decimal places is computed noise (an average, a rate): 2 places for the model.
+    Stored values have 5 places or fewer and are untouched."""
+    if isinstance(node, dict):
+        return {k: _round_computed_floats(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_round_computed_floats(v) for v in node]
+    if isinstance(node, float) and math.isfinite(node):
+        places = -Decimal(repr(node)).as_tuple().exponent
+        return round(node, 2) if places > 5 else node
+    return node
+
+
 def _dispatch_inner(
     db: Any,
     ctx: Any,
@@ -1263,7 +1278,7 @@ def _dispatch_inner(
         drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
     if _is_empty(data, tool.render):
         return ToolResult("empty", data={"applied_filters": filters}, message=NO_ROWS_MESSAGE)
-    data, more = cap_result(data)
+    data, more = cap_result(_round_computed_floats(data))
     _collect_uuids(data, seen)
     message = (
         f"{more} more rows did not fit in this result. They are not on the next page: "
