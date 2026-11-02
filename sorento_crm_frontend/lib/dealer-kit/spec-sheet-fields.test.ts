@@ -202,3 +202,15 @@ describe('families', () => {
     expect(TAG_TEMPLATE_FAMILIES.some((f) => isSpecSheetFamily(f.value))).toBe(false);
   });
 });
+
+describe('quoted price (owner Q-B)', () => {
+  it("the price tag designer's own List Price slot prints the quoted unit price", () => {
+    const price = layer({ slot_binding: 'list_price' });
+    expect(resolveSlotText(price, specLine({ list_price: 1250 }))).toBe('1,250'); // the price tag's own format, reused as-is
+  });
+
+  it('a page whose line has no price prints nothing in that slot', () => {
+    const price = layer({ slot_binding: 'list_price' });
+    expect(resolveSlotText(price, specLine({ list_price: null }))).toBeNull();
+  });
+});

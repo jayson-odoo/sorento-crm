@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Project spec sheet (mock v3)</title>
+<title>Project spec sheet (mock v4)</title>
 <style>
 /* App tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/QUOTE-COVER-PAGE.
    Spec pages are drawn at 338.7 x 190.5 mm scaled to 880 x 495 px (16:9), as TagSheetRenderer draws a sheet. */
@@ -101,11 +101,36 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 </head>
 <body>
 <div class="doc">
-<h1>Project spec sheet <span class="newtag">MOCK v3</span></h1>
+<h1>Project spec sheet <span class="newtag">MOCK v4</span></h1>
 <p class="intro">PS-SPEC-SHEET. A cover page plus one page per quoted item, designed as tag templates and printed from an issued revision.
 Data is masked (project title, ref, names and phones are placeholders; codes are illustrative). Behaviour card:
 <code>documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md</code>.</p>
-<div class="nav"><a href="#layout">0. Page layout (owner 23:17)</a><a href="#repeat">0b. Repeated per product</a><a href="#ask">0c. Questions</a><a href="#tab">A. Spec sheet tab</a><a href="#empty">B. Empty states</a><a href="#pages">C. Printed pages</a><a href="#editor">D. Template editor</a><a href="#map">E. Component map</a></div>
+<div class="nav"><a href="#reuse">R. Reuse of the price tag designer</a><a href="#listwhy">L. Why the page list</a><a href="#layout">0. Page layout (owner 23:17)</a><a href="#repeat">0b. Repeated per product</a><a href="#ask">0c. Questions</a><a href="#tab">A. Spec sheet tab</a><a href="#empty">B. Empty states</a><a href="#pages">C. Printed pages</a><a href="#editor">D. Template editor</a><a href="#map">E. Component map</a></div>
+
+<section id="reuse">
+<h2>R. Reuse of the price tag designer <span class="newtag">NEW v4</span></h2>
+<p class="why">Owner 23:29: "We need to reuse price tag designer as much as possible." A spec sheet page IS a price tag template of a new family: same editor, same fields, same renderer, same PDF worker. What is new is only what a price tag never needed.</p>
+<table class="map card">
+<colgroup><col style="width:34%"><col style="width:33%"><col style="width:33%"></colgroup>
+<thead><tr><th>Part</th><th>Reused as is</th><th>Added for the spec sheet</th></tr></thead>
+<tbody>
+<tr><td>Designer (canvas, layers, image / text / shape / group, fonts, versions, Publish)</td><td>TagCanvasEditor, Tag Templates list and page, template versions</td><td>two families: Spec sheet cover, Spec sheet page</td></tr>
+<tr><td>Product fields (code, name, dimensions, spec lines, specs, photo)</td><td>slot bindings + Insert field (Product, Specs)</td><td>Drawing slot; Brand</td></tr>
+<tr><td>Price area (Q-B)</td><td>List Price slot and list-only price badge, price format</td><td>rows carry the quoted unit price</td></tr>
+<tr><td>Accessory rows</td><td>per-layer Product picker (combo parts)</td><td>Accessory 1-3 offered without a combo preview</td></tr>
+<tr><td>Project / page fields in the right band</td><td>merge fields <code>{{...}}</code></td><td>Spec sheet field group (project title, ref, area, prepared by, date, comment, marker)</td></tr>
+<tr><td>Show a badge or row only when needed</td><td>-</td><td>"Show only when" (accessory exists / spec is Yes)</td></tr>
+<tr><td>Preview and PDF</td><td>TagSheetRenderer, the tag-sheet print page, the Chromium worker, My Downloads</td><td>a page size other than A4 (the template's size)</td></tr>
+</tbody></table>
+</section>
+
+<section id="listwhy">
+<h2>L. Why the page list on the Spec sheet tab <span class="newtag">NEW v4</span></h2>
+<p class="why">Owner 23:29 on the "Item" column: "Why is this table needed". <b>In one line: the list IS the pages of the catalogue, in print order, and it is the only place to type each page's AREA (printed in the right band).</b> The quotation itself has no Area. The same list also lets you leave a page out (Print), put a bottle trap under a basin (Accessories) and drag pages into area order, as in your sample (UNIT, then PANTRY, then TOILET).</p>
+<div class="opt">
+  <div class="o rec"><h4>Q-D. Keep the list?</h4>(a) Keep it as drawn in section A. (b) Drop it: every quoted item prints, in quotation order, with an empty AREA and no picked accessories. <b>Recommend (a)</b>: without it the right band's AREA can never be filled.</div>
+</div>
+</section>
 
 <section id="layout">
 <h2>0. The page template is a layout of named areas <span class="newtag">NEW v3</span></h2>
@@ -120,7 +145,7 @@ Data is masked (project title, ref, names and phones are placeholders; codes are
     <div class="area" style="left:3%;top:64%;width:33%;height:22%">Description<small>brand + code + marker, name, spec lines</small></div>
     <div class="area opt" style="left:38%;top:64%;width:36%;height:11%">Accessory 1<small>shows only when the item has one</small></div>
     <div class="area opt" style="left:38%;top:77%;width:36%;height:11%">Accessory 2<small>shows only when the item has two</small></div>
-    <div class="area opt" style="left:3%;top:87%;width:33%;height:9%">Price<small>see question Q-B</small></div>
+    <div class="area opt" style="left:3%;top:87%;width:33%;height:9%">Price<small>List Price slot: the quoted unit price (Q-B answered b)</small></div>
     <div class="area fixed" style="left:77%;top:1%;width:22%;height:97%">Right band (fixed, every page)<small>project title, ref, area, prepared by, date, comment, logo</small></div>
   </div>
   <div class="cap">Designer view. The canvas is the existing tag template editor; areas are its layers (an image layer bound to Product Image / Drawing, text layers with Insert field). Nothing per product is typed here.</div>
@@ -136,7 +161,7 @@ Data is masked (project title, ref, names and phones are placeholders; codes are
     <div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%">photo</div>
     <div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">drawing</div>
     <div class="abs txt" style="left:7%;top:65%;width:30%"><div class="c">SORENTO SRTWC0001-RL</div><div class="n">Wall hung WC</div><div>- specs ...</div></div>
-    <div class="abs acc" style="left:38%;top:65%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTAV0010</b></div></div><div class="abs acc" style="left:38%;top:78%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTFH0011</b></div></div><div class="abs" style="left:7%;top:88%;font:700 1.3cqw Arial;color:#b45309">RM &lt;quoted price&gt;</div>
+    <div class="abs acc" style="left:38%;top:65%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTAV0010</b></div></div><div class="abs acc" style="left:38%;top:78%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTFH0011</b></div></div><div class="abs" style="left:7%;top:88%;font:700 1.3cqw Arial;color:#b45309">RM 1,250</div>
     <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title&gt;</div><div><b>REF :</b> &lt;ref&gt;</div><div><b>AREA :</b> UNIT</div><div><b>PREPARED BY :</b> &lt;sales&gt;</div><div><b>DATE :</b> 02 NOV 2026</div><div><b>COMMENT :</b></div></div>
     <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
   </div><div class="cap">Page 2: WC set, two accessories</div></div>
@@ -155,12 +180,13 @@ Data is masked (project title, ref, names and phones are placeholders; codes are
     
     <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title&gt;</div><div><b>REF :</b> &lt;ref&gt;</div><div><b>AREA :</b> TOILET (ALL TYPE)</div><div><b>PREPARED BY :</b> &lt;sales&gt;</div><div><b>DATE :</b> 02 NOV 2026</div><div><b>COMMENT :</b></div></div>
     <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
-  </div><div class="cap">Page 4: floor trap, no accessory (price area off, Q-B)</div></div>
+  </div><div class="cap">Page 4: floor trap, no accessory. A template without the Price area prints no price on any page.</div></div>
 </div>
 </section>
 
 <section id="ask">
-<h2>0c. Questions for the owner <span class="newtag">PLEASE ANSWER</span></h2>
+<h2>0c. Questions for the owner <span class="newtag">ANSWERED 23:29</span></h2>
+<p class="why"><b>Q-A: a</b> (right band = project details). <b>Q-B: b</b> (optional Price area, quoted unit price; built). <b>Q-C: a</b> (any fixed area repeats on every page).</p>
 <div class="opt">
   <div class="o rec"><h4>Q-A. Your note ended "...repeated over and over every page that ca..." What was the rest?</h4>Our guess: (a) "...that can show the project details" (the right band above: title, ref, area, prepared by, date). (b) "...that can be changed per page" (a band with per-page text). (c) something else: please type it.<br><b>Recommend (a)</b>: it is what the sample prints, and per-page AREA and COMMENT are already typed on the tab.</div>
   <div class="o rec"><h4>Q-B. Price on the spec sheet?</h4>Your sample prints no price; you mentioned "price in one of the area". (a) No price (as the sample). (b) An optional Price area showing the quoted unit price of the issued revision; a template without it prints none. (c) The list price.<br><b>Recommend (b)</b>: the quotation's own price is what the customer agreed to; the area is optional so the no-price catalogue stays possible.</div>
@@ -170,7 +196,7 @@ Data is masked (project title, ref, names and phones are placeholders; codes are
 
 <section id="tab">
 <h2>A. Quotation document &gt; Spec sheet tab <span class="newtag">NEW TAB</span></h2>
-<p class="why">Rules 1-15. Templates and revision on top; pages in print order, drag to reorder; Area / Comment typed per page; Hide drops a page. One CTA in the header: Export PDF (to My Downloads).</p>
+<p class="why">What the list is for: section L. Rules 1-15. Templates and revision on top; pages in print order, drag to reorder; Area / Comment typed per page; Hide drops a page. One CTA in the header: Export PDF (to My Downloads).</p>
 <div class="card">
   <div class="hdr"><div><h3>Proposal PRJQ-2026-0042</h3><div class="meta">Project &lt;masked title&gt; &middot; Rev B issued 02 Nov 2026</div></div><span class="btn pri">Export PDF</span></div>
   <div class="tabs"><span>Header</span><span>Lines</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span class="on">Spec sheet</span></div>

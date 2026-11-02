@@ -1,6 +1,6 @@
 # Project spec sheet (project catalogue)
 
-Use this when a customer's QS or consultant wants the project catalogue: a cover page, then one page per item you quoted, each with the photo, the drawing, the code and specs, its valve, hose or trap, and a title block with the project, ref, area, your name and the date. No prices are printed.
+Use this when a customer's QS or consultant wants the project catalogue: a cover page, then one page per item you quoted, each with the photo, the drawing, the code and specs, its valve, hose or trap, and a title block with the project, ref, area, your name and the date. A price prints only if the template has a price area (see below).
 
 The pages are designed once by marketing as templates (see "Designing the templates" below). You only choose the templates, type the area per page, and export.
 
@@ -26,6 +26,7 @@ The pages are designed once by marketing as templates (see "Designing the templa
 * Page 1: the cover template as designed (for example a photo collage and the logo).
 * One page per printed row: the main item's photo and drawing (as frozen on the issued revision), brand, code, name and specs, and up to the number of accessory rows the template has.
 * Title block fields come from the quotation: **Ref** is the quotation's Your ref, or our quotation number when Your ref is empty; **Prepared by** is the quotation's signatory (else the project salesperson) with their phone; **Date** is the revision's issue date.
+* **Price**: only when the template has a price area: the quoted unit price of that item on the revision. The sample catalogue has none.
 * The same product quoted twice (for example in two blocks) prints once.
 
 ## Who can do what
@@ -39,8 +40,9 @@ The pages are designed once by marketing as templates (see "Designing the templa
 2. Design the page as any tag template. **Insert field** has a **Spec sheet** group: Brand, Area, Comment, Marker, Project title, Ref, Your ref, Quotation no, Prepared by, Prepared by phone, Date.
 3. For the drawing, bind an image layer to **Drawing** under **Slot Binding**.
 4. For an accessory row, point its photo and text layers at **Accessory 1** (or 2, 3) under **Product**, and set **Show only when** to **Accessory 1 exists** on the row's frame, so a page with fewer accessories prints no empty row.
-5. For a badge (Rimless, Accessible), set **Show only when** to the spec, for example **Rimless is Yes**. Mark a product **Accessible (OKU)** under its Product Specifications.
-6. **Publish**. Only published templates are offered on the Spec sheet tab. Spec sheet templates are never offered on price tag requests.
+5. For a price, bind a text layer to **List Price** under **Slot Binding** (or add a list-only price badge); it prints the item's quoted unit price. Leave it out for a catalogue without prices. Anything you place that is not tied to the item (a band with the project details, a logo, a frame) repeats on every page.
+6. For a badge (Rimless, Accessible), set **Show only when** to the spec, for example **Rimless is Yes**. Mark a product **Accessible (OKU)** under its Product Specifications.
+7. **Publish**. Only published templates are offered on the Spec sheet tab. Spec sheet templates are never offered on price tag requests.
 
 ## How you'll be notified
 

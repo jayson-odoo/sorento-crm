@@ -91,6 +91,15 @@ def _templates(db: Session) -> dict:
     return out
 
 
+def _public(page: dict) -> dict:
+    """A page without its print-only (underscore) keys, accessories included."""
+    out = {k: v for k, v in page.items() if not k.startswith("_")}
+    out["accessories"] = [
+        {k: v for k, v in acc.items() if not k.startswith("_")} for acc in page["accessories"]
+    ]
+    return out
+
+
 def _view(db: Session, document, issue) -> dict:
     issues = qdocs.list_issues(db, document)
     return {
@@ -106,10 +115,7 @@ def _view(db: Session, document, issue) -> dict:
             }
             for row in issues
         ],
-        "pages": [
-            {k: v for k, v in page.items() if not k.startswith("_")}
-            for page in spec.pages(db, document, issue)
-        ],
+        "pages": [_public(page) for page in spec.pages(db, document, issue)],
         "templates": _templates(db),
     }
 

@@ -49,6 +49,12 @@ the project, ref, area, salesperson and date). Today it is built by hand in Powe
 - Quotation document: "Spec sheet" tab (`QuotationSpecSheetTab`), service `specSheetService.ts`,
   hooks `useSpecSheet.ts`.
 
+## Owner answers on mock v3 (2 Nov 23:29)
+
+Q-A (a), Q-B (b): rows carry the quoted unit price in `list_price` (+ `parent_list_price`), so the price tag
+designer's List Price slot and list-only price badge print it; set parts carry none; a picked accessory
+carries its own line's price; the tab's API never returns it. Q-C (a): fixed layers repeat (already so).
+
 ## Deferred, with their triggers
 
 - Shrink-to-fit text for the long project title: the first real title that does not fit its box.

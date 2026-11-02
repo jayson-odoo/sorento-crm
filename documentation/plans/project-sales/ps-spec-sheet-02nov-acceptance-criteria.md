@@ -60,9 +60,14 @@ Mock: `documentation/mockups/PS-SPEC-SHEET/index.html`.
 
 - **C1** Page 1 is the cover template. Then one page per printed row: the page template when the
   page has accessories, else the single item template.
-- **C2** No price appears anywhere.
+- **C2** Price (owner Q-B, 2 Nov 23:29): a page prints the issued line's quoted unit price ONLY where
+  the template places a price (the price tag designer's List Price slot or a list-only price badge,
+  on the main item or, for a hand-picked accessory, on that accessory). A set's parts carry no price
+  of their own. A template with no price layer prints no price anywhere (the owner's sample).
 - **C3** The main item prints the issued line's frozen photo and drawing (else the product's chosen
   photo / first drawing); an accessory prints its product's photo and first drawing.
+- **C3a** Any fixed layer anywhere on the page (the sample's right band, a top or bottom band)
+  repeats on every page (owner Q-C); the right band carries the project details (owner Q-A).
 - **C4** Ref prints the quotation's Your ref, or the quotation number with revision when Your ref is
   blank. Prepared by / phone = the quotation's signatory, else the project owner. Date = the
   revision's issue date as `02 NOV 2026`.

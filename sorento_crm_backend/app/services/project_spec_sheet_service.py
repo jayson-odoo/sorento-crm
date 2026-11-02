@@ -13,7 +13,9 @@ What it prints is an ISSUED revision, the same doctrine as the quotation PDF: wh
 received. The per-item settings (order, Area, Comment, Marker, Hide, hand-picked accessories) are
 keyed by product id or ``set:<set id>``, not by line id, so they survive the next revision.
 
-No price is ever placed in a row: a spec sheet is a catalogue of what was quoted, not of the money.
+Price (owner Q-B, 2 Nov): each page row carries the issued line's quoted unit price in the same
+``list_price`` field a price tag reads, so the price tag designer's own List Price slot and price
+badge print it. A template that places no price prints none (the owner's sample has none).
 """
 from __future__ import annotations
 
@@ -32,6 +34,7 @@ from app.models.projects import (
     ProjectQuotationIssueScope,
     ProjectQuotationLine,
 )
+from app.services.dealer_kit.pricing import DEFAULT_CURRENCY
 from app.services.error_handler import AppException
 
 #: ``user_downloads.kind`` of a spec sheet PDF. The print payload route answers it.
@@ -417,6 +420,7 @@ def pages(
                     "brand": brand_of(other["product_id"], other["line"].brand_snapshot),
                     "image_attachment_id": other["line"].image_attachment_id,
                     "drawing_attachment_id": other["line"].drawing_attachment_id,
+                    "_price": _quoted(other["line"]),
                 }
             )
         out.append(
@@ -435,9 +439,18 @@ def pages(
                 "comment": setting["comment"],
                 "marker": setting["marker"],
                 "hidden": setting["hidden"],
+                # Print-only (underscore keys never leave the API): the quoted unit price.
+                "_price": _quoted(line),
             }
         )
     return out
+
+
+def _quoted(line: ProjectQuotationLine) -> Optional[float]:
+    """The issued line's quoted unit price (owner Q-B, 2 Nov 23:29). A template prints it only
+    where the designer placed a price (the price tag designer's List Price slot or price
+    badge); a template without one prints no price at all."""
+    return float(line.unit_price) if line.unit_price is not None else None
 
 
 # ----------------------------------------------------------------------------- print
@@ -604,8 +617,11 @@ def build_print_payload(
                     "images": [photo] if photo else [],
                     "drawing": _image(acc["_drawing"], urls),
                     "barcode": part_fields["barcode"],
-                    "list_price": None,
+                    # A set part has no price of its own (the set line carries it); a
+                    # hand-picked accessory carries its own quoted line price.
+                    "list_price": acc.get("_price"),
                     "sell_price": None,
+                    "currency": DEFAULT_CURRENCY,
                 }
             )
         photo = _image(page["_photo"], urls)
@@ -627,6 +643,11 @@ def build_print_payload(
                 "area": page["area"].upper(),
                 "comment": page["comment"],
                 "marker": page["marker"],
+                # The quoted unit price, through the same fields a price tag's List Price
+                # slot and price badge read. No promotion on a quotation.
+                "list_price": page["_price"],
+                "parent_list_price": page["_price"],
+                "currency": DEFAULT_CURRENCY,
             }
         )
         resolved[page["key"]] = row

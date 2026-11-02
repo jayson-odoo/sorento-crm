@@ -456,7 +456,7 @@ def test_without_a_single_item_template_every_page_uses_the_page_template_and_hi
         assert [s["tags"][0]["template_id"] for s in sheets] == [t["cover"].id, t["page"].id]
 
 
-def test_resolved_rows_carry_product_parts_document_and_line_fields_and_no_price():
+def test_resolved_rows_carry_product_parts_document_and_line_fields_and_the_quoted_price():
     from app.services import project_spec_sheet_service as spec
 
     with blank_session() as db:
@@ -486,8 +486,12 @@ def test_resolved_rows_carry_product_parts_document_and_line_fields_and_no_price
         assert [p["code"] for p in row["parts"]] == [c["valve"].product_code, c["hose"].product_code]
         assert row["own_parts"] == row["parts"]
         assert row["strict_parts"] is True
-        assert row["list_price"] is None and row["sell_price"] is None
-        assert row["show_promo_price"] is False
+        # Owner Q-B: the quoted unit price, in the field a price tag's List Price slot reads;
+        # set parts carry none (the set line carries it); no promotion; the cover has none.
+        assert row["list_price"] == 100.0 and row["parent_list_price"] == 100.0
+        assert row["sell_price"] is None and row["show_promo_price"] is False
+        assert all(p["list_price"] is None for p in row["parts"])
+        assert data["cover"]["list_price"] is None
         assert row["area"] == "UNIT & PODIUM"
         assert row["comment"] == "c1"
         assert row["marker"] == "*"
@@ -930,3 +934,30 @@ def test_a_spec_sheet_download_on_a_document_without_a_company_fails_closed(monk
             with pytest.raises(AppException) as raised:
                 call(db, download)
             assert raised.value.status_code == 404
+
+
+def test_a_hand_picked_accessory_carries_its_own_quoted_price_and_the_tab_view_shows_none():
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        set_key = f"set:{c['set'].id}"
+        spec.save_settings(
+            db,
+            c["document"],
+            {
+                "cover_template_id": t["cover"].id,
+                "page_template_id": t["page"].id,
+                "rows": [{"key": set_key, "accessories": [c["basin"].id]}],
+            },
+        )
+        row = spec.build_print_payload(db, c["document"], c["issue"])["resolvedData"][set_key]
+        assert [p["list_price"] for p in row["parts"]] == [None, None, 100.0]
+
+        from app.api.v1.projects.spec_sheet import _public
+
+        for page in spec.pages(db, c["document"], c["issue"]):
+            shown = _public(page)
+            assert not any(k.startswith("_") for k in shown)
+            assert all(not any(k.startswith("_") for k in a) for a in shown["accessories"])

@@ -8,6 +8,10 @@ mean, non-blocking). Q2: offer both `{{doc.your_ref}}` and `{{doc.quotation_no}}
 template prints it. Q3: (a) set parts + (c) hand-pick; NOT (b) position grouping (owner: no implicit
 matching). Q4 (a) free-text comment, blank prints an empty box. Q5 (a) add an `is_accessible` spec key next
 to `is_rimless`. Sample Q7: no product code starts with BBT; print the line's code as quoted.
+**Owner answers on mock v3 (2 Nov 23:29):** Q-A (a) the right band shows the project details; Q-B (b) an
+optional price area shows the quoted unit price of the issued revision, a template without one prints none
+(built through the price tag's own List Price slot / price badge, rows carry `list_price`); Q-C (a) any fixed
+area anywhere repeats on every page. "Reuse the price tag designer as much as possible" (reuse table on the PR).
 #2100 already excludes families starting `spec_` from product links (`NON_PRICE_TAG_FAMILY_PREFIX`).
 Track: L (one migration, new template families, new print payload, new document tab).
 
