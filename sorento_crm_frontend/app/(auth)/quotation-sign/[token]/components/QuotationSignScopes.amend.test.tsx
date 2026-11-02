@@ -104,10 +104,10 @@ describe('QuotationSignScopes, fix round 2', () => {
         amendment={amendment}
       />,
     );
-    expect(amountOf('1')).toMatch(/RM\s*41,800\.00/);
-    expect(amountOf('2')).toMatch(/RM\s*18,000\.00/);
+    expect(amountOf('1')).toMatch(/41,800\.00/);
+    expect(amountOf('2')).toMatch(/18,000\.00/);
     expect(amountOf('3')).not.toMatch(/RM/);
     expect(amountOf('3')).toMatch(/Removal accepted/);
-    expect(amountOf('4')).toMatch(/RM\s*6,000\.00/);
+    expect(amountOf('4')).toMatch(/6,000\.00/);
   });
 });

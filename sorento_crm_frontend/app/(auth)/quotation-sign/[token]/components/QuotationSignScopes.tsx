@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 // customer reading this screen is the person who would notice.
 import {
   compareMoney,
+  formatFigureExact,
   formatMyrExact,
   formatQty,
   multiplyMoney,
@@ -114,7 +115,7 @@ function withUom(line: QuotationSignLine): string {
 function Description({ line }: { line: QuotationSignLine }) {
   return (
     <>
-      {text(line.description)}
+      {cell(line.description)}
       {line.technical_spec?.trim() ? (
         <span className="mt-1 block whitespace-pre-line text-xs text-muted-foreground">
           {line.technical_spec}
@@ -131,15 +132,15 @@ function commonCells(
 ): Record<string, React.ReactNode> {
   const name = line.item_label?.trim() || String(position + 1);
   return {
-    item: text(line.item_label),
+    item: cell(line.item_label),
     image: <Picture src={line.image_url} alt={`Product photo, line ${name}`} />,
     spec: (
       <Picture src={line.drawing_url} alt={`Technical drawing, line ${name}`} />
     ),
     description: <Description line={line} />,
-    brand: text(line.brand),
-    product_code: text(line.product_code),
-    complete_set: text(line.complete_set),
+    brand: cell(line.brand),
+    product_code: cell(line.product_code),
+    complete_set: cell(line.complete_set),
   };
 }
 
@@ -292,6 +293,14 @@ function RemovalAnswer({
   );
 }
 
+/**
+ * A table cell's text: blank when there is nothing, as the PDF's `_cell` prints it. A dash in a
+ * cell the PDF leaves empty is the page and the document disagreeing.
+ */
+function cell(value: string | null | undefined): string {
+  return value?.trim() ? value : '';
+}
+
 function text(value: string | null | undefined): string {
   return value?.trim() ? value : '-';
 }
@@ -308,7 +317,7 @@ function lineMoney(value: string | null | undefined): string {
   const amount = Number(value ?? 0);
   return Number.isFinite(amount) && amount === 0
     ? ''
-    : formatMyrExact(value ?? '0');
+    : formatFigureExact(value ?? '0');
 }
 
 /**
@@ -423,7 +432,7 @@ function ScopeTable({
                               row={answers.get(`${line.id}:unit_price`)!}
                               status={amendment.status}
                               issued={line.unit_price}
-                              format={formatMyrExact}
+                              format={formatFigureExact}
                             />
                           ) : (
                             lineMoney(line.unit_price)
@@ -550,7 +559,7 @@ function SuggestRow({
                   {rateError}
                 </p>
               ) : rateChanged ? (
-                <p className="mt-1 whitespace-nowrap text-xs text-muted-foreground">{`quoted ${formatMyrExact(line.unit_price)}`}</p>
+                <p className="mt-1 whitespace-nowrap text-xs text-muted-foreground">{`quoted ${formatFigureExact(line.unit_price)}`}</p>
               ) : null}
             </>
           ) : (
@@ -569,7 +578,7 @@ function SuggestRow({
                   {lineMoney(editedAmount(line, edit))}
                 </span>
                 <span className="block whitespace-nowrap text-xs text-muted-foreground">
-                  {`quoted ${formatMyrExact(line.amount ?? '0')}`}
+                  {`quoted ${formatFigureExact(line.amount ?? '0')}`}
                 </span>
               </>
             ),

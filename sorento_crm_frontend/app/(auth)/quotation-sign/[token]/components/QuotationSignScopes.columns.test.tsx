@@ -88,6 +88,41 @@ describe('QuotationSignScopes columns', () => {
     );
   });
 
+  it('prints cells as the PDF does: money without RM, blanks for empties', () => {
+    render(
+      <QuotationSignScopes
+        scopes={[
+          {
+            scope_label: 'Sanitary ware',
+            scope_total: '1000.00',
+            columns: SIGN_COLUMNS,
+            lines: [
+              line('l1', '1', {
+                brand: null,
+                complete_set: '  ',
+                quantity: '2',
+                unit_price: '500.00',
+                amount: '1000.00',
+              }),
+            ],
+          },
+        ]}
+        grandTotal="1000.00"
+      />,
+    );
+    const cells = Array.from(
+      document.querySelectorAll('tbody tr')[0].querySelectorAll('td'),
+    ).map((td) => td.textContent);
+    const at = (label: string) =>
+      cells[SIGN_COLUMNS.findIndex((c) => c.label === label)];
+    // The PDF's `_money`: the heading names the currency, the cell does not.
+    expect(at('UNIT RATE (RM)')).toBe('500.00');
+    expect(at('GRAND TOTAL')).toBe('1,000.00');
+    // The PDF's `_cell`: an empty value is an empty cell, never a dash.
+    expect(at('BRAND')).toBe('');
+    expect(at('COMPLETE SET')).toBe('');
+  });
+
   it('omits the photo column for a scope the server sends without it', () => {
     render(
       <QuotationSignScopes
