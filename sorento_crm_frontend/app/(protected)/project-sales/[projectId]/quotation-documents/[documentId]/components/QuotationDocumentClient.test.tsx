@@ -53,6 +53,19 @@ vi.mock('@/lib/toast', () => ({
   },
 }));
 
+// QUOTE-COVER-DESIGN: only the cover preview call is intercepted; every other apiFetch is real.
+const coverPreview = vi.fn();
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    apiFetch: (url: string, init?: RequestInit) =>
+      String(url).includes('/quotation-documents/cover-preview')
+        ? coverPreview(String(url), init)
+        : actual.apiFetch(url, init),
+  };
+});
+
 const getQuotationDocument = vi.fn();
 const listQuotationIssues = vi.fn();
 const updateQuotationDocument = vi.fn();
@@ -2064,3 +2077,39 @@ async function expectTermsClass(inner: HTMLElement) {
   ).toBe(true);
   expect(chain.some((el) => el.classList.contains('prose'))).toBe(false);
 }
+
+
+/** QUOTE-COVER-DESIGN (UAC B2, B3): the read Cover letter tab is the preview card, no editors. */
+describe('Cover letter tab preview (read)', () => {
+  it('renders the design title and rows from the preview endpoint and no editors', async () => {
+    coverPreview.mockReset();
+    coverPreview.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            cover_title: 'OFFER SHEET',
+            cover_show_letterhead: false,
+            cover_rows: [{ key: 'reference', label: 'Offer Number', text: 'SRT/Q/2026/0141-R1 Menara Test' }],
+            cover_intro_html: '<p>LETTER AS INTRO</p>',
+            cover_closing_html: '',
+            sender_name: 'Sorento Sdn Bhd',
+            sender_logo_url: null,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ cover_letter_html: '<p>LETTER AS INTRO</p>' }),
+    );
+    renderScreen(<QuotationCoverLetterTab />);
+
+    expect(await screen.findByText('OFFER SHEET')).toBeInTheDocument();
+    expect(screen.getByText('Offer Number')).toBeInTheDocument();
+    expect(screen.getByText('LETTER AS INTRO')).toBeInTheDocument();
+    expect(screen.queryByText('Quotation from')).toBeNull();
+    expect(screen.queryByLabelText('Intro text')).toBeNull();
+    expect(screen.queryByLabelText('Closing text')).toBeNull();
+    const body = JSON.parse(String((coverPreview.mock.calls[0][1] as RequestInit).body));
+    expect(body).toMatchObject({ document_id: 'd1' });
+  });
+});
