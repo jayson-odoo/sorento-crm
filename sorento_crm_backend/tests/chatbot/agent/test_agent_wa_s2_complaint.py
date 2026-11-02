@@ -410,7 +410,7 @@ def test_c10_a_valid_claim_reads_every_value_and_photo_and_writes_nothing(db, st
     summary = step["summary"]
     for part in (do, "ELP3754", '"leaking after 3 months"', "within warranty: Yes", "Product defect",
                  "After installation", "Dealer", "ZZT Debtor Sdn Bhd", contact["name"], contact["phone"],
-                 "could not be read", "water stain"):
+                 "could not be read", "water stain", "date ", f"salesperson {contact['name']}"):
         assert part in summary, (part, summary)
     assert summary.count("photo") >= 2
     assert _complaints(db, contact["pk"]) == []
@@ -490,6 +490,39 @@ def test_c7_an_omitted_lookup_with_no_default_is_asked_for(db, store):
     out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do))
 
     assert step is None and "complaint_type" in out.message
+
+
+def test_c8_the_complaint_date_is_the_malaysian_business_day(db, store, monkeypatch):
+    """23:30 UTC on 2 Nov is 3 Nov in Kuala Lumpur (review should-fix 4)."""
+    from datetime import timezone as tz
+
+    from app.services.chatbot.agent import portal_writes
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tzinfo=None):
+            fixed = datetime(2026, 11, 2, 23, 30, tzinfo=tz.utc)
+            return fixed.astimezone(tzinfo) if tzinfo else fixed.replace(tzinfo=None)
+
+    monkeypatch.setattr(portal_writes, "datetime", Clock)
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+
+    out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do, address=None))
+
+    assert step is not None, out.message
+    assert "date 2026-11-03" in step["summary"]
+
+
+def test_c8_address_and_project_given_by_the_dealer_are_shown(db, store):
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+
+    out, step = _propose(db, _ctx(db, contact), CP_CREATE,
+                         _claim(do, customer_address="Lot 5 Jalan ZZT", project_title="ZZT Tower"))
+
+    assert step is not None, out.message
+    assert "address Lot 5 Jalan ZZT" in step["summary"] and "project ZZT Tower" in step["summary"]
 
 
 def test_c8_a_site_contact_named_by_the_dealer_replaces_the_default(db, store):
