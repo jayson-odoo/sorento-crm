@@ -96,14 +96,10 @@ The confirm block lists each value and each photo, with the time it was sent and
 so a photo that is not part of the claim can be spotted before the yes:
 
 > I will make these changes when you confirm:
-> 1. File a warranty / complaint claim: DO DO2026-01234; ELP3754 x1; "leaking after 3 months"; within warranty: Yes; complaint type: Product defect; ...; photo 1 (2 Nov 10:02): ELP3754; water stain under the basin; photo 2 (2 Nov 10:04): could not be read.
+> 1. File a warranty / complaint claim: DO DO2026-01234; ELP3754 x1; "leaking after 3 months"; within warranty: Yes; complaint type: Product defect; ...; date 2026-11-02; salesperson Tan; photo 1 (2 Nov 10:02): ELP3754, water stain under the basin; photo 2 (2 Nov 10:04): could not be read.
 
 After the yes the reply gives the number: *"Complaint CMP-... is with the team. Reply undo within
 10 minutes to withdraw it."* The team is told as for a portal complaint.
-
-If the dealer already has an open complaint on the same delivery order and product, the confirm
-block says so (*"Note: you already sent complaint CMP-... for this on 1 Nov; this sends a second
-claim."*). The dealer can still go ahead.
 
 In the Chatbot Console these requests are a test: the yes shows what would happen and the reply
 ends with *"Test turn: nothing was sent."* Nothing is created, changed or deleted.

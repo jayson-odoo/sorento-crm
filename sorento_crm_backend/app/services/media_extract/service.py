@@ -455,12 +455,6 @@ class MediaExtractService:
     # ----- Image ------------------------------------------------------------
 
     def _extract_image(self, job: MediaJobInput, settings: Any) -> MediaExtractionOutcome:
-        from app.services.ai_extract.extract_service import (
-            AIExtractService,
-            ExtractFile,
-        )
-        from app.services.llm_provider import ChatResult
-
         data, content_type = fetch_media_bytes(job.media_url or "")
         mime = (job.mime_type or content_type or "image/jpeg").split(";")[0].strip()
         kind = sniff.expected_kind(job.modality, mime)

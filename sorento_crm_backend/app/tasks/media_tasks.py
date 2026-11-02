@@ -280,6 +280,9 @@ def process_media_extraction(job_id: str) -> None:
             terminal_error = str(exc) or exc.__class__.__name__
             _mark_usage_failed(db, job, exc)
             if getattr(exc, "media_bytes", None):
+                # Committed first: a storage failure rolls its own work back and must not take the ledger's
+                # `failed` mark with it.
+                db.commit()
                 # AGENTIC-WA-S2: the read failed but the photo was fetched; keep it (same store, same
                 # rules as a read that worked) so a dealer's claim can still carry it. The job stays failed.
                 _store_media_bytes(

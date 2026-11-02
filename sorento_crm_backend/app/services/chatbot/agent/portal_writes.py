@@ -15,6 +15,7 @@ within `WITHDRAW_MINUTES` of its submit while no staff member has touched it (W2
 from __future__ import annotations
 
 import html
+import logging
 import re
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -37,9 +38,6 @@ CP_WITHDRAW = "crm_complaint_withdraw"
 CP_PHOTOS_ADD = "crm_complaint_photos_add"
 CP_PHOTO_REMOVE = "crm_complaint_photo_remove"
 COMPLAINT = "complaint"
-#: S2-Q5 (owner pending). "allow": a second open claim on the same DO and product goes through and its confirm
-#: line names the earlier one. "refuse": refused at proposal with the note offer. One word either way.
-DUPLICATE_CLAIMS = "allow"
 #: The chat photos a claim may carry: the newest of the last day (S2-Q1 (a): only what the bot stored).
 PHOTO_WINDOW_HOURS = 24
 MAX_CHAT_PHOTOS = 10
@@ -64,6 +62,7 @@ TEST_NOTE = "Test turn: nothing was sent."
 WITHDRAW_REFUSED = "It is with the team now, so I can't withdraw it. I can add a note to it instead."
 _TOKEN_NAMESPACE = uuid.UUID("5f0b9a3e-6c1d-4e7a-9b2f-0a2c0000a002")
 _TAGS = re.compile(r"<[^>]+>")
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------ the contact's portal token
@@ -525,11 +524,9 @@ def _untouched_or_refuse(db, token, kind: str, row, *, own_files_ok: bool = Fals
         EntityAttachmentLink.entity_type == kind, EntityAttachmentLink.entity_id == sid
     )
     if own_files_ok:
-        # Only a file the contact itself uploaded may stay; anyone else's file (staff) is a touch.
-        own = db.query(Attachment.id).filter(
-            Attachment.uploader_kind == "contact", Attachment.uploaded_by_contact_id == token.contact_id
-        )
-        files = files.filter(~EntityAttachmentLink.attachment_id.in_(own))
+        # Only the contact's own upload, linked by the portal itself, may stay. Anyone else's file, or a staff
+        # link (even to the contact's own file), is a touch (security review S1).
+        files = files.filter(~EntityAttachmentLink.id.in_(_own_link_ids(db, kind, sid, token.contact_id)))
     fresh = (
         len(history) == 1
         and history[0].kind == "original"
@@ -539,6 +536,25 @@ def _untouched_or_refuse(db, token, kind: str, row, *, own_files_ok: bool = Fals
     if not (fresh and others is None and ticket is None and action is None and files.first() is None):
         raise handle_conflict(WITHDRAW_REFUSED)
     return history, trackers
+
+
+def _own_link_ids(db, kind: str, entity_id: str, contact_id: str):
+    """A select of the links on the row that are the contact's OWN uploads made through the portal path (the
+    attachment's uploader is the contact and the link has no staff creator)."""
+    from sqlalchemy import select
+
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+
+    return (
+        select(EntityAttachmentLink.id)
+        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
+        .where(
+            EntityAttachmentLink.entity_type == kind, EntityAttachmentLink.entity_id == str(entity_id),
+            EntityAttachmentLink.created_by.is_(None),
+            Attachment.uploader_kind == "contact", Attachment.uploaded_by_contact_id == str(contact_id),
+        )
+    )
 
 
 def _hard_delete(db, token, kind: str, row, trackers: list) -> None:
@@ -684,7 +700,7 @@ def _photo_read(db, att) -> str:
     for key in ("notes", "caption"):
         if _line(result.get(key)):
             parts.append(_line(result[key]))
-    return "; ".join(parts)[:160] or "nothing readable"
+    return ", ".join(parts)[:160] or "nothing readable"
 
 
 def _chat_photos(db, ctx, args: dict) -> ToolResult:
@@ -789,25 +805,34 @@ def _store_photos(db, token, sid: str, photos: list) -> list[dict]:
             stored.append(store_portal_upload(db, token, COMPLAINT, sid, data, att.original_filename, att.mime_type))
     except Exception:
         db.rollback()
-        _discard_files(db, [s["attachment_id"] for s in stored])
+        _discard_files(db, [s["link_id"] for s in stored])
         raise
     return stored
 
 
-def _discard_files(db, attachment_ids: list[str]) -> None:
-    """Hard delete files this tool stored: links, rows and objects. Best effort on the objects."""
+def _discard_files(db, link_ids: list[str]) -> None:
+    """Remove the given links (files this tool stored, or the contact's own uploads on a withdrawn claim). The
+    attachment row and its stored object go too, but only when no other link still refers to it (security
+    review S1: never a file staff linked elsewhere). Best effort on the objects."""
     from app.models.entity_attachment import EntityAttachmentLink
     from app.models.resources import Attachment
     from app.services.storage_router import delete_object_best_effort, extract_key
 
-    if not attachment_ids:
+    if not link_ids:
         return
-    rows = db.query(Attachment).filter(Attachment.id.in_(attachment_ids)).all()
+    attachment_ids = [
+        str(a) for (a,) in db.query(EntityAttachmentLink.attachment_id).filter(EntityAttachmentLink.id.in_(link_ids)).all()
+    ]
+    db.query(EntityAttachmentLink).filter(EntityAttachmentLink.id.in_(link_ids)).delete(synchronize_session=False)
+    still_linked = {
+        str(a) for (a,) in db.query(EntityAttachmentLink.attachment_id)
+        .filter(EntityAttachmentLink.attachment_id.in_(attachment_ids)).all()
+    } if attachment_ids else set()
+    rows = db.query(Attachment).filter(
+        Attachment.id.in_([a for a in attachment_ids if a not in still_linked])
+    ).all() if attachment_ids else []
     objects = [(r.storage_provider, extract_key(r.file_path) or r.file_path) for r in rows]
     objects += [(r.storage_provider, extract_key(r.thumbnail_path)) for r in rows if r.thumbnail_path]
-    db.query(EntityAttachmentLink).filter(EntityAttachmentLink.attachment_id.in_(attachment_ids)).delete(
-        synchronize_session=False
-    )
     for r in rows:
         db.delete(r)
     db.commit()
@@ -941,7 +966,7 @@ def _claim(db, token, args: dict) -> dict:
         "customer_name": ", ".join(debtors),
         "contact_person": _line(args.get("contact_person")) or name,
         "contact_number": _line(args.get("contact_number")) or _line(contact.phone_number),
-        "complaint_date": date.today().isoformat(),
+        "complaint_date": datetime.now(_BUSINESS_TZ).date().isoformat(),
         "salesperson": name,
         "defect_description": str(args.get("defect_description") or "").strip(),
         "product_lines": lines,
@@ -975,34 +1000,6 @@ def _open_complaints(db, token):
     )
 
 
-def _earlier_claim(db, token, claim: dict) -> str:
-    """S2-Q5: the sentence about an open claim of the contact on the same DO and product ("" when none). Under
-    `DUPLICATE_CLAIMS == "refuse"` it refuses instead."""
-    from app.services.error_handler import handle_conflict
-
-    def parts(text: Any) -> set[str]:
-        return {p.strip().upper() for p in str(text or "").split(",") if p.strip()}
-
-    dos = {o.order_number.strip().upper() for o in claim["orders"]}
-    codes = {l["product_code"].upper() for l in claim["lines"]}
-    for row in _open_complaints(db, token).order_by(*_newest(db)).limit(50).all():
-        if dos & parts(row.delivery_order_number) and codes & parts(row.product_code):
-            number = _number(db, COMPLAINT, row)
-            day = _sent_at(row.created_at).rsplit(" ", 1)[0] if row.created_at else "earlier"
-            if DUPLICATE_CLAIMS == "refuse":
-                raise handle_conflict(
-                    f"You already sent complaint {number} for this on {day}. I can add a note to it instead."
-                )
-            return f"Note: you already sent complaint {number} for this on {day}; this sends a second claim."
-    return ""
-
-
-def _newest(db):
-    from app.models.complaints import Complaint
-
-    return (Complaint.created_at.desc(), Complaint.id.desc())
-
-
 def _cp_read_before(db, token, args: dict) -> dict:
     claim = _claim(db, token, args)
     photos = _photos(db, token, args.get("photo_ids"), entity_id=None)
@@ -1015,8 +1012,11 @@ def _cp_read_before(db, token, args: dict) -> dict:
         **{column: labels[column] or "" for column, _label in _LOOKUPS},
         "customer": payload["customer_name"],
         "contact": f"{payload['contact_person']} {payload['contact_number']}",
+        "address": payload.get("customer_address") or "",
+        "project": payload.get("project_title") or "",
+        "date": payload["complaint_date"],
+        "salesperson": payload["salesperson"],
         "photos": _photo_show(db, photos),
-        "earlier": _earlier_claim(db, token, claim),
     }}
 
 
@@ -1026,9 +1026,14 @@ def _cp_summary(args: dict, before: dict) -> str:
     for column, label in _LOOKUPS[1:]:
         if before.get(column):
             parts.append(f"{label}: {before[column]}")
-    parts += [f"customer {before['customer']}", f"contact {before['contact']}", _photo_words(before["photos"])]
-    text = "File a warranty / complaint claim: " + "; ".join(_line(p) for p in parts) + "."
-    return f"{text} {before['earlier']}" if before.get("earlier") else text
+    parts += [f"customer {before['customer']}", f"contact {before['contact']}"]
+    if before.get("address"):
+        parts.append(f"address {before['address']}")
+    if before.get("project"):
+        parts.append(f"project {before['project']}")
+    parts += [f"date {before.get('date')}", f"salesperson {before.get('salesperson')}", _photo_words(before["photos"])]
+    # S2-Q5 (owner, 2 Nov): no duplicate handling for now; a second claim on the same DO goes through as on the portal.
+    return "File a warranty / complaint claim: " + "; ".join(_line(p) for p in parts) + "."
 
 
 def _cp_execute(db, token, args: dict) -> dict:
@@ -1046,14 +1051,20 @@ def _cp_execute(db, token, args: dict) -> dict:
         stored = _store_photos(db, token, sid, photos)
         service.submit_draft(token, COMPLAINT, sid)
     except Exception:
-        # No stray draft or file is left behind by a refused submit.
         db.rollback()
-        try:
-            _discard_files(db, [s["attachment_id"] for s in stored])
-            service.delete_draft(token, COMPLAINT, sid)
-        except Exception:  # noqa: BLE001 - the submit's own refusal is the one to report
-            db.rollback()
-        raise
+        row = db.get(Complaint, sid)
+        if row is not None and row.portal_draft_at is None:
+            # The submit committed and a best-effort step after it failed (review blocker 1): the claim IS with
+            # the team, photos included, so it is reported as sent and nothing is removed.
+            logger.warning("agent: complaint %s submitted; a step after the submit failed", sid, exc_info=True)
+        else:
+            # A refused submit: no stray draft or file is left behind.
+            try:
+                _discard_files(db, [s["link_id"] for s in stored])
+                service.delete_draft(token, COMPLAINT, sid)
+            except Exception:  # noqa: BLE001 - the submit's own refusal is the one to report
+                db.rollback()
+            raise
     row = db.get(Complaint, sid)
     number = _number(db, COMPLAINT, row)
     return {
@@ -1115,19 +1126,15 @@ def _cp_withdraw_summary(args: dict, before: dict) -> str:
 
 
 def _cp_withdraw_execute(db, token, args: dict, confirmed: dict) -> dict:
-    from app.models.entity_attachment import EntityAttachmentLink
-
     if args.get("_is_test"):
         return _test_result()
     row, _history, trackers = _cp_withdraw_target(db, token, args, lock=True)
     sid = str(row.id)
-    files = [
-        str(a) for (a,) in db.query(EntityAttachmentLink.attachment_id)
-        .filter(EntityAttachmentLink.entity_type == COMPLAINT, EntityAttachmentLink.entity_id == sid).all()
-    ]
+    # Only the contact's own portal-made links (the same select the untouched check used); a staff file that
+    # landed after the check is never removed with the claim (review should-fix 3).
+    files = [str(i) for (i,) in db.execute(_own_link_ids(db, COMPLAINT, sid, token.contact_id)).all()]
     _hard_delete(db, token, COMPLAINT, row, trackers)
     db.flush()
-    # Only the contact's own files can be here (`_untouched_or_refuse`); they go with the claim.
     _discard_files(db, files)
     return {"id": sid, "after": {"state": "withdrawn"}}
 
@@ -1210,6 +1217,7 @@ def _photos_add_changes(args: dict, before: dict, after: dict, shown: dict) -> l
 def _photo_remove_target(db, token, args: dict):
     from app.api.v1.public.portal import removable_attachment_link
     from app.models.complaints import Complaint
+    from app.models.entity_attachment import EntityAttachmentLink
     from app.models.resources import Attachment
     from app.services.error_handler import handle_not_found
     from app.services.portal_form_visibility_service import require_form_visible
@@ -1228,6 +1236,10 @@ def _photo_remove_target(db, token, args: dict):
     # The portal's own remove rule: the contact's own row, the form visible, never a staff upload.
     link = removable_attachment_link(db, token, fid)
     if link.entity_type != COMPLAINT or str(link.entity_id) != sid:
+        raise handle_not_found("Photo", fid)
+    # Only a photo the contact itself added (security review N2): not a legacy / system file, not a staff link.
+    own = _own_link_ids(db, COMPLAINT, sid, token.contact_id).where(EntityAttachmentLink.id == fid)
+    if db.execute(own).first() is None:
         raise handle_not_found("Photo", fid)
     att = db.get(Attachment, link.attachment_id)
     return row, link, att

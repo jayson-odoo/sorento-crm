@@ -1,7 +1,7 @@
 # PLAN: AGENTIC-WA-S2 - agent on WhatsApp slice 2: warranty / complaint claim with photos
 
-Status: BUILDING (Phase 2 red-first) on #2095. Card v1 answered 2 Nov by crew (Q1-Q4); Q5 with the owner, built
-as a one-line switch defaulting to "allow". Track: M (cloud lane).
+Status: BUILT on #2095: review round 1 folded (reviewer blocker + should-fixes, security S1/N1/N2); owner hand test
+next. Card v1 answered 2 Nov (Q1-Q4 crew from prior rulings; Q5 owner: deferred, no duplicate handling). Track: M (cloud lane).
 UAC: `agentic-wa-s2-acceptance-criteria.md` (written after the answers).
 
 Parent: `PLAN-agentic-wa-w2-01nov.md` (slice 1 merged in #2072, 46de2f6d77). Out of scope: slice 3 (purchase
@@ -140,9 +140,9 @@ Proposed confirm block (English, built by code as in W2; the dealer's text is ke
 - S2-Q3 (a): portal-form pre-fills; contact person / number = the dealer unless they name a site contact; ask
   only what is missing. Condition: "within warranty" must come from the dealer, never a default.
 - S2-Q4 (a): a fourth tool adds newer chat photos to the dealer's own open complaint, with confirm + undo.
-- S2-Q5: with the owner. Built as a switch (`portal_writes.DUPLICATE_CLAIMS`), default `"allow"` (no new
-  guard): the confirm block names the earlier open claim on the same DO + product. `"refuse"` refuses at
-  proposal with the note offer.
+- S2-Q5 (owner, 2 Nov): "I do not want to handle that now." No duplicate handling in this slice: a second claim
+  on the same DO and product goes through exactly as on the portal. Deferred owner question; trigger to revisit:
+  the first duplicate claim the team reports.
 
 ### Fixes from the crew helper review of e2f351fd (before review)
 
@@ -155,3 +155,19 @@ Proposed confirm block (English, built by code as in W2; the dealer's text is ke
    lose claim photos.
 3. The confirm block lists EACH photo it attaches: its time and what it shows (the stored read), or "could not
    be read".
+
+### Review round 1 (2 Nov)
+
+Reviewer NOT READY (1 blocker), security PASS (1 should-fix); all folded, each with a test that fails on the
+pre-fix code:
+
+- Blocker: a failure AFTER the submit's commit no longer deletes the filed claim's photos; the claim is reported as
+  sent (cleanup only while the row is still a draft).
+- Media worker: the ledger's `failed` mark is committed before the best-effort photo store.
+- Withdraw removes only the contact's own portal-made links (`_own_link_ids`), and a file's row and object only
+  when nothing else links it; a staff link, even to the dealer's own file, is a touch (security S1).
+- Photo remove: only a photo the dealer itself added (security N2). Tool list arguments: `maxItems` and item
+  `maxLength` enforced in `writes._args_problem` (security N1).
+- Complaint date = the business day (Asia/Kuala_Lumpur); the confirm line also shows date, salesperson, address
+  and project; extension and size refusals tested (kill-test survivor M3c).
+- S2-Q5 (owner): duplicate handling removed entirely, a second claim goes through as on the portal.

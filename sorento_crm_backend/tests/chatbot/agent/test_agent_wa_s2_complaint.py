@@ -537,30 +537,16 @@ def test_c9_more_photos_than_the_portal_allows_are_refused(db, store):
     assert step is None and "Attachment limit reached (5)" in out.message
 
 
-def test_c11_duplicates_are_allowed_by_default_and_the_earlier_claim_is_named(db, store):
-    contact = _dealer(db)
-    do = _order(db, contact["pk"])
-    earlier = _submitted_complaint(db, contact, do=do, minutes_ago=60 * 24)
-    from app.models.complaints import Complaint
-
-    number = db.get(Complaint, earlier).complaint_number
-    out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do))
-
-    assert step is not None, out.message
-    assert number in step["summary"]
-
-
-def test_c11_the_refuse_switch_refuses_a_duplicate_with_the_note_offer(db, store, monkeypatch):
-    from app.services.chatbot.agent import portal_writes
-
-    monkeypatch.setattr(portal_writes, "DUPLICATE_CLAIMS", "refuse")
+def test_c11_a_second_claim_on_the_same_do_and_product_goes_through_as_on_the_portal(db, store):
+    """S2-Q5 (owner, 2 Nov): no duplicate handling in this slice."""
     contact = _dealer(db)
     do = _order(db, contact["pk"])
     _submitted_complaint(db, contact, do=do, minutes_ago=60 * 24)
 
     out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do))
 
-    assert step is None and "I can add a note to it instead" in out.message
+    assert step is not None, out.message
+    assert "already" not in step["summary"]
 
 
 # ================================================================ C-12 .. C-14 confirm
@@ -583,7 +569,11 @@ def test_c12_a_confirm_files_the_claim_with_its_photos_through_the_portal(db, st
     assert row.within_warranty == "yes" and row.complaint_type == "product_defect"
     assert row.customer_name == "ZZT Debtor Sdn Bhd"
     assert row.contact_person == contact["name"] and row.contact_number == contact["phone"]
-    assert row.salesperson == contact["name"] and row.complaint_date == date.today()
+    assert row.salesperson == contact["name"]
+    # The business day (Asia/Kuala_Lumpur), not the server's UTC date (review should-fix 4).
+    from zoneinfo import ZoneInfo
+
+    assert row.complaint_date == datetime.now(ZoneInfo("Asia/Kuala_Lumpur")).date()
     links = _files_on(db, "complaint", row.id)
     assert len(links) == 2
     for link in links:
@@ -915,3 +905,189 @@ def test_a_whole_whatsapp_claim_reads_photos_proposes_then_files_on_yes(db, stor
     assert len(_files_on(db, "complaint", row.id)) == 2
     with capsys.disabled():
         print("\n--- turn 1 reply ---\n" + turn1.reply_text + "\n--- turn 2 reply ---\n" + turn2.reply_text)
+
+
+
+# ================================================================ review round 1
+
+
+def test_r1_a_failure_after_the_submit_commits_keeps_the_filed_claim_and_its_photos(db, store, monkeypatch):
+    """Review blocker 1: a best-effort step after the submit's commit fails; the claim IS filed."""
+    from app.services.portal_service import PortalService
+
+    contact = _dealer(db)
+    ctx, _do, _ids, step = _claim_step(db, store, contact, photos=2)
+    real = PortalService.submit_draft
+
+    def submit_then_fail(self, *a, **k):
+        real(self, *a, **k)
+        raise RuntimeError("a step after the commit failed")
+
+    monkeypatch.setattr(PortalService, "submit_draft", submit_then_fail)
+    outcome = _store_and_confirm(db, ctx, step)
+
+    assert outcome.status == "executed", outcome.reply_text
+    [row] = _complaints(db, contact["pk"])
+    assert row.status == "submitted" and row.portal_draft_at is None
+    assert len(_files_on(db, "complaint", row.id)) == 2
+    assert row.complaint_number in " ".join(outcome.notes)
+
+
+def test_r1_a_photo_of_a_type_the_portal_refuses_is_refused(db, store):
+    contact = _dealer(db)
+    ctx = _ctx(db, contact)
+    do = _order(db, contact["pk"])
+    pid = _chat_photo(db, store, contact, mime="image/webp")
+    db.execute(text("UPDATE attachments SET original_filename = replace(original_filename, '.jpg', '.webp') "
+                    "WHERE id = :i"), {"i": pid})
+    seen: set[str] = set()
+    _read_photos(db, ctx, seen)
+
+    out, step = _propose(db, ctx, CP_CREATE, _claim(do, photo_ids=[pid]), seen)
+
+    assert step is None and "Unsupported file type" in out.message
+
+
+def test_r1_a_photo_over_the_portal_size_limit_is_refused(db, store):
+    contact = _dealer(db)
+    ctx = _ctx(db, contact)
+    do = _order(db, contact["pk"])
+    pid = _chat_photo(db, store, contact)
+    db.execute(text("UPDATE attachments SET file_size_bytes = :n WHERE id = :i"), {"n": 11 * 1024 * 1024, "i": pid})
+    seen: set[str] = set()
+    _read_photos(db, ctx, seen)
+
+    out, step = _propose(db, ctx, CP_CREATE, _claim(do, photo_ids=[pid]), seen)
+
+    assert step is None and "exceeds 10 MB" in out.message
+
+
+def _filed(db, store, contact, photos=1):
+    ctx, do, ids, step = _claim_step(db, store, contact, photos=photos)
+    assert _store_and_confirm(db, ctx, step).status == "executed"
+    [row] = _complaints(db, contact["pk"])
+    return ctx, str(row.id)
+
+
+def test_r1_a_staff_link_to_the_dealers_own_photo_is_a_touch(db, store):
+    """Security S1: staff re-linking the dealer's own file onto the claim stops the withdraw."""
+    from app.services.chatbot.agent.portal_writes import WITHDRAW_REFUSED
+    from app.services.entity_attachment_service import EntityAttachmentService
+    from tests.chatbot.agent._seed import seed_user
+
+    contact = _dealer(db)
+    ctx, cid = _filed(db, store, contact)
+    [own] = _files_on(db, "complaint", cid)
+    other = _submitted_complaint(db, contact, do=_order(db, contact["pk"]), minutes_ago=60)
+    staff = seed_user(db, contact_pk=None)
+    EntityAttachmentService(db).link_existing_attachment(entity_type="complaint", entity_id=other,
+                                                        attachment_id=str(own.attachment_id), created_by=staff)
+    EntityAttachmentService(db).link_existing_attachment(entity_type="complaint", entity_id=cid,
+                                                        attachment_id=_chat_photo(db, store, contact), created_by=staff)
+    db.flush()
+
+    out, step = _propose(db, ctx, CP_WITHDRAW, {"submission_id": cid}, {cid})
+
+    assert step is None and WITHDRAW_REFUSED in out.message
+
+
+def test_r1_a_withdraw_keeps_a_file_staff_linked_elsewhere(db, store):
+    """Security S1: the claim's own link goes, but a file still linked on another record stays."""
+    from app.models.resources import Attachment
+    from app.services.entity_attachment_service import EntityAttachmentService
+    from tests.chatbot.agent._seed import seed_user
+
+    contact = _dealer(db)
+    ctx, cid = _filed(db, store, contact)
+    [own] = _files_on(db, "complaint", cid)
+    att_id = str(own.attachment_id)
+    other = _submitted_complaint(db, contact, do=_order(db, contact["pk"]), minutes_ago=60)
+    EntityAttachmentService(db).link_existing_attachment(entity_type="complaint", entity_id=other,
+                                                        attachment_id=att_id,
+                                                        created_by=seed_user(db, contact_pk=None))
+    db.flush()
+    path = db.get(Attachment, att_id).file_path
+
+    out, step = _propose(db, ctx, CP_WITHDRAW, {"submission_id": cid}, {cid})
+    assert step is not None, out.message
+    assert _store_and_confirm(db, ctx, step).status == "executed"
+
+    db.expire_all()
+    assert _complaints(db, contact["pk"]) != [] and all(str(r.id) != cid for r in _complaints(db, contact["pk"]))
+    assert len(_files_on(db, "complaint", other)) == 1
+    assert db.get(Attachment, att_id) is not None and path in store.files
+
+
+def test_r1_photo_remove_refuses_a_staff_link_to_the_dealers_own_file(db, store):
+    """Security N2: only a photo the dealer itself added is removed."""
+    from app.services.entity_attachment_service import EntityAttachmentService
+    from tests.chatbot.agent._seed import seed_user
+
+    contact = _dealer(db)
+    ctx = _ctx(db, contact)
+    cid = _submitted_complaint(db, contact, do=_order(db, contact["pk"]), minutes_ago=30)
+    link = EntityAttachmentService(db).link_existing_attachment(
+        entity_type="complaint", entity_id=cid, attachment_id=_chat_photo(db, store, contact),
+        created_by=seed_user(db, contact_pk=None),
+    )
+    db.flush()
+
+    out, step = _propose(db, ctx, CP_PHOTO_REMOVE, {"submission_id": cid, "file_id": str(link.id)}, {cid, str(link.id)})
+
+    assert step is None and "not found" in out.message.lower()
+
+
+def test_r1_list_arguments_are_capped(db, store):
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+
+    out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do, delivery_order_numbers=[do] * 21))
+    assert step is None and "too many" in out.message
+
+    out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do, product_codes=["X" * 101]))
+    assert step is None and "too long" in out.message
+
+
+def test_r1_a_storage_failure_keeps_the_ledgers_failed_mark(db, store, monkeypatch):
+    """Review should-fix 2: the failed read is metered as today even when keeping the photo fails."""
+    from app.models.media import ContactMediaUsage, MediaExtractionJob
+    from app.services.media_extract.service import MediaExtractionError
+    from app.tasks import media_tasks
+
+    contact = _dealer(db)
+    usage = ContactMediaUsage(id=str(uuid.uuid4()), respond_io_id=contact["respond_id"], contact_id=contact["pk"],
+                              modality="image", message_id=unique_code("m"), period_key="2026-11",
+                              outcome="accepted", turn_id=str(uuid.uuid4()))
+    db.add(usage)
+    db.flush()
+    job = MediaExtractionJob(id=str(uuid.uuid4()), usage_id=usage.id, status="queued", modality="image",
+                             mime_type="image/jpeg", media_url="https://x/y")
+    db.add(job)
+    db.commit()
+
+    def failing(_job):
+        exc = MediaExtractionError("provider down")
+        exc.media_bytes, exc.media_content_type = JPEG, "image/jpeg"
+        raise exc
+
+    def broken_upload(*a, **k):
+        raise RuntimeError("bucket down")
+
+    class Session:
+        def __getattr__(self, name):
+            return getattr(db, name)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(store, "upload_file", broken_upload)
+    monkeypatch.setattr(media_tasks, "SessionLocal", lambda: Session())
+    monkeypatch.setattr(media_tasks, "run_media_extraction", failing)
+    monkeypatch.setattr(media_tasks, "deliver_callback", lambda job: None)
+
+    media_tasks.process_media_extraction(str(job.id))
+
+    db.expire_all()
+    assert db.get(MediaExtractionJob, job.id).status == "failed"
+    assert db.get(ContactMediaUsage, usage.id).outcome == "failed"
+    assert _files_on(db, "chatbot_turn", usage.turn_id) == []

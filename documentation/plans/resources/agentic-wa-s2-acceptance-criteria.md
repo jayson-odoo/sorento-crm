@@ -34,9 +34,8 @@ Complaint form is visible. Linked staff contacts are unchanged.
   last 24 hours, and pass the portal attachment type (extension, size, count).
 - C-10 The confirm line lists every value and EACH photo with its time and what it shows (or "could not be
   read"). Nothing is written before the yes.
-- C-11 Duplicate (S2-Q5, owner pending): with `DUPLICATE_CLAIMS = "allow"` (default) an open complaint of the
-  contact on the same DO and product does not block; the confirm line names it. With `"refuse"` the proposal is
-  refused: "You already sent complaint <no> for this on <date>. I can add a note to it instead."
+- C-11 Duplicate (S2-Q5, owner 2 Nov: deferred): a second claim on the same DO and product goes through as on the
+  portal, with no extra line and no refusal.
 
 ## Claim (confirm)
 
