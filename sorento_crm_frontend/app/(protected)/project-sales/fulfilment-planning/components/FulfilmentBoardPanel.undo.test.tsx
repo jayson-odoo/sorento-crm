@@ -146,6 +146,8 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 import { toast } from '@/lib/toast';
+import { LineDraftNewerError } from '../../_shared/lib/confirmPreviewFresh';
+import * as planningService from '../../_shared/services/fulfilmentPlanningService';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
@@ -514,6 +516,82 @@ describe('AC-B13: Undo on a pre-marked line returns to "Change proposed", not "S
 
   beforeEach(() => {
     getPlanningChangeBatch.mockResolvedValue(NAMED_BATCH);
+  });
+
+  // CONFIRM-PREVIEW-STALE round 2 (crew browser pass: "Take suggestion from that stale view
+  // DELETED the other tab's newer decision"). Take suggestion is `decide(key, null)`, the same
+  // path as this Undo on a line the batch names.
+  it('Undo (and Take suggestion) says which draft it stands on: the saved_at of this tab\'s own save', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+    renderOnBatch(['SO381895']);
+    await saveThenUndo('SO381895', 1, 'Change proposed');
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
+    // The mocked save reply's own saved_at.
+    expect(deleteLineDraft.mock.calls[0][1]).toBe('2026-09-03T00:00:00Z');
+  });
+
+  it('an Undo on a line this tab holds no draft record for says so (null), so a draft saved elsewhere is refused', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+    // A save reply that carries no saved_at leaves this tab with no record of the draft.
+    vi.mocked(planningService.putLineDraft).mockResolvedValueOnce({
+      decision: { verdict: 'approved' },
+      saved_by: 'Test Planner',
+      saved_at: '',
+    } as never);
+    renderOnBatch(['SO381895']);
+    await saveThenUndo('SO381895', 1, 'Change proposed');
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
+    expect(deleteLineDraft.mock.calls[0][1]).toBeNull();
+  });
+
+  it('an Undo on a line waits for the save on the wire, and stands on its saved_at', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+    let answer: (value: unknown) => void = () => {};
+    const put = vi.mocked(planningService.putLineDraft);
+    put.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }) as never,
+    );
+    renderOnBatch(['SO381895']);
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SO381895');
+    const row = () => screen.getByText('SO381895').closest('tr') as HTMLElement;
+    fireEvent.click(screen.getByTestId('board-list-expand-all'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    await waitFor(() => expect(within(row()).getByText('Saved')).toBeInTheDocument());
+    const calls = put.mock.calls.length;
+    // An Undo while the save is still on the wire (the queue itself: `queuedPerKey` tests).
+    fireEvent.click(within(row()).getByRole('button', { name: 'Undo SO381895 line 1' }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(put.mock.calls.length).toBe(calls);
+    expect(deleteLineDraft).not.toHaveBeenCalled();
+    answer({ decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-11-02T05:00:00' });
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
+    expect(deleteLineDraft.mock.calls[0][1]).toBe('2026-11-02T05:00:00');
+  });
+
+  it('an Undo the server refuses as stale keeps the line saved and reads the board again', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+    deleteLineDraft.mockRejectedValueOnce(
+      new LineDraftNewerError('This line was saved again by another planner. Reload the board to see it.'),
+    );
+    renderOnBatch(['SO381895']);
+    const reads = () => getPlanningBoard.mock.calls.length;
+    const row = await saveThenUndo('SO381895', 1, 'Change proposed');
+    const before = reads();
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    await waitFor(() => expect(within(row()).getByText('Saved')).toBeInTheDocument());
   });
 
   it('a line the open batch names is "Change proposed" again after Save then Undo, and the server draft is deleted', async () => {

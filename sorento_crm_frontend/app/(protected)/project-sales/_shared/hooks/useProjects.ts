@@ -6,6 +6,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import type { QueryKey } from '@tanstack/react-query';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { toast } from '@/lib/toast';
+import { isQtyOver } from '../lib/qtyOverQuote';
 import { splitMulti } from '@/lib/list-filters/multiValue';
 import { projectCodeLabel } from '../lib/projectCode';
 import { formatMyrExact } from '../lib/money';
@@ -1662,7 +1663,10 @@ export function usePurchaseOrderMutations(projectId: string) {
       queryClient.invalidateQueries({ queryKey: poLinesKey(id) });
       toast.success('Purchase order saved');
     },
-    onError: (error: Error) => toast.error(error.message),
+    // The qty-over soft stop is not a failure: the screen asks for the reason instead.
+    onError: (error: Error) => {
+      if (!isQtyOver(error)) toast.error(error.message);
+    },
   });
 
   const remove = useMutation({

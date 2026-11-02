@@ -58,6 +58,9 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   // How a covered-product link got there. Human confirmation reads stronger
   // than a machine reading, so `manual` takes the affirmative colour.
   manual: 'bg-blue-100 text-blue-800',
+  // PS-PROPOSAL-QUOTATION: the kind of a project sales document.
+  proposal: 'bg-muted text-muted-foreground',
+  quotation: 'bg-blue-100 text-blue-800',
   ai: 'bg-muted text-muted-foreground',
   // Onboarding requests. `link_sent` rather than reusing `sent`: an onboarding
   // link that went out is a WAIT (nobody has filled anything in yet), while

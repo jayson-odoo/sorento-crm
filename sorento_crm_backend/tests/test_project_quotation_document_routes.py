@@ -707,9 +707,9 @@ def test_an_issued_document_refuses_deletion_and_a_draft_takes_its_scopes_with_i
 # --------------------------------------------------------------------- AC-B2
 
 
-def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api):
-    """`Our Ref ... (R2)` is the string a customer reads down the phone. It has to advance on
-    every issue and identify exactly one thing: if a second issue could reuse R1, the
+def test_reissuing_stamps_a_then_b_which_is_what_the_customer_quotes_back(api):
+    """`Our Ref ... -B` is the string a customer reads down the phone. It has to advance on
+    every issue and identify exactly one thing: if a second issue could reuse A, the
     reference stops naming the paper they are holding and no conversation about it can be
     settled. The grand total is frozen onto each issue for the same reason - what was sent
     stays readable after the live document moves on."""
@@ -735,10 +735,10 @@ def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api)
     assert first.status_code == 201, first.text
     r1 = first.json()
     assert r1["issue_no"] == 1
-    assert r1["our_ref_text"] == f"{document['document_no']}-R1"
+    assert r1["our_ref_text"] == f"{document['document_no']}-A"
     assert _money(r1["grand_total"]) == TOWNHOUSE_TOTAL
 
-    # A revision re-prices the scope, then goes out as R2.
+    # A revision re-prices the scope, then goes out as B.
     revised = client.post(f"{BASE}/quotations/{scope['id']}/revise")
     assert revised.status_code == 201, revised.text
     carried = client.get(
@@ -754,7 +754,7 @@ def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api)
     assert second.status_code == 201, second.text
     r2 = second.json()
     assert r2["issue_no"] == 2
-    assert r2["our_ref_text"] == f"{document['document_no']}-R2"
+    assert r2["our_ref_text"] == f"{document['document_no']}-B"
     assert _money(r2["grand_total"]) == Decimal("240580.00")  # 1046 x 230
 
     history = client.get(f"{root}/{document['id']}/issues")
@@ -762,7 +762,7 @@ def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api)
     envelope = history.json()
     assert [row["issue_no"] for row in envelope["data"]] == [2, 1]
     assert envelope["pagination"]["total"] == 2
-    # R1 still reads as it was sent, at the price it was sent at.
+    # A still reads as it was sent, at the price it was sent at.
     assert _money(envelope["data"][1]["grand_total"]) == TOWNHOUSE_TOTAL
 
 
@@ -919,7 +919,7 @@ def _issue_one(client, db, project, *, price: str = PRICED_RATE, qty: str = "4")
 def test_the_pdf_download_returns_a_real_pdf_named_after_the_reference(api):
     """This is the file that goes in the customer's inbox, so two things have to hold on the
     wire: the bytes are a PDF a browser will open inline rather than a JSON error rendered as
-    a download, and the filename carries `Our Ref (R1)`. A saved attachment named
+    a download, and the filename carries `Our Ref (-A)`. A saved attachment named
     `download.pdf` cannot be matched back to the paper it is, which is the whole reason the
     reference exists."""
     client, db, _company_id, _user_id, project, _party = api
@@ -933,7 +933,7 @@ def test_the_pdf_download_returns_a_real_pdf_named_after_the_reference(api):
     assert response.headers["content-type"].startswith("application/pdf")
     # A PDF, not a 200 carrying an error page. The magic bytes are the only honest check.
     assert response.content[:5] == b"%PDF-"
-    expected = f"quotation-{MARKER}-Q-0001-R1.pdf"
+    expected = f"proposal-{MARKER}-Q-0001-A.pdf"
     assert response.headers["content-disposition"] == (
         f'inline; filename="{expected}"; filename*=UTF-8\'\'{quote(expected)}'
     )
@@ -1004,7 +1004,7 @@ def test_the_excel_download_returns_a_workbook_that_downloads_rather_than_previe
     lands on the wire has to be a workbook their spreadsheet opens, not a JSON error served with
     a spreadsheet content type. Sent as an ATTACHMENT rather than inline: nobody previews a
     workbook in a browser tab, and an inline disposition on a binary a browser cannot render is
-    how a download turns into a blank page. The filename carries `Our Ref (R1)` for the same
+    how a download turns into a blank page. The filename carries `Our Ref (-A)` for the same
     reason the PDF's does - a saved `download.xlsx` cannot be matched back to the paper it is."""
     from io import BytesIO
 
@@ -1018,7 +1018,7 @@ def test_the_excel_download_returns_a_workbook_that_downloads_rather_than_previe
     assert response.headers["content-type"].startswith(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-    expected = f"quotation-{MARKER}-Q-0001-R1.xlsx"
+    expected = f"proposal-{MARKER}-Q-0001-A.xlsx"
     assert response.headers["content-disposition"] == (
         f'attachment; filename="{expected}"; filename*=UTF-8\'\'{quote(expected)}'
     )
@@ -1218,7 +1218,8 @@ def test_malformed_ids_on_the_whatsapp_log_route_are_answered_not_crashed(api):
 
 @pytest.mark.parametrize("kind", ["pdf", "xlsx"])
 def test_the_pending_download_is_named_from_document_no_and_issue_no(api, monkeypatch, kind):
-    """AC2.6: same Quotation No. as the sign page, also for an old `(R1)` stored text."""
+    """AC2.6: same Proposal No. as the sign page, also for an old `(R1)` stored text: the name is built
+    (proposal-<document_no>-A), never read back from the stale text."""
     from app.models.projects import ProjectQuotationIssue
     from app.services import queue_service
 
@@ -1232,5 +1233,5 @@ def test_the_pending_download_is_named_from_document_no_and_issue_no(api, monkey
     response = client.post(f"{root}/{document['id']}/issues/{issue['id']}/export/{kind}")
 
     assert response.status_code in (200, 201, 202), response.text
-    expected = f"quotation-{document['document_no']}-R{row.issue_no}.{kind}".replace("/", "-")
+    expected = f"proposal-{document['document_no']}-A.{kind}".replace("/", "-")
     assert response.json()["filename"] == expected

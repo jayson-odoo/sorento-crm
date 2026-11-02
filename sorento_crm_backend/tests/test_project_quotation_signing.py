@@ -533,7 +533,7 @@ def _accept_body(**extra):
 
 
 def test_sign_page_our_ref_is_built_from_document_no_and_issue_no_not_the_stored_text():
-    """AC2.3: an issue stored with the old text still shows <document_no>-R<issue_no>."""
+    """AC2.3: an issue stored with the old text still shows the built <document_no>-A."""
     with blank_session() as db:
         _project_row, document, owner, _scopes = _setup(db)
         _sign_draft(db, document, owner)
@@ -547,7 +547,7 @@ def test_sign_page_our_ref_is_built_from_document_no_and_issue_no_not_the_stored
 
         page = qdocs.serialize_sign_page(db, record)
 
-        assert page["our_ref"] == f"{document.document_no}-R{record.issue_no}"
+        assert page["our_ref"] == f"{document.document_no}-A"
         assert page["issue_no"] == record.issue_no
 
 
