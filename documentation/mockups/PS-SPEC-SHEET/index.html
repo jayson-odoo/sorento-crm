@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Project spec sheet (mock v2)</title>
+<title>Project spec sheet (mock v3)</title>
 <style>
 /* App tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/QUOTE-COVER-PAGE.
    Spec pages are drawn at 338.7 x 190.5 mm scaled to 880 x 495 px (16:9), as TagSheetRenderer draws a sheet. */
@@ -49,6 +49,7 @@ td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle;o
 .empty h4{margin:0 0 4px;font-size:15px}
 .empty p{margin:0;color:var(--muted-fg);font-size:13px}
 .row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.row>div{min-width:0;max-width:100%}
 .cap{font-size:11.5px;color:var(--muted-fg);padding:6px 0}
 /* ---------- spec pages (16:9) ---------- */
 .pg{width:880px;max-width:100%;aspect-ratio:16/9;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12),0 0 0 1px #e4e4e7;position:relative;overflow:hidden;font-family:'Helvetica Neue',Arial,sans-serif;color:#111;container-type:inline-size}
@@ -79,17 +80,93 @@ td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle;o
 .grp{font-size:11px;color:var(--muted-fg);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.05em}
 .map td,.map th{white-space:normal;font-size:12px;vertical-align:top}
 code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
+.area{position:absolute;border:2px dashed #2563eb;background:rgba(37,99,235,.06);border-radius:4px;display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-start;padding:.5cqw;font:600 1.15cqw/1.2 Inter,system-ui,sans-serif;color:#1d4ed8}
+.area.fixed{border-color:#15803d;background:rgba(21,128,61,.07);color:#15803d}
+.area.opt{border-color:#b45309;background:rgba(180,83,9,.06);color:#b45309}
+.area small{display:block;font-weight:400;color:#52525b;font-size:.95cqw;margin-top:.3cqw}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;margin:8px 0}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw2{width:14px;height:10px;border:2px dashed #2563eb;border-radius:2px}
+.sw2.fixed{border-color:#15803d}.sw2.opt{border-color:#b45309}
+.opt{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.opt .o{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 16px;font-size:12.5px}
+.opt .o h4{margin:0 0 6px;font-size:13px}
+.opt .o.rec{border-color:#a78bfa}
+.mini3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mini3 .pg{width:100%}
+@media (max-width:900px){.mini3,.opt{grid-template-columns:1fr}}
 @media (max-width:900px){.pickers{grid-template-columns:1fr 1fr}.ed{grid-template-columns:1fr}.ed .col{border-right:0;border-bottom:1px solid var(--border)}}
 @media (max-width:520px){.pickers{grid-template-columns:1fr}.hide-sm{display:none}}
 </style>
 </head>
 <body>
 <div class="doc">
-<h1>Project spec sheet <span class="newtag">MOCK v2</span></h1>
+<h1>Project spec sheet <span class="newtag">MOCK v3</span></h1>
 <p class="intro">PS-SPEC-SHEET. A cover page plus one page per quoted item, designed as tag templates and printed from an issued revision.
 Data is masked (project title, ref, names and phones are placeholders; codes are illustrative). Behaviour card:
 <code>documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md</code>.</p>
-<div class="nav"><a href="#tab">A. Spec sheet tab</a><a href="#empty">B. Empty states</a><a href="#pages">C. Printed pages</a><a href="#editor">D. Template editor</a><a href="#map">E. Component map</a></div>
+<div class="nav"><a href="#layout">0. Page layout (owner 23:17)</a><a href="#repeat">0b. Repeated per product</a><a href="#ask">0c. Questions</a><a href="#tab">A. Spec sheet tab</a><a href="#empty">B. Empty states</a><a href="#pages">C. Printed pages</a><a href="#editor">D. Template editor</a><a href="#map">E. Component map</a></div>
+
+<section id="layout">
+<h2>0. The page template is a layout of named areas <span class="newtag">NEW v3</span></h2>
+<p class="why">Owner 23:17: "define the orientation of the products image, technical spec and ... description, price in one of the area, and make it repeat for every product, then ... something on the right side ... like a header that will be repeated over every page". This is how a Spec sheet page template works: the designer places each area ONCE. Blue areas fill from each product. The green band is fixed and repeats on every page like a header. Orange areas are optional.</p>
+<div class="legend"><span><i class="sw2"></i> per product (fills from the item)</span><span><i class="sw2 fixed"></i> fixed band, same on every page</span><span><i class="sw2 opt"></i> optional (only when there is something to show)</span></div>
+<div class="card">
+  <div class="hdr"><div><h3>Item with accessories</h3><div class="meta">Dealer Kit &gt; Tag Templates &middot; Family: Spec sheet page &middot; 338.7 x 190.5 mm</div></div><span class="btn pri">Publish</span></div>
+  <div style="padding:16px">
+  <div class="pg">
+    <div class="area" style="left:3%;top:10%;width:33%;height:52%">Product image<small>Product Image slot</small></div>
+    <div class="area" style="left:38%;top:2%;width:36%;height:60%">Technical spec (drawing)<small>Drawing slot</small></div>
+    <div class="area" style="left:3%;top:64%;width:33%;height:22%">Description<small>brand + code + marker, name, spec lines</small></div>
+    <div class="area opt" style="left:38%;top:64%;width:36%;height:11%">Accessory 1<small>shows only when the item has one</small></div>
+    <div class="area opt" style="left:38%;top:77%;width:36%;height:11%">Accessory 2<small>shows only when the item has two</small></div>
+    <div class="area opt" style="left:3%;top:87%;width:33%;height:9%">Price<small>see question Q-B</small></div>
+    <div class="area fixed" style="left:77%;top:1%;width:22%;height:97%">Right band (fixed, every page)<small>project title, ref, area, prepared by, date, comment, logo</small></div>
+  </div>
+  <div class="cap">Designer view. The canvas is the existing tag template editor; areas are its layers (an image layer bound to Product Image / Drawing, text layers with Insert field). Nothing per product is typed here.</div>
+  </div>
+</div>
+</section>
+
+<section id="repeat">
+<h2>0b. Generated: one page per quoted product, same layout <span class="newtag">NEW v3</span></h2>
+<p class="why">The same template above, filled for three items of one quotation. The right band repeats on every page (only AREA and COMMENT change per page, typed on the Spec sheet tab). The second accessory area disappears on a page with one accessory.</p>
+<div class="mini3">
+  <div><div class="pg">
+    <div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%">photo</div>
+    <div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">drawing</div>
+    <div class="abs txt" style="left:7%;top:65%;width:30%"><div class="c">SORENTO SRTWC0001-RL</div><div class="n">Wall hung WC</div><div>- specs ...</div></div>
+    <div class="abs acc" style="left:38%;top:65%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTAV0010</b></div></div><div class="abs acc" style="left:38%;top:78%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTFH0011</b></div></div><div class="abs" style="left:7%;top:88%;font:700 1.3cqw Arial;color:#b45309">RM &lt;quoted price&gt;</div>
+    <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title&gt;</div><div><b>REF :</b> &lt;ref&gt;</div><div><b>AREA :</b> UNIT</div><div><b>PREPARED BY :</b> &lt;sales&gt;</div><div><b>DATE :</b> 02 NOV 2026</div><div><b>COMMENT :</b></div></div>
+    <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+  </div><div class="cap">Page 2: WC set, two accessories</div></div>
+  <div><div class="pg">
+    <div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%">photo</div>
+    <div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">drawing</div>
+    <div class="abs txt" style="left:7%;top:65%;width:30%"><div class="c">SORENTO SRTWB0002</div><div class="n">Counter top basin</div><div>- specs ...</div></div>
+    <div class="abs acc" style="left:38%;top:65%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTBT0006</b></div></div><div class="abs" style="left:7%;top:88%;font:700 1.3cqw Arial;color:#b45309">RM &lt;quoted price&gt;</div>
+    <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title&gt;</div><div><b>REF :</b> &lt;ref&gt;</div><div><b>AREA :</b> PANTRY (TYPE A)</div><div><b>PREPARED BY :</b> &lt;sales&gt;</div><div><b>DATE :</b> 02 NOV 2026</div><div><b>COMMENT :</b></div></div>
+    <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+  </div><div class="cap">Page 3: basin, one accessory</div></div>
+  <div><div class="pg">
+    <div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%">photo</div>
+    <div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">drawing</div>
+    <div class="abs txt" style="left:7%;top:65%;width:30%"><div class="c">SORENTO SRTFT0004</div><div class="n">Floor trap</div><div>- specs ...</div></div>
+    
+    <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title&gt;</div><div><b>REF :</b> &lt;ref&gt;</div><div><b>AREA :</b> TOILET (ALL TYPE)</div><div><b>PREPARED BY :</b> &lt;sales&gt;</div><div><b>DATE :</b> 02 NOV 2026</div><div><b>COMMENT :</b></div></div>
+    <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+  </div><div class="cap">Page 4: floor trap, no accessory (price area off, Q-B)</div></div>
+</div>
+</section>
+
+<section id="ask">
+<h2>0c. Questions for the owner <span class="newtag">PLEASE ANSWER</span></h2>
+<div class="opt">
+  <div class="o rec"><h4>Q-A. Your note ended "...repeated over and over every page that ca..." What was the rest?</h4>Our guess: (a) "...that can show the project details" (the right band above: title, ref, area, prepared by, date). (b) "...that can be changed per page" (a band with per-page text). (c) something else: please type it.<br><b>Recommend (a)</b>: it is what the sample prints, and per-page AREA and COMMENT are already typed on the tab.</div>
+  <div class="o rec"><h4>Q-B. Price on the spec sheet?</h4>Your sample prints no price; you mentioned "price in one of the area". (a) No price (as the sample). (b) An optional Price area showing the quoted unit price of the issued revision; a template without it prints none. (c) The list price.<br><b>Recommend (b)</b>: the quotation's own price is what the customer agreed to; the area is optional so the no-price catalogue stays possible.</div>
+  <div class="o rec"><h4>Q-C. One header band or also a top/bottom band?</h4>(a) Any fixed area anywhere on the page repeats (the right band is just the sample's choice; a top or bottom band works the same way). (b) Only a right band.<br><b>Recommend (a)</b>: it is how the template already works; nothing extra to build.</div>
+</div>
+</section>
 
 <section id="tab">
 <h2>A. Quotation document &gt; Spec sheet tab <span class="newtag">NEW TAB</span></h2>
