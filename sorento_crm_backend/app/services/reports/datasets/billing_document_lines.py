@@ -190,12 +190,15 @@ COLUMNS = (
 #: The invoiced ask's own copy of the catalog for the "Sales & outstanding" screen: the report ask's keys replace the
 #: Top selling items report's twins (quantity, RM and documents are the same figures as qty, amount and orders), and an
 #: invoice line has no location. They stay resolvable, only out of the Columns menu; the other report is unchanged.
-_ASK_HIDDEN = frozenset({"quantity", "sales_value", "documents", "location"})
+_ASK_HIDDEN = frozenset({"quantity", "sales_value", "documents", "location", "debtor_type"})
 ASK_COLUMNS = tuple(
     dataclasses.replace(c, hidden=True) if c.key in _ASK_HIDDEN
     else dataclasses.replace(c, label="Month of the year") if c.key == "month_of_year"
     else c
     for c in COLUMNS
+) + (
+    # The account type split and filter (SALES-ACCOUNT-TYPE): the ask's copy only, so Top selling items is unchanged.
+    reg.Column("account_type", "Account type", "text", "dimension", lambda c: Customer.autocount_debtor_type, size=140),
 )
 
 DATASET = reg.Dataset(
@@ -233,6 +236,7 @@ ASK_DEFINITION = reg.ReportDefinition(
         reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
         reg.PeriodParam(key="period", label="Period", default=reg.current_year_period),
         reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
+        reg.SelectParam("account_type", "Account type", True, (), ap.account_type_options, ap.account_type_condition),
         reg.SelectParam("product", "Product", True, (), _no_options, product_condition, hidden=True),
         reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),
         reg.SelectParam("category", "Category", True, (), ap.category_options, category_condition),
