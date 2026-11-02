@@ -1,7 +1,7 @@
 """SUPPLIER-ASK robustness sweep (#2066 fix round 3): supplier phrasings x picks through the Chatbot Console.
 
 Every turn is a console DRY RUN (`console_service.run_console_turn`, the same path the console page posts to:
-`is_test`, zero writes outside `chatbot.turns`), pinned to one parser version (`--parser-version`, default 194; the
+`is_test`, zero writes outside `chatbot.turns`), pinned to one parser version (`--parser-version`, required; the
 console pin also runs its paired span prompt, `engine._span_override`). Each case starts a new conversation
 (`session_vars={}`) and its picks carry the turn's own `session_vars` forward, as the console does.
 
@@ -16,7 +16,7 @@ projection, not a meter: a turn dearer than every earlier one can still go past 
 
 Usage, from `sorento_crm_backend/` with the copy's backend env (`DATABASE_URL`, provider keys) in place:
 
-    venv/bin/python -m scripts.sweep_supplier_ask --contact 487555417 --parser-version 194 \\
+    venv/bin/python -m scripts.sweep_supplier_ask --contact 487555417 --parser-version <the version publish_supplier_ask_prompts printed> \\
         --ledger ../state/ledger/supplier-ask-sweep.jsonl --out /tmp/supplier-sweep.md
 
 Writes a Markdown table (case, turn, text, verdict, tool, supplier ids, window, reply first line, usd) to `--out`
@@ -93,6 +93,8 @@ CASES: list[Case] = [
     _c("typo-taiyan-2", ("outstanding PO taiyan", "ask"), ("2", "po:1")),
     _c("unknown-supplier", ("outstanding PO for zzqqxx supplier", "miss")),
     _c("zh-quarter-all", ("outstanding PO for 太阳 in Q1 2026", "ask"), ("all", "po:3", "2026-01-01", "2026-03-31")),
+    # Fix round 4 (crew): the owner's turn 1, five times over (v194 asked on 2 of 5): each a new conversation.
+    *[_c(f"owner-turn1-repeat-{n}", ("outstaing for 太阳 for SRTW2600 after 2025", "ask")) for n in range(1, 6)],
     _c("control-stock", ("stock SRTW2600", "not_po"), names_supplier=False),
     _c("control-order-outstanding", ("outstanding for SRTW2600", "not_po"), names_supplier=False),
 ]
@@ -124,18 +126,36 @@ def _token_calls(trace: Any) -> list[dict[str, Any]]:
 
 
 def _price_table(db) -> dict[str, tuple[Decimal, Decimal, Decimal]]:
+    """`llm_model_prices`, over the repo's own seeded prices (`analytics_connector.prices.SEED_PRICES`, which carry the
+    Gemini parser model a copy's table may lack). A row in the table wins."""
     from sqlalchemy import text
 
+    from app.services.analytics_connector.prices import SEED_PRICES
+
+    out = {
+        model: (Decimal(i), Decimal(c if c is not None else i), Decimal(o)) for model, (i, c, o, _n) in SEED_PRICES.items()
+    }
     rows = db.execute(
         text("SELECT model, input_usd_per_1m, cached_input_usd_per_1m, output_usd_per_1m FROM llm_model_prices")
     ).all()
-    return {str(m): (Decimal(i), Decimal(c if c is not None else i), Decimal(o)) for m, i, c, o in rows}
+    out.update({str(m): (Decimal(i), Decimal(c if c is not None else i), Decimal(o)) for m, i, c, o in rows})
+    return out
+
+
+def _price_of(model: str, prices: dict[str, tuple[Decimal, Decimal, Decimal]]):
+    """The price row for a model id as a trace writes it: exact, without a `models/` prefix, else the longest priced
+    id it starts with (a dated or preview suffix). None when nothing matches."""
+    name = (model or "").strip().removeprefix("models/")
+    if name in prices:
+        return prices[name]
+    best = max((k for k in prices if name.startswith(k)), key=len, default=None)
+    return prices[best] if best else None
 
 
 def _usd(calls: list[dict[str, Any]], prices: dict[str, tuple[Decimal, Decimal, Decimal]], unpriced: Decimal) -> Decimal:
     total = Decimal(0)
     for call in calls:
-        price = prices.get(call["model"])
+        price = _price_of(call["model"], prices)
         if price is None:
             total += unpriced
             continue
@@ -154,7 +174,8 @@ def _tool_events(trace: Any) -> list[tuple[str, dict[str, Any]]]:
     out = []
     for e in trace or []:
         if isinstance(e, dict) and e.get("kind") == "tool":
-            payload = e.get("payload") if isinstance(e.get("payload"), dict) else {}
+            # `TurnTrace.add` spreads its payload beside `kind` (crew, round 4); an older nested `payload` still reads.
+            payload = e.get("payload") if isinstance(e.get("payload"), dict) else e
             out.append((str(payload.get("name") or ""), dict(payload.get("args") or {})))
     return out
 
@@ -199,7 +220,10 @@ def _cell(value: Any, limit: int = 70) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--contact", required=True, help="respond id of an office staff contact holding the reveals")
-    parser.add_argument("--parser-version", type=int, default=194)
+    parser.add_argument(
+        "--parser-version", type=int, required=True,
+        help="the parser version `scripts.publish_supplier_ask_prompts` printed (it carries the after-year sentence)",
+    )
     parser.add_argument("--cap-usd", type=Decimal, default=Decimal("0.50"))
     parser.add_argument("--unpriced-usd", type=Decimal, default=Decimal("0.01"))
     parser.add_argument("--ledger", type=Path, required=True)

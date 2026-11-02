@@ -447,18 +447,17 @@ def test_the_parser_edit_goes_right_after_the_span_marker():
     assert sask.with_supplier_line("no marker") is None
 
 
-def test_the_parser_edit_rules_after_a_year_on_the_line_that_names_years():
-    """Owner turn 1-3: 'after 2025' was read as from 1 January 2025. No date rule named a bounded year; the published
-    parser carries one sentence for it, on the R-X-02 line that already rules on years, once."""
-    from app.services.chatbot.head.parser_template import TEMPLATE
-
+@pytest.mark.parametrize("base", ["head\n== LOOKUP SPANS ==\ntail", "no years line here\n== LOOKUP SPANS ==\n"])
+def test_the_parser_edit_rules_after_a_year_whatever_the_base_says_about_years(base):
+    """Owner turn 1-3: 'after 2025' was read as from 1 January 2025. Round 4 (crew): the copy's production parser v189
+    has no 'Years compared' line, so the sentence never landed. It now sits right after the supplier line, which every
+    published version carries, once."""
     sask = _migration("sask_0002_span_supplier")
-    out = sask.with_after_year(TEMPLATE)
+    out = sask.with_after_year(sask.with_supplier_line(base))
     assert out is not None and out.count(sask.AFTER_YEAR_SENTENCE) == 1
-    line = next(ln for ln in out.split("\n") if sask.AFTER_YEAR_SENTENCE in ln)
-    assert sask.YEAR_ANCHOR in line and "2026-01-01" in sask.AFTER_YEAR_SENTENCE
+    assert f"{sask.PARSER_SUPPLIER_LINE}\n{sask.AFTER_YEAR_SENTENCE}" in out and "2026-01-01" in sask.AFTER_YEAR_SENTENCE
     assert sask.with_after_year(out) is None, "applied once"
-    assert sask.with_after_year("no year line") is None
+    assert sask.with_after_year("no supplier line") is None
 
 
 def _seed_prompts(db) -> str:
@@ -471,7 +470,7 @@ def _seed_prompts(db) -> str:
     ).first()
     parser_row = AIPromptVersion(
         name="chatbot_semantic_parser", version=(int(top[0]) if top else 0) + 1, type="text",
-        template="ZZT parser\nYears compared (\"2025 vs 2026\") run from 1 January.\n== LOOKUP SPANS ==\nrules", variables=["current_date"], config_json={"blocks_hash": "x"},
+        template="ZZT parser\n== LOOKUP SPANS ==\nrules", variables=["current_date"], config_json={"blocks_hash": "x"},
     )
     db.add(parser_row)
     db.flush()

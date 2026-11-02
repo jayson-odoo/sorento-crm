@@ -9,7 +9,8 @@ Usage, from `sorento_crm_backend/` with the backend env (`DATABASE_URL`) in plac
 
     venv/bin/python -m scripts.publish_supplier_ask_prompts
 
-Prints `span v<N>, parser v<M>` (the pin for the console), and whether the parser text took the date sentence.
+Prints `span v<N>, parser v<M>: after-year sentence published. Pin parser v<M>.`, or exits non-zero with FAILED
+when the published parser version does not carry the date sentence.
 """
 from __future__ import annotations
 
@@ -43,7 +44,11 @@ def main() -> None:
             else None
         )
         took = bool(row is not None and sask.AFTER_YEAR_SENTENCE in (row.template or ""))
-        print(f"span v{span_v}, parser v{parser_v}; after-year sentence: {'yes' if took else 'no (no Years compared line)'}")
+        if not took:
+            raise SystemExit(
+                f"FAILED: parser v{parser_v} does not carry the after-year sentence (span v{span_v}); nothing to pin"
+            )
+        print(f"span v{span_v}, parser v{parser_v}: after-year sentence published. Pin parser v{parser_v}.")
     finally:
         db.close()
 

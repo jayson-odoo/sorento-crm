@@ -14,8 +14,9 @@ Crew console pass on the first cut (1 Nov 2026) found three gaps, fixed here:
   line (`parser.SUPPLIER_ID_ASK`), which `resolve_gate.bind_span_suppliers` binds with every supplier the span pass
   scored within the runner-up margin (owner ruling, 1 Nov 2026: "match by meaning");
 * fix round 3 (owner hand test, 2 Nov 2026): "after 2025" read as from 1 January 2025. No date rule named a
-  bounded year ("after", "before", "since"), so the parser version also carries one sentence for it, appended to
-  the R-X-02 line that names years ("Years compared"); a text without that line takes no date sentence;
+  bounded year ("after", "before", "since"), so the parser version also carries one sentence for it, on its own line
+  right after the supplier line. Round 4: anchored on the span marker, which every base this migration publishes on
+  carries, not on a date line only some versions have (the copy's production v189 has none);
 * the Chatbot Console pins only a parser version. The parser version records the span version it was published with
   (`config_json.span_prompt_version_id`); a dry run that pins this parser runs that span prompt too
   (`engine._span_override`). A live turn never reads the pairing.
@@ -67,9 +68,11 @@ SUPPLIER_ID_ASK = "For a supplier entity, canonical_code is the id of the Suppli
 PARSER_SUPPLIER_LINE = (
     SUPPLIER_ID_ASK + " A supplier is a company we buy goods from; what is outstanding with a supplier is our open "
     "purchase orders to it (domain purchase_order)."
+    # Fix round 4 (crew sweep: owner turn 1 read as a customer on 3 of 5 sends): the candidates decide the kind.
+    " A phrase whose only candidates are Supplier candidates lines is a supplier entity with that line's id, never a"
+    " customer, whatever else the message says."
 )
-#: Fix round 3: a year bounded by a word, appended to the R-X-02 line that already rules on years.
-YEAR_ANCHOR = "Years compared ("
+#: Fix round 3: a year bounded by a word. Round 4: its own line after the supplier line (`with_after_year`).
 AFTER_YEAR_SENTENCE = (
     '"After <year>" starts on 1 January of the next year ("after 2025" -> 2026-01-01) and "before <year>" ends on '
     '31 December of the year before; "since <year>" and "from <year>" start on 1 January of that year. Each leaves '
@@ -106,16 +109,14 @@ def with_supplier_line(template: str) -> str | None:
 
 
 def with_after_year(template: str) -> str | None:
-    """The parser text with `AFTER_YEAR_SENTENCE` at the end of the line holding `YEAR_ANCHOR`. None without that
-    line or when the sentence is already there."""
-    if AFTER_YEAR_SENTENCE in (template or ""):
+    """The parser text with `AFTER_YEAR_SENTENCE` on its own line right after `PARSER_SUPPLIER_LINE` (which
+    `with_supplier_line` puts right after the span marker, so every published version has it). None without the
+    supplier line or when the sentence is already there."""
+    text = template or ""
+    if AFTER_YEAR_SENTENCE in text or PARSER_SUPPLIER_LINE not in text:
         return None
-    lines = (template or "").split("\n")
-    at = next((i for i, ln in enumerate(lines) if YEAR_ANCHOR in ln), None)
-    if at is None:
-        return None
-    lines[at] = lines[at].rstrip() + " " + AFTER_YEAR_SENTENCE
-    return "\n".join(lines)
+    at = text.index(PARSER_SUPPLIER_LINE) + len(PARSER_SUPPLIER_LINE)
+    return text[:at] + "\n" + AFTER_YEAR_SENTENCE + text[at:]
 
 
 def _production(session: Session, name: str):
@@ -205,7 +206,9 @@ def publish_parser(session: Session, span_version_id) -> int | None:
     if template is None:
         logger.warning("sask_0002: the span-pass parser does not take the supplier line")
         return None
-    template = with_after_year(template) or template
+    template = with_after_year(template)
+    if template is None:
+        raise RuntimeError("sask_0002: the parser text did not take the after-year sentence")
     existing = _existing(session, PARSER, template)
     if existing is not None:
         return int(existing[1])

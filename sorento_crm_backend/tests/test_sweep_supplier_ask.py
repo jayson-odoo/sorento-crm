@@ -7,6 +7,8 @@ from scripts import sweep_supplier_ask as sweep
 def test_the_sweep_holds_at_least_24_phrasings_covering_every_axis():
     texts = [t.text for c in sweep.CASES for t in c.turns]
     assert len(sweep.CASES) >= 24
+    repeat = [c for c in sweep.CASES if c.name.startswith("owner-turn1-repeat-")]
+    assert len(repeat) == 5 and {c.turns[0].text for c in repeat} == {"outstaing for 太阳 for SRTW2600 after 2025"}
     for needle in ("太阳", "taiyng", "SRTW2600", "after 2025", "in 2026", "March", "all", "both", "400-X008", "1 and 3"):
         assert any(needle in t for t in texts), needle
     assert any("order" in t for t in texts) and any("PO" in t for t in texts) and any("outstanding" in t for t in texts)
@@ -62,3 +64,24 @@ def test_cached_tokens_are_priced_at_the_cached_rate():
     calls = [{"model": "m1", "prompt": 1_000_000, "completion": 0, "cached": 500_000}]
     usd = sweep._usd(calls, {"m1": (Decimal("0.10"), Decimal("0.02"), Decimal("0.40"))}, Decimal("0.01"))
     assert usd == Decimal("0.06")
+
+
+def test_tool_events_read_the_flat_trace_shape():
+    """Crew round 4: `TurnTrace.add` keeps `name` / `args` beside `kind`; reading `payload` graded every PO turn as
+    'no PO list'."""
+    trace = [
+        {"kind": "tool", "at": 1, "name": sweep.PO_TOOL, "args": {"supplier_ids": ["a"]}},
+        {"kind": "tool", "payload": {"name": "crm_report_ask", "args": {}}},
+        {"stage": "understood", "facts": {}},
+    ]
+    assert sweep._tool_events(trace) == [(sweep.PO_TOOL, {"supplier_ids": ["a"]}), ("crm_report_ask", {})]
+
+
+def test_a_gemini_model_is_priced_from_the_seed_prices_not_the_flat_fallback():
+    from app.services.analytics_connector.prices import SEED_PRICES
+
+    prices = {m: (Decimal(i), Decimal(c or i), Decimal(o)) for m, (i, c, o, _n) in SEED_PRICES.items()}
+    assert sweep._price_of("models/gemini-3.5-flash-lite", prices) == prices["gemini-3.5-flash-lite"]
+    assert sweep._price_of("gemini-3.5-flash-lite-preview-10-2026", prices) == prices["gemini-3.5-flash-lite"]
+    calls = [{"model": "gemini-3.5-flash-lite", "prompt": 50_000, "completion": 500, "cached": 0}]
+    assert sweep._usd(calls, prices, Decimal("0.01")) == Decimal("0.01625")
