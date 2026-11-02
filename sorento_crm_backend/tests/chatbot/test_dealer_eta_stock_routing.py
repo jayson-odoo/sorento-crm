@@ -263,6 +263,10 @@ class Console:
 
 @pytest.fixture
 def console(session_factory, monkeypatch, stub_access):
+    # Fix B marks a past told date "(delayed)": today is pinned before the fixed 2026 dates.
+    import app.services.incoming_stock_service as incoming
+
+    monkeypatch.setattr(incoming, "today_myt", lambda: date(2026, 1, 1))
     try:
         yield lambda **seed: (_seed(session_factory, **seed), Console(session_factory, monkeypatch, stub_access))[1]
     finally:

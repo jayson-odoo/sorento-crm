@@ -1025,7 +1025,16 @@ def _twin_shipment(db, p, *, eta=SHIP_ETA):
     return shipment
 
 
-def test_dealer_list_is_one_row_per_product_with_deduped_padded_etas(client, db):
+@pytest.fixture
+def _jan_today(monkeypatch):
+    """These tests date shipments in Oct to Dec 2026: today is pinned before them so a past
+    date is not marked delayed (Fix B) and the test is not a time bomb."""
+    import app.services.incoming_stock_service as incoming
+
+    monkeypatch.setattr(incoming, "today_myt", lambda: date(2026, 1, 1))
+
+
+def test_dealer_list_is_one_row_per_product_with_deduped_padded_etas(client, db, _jan_today):
     p, _ = _seed(db)
     _twin_shipment(db, p)  # same ETA, another container: the owner's duplicate
     _twin_shipment(db, p, eta=date(2026, 12, 1))
@@ -1039,7 +1048,7 @@ def test_dealer_list_is_one_row_per_product_with_deduped_padded_etas(client, db)
     assert "salesperson_name" not in body
 
 
-def test_dealer_list_carries_no_container_quantity_allocation_or_file(client, db):
+def test_dealer_list_carries_no_container_quantity_allocation_or_file(client, db, _jan_today):
     p, _ = _seed(db)
     _twin_shipment(db, p)
     body = _list(client, p, _dealer(db))
@@ -1049,13 +1058,13 @@ def test_dealer_list_carries_no_container_quantity_allocation_or_file(client, db
     assert "attachment" not in set(_walk_keys(body))
 
 
-def test_dealer_list_with_the_offset_off_reads_the_exact_date(client, db):
+def test_dealer_list_with_the_offset_off_reads_the_exact_date(client, db, _jan_today):
     p, _ = _seed(db)
     body = _list(client, p, _dealer(db, offset_applied=False))
     assert body["data"][0]["etas"] == [_told(EXACT)]
 
 
-def test_dealer_by_product_is_the_same_view(client, db):
+def test_dealer_by_product_is_the_same_view(client, db, _jan_today):
     p, _ = _seed(db)
     _twin_shipment(db, p)
     body = _by_product(client, p, _dealer(db, salesperson="ZZT Sean"))
