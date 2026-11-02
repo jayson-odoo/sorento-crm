@@ -1049,7 +1049,10 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     for (const [, decision] of putLineDraft.mock.calls) expect(decision.remark ?? '').toBe('');
   });
 
-  it('F28: a covered line delivered in full has a read-only Remark and says nothing goes to purchasing', async () => {
+  // CONFIRM-PREVIEW-STALE item 4 (crew ruling 2 Nov; owner rulings 14 Sep, 22 Sep, 12 Oct,
+  // 1 Nov): Confirm plans a delivered line at its ordered qty, so its saved decision DOES reach
+  // purchasing. The row prints that decision's words, read-only; no "nothing goes" note.
+  it('F28 (reworked): a covered line delivered in full prints its saved words read-only, no "nothing goes" note', async () => {
     const read = LINE3_READ();
     read.lines = [
       {
@@ -1068,7 +1071,8 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     await openConfirmGuide();
     const page = await screen.findByTestId('confirm-guide-split-page');
     const block = await within(page).findByTestId('split-line-3');
-    expect(block).toHaveTextContent('Delivered in full: nothing goes to purchasing');
+    expect(block).not.toHaveTextContent('nothing goes to purchasing');
+    expect(block).toHaveTextContent('USE BRW 522 & ORDER 294');
     expect(block.querySelectorAll('input')).toHaveLength(0);
   });
 

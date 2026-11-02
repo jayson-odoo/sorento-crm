@@ -69,3 +69,16 @@ Tests: `tests/scm/test_confirm_preview_delivered_change.py` (red first); vitest
 - Hand test: the board is under Supply Chain > Project Demand > Fulfilment Planning in the staff
   sidebar (`config/menu.config.tsx:390-396`); the Project Sales entry exists only in the compact
   menu (`:2260`). Not a bug.
+
+## Item 4 (stacked PR)
+
+Measured, not assumed: Confirm's facts plan a line at `plan_qty_of(core)` (ordered qty, owner
+ruling 14 Sep, `project_supply_service.py:518-543`, `_facts_for` `:9766`), so the #1362 skip
+(`:5785`, `open_qty <= 0`) only catches a line whose PLAN qty is 0 (cancelled, returned,
+`qty_required` 0). A delivered line's saved decision already reaches purchasing on a plain
+Confirm (pin: `test_a_delivered_line_s_saved_buy_on_a_plain_confirm_reaches_purchasing`). So no
+engine change: the sheet's F28 note was the only wrong part and is removed; the row prints the
+saved decision's words. The crew ruling "a Buy on a delivered line keeps the skip" rested on my
+earlier reading of the skip and is moot: the engine never skipped it. Own-bin Borrow emailing
+purchasing (owner, 2 Nov) is an engine rule `_borrow_shortfalls` does not apply today (own
+location is never a hole); not in this lane.

@@ -84,6 +84,8 @@ will say, line for line:
 * A line delivered in full that AutoCount still changed (for example a new date) shows the old
   date under **Delivery date** and the new one under **New date**, the same Was and Now the email
   prints.
+* A line delivered in full still goes to purchasing on Confirm: the board plans it at its
+  ordered quantity, so its row shows your saved decision's words like any other saved line.
 * When your saved decision is not what AutoCount's change now suggests, the page flags the line:
   "AutoCount moved this line: suggestion Buy 3, you keep Borrow 3". **Keep** leaves your
   decision as it is. **Take suggestion** drops your saved decision so the line takes the change's

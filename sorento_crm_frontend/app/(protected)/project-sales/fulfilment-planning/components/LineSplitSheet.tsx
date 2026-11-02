@@ -673,31 +673,15 @@ const LineBlock = React.memo(function LineBlock({
   // decision (only the guide sets them), and the planner's own remark over them.
   const savedRemark = line.savedRemark || null;
   const ownRemark = line.ownRemark || '';
-  // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026, "popup = email = Excel"): a delivered line a
-  // pending AutoCount change names is not dropped by Confirm (the change settles it), and the
-  // email prints its Was -> Now: it reads its NEW cells and words like any changed line.
+  // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026, "popup = email = Excel"; item 4): Confirm plans
+  // a delivered line at its ordered qty (`plan_qty_of`, owner ruling 14 Sep), so its saved
+  // decision DOES reach purchasing and the row prints that decision's words like any saved
+  // line (the "nothing goes to purchasing" note, UAC F28, is gone). A delivered line a pending
+  // change names reads its NEW cells and words as well.
   const deliveredQuiet = delivered && !line.pendingChange;
   let body: React.ReactNode;
-  if (deliveredQuiet && line.remarkInDraft) {
-    // UAC F28: Confirm drops a line delivered in full, so nothing of it reaches purchasing:
-    // its remark stays read-only and the row says why.
-    body = (
-      <TableRow className="border-0 hover:bg-transparent">
-        {emptyGrip}
-        {baseCells}
-        <TableCell colSpan={2} className={cn(changeCell, 'ps-2 text-start')}>
-          <span className="text-2xs text-muted-foreground">
-            Delivered in full: nothing goes to purchasing
-          </span>
-        </TableCell>
-        <TableCell className={changeCell}>
-          <RemarkText value={ownRemark} generated={savedRemark ?? ''} />
-        </TableCell>
-        {balance}
-        {emptyRemove}
-      </TableRow>
-    );
-  } else if (deliveredQuiet && !savedRemark) {
+  if (deliveredQuiet && !savedRemark && !line.remarkInDraft) {
+    // No decision of its own to print: say what AutoCount delivered.
     body = (
       <TableRow className="border-0 hover:bg-transparent">
         {emptyGrip}
