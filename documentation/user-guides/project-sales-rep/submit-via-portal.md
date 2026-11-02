@@ -44,7 +44,9 @@ Complaints support an **AI Extract** shortcut to pre-fill the form from a photo,
 
 If the upload doesn't return useful values, dismiss the dialog and fill the form manually.
 
-If the AI reader itself fails, the dialog shows one of these messages instead of values:
+A file of several pages is read in up to four parts at once, so a long price list still comes back in well under a minute. If some parts could not be read, the rows from the other pages still show, with a line above them such as *"Pages 7-9 could not be read, try them again."* Extract those pages again (for example from a file with just those pages) to add their rows.
+
+If the AI reader fails for the whole file, the dialog shows one of these messages instead of values:
 
 * *"This file is too long to read in one go; try fewer pages."* - the file lists more than one read can hold. Split it (for example send the pages with the lines you need) and extract each part.
 * *"The AI reader did not answer within 45 seconds and was stopped. Try again, or send fewer pages."*

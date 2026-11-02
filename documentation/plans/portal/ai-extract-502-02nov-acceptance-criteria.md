@@ -15,3 +15,11 @@
   budget (production: 6138 answer tokens) reads.
 - AC-8: An answer still cut off at the cap answers 503 "This file is too long to read in one go; try
   fewer pages."
+- AC-9: A multi-page upload is read as at most 4 page groups at once, each with its own 45 s cap and
+  answer budget; the whole read ends inside one call's cap (one wave).
+- AC-10: Rows come back in page order whatever order the groups finish in; an exact duplicate of an
+  earlier group's row is dropped.
+- AC-11: When some groups fail, the rows from the others come back with a plain note naming the
+  pages that were not read ("Pages 7-9 could not be read, try them again."), shown in the dialog;
+  never the provider's text. When every group fails, the 503 path answers.
+- AC-12: A one-page upload and a video are still read in one call.

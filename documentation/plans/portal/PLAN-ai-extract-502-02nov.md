@@ -62,6 +62,21 @@ takes in one non-streamed call (gpt-4o/4o-mini cap 16,384; Anthropic non-streami
 about what the 45 s cap holds at production's measured speed. A truncation that still happens
 (`ResponseTruncated`) answers 503 with the too-long message.
 
+## Round 3: big files read in parallel page groups (crew browser pass, 2 Nov)
+
+On 9c9fb65f18 a 6-page / 168-row stand-in read in 34 s, but a 12-page / 336-row one (the owner's real
+promo size) hit the 45 s cap. A multi-page upload is now read as at most `MAX_PARALLEL_CALLS` (4) page
+groups at once, group size ceil(pages / 4), so every group runs in ONE wave: the whole read ends inside
+one call's 45 s cap plus render, under the proxy's 60 s, with no separate deadline to manage. Each call
+keeps its own cap and answer budget. Rows merge in page order (`pool.map`, not finish order); a row
+exactly equal to one from an earlier group is dropped (repeats inside one group stay, as a single call
+always kept them); a field takes the first page's non-empty value. Groups that fail are named in a plain
+`note` ("Pages 7-9 could not be read, try them again.") beside the rows that did read; every group
+failing is the 503 path, first group's error. A video is not split (its frames show the same products).
+Pasted text rides with the first group. Usage is logged once with the summed tokens.
+Frontend: `AIExtractResult.note` and one muted line at the top of the review stage
+(`components/common/ai-extract/AIExtractDialog.tsx`, same style as its "Nothing extractable" line).
+
 ## Measured (dev copy, read-only)
 
 `ai_assistant_usage_logs` feature=ai_extract: 840 successful calls, max 10.3 s, 0 over 30 s
