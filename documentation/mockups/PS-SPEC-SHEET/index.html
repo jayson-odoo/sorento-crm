@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Project spec sheet (mock v1)</title>
+<style>
+/* App tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/QUOTE-COVER-PAGE.
+   Spec pages are drawn at 338.7 x 190.5 mm scaled to 880 x 495 px (16:9), as TagSheetRenderer draws a sheet. */
+:root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--new:#b45309;--new-soft:#fffbeb;--bad:#b91c1c;--good:#15803d;--page:#f7f7f8;--green:#3f7d3a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:920px}
+.nav{position:sticky;top:0;z-index:5;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 34px}
+section>h2{font-size:15px;margin:0 0 4px}
+.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:900px}
+.newtag{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--new);background:var(--new-soft);border:1px solid #fcd34d;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.card{background:#fff;border:1px solid var(--border);border-radius:12px}
+.hdr{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.hdr h3{margin:0;font-size:17px}
+.meta{font-size:12px;color:var(--muted-fg)}
+.tabs{display:flex;gap:18px;padding:0 18px;border-bottom:1px solid var(--border);overflow-x:auto}
+.tabs span{padding:10px 0;font-size:13px;color:var(--muted-fg);white-space:nowrap}
+.tabs span.on{color:var(--foreground);border-bottom:2px solid var(--foreground);font-weight:500}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 12px;font-size:13px}
+.btn.pri{background:var(--foreground);color:#fff;border-color:var(--foreground)}
+.body{padding:16px 18px;display:flex;flex-direction:column;gap:16px}
+.pickers{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fld label{display:block;font-size:12px;color:var(--muted-fg);margin-bottom:4px}
+.sel{border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;display:flex;justify-content:space-between;background:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sel:after{content:"\25BE";color:var(--muted-fg);margin-left:6px}
+table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
+th{text-align:left;font-weight:500;color:var(--muted-fg);font-size:12px;padding:8px;border-bottom:1px solid var(--border)}
+td{padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.inp{border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12.5px;background:#fff;min-height:28px;overflow:hidden;text-overflow:ellipsis}
+.inp.ph{color:#a1a1aa}
+.thumb{width:34px;height:34px;border-radius:6px;background:#e4e4e7;display:inline-block;vertical-align:middle}
+.grip{color:#a1a1aa;cursor:grab}
+.badge{display:inline-block;border-radius:999px;padding:1px 8px;font-size:11px;background:var(--muted);color:var(--muted-fg)}
+.badge.warn{background:var(--new-soft);color:var(--new)}
+.sw{display:inline-block;width:28px;height:16px;border-radius:8px;background:var(--foreground);position:relative;vertical-align:middle}
+.sw:after{content:"";position:absolute;right:2px;top:2px;width:12px;height:12px;border-radius:6px;background:#fff}
+.sw.off{background:#d4d4d8}.sw.off:after{right:auto;left:2px}
+.empty{padding:40px 18px;text-align:center}
+.empty h4{margin:0 0 4px;font-size:15px}
+.empty p{margin:0;color:var(--muted-fg);font-size:13px}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.cap{font-size:11.5px;color:var(--muted-fg);padding:6px 0}
+/* ---------- spec pages (16:9) ---------- */
+.pg{width:880px;max-width:100%;aspect-ratio:16/9;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.12),0 0 0 1px #e4e4e7;position:relative;overflow:hidden;font-family:'Helvetica Neue',Arial,sans-serif;color:#111;container-type:inline-size}
+.pg .abs{position:absolute}
+.ph-img{background:repeating-linear-gradient(45deg,#f4f4f5,#f4f4f5 8px,#ececee 8px,#ececee 16px);border-radius:3px;display:flex;align-items:center;justify-content:center;color:#71717a;font-size:1.2cqw}
+.drw{background:#fff;border:1px dashed #a1a1aa;display:flex;align-items:center;justify-content:center;color:#71717a;font-size:1.2cqw}
+.logo{border:1px dashed #a1a1aa;color:#71717a;font-size:1.1cqw;display:flex;align-items:center;justify-content:center;font-weight:700;letter-spacing:.1em}
+.tb{border:1.5px solid var(--green);display:flex;flex-direction:column;font-size:.85cqw;line-height:1.35}
+.tb>div{border-bottom:1px solid var(--green);padding:.4cqw .6cqw}
+.tb>div:last-child{border-bottom:0;flex:1}
+.tb .desc{flex:none;height:55%;color:#333;overflow:hidden}
+.tb b{font-weight:700}
+.txt{font-size:1.25cqw;line-height:1.4}
+.txt .c{font-weight:700}
+.txt .n{font-weight:700;text-transform:uppercase}
+.txt .m{color:#d32f2f;font-weight:700}
+.acc{display:flex;gap:1cqw;align-items:flex-start;font-size:1.05cqw;line-height:1.35}
+.acc .t{width:5.5cqw;height:5.5cqw;flex:none}
+.bdg{width:4cqw;height:4cqw;border-radius:50%;background:#1f2937;color:#fff;font-size:.8cqw;display:flex;align-items:center;justify-content:center;text-align:center;line-height:1}
+.tok{font-family:ui-monospace,monospace;font-size:.85em;background:#eef2ff;color:#3730a3;border-radius:3px;padding:0 3px}
+/* editor */
+.ed{display:grid;grid-template-columns:220px minmax(0,1fr) 260px;gap:0;border-top:1px solid var(--border)}
+.ed .col{padding:12px;border-right:1px solid var(--border);font-size:12.5px}
+.ed .col:last-child{border-right:0}
+.ed h5{margin:0 0 8px;font-size:12px;color:var(--muted-fg);font-weight:500;text-transform:uppercase;letter-spacing:.05em}
+.li{padding:5px 8px;border-radius:6px}
+.li.on{background:var(--primary-soft)}
+.grp{font-size:11px;color:var(--muted-fg);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.05em}
+.map td,.map th{white-space:normal;font-size:12px;vertical-align:top}
+code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
+@media (max-width:900px){.pickers{grid-template-columns:1fr 1fr}.ed{grid-template-columns:1fr}.ed .col{border-right:0;border-bottom:1px solid var(--border)}}
+@media (max-width:520px){.pickers{grid-template-columns:1fr}.hide-sm{display:none}}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Project spec sheet <span class="newtag">MOCK v1</span></h1>
+<p class="intro">PS-SPEC-SHEET. A cover page plus one page per quoted item, designed as tag templates and printed from an issued revision.
+Data is masked (project title, ref, names and phones are placeholders; codes are illustrative). Behaviour card:
+<code>documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md</code>.</p>
+<div class="nav"><a href="#tab">A. Spec sheet tab</a><a href="#empty">B. Empty states</a><a href="#pages">C. Printed pages</a><a href="#editor">D. Template editor</a><a href="#map">E. Component map</a></div>
+
+<section id="tab">
+<h2>A. Quotation document &gt; Spec sheet tab <span class="newtag">NEW TAB</span></h2>
+<p class="why">Rules 1-15. Templates and revision on top; pages in print order, drag to reorder; Area / Comment typed per page; Hide drops a page. One CTA in the header: Export PDF (to My Downloads).</p>
+<div class="card">
+  <div class="hdr"><div><h3>Proposal PRJQ-2026-0042</h3><div class="meta">Project &lt;masked title&gt; &middot; Rev B issued 02 Nov 2026</div></div><span class="btn pri">Export PDF</span></div>
+  <div class="tabs"><span>Header</span><span>Lines</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span class="on">Spec sheet</span></div>
+  <div class="body">
+    <div class="pickers">
+      <div class="fld"><label>Revision</label><div class="sel">B, issued 02 Nov 2026</div></div>
+      <div class="fld"><label>Cover template</label><div class="sel">Project catalogue cover</div></div>
+      <div class="fld"><label>Page template</label><div class="sel">Item with accessories</div></div>
+      <div class="fld"><label>Single item template</label><div class="sel">Single item</div></div>
+    </div>
+    <div style="overflow-x:auto">
+    <table style="min-width:900px">
+      <colgroup><col style="width:34px"><col style="width:40px"><col style="width:52px"><col style="width:190px"><col style="width:120px"><col style="width:230px"><col style="width:150px"><col style="width:70px"><col style="width:60px"></colgroup>
+      <thead><tr><th></th><th>Page</th><th></th><th>Item</th><th>Accessories</th><th>Area</th><th>Comment</th><th>Marker</th><th>Print</th></tr></thead>
+      <tbody>
+        <tr><td class="grip">&#8942;&#8942;</td><td>1</td><td colspan="7"><b>Cover</b> &middot; <span class="meta">Project catalogue cover</span></td></tr>
+        <tr><td class="grip">&#8942;&#8942;</td><td>2</td><td><span class="thumb"></span></td><td title="SORENTO SRTWC0001-RL Wall hung WC"><b>SRTWC0001-RL</b><br><span class="meta">Wall hung WC</span></td><td><span class="badge">2 (set)</span></td><td><div class="inp">UNIT</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp">*</div></td><td><span class="sw"></span></td></tr>
+        <tr><td class="grip">&#8942;&#8942;</td><td>3</td><td><span class="thumb"></span></td><td><b>SRTWB0002</b><br><span class="meta">Counter top basin</span></td><td><span class="badge">1</span></td><td><div class="inp">UNIT &amp; PODIUM FACILITIES</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw"></span></td></tr>
+        <tr><td class="grip">&#8942;&#8942;</td><td>4</td><td><span class="thumb"></span></td><td><b>SRTBM0003</b><br><span class="meta">Basin mixer</span></td><td><span class="badge warn">2 of 3 fit</span></td><td><div class="inp">PANTRY (TYPE A)</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw"></span></td></tr>
+        <tr><td class="grip">&#8942;&#8942;</td><td>5</td><td><span class="thumb"></span></td><td><b>SRTFT0004</b><br><span class="meta">Floor trap</span></td><td><span class="meta">none</span></td><td><div class="inp">TOILET (ALL TYPE)</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw"></span></td></tr>
+        <tr style="opacity:.55"><td class="grip">&#8942;&#8942;</td><td>&ndash;</td><td><span class="thumb"></span></td><td><b>SRTSV0005</b><br><span class="meta">Silicone sealant</span></td><td><span class="meta">none</span></td><td><div class="inp ph">Area</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw off"></span></td></tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="cap">Area input: SearchableSelect-style combobox, free text allowed, suggests areas already typed on this sheet. Marker column shown only if Q1 = (c). Rows save on blur (no Save button); the header Export uses the saved state.</div>
+  </div>
+</div>
+</section>
+
+<section id="empty">
+<h2>B. Empty states</h2>
+<div class="row">
+  <div class="card" style="flex:1;min-width:280px"><div class="empty"><h4>No issued revision yet</h4><p>A spec sheet prints what the customer received. Issue a revision first.</p></div></div>
+  <div class="card" style="flex:1;min-width:280px"><div class="empty"><h4>No spec sheet templates</h4><p>Publish a Spec sheet cover and a Spec sheet page template in Dealer Kit &gt; Tag templates.</p></div></div>
+</div>
+<p class="cap">Export is disabled (with the reason as its title) until a revision, a cover template and a page template are set.</p>
+</section>
+
+<section id="pages">
+<h2>C. Printed pages (338.7 x 190.5 mm, as designed in the templates)</h2>
+<p class="why">Drawn by TagSheetRenderer from the template's layers; every value below comes from a slot or a <span class="tok">{{merge field}}</span>. Nothing prints a price.</p>
+<div class="row" style="flex-direction:column">
+  <div>
+  <div class="pg">
+    <div class="abs ph-img" style="left:3%;top:1%;width:94%;height:97%">photo collage (library asset)</div>
+    <div class="abs logo" style="left:74%;top:1%;width:23%;height:7%;background:#fff">SORENTO</div>
+  </div>
+  <div class="cap">Page 1: Spec sheet cover template (two image layers; no data). A designer may add <span class="tok">{{doc.project_title}}</span> etc.</div>
+  </div>
+
+  <div>
+  <div class="pg">
+    <div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%">photo slot</div>
+    <div class="abs bdg" style="left:5%;top:14%">RIM<br>LESS</div>
+    <div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">Drawing slot (frozen on the issue)</div>
+    <div class="abs txt" style="left:7%;top:65%;width:30%">
+      <div class="c">SORENTO SRTWC0001-RL <span class="m">*</span></div>
+      <div class="n">Wall hung WC</div>
+      <div>- (L)540 X (W)360 X (H)350 MM</div><div>- DUAL FLUSH 4.5/3L</div><div>- SOFT CLOSE SEAT COVER</div><div>- RIMLESS</div>
+    </div>
+    <div class="abs acc" style="left:38%;top:65%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTAV0010</b><br>ANGLE VALVE<br>FINISHING: CHROME</div></div>
+    <div class="abs acc" style="left:38%;top:78%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTFH0011</b><br>FLEXIBLE HOSE 40CM</div></div>
+    <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%">
+      <div class="desc"><span class="tok">{{doc.project_title}}</span> &lt;proposed development of N blocks of M storey residential ... masked, ~800 characters at 7 pt&gt;</div>
+      <div><b>REF :</b> <span class="tok">{{doc.ref}}</span></div>
+      <div><b>AREA :</b> UNIT</div>
+      <div><b>PREPARED BY :</b> &lt;salesperson&gt; &lt;phone&gt;</div>
+      <div><b>DATE :</b> 02 NOV 2026</div>
+      <div><b>COMMENT :</b></div>
+    </div>
+    <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+  </div>
+  <div class="cap">Item with accessories: accessory rows are layers pointed at part 1 / part 2; part 2 absent = that row draws nothing. Badge shows only when spec Rimless = Yes.</div>
+  </div>
+
+  <div>
+  <div class="pg">
+    <div class="abs ph-img" style="left:5%;top:15%;width:31%;height:50%">photo slot</div>
+    <div class="abs drw" style="left:40%;top:10%;width:34%;height:58%">Drawing slot</div>
+    <div class="abs txt" style="left:28%;top:70%;width:46%;text-align:center">
+      <div class="c">SORENTO SRTFT0004</div><div class="n">Floor trap</div><div>SIZE : 130 x 130MM</div>
+    </div>
+    <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%">
+      <div class="desc">&lt;project title, masked&gt;</div>
+      <div><b>REF :</b> &lt;ref&gt;</div><div><b>AREA :</b> TOILET (ALL TYPE)</div><div><b>PREPARED BY :</b> &lt;salesperson&gt;</div><div><b>DATE :</b> 02 NOV 2026</div><div><b>COMMENT :</b></div>
+    </div>
+    <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+  </div>
+  <div class="cap">Single item template (an item with no accessories). No drawing on the line = the drawing box is empty.</div>
+  </div>
+</div>
+</section>
+
+<section id="editor">
+<h2>D. Dealer Kit &gt; Tag templates editor: what is added</h2>
+<p class="why">Same editor, same versions and publish. New: two families, a Document field group, a Drawing slot, "Show only when spec is Yes" on image layers.</p>
+<div class="card">
+  <div class="hdr"><div><h3>Item with accessories</h3><div class="meta">Family: Spec sheet page <span class="newtag">NEW</span> &middot; 338.7 x 190.5 mm &middot; Draft (v3 published)</div></div><span class="btn pri">Publish</span></div>
+  <div class="ed">
+    <div class="col"><h5>Insert field</h5>
+      <div class="grp">Document <span class="newtag">NEW</span></div>
+      <div class="li">Project title</div><div class="li">Ref</div><div class="li">Prepared by</div><div class="li">Prepared by phone</div><div class="li">Date</div>
+      <div class="grp">Line</div><div class="li on">Area <span class="newtag">NEW</span></div><div class="li">Comment <span class="newtag">NEW</span></div><div class="li">Marker <span class="newtag">Q1</span></div>
+      <div class="grp">Product</div><div class="li">Brand <span class="newtag">NEW</span></div><div class="li">Code</div><div class="li">Name</div><div class="li">Dimensions</div><div class="li">Spec lines</div>
+    </div>
+    <div class="col" style="background:#fafafa;display:flex;align-items:center;justify-content:center;min-height:220px"><span class="meta">canvas (TagCanvasEditor), preview against a picked product or set</span></div>
+    <div class="col"><h5>Layer: badge image</h5>
+      <div class="fld" style="margin-bottom:10px"><label>Binds to</label><div class="sel">Library asset: Rimless icon</div></div>
+      <div class="fld" style="margin-bottom:10px"><label>Show only when spec is Yes <span class="newtag">NEW</span></label><div class="sel">Rimless</div></div>
+      <div class="fld" style="margin-bottom:10px"><label>Image slot</label><div class="sel">Drawing <span class="newtag">NEW</span></div></div>
+      <div class="fld"><label>Subject</label><div class="sel">Part 1</div></div>
+    </div>
+  </div>
+</div>
+</section>
+
+<section id="map">
+<h2>E. Element to existing component map</h2>
+<table class="map card">
+<colgroup><col style="width:28%"><col style="width:44%"><col style="width:28%"></colgroup>
+<thead><tr><th>Element</th><th>Existing component (path)</th><th>New</th></tr></thead>
+<tbody>
+<tr><td>Spec sheet tab</td><td><code>quotation-documents/[documentId]/components/QuotationDocumentTabs.tsx:31-40</code>, route pages under <code>(view)/</code></td><td>one tab entry + <code>(view)/spec-sheet/page.tsx</code></td></tr>
+<tr><td>Template / revision pickers</td><td><code>components/ui/searchable-select</code> (clearable)</td><td>none</td></tr>
+<tr><td>Pages list + drag order</td><td><code>components/ui/sortable.tsx</code> (Sortable / SortableItem / SortableItemHandle), <code>components/ui/input.tsx</code>, <code>switch.tsx</code></td><td>SpecSheetPagesTable (composition)</td></tr>
+<tr><td>Export PDF</td><td>My Downloads flow as the quotation PDF (<code>BE api/v1/projects/quotation_documents.py:884-950</code>)</td><td>route + task</td></tr>
+<tr><td>Printed pages</td><td><code>app/(public)/c/print/tag-sheet/[downloadId]</code> page + <code>TagSheetRenderer.tsx</code></td><td>payload branch by download kind; page size from payload</td></tr>
+<tr><td>Template editor</td><td><code>dealer-kit/tag-templates/components/TagCanvasEditor.tsx</code>, <code>lib/dealer-kit/merge-fields.ts</code>, <code>product-block.ts</code></td><td>families, Document group, Drawing slot, show-when-spec</td></tr>
+<tr><td>Empty states</td><td>DESIGN-LANGUAGE section 6 (heading + hint, no button)</td><td>none</td></tr>
+</tbody></table>
+</section>
+</div>
+</body>
+</html>
