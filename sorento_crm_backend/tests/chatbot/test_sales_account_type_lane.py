@@ -1554,3 +1554,48 @@ def test_at37_an_answer_never_prints_a_crafted_word(bot, seeded) -> None:
     text, calls = bot.say(verdict, "cabana brand")
     assert calls == [], calls
     assert text.strip() == "I don't know that brand.", text
+
+
+# ============================================================================================= round 6 (AT-35 follow-ups)
+
+
+def test_at35_b_followup_naming_only_an_account_keeps_the_held_company(bot, seeded) -> None:
+    """An account number names no company, so it is no subject for the company question: the held company stays."""
+    sorento, mocha, _ = _disagreeing_books(bot)
+    text, calls = bot.say(_sales(_acct("4"), sales_company=mocha), "mocha account 4 sales in Jan")
+    assert _only_report_ask(calls)["company"] == MOCHA_ID
+    # Control: a follow-up naming no subject keeps the held company (passes today; guards the fix from over-reaching).
+    follow = _sales(ranking_refine=False, entity_op="reuse")
+    text, calls = bot.say(follow, "and for Jan")
+    assert _only_report_ask(calls)["company"] == MOCHA_ID, (text, calls)
+    # The case: not a refine, names only account 4.
+    follow = _sales(_acct("4"), ranking_refine=False, entity_op="reuse")
+    text, calls = bot.say(follow, "and account 4")
+    assert f"{sorento} or {mocha}?" not in text, text
+    args = _only_report_ask(calls)
+    assert args["company"] == MOCHA_ID and args["account_types"] == ["4"], args
+
+
+def _refine_all_customers(*entities: dict[str, Any]) -> dict[str, Any]:
+    return _rank(
+        *entities, group_by=None, top_n=None, ranking_refine=True, broaden_axis="customer", broaden_to="all", **JAN
+    )
+
+
+def test_at35_c_refine_dropping_the_held_customer_with_a_covered_word_asks_no_company(bot, seeded) -> None:
+    """Coverage test for the guard the merge added (expected to pass before any fix): a word an account number made
+    redundant is no subject for the company question; with no covered word the question is still asked."""
+    sorento, mocha = _two_companies(bot)
+    held = _rank(_customer(bot), group_by="product", top_n=3, **JAN)
+    text, calls = bot.say(held, "top 3 products for the customer in Jan")
+    args = _only_report_ask(calls)
+    assert args.get("customer_ids") and not args.get("company"), args
+    # No covered word: dropping the customer on a two-company contact asks the company.
+    text, calls = bot.say(_refine_all_customers(), "how about all customers")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+    bot.say(held, "top 3 products for the customer in Jan")
+    # Covered word: cabana with account 4, where every company reads 4 as CABANA, asks no company question.
+    text, calls = bot.say(_refine_all_customers(_word(), _acct("4")), "all customers on cabana account 4")
+    assert f"{sorento} or {mocha}?" not in text, text
+    args = _only_report_ask(calls)
+    assert not args.get("customer_ids") and args["account_types"] == ["4"], args
