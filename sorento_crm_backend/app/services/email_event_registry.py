@@ -181,6 +181,25 @@ EMAIL_EVENT_REGISTRY: list[EventDef] = [
         "conversation ticket. Gated on the user's notify_email_on_mention toggle.",
     ),
     EventDef(
+        "project_below_minimum_price",
+        "Project sales: below minimum price alert",
+        "Emails project managers when a quotation line is priced below its minimum price. "
+        "Turning this off stops only the email; the in-app notification still arrives.",
+    ),
+    EventDef(
+        "project_quotation_approval_requested",
+        "Project sales: quotation approval request",
+        "Emails quotation approvers when a quotation is sent for approval. Turning this off "
+        "stops only the email; the in-app notification and WhatsApp still go out.",
+    ),
+    EventDef(
+        "project_interest_registered",
+        "Project sales: secondary lead registered",
+        "Emails the project owner and managers when a colleague registers as secondary lead "
+        "on a project. Turning this off stops only the email; the in-app notification still "
+        "arrives.",
+    ),
+    EventDef(
         "notification_delivery",
         "Generic notification delivery",
         "Fallback event_key for legacy NotificationDelivery rows whose event_type does not "

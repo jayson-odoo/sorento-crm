@@ -235,6 +235,13 @@ describe('QuotationApprovalPanel: the block', () => {
     );
 
     expect(screen.getByText(/A manager sent this back/i)).toBeInTheDocument();
+    // Owner ruling 1 Nov: "minimum price", never "floor", on anything a user reads.
+    expect(
+      screen.getByText(
+        'A manager sent this back. Re-price the lines below the minimum price, then ask again.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/floor/i)).toBeNull();
     expect(screen.getByText(/Bring the WC suite back to RM 240\./i)).toBeInTheDocument();
     expect(screen.queryByText(/Back to draft/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
