@@ -375,9 +375,12 @@ def test_u4_guard_every_other_op_stays_off(entity_op):
     assert _stamp(_verdict(entity_op), _focus(TOTAL)) is None
 
 
-def test_u5_guard_replace_combine_with_no_customer_held_stays_off():
-    """R8's `names_its_own_value`: the widening is for a held customer only."""
-    assert _stamp(_verdict("replace_combine"), _focus({k: v for k, v in TOTAL.items() if k != "customer_ids"})) is None
+def test_u5_replace_combine_with_no_customer_held_carries_the_period_and_basis():
+    """R1, multi-turn carry (#2092, crew ruling 2 Nov): a sales follow-up starts from the held frame whatever the
+    entity_op, so "for agent b" over a company total for Oct, invoiced, carries the period and the basis."""
+    held = _stamp(_verdict("replace_combine"), _focus({k: v for k, v in TOTAL.items() if k != "customer_ids"}))
+    assert held and held["date_from"] == "2026-10-01" and held["date_to"] == "2026-10-31", held
+    assert held["basis"] == "invoiced" and "customer_ids" not in held, held
 
 
 def test_u6_a_ranking_held_for_a_customer_is_stamped():
@@ -387,17 +390,25 @@ def test_u6_a_ranking_held_for_a_customer_is_stamped():
     assert "group_by" not in held and "top_n" not in held, held
 
 
-@pytest.mark.parametrize(
-    "frame",
-    [
-        {"group_by": "product", "date_from": "2026-10-01"},
-        {"group_by": "product", "date_from": "2026-10-01", "stale": True},
-        {**TOTAL, "group_by": "customer"},
-    ],
-    ids=["no-customer", "stale-no-customer", "the-customer-is-the-ranked-side"],
-)
-def test_u7_guard_every_other_ranking_keeps_its_own_rules(frame):
-    assert _stamp(_verdict("reuse"), _focus(frame)) is None
+def test_u7_a_ranking_with_no_customer_is_stamped_with_its_period():
+    """R1, multi-turn carry (#2092, crew ruling 2 Nov): a held ranking is a frame to start from; its period carries,
+    its axis and count do not."""
+    held = _stamp(_verdict("reuse"), _focus({"group_by": "product", "date_from": "2026-10-01"}))
+    assert held and held["date_from"] == "2026-10-01", held
+    assert "group_by" not in held and "customer_ids" not in held, held
+
+
+def test_u7_guard_a_stale_ranking_with_no_customer_keeps_the_stale_rule():
+    """R1, multi-turn carry (#2092, crew ruling 2 Nov): the stale-frame rule is kept, nothing is stamped."""
+    assert _stamp(_verdict("reuse"), _focus({"group_by": "product", "date_from": "2026-10-01", "stale": True})) is None
+
+
+def test_u7_a_ranking_with_the_customer_as_the_ranked_side_carries_period_and_basis_never_the_customers():
+    """R1, multi-turn carry (#2092, crew ruling 2 Nov): the ranked customers are the answer, not a filter, so they never
+    carry; the period and basis do."""
+    held = _stamp(_verdict("reuse"), _focus({**TOTAL, "group_by": "customer"}))
+    assert held and held["date_from"] == "2026-10-01" and held["basis"] == "invoiced", held
+    assert "customer_ids" not in held, held
 
 
 NO_CUSTOMER = {k: v for k, v in TOTAL.items() if k != "customer_ids"}

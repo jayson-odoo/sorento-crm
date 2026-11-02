@@ -82,10 +82,17 @@ def test_cr2_guard_nothing_held_stays_today_s_sales_report(console, monkeypatch,
     assert _ran(log) == [] and FRESH in text, (text, log)
 
 
-def test_cr3_guard_no_count_stays_today_s_sales_report(console, monkeypatch, other_product) -> None:
+def test_cr3_guard_no_count_runs_a_total_and_never_re_runs_the_agent_ranking(console, monkeypatch, other_product) -> None:
+    """R1, multi-turn carry (#2092, crew ruling 2 Nov): a no-count follow-up starts from the held frame, so it runs a
+    TOTAL for the product on the project channel with the held period and basis; the agent ranking is never re-run."""
     _agent_ranking(console, monkeypatch)
     text, log = _say_all(console, monkeypatch, _project_top_10(top_n=None), f"Project sales {OTHER_CODE.lower()}")
-    assert _ran(log) == [] and FRESH in text, (text, log)
+    ran = _ran(log)
+    assert len(ran) == 1, (text, log)
+    assert not ran[0].get("group_by") and not ran[0].get("top_n"), ("the agent ranking was re-run", ran)
+    assert ran[0]["product_code"] == OTHER_CODE and ran[0]["channel"] == "project", ran
+    assert ran[0]["date_from"] == "2026-01-01" and ran[0]["date_to"] == "2026-12-31", ran
+    assert ran[0]["basis"] == "delivered", ran
 
 
 def test_cr4_guard_a_count_with_an_axis_stays_today_s_sales_report(console, monkeypatch, other_product) -> None:

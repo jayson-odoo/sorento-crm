@@ -581,12 +581,17 @@ def _report_calls(calls) -> list:
     return [c for c in calls]
 
 
-def test_m3_a_sales_analysis_parse_naming_an_axis_under_the_period_question_is_a_new_ask(console) -> None:
+def test_m3_a_sales_analysis_parse_naming_an_axis_under_the_period_question_is_a_new_ask_that_carries_the_held_slots(console) -> None:
+    """R1, multi-turn carry (#2092, crew ruling 2 Nov): the follow-up starts from the open ask, so the month axis it names
+    is kept (not taken as the period answer and dropped) and the measure and basis of the open ask carry."""
     _open_period_question(console)
     text, calls = console.say(
         _other("sales_analysis", group_by="month", **OCT_MONTH), "sales by month this month"
     )
-    assert calls == [], f"taken as the period answer, the axis was dropped: {calls}"
+    assert len(calls) == 1, (text, calls)
+    assert calls[0]["group_by"] == "month", f"the month axis was dropped: {calls}"
+    assert calls[0]["date_from"] == "2026-10-01" and calls[0]["date_to"] == "2026-10-31", calls
+    assert calls[0]["measure"] == "qty" and calls[0]["basis"] == "delivered", calls
 
 
 def test_m3_a_top_selling_parse_naming_a_brand_under_the_period_question_is_a_new_ask(console) -> None:

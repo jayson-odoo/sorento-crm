@@ -240,7 +240,6 @@ OFF = {
     "names_its_own_value": (dict(entity_op="replace_combine"), {}, {}),
     # R9 (crew ruling, part 2): an axis-less ranking is stamped too (`test_one_ranking_r9_v63_total.py`).
     "not_a_ranking": (dict(order_status="sales_report"), {}, {}),
-    "a_ranking_frame_held": ({}, dict(sales_ranking_frame={"group_by": "customer", "date_from": "2026-01-01"}), {}),
     "a_stale_frame_held": ({}, dict(sales_ranking_frame={"group_by": "customer", "stale": True}), {}),
     "an_order_list_window": ({}, dict(domains=["order"]), {}),
     "an_open_ask_still_answered": ({}, {}, {"open_ask": "slot"}),
@@ -257,6 +256,16 @@ def test_r8_guard_unit_the_stamp_stays_off(case: str) -> None:
         kw["open_ask"] = _open_slot()
     out = report_ask.with_held(_row2(**verdict_over), _focus(**focus_over), **kw)
     assert report_ask.HELD_KEY not in out, (case, out.get(report_ask.HELD_KEY))
+
+
+def test_r8_unit_a_held_customer_ranking_is_stamped_with_its_period_only() -> None:
+    """R1, multi-turn carry (#2092, crew ruling 2 Nov): a product refine over a held customer ranking starts from that
+    frame (the gate on the frame is gone): its period carries, the ranked customers and axis never do."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    focus = _focus(sales_ranking_frame={"group_by": "customer", "date_from": "2026-01-01"})
+    out = report_ask.with_held(_row2(), focus, open_ask=None, replaced=None)
+    assert out[report_ask.HELD_KEY] == {"date_from": "2026-01-01"}, out.get(report_ask.HELD_KEY)
 
 
 def test_r8_guard_unit_the_engine_key_is_listed() -> None:
