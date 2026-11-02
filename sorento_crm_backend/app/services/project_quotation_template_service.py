@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from app.models.projects import (
     QUOTATION_TEMPLATE_KINDS,
     TEMPLATE_KIND_COVER_LETTER,
+    TEMPLATE_KIND_COVER_PAGE,
     TEMPLATE_KIND_TERMS,
     Project,
     ProjectParty,
@@ -285,7 +286,7 @@ def _assert_kind(kind: Optional[str]) -> str:
             status_code=422,
             message=(
                 f"Unknown template kind '{kind}'. A quotation template is either a "
-                "cover_letter or terms."
+                "cover_letter, terms or cover_page."
             ),
             code="quotation_template_kind_invalid",
         )
@@ -377,13 +378,21 @@ def create_template(
             message="Give the template a name, e.g. Standard cover letter 2026.",
             code="quotation_template_name_required",
         )
-    if not (body_html or "").strip():
+    body_html = body_html or ""
+    is_design = kind == TEMPLATE_KIND_COVER_PAGE
+    # A cover page design may have an empty intro: its rows and title are the content.
+    if not body_html.strip() and not is_design:
         raise AppException(
             status_code=422,
             message="A template with no text renders an empty letter. Write the letter first.",
             code="quotation_template_body_required",
         )
     assert_tokens_known(body_html)
+    design = None
+    if is_design:
+        from app.services.quotation_cover_service import default_design, validate_design
+
+        design = validate_design(payload["design"]) if payload.get("design") else default_design()
 
     incumbent = active_template(db, company_id=company_id, kind=kind)
     wants_active = bool(payload.get("is_active")) or incumbent is None
@@ -397,6 +406,7 @@ def create_template(
         body_html=body_html,
         payment_terms=payload.get("payment_terms"),
         validity=payload.get("validity"),
+        design=design,
         is_active=wants_active,
         created_by=actor_user_id,
     )
@@ -427,7 +437,7 @@ def update_template(
         template.name = name
     if "body_html" in payload and payload["body_html"] is not None:
         body_html = payload["body_html"]
-        if not str(body_html).strip():
+        if not str(body_html).strip() and template.kind != TEMPLATE_KIND_COVER_PAGE:
             raise AppException(
                 status_code=422,
                 message="A template with no text renders an empty letter. Write the letter first.",
@@ -435,6 +445,10 @@ def update_template(
             )
         assert_tokens_known(body_html)
         template.body_html = body_html
+    if template.kind == TEMPLATE_KIND_COVER_PAGE and payload.get("design") is not None:
+        from app.services.quotation_cover_service import validate_design
+
+        template.design = validate_design(payload["design"])
     for field in ("payment_terms", "validity"):
         if field in payload:
             setattr(template, field, payload[field])
@@ -488,6 +502,7 @@ def serialize_template(template: QuotationTemplate) -> Dict[str, Any]:
         "body_html": template.body_html,
         "payment_terms": template.payment_terms,
         "validity": template.validity,
+        "design": template.design,
         "is_active": bool(template.is_active),
         "created_at": template.created_at,
         "updated_at": template.updated_at,
@@ -514,6 +529,7 @@ __all__ = [
     "MERGE_FIELDS",
     "MERGE_FIELD_TOKENS",
     "TEMPLATE_KIND_COVER_LETTER",
+    "TEMPLATE_KIND_COVER_PAGE",
     "TEMPLATE_KIND_TERMS",
     "activate_template",
     "active_template",

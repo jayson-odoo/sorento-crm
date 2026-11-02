@@ -21,10 +21,16 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import permission_slugs
 from app.api.v1.projects.quotations import _notify_breaches
 from app.database import get_db
-from app.dependencies import require_any_permission_with_api_key, require_permission
+from app.dependencies import (
+    require_any_permission,
+    require_any_permission_with_api_key,
+    require_permission,
+)
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
     ProjectQuotationDocumentCreate,
+    QuotationCoverPreviewRequest,
+    QuotationCoverPreviewResponse,
     QuotationAmendmentApplyResponse,
     QuotationAmendmentDecideRequest,
     QuotationAmendmentStaffResponse,
@@ -164,6 +170,29 @@ def get_quotation_letter_templates(
     try:
         project = _editable_project(db, project_id, current_user, write=False)
         return svc.letter_templates(db, project=project)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/cover-preview",
+    response_model=QuotationCoverPreviewResponse,
+)
+def preview_quotation_cover(
+    project_id: str,
+    payload: QuotationCoverPreviewRequest,
+    _user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """The cover page as it would print from the form's unsaved values. Stores nothing, and is
+    declared before ``/{document_id}`` so the literal segment is not read as a document id."""
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        project = projects.get_project_or_404(db, project_id)
+        body = payload.model_dump(exclude_unset=True)
+        if body.get("document_id"):
+            body["document_id"] = validate_uuid_path(str(body["document_id"]), resource="Quotation")
+        return svc.preview_cover(db, project=project, payload=body)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

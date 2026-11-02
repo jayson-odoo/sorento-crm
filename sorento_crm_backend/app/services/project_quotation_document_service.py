@@ -18,6 +18,7 @@ wrong once somewhere in this codebase:
 """
 from __future__ import annotations
 
+import copy
 import logging
 import secrets
 from datetime import date, datetime, timedelta
@@ -48,8 +49,13 @@ from app.services import project_quotation_service as scope_service
 from app.services.error_handler import AppException
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
+    COVER_LAYOUT_DESIGNED,
+    cover_payload,
     cover_reference,
     cover_rows,
+    sender_of,
+    default_design,
+    design_of,
     layout_of,
 )
 from app.services.numbering_service import NumberingService
@@ -202,6 +208,7 @@ def create_document(
         validity=payload.get("validity"),
         subject_title=payload.get("subject_title") or project.title,
         cover_letter_html=payload.get("cover_letter_html"),
+        cover_closing_html=payload.get("cover_closing_html"),
         terms_html=payload.get("terms_html"),
         signatory_name=payload.get("signatory_name"),
         signatory_phone=payload.get("signatory_phone"),
@@ -230,11 +237,25 @@ def _render_templates_onto(
     """
     from app.services import project_quotation_template_service as templates
 
+    # The active cover page design supplies the intro (into the letter column) and the closing;
+    # with none active the old cover letter template stays the intro.
+    design = templates.active_template(
+        db, company_id=document.company_id, kind=templates.TEMPLATE_KIND_COVER_PAGE
+    )
+    context = templates.build_document_context(db, document=document) if design else None
+    if design is not None:
+        if not (payload.get("cover_closing_html") or "").strip():
+            closing = (getattr(design, "design", None) or {}).get("closing_html")
+            document.cover_closing_html = templates.render(closing, context) or None
+        if not (payload.get("cover_letter_html") or "").strip():
+            document.cover_letter_html = templates.render(design.body_html, context) or None
     for field, kind in (
         ("cover_letter_html", templates.TEMPLATE_KIND_COVER_LETTER),
         ("terms_html", templates.TEMPLATE_KIND_TERMS),
     ):
         if (payload.get(field) or "").strip():
+            continue
+        if field == "cover_letter_html" and design is not None:
             continue
         rendered = templates.render_for_document(db, document=document, kind=kind)
         if rendered is not None:
@@ -354,7 +375,7 @@ def create_document_with_scopes(
     # number and total, not the ones a half-made quotation would give.
     letter = {
         field: body.pop(field)
-        for field in ("cover_letter_html", "terms_html")
+        for field in ("cover_letter_html", "cover_closing_html", "terms_html")
         if (body.get(field) or "").strip()
     }
 
@@ -395,12 +416,21 @@ def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str
     from app.services import project_quotation_template_service as templates
 
     out: Dict[str, Optional[str]] = {}
+    design = templates.active_template(
+        db, company_id=project.company_id, kind=templates.TEMPLATE_KIND_COVER_PAGE
+    )
+    out["cover_closing_html"] = (getattr(design, "design", None) or {}).get("closing_html") or None if design else None
     for field, kind in (
         ("cover_letter_html", templates.TEMPLATE_KIND_COVER_LETTER),
         ("terms_html", templates.TEMPLATE_KIND_TERMS),
     ):
-        template = templates.active_template(db, company_id=project.company_id, kind=kind)
-        out[field] = template.body_html if template is not None else None
+        # An active cover page design supplies the intro in place of the old cover letter.
+        template = templates.active_template(
+            db,
+            company_id=project.company_id,
+            kind=templates.TEMPLATE_KIND_COVER_PAGE if field == "cover_letter_html" and design else kind,
+        )
+        out[field] = (template.body_html or None) if template is not None else None
         if kind == templates.TEMPLATE_KIND_TERMS:
             out["payment_terms"] = template.payment_terms if template is not None else None
             out["validity"] = template.validity if template is not None else None
@@ -569,6 +599,13 @@ def issue(
     )
     issue_no = 1 if highest is None else int(highest) + 1
 
+    from app.services import project_quotation_template_service as templates
+
+    # The active cover page design, copied: editing or activating another one later never
+    # touches this revision (QUOTE-COVER-DESIGN, UAC C4).
+    active_design = templates.active_template(
+        db, company_id=document.company_id, kind=templates.TEMPLATE_KIND_COVER_PAGE
+    )
     record = ProjectQuotationIssue(
         company_id=document.company_id,
         document_id=document.id,
@@ -577,8 +614,14 @@ def issue(
         issued_at=datetime.utcnow(),
         issued_by=actor_user_id,
         cover_letter_rendered=document.cover_letter_html,
+        cover_closing_rendered=document.cover_closing_html,
+        cover_design=(
+            copy.deepcopy(active_design.design)
+            if active_design is not None and active_design.design
+            else default_design()
+        ),
         terms_rendered=document.terms_html,
-        layout_version=COVER_LAYOUT,
+        layout_version=COVER_LAYOUT_DESIGNED,
         payment_terms=document.payment_terms,
         validity=document.validity,
         grand_total=ZERO,
@@ -756,6 +799,7 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
         "attn_name": document.attn_name,
         "subject_title": document.subject_title,
         "cover_letter_html": document.cover_letter_html,
+        "cover_closing_html": document.cover_closing_html,
         "terms_html": document.terms_html,
         "signatory_name": document.signatory_name,
         "signatory_phone": document.signatory_phone,
@@ -882,6 +926,7 @@ def update_document(
         "attn_name",
         "subject_title",
         "cover_letter_html",
+        "cover_closing_html",
         "terms_html",
         "signatory_name",
         "signatory_phone",
@@ -1547,6 +1592,7 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         blocked = amendments.blocks_issue(asked)
 
     cover = None
+    designed: Dict[str, Any] = {}
     our_ref = (
         quotation_no(document.document_no, record.issue_no)
         if document is not None
@@ -1558,11 +1604,25 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
             if document.project_id
             else None
         )
-        cover = cover_rows(db, document, record, project)
+        layout3 = layout_of(record) >= COVER_LAYOUT_DESIGNED
+        cover = cover_rows(db, document, record, project, design_of(record) if layout3 else None)
         our_ref = cover_reference(document, record, project)
+        if layout3:
+            designed = cover_payload(
+                cover,
+                design_of(record),
+                intro=record.cover_letter_rendered,
+                closing=record.cover_closing_rendered,
+                sender_name=None,
+                sender_logo_url=None,
+            )
     return {
         "our_ref": our_ref,
         "cover_rows": cover,
+        "cover_title": designed.get("cover_title"),
+        "cover_show_letterhead": designed.get("cover_show_letterhead"),
+        "cover_intro_html": designed.get("cover_intro_html"),
+        "cover_closing_html": designed.get("cover_closing_html"),
         "issue_no": record.issue_no,
         "doc_date": document.doc_date if document else None,
         "subject_title": document.subject_title if document else None,
@@ -1593,3 +1653,85 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         "can_sign": blocked is None,
         "sign_blocked_reason": blocked,
     }
+
+
+# ------------------------------------------------------------------ cover preview (stores nothing)
+
+#: The quotation fields a preview body may stage over the saved document.
+_PREVIEW_FIELDS = (
+    "doc_date",
+    "attn_name",
+    "recipient_name_snapshot",
+    "recipient_address_snapshot",
+    "recipient_phone_snapshot",
+    "recipient_email_snapshot",
+    "quotation_purpose",
+    "payment_terms",
+    "validity",
+    "cover_letter_html",
+    "cover_closing_html",
+    "terms_html",
+)
+
+
+def preview_cover(
+    db: Session, *, project: Project, payload: Dict[str, Any]
+) -> Dict[str, Any]:
+    """The cover as it would print now, from the form's unsaved values.
+
+    Works on plain namespaces, never an ORM row, so nothing is added to the session: no number is
+    drawn from the numbering rule and no row is written. A saved quotation (``document_id``) shows
+    its own number; an unsaved one shows a placeholder.
+    """
+    from types import SimpleNamespace
+
+    from app.services import project_quotation_template_service as templates
+
+    document_id = payload.get("document_id")
+    if document_id:
+        saved = get_document_or_404(db, str(project.id), str(document_id))
+        base = {field: getattr(saved, field) for field in _PREVIEW_FIELDS}
+        base.update(
+            document_no=saved.document_no,
+            created_by=saved.created_by,
+            company_id=saved.company_id,
+        )
+        highest = (
+            db.query(func.max(ProjectQuotationIssue.issue_no))
+            .filter(ProjectQuotationIssue.document_id == saved.id)
+            .scalar()
+        )
+        issue_no = 1 if highest is None else int(highest) + 1
+    else:
+        base = {field: None for field in _PREVIEW_FIELDS}
+        base.update(_recipient_from_project(db, project))
+        base.update(
+            doc_date=date.today(),
+            document_no="NEW",
+            created_by=None,
+            company_id=project.company_id,
+        )
+        issue_no = 1
+    for field in _PREVIEW_FIELDS:
+        if field in payload:
+            base[field] = payload[field]
+    document = SimpleNamespace(project_id=project.id, **base)
+    draft = SimpleNamespace(
+        issue_no=issue_no,
+        issued_at=None,
+        payment_terms=document.payment_terms,
+        validity=document.validity,
+        terms_rendered=document.terms_html,
+    )
+    active = templates.active_template(
+        db, company_id=document.company_id, kind=templates.TEMPLATE_KIND_COVER_PAGE
+    )
+    design = active.design if active is not None and active.design else default_design()
+    sender = sender_of(db, document.company_id)
+    return cover_payload(
+        cover_rows(db, document, draft, project, design),
+        design,
+        intro=document.cover_letter_html,
+        closing=document.cover_closing_html,
+        **sender,
+    )

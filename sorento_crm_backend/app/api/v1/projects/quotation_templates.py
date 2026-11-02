@@ -23,12 +23,15 @@ from app.database import get_db
 from app.dependencies import require_permission
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
+    QuotationCoverPreviewResponse,
+    QuotationDesignPreviewRequest,
     QuotationMergeFieldResponse,
     QuotationTemplateCreate,
     QuotationTemplateResponse,
     QuotationTemplateUpdate,
 )
 from app.services import project_quotation_template_service as templates
+from app.services import quotation_cover_service as cover
 from app.services.error_handler import handle_internal_error
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -62,9 +65,27 @@ def list_merge_fields(
     return _envelope(templates.serialize_merge_fields())
 
 
+@router.post("/quotation-templates/cover-preview", response_model=QuotationCoverPreviewResponse)
+def preview_cover_design(
+    payload: QuotationDesignPreviewRequest,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """An unsaved design against fixed sample values. Stores nothing."""
+    try:
+        return cover.preview_design(
+            db,
+            company_id=acting_company_id(db),
+            design=payload.design,
+            body_html=payload.body_html,
+        )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.get("/quotation-templates", response_model=ListResponse[QuotationTemplateResponse])
 def list_quotation_templates(
-    kind: Optional[str] = Query(None, description="cover_letter | terms"),
+    kind: Optional[str] = Query(None, description="cover_letter | terms | cover_page"),
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
