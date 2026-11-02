@@ -5931,9 +5931,11 @@ class ProjectSupplyService:
         )
 
         def _marked(snapshot, fact):
-            if snapshot is None or origin.get(str(fact.product_id)) != "local":
+            if snapshot is None:
                 return snapshot
-            return {**snapshot, "buy_origin": "local"}
+            if origin.get(str(fact.product_id)) == "local":
+                snapshot = {**snapshot, "buy_origin": "local"}
+            return self._own_bin_borrows_read_as_use(snapshot, fact)
 
         saved = [
             (
@@ -5948,6 +5950,50 @@ class ProjectSupplyService:
             ProjectOrderInquiryService(self.db).record_saved_lines(
                 pso_id=str(order.id), saved=saved, actor_user_id=actor_user_id
             )
+
+    def _owes_nothing_at_own_bin(self, fact: "_LineFacts", warehouse_id: Any) -> bool:
+        """CONSIGN-PLAN (owner Q1): a Borrow at a consignment's OWN bin. The goods ARE the
+        consignment's own bin; nothing was lent, so nothing is owed back and purchasing hears
+        nothing: no order back row (`_location_order_backs`) and no email line
+        (`_tell_saved_lines`). One rule for both, so the row and the email never disagree."""
+        return (
+            planned_at_own_bin(fact.warehouse, fact.doc_type)
+            and warehouse_id is not None
+            and str(warehouse_id) == str(fact.warehouse.id)
+        )
+
+    def _own_bin_borrows_read_as_use(
+        self, snapshot: Mapping[str, Any], fact: "_LineFacts"
+    ) -> Mapping[str, Any]:
+        """The snapshot the purchasing email reads, with each Borrow that raised no row because
+        it is at the consignment's own bin read as what it is, the line's own stock (`USE
+        <bin>`, not purchasing's), never `ORDER BACK` (CONSIGN-OWN-BIN-EMAIL). Marked on both
+        snapshots alike, as a local Buy is, so it never reads as a change by itself.
+
+        Exactly the row rule: a document Borrow is not an order back at all, and a Borrow that
+        names its order (switch ON) still raises its row at the donor line, so both keep their
+        own words."""
+        if not planned_at_own_bin(fact.warehouse, fact.doc_type):
+            return snapshot
+        components = []
+        for component in snapshot.get("components") or []:
+            if (
+                component.get("kind") == "borrow"
+                and not component.get("supply_key")
+                and self._owes_nothing_at_own_bin(fact, component.get("source_warehouse_id"))
+                and not (
+                    component.get("donor_core_line_id")
+                    and self._names_its_order(SimpleNamespace(**component))
+                )
+            ):
+                component = {
+                    "kind": RESERVE,
+                    "qty": component.get("qty"),
+                    "source_location": component.get("source_location"),
+                    "rung": None,
+                }
+            components.append(component)
+        return {**snapshot, "components": components}
 
     def _record_short(
         self,
@@ -8713,9 +8759,7 @@ class ProjectSupplyService:
                     continue
                 if getattr(item, "supply_key", None):
                     continue
-                if planned_at_own_bin(fact.warehouse, fact.doc_type) and str(
-                    item.warehouse_id
-                ) == str(fact.warehouse.id):
+                if self._owes_nothing_at_own_bin(fact, item.warehouse_id):
                     # CONSIGN-PLAN: the goods ARE the consignment's own bin; nothing was
                     # lent, so nothing is owed back and purchasing hears nothing.
                     continue
