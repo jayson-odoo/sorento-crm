@@ -1,6 +1,6 @@
 # PLAN: integration_log indexes + upload bell polling cap (INTEGRATION-LOG-INDEXES)
 
-Status: in progress (small fix track: one additive index-only migration, no auth/RBAC change, no UI change)
+Status: built, reviewer READY, awaiting CI + merge (small fix track: one additive index-only migration, no auth/RBAC change, no UI change)
 
 ## Problem (measured by crew, 2 Nov 2026, read-only on a 20 Oct prod copy)
 
