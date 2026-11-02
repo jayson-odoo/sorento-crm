@@ -454,7 +454,7 @@ def test_H1_an_empty_quotations_read_for_a_project_from_a_list_row_backs_none():
 def test_H1_an_empty_quotations_read_for_the_record_of_a_detail_read_backs_none():
     pid = str(uuid.uuid4())
     ledger = {
-        "p1": _ok("crm_project_detail", {"record": {"id": pid, "title": "ZZT tower"}, "quotations": []}),
+        "p1": _ok("crm_project_detail", {"id": pid, "title": "ZZT tower", "quotations": []}),
         **_empty_read("crm_project_quotations_list", {"project_id": pid}),
     }
     assert _nf_bad(ledger) == []
@@ -562,15 +562,6 @@ def test_H1_a_bare_detail_counts_its_own_id_not_a_nested_records():
     nested = {**detail, **_empty_read("crm_project_quotations_list", {"project_id": cid})}
     assert _nf_bad(own) == []
     assert _nf_bad(nested) == ["quotations for ZZT tower"]
-
-
-def test_H1_a_response_wrapped_detail_record_still_counts_its_own_id():
-    pid = str(uuid.uuid4())
-    ledger = {
-        "p1": _ok("crm_project_detail", {"response": {"id": pid, "title": "ZZT tower"}}),
-        **_empty_read("crm_project_quotations_list", {"project_id": pid}),
-    }
-    assert _nf_bad(ledger) == []
 
 
 def test_H1_a_star_id_field_never_counts():

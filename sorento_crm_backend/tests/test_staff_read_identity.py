@@ -1415,3 +1415,29 @@ def test_h3_a_staff_delivered_read_totals_the_seeded_line(env):
 def test_h3_a_staff_outstanding_read_is_not_empty_for_an_open_line(env):
     body, amount = _staff_report(env, "outstanding", seed={"delivered": 0})
     assert body["total"]["amount"] and float(body["total"]["amount"]) == float(amount), body["total"]
+
+
+@pytest.mark.parametrize("narrow", ["customer_ids", "product_ids"])
+def test_h3_a_staff_outstanding_summary_for_a_named_customer_or_product_counts_the_line(env, narrow):
+    """The summary (documents and amount) is built by `outstanding_summary`, which must not be capped by a
+    contact policy on a staff read either."""
+    from tests._report_ask_so_seed import seed_so_line
+    from tests._sales_report_do_seed import seed_customer
+
+    staff = mk_user(env.db, "h3sum", roles=("superadmin",), companies=[SORENTO], last_active=SORENTO)
+    cust = seed_customer(env.db, name=unique_code("Cust"))
+    prod = product(env.db, company_id=SORENTO)
+    seed_so_line(env.db, cust=cust, prod=prod, qty=3, total="1234.50", order_date=date(2026, 9, 10),
+                 company_id=SORENTO, delivered=0)
+    env.db.commit()
+    named = str(cust.id) if narrow == "customer_ids" else str(prod.id)
+    resp = env.client.get(
+        "/api/v1/order-management/report-ask",
+        params={"contact_id": "", "space_id": "", "basis": "outstanding", "date_from": "2026-09-01",
+                "date_to": "2026-09-30", narrow: [named]},
+        headers=env.ident(staff),
+    )
+    assert resp.status_code == 200, resp.text[:300]
+    summary = resp.json().get("summary") or {}
+    assert summary.get("documents") == 1, summary
+    assert float(summary.get("amount") or 0) == 1234.5, summary
