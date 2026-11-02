@@ -314,7 +314,7 @@ def test_sc4_an_open_count_question_is_named_in_the_held_line(rbot, world) -> No
     sorento, _mocha = world
     first = _v(
         "sales_ranking", _ra(basis="invoiced", group_by="customer", measure="amount", company=sorento, **Y),
-        basis="invoiced", group_by="customer", measure="amount", sales_company=sorento, domain_in_message=True,
+        basis="invoiced", group_by="customer", measure="amount", rank_direction="top", sales_company=sorento, domain_in_message=True,
         date_filter_start="2026-01-01", date_filter_end="2026-12-31",
     )
     text, calls = rbot.say(first, "sorento customers ranking 2026 invoiced")
@@ -586,7 +586,7 @@ def test_sc13_a_ranking_without_a_count_asks_the_count(rbot, world) -> None:
     sorento, _mocha = world
     v = _v(
         "sales_ranking", _ra(basis="invoiced", group_by="customer", measure="amount", company=sorento, **Y), basis="invoiced",
-        group_by="customer", measure="amount", sales_company=sorento, domain_in_message=True,
+        group_by="customer", measure="amount", rank_direction="top", sales_company=sorento, domain_in_message=True,
         date_filter_start="2026-01-01", date_filter_end="2026-12-31",
     )
     text, calls = rbot.say(v, "sorento customers ranking 2026 invoiced")
@@ -664,3 +664,221 @@ def test_v4d_the_declared_pick_of_account_type_wins_over_the_object_bucket(rbot,
     assert ran[0].get("account_types") == ["CABANA"] and not ran[0].get("brand_ids"), f"V4d: {ran[0]}"
     assert ran[0].get("sales_agent_ids") == [rbot.ids["agent"]] and ran[0].get("basis") == "invoiced", ran[0]
     assert ran[0].get("date_from") == "2026-01-01" and ran[0].get("company") == DEFAULT_COMPANY_ID, ran[0]
+
+
+# ------------------------------------------------------------------------------------------ review round
+KIND_QUESTION = "Undelivered orders or pending delivery?"
+YR = dict(date_filter_start="2026-01-01", date_filter_end="2026-12-31")
+
+
+def test_b1_a_company_switch_sends_the_new_companys_agent_id(rbot, world) -> None:
+    sorento, mocha = world
+    first = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_2], **Y), _ent(AGENT_2, "sales_agent"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(first, "sorento sales for agent b 2026 invoiced")
+    assert _ran(calls)[0].get("sales_agent_ids") == [agent_b_sorento(rbot)], f"setup: {calls}"
+    second = _v("sales_report", _ra(basis="invoiced", company=mocha, sales_agents=[AGENT_2], **Y), _ent(AGENT_2, "sales_agent"), sales_company=mocha, continuation=True, **YR)
+    text, calls = rbot.say(second, "mocha")
+    ran = _ran(calls)
+    assert ran, f"B1: the Mocha ask did not run: {text!r}"
+    assert ran[0].get("company") == MOCHA_ID, f"B1: company {ran[0].get('company')!r}, want Mocha"
+    assert ran[0].get("sales_agent_ids") == [rbot.ids[f"{AGENT_2}:{MOCHA_ID}"]], f"B1: Sorento's AGENT B id was kept: {ran[0].get('sales_agent_ids')}"
+
+
+def test_b2_a_declared_pick_of_a_basis_option_runs_with_that_basis(rbot, world) -> None:
+    sorento, _mocha = world
+    first = _v("sales_report", _ra(sales_agents=[AGENT_1], company=sorento, **Y), _ent(AGENT_1, "sales_agent"), sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(first, "sorento sales for agent a 2026")
+    assert not calls and text.strip() == BASIS_Q, f"setup: {text!r}"
+    reply = _v(
+        "sales_report", _ra(basis="invoiced", sales_agents=[AGENT_1], company=sorento, **Y), entity_op="reuse",
+        continuation=True, open_question_answer=_pick_of(1), reference_positions=[1],
+    )
+    text, calls = rbot.say(reply, "the first")
+    assert text.strip() != BASIS_Q, "B2: the basis was asked again after the pick"
+    ran = _ran(calls)
+    assert ran and ran[0].get("basis") == "invoiced", f"B2: want a run with basis invoiced, got {ran or text!r}"
+
+
+def test_b2_a_declared_pick_of_an_outstanding_kind_runs_with_that_kind(rbot, world) -> None:
+    first = _v("outstanding", _ra(kind="outstanding"), domain_in_message=True)
+    text, calls = rbot.say(first, "outstanding")
+    assert not calls and KIND_QUESTION in text, f"setup: {text!r}"
+    reply = _v(
+        "outstanding", _ra(kind="outstanding", basis="outstanding"), entity_op="reuse", continuation=True,
+        open_question_answer=_pick_of(1), reference_positions=[1],
+    )
+    text, calls = rbot.say(reply, "the first")
+    assert KIND_QUESTION not in text, "B2: the kind was asked again after the pick"
+    ran = _ran(calls)
+    assert ran and ran[0].get("basis") == "outstanding", f"B2: want a run with basis outstanding, got {ran or text!r}"
+
+
+def _by_customer(sorento: str, status: str = "sales_report", **over: Any) -> dict[str, Any]:
+    return _v(
+        status, _ra(basis="invoiced", group_by="customer", measure="amount", company=sorento, **Y),
+        basis="invoiced", group_by="customer", measure="amount", rank_direction=None, top_n=None, sales_company=sorento,
+        domain_in_message=True, **YR, **over,
+    )
+
+
+def test_b3_a_fresh_breakdown_by_customer_runs_every_row_as_flag_off_does(bot, monkeypatch, world) -> None:
+    sorento, _mocha = world
+    text, calls = bot.say(_by_customer(sorento), "sales by customer by amount")  # flag off (the harness config)
+    off = _ran(calls)
+    assert off and off[0].get("top_n") == 100, f"baseline: flag off should run every row, got {off or text!r}"
+    bot.console.session_vars = {}
+    _flag_on(bot.console, monkeypatch)
+    text, calls = bot.say(_by_customer(sorento), "sales by customer by amount")
+    on = _ran(calls)
+    assert "How many?" not in text, f"B3(i): a breakdown asked a count: {text!r}"
+    assert on and on[0].get("top_n") == off[0].get("top_n") and on[0].get("group_by") == "customer", f"B3(i): flag on {on or text!r}, flag off {off[0].get('top_n')}"
+
+
+def test_b3_iii_the_usual_ranking_read_of_by_customer_runs_every_row_as_flag_off_does(bot, monkeypatch, world) -> None:
+    """The reviewer's probe: order_status sales_ranking, rank_direction null, top_n null, object measure amount."""
+    sorento, _mocha = world
+    text, calls = bot.say(_by_customer(sorento, "sales_ranking"), "sales by customer by amount")  # flag off
+    off = _ran(calls)
+    assert off and off[0].get("top_n") == 100, f"baseline: flag off should run every row, got {off or text!r}"
+    bot.console.session_vars = {}
+    _flag_on(bot.console, monkeypatch)
+    text, calls = bot.say(_by_customer(sorento, "sales_ranking"), "sales by customer by amount")
+    on = _ran(calls)
+    assert "How many?" not in text, f"B3(iii): a breakdown (sales_ranking, no rank_direction) asked a count: {text!r}"
+    assert on and on[0].get("top_n") == off[0].get("top_n"), f"B3(iii): flag on {on or text!r}, flag off {off[0].get('top_n')}"
+
+
+def test_b3_iv_the_same_after_a_total_runs_every_row(rbot, world) -> None:
+    sorento, _mocha = world
+    total = _v("sales_report", _ra(basis="invoiced", measure="amount", company=sorento, **Y), basis="invoiced", measure="amount", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(total, "sorento sales 2026 invoiced by amount")
+    assert _ran(calls), f"setup: {text!r}"
+    text, calls = rbot.say(_by_customer(sorento, "sales_ranking", continuation=True, entity_op="reuse"), "break down by customer")
+    assert "How many?" not in text, f"B3(iv): a breakdown (sales_ranking) asked a count: {text!r}"
+    ran = _ran(calls)
+    assert ran and ran[0].get("group_by") == "customer" and ran[0].get("top_n"), f"B3(iv): {ran or text!r}"
+
+
+def test_b3_break_down_by_customer_after_a_total_runs_every_row(rbot, world) -> None:
+    sorento, _mocha = world
+    total = _v("sales_report", _ra(basis="invoiced", measure="amount", company=sorento, **Y), basis="invoiced", measure="amount", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(total, "sorento sales 2026 invoiced by amount")
+    assert _ran(calls), f"setup: {text!r}"
+    text, calls = rbot.say(_by_customer(sorento, continuation=True, entity_op="reuse"), "break down by customer")
+    assert "How many?" not in text, f"B3(ii): a breakdown asked a count: {text!r}"
+    ran = _ran(calls)
+    assert ran and ran[0].get("group_by") == "customer" and ran[0].get("top_n"), f"B3(ii): {ran or text!r}"
+
+
+def _twins(bot_: Routing) -> None:
+    db = bot_.console.session_factory()
+    try:
+        for code in ("ZZT-TWIN-1", "ZZT-TWIN-2"):
+            row = SalesAgent(id=str(uuid.uuid4()), sales_agent=code, aliases="twin", company_id=DEFAULT_COMPANY_ID)
+            db.add(row)
+            bot_.ids[code] = row.id
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_b4_a_picked_agent_stays_the_one_picked_when_the_name_is_carried_back(rbot, world) -> None:
+    sorento, _mocha = world
+    _twins(rbot)
+    ask = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=["twin"], **Y), _ent("twin", "sales_agent"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(ask, "sorento sales agent twin 2026 invoiced")
+    assert not calls and "Which sales agent?" in text, f"setup: {text!r}"
+    m = re.search(r"(\d+)[.)]?\s[^\n]*ZZT-TWIN-2", text)
+    assert m, text
+    pick = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=["ZZT-TWIN-2"], **Y), entity_op="reuse", continuation=True, open_question_answer=_pick_of(int(m.group(1))), reference_positions=[int(m.group(1))])
+    text, calls = rbot.say(pick, "the second")
+    assert _ran(calls) and _ran(calls)[0].get("sales_agent_ids") == [rbot.ids["ZZT-TWIN-2"]], f"B4: the declared pick did not run with the second twin: {text!r}"
+    again = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=["twin"], date_from="2025-01-01", date_to="2025-12-31"), _ent("twin", "sales_agent", current=False), continuation=True, entity_op="reuse", date_filter_start="2025-01-01", date_filter_end="2025-12-31")
+    text, calls = rbot.say(again, "and 2025")
+    assert "Which sales agent?" not in text, f"B4: the picked agent was asked again: {text!r}"
+    ran = _ran(calls)
+    assert ran and ran[0].get("sales_agent_ids") == [rbot.ids["ZZT-TWIN-2"]], f"B4: want the picked id, got {ran[0].get('sales_agent_ids') if ran else text!r}"
+
+
+def test_s5_a_named_agent_outside_the_named_company_is_said_not_dropped(rbot, world) -> None:
+    sorento, _mocha = world
+    v = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1, AGENT_M], **Y), _ent(AGENT_1, "sales_agent"), _ent(AGENT_M, "sales_agent"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(v, "sorento sales for agent a and agent m 2026 invoiced")
+    ran = _ran(calls)
+    assert ran and ran[0].get("sales_agent_ids") == [rbot.ids["agent"]], f"S5: want AGENT A alone to run, got {ran or text!r}"
+    lines = [ln for ln in text.splitlines() if ln.startswith("Not applied:")]
+    assert lines and AGENT_M in lines[0], f"S5: AGENT M was dropped without a Not applied line: {text!r}"
+
+
+def test_s6_the_state_path_still_lets_the_object_drive_the_args(rbot, world) -> None:
+    from tests.chatbot.test_report_smart_step7 import KEEP, NEW_SUBJECT, _state_on
+
+    sorento, _mocha = world
+    ran_state = _state_on(rbot.console)
+    t1 = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], **Y), _ent(AGENT_1, "sales_agent"), basis="invoiced", sales_company=sorento, domain_in_message=True, state_changes=NEW_SUBJECT, **YR)
+    text, calls = rbot.say(t1, "sorento sales for agent a 2026 invoiced")
+    assert _ran(calls), f"turn 1: {text!r}"
+    t2 = _v("sales_analysis", _ra(basis="invoiced", group_by="month", company=sorento, sales_agents=[AGENT_1], **Y), sales_basis="invoiced", group_by="month", continuation=True, entity_op="modify", state_changes=KEEP)
+    text, calls = rbot.say(t2, "by month")
+    ran = _ran(calls)
+    assert ran_state, "harness: the State path never ran"
+    assert ran and ran[0].get("group_by") == "month" and ran[0].get("sales_agent_ids") == [rbot.ids["agent"]], f"turn 2: {ran or text!r}"
+    t3 = _v("sales_analysis", _ra(basis="invoiced", group_by="month", company=sorento, sales_agents=[AGENT_2], account_types=["ceramic"], **Y), _ent("ceramic", "account_type", None, "account type"), sales_basis="invoiced", group_by="month", continuation=True, state_changes=[{"op": "set", "axis": "account_type", "position": None}])
+    text, calls = rbot.say(t3, "for ceramic account type, agent b")
+    ran = _ran(calls)
+    assert ran and ran[0].get("account_types") == ["CERAMIC"] and ran[0].get("group_by") == "month", f"turn 3: {ran or text!r}"
+    assert ran[0].get("sales_agent_ids") == [agent_b_sorento(rbot)], f"turn 3: {ran[0].get('sales_agent_ids')}"
+
+
+def test_s7_an_object_with_kind_null_on_a_non_report_parse_runs_no_report(rbot, world) -> None:
+    v = _v("none", _ra(kind=None, brands=["Cabana"]), _ent("cabana", "brand", "CABANA"), domain_hint="inventory", intent_hint="check_stock", order_status=None, continuation=None)
+    text, calls = rbot.say(v, "cabana stock")
+    assert not _ran(calls), f"S7: a stock ask ran a report from the object: {_ran(calls)}"
+
+
+def test_s8_a_continuation_with_bare_flat_fields_is_driven_by_the_object(rbot, world) -> None:
+    sorento, _mocha = world
+    first = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], **Y), _ent(AGENT_1, "sales_agent"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(first, "sorento sales for agent a 2026 invoiced")
+    assert _ran(calls), f"setup: {text!r}"
+    # the follow-up carries no entities, no basis, no dates of its own: only continuation and the object
+    follow = _v("sales_analysis", _ra(basis="invoiced", group_by="month", company=sorento, sales_agents=[AGENT_1], account_types=["ceramic"], **Y), continuation=True, entity_op="reuse", topic_reset=False)
+    text, calls = rbot.say(follow, "by month for ceramic")
+    ran = _ran(calls)
+    assert ran and ran[0].get("account_types") == ["CERAMIC"] and ran[0].get("group_by") == "month", f"S8: the object did not drive the args: {ran or text!r}"
+
+
+def test_sec_a_parser_output_report_ask_ids_never_become_customer_ids(rbot, world) -> None:
+    sorento, _mocha = world
+    v = _v("sales_report", _ra(basis="invoiced", company=sorento, **Y), basis="invoiced", sales_company=sorento, domain_in_message=True, report_ask_ids={"customer_ids": [rbot.ids["customer"]]}, **YR)
+    text, calls = rbot.say(v, "sorento sales 2026 invoiced")
+    ran = _ran(calls)
+    assert ran, f"setup: {text!r}"
+    assert not ran[0].get("customer_ids"), f"SEC: a parser-written report_ask_ids reached the route: {ran[0].get('customer_ids')}"
+
+
+def test_sec_b_a_dealers_object_with_account_types_or_a_channel_is_refused(rdealer) -> None:
+    from app.services.chatbot.lanes.business import report_ask
+
+    for label, ra, extra in (
+        ("account_types", _ra(basis="invoiced", account_types=["cabana"], **Y), {}),
+        ("channel", _ra(basis="invoiced", channel="dealer", **Y), {"sales_channel": "dealer"}),
+    ):
+        rdealer.console.session_vars = {}
+        v = _v("sales_report", ra, basis="invoiced", domain_in_message=True, **YR, **extra)
+        text, calls = rdealer.say(v, f"sales 2026 invoiced {label}")
+        assert not _ran(calls) and text.strip() == report_ask.DEALER_REFUSAL, f"SEC {label}: {calls or text!r}"
+
+
+def test_sec_b_a_dealers_carried_customer_never_widens_to_another_customer(rdealer) -> None:
+    from tests.chatbot.test_report_ask_lane import _other_customer
+
+    other = "ZZT OTHER DEALER SDN BHD"
+    other_id = _other_customer(rdealer.console, other)
+    own = "ZZT OWN DEALER SDN BHD"
+    t1 = _v("sales_report", _ra(basis="invoiced", customers=[own], **Y), _e(own, "customer"), basis="invoiced", domain_in_message=True, **YR)
+    text, calls = rdealer.say(t1, "my sales 2026 invoiced")
+    assert _ran(calls), f"setup: {text!r}"
+    t2 = _v("sales_report", _ra(basis="invoiced", customers=[own, other], **Y), _e(other, "customer"), continuation=True, **YR)
+    text, calls = rdealer.say(t2, f"and {other}")
+    assert not any(other_id in (a.get("customer_ids") or []) for a in _ran(calls)), f"SEC: a dealer's report ran for another customer: {_ran(calls)}"
