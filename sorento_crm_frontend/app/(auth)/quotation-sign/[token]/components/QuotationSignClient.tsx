@@ -30,14 +30,13 @@ import { signatureValueFrom } from '@/components/common/signatureValue';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { sanitizedHtml } from '@/lib/sanitize';
-import { TERMS_HTML_CLASS } from '@/lib/terms-html';
+import { CoverPageCard, SenderRow } from '@/components/quotation/CoverPageCard';
 import {
   useQuotationSignMutations,
   useQuotationSignPage,
 } from '../../hooks/useQuotationSign';
 import {
   QuotationSignError,
-  type QuotationCoverRow,
   type QuotationSignPage,
 } from '../../services/quotationSignService';
 import {
@@ -79,68 +78,6 @@ function firstName(...names: Array<string | null | undefined>): string | null {
   return null;
 }
 
-function SenderRow({ page }: { page: QuotationSignPage }) {
-  return (
-    <div className="flex min-w-0 items-center gap-3">
-      {page.sender_logo_url && (
-        <img
-          src={page.sender_logo_url}
-          alt={`${page.sender_name ?? 'Company'} logo`}
-          referrerPolicy="no-referrer"
-          className="h-12 w-auto max-w-[120px] shrink-0 object-contain"
-        />
-      )}
-      <div className="min-w-0">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Quotation from
-        </p>
-        <p className="min-w-0 break-words text-base font-semibold">
-          {text(page.sender_name)}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/** The cover page first: the same rows, in the same order, as the PDF's first page. */
-function CoverCard({
-  page,
-  rows,
-}: {
-  page: QuotationSignPage;
-  rows: QuotationCoverRow[];
-}) {
-  return (
-    <Card data-testid="quotation-sign-cover">
-      <CardContent className="space-y-4 py-5">
-        <SenderRow page={page} />
-        <div className="space-y-3 border-t border-border pt-4">
-          {rows.map((row) => (
-            <div
-              key={row.key}
-              className="flex min-w-0 flex-col gap-1 text-sm sm:flex-row sm:gap-2"
-            >
-              <span className="shrink-0 text-muted-foreground sm:w-40">
-                {row.label}
-              </span>
-              {row.html ? (
-                <div
-                  className={cn(TERMS_HTML_CLASS, 'font-medium')}
-                  dangerouslySetInnerHTML={sanitizedHtml(row.html)}
-                />
-              ) : (
-                <span className="min-w-0 whitespace-pre-line break-words font-medium">
-                  {row.text}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
 /** The refs and the parties, in the order they sit on the printed quotation. */
 function Letterhead({
   page,
@@ -159,7 +96,7 @@ function Letterhead({
   return (
     <Card>
       <CardContent className="space-y-5 py-5">
-        {withSender && <SenderRow page={page} />}
+        {withSender && <SenderRow name={page.sender_name} logoUrl={page.sender_logo_url} />}
 
         <div
           className={cn(
@@ -826,6 +763,10 @@ function SignPageBody({
     !(page.is_changes_requested && !page.amendment_request);
 
   const coverRows = page.cover_rows?.length ? page.cover_rows : null;
+  // Layout 3 (a designed cover) names its title; layouts 1 and 2 do not.
+  const designed = coverRows !== null && page.cover_title != null;
+  // The terms print inside the cover while their row is shown; below the prices otherwise.
+  const termsOnCover = coverRows?.some((row) => row.key === 'terms') ?? false;
   const preparedBy = firstName(
     page.sorento_signature?.signer_name,
     page.signatory_name,
@@ -834,14 +775,19 @@ function SignPageBody({
 
   return (
     <PageShell testId="quotation-sign-page">
-      {coverRows && <CoverCard page={page} rows={coverRows} />}
+      {coverRows && (
+        <CoverPageCard cover={{ ...page, cover_rows: coverRows }} testId="quotation-sign-cover" />
+      )}
       <Letterhead page={page} withSender={!coverRows} />
 
-      <ProsePanel
-        title="Cover letter"
-        html={page.cover_letter}
-        empty="No cover letter was included with this quotation."
-      />
+      {/* A designed cover carries the letter as its intro. */}
+      {!designed && (
+        <ProsePanel
+          title="Cover letter"
+          html={page.cover_letter}
+          empty="No cover letter was included with this quotation."
+        />
+      )}
 
       {suggesting && (
         <SuggestBar
@@ -889,7 +835,7 @@ function SignPageBody({
         }}
       />
 
-      {!coverRows && (
+      {(!coverRows || (designed && !termsOnCover)) && (
         <ProsePanel
           title="Terms and conditions"
           html={page.terms}

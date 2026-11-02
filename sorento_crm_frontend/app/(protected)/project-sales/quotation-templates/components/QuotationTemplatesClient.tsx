@@ -20,21 +20,47 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
   useQuotationTemplateMutations,
   useQuotationTemplates,
 } from '../../_shared/hooks/useQuotationTemplates';
-import type { QuotationTemplate } from '../../_shared/services/quotationTemplateService';
+import type {
+  QuotationTemplate,
+  QuotationTemplateKind,
+} from '../../_shared/services/quotationTemplateService';
+import { QuotationCoverDesigner } from './QuotationCoverDesigner';
 import { QuotationTemplateDialog } from './QuotationTemplateDialog';
 
+type TemplatesTab = Extract<QuotationTemplateKind, 'terms' | 'cover_page'>;
+
 /**
- * The standard terms and conditions. The active template is copied into each NEW quotation at
- * creation; quotations that already exist keep the wording they were created with.
+ * The standard terms and conditions, and the cover page designs. The active template is copied
+ * into each NEW quotation at creation; quotations that already exist keep the wording they were
+ * created with.
  */
 export function QuotationTemplatesClient() {
-  const templates = useQuotationTemplates('terms');
-  const { activate } = useQuotationTemplateMutations('terms');
+  const [kind, setKind] = React.useState<TemplatesTab>('terms');
+  return (
+    <div className="space-y-4">
+      <Tabs value={kind} onValueChange={(next) => setKind(next as TemplatesTab)}>
+        <TabsList variant="line" className="w-full justify-start">
+          <TabsTrigger value="terms">Terms</TabsTrigger>
+          <TabsTrigger value="cover_page">Cover page</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      <QuotationTemplatesList key={kind} kind={kind} />
+    </div>
+  );
+}
+
+function QuotationTemplatesList({ kind }: { kind: TemplatesTab }) {
+  const isDesign = kind === 'cover_page';
+  const templates = useQuotationTemplates(kind);
+  const { activate } = useQuotationTemplateMutations(kind);
+  const activateTemplate = activate.mutate;
+  const activating = activate.isPending;
   const canEdit = useHasPermission('projects.types.edit');
   const [editing, setEditing] = React.useState<QuotationTemplate | null>(null);
   const [creating, setCreating] = React.useState(false);
@@ -84,10 +110,10 @@ export function QuotationTemplatesClient() {
               type="button"
               size="sm"
               variant="outline"
-              disabled={activate.isPending}
+              disabled={activating}
               onClick={(event) => {
                 event.stopPropagation();
-                activate.mutate(row.original.id);
+                activateTemplate(row.original.id);
               }}
             >
               Activate
@@ -95,7 +121,7 @@ export function QuotationTemplatesClient() {
           ) : null,
       },
     ],
-    [activate, canEdit],
+    [activateTemplate, activating, canEdit],
   );
 
   const table = useReactTable({
@@ -124,8 +150,14 @@ export function QuotationTemplatesClient() {
         onRowClick={canEdit ? (row: QuotationTemplate) => setEditing(row) : undefined}
         emptyMessage={
           <span className="flex flex-col items-center gap-1">
-            <span className="font-medium text-foreground">No terms templates yet</span>
-            <span className="text-xs">The first template you add becomes the standard terms.</span>
+            <span className="font-medium text-foreground">
+              {isDesign ? 'No cover page designs yet' : 'No terms templates yet'}
+            </span>
+            <span className="text-xs">
+              {isDesign
+                ? 'The first design you add becomes the cover page.'
+                : 'The first template you add becomes the standard terms.'}
+            </span>
           </span>
         }
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
@@ -141,7 +173,7 @@ export function QuotationTemplatesClient() {
                 canEdit ? (
                   <Button onClick={() => setCreating(true)}>
                     <Plus />
-                    Add template
+                    {isDesign ? 'Add design' : 'Add template'}
                   </Button>
                 ) : undefined
               }
@@ -156,7 +188,16 @@ export function QuotationTemplatesClient() {
         </Card>
       </DataGrid>
 
-      {(creating || editing) && (
+      {(creating || editing) && isDesign && (
+        <QuotationCoverDesigner
+          template={editing}
+          onDone={() => {
+            setCreating(false);
+            setEditing(null);
+          }}
+        />
+      )}
+      {(creating || editing) && !isDesign && (
         <QuotationTemplateDialog
           template={editing}
           onDone={() => {

@@ -123,6 +123,11 @@ export type QuotationSignPage = {
   our_ref: string | null;
   /** The cover page rows of a new-layout issue; null for an issue from before the cover page. */
   cover_rows?: QuotationCoverRow[] | null;
+  /** Layout 3 only: the design copied at send. Absent for layouts 1 and 2. */
+  cover_title?: string | null;
+  cover_show_letterhead?: boolean | null;
+  cover_intro_html?: string | null;
+  cover_closing_html?: string | null;
   issue_no: number;
   doc_date: string | null;
   subject_title: string | null;

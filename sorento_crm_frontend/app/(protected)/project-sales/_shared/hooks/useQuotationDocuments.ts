@@ -1,6 +1,7 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { toast } from '@/lib/toast';
 import {
   ENTITY_DOWNLOADS_QUERY_KEY,
@@ -24,6 +25,7 @@ import {
   listQuotationIssues,
   logQuotationWhatsAppOpened,
   moveQuotationApproval,
+  previewQuotationCover,
   queueQuotationIssuePdf,
   queueQuotationIssueXlsx,
   rejectQuotationDocument,
@@ -32,6 +34,7 @@ import {
   updateQuotationDocument,
   updateQuotationScope,
   type QuotationDocument,
+  type QuotationCoverPreviewBody,
   type QuotationDocumentBody,
   type QuotationSignatureBody,
 } from '../services/quotationDocumentService';
@@ -69,6 +72,25 @@ export function useQuotationDocument(
     queryKey: quotationDocumentKey(projectId ?? '', documentId ?? ''),
     queryFn: () => getQuotationDocument(projectId as string, documentId as string),
     enabled: Boolean(projectId && documentId),
+  });
+}
+
+/**
+ * The cover page as it would print, from the form's unsaved values (nothing is stored). Settled
+ * for 400 ms so typing does not request per keystroke; off until the tab that shows it is open.
+ */
+export function useQuotationCoverPreview(
+  projectId: string | undefined,
+  body: QuotationCoverPreviewBody,
+  enabled = true,
+) {
+  const settled = useDebouncedValue(body, 400);
+  return useQuery({
+    queryKey: ['project-quotation-cover-preview', projectId ?? '', settled],
+    queryFn: () => previewQuotationCover(projectId as string, settled),
+    enabled: Boolean(projectId) && enabled,
+    placeholderData: keepPreviousData,
+    retry: false,
   });
 }
 

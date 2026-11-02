@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import type { CoverPageData } from '@/lib/quotation-cover';
 import type {
   QuotationAmendmentDecision,
   QuotationAmendmentRequest,
@@ -115,6 +116,8 @@ export type QuotationDocument = {
   attn_name: string | null;
   subject_title: string | null;
   cover_letter_html: string | null;
+  /** The cover page's closing text (the letter above is its intro). */
+  cover_closing_html?: string | null;
   terms_html: string | null;
   signatory_name: string | null;
   signatory_phone: string | null;
@@ -214,6 +217,7 @@ export type QuotationDocumentBody = Partial<{
   attn_name: string | null;
   subject_title: string | null;
   cover_letter_html: string | null;
+  cover_closing_html: string | null;
   terms_html: string | null;
   signatory_name: string | null;
   signatory_phone: string | null;
@@ -249,6 +253,7 @@ export type QuotationDocumentBody = Partial<{
 /** The company's letter and terms as written, for the create form's own tabs (#1341). */
 export type QuotationLetterTemplates = {
   cover_letter_html: string | null;
+  cover_closing_html?: string | null;
   terms_html: string | null;
   /** Defaults of the active terms template. */
   payment_terms?: string | null;
@@ -657,3 +662,36 @@ export async function applyQuotationAmendmentRequest(
     throw new Error(await extractApiError(response, 'Failed to apply the decisions'));
   return response.json();
 }
+
+/**
+ * The cover page as it would print from the form's unsaved values. Stores nothing. With
+ * `document_id` the saved quotation supplies every field the body leaves out.
+ */
+export async function previewQuotationCover(
+  projectId: string,
+  body: QuotationCoverPreviewBody,
+): Promise<CoverPageData> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/cover-preview`,
+    { method: 'POST', body: JSON.stringify(body) },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to preview the cover page'));
+  return response.json();
+}
+
+export type QuotationCoverPreviewBody = Partial<{
+  document_id: string;
+  doc_date: string | null;
+  attn_name: string | null;
+  recipient_name_snapshot: string | null;
+  recipient_address_snapshot: string | null;
+  recipient_phone_snapshot: string | null;
+  recipient_email_snapshot: string | null;
+  quotation_purpose: string | null;
+  payment_terms: string | null;
+  validity: string | null;
+  terms_html: string | null;
+  cover_letter_html: string | null;
+  cover_closing_html: string | null;
+}>;
