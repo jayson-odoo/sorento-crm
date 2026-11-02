@@ -3401,6 +3401,7 @@ _REPORT_ASK_PLURALS = {
     "sales_agent": "sales agents",
     "location": "locations",
     "channel": "channels",
+    "account_type": "account types",
     "month": "months",
     "year": "years",
     "sales_order": "sales orders",
