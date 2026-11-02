@@ -502,8 +502,10 @@ describe('the page\'s Save waits for a parked removal (review nit)', () => {
 
 describe('readable column labels in edit mode (browser pass finding)', () => {
   function widthOf(name: RegExp | string): number {
-    const input = screen.getByRole('textbox', { name });
-    return parseInt((input.closest('th') as HTMLElement).style.width, 10);
+    const widths = screen
+      .getAllByRole('textbox', { name })
+      .map((input) => parseInt((input.closest('th') as HTMLElement).style.width, 10));
+    return Math.min(...widths);
   }
 
   it('gives every leaf column at least the edit minimum, wider for a long label', () => {
