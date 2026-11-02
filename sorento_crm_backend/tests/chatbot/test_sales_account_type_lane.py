@@ -1601,10 +1601,9 @@ def test_at35_c_refine_dropping_the_held_customer_with_a_covered_word_asks_no_co
     assert not args.get("customer_ids") and args["account_types"] == ["4"], args
 
 
-def test_at35_d_followup_on_a_held_company_reads_a_word_in_that_company_only(bot) -> None:
-    """CABANA is a brand in the held company (no stored type there) and a stored type only in the other company: on a
-    follow-up the held company narrows the word to its own book, so it is the brand, with no question."""
-    ids = _seed(bot)  # brand Cabana in the default company, no stored account types there
+def _brand_here_type_there(bot) -> tuple[str, str]:
+    """CABANA is a brand in the default company (no stored type there) and a stored type only in Mocha."""
+    _seed(bot)
     sorento, mocha = _two_companies(bot)
     db = bot.console.session_factory()
     try:
@@ -1613,11 +1612,37 @@ def test_at35_d_followup_on_a_held_company_reads_a_word_in_that_company_only(bot
         db.commit()
     finally:
         db.close()
+    return sorento, mocha
+
+
+def _held_default_total(bot, sorento: str) -> None:
     text, calls = bot.say(_sales(sales_company=sorento), "sorento sales in Jan")
     assert _only_report_ask(calls)["company"] == DEFAULT_COMPANY_ID
-    follow = _sales(_word(), ranking_refine=False, entity_op="reuse")
-    text, calls = bot.say(follow, "and cabana")
-    assert calls and QUESTION not in text, (text, calls)
-    args = _only_report_ask(calls)
-    assert args["company"] == DEFAULT_COMPANY_ID and args.get("brand_ids") == [ids["CABANA"]], args
-    assert not args.get("account_types"), args
+
+
+def test_at35_d_followup_naming_a_brand_word_reads_every_company_in_play(bot) -> None:
+    """Brands are per company, so a brand word is a subject of its own: a follow-up naming it drops the held company and
+    the word is read in every company the contact holds."""
+    sorento, _mocha = _brand_here_type_there(bot)
+    _held_default_total(bot, sorento)
+    text, calls = bot.say(_sales(_word(), ranking_refine=False, entity_op="reuse"), "and cabana")
+    assert calls == [] and text.strip() == QUESTION, (text, calls)
+
+
+def test_at35_d2_followup_naming_the_word_and_a_product_reads_every_company_in_play(bot) -> None:
+    from tests.chatbot.test_report_ask_lane import PRODUCT_CODE
+
+    sorento, _mocha = _brand_here_type_there(bot)
+    _held_default_total(bot, sorento)
+    follow = _sales(_word(), _e(PRODUCT_CODE, "product"), ranking_refine=False, entity_op="reuse")
+    text, calls = bot.say(follow, f"and cabana on {PRODUCT_CODE}")
+    assert calls == [] and text.strip() == QUESTION, (text, calls)
+
+
+def test_at35_d3_refine_naming_the_word_and_a_customer_reads_every_company_in_play(bot) -> None:
+    sorento, _mocha = _brand_here_type_there(bot)
+    text, calls = bot.say(_rank(group_by="product", top_n=3, sales_company=sorento, **JAN), "top 3 products in Jan for sorento")
+    assert _only_report_ask(calls)["company"] == DEFAULT_COMPANY_ID
+    refine = _rank(_word(), _customer(bot), group_by=None, top_n=None, ranking_refine=True, **JAN)
+    text, calls = bot.say(refine, "cabana for the customer")
+    assert calls == [] and text.strip() == QUESTION, (text, calls)
