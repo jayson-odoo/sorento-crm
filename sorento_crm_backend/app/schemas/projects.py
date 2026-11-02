@@ -1226,6 +1226,11 @@ class ProjectQuotationResponse(ProjectQuotationBase):
     id: str
     project_id: str
     series_name: Optional[str] = None
+    # PS-PROPOSAL-QUOTATION: the document this scope sits on, and whether it is a proposal or the
+    # project's quotation.
+    document_id: Optional[str] = None
+    document_no: Optional[str] = None
+    document_kind: Optional[str] = None
 
     outcome: str = "open"
     loss_reason: Optional[str] = None
@@ -2134,6 +2139,12 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class MakeQuotationRequest(BaseModel):
+    """PS-PROPOSAL-QUOTATION: the issued proposal revision a won project's quotation is made from."""
+
+    issue_id: str = Field(min_length=1)
 
 
 class QuotationApprovalMoveRequest(BaseModel):

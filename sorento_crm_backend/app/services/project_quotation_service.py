@@ -1459,14 +1459,30 @@ def serialize_quotations(
 
     labels = {row["value"]: row["label"] for row in loss_reasons(db)}
 
+    # PS-PROPOSAL-QUOTATION: which document each scope sits on, so a reader (the bot included)
+    # can tell a proposal's figure from the quotation's.
+    from app.models.projects import ProjectQuotationDocument
+
+    document_ids = {q.document_id for q in quotations if q.document_id}
+    documents = {
+        row.id: row
+        for row in db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id.in_(document_ids))
+        .all()
+    } if document_ids else {}
+
     out: List[Dict[str, Any]] = []
     for quotation in quotations:
         version = highest.get(quotation.id)
         stats = alerts.get(version.id if version else "", {})
+        document = documents.get(quotation.document_id or "")
         out.append(
             {
                 "id": quotation.id,
                 "project_id": quotation.project_id,
+                "document_id": quotation.document_id,
+                "document_no": document.document_no if document is not None else None,
+                "document_kind": (document.kind or "proposal") if document is not None else None,
                 "scope_label": quotation.scope_label,
                 "series_id": quotation.series_id,
                 "series_name": series_names.get(quotation.series_id or ""),

@@ -916,6 +916,22 @@ def serialize_pos(
 
     progress = po_totals(db, purchase_orders)
 
+    # PS-PROPOSAL-QUOTATION: what each PO is checked against (proposal or quotation), and who
+    # gave the over-quantity reason.
+    from app.models.projects import ProjectQuotationDocument
+    from app.services.project_service import resolve_user_names
+
+    document_ids = {q.document_id for q in quotations.values()}
+    documents_by_id = {
+        d.id: d
+        for d in db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id.in_(document_ids))
+        .all()
+    } if document_ids else {}
+    reason_names = resolve_user_names(
+        db, [po.qty_over_reason_by for po in purchase_orders if po.qty_over_reason_by]
+    )
+
     out: List[Dict[str, Any]] = []
     for po in purchase_orders:
         version = versions.get(po.quotation_version_id or "")
@@ -950,6 +966,21 @@ def serialize_pos(
                 "published_sales_order_count": published_so_counts.get(str(po.id), 0),
                 "model_mismatch_count": model_flags.get(po.id, 0),
                 "price_mismatch_count": price_flags.get(po.id, 0),
+                "qty_over_reason": po.qty_over_reason,
+                "qty_over_reason_at": po.qty_over_reason_at,
+                "qty_over_reason_by_name": (
+                    reason_names.get(str(po.qty_over_reason_by)) if po.qty_over_reason_by else None
+                ),
+                "checked_against_kind": (
+                    (documents_by_id.get(quotation.document_id).kind or "proposal")
+                    if quotation is not None and documents_by_id.get(quotation.document_id)
+                    else None
+                ),
+                "checked_against_label": (
+                    documents_by_id.get(quotation.document_id).document_no
+                    if quotation is not None and documents_by_id.get(quotation.document_id)
+                    else None
+                ),
                 "v1_total": drift["v1_total"],
                 "drift_delta": drift["delta"],
                 "drift_percent": drift["percent"],

@@ -156,7 +156,7 @@ def cover_rows(
         ("contact", "Contact", clean(document.recipient_phone_snapshot)),
         ("address", "Add", clean(document.recipient_address_snapshot)),
         ("email", "Email", clean(document.recipient_email_snapshot)),
-        ("purpose", "Quotation Purpose", clean(document.quotation_purpose)),
+        ("purpose", f"{'Quotation' if getattr(document, 'kind', None) == 'quotation' else 'Proposal'} Purpose", clean(document.quotation_purpose)),
     ]
     tail = [
         ("payment_terms", "Payment Terms", clean(issue.payment_terms)),

@@ -24,6 +24,7 @@ from app.database import get_db
 from app.dependencies import require_any_permission_with_api_key, require_permission
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
+    MakeQuotationRequest,
     ProjectQuotationDocumentCreate,
     QuotationAmendmentApplyResponse,
     QuotationAmendmentDecideRequest,
@@ -388,6 +389,37 @@ def issue_quotation_document(
         db.commit()
         db.refresh(record)
         return svc.serialize_issue(db, record)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/make-quotation",
+    response_model=ProjectQuotationDocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def make_quotation_from_proposal(
+    project_id: str,
+    document_id: str,
+    payload: MakeQuotationRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """PS-PROPOSAL-QUOTATION: a won project's salesperson turns one issued proposal revision into
+    the project's quotation. 409 ``project_not_won`` / ``project_has_quotation``, 422
+    ``quotation_source_not_proposal``, 404 ``quotation_issue_not_found``."""
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(payload.issue_id, resource="Revision")
+        _editable_project(db, project_id, current_user)
+        proposal = svc.get_document_or_404(db, project_id, document_id)
+        quotation = svc.make_quotation(
+            db, proposal=proposal, issue_id=payload.issue_id, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        db.refresh(quotation)
+        return svc.serialize_document(db, quotation)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -921,7 +953,8 @@ def _queue_issue_export(
         # Named up front so the drawer reads as the quotation it is while still pending; the
         # task overwrites it with the renderer's own name once it knows it.
         filename=(
-            f"quotation-{svc.quotation_no(document.document_no, record.issue_no, record.revision_label)}"
+            f"{svc.document_noun(document).lower()}-"
+            f"{svc.quotation_no(document.document_no, record.issue_no, record.revision_label)}"
             f".{suffix}"
         ).replace("/", "-"),
     )

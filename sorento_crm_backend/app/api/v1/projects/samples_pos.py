@@ -257,7 +257,11 @@ def update_purchase_order(
         po = po_svc.get_po(db, po_id)
         _project_for_edit(db, po.project_id, current_user)
         body = payload.model_dump(exclude_unset=True)
+        reason = body.pop("qty_over_reason", None)
         lines = po_svc.save_po_document(db, po=po, payload=body)
+        # PS-PROPOSAL-QUOTATION soft stop: a 409 here rolls the save back and the screen sends
+        # it again with the reason; with one, it saves and management is told.
+        po_svc.enforce_qty_over(db, po, reason=reason, actor_user_id=current_user["id"])
         db.commit()
         db.refresh(po)
         # Mismatch alerts on a whole-set save are raised ONCE for the PO, not once per line:
