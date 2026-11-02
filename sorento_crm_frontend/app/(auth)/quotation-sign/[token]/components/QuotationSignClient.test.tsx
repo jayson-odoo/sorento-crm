@@ -1041,3 +1041,34 @@ describe('QuotationSignClient designed cover card', () => {
     expect(screen.queryByText('OFFER SHEET')).not.toBeInTheDocument();
   });
 });
+
+/** QUOTE-COVER-DESIGN round 2 guards (C2): terms panel and the old letter panel on a designed cover. */
+describe('QuotationSignClient designed cover guards', () => {
+  const base = (overrides: Record<string, unknown> = {}) =>
+    page({
+      our_ref: 'PRJQ-2026-0042-R2 SERI MUTIARA',
+      terms: '<p>BOTTOM CLAUSE</p>',
+      cover_rows: [{ key: 'reference', label: 'Offer Number', text: 'PRJQ-2026-0042-R2 SERI MUTIARA' }],
+      cover_title: 'OFFER SHEET',
+      cover_show_letterhead: true,
+      cover_intro_html: '<p>INTRO WORDS</p>',
+      cover_closing_html: '',
+      ...overrides,
+    } as Partial<QuotationSignPage>);
+
+  it('shows the bottom Terms and conditions panel when the Terms row is hidden', async () => {
+    getQuotationSignPage.mockResolvedValue(base());
+    renderPage();
+    await screen.findByText('OFFER SHEET');
+    expect(screen.getByText('Terms and conditions')).toBeInTheDocument();
+    expect(screen.getByText('BOTTOM CLAUSE')).toBeInTheDocument();
+  });
+
+  it('does not show the old Cover letter panel on a designed cover', async () => {
+    getQuotationSignPage.mockResolvedValue(base({ cover_letter: '<p>OLD LETTER BODY</p>' }));
+    renderPage();
+    await screen.findByText('OFFER SHEET');
+    expect(screen.queryByText('Cover letter')).not.toBeInTheDocument();
+    expect(screen.queryByText('OLD LETTER BODY')).not.toBeInTheDocument();
+  });
+});

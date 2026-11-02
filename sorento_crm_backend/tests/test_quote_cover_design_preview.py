@@ -117,6 +117,26 @@ def test_project_preview_for_an_existing_document_names_its_number_and_next_revi
     assert ref == f"{created['document_no']}-R1 {project.title}"
 
 
+def test_project_preview_after_a_send_names_r2_and_uses_the_typed_values(api):
+    from .test_project_quotation_document_routes import _add_scope, _sign
+
+    client, db, _c, _u, project, _party = api
+    created = _create_document(client, project.id, attn_name=f"{MARKER} Saved Attn")
+    root = f"{PS}/projects/{project.id}/quotation-documents"
+    _add_scope(client, project.id, created["id"], f"{MARKER} Townhouse")
+    _sign(client, root, created["id"])
+    assert client.post(f"{root}/{created['id']}/issue").status_code == 201
+    before = counts(db)
+    out = client.post(
+        project_url(project),
+        json={**body_for_project(attn_name=f"{MARKER} Typed Attn"), "document_id": created["id"]},
+    ).json()
+    assert counts(db) == before
+    by = {r["key"]: r for r in out["cover_rows"]}
+    assert by["reference"]["text"] == f"{created['document_no']}-R2 {project.title}"
+    assert by["attn"]["text"] == f"{MARKER} Typed Attn"
+
+
 def test_project_preview_without_permission_is_403_and_stores_nothing(api):
     client, db, _c, _u, project, _party = api
     before = counts(db)

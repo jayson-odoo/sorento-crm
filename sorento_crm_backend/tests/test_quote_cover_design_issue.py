@@ -289,3 +289,28 @@ def test_countersign_default_design_matches_the_2088_rows_and_title():
         assert [r["key"] for r in body["cover_rows"]] == KEYS
         assert [r["label"] for r in body["cover_rows"]] == LABELS
         assert body["cover_title"] == "QUOTATION" and body["cover_show_letterhead"] is True
+
+
+def test_editing_the_document_letter_and_closing_after_send_leaves_pdf_and_sign_payload_alone():
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        env = _setup(db)
+        document = prepared(db, env, designed())
+        record = _issue(db, document, env["owner"])
+        html_before = qpdf.build_issue_html(db, record)
+        body_before = sign_body(db, record)
+        assert f"{MARKER} intro line" in html_before and f"{MARKER} closing words" in html_before
+
+        document.cover_letter_html = "<p>EDITED LATER INTRO</p>"
+        document.cover_closing_html = "<p>EDITED LATER CLOSING</p>"
+        db.flush()
+        db.expire_all()
+
+        html_after = qpdf.build_issue_html(db, record)
+        assert html_after == html_before
+        assert "EDITED LATER" not in html_after
+        body_after = sign_body(db, record)
+        assert f"{MARKER} intro line" in body_after["cover_intro_html"]
+        assert f"{MARKER} closing words" in body_after["cover_closing_html"]
+        assert "EDITED LATER" not in body_after["cover_intro_html"] + body_after["cover_closing_html"]
