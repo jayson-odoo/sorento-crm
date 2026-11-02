@@ -12,6 +12,12 @@ import { projectCodeLabel } from '../lib/projectCode';
 import { formatMyrExact } from '../lib/money';
 import { getProductSetsForLineSelect } from '@/app/(protected)/master-data-management/product-sets/services/productSetService';
 import {
+  createPartyContact,
+  getParty,
+  fillPartyPhone,
+  getPartiesOnProject,
+  listPartyContacts,
+  updatePartyContact,
   addStakeholder,
   aiExtractProject,
   approveProject,
@@ -118,6 +124,8 @@ import {
 import type {
   ProjectListParams,
   ProjectPartyBody,
+  PartyContactBody,
+  PartyType,
   ProjectRegisterBody,
   ProjectStakeholderBody,
   ProjectTaskBody,
@@ -230,6 +238,8 @@ export function useProjectParties(params: {
   page?: number;
   limit?: number;
   include_inactive?: boolean;
+  sort?: string;
+  dir?: 'asc' | 'desc';
 }, options: { enabled?: boolean } = {}) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
@@ -787,7 +797,7 @@ export function useLeads(params: LeadListParams) {
  * Async options for the Developer / Architect / Main contractor pickers: a server-side search
  * of one party type (PROJECT-REGISTER-V2 B1), so a party past the first page is found by name.
  */
-export function useFetchPartyOptions(partyType: 'developer' | 'architect' | 'main_contractor') {
+export function useFetchPartyOptions(partyType: PartyType) {
   return React.useCallback(
     async (query: string) => {
       const result = await listParties({ party_type: partyType, query: query || undefined, limit: 20 });
@@ -1734,5 +1744,84 @@ export function useProjectDashboard() {
     queryKey: ['project-dashboard'],
     queryFn: () => getProjectDashboard(),
     staleTime: 60_000,
+  });
+}
+
+
+// ------------------------------------------------------------ party contacts (PS-REGISTRATION-V3)
+
+export const partyContactsKey = (partyId: string) => [PARTIES_KEY, 'contacts', partyId];
+export const partiesOnProjectKey = (projectId: string) => [PROJECTS_KEY, 'parties', projectId];
+
+export function useParty(partyId: string | null | undefined) {
+  return useQuery({
+    queryKey: [PARTIES_KEY, 'detail', partyId ?? ''],
+    queryFn: () => getParty(partyId as string),
+    enabled: Boolean(partyId),
+  });
+}
+
+export function usePartyContacts(partyId: string | null | undefined) {
+  return useQuery({
+    queryKey: partyContactsKey(partyId ?? ''),
+    queryFn: () => listPartyContacts(partyId as string),
+    enabled: Boolean(partyId),
+  });
+}
+
+export function usePartyContactMutations(partyId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: partyContactsKey(partyId) });
+    void queryClient.invalidateQueries({ queryKey: [PARTIES_KEY] });
+  };
+  const create = useMutation({
+    mutationFn: (body: PartyContactBody) => createPartyContact(partyId, body),
+    onSuccess: (row) => {
+      invalidate();
+      toast.success(`${row.name} added`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: PartyContactBody }) =>
+      updatePartyContact(partyId, id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Contact saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  return { create, update };
+}
+
+/** The project's parties by role with its people at each (shared with PS-PROPOSAL-QUOTATION). */
+export function usePartiesOnProject(projectId: string | null | undefined) {
+  return useQuery({
+    queryKey: partiesOnProjectKey(projectId ?? ''),
+    queryFn: () => getPartiesOnProject(projectId as string),
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useFillPartyPhone(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      partyId,
+      phone,
+      stakeholderId,
+    }: {
+      partyId: string;
+      phone: string;
+      stakeholderId?: string | null;
+    }) => fillPartyPhone(projectId, partyId, { phone, stakeholder_id: stakeholderId ?? null }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: partiesOnProjectKey(projectId) });
+      void queryClient.invalidateQueries({ queryKey: stakeholdersKey(projectId) });
+      void queryClient.invalidateQueries({ queryKey: [PARTIES_KEY] });
+      toast.success('Number saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 }

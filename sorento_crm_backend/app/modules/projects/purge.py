@@ -100,6 +100,8 @@ from app.models.projects import (
     ProjectSeriesCategory,
     ProjectSeriesProduct,
     ProjectSeriesSet,
+    ProjectPartyContact,
+    ProjectPartyLink,
     ProjectStakeholder,
     ProjectTakeoverRequest,
     ProjectTask,
@@ -109,6 +111,7 @@ from app.models.projects import (
     ProjectType,
     QuotationAmendmentRequest,
     QuotationAmendmentRequestRow,
+    QuotationIssueView,
     QuotationSignature,
     QuotationTemplate,
 )
@@ -196,6 +199,8 @@ PURGE_ORDER: List[Type] = [
     # own statement so the operator sees the customer's suggestions counted.
     QuotationAmendmentRequestRow,
     QuotationAmendmentRequest,
+    # quotation_issue_views CASCADEs off the issue (PS-QUOTE-VIEWS); counted on its own.
+    QuotationIssueView,
     ProjectQuotationIssueScope,
     ProjectQuotationIssue,
     ProjectQuotationLine,
@@ -219,6 +224,10 @@ PURGE_ORDER: List[Type] = [
     ProjectCollaborator,
     # RESTRICT on project_stakeholders.role_id: this MUST precede ProjectTemplateRole.
     ProjectStakeholder,
+    # RESTRICT on party_links.party_id: links MUST precede ProjectParty (PS-REGISTRATION-V3).
+    ProjectPartyLink,
+    # Stakeholders point at contacts (SET NULL), contacts CASCADE off their party.
+    ProjectPartyContact,
     ProjectBrand,
     ProjectSalesProfile,
     CustomerItemCodeMap,

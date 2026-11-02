@@ -19,7 +19,8 @@ from tests._pg_fixture import unique_code
 from tests.chatbot.agent._seed import all_agent_slugs, seed_agent_contact, seed_contact, seed_user
 
 # Fixtures and helpers from the router suite (fixtures must live in this namespace to be found).
-from tests.chatbot.agent.test_router import (  # noqa: F401
+from tests.chatbot.agent.test_router import (
+    CONSOLE_LABELS,  # noqa: F401
     INSTRUCTIONS,
     JEV_MODEL,
     OPEN_QUESTION_VARS,
@@ -45,13 +46,30 @@ EXPECTED_LABELS = [
     "take back a purchase request action",
     "record a suggestion or wish for what the system should have or do, an idea or a feature request",
     "change one of your ideas",
+    # AGENTIC-UNIFY PR 4: the three writes.
+    "close a complaint",
+    "cancel an order",
+    "raise an IT support ticket",
     "your customer asks",
     "recent changes",
     "your sales opportunities",
     "opportunity stages",
     "finding dealer contacts",
     "purchase requests and sponsorship forms",
+    # AGENTIC-UNIFY PR 4: the two finds (user reads), then the ported reads (PORTED_READS, in registry order).
+    "finding a complaint by its number",
+    "finding a project by its code",
     "your ideas",
+    "the complaints list",
+    "complaint counts and trends",
+    "conversation response-time summary",
+    "tracked conversations and their deadlines",
+    "conversation response-time events",
+    "the projects list",
+    "one project's details",
+    "a project's quotations",
+    "the project pipeline forecast",
+    "order totals and trends",
 ]
 
 
@@ -114,7 +132,7 @@ def test_AC_R1_1_agent_criteria_gain_tools_and_nothing_else_changes(db, jev):
     sent = call["criteria"]
     assert sent["agent"]["what"] == criteria["agent"]["what"]
     assert sent["agent"]["also"] == criteria["agent"]["also"]
-    assert sent["agent"]["tools"] == router_labels()
+    assert sent["agent"]["tools"] == CONSOLE_LABELS
     assert set(sent["agent"]) == {"what", "also", "tools"}
     assert sent["chat"] == criteria["chat"]
     assert set(sent) == {"chat", "agent"}
@@ -135,7 +153,7 @@ def test_AC_R1_2_stored_prompt_is_untouched_and_list_does_not_grow(db, jev):
     db.expire_all()
     assert stored_prompt(db) == before
     first, second = (c["criteria"]["agent"]["tools"] for c in jev.calls)
-    assert first == second == router_labels()
+    assert first == second == CONSOLE_LABELS
     assert len(second) == len(set(second))
 
 
@@ -206,6 +224,8 @@ def test_AC_R1_6_shared_lookup_labels_are_not_listed():
     assert "stock on hand" not in labels
     assert "incoming stock" not in labels
     for name in agent_tools.REGISTRY:
+        if name in agent_tools.PORTED_READS:
+            continue  # AGENTIC-UNIFY PR 4: no chat lane answers these, so Jev is told of them
         label = agent_tools.TOOL_LABELS.get(name)
         if label:
             assert label not in labels, f"registry tool {name} label {label!r} is listed"
@@ -233,7 +253,8 @@ def test_AC_R1_7_the_list_follows_what_the_user_may_use(db, jev):
     route(db, wide["respond_id"])
     assert len(jev.calls) == 2
     first, second = (c["criteria"]["agent"]["tools"] for c in jev.calls)
-    assert first == ["recent changes"], "the one tool that needs no permission"
+    # Off the panel none of PR 4's tools is told to Jev (AC-0), so the ticket label is gone too.
+    assert first == ["recent changes"], "the tools that need no permission"
     assert second and set(first) < set(second) < set(router_labels())
     assert "change a customer ask" in second
 
@@ -247,7 +268,7 @@ def test_AC_R1_8_string_agent_criterion_becomes_an_object(db, jev):
     publish_criteria(db, {"chat": "single lookups", "agent": "several reads combined"})
     route(db, contact["respond_id"])
     sent = jev.calls[0]["criteria"]
-    assert sent["agent"] == {"what": "several reads combined", "tools": router_labels()}
+    assert sent["agent"] == {"what": "several reads combined", "tools": CONSOLE_LABELS}
     assert sent["chat"] == "single lookups"
 
 
@@ -266,7 +287,7 @@ def test_AC_R1_8_published_tools_key_is_replaced(db, jev):
     publish_criteria(db, {"chat": {"what": "c"}, "agent": {"what": "a", "tools": ["stale label"]}})
     route(db, contact["respond_id"])
     sent = jev.calls[0]["criteria"]["agent"]
-    assert sent["tools"] == router_labels()
+    assert sent["tools"] == CONSOLE_LABELS
     assert "stale label" not in sent["tools"]
     assert sent["what"] == "a"
 

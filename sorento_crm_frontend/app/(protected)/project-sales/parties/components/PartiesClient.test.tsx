@@ -217,6 +217,31 @@ describe('PartiesClient', () => {
     );
   });
 
+  it('asks the SERVER to sort and page (PS-REGISTRATION-V3, owner rule)', async () => {
+    listParties.mockResolvedValue(envelope([party({ id: 'pt1' })]));
+    renderClient();
+    await waitFor(() =>
+      expect(listParties).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'name', dir: 'asc', page: 1, limit: 25 }),
+      ),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /^contacts$/i }));
+    await waitFor(() =>
+      expect(listParties).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'contact_count' }),
+      ),
+    );
+  });
+
+  it('shows the contacts count per party', async () => {
+    listParties.mockResolvedValue(
+      envelope([party({ id: 'pt1', contact_count: 3 }), party({ id: 'pt2', name: 'Other', contact_count: 0 })]),
+    );
+    renderClient();
+    expect(await screen.findByText('3 contacts')).toBeInTheDocument();
+    expect(screen.getByText('No contacts')).toBeInTheDocument();
+  });
+
   it('distinguishes an empty filter result from an empty master', async () => {
     renderClient();
 

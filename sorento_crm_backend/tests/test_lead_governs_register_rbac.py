@@ -201,7 +201,7 @@ def test_h5_view_own_plus_edit_creates_as_an_edit_holder(v2):
 
 
 def _register(w, user, *, submit: bool, **body):
-    payload = {"title": title("Sub"), "submit": submit, **body}
+    payload = {"title": title("Sub"), "submit": submit, "lead_source": "site_visit", **body}
     return as_user(w, user).post(LIST, json=payload)
 
 
@@ -298,7 +298,7 @@ def test_m1_a_view_holder_still_gets_the_duplicate_hint(v2):
 
 def _staff_project_with_lead(w):
     lead = lead_row(w, customer_id=w.customer.id, owner=w.owner)
-    res = as_user(w, w.owner).post(LIST, json={"title": title("E9"), "customer_id": w.customer.id})
+    res = as_user(w, w.owner).post(LIST, json={"lead_source": "site_visit", "title": title("E9"), "customer_id": w.customer.id})
     assert res.status_code == 201, res.text
     row = project_of(w, res.json()["id"])
     row.lead_id = lead.id  # registering no longer links a lead (AC-L4)

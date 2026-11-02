@@ -11,6 +11,7 @@ import json
 import logging
 import time
 import uuid
+from types import SimpleNamespace
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -303,10 +304,14 @@ def agent_tool_labels(db=None, user=None, *, contact_respond_id: str | None = No
 
     With `db` the labels are the ones THIS contact's agent could do (AGENTIC-KNOWLEDGE W1): a contact with
     no linked user (`user` None) has no writes or user reads, and a linked user only the tools whose slug it
-    holds. Called with nothing, it lists every tool (the guard tests)."""
+    holds. Called with nothing, it lists every tool (the guard tests). The panel's ported reads
+    (`agent_tools.PORTED_READS`) follow the same filter."""
     labels: list[str] = []
     for name, definition in [*agent_writes.WRITES.items(), *agent_writes.USER_READS.items()]:
-        if db is not None and (user is None or not agent_writes.holds(db, str(user.id), definition.user_permission)):
+        if db is not None and (
+            user is None or agent_tools.panel_closed(name)
+            or not agent_writes.holds(db, str(user.id), definition.user_permission)
+        ):
             continue
         label = agent_tools.TOOL_LABELS.get(name)
         if label and label not in labels:
@@ -319,6 +324,28 @@ def agent_tool_labels(db=None, user=None, *, contact_respond_id: str | None = No
             label = agent_tools.TOOL_LABELS.get(name)
             if label and label not in labels:
                 labels.append(label)
+    if db is not None and staff_principal.current() is None:
+        return labels  # a panel-only label is never sent off the panel, and nothing of the panel part runs
+    # AGENTIC-UNIFY PR 4: the panel's reads no chat lane answers, through the tool gate itself (`user_may_use` and the
+    # contact reveal), so the label and the tool are one predicate. A panel-only tool is not sent off the panel.
+    ctx = None
+    if db is not None and user is not None:
+        from app.services.contact_field_reveal_service import staff_reveal_keys
+
+        ctx = SimpleNamespace(
+            user_id=str(user.id), operator_user_id=None, principal="user", stock_allowed=True,
+            grants=frozenset(staff_reveal_keys(db, str(user.id))),
+        )
+    for name, tool in agent_tools.REGISTRY.items():
+        if name not in agent_tools.PORTED_READS:
+            continue
+        if db is not None and (
+            ctx is None or not (agent_tools.user_may_use(db, ctx, tool) and agent_tools.contact_allows(ctx, tool))
+        ):
+            continue
+        label = agent_tools.TOOL_LABELS.get(name)
+        if label and label not in labels:
+            labels.append(label)
     return labels
 
 

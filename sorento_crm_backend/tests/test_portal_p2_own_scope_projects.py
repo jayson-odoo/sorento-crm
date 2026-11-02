@@ -419,7 +419,7 @@ def test_a_clash_does_not_name_a_foreign_project_to_a_limited_user(scene):
     )
     db.add(lead)
     db.flush()
-    body = {"title": foreign.title, "customer_id": customer.id, "lead_id": lead.id}
+    body = {"title": foreign.title, "customer_id": customer.id, "lead_id": lead.id, "lead_source": "site_visit"}
     db.commit()
     with acting(db, w.a, LIMITED) as client:
         response = client.post(f"{BASE}/projects/", json=body)
