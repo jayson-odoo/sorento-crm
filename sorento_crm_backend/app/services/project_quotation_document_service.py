@@ -870,6 +870,8 @@ def make_quotation(
         validity=record.validity,
         signatory_name=proposal.signatory_name,
         signatory_phone=proposal.signatory_phone,
+        # PS-SPEC-SHEET (#2103): the spec sheet settings travel with the lines they describe.
+        spec_sheet=proposal.spec_sheet,
         created_by=actor_user_id,
     )
     db.add(quotation)
