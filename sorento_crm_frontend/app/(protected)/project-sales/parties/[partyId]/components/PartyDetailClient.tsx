@@ -13,6 +13,7 @@ import { usePartyMutations, useProjectParties } from '../../../_shared/hooks/use
 import type { ProjectParty } from '../../../_shared/types/project.types';
 import { PartyFormDialog } from '../../components/PartyFormDialog';
 import { TYPE_HINT, TYPE_LABEL } from '../../components/partyTypes';
+import { PartyContactsPanel } from './PartyContactsPanel';
 
 /**
  * One organisation, read in full.
@@ -198,6 +199,8 @@ export function PartyDetailClient({ partyId }: { partyId: string }) {
           </CardContent>
         </Card>
       </div>
+
+      <PartyContactsPanel partyId={party.id} />
 
       {editing && <PartyFormDialog party={party} onDone={() => setEditing(false)} />}
 
