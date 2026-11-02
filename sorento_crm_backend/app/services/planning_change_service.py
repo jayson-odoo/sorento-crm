@@ -4251,7 +4251,13 @@ def _notify_purchasing(
     db: Session, order: ProjectSalesOrder, so_number: str, batch: PlanningChangeBatch
 ) -> bool:
     """AC-R09: purchasing told once per order, by a batch link. Best-effort - Apply has
-    already written the plan and Order Inquiry changes by the time this runs."""
+    already written the plan and Order Inquiry changes by the time this runs.
+
+    QUEUED, never sent from here (CONFIRM-REMARK-FIX F1): `create_with_channel_preferences`
+    commits, and this runs inside the Confirm's own request transaction. That commit drained
+    the handover email before the confirm route stamped the planner's SO remark on it, so the
+    email went out with a blank REMARK. The order inquiry service's post-commit listener sends
+    it on a fresh session once the write has landed, the same as its own purchasing notice."""
     from app.services.confirm_simulation import is_simulating
 
     if is_simulating():
@@ -4260,27 +4266,26 @@ def _notify_purchasing(
         # inside the simulation) is still a notification attempted.
         return False
     try:
-        from app.services.notification_service import NotificationService
-        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+        from app.services.project_order_inquiry_service import (
+            ProjectOrderInquiryService,
+            queue_purchasing_notification,
+        )
 
         user_ids = ProjectOrderInquiryService(db)._purchasing_user_ids()
         if not user_ids:
             return False
-        service = NotificationService(db)
-        for user_id in user_ids:
-            service.create_with_channel_preferences(
-                user_id=str(user_id),
-                type="project_order_inquiry_raised",
-                title=f"Planning change applied - {so_number}",
-                body=f"The SO book moved lines on {so_number}; review what changed.",
-                data={"planning_change_batch_id": str(batch.id), "so_number": so_number},
-                source_entity_type="planning_change_batch",
-                source_entity_id=str(batch.id),
-                dedup_key=f"{batch.id}:{order.id}:planning_change_applied",
-                event_type="project_order_inquiry_raised",
-                send_in_app=True,
-                send_email=False,
-            )
+        queue_purchasing_notification(
+            db,
+            {
+                "user_ids": [str(user_id) for user_id in user_ids],
+                "title": f"Planning change applied - {so_number}",
+                "body": f"The SO book moved lines on {so_number}; review what changed.",
+                "data": {"planning_change_batch_id": str(batch.id), "so_number": so_number},
+                "source_entity_type": "planning_change_batch",
+                "source_entity_id": str(batch.id),
+                "dedup_key": f"{batch.id}:{order.id}:planning_change_applied",
+            },
+        )
         return True
     except Exception:  # noqa: BLE001 - a notify failure must not undo a written plan
         logger.exception("planning change purchasing notify failed for order %s", order.id)
@@ -5267,14 +5272,10 @@ def apply(
             )
             continue
 
-        # Notified AFTER `savepoint.commit()` has returned, never inside the savepoint:
-        # `NotificationService.create_with_channel_preferences` commits on its own, and that
-        # commit closes the savepoint's transaction out from under us if it runs first, so
-        # `savepoint.commit()` raises `ResourceClosedError` and an order that applied cleanly
-        # gets reported as failed. Still best-effort - a notify failure here cannot undo the
-        # order, which is already committed by this point.
-        # `notify=False` is a Preview: the notification service commits, and a preview
-        # writes nothing that outlives its rollback.
+        # Queued AFTER `savepoint.commit()` has returned, under the order's parent
+        # transaction: a later rollback of the whole write drops it, a sibling order's
+        # savepoint rollback does not (C2). Sent once the write commits (F1: never commit
+        # mid-write). `notify=False` is a Preview.
         notified = _notify_purchasing(db, order, so_number, batch) if notify else False
 
         applied_orders.append(so_number)

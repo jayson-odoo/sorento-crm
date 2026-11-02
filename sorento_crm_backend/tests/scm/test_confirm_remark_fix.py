@@ -10,7 +10,11 @@ tests had no active purchasing user, so the notify step returned early and never
 from __future__ import annotations
 
 from tests.scm.test_confirm_preview_delivered_change import _press, _seed
-from tests.scm.test_planning_change_apply_notifies_purchasing import _seed_user_with_role
+from tests.scm.test_planning_change_apply_notifies_purchasing import (  # noqa: F401
+    _notices,
+    _seed_user_with_role,
+    sent_notices,
+)
 from tests.test_order_inquiry_handover_automation import (
     _captured_dispatches,
     _handover_calls,
@@ -50,7 +54,7 @@ def _press_with_remark(s, *, preview, so_remark=REMARK):
 
 
 def test_f1_the_typed_so_remark_reaches_the_email_when_purchasing_is_notified(
-    api, monkeypatch
+    api, monkeypatch, sent_notices
 ):
     s = _seed(api, pending=True)
     user = _seed_purchasing_user(s.db)
@@ -68,14 +72,11 @@ def test_f1_the_typed_so_remark_reaches_the_email_when_purchasing_is_notified(
     assert remarks == [REMARK], remarks
 
     # Purchasing is still told the batch was applied (best-effort, after the write lands).
-    from app.models.notification import Notification
-
-    s.db.expire_all()
     dedup = f"{s.batch.id}:{s.order.id}:planning_change_applied"
-    assert s.db.query(Notification).filter_by(user_id=user.id, dedup_key=dedup).count() == 1
+    assert len(_notices(sent_notices, user_id=user.id, dedup_key=dedup)) == 1, sent_notices
 
 
-def test_f1_one_email_per_press_when_purchasing_is_notified(api, monkeypatch):
+def test_f1_one_email_per_press_when_purchasing_is_notified(api, monkeypatch, sent_notices):
     """The mid-write commit also split the press: the lines queued after it went in a second
     email. One press, one email."""
     s = _seed(api, pending=True)

@@ -15178,6 +15178,16 @@ def _build_undo_context(
 _POST_COMMIT_DISPATCH_REGISTERED = False
 
 
+def queue_purchasing_notification(session, item: dict) -> None:
+    """Queue an in-app purchasing notice on this session, sent on a fresh session once the
+    write commits (`_fire_pending_purchasing_notifications`), dropped if the transaction it was
+    queued under rolls back. `item` carries `user_ids`, `title`, `body`, `data` and the
+    notification's `source_entity_type` / `source_entity_id` / `dedup_key`."""
+    session.info.setdefault(_PURCHASING_NOTIFY_PENDING_KEY, []).append(
+        {**item, "tx_chain": _transaction_chain(session)}
+    )
+
+
 def register_order_inquiry_post_commit_dispatch() -> None:
     """Fire every `order_inquiry_changed_with_links` a settle queued, once this session's
     write actually commits (S5, review of PR #471).
@@ -15266,9 +15276,14 @@ def register_order_inquiry_post_commit_dispatch() -> None:
                             title=item["title"],
                             body=item["body"],
                             data=item["data"],
-                            source_entity_type="order_inquiry",
-                            source_entity_id=item["inquiry_id"],
-                            dedup_key=f"{item['inquiry_id']}:order_inquiry_raised",
+                            source_entity_type=item.get(
+                                "source_entity_type", "order_inquiry"
+                            ),
+                            source_entity_id=item.get(
+                                "source_entity_id", item.get("inquiry_id")
+                            ),
+                            dedup_key=item.get("dedup_key")
+                            or f"{item['inquiry_id']}:order_inquiry_raised",
                             event_type="project_order_inquiry_raised",
                             send_in_app=True,
                             # Deliberately not email. AC-I4 is that this stops being an
@@ -15279,8 +15294,8 @@ def register_order_inquiry_post_commit_dispatch() -> None:
                     except Exception:  # noqa: BLE001 - post-commit work never raises
                         fresh.rollback()
                         logger.exception(
-                            "order inquiry %s raised, but purchasing was not notified",
-                            item.get("inquiry_id"),
+                            "%s: purchasing was not notified",
+                            item.get("dedup_key") or item.get("inquiry_id"),
                         )
         finally:
             fresh.close()
