@@ -507,11 +507,12 @@ def test_resolved_rows_carry_product_parts_document_and_line_fields_and_no_price
 
         import datetime
 
-        c["document"].doc_date = datetime.date(2026, 11, 2)
+        # A date that cannot be the issue date, so the two sources are told apart.
+        c["document"].doc_date = datetime.date(2020, 1, 15)
         db.flush()
         dated = spec.build_print_payload(db, c["document"], c["issue"])["resolvedData"]["cover"]
         # The quotation's own date wins, as on its PDF and cover page.
-        assert dated["doc"]["date"] == "02 NOV 2026"
+        assert dated["doc"]["date"] == "15 JAN 2020"
 
 
 def test_ref_falls_back_to_the_quotation_number_when_your_ref_is_blank():
@@ -898,3 +899,34 @@ def test_the_layer_schema_accepts_the_drawing_slot_and_show_when():
     )
     assert layer.slot_binding == "drawing"
     assert layer.show_when.part == 1 and layer.show_when.spec == "is_rimless"
+
+
+def test_a_spec_sheet_download_on_a_document_without_a_company_fails_closed(monkeypatch):
+    """The public print route must never read a payload with no company filter."""
+    from app.models.download import UserDownload
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        c = _chain(db)
+        download = UserDownload(
+            user_id=c["owner"],
+            kind=spec.KIND,
+            source_entity_type="quotation_issue",
+            source_entity_id=c["issue"].id,
+            status="pending",
+            filename="spec-sheet-x.pdf",
+        )
+        db.add(download)
+        db.flush()
+
+        class _NoCompany:
+            company_id = None
+
+        monkeypatch.setattr(
+            spec, "source_of_download", lambda db, dl: (_NoCompany(), c["issue"])
+        )
+        for call in (spec.print_payload_for_download, spec.page_size_for_download):
+            with pytest.raises(AppException) as raised:
+                call(db, download)
+            assert raised.value.status_code == 404
