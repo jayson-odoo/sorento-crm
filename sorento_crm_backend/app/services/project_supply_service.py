@@ -49,6 +49,7 @@ whichever line the database happened to return first.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from contextlib import contextmanager
 from collections import defaultdict
@@ -71,7 +72,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import and_, case, func, null, nullslast, or_, text
+from sqlalchemy import and_, case, func, literal_column, null, nullslast, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -311,6 +312,9 @@ def _pile_key(code: str, water: bool, per_half: bool) -> str:
 #: The confirmation's one running pools' net, on `_CapacityLedger` beside its bins, as
 #: `_group_budget_key` keeps a group's book. No warehouse id can collide with it.
 _POOLS_NET_BUDGET = "pools-net"
+#: `Session.info` key of the parsed active-decision snapshots, keyed by row version
+#: (`_active_decision_snapshots_reused`).
+_ACTIVE_SNAPSHOT_CACHE = "active_decision_snapshots_by_version"
 
 
 def _group_budget_key(group: str) -> str:
@@ -10663,15 +10667,43 @@ class ProjectSupplyService:
         rather than two, because the answer cannot change mid-request.
         """
         if self._active_decision_rows is None:
-            self._active_decision_rows = (
-                self.db.query(
-                    SOSupplyDecision.project_sales_order_id,
-                    SOSupplyDecision.line_snapshots,
-                )
-                .filter(SOSupplyDecision.state == DECISION_ACTIVE)
-                .all()
-            )
+            self._active_decision_rows = self._active_decision_snapshots_reused()
         return self._active_decision_rows
+
+    def _active_decision_snapshots_reused(self) -> List[Tuple[Any, Any]]:
+        """The same rows as a plain read, reusing the parsed `line_snapshots` across orders
+        and services on this session (SIMULATE-CONFIRM-SPEED: the JSON is megabytes and was
+        re-read once per order and per Simulate probe).
+
+        Each active row is keyed by `(id, xmin, ctid)`. Any write to a row (an in-place
+        snapshot rewrite, a state change) makes a new tuple version with a new `ctid`, and a
+        rolled-back savepoint brings the old version back, so a key that is still in the table
+        is a row whose content is the cached one. Only rows with a new key are read.
+        Consumers only read the snapshots; nothing may mutate what this returns.
+        """
+        version = (literal_column("xmin::text"), literal_column("ctid::text"))
+        active = SOSupplyDecision.state == DECISION_ACTIVE
+        keys = {
+            (str(row[0]), row[1], row[2])
+            for row in self.db.query(SOSupplyDecision.id, *version).filter(active)
+        }
+        cache: Dict[Tuple[str, str, str], Tuple[Any, Any]] = self.db.info.get(
+            _ACTIVE_SNAPSHOT_CACHE, {}
+        )
+        kept = {key: cache[key] for key in keys if key in cache}
+        missing = [key[0] for key in keys if key not in kept]
+        if missing:
+            # A row a concurrent commit changed between the two reads comes back under its
+            # newer key, and that is the version this read answers with.
+            for row in self.db.query(
+                SOSupplyDecision.id,
+                *version,
+                SOSupplyDecision.project_sales_order_id,
+                SOSupplyDecision.line_snapshots,
+            ).filter(active, SOSupplyDecision.id.in_(missing)):
+                kept[(str(row[0]), row[1], row[2])] = (row[3], row[4])
+        self.db.info[_ACTIVE_SNAPSHOT_CACHE] = kept
+        return list(kept.values())
 
     def _decided_anywhere_cached(self) -> Set[str]:
         """Core lines ANY active decision covers - the lines being replaced INCLUDED.
@@ -12043,6 +12075,7 @@ class ProjectSupplyService:
             held_back: List[Dict[str, Any]] = []
             if preview:
                 self.db.info["confirm_preview"] = True
+            started = time.monotonic()
             try:
                 order = self.get_order(pso_id)
                 assert_can_act(self.db, order)
@@ -12142,11 +12175,24 @@ class ProjectSupplyService:
                         "error": message,
                         "failing_lines": failing_lines,
                         **({"preview": True} if observe else {}),
+                        # Simulate only (SIMULATE-CONFIRM-SPEED): tells an order-level
+                        # refusal from a line's; the route pops both before replying.
+                        **(
+                            {
+                                "error_status": getattr(exc, "status_code", None),
+                                "error_class": type(exc).__name__,
+                            }
+                            if raw_errors
+                            else {}
+                        ),
                     }
                 )
             finally:
                 if preview:
                     self.db.info.pop("confirm_preview", None)
+                if raw_errors and results and results[-1].get("pso_id") == pso_id:
+                    # Simulate only: its server log times each order (the route pops it).
+                    results[-1]["elapsed_ms"] = int((time.monotonic() - started) * 1000)
         return results
 
     def _preview_baseline(
