@@ -1,6 +1,6 @@
 # PLAN: PS-QUOTE-VIEWS (view count on the proposal/quotation sign link)
 
-Status: Build. Track: full, size M (one additive migration, new public ingest endpoint).
+Status: Merge-ready (reviewer READY, security review no blockers). Track: full, size M (one additive migration, new public ingest endpoint).
 
 Lane: PS-QUOTE-VIEWS, owner 2 Nov 2026 ~21:20 MYT. Behaviour card: `CARD-quote-views-2nov.md`.
 UAC: `quote-views-2nov-acceptance-criteria.md`.
