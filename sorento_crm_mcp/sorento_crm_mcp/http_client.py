@@ -16,6 +16,13 @@ from sorento_crm_mcp.settings import Settings
 logger = logging.getLogger(__name__)
 
 
+# The status on a body this client builds itself when the CRM could not be read.
+# `presenters.present_response` turns a body with `status_code >= 400` into the error envelope;
+# without it a failed read renders as an empty answer, and the chatbot told a customer "No stock
+# and no incoming" over a dropped connection (owner, 1 Nov 2026).
+READ_FAILED_STATUS = 502
+
+
 def http_error_body(text: str, *, status_code: int, path: str, method: str) -> str:
     """A non-2xx answer, as the JSON the model and the presenters read.
 
@@ -212,6 +219,7 @@ class CRMClient:
             return json.dumps(
                 {
                     "error": "request_failed",
+                    "status_code": READ_FAILED_STATUS,
                     "error_type": err_type,
                     "detail": detail,
                     "path": rendered,
@@ -236,6 +244,7 @@ class CRMClient:
             return json.dumps(
                 {
                     "error": "response_too_large",
+                    "status_code": READ_FAILED_STATUS,
                     "path": rendered,
                     "max_bytes": self._settings.max_response_bytes,
                 }
@@ -244,7 +253,7 @@ class CRMClient:
         try:
             text = body.decode("utf-8")
         except UnicodeDecodeError:
-            return json.dumps({"error": "invalid_utf8", "path": rendered, "status_code": r.status_code})
+            return json.dumps({"error": "invalid_utf8", "path": rendered, "status_code": READ_FAILED_STATUS})
 
         if r.status_code >= 400:
             logger.info(

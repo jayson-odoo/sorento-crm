@@ -937,6 +937,10 @@ class _Calls:
         value = self._cache[key]
         if isinstance(value, _CallFailed):
             raise _CallFailed(name, status="exception")
+        # Plain text is no answer: `rows` and `stock_summary` would read it as nothing, and
+        # the line would print a measured-looking "Stock: 0".
+        if isinstance(value, str):
+            raise _CallFailed(name, status="unreadable", message=value)
         if isinstance(value, dict) and (value.get("error") or (value.get("status_code") or 0) >= 400):
             raise _CallFailed(name, status=value.get("status_code") or "error", message=value.get("error") or value.get("detail"))
         return value
