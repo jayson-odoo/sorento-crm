@@ -9,11 +9,14 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import func
+from sqlalchemy import select as db_select
 from sqlalchemy.orm import Session
 
 from app.models.projects import (
     Project,
     ProjectParty,
+    ProjectPartyContact,
+    ProjectPartyLink,
     ProjectStakeholder,
     ProjectTemplate,
     ProjectTemplateRole,
@@ -50,6 +53,65 @@ INFLUENCE_LEVELS = ("high", "medium", "low")
 # ------------------------------------------------------------------- parties
 
 
+def _project_count_expr():
+    """Projects a party is on: as developer, as a stakeholder's firm, or linked by role. The
+    list sorts by it on the server and ``serialize_parties`` shows the same number."""
+    as_developer = (
+        db_select(func.count(Project.id))
+        .where(Project.developer_party_id == ProjectParty.id)
+        .correlate(ProjectParty)
+        .scalar_subquery()
+    )
+    as_stakeholder = (
+        db_select(func.count(func.distinct(ProjectStakeholder.project_id)))
+        .where(ProjectStakeholder.party_id == ProjectParty.id)
+        .correlate(ProjectParty)
+        .scalar_subquery()
+    )
+    as_link = (
+        db_select(func.count(func.distinct(ProjectPartyLink.project_id)))
+        .where(ProjectPartyLink.party_id == ProjectParty.id)
+        .correlate(ProjectParty)
+        .scalar_subquery()
+    )
+    return as_developer + as_stakeholder + as_link
+
+
+def _contact_count_expr():
+    return (
+        db_select(func.count(ProjectPartyContact.id))
+        .where(
+            ProjectPartyContact.party_id == ProjectParty.id,
+            ProjectPartyContact.is_active.is_(True),
+        )
+        .correlate(ProjectParty)
+        .scalar_subquery()
+    )
+
+
+def _customer_name_expr():
+    from app.models.order import Customer
+
+    return (
+        db_select(Customer.customer_name)
+        .where(Customer.id == ProjectParty.customer_id)
+        .correlate(ProjectParty)
+        .scalar_subquery()
+    )
+
+
+#: Server-side sort keys of the Parties grid (owner rule: every sortable column sorts on the
+#: server). Unknown keys fall back to the name.
+PARTY_SORTS = {
+    "name": lambda: func.lower(ProjectParty.name),
+    "party_type": lambda: ProjectParty.party_type,
+    "is_active": lambda: ProjectParty.is_active,
+    "project_count": _project_count_expr,
+    "contact_count": _contact_count_expr,
+    "customer_name": _customer_name_expr,
+}
+
+
 def list_parties(
     db: Session,
     *,
@@ -59,6 +121,8 @@ def list_parties(
     include_inactive: bool = False,
     page: int = 1,
     limit: int = 50,
+    sort: Optional[str] = None,
+    direction: Optional[str] = None,
 ) -> tuple:
     query = db.query(ProjectParty).filter(ProjectParty.company_id == company_id)
     types = multi_values(party_type)
@@ -73,8 +137,11 @@ def list_parties(
     total = query.count()
     page = max(1, int(page or 1))
     limit = max(1, min(int(limit or 50), MAX_PAGE_LIMIT))
+    key = sort if sort in PARTY_SORTS else "name"
+    expr = PARTY_SORTS[key]()
+    ordered = expr.desc().nulls_last() if direction == "desc" else expr.asc().nulls_first()
     rows = (
-        query.order_by(ProjectParty.name.asc())
+        query.order_by(ordered, func.lower(ProjectParty.name).asc(), ProjectParty.id.asc())
         .offset((page - 1) * limit)
         .limit(limit)
         .all()
@@ -106,6 +173,21 @@ def serialize_parties(db: Session, parties: List[ProjectParty]) -> List[Dict[str
         .group_by(ProjectStakeholder.party_id)
         .all()
     )
+    link_counts = dict(
+        db.query(ProjectPartyLink.party_id, func.count(func.distinct(ProjectPartyLink.project_id)))
+        .filter(ProjectPartyLink.party_id.in_(party_ids))
+        .group_by(ProjectPartyLink.party_id)
+        .all()
+    )
+    contact_counts = dict(
+        db.query(ProjectPartyContact.party_id, func.count(ProjectPartyContact.id))
+        .filter(
+            ProjectPartyContact.party_id.in_(party_ids),
+            ProjectPartyContact.is_active.is_(True),
+        )
+        .group_by(ProjectPartyContact.party_id)
+        .all()
+    )
 
     customer_names: Dict[str, str] = {}
     customer_ids = [p.customer_id for p in parties if p.customer_id]
@@ -134,7 +216,9 @@ def serialize_parties(db: Session, parties: List[ProjectParty]) -> List[Dict[str
             # architect is never the developer, so a developer-only count would read
             # zero for every architect and make the list look broken.
             "project_count": counts.get(party.id, 0)
-            + stakeholder_counts.get(party.id, 0),
+            + stakeholder_counts.get(party.id, 0)
+            + link_counts.get(party.id, 0),
+            "contact_count": contact_counts.get(party.id, 0),
             "created_at": party.created_at,
             "updated_at": party.updated_at,
         }

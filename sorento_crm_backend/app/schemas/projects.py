@@ -66,6 +66,7 @@ class ProjectPartyResponse(ProjectPartyBase):
     id: str
     customer_name: Optional[str] = None
     project_count: Optional[int] = None
+    contact_count: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

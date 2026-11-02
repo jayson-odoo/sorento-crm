@@ -427,3 +427,57 @@ def test_r13_an_empty_phone_is_422(v2):
     pid, dev, mc, *_ = _project_with_parties(v2)
     res = as_user(v2, v2.owner).post(f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "  "})
     assert res.status_code == 422, res.text
+
+
+# ------------------------------------------------------------------ Parties page: server-side sort (owner rule)
+
+
+def _parties_listed(w, **params):
+    res = as_user(w, w.owner).get(f"{PARTIES}/", params={"party_type": "consultant", "limit": 50, **params})
+    assert res.status_code == 200, res.text
+    return res.json()["data"]
+
+
+def test_parties_list_carries_the_contact_count(v2):
+    party = _party(v2, "consultant", name=f"CONTOH Count {uid()[:6]}")
+    _contact(v2, party)
+    _contact(v2, party, name="Second")
+    _contact(v2, party, name="Retired", is_active=False)
+    row = next(r for r in _parties_listed(v2) if r["id"] == party.id)
+    assert row["contact_count"] == 2
+
+
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_parties_list_sorts_by_contact_count_on_the_server(v2, direction):
+    none = _party(v2, "consultant", name="CONTOH A none")
+    two = _party(v2, "consultant", name="CONTOH B two")
+    one = _party(v2, "consultant", name="CONTOH C one")
+    _contact(v2, two)
+    _contact(v2, two, name="x")
+    _contact(v2, one)
+    ids = [r["id"] for r in _parties_listed(v2, sort="contact_count", dir=direction)]
+    order = [none.id, one.id, two.id]
+    assert ids == (order if direction == "asc" else order[::-1])
+
+
+def test_parties_list_sorts_by_project_count_on_the_server(v2):
+    busy = _party(v2, "consultant", name="CONTOH Z busy")
+    idle = _party(v2, "consultant", name="CONTOH Y idle")
+    _register(v2, party_links=[{"role": "consultant", "party_id": busy.id}])
+    ids = [r["id"] for r in _parties_listed(v2, sort="project_count", dir="desc")]
+    assert ids.index(busy.id) < ids.index(idle.id)
+
+
+def test_parties_list_sorts_by_name_desc_and_pages_after_sorting(v2):
+    names = [f"CONTOH {c}" for c in "ABC"]
+    for n in names:
+        _party(v2, "consultant", name=n)
+    page = _parties_listed(v2, sort="name", dir="desc", limit=2, page=1)
+    assert [r["name"] for r in page] == ["CONTOH C", "CONTOH B"]
+
+
+def test_parties_project_count_includes_party_links(v2):
+    sub = _party(v2, "subcontractor")
+    _register(v2, party_links=[{"role": "subcontractor", "party_id": sub.id}])
+    res = as_user(v2, v2.owner).get(f"{PARTIES}/{sub.id}")
+    assert res.json()["project_count"] == 1

@@ -39,6 +39,8 @@ def list_parties(
     include_inactive: bool = Query(False),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
     _user: dict = Depends(require_any_permission([VIEW, SUBMIT])),
     db: Session = Depends(get_db),
 ):
@@ -52,6 +54,8 @@ def list_parties(
             include_inactive=include_inactive,
             page=page,
             limit=limit,
+            sort=sort,
+            direction=dir,
         )
         data = refs.serialize_parties(db, rows)
         if VIEW not in permission_slugs(db, _user["id"]):
