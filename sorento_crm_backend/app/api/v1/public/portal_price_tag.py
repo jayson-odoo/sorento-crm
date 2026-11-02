@@ -95,6 +95,29 @@ _DESIGN_VISIBLE_STATUSES = frozenset(
 )
 
 
+# Where a PDF can be downloaded: approved, and the office print's two steps.
+_DOWNLOADABLE_STATUSES = frozenset(
+    {STATUS_APPROVED, STATUS_READY_FOR_COLLECTION, STATUS_COLLECTED}
+)
+
+
+class ApprovePayload(BaseModel):
+    """The tag sheet the salesperson is approving (his own proof only)."""
+
+    doc: Optional[dict] = None
+
+
+class EscalatePayload(BaseModel):
+    note: str = Field(..., max_length=2000)
+
+
+def _contact_name(db: Session, contact_id: str) -> Optional[str]:
+    from app.models.access import RespondContact
+
+    contact = db.query(RespondContact).filter(RespondContact.id == contact_id).first()
+    return (contact.name or contact.phone_number) if contact else None
+
+
 # ---------------------------------------------------------------------------
 # The contact's price tag routes, shared with the CRM
 # ---------------------------------------------------------------------------
@@ -301,6 +324,14 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
         request_id = validate_uuid_path(request_id, resource="Price tag request")
         _assert_visible(db, token.contact_id)
         req = _require_own_request(db, token, request_id)
+        if req.status not in _DOWNLOADABLE_STATUSES:
+            # R5: an edit sends the request back for approval, and the PDF from
+            # before the edit no longer says what the request says.
+            raise AppException(
+                status_code=409,
+                message="Approve the tag first. The last PDF is out of date.",
+                code="NOT_APPROVED",
+            )
         download = latest_completed_export(db, req.id)
         if download is None or not download.storage_key:
             raise AppException(
@@ -467,50 +498,18 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
         # and the request goes through.
         PriceTagRequestService.apply_package_warnings(db, req)
 
-        # Clear draft and set status to new (ready for marketing).
+        # PRICETAG-SELF-APPROVAL R1: the salesperson approves his own tag, so a
+        # submitted request waits for HIM at `proof_ready` - nobody assigned, no
+        # form SLA tracker, marketing not rung. Marketing comes in only through
+        # Escalate, which fires the form SLA and the config's auto-assign.
         req.portal_draft_at = None
-        req.status = STATUS_NEW
+        req.status = STATUS_PROOF_READY
         db.flush()
         db.commit()
 
-        # S9/D12: the copy table's first line. Submit is not a status transition -
-        # a submitted request keeps `new` until marketing claims it - so it is the
-        # one moment the transition notifier cannot cover, and the moment somebody
-        # most wants to hear that the form worked. After the commit, and before the
-        # auto-assign below can move the request on, so the salesperson reads the
-        # two messages in the order the events happened.
+        # S9/D12: the copy table's first line. Submit is not a status transition,
+        # so it is the one moment the transition notifier cannot cover.
         PriceTagRequestService.notify_submitted(db, req)
-
-        # Fire form SLA.
-        try:
-            from app.services.form_sla_service import emit_form_event
-
-            emit_form_event(
-                db,
-                _FORM_TYPE,
-                str(req.id),
-                "submit",
-                contact_id=req.contact_id,
-            )
-        except Exception:
-            logger.warning(
-                "Form SLA emit 'submit' failed for price_tag_request %s",
-                req.id,
-                exc_info=True,
-            )
-
-        # D8: auto-assign to whatever tracker the emit above just opened. Its own
-        # try/except - a bug here must not turn a successful submit into a
-        # failed one; the request simply stays `new` and unclaimed, same as if
-        # no active config existed at all (AC-S3-3).
-        try:
-            PriceTagRequestService.auto_assign_from_tracker(db, req)
-        except Exception:
-            logger.warning(
-                "Auto-assign from tracker failed for price_tag_request %s",
-                req.id,
-                exc_info=True,
-            )
 
         db.commit()
         return PriceTagRequestResponse.model_validate(req)
@@ -524,32 +523,48 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
     @router.post("/submissions/price_tag_request/{request_id}/approve")
     def portal_approve_price_tag_request(
         request_id: str,
+        payload: Optional[ApprovePayload] = None,
         token: PortalToken = Depends(token_dependency),
         db: Session = Depends(get_db),
     ):
-        """Approve a proof-ready price tag request."""
-        _assert_visible(db, token.contact_id)
-        req = PriceTagRequestService.get_request(db, request_id)
-        if not req or req.contact_id != token.contact_id:
-            raise AppException(
-                status_code=404,
-                message="Price tag request not found.",
-                code="NOT_FOUND",
-            )
+        """Approve a proof (PRICETAG-SELF-APPROVAL R3/R7).
 
-        # D12's auto-export needs a requesting user; the portal has no CRM user
-        # of its own, so this passes the request's own assignee - the marketing
-        # person who designed it, and the natural "who asked for this PDF" answer
-        # for an export the SALESPERSON'S approve click triggered.
-        if not req.assigned_to_id:
-            logger.warning(
-                "portal_approve_price_tag_request: %s has no assignee, export skipped",
-                req.id,
+        His own proof carries ``doc``, the tag sheet his screen built; it is saved
+        as the design version the PDF prints. An escalated proof (marketing drew
+        it) approves marketing's saved version and ignores any ``doc``.
+        """
+        request_id = validate_uuid_path(request_id, resource="Price tag request")
+        _assert_visible(db, token.contact_id)
+        req = _require_own_request(db, token, request_id)
+        with company_scope(db, frozenset({req.company_id})):
+            result = PriceTagRequestService.self_approve(
+                db,
+                req,
+                payload.doc if payload else None,
+                _contact_name(db, token.contact_id),
             )
-        result = PriceTagRequestService.transition_status(
-            db, request_id, STATUS_APPROVED, user_id=req.assigned_to_id,
-        )
         db.commit()
+        return PriceTagRequestResponse.model_validate(result)
+
+
+    # ---------------------------------------------------------------------------
+    # Escalate (PRICETAG-SELF-APPROVAL R6)
+    # ---------------------------------------------------------------------------
+
+
+    @router.post("/submissions/price_tag_request/{request_id}/escalate")
+    def portal_escalate_price_tag_request(
+        request_id: str,
+        payload: EscalatePayload,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Send the request to marketing with a note; the form SLA config picks who."""
+        request_id = validate_uuid_path(request_id, resource="Price tag request")
+        _assert_visible(db, token.contact_id)
+        req = _require_own_request(db, token, request_id)
+        result = PriceTagRequestService.escalate(db, req, payload.note, token.contact_id)
+        db.refresh(result)
         return PriceTagRequestResponse.model_validate(result)
 
 

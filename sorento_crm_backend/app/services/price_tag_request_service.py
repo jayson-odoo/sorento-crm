@@ -66,6 +66,9 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     STATUS_PROOF_READY: {
         STATUS_APPROVED,
         STATUS_CHANGES_REQUESTED,
+        # PRICETAG-SELF-APPROVAL R6: the salesperson escalates his own proof to
+        # marketing, which starts the request over at `new` for them.
+        STATUS_NEW,
         STATUS_REJECTED,
         STATUS_VOID,
     },
@@ -83,7 +86,14 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     # The office hand-over (D8). `ready_for_collection` is reachable only when
     # somebody has said the office prints - `transition_status` checks that on
     # top of this table, because the graph alone cannot see `print_by`.
-    STATUS_APPROVED: {STATUS_READY_FOR_COLLECTION, STATUS_REJECTED, STATUS_VOID},
+    # `new` is the escalation edge (PRICETAG-SELF-APPROVAL R6): a problem found
+    # after approval goes to marketing.
+    STATUS_APPROVED: {
+        STATUS_READY_FOR_COLLECTION,
+        STATUS_NEW,
+        STATUS_REJECTED,
+        STATUS_VOID,
+    },
     # Its ONLY exit: the tags exist, they are on the counter, and the single
     # remaining question is whether anybody has taken them.
     STATUS_READY_FOR_COLLECTION: {STATUS_COLLECTED},
@@ -1336,8 +1346,14 @@ Marketing's own work is not part of the form's payload, so it is captured
             try:
                 from app.services.dealer_kit import tag_sheet_export_service
 
+                # A self-approved request has nobody assigned, so the
+                # salesperson's own contact asked for this PDF - the same
+                # fallback the portal's Download PDF route uses.
                 tag_sheet_export_service.request_tag_sheet_export(
-                    db, request_id=request_id, user_id=user_id, sheet_ids=None,
+                    db,
+                    request_id=request_id,
+                    user_id=user_id or request.assigned_to_id or request.contact_id,
+                    sheet_ids=None,
                 )
             except Exception:
                 logger.warning(
@@ -1600,6 +1616,169 @@ Marketing's own work is not part of the form's payload, so it is captured
             )
 
     @staticmethod
+    def is_with_marketing(request: PriceTagRequest) -> bool:
+        """Marketing holds this request (PRICETAG-SELF-APPROVAL R8).
+
+        Derived, not stored. The normal flow never puts a submitted request at
+        `new`, `designing` or `changes_requested`, and its own proof has nobody
+        assigned; only an escalation (or a request that was already with
+        marketing at deploy) reaches those states or carries an assignee on a
+        proof. So in-flight work needs no backfill to keep its place.
+        """
+        if request.portal_draft_at is not None:
+            return False
+        if request.status in (STATUS_NEW, STATUS_DESIGNING, STATUS_CHANGES_REQUESTED):
+            return True
+        return request.status == STATUS_PROOF_READY and bool(request.assigned_to_id)
+
+    @staticmethod
+    def is_with_salesperson(request: PriceTagRequest) -> bool:
+        """The salesperson may edit, approve his own tag, or escalate (R3/R4/R6).
+
+        His own proof, or an approved request whatever drew it. Once the office
+        has printed (`ready_for_collection` onwards) the paper exists and the
+        answer is no (owner, Q4 a, 2 Nov): that is the one check to change if
+        the owner ever wants (b).
+        """
+        if request.portal_draft_at is not None:
+            return False
+        if request.status == STATUS_APPROVED:
+            return True
+        return request.status == STATUS_PROOF_READY and not request.assigned_to_id
+
+    @staticmethod
+    def self_approve(
+        db: Session, request: PriceTagRequest, doc: dict | None, approver_name: str | None,
+    ) -> PriceTagRequest:
+        """The salesperson approves a tag sheet (PRICETAG-SELF-APPROVAL R3, R7).
+
+        His own proof: ``doc`` is the sheet his screen built from this request's
+        tags and is REQUIRED. It is checked (a tag sheet; every placement one of
+        THIS request's tags), the tags are pinned to master data as it is now, and
+        the doc becomes the page's next version, which is what the auto-export
+        prints. So the PDF is exactly what he approved.
+
+        An escalated proof (an assignee drew it): marketing's saved version is
+        what he reviewed, so any ``doc`` is ignored and nothing is written.
+        """
+        if request.status == STATUS_PROOF_READY and not request.assigned_to_id:
+            if not doc:
+                raise AppException(
+                    status_code=422,
+                    message="Approve needs the tag sheet you are approving.",
+                    code="DOC_REQUIRED",
+                )
+            PriceTagRequestService._check_sheet(request, doc)
+            from app.api.v1.dealer_kit.price_tag_requests import _snapshot_draft
+            from app.services.dealer_kit import tag_data_service
+
+            PriceTagRequestService.ensure_tag_sheet_page(db, request, None)
+            tag_data_service.pin_tags(db, request, only_unpinned=False)
+            from app.models.dealer_kit import Page
+
+            page = db.query(Page).filter(Page.id == request.page_id).first()
+            _snapshot_draft(
+                db,
+                page,
+                doc,
+                None,
+                f"Approved by {approver_name}" if approver_name else "Approved by the salesperson",
+            )
+            db.flush()
+        return PriceTagRequestService.transition_status(
+            db, str(request.id), STATUS_APPROVED, user_id=request.assigned_to_id,
+        )
+
+    @staticmethod
+    def _check_sheet(request: PriceTagRequest, doc: dict) -> None:
+        """A tag sheet whose every placement prints one of this request's tags."""
+        sheets = doc.get("sheets") if isinstance(doc, dict) else None
+        if (
+            not isinstance(doc, dict)
+            or doc.get("kind") != "tag_sheet"
+            or not isinstance(doc.get("imposition"), dict)
+            or not isinstance(sheets, list)
+        ):
+            raise AppException(
+                status_code=422,
+                message="That is not a tag sheet.",
+                code="INVALID_DOC",
+            )
+        own = {tag.id for line in request.lines for tag in line.tags or []}
+        placed: list = []
+        for sheet in sheets:
+            tags = sheet.get("tags") if isinstance(sheet, dict) else None
+            if not isinstance(tags, list):
+                placed.append(None)
+                continue
+            placed.extend(t.get("request_tag_id") if isinstance(t, dict) else None for t in tags)
+        if not placed or any(tag_id not in own for tag_id in placed):
+            raise AppException(
+                status_code=422,
+                message="The tag sheet does not match this request's tags. Reload and try again.",
+                code="INVALID_DOC",
+            )
+
+    @staticmethod
+    def escalate(
+        db: Session, request: PriceTagRequest, note: str, contact_id: str,
+    ) -> PriceTagRequest:
+        """Send the request to marketing with the salesperson's note (R6).
+
+        The note is a general review comment, the thread marketing's designer
+        already reads. The request starts over at `new`, the form SLA `submit`
+        event opens a tracker under whatever config is active, and the existing
+        auto-assign hands it to that config's assignee - nobody is named here.
+        No config, or none with an assignee: it waits at `new` for a Claim.
+        """
+        if not PriceTagRequestService.is_with_salesperson(request):
+            raise AppException(
+                status_code=409,
+                message="This request cannot be escalated in its current status.",
+                code="INVALID_STATE",
+            )
+        text = (note or "").strip()
+        if not text:
+            raise AppException(
+                status_code=422,
+                message="Say what marketing needs to fix.",
+                code="NOTE_REQUIRED",
+            )
+        from app.services import price_tag_review_service
+
+        price_tag_review_service.create_comments(
+            db, request, comments=[], note=text, author_contact_id=contact_id,
+        )
+        # Whoever drew it last is not automatically who gets it now: the config
+        # decides, and with no config the request is unclaimed.
+        request.assigned_to_id = None
+        db.flush()
+        PriceTagRequestService.transition_status(db, str(request.id), STATUS_NEW)
+        try:
+            from app.services.form_sla_service import emit_form_event
+
+            emit_form_event(
+                db, "price_tag_request", str(request.id), "submit",
+                contact_id=request.contact_id,
+            )
+        except Exception:
+            logger.warning(
+                "Form SLA emit 'submit' failed for escalated price_tag_request %s",
+                request.id,
+                exc_info=True,
+            )
+        try:
+            PriceTagRequestService.auto_assign_from_tracker(db, request)
+        except Exception:
+            logger.warning(
+                "Auto-assign failed for escalated price_tag_request %s",
+                request.id,
+                exc_info=True,
+            )
+        db.commit()
+        return request
+
+    @staticmethod
     def validate_designable(request: PriceTagRequest) -> None:
         """Mirrors the FE's ``priceTagActions`` design/"view design" predicate.
 
@@ -1618,7 +1797,11 @@ Marketing's own work is not part of the form's payload, so it is captured
         legal_status = request.status in (
             STATUS_DESIGNING,
             STATUS_CHANGES_REQUESTED,
-            STATUS_PROOF_READY,
+        ) or (
+            # PRICETAG-SELF-APPROVAL R8: a proof nobody is assigned to is the
+            # salesperson's own; marketing designs it only once escalated.
+            request.status == STATUS_PROOF_READY
+            and PriceTagRequestService.is_with_marketing(request)
         )
         if not (legal_claimed_new or legal_status):
             raise AppException(
