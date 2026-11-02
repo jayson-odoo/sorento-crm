@@ -1,7 +1,8 @@
 # PLAN: AI assistant 500, backend reads the MCP catalog that is not in its image
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface;
-the diff is large only because of one verbatim file copy)
+Status: reviewed READY, PR #2085 waiting on CI and the owner's hotfix merge (small fix track: no
+migration, no auth/RBAC change, no new ingest surface; the diff is large only because of one
+verbatim file copy)
 
 Lane: ASSISTANT-CATALOG-500. Base: main at 5ac2eb7fa6.
 
