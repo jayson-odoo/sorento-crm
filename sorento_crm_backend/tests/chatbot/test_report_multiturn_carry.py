@@ -16,7 +16,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from app.models.product import Brand
+from app.models.product import Brand, ProductCategory
 from app.models.sales_agent import SalesAgent
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import MOCHA_ID
@@ -553,3 +553,123 @@ def test_mc13b_a_total_held_for_a_product_keeps_the_product_on_another_axis(bot)
     text, calls = c.say(2, follow, "by agent")
     args = c.ran(2, text, calls)
     _slots(c, 2, args, group_by="sales_agent", product_code=PRODUCT_CODE, basis="invoiced", date_from="2026-01-01", date_to="2026-12-31")
+
+
+# ------------------------------------------------------------------------------------------ round 3 reds
+
+
+def test_mc13c_the_same_product_axis_typed_again_keeps_the_product(bot) -> None:
+    """A TOTAL for a product, then "top 5 by product" (its variants), then "top 10 by product" (reuse, the axis typed
+    again, no refine flag): the held frame is already the product ranking, so the product it ranks within stays, and no
+    company is asked."""
+    sorento, mocha = _world(bot)
+    c = Convo(bot)
+    first = _status("sales_report", _e(PRODUCT_CODE, "product"), basis="invoiced", entity_op="replace_combine", **YEAR)
+    text, calls = c.say(1, first, f"sales for {PRODUCT_CODE} invoiced 2026")
+    c.ran(1, text, calls, "setup, the product total")
+
+    def by_product(top_n: int) -> dict[str, Any]:
+        return _status(
+            "sales_ranking", group_by="product", top_n=top_n, rank_direction="top", measure="amount", basis=None,
+            entity_op="reuse", continuation=True, ranking_refine=None, **NO_DATES,
+        )
+
+    text, calls = c.say(2, by_product(5), "top 5 by product")
+    args = c.ran(2, text, calls, "the product's variants")
+    _slots(c, 2, args, group_by="product", product_code=PRODUCT_CODE)
+    text, calls = c.say(3, by_product(10), "top 10 by product")
+    assert f"{sorento} or {mocha}?" not in text, "turn 3: asked the company\n" + "\n".join(c.log)
+    args = c.ran(3, text, calls)
+    _slots(c, 3, args, group_by="product", top_n=10, product_code=PRODUCT_CODE, basis="invoiced")
+
+
+def _cabana_company_question(bot: Routing, c: Convo) -> tuple[str, str]:
+    """An open ask holding account type CABANA (both companies carry it) and asking the company."""
+    sorento, mocha = _world(bot)
+    db = bot.console.session_factory()
+    try:
+        _ledger(db, MOCHA_ID, "ZZT MOCHA LEDGER THREE [A/C IV]", "CABANA")
+        db.commit()
+    finally:
+        db.close()
+    ask = _v(
+        "sales_analysis", _ent("cabana", "account_type", None, "account type"), sales_basis="invoiced", group_by="month",
+        domain_in_message=True, **YEAR,
+    )
+    text, calls = c.say(1, ask, "cabana account type by month 2026 invoiced")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, f"setup: want the company question, got {text!r}"
+    return sorento, mocha
+
+
+def _never_mocha_with_cabana(c: Convo, calls: list[tuple[str, dict[str, Any]]]) -> None:
+    for n, args in calls:
+        stale = n == TOOL and args.get("account_types") == ["CABANA"] and args.get("company") == MOCHA_ID
+        assert not stale, f"turn 2: ran Mocha with the old CABANA, the word 'ceramic' was dropped: {args}\n" + "\n".join(c.log)
+    assert not any(
+        n == TOOL and args.get("company") == MOCHA_ID and args.get("account_types") != ["CERAMIC"] for n, args in calls
+    ), f"turn 2: Mocha ran without CERAMIC: {calls}\n" + "\n".join(c.log)
+
+
+def test_mc9c_an_inferred_company_pick_with_another_word_does_not_drop_the_word(bot) -> None:
+    """As mc9b, with NO declared pick: the company comes only from the parser's `sales_company` (Mocha), beside the
+    "ceramic" account_type entity (kind_said "account type"). It must never run Mocha with the old CABANA."""
+    c = Convo(bot)
+    _sorento, mocha = _cabana_company_question(bot, c)
+    reply = _v(
+        "sales_analysis", _ent("ceramic", "account_type", None, "account type"), sales_basis="invoiced", group_by="month",
+        entity_op="replace_combine", continuation=True, sales_company=mocha, **YEAR,
+    )
+    text, calls = c.say(2, reply, "mocha, for ceramic")
+    _never_mocha_with_cabana(c, calls)
+
+
+def test_mc9d_a_company_answer_that_names_a_period_keeps_the_period(bot) -> None:
+    """The bot asked the company with an open ask for 2026; "mocha, 2025" is the declared pick of Mocha and a period
+    (no other entity). R2: a slot the reply names changes that slot, so Mocha runs for 2025."""
+    c = Convo(bot)
+    sorento, mocha = _world(bot)
+    ask = _v(
+        "sales_analysis", _ent("ceramic", "account_type", None, "account type"), sales_basis="invoiced", group_by="month",
+        domain_in_message=True, **YEAR,
+    )
+    text, calls = c.say(1, ask, "ceramic account type by month 2026 invoiced")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, f"setup: want the company question, got {text!r}"
+    reply = _v(
+        "sales_analysis", entity_op="reuse", continuation=True, open_question_answer=_pick_of(2),
+        escalation={"company_pick": mocha, "is_escalation_confirmation": False},
+        date_filter_start="2025-01-01", date_filter_end="2025-12-31",
+    )
+    text, calls = c.say(2, reply, "mocha, 2025")
+    args = c.ran(2, text, calls)
+    _slots(c, 2, args, company=MOCHA_ID, account_types=["CERAMIC"], date_from="2025-01-01", date_to="2025-12-31")
+
+
+def test_mc11d_a_category_class_word_with_the_company_held_narrows_not_asks(bot) -> None:
+    """Sorento held; "zzt basin class" is a class word (a class label with member categories in both companies, Mocha
+    with a member code Sorento lacks). It narrows to the held company's members, keeps Sorento, asks no company."""
+    sorento, mocha = _world(bot)
+    db = bot.console.session_factory()
+    try:
+        for code, company in (("ZZTCLS1", DEFAULT_COMPANY_ID), ("ZZTCLS1M", MOCHA_ID), ("ZZTCLS2M", MOCHA_ID)):
+            row = ProductCategory(
+                id=str(uuid.uuid4()), category_code=code, category_name=f"ZZT Member {code}",
+                class_label="Zzt Basin Class", search_synonyms=["zzt basin class"], company_id=company,
+            )
+            db.add(row)
+            bot.ids[f"{code}:{company}"] = row.id
+        db.commit()
+    finally:
+        db.close()
+    c = Convo(bot)
+    _sorento_held(c, sorento)
+    follow = _v(
+        "sales_analysis", _ent("zzt basin class", "category"), sales_basis="invoiced", entity_op="replace_combine",
+        continuation=True, **YEAR,
+    )
+    text, calls = c.say(2, follow, "for zzt basin class")
+    assert f"{sorento} or {mocha}?" not in text, "turn 2: asked the company for a class word\n" + "\n".join(c.log)
+    args = c.ran(2, text, calls)
+    members = args.get("category_ids") or []
+    assert bot.ids[f"ZZTCLS1:{DEFAULT_COMPANY_ID}"] in members, f"turn 2: the held company's member missing: {args}"
+    assert not {bot.ids[f"ZZTCLS1M:{MOCHA_ID}"], bot.ids[f"ZZTCLS2M:{MOCHA_ID}"]} & set(members), f"turn 2: Mocha members kept: {args}"
+    _slots(c, 2, args, company=DEFAULT_COMPANY_ID)
