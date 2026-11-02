@@ -103,6 +103,14 @@ R10. **Requests in flight at deploy.** No data change:
      escalate.
    - `ready_for_collection` / `collected` / `rejected` / `void` / drafts: untouched.
 
+## Go-live (with #2100)
+
+Production has no product-template links at deploy, and since #2100 a product with no link has no
+template at all: its line cannot be self-approved ("No tag template yet for <code>. Escalate it to
+marketing.") and would have to be escalated. So marketing bulk-assigns templates (Tag Templates >
+Assign to products) before release, crew tells the owner, and self-approval is announced to
+salespeople only after the links are seeded.
+
 ## Edge cases
 
 - Approve with no `doc` on a normal-flow request: 422 `DOC_REQUIRED`. Approve WITH a `doc` on an

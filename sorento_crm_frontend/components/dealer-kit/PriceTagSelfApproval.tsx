@@ -81,6 +81,20 @@ export function buildSelfProof(
   return payload ? { doc, payload } : null;
 }
 
+/** The codes of the lines that print a tag but have no template to draw it with. */
+export function linesWithoutTemplate(
+  lines: PriceTagRequestLine[],
+  response: TagPreviewResponse,
+): string[] {
+  return [
+    ...new Set(
+      lines
+        .filter((line) => (line.tags ?? []).length > 0 && !response.templates[line.id])
+        .map((line) => line.code),
+    ),
+  ];
+}
+
 /** The note box Escalate opens: what marketing needs to fix, then Send. */
 export function EscalateNote({
   onEscalate,
@@ -132,6 +146,9 @@ export function PriceTagSelfApproval({
   onEscalate,
 }: Props) {
   const [built, setBuilt] = useState<ReturnType<typeof buildSelfProof>>(null);
+  // A line with no template is left off the sheet, and the server refuses the
+  // approval (NO_TEMPLATE), so it is named here and Approve stays off.
+  const [missing, setMissing] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -144,6 +161,7 @@ export function PriceTagSelfApproval({
       .then((response) => {
         if (!live) return;
         setBuilt(buildSelfProof(request.lines, response));
+        setMissing(linesWithoutTemplate(request.lines, response));
         setFailed(false);
       })
       .catch(() => {
@@ -167,8 +185,14 @@ export function PriceTagSelfApproval({
     }
   }, [built, onApprove]);
 
+  const missingText =
+    missing.length > 0
+      ? `No tag template yet for ${missing.join(', ')}. Escalate it to marketing.`
+      : null;
+
   const footer = (
     <div className="space-y-2">
+      {missingText && built && <p className="text-sm text-muted-foreground">{missingText}</p>}
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={onEdit}>
           <PencilLine className="size-4 mr-1" />
@@ -199,11 +223,11 @@ export function PriceTagSelfApproval({
       emptyHint={
         failed
           ? 'The tag could not be drawn. Escalate it to marketing.'
-          : 'None of these items has a published tag template. Escalate it to marketing.'
+          : (missingText ?? 'Escalate it to marketing.')
       }
       footer={footer}
       headerActions={
-        <Button size="sm" onClick={() => void approve()} disabled={!built || approving}>
+        <Button size="sm" onClick={() => void approve()} disabled={!built || missing.length > 0 || approving}>
           {approving ? (
             <Loader2 className="size-4 mr-1 animate-spin" />
           ) : (

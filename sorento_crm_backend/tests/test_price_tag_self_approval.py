@@ -80,6 +80,24 @@ def _published_template(db) -> str:
     return template_id
 
 
+def _linked_product(db) -> str:
+    """A product linked to this test's published template (#2100: an unlinked
+    product has no template at all, so nothing would draw or approve)."""
+    from app.models.dealer_kit import TagTemplate
+    from tests.test_product_tag_templates import _link
+
+    product_id = _seed_product(db)
+    template = (
+        db.query(TagTemplate)
+        .filter(TagTemplate.name.ilike("%self tag%"))
+        .order_by(TagTemplate.created_at.desc())
+        .first()
+    )
+    _link(db, product_id, template.id)
+    db.commit()
+    return product_id
+
+
 def _payload(product_id: str, print_by: str = "self") -> dict:
     body = _submittable_payload(product_id)
     body["print_by"] = print_by
@@ -87,7 +105,7 @@ def _payload(product_id: str, print_by: str = "self") -> dict:
 
 
 def _submitted(c, db, *, print_by: str = "self") -> dict:
-    product_id = _seed_product(db)
+    product_id = _linked_product(db)
     created = c.post(_BASE, json=_payload(product_id, print_by)).json()
     res = c.post(f"{_BASE}/{created['id']}/submit")
     assert res.status_code == 200, res.text
@@ -770,8 +788,8 @@ class TestTheServerWritesTheTagContent:
 
     def test_a_not_printed_tag_may_be_left_out(self, client):
         c, db, _ = client
-        product_a = _seed_product(db)
-        product_b = _seed_product(db)
+        product_a = _linked_product(db)
+        product_b = _linked_product(db)
         payload = _payload(product_a)
         payload["lines"].append({"line_type": "product", "product_id": product_b})
         created = c.post(_BASE, json=payload).json()
@@ -832,6 +850,8 @@ class TestTheServerWritesTheTagContent:
 
         assert res.status_code == 422, res.text
         assert res.json().get("code") == "NO_TEMPLATE"
+        assert res.json()["message"].startswith("No tag template yet for ")
+        assert res.json()["message"].endswith("Escalate it to marketing.")
 
 
 class TestSlaStages:

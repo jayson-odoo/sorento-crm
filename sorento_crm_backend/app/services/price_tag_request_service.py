@@ -1798,13 +1798,23 @@ Marketing's own work is not part of the form's payload, so it is captured
         import copy as _copy
         from app.services.dealer_kit import product_tag_template_service
 
-        templates = product_tag_template_service.preview_for_request(db, request)["templates"]
-        if any(line.id not in templates for line in request.lines if line.tags):
+        preview = product_tag_template_service.preview_for_request(db, request)
+        templates = preview["templates"]
+        missing = [line for line in request.lines if line.tags and line.id not in templates]
+        if missing:
             # The screen draws nothing for such a line, so its tags are missing
-            # from the sheet: say why rather than "leaves out some tags".
+            # from the sheet: say why rather than "leaves out some tags", in the
+            # words the salesperson's preview already uses (#2100).
+            code_by_line = {}
+            for row in preview.get("lines") or []:
+                code_by_line.setdefault(row.get("line_id"), row.get("code"))
+            codes = [code_by_line.get(line.id) or "an item" for line in missing]
             raise AppException(
                 status_code=422,
-                message="An item on this request has no tag template. Escalate it to marketing.",
+                message=(
+                    f"No tag template yet for {', '.join(dict.fromkeys(codes))}. "
+                    "Escalate it to marketing."
+                ),
                 code="NO_TEMPLATE",
             )
         sheets = PriceTagRequestService._placements(request, doc)

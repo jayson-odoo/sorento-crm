@@ -116,3 +116,17 @@ describe('PriceTagSelfApproval', () => {
     expect(props.onEdit).toHaveBeenCalled();
   });
 });
+
+describe('PriceTagSelfApproval with a line that has no template', () => {
+  it('names the item and keeps Approve off', async () => {
+    const second = { ...line, id: 'l2', code: 'C-2', tags: [{ id: 't2', label: '2a', quantity: 1 }] };
+    renderIt({ request: { id: 'r1', doc_number: 'PT-1', lines: [line, second] } });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('No tag template yet for C-2. Escalate it to marketing.'),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: /approve/i })).toBeDisabled();
+  });
+});
