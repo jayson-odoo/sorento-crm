@@ -1,6 +1,6 @@
 # UAC: Project spec sheet from templates (PS-SPEC-SHEET)
 
-**Status:** Final for build. From card v2 (`CARD-ps-spec-sheet-02nov.md`) with the crew answers of
+**Status:** Final for build (section B rewritten for mock v5, 3 Nov). From card v2 (`CARD-ps-spec-sheet-02nov.md`) with the crew answers of
 2 Nov (Q1 c, Q2 both refs, Q3 set parts + hand-pick, Q4 a, Q5 a) and the owner's marker ruling
 (21:45: no fixed meaning; the designer places markers). Plan: `PLAN-ps-spec-sheet-02nov.md`.
 Mock: `documentation/mockups/PS-SPEC-SHEET/index.html`.
@@ -22,38 +22,43 @@ Mock: `documentation/mockups/PS-SPEC-SHEET/index.html`.
   default, or its size presets.
 - **A7** "Accessible (OKU)" is a Yes/No spec right after Rimless in Product Specifications.
 
-## B. Spec sheet tab (quotation document)
+## B. Spec sheet tab (quotation document): the pages are the editor (owner, mock v5, 3 Nov 00:14)
 
 - **B1** Every quotation document (proposal or quotation) has a "Spec sheet" tab, last after
-  Signatures, at `/spec-sheet`.
-- **B2** With no issued revision the tab says "No issued revision yet" / "A spec sheet prints what
-  the customer received. Issue a revision first." and Export PDF is off with that reason as its
-  tooltip.
+  Signatures, at `/spec-sheet`. There is no table of rows.
+- **B2** With no issued revision the tab says "No issued revision yet" / "Issue a revision first."
+  and Export PDF is off with that reason as its tooltip.
 - **B3** With no published spec templates the tab says "No spec sheet templates" with where to
   publish them. Export PDF stays off ("Pick a cover template and a page template first.") until a
   cover and a page template are picked.
 - **B4** Pickers: Revision (latest by default), Cover template, Page template, Single item template
   (optional; empty = the page template). Only published templates of the right family are listed,
   with their size.
-- **B5** One row per item of the chosen revision, after the cover, in quotation order (scope order,
-  then line order). An item is a line with a product or a product set; the same product or set
-  twice prints once, at its first position.
-- **B6** A set line's row shows its driver part as the item and "With <other part codes>"; those
-  parts print as accessory rows.
-- **B7** Accessories: other items of the revision can be hand-picked onto a row. A picked item
-  leaves its own row and prints after the set parts. An item cannot be its own accessory, an item
-  that hosts accessories cannot be picked, and an item sits on one page only (422 otherwise).
-- **B8** Area (free text with this sheet's earlier areas as suggestions, printed upper case),
-  Comment and Marker (free text) and Print (on/off) save by themselves per row; drag reorders the
-  pages. All are kept per item, so a new revision keeps them.
-- **B9** The page numbers on the rows count only printed pages (the cover is page 1).
-- **B10** A Preview shows the pages exactly as the PDF prints them, one at a time with
-  Previous / Next and "Page N of M".
-- **B11** Export PDF queues the file; the toast says "Preparing the spec sheet. It will appear in My
+- **B5** A strip of page thumbnails, drawn as they print: "1 Cover", then one page per item of the
+  chosen revision, in quotation order (scope order, then line order) until reordered. An item is a
+  line with a product or a product set; the same product or set twice prints once, at its first
+  position. A left-out page shows "Left out" and "-" for its number; the numbers count printed
+  pages only.
+- **B6** Clicking a thumbnail opens that page large, as it prints ("Page N: <code>"); Previous /
+  Next walk the strip.
+- **B7** AREA starts as the Section heading the line sits under on the Lines tab (blank when it has
+  none). Clicking AREA on the open page types over it (saved upper case); clicking COMMENT or the
+  marker types those. Only the template's layers that print `{{line.area}}`, `{{line.comment}}` or
+  `{{line.marker}}` are clickable. An AREA left equal to its Section heading is not stored as typed,
+  so it follows the heading.
+- **B8** "Leave out" on the open page removes it from the PDF (it stays in the strip, greyed); "Put
+  back" returns it.
+- **B9** "Add accessory" on the open page picks other items of the revision; a picked item leaves its
+  own page and prints after the set parts. A set line's other parts are accessories by themselves.
+  An item cannot be its own accessory, an item that hosts accessories cannot be picked, and an item
+  sits on one page only (422 otherwise).
+- **B10** Dragging a thumbnail reorders the pages (mouse, or Space / arrows / Space on its handle).
+- **B11** Every change saves by itself, keyed by item, so a new revision keeps it.
+- **B12** Export PDF queues the file; the toast says "Preparing the spec sheet. It will appear in My
   Downloads." The file is `spec-sheet-<quotation no>.pdf`, page size = the templates' size.
-- **B12** A user with view but not edit sees everything and can preview and export, but cannot
-  change pickers or rows (PUT answers 403).
-- **B13** Templates of different sizes refuse export: "Page templates must be the same size as the
+- **B13** A user with view but not edit sees the strip and the pages and can export, but gets no
+  edit spots, no Leave out / Add accessory and no drag (PUT answers 403).
+- **B14** Templates of different sizes refuse export: "Page templates must be the same size as the
   cover." (422).
 
 ## C. Printed pages

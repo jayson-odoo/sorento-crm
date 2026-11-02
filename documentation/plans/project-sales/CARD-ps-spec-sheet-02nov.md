@@ -12,6 +12,8 @@ to `is_rimless`. Sample Q7: no product code starts with BBT; print the line's co
 the pages; AREA defaults from the quotation's Section heading (Q-E), COMMENT / AREA are typed on the page, "Leave
 out" and "Add accessory" are on the page, order = quotation order (Q-G). Rules 3, 4a, 12, 13 change accordingly once
 Q-E/F/G are answered; the built table is replaced in the next round.
+**Owner on mock v5 (3 Nov 00:14):** approved ("Ok"). Q-E: no extra rules (AREA = the Section heading over the line,
+editable on the page); Q-F (a) Add accessory on the page; Q-G (b) drag pages in the strip. Built.
 **Owner answers on mock v3 (2 Nov 23:29):** Q-A (a) the right band shows the project details; Q-B (b) an
 optional price area shows the quoted unit price of the issued revision, a template without one prints none
 (built through the price tag's own List Price slot / price badge, rows carry `list_price`); Q-C (a) any fixed

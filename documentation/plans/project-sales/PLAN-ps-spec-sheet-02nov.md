@@ -1,6 +1,6 @@
 # PLAN: Project spec sheet from templates (PS-SPEC-SHEET)
 
-**Status:** Waiting (built provisionally ahead of mock approval; owner reviewing mock v2; security PASS, reviewer re-check of round 2, cloud browser pass done, crew browser pass pending). No merge until the mock is approved. Track: L (one
+**Status:** Review (mock v5 approved 3 Nov 00:14; canvas-flow tab built; reviewer round on the tab running; crew browser pass pending). Track: L (one
 migration, new public print payload branch, new tab). PR #2103. UAC:
 `ps-spec-sheet-02nov-acceptance-criteria.md`. Card: `CARD-ps-spec-sheet-02nov.md`.
 
@@ -54,6 +54,14 @@ the project, ref, area, salesperson and date). Today it is built by hand in Powe
 Q-A (a), Q-B (b): rows carry the quoted unit price in `list_price` (+ `parent_list_price`), so the price tag
 designer's List Price slot and list-only price badge print it; set parts carry none; a picked accessory
 carries its own line's price; the tab's page list never returns it (the Preview payload carries it, as the PDF does). Q-C (a): fixed layers repeat (already so).
+
+## Mock v5 (approved 3 Nov 00:14): the pages are the editor
+
+No table. The tab shows a strip of page thumbnails (drag to reorder, Q-G b) and the open page as it
+prints; AREA / COMMENT / marker are typed by clicking their layers on the page; Leave out / Put back
+and Add accessory (Q-F a) sit on the page. AREA defaults to the Section heading over the line
+(`band_label`, the nearest one at or above it in its scope); a typed AREA equal to that default is
+not stored. Backend settings and routes are unchanged apart from `area_default` on each page.
 
 ## Deferred, with their triggers
 

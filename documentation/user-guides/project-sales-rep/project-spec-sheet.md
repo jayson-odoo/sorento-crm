@@ -2,7 +2,7 @@
 
 Use this when a customer's QS or consultant wants the project catalogue: a cover page, then one page per item you quoted, each with the photo, the drawing, the code and specs, its valve, hose or trap, and a title block with the project, ref, area, your name and the date. A price prints only if the template has a price area (see below).
 
-The pages are designed once by marketing as templates (see "Designing the templates" below). You only choose the templates, type the area per page, and export.
+The pages are designed once by marketing as templates (see "Designing the templates" below). You only choose the templates, check the pages (type an area where the Section heading is not right), and export.
 
 ## Steps
 
@@ -10,21 +10,19 @@ The pages are designed once by marketing as templates (see "Designing the templa
 2. Click the **Spec sheet** tab (after **Signatures**).
 3. **Revision**: the latest issued revision is picked for you. Pick an older one if the customer is working from it. A quotation that was never sent shows **No issued revision yet**: issue a revision first.
 4. Pick the **Cover template** and the **Page template**. **Single item template** is optional: when set, an item with no accessories uses it; when empty, every page uses the page template.
-5. Check the pages. Each row is one printed page, in quotation order, after the cover (page 1):
-   - **Area**: where the item is used, for example `UNIT & PODIUM FACILITIES`. Type it once and pick it again on the next rows. It prints in capitals.
-   - **Accessories**: a product set (for example a WC with its angle valve and flexible hose) already shows **With** its other parts; they print as the accessory rows. To put another quoted item on this page instead of its own page (for example a bottle trap under a basin), pick it here. Pick nothing to leave it on its own page.
-   - **Comment**: printed in the page's comment box. Leave it empty for an empty box.
-   - **Marker**: any mark the template prints next to the code (for example `*`).
-   - **Print**: switch it off to leave a page out (for example a sealant). The quotation is not changed.
-   - Drag a row by its handle to change the page order.
-   Every change saves by itself. The settings stay with the quotation, so the next revision keeps them.
-6. Look at the **Preview** below the rows. Use the arrows to page through; it is exactly what the PDF prints.
-7. Click **Export PDF**. The file is prepared in the background and appears in **My Downloads** as `spec-sheet-<quotation no>.pdf`.
+5. The pages show as a strip of thumbnails, the cover first, then one page per quoted item in quotation order. Click a thumbnail to open that page large, exactly as it prints (**Previous** / **Next** walk the strip). On the open page:
+   - **AREA**: starts as the **Section heading** the line sits under on the **Lines** tab (for example `UNIT`). Click it on the page to type something else, for example `UNIT & PODIUM FACILITIES`; it prints in capitals.
+   - **COMMENT** and the marker next to the code: click them on the page to type.
+   - **Leave out**: the page is not printed (for example a sealant); it stays in the strip, greyed, with **Put back**. The quotation is not changed.
+   - **Add accessory**: puts another quoted item on this page instead of its own page (for example a bottle trap under a basin). A product set (a WC with its angle valve and flexible hose) brings its other parts by itself.
+   - Drag a thumbnail to change the page order.
+   Every change saves by itself and stays with the quotation, so the next revision keeps it.
+6. Click **Export PDF**. The file is prepared in the background and appears in **My Downloads** as `spec-sheet-<quotation no>.pdf`.
 
 ## What's printed
 
 * Page 1: the cover template as designed (for example a photo collage and the logo).
-* One page per printed row: the main item's photo and drawing (as frozen on the issued revision), brand, code, name and specs, and up to the number of accessory rows the template has.
+* One page per printed item: the main item's photo and drawing (as frozen on the issued revision), brand, code, name and specs, and up to the number of accessory rows the template has.
 * Title block fields come from the quotation: **Ref** is the quotation's Your ref, or our quotation number when Your ref is empty; **Prepared by** is the quotation's signatory (else the project salesperson) with their phone; **Date** is the revision's issue date.
 * **Price**: only when the template has a price area: the quoted unit price of that item on the revision (the item's own price, not added up with its accessories). An item quoted at zero prints no price. An item quoted twice at two prices shows the first one. The sample catalogue has none.
 * The same product quoted twice (for example in two blocks) prints once.

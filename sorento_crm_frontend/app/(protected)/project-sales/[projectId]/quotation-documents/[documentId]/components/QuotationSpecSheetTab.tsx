@@ -348,7 +348,10 @@ function SpecSheetPages({
                     canEdit ? (
                       <SortableItemHandle
                         aria-label={`Drag ${page.code} to reorder`}
-                        className="absolute left-1 top-1"
+                        // Focusable, so the shared Sortable's keyboard sensor can move a page too
+                        // (Space, arrows, Space).
+                        tabIndex={0}
+                        className="absolute left-1 top-1 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
                         style={{ width: THUMB_WIDTH, height: (THUMB_WIDTH * 9) / 16 }}
                         onClick={() => setSelected(page.key)}
                       />
