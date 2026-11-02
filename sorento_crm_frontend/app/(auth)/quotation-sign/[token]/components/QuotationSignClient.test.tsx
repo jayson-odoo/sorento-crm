@@ -445,7 +445,7 @@ describe('QuotationSignClient letterhead', () => {
     getQuotationSignPage.mockResolvedValue(page());
     renderPage();
 
-    expect(await screen.findByText('Quotation No.')).toBeInTheDocument();
+    expect(await screen.findByText('Proposal No.')).toBeInTheDocument();
     expect(screen.getByText('PRJQ-2026-0003-R1')).toBeInTheDocument();
     expect(screen.queryByText('Our Ref')).not.toBeInTheDocument();
     expect(screen.getByText('Revision')).toBeInTheDocument();
@@ -468,7 +468,7 @@ describe('QuotationSignClient letterhead', () => {
     getQuotationSignPage.mockResolvedValue(page({ sender_logo_url: null }));
     renderPage();
 
-    await screen.findByText('Quotation No.');
+    await screen.findByText('Proposal No.');
     expect(screen.queryByRole('img', { name: /logo/i })).not.toBeInTheDocument();
   });
 
@@ -491,7 +491,7 @@ describe('QuotationSignClient letterhead', () => {
 
     getQuotationSignPage.mockResolvedValue(page({ signatory_name: null, signatory_phone: null }));
     renderPage();
-    await screen.findByText('Quotation No.');
+    await screen.findByText('Proposal No.');
     expect(screen.queryByText('Sales contact')).not.toBeInTheDocument();
   });
 });
@@ -923,7 +923,7 @@ describe('QuotationSignClient cover card', () => {
     renderPage();
 
     await screen.findByText('Reference No.');
-    expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+    expect(screen.getAllByText('Proposal from')).toHaveLength(1);
     expect(screen.getAllByText(REF).length).toBeGreaterThan(0);
   });
 
@@ -935,7 +935,7 @@ describe('QuotationSignClient cover card', () => {
 
     expect(await screen.findByText('Terms and conditions')).toBeInTheDocument();
     expect(screen.queryByText('Reference No.')).not.toBeInTheDocument();
-    expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+    expect(screen.getAllByText('Proposal from')).toHaveLength(1);
   });
 
   it('polish: the cover terms row carries every TERMS_HTML_CLASS token and no prose', async () => {

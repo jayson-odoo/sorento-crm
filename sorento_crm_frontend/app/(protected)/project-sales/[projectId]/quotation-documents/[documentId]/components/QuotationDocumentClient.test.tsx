@@ -387,7 +387,7 @@ async function openGear() {
  */
 async function pressEdit() {
   const menu = await openGear();
-  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit quotation' }));
+  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit proposal' }));
   // Selecting an item closes the menu, which - like every Radix modal layer -
   // keeps `aria-hidden` over the rest of the page for as long as it stays
   // mounted for its own close animation (S8-01's shared spring, unlike the old
@@ -404,7 +404,7 @@ async function pressEdit() {
  */
 async function gearOffersEdit() {
   const menu = await openGear();
-  const offered = within(menu).queryByRole('menuitem', { name: 'Edit quotation' }) !== null;
+  const offered = within(menu).queryByRole('menuitem', { name: 'Edit proposal' }) !== null;
   fireEvent.keyDown(menu, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
   return offered;
@@ -1383,7 +1383,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
       screen.queryAllByRole('button', { name: 'Sign' }).filter((b) => b.classList.contains('bg-primary')),
     ).toHaveLength(0);
     const menu = await openGear();
-    expect(within(menu).getByRole('menuitem', { name: /Sign quotation/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /Sign proposal/ })).toBeInTheDocument();
   });
 
   it('E1: the label comes off the graph edge, and falls back to Send for approval with no graph', async () => {
@@ -1561,11 +1561,11 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     const menu = await openGear();
     for (const name of [
       'Sign again',
-      'Edit quotation',
+      'Edit proposal',
       'Download PDF',
       'Download Excel',
       'Copy counter-sign link',
-      'Delete quotation',
+      'Delete proposal',
     ]) {
       expect(within(menu).getByRole('menuitem', { name: new RegExp(name) })).toBeInTheDocument();
     }
@@ -1576,7 +1576,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     renderScreen();
 
     const menu = await openGear();
-    expect(within(menu).getByRole('menuitem', { name: /Sign quotation/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /Sign proposal/ })).toBeInTheDocument();
   });
 
   it('E8: the approval banner states the situation and holds no buttons', async () => {
@@ -1762,7 +1762,7 @@ describe('QuotationDocumentClient: Delete is the deferred countdown (F7)', () =>
     renderScreen();
 
     const menu = await openGear();
-    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete quotation/ }));
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete proposal/ }));
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     expect(createPendingAction).toHaveBeenCalledWith(
@@ -1833,7 +1833,7 @@ describe('QuotationDocumentClient: fix round 2', () => {
     renderScreen();
 
     const menu = await openGear();
-    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete quotation/ }));
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete proposal/ }));
 
     expect(await screen.findByTestId('deferred-countdown')).toBeInTheDocument();
   });

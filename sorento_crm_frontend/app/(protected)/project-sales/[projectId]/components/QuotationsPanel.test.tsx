@@ -191,7 +191,7 @@ describe('QuotationsPanel', () => {
     expect(await screen.findByText(/Nothing quoted yet/i)).toBeInTheDocument();
     // ONE way in, in the toolbar (ADR 1d): a second button in the middle of an empty state is
     // another thing to read and decide between.
-    expect(screen.getByRole('button', { name: /Add a quotation/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Add a proposal/i })).toBeInTheDocument();
   });
 
   it('reads a document without opening it: reference, subject, recipient, status, date', async () => {
@@ -327,15 +327,15 @@ describe('QuotationsPanel', () => {
     renderPanel({ can_edit: false });
 
     expect(await screen.findByText('SRT/Q/2026/0141 (R2)')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Add a quotation/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Add a proposal/i })).toBeNull();
   });
 
-  it('AC-QF001: Add a quotation opens the form page and creates nothing', async () => {
+  it('AC-QF001: Add a proposal opens the form page and creates nothing', async () => {
     listQuotationDocuments.mockResolvedValue([]);
 
     renderPanel();
 
-    fireEvent.click(await screen.findByRole('button', { name: /Add a quotation/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /Add a proposal/i }));
 
     // The owner: "I should be able to add product straight away and save when I am
     // satisfied". The press is a navigation, never a write.
@@ -366,13 +366,13 @@ function draftDocument(overrides: Partial<QuotationDocument> = {}) {
 }
 
 describe('QuotationsPanel: the standard list (QUOTE-APPROVAL-UX F2-F8)', () => {
-  it('F2: the app list toolbar - search box first, then Columns, then Add a quotation on the right', async () => {
+  it('F2: the app list toolbar - search box first, then Columns, then Add a proposal on the right', async () => {
     listQuotationDocuments.mockResolvedValue([quotationDocument()]);
     const { container } = renderPanel();
 
-    const search = await screen.findByRole('searchbox', { name: 'Search quotations' });
+    const search = await screen.findByRole('searchbox', { name: 'Search proposals' });
     const columns = screen.getByRole('button', { name: /Columns/i });
-    const add = screen.getByRole('button', { name: /Add a quotation/i });
+    const add = screen.getByRole('button', { name: /Add a proposal/i });
 
     expect(container.querySelector('[data-slot="data-grid-list-toolbar"]')).not.toBeNull();
     const follows = (a: Element, b: Element) =>
@@ -400,12 +400,12 @@ describe('QuotationsPanel: the standard list (QUOTE-APPROVAL-UX F2-F8)', () => {
     const menu = await openRowMenu();
 
     for (const name of [
-      'Edit quotation',
-      'Sign quotation',
+      'Edit proposal',
+      'Sign proposal',
       'Download PDF',
       'Download Excel',
       'Copy counter-sign link',
-      'Delete quotation',
+      'Delete proposal',
     ]) {
       expect(within(menu).getByRole('menuitem', { name: new RegExp(name) })).toBeInTheDocument();
     }
@@ -428,7 +428,7 @@ describe('QuotationsPanel: the standard list (QUOTE-APPROVAL-UX F2-F8)', () => {
     expect(
       within(menu).getByRole('menuitem', { name: /Copy counter-sign link/ }),
     ).toHaveAttribute('aria-disabled', 'true');
-    expect(within(menu).getByRole('menuitem', { name: /Edit quotation/ })).not.toHaveAttribute(
+    expect(within(menu).getByRole('menuitem', { name: /Edit proposal/ })).not.toHaveAttribute(
       'aria-disabled',
       'true',
     );
@@ -452,7 +452,7 @@ describe('QuotationsPanel: the standard list (QUOTE-APPROVAL-UX F2-F8)', () => {
     renderPanel();
 
     const menu = await openRowMenu();
-    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete quotation/ }));
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete proposal/ }));
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     expect(createPendingAction).toHaveBeenCalledWith(
@@ -554,14 +554,14 @@ describe('QuotationsPanel: fix round 2', () => {
     renderPanel();
 
     const row = (await screen.findByText('SRT/Q/2026/0150')).closest('tr') as HTMLElement;
-    expect(screen.getByRole('searchbox', { name: 'Search quotations' })).toBeInTheDocument();
+    expect(screen.getByRole('searchbox', { name: 'Search proposals' })).toBeInTheDocument();
 
     fireEvent.click(within(row).getByRole('checkbox'));
     expect(await screen.findByText('1 selected')).toBeInTheDocument();
-    expect(screen.queryByRole('searchbox', { name: 'Search quotations' })).toBeNull();
+    expect(screen.queryByRole('searchbox', { name: 'Search proposals' })).toBeNull();
 
     fireEvent.click(within(row).getByRole('checkbox'));
-    expect(await screen.findByRole('searchbox', { name: 'Search quotations' })).toBeInTheDocument();
+    expect(await screen.findByRole('searchbox', { name: 'Search proposals' })).toBeInTheDocument();
   });
 
   it('4: typing in the search box still filters the rows', async () => {
@@ -569,7 +569,7 @@ describe('QuotationsPanel: fix round 2', () => {
     renderPanel();
 
     await screen.findByText('SRT/Q/2026/0150');
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search quotations' }), {
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search proposals' }), {
       target: { value: '0150' },
     });
 
@@ -600,7 +600,7 @@ describe('QuotationsPanel: search with no match (round 3)', () => {
     renderPanel();
 
     await screen.findByText('SRT/Q/2026/0141 (R2)');
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Search quotations' }), {
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search proposals' }), {
       target: { value: 'zzz-no-such-quotation' },
     });
 
@@ -619,17 +619,17 @@ describe('QuotationsPanel: search with no match (round 3)', () => {
 
 describe('QuotationsPanel on a project waiting for approval (review round 3)', () => {
   it.each(['pending', 'rejected'] as const)(
-    'offers no Add a quotation on a %s registration, even to someone who may edit it',
+    'offers no Add a proposal on a %s registration, even to someone who may edit it',
     async (approvalState) => {
       renderPanel({ approval_state: approvalState, project_code: null, can_edit: true });
       expect(await screen.findByText(/Nothing quoted yet/i)).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /Add a quotation/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /Add a proposal/i })).toBeNull();
     },
   );
 
   it('an approved registration offers it again', async () => {
     renderPanel({ approval_state: 'approved', project_code: 'PPF2610001', can_edit: true });
     expect(await screen.findByText(/Nothing quoted yet/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Add a quotation/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Add a proposal/i })).toBeInTheDocument();
   });
 });
