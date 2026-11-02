@@ -17,6 +17,7 @@ import type {
   LayerPadding,
   PlacedTag,
   SlotBinding,
+  SpecSheetDocFields,
   TagBindingData,
   TagImage,
   TagLayer,
@@ -28,6 +29,7 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import {
+  layerShownFor,
   layerText,
   priceBadgeInput,
   resolveBarcodeValue,
@@ -98,6 +100,14 @@ export interface ResolvedLineData {
   /** Staff-authored tag copy (r10 S4), what `{{product.price_tag_description}}`
    *  draws. Null for a set line. */
   price_tag_description?: string | null;
+  /** PS-SPEC-SHEET: a project spec sheet page's own fields (absent on a price tag). */
+  brand?: string;
+  drawing?: TagImage | null;
+  area?: string;
+  comment?: string;
+  marker?: string;
+  doc?: SpecSheetDocFields;
+  strict_parts?: boolean;
 }
 
 /**
@@ -884,8 +894,12 @@ function TagRenderer({
   bleed_mm: number;
   media: TagSheetMedia;
 }) {
+  // PS-SPEC-SHEET: `show_when` drops a layer the data says not to print (an accessory row
+  // with no accessory, a badge whose spec is not Yes). No condition = drawn, as before.
+  const binding = bindingOf(resolved);
   const sortedLayers = [...tag.layers]
     .filter((l) => l.visible !== false)
+    .filter((l) => layerShownFor(l, binding))
     .sort((a, b) => a.z_index - b.z_index);
 
   // Rotation (S7, AC-S7-8): `width_mm`/`height_mm` stay the tag's own NATURAL

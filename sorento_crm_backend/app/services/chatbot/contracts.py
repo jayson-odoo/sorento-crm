@@ -66,6 +66,9 @@ UNDOMAINED_CHATBOT_TOOLS: tuple[str, ...] = (
     # REPORT-UNIFY (Q1): the Yearly comparison file is the one sales analysis left on its own tool (the lane's
     # `sales_analysis` override, axis `year`); no domain row lists it any more.
     "crm_sales_analysis",
+    # AGENTIC-UNIFY PR 4: plain GETs the staff agent reaches (`agent/tools.py`); no domain answers from them.
+    "crm_order_analytics",
+    "crm_find",
     "crm_complaint_analytics",
     "crm_complaints_list",
     "crm_lookup_resolve",

@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { FileText, ListOrdered, Mail, PenLine, ScrollText } from 'lucide-react';
+import { BookImage, FileText, ListOrdered, Mail, PenLine, ScrollText } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 /**
@@ -36,6 +36,8 @@ export function quotationDocumentTabs(projectId: string, documentId: string): Ta
     { key: 'cover-letter', title: 'Cover letter', icon: Mail, path: `${base}/cover-letter` },
     { key: 'terms', title: 'Terms', icon: ScrollText, path: `${base}/terms` },
     { key: 'signatures', title: 'Signatures', icon: PenLine, path: `${base}/signatures` },
+    // PS-SPEC-SHEET: the project catalogue printed from an issued revision.
+    { key: 'spec-sheet', title: 'Spec sheet', icon: BookImage, path: `${base}/spec-sheet` },
   ];
 }
 

@@ -1441,6 +1441,12 @@ def _serialize_signature(signature: Optional[QuotationSignature]) -> Optional[Di
     }
 
 
+#: Rendered sign-page pictures by attachment id, across requests. Bounded: ~15 KB each, so the cap
+#: holds a few MB; evicting the lot on overflow costs one re-render per picture.
+_SIGN_PICTURES_MAX = 512
+_SIGN_PICTURES: Dict[str, str] = {}
+
+
 def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any]:
     """The quotation as ISSUED, for the customer's read-only counter-sign page.
 
@@ -1459,6 +1465,34 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         .order_by(ProjectQuotationIssueScope.sort_order)
         .all()
     )
+
+    # Imported here, as the PDF service is elsewhere in this module: keeps module load light.
+    from app.services import product_image_service as product_images
+    from app.services import quotation_columns
+
+    # Per page, as per PDF render: one photo commonly repeats down a scope.
+    picture_cache: Dict[str, Optional[str]] = {}
+
+    def _picture(attachment_id: Optional[str]) -> Optional[str]:
+        """The PDF's own inline, downscaled bytes. A data URI rather than a link: the customer has
+        no login, and a signed URL would carry the storage key into their browser.
+
+        Kept across requests (`_SIGN_PICTURES`): the page is public and refetched after every
+        answer, and without it each anonymous GET downloads and decodes every picture again. The
+        ids are stamped at issue, so a cached render never goes stale. A miss (storage down) is
+        not kept, so a hiccup does not become a permanent blank."""
+        if not attachment_id:
+            return None
+        key = str(attachment_id)
+        hit = _SIGN_PICTURES.get(key)
+        if hit is not None:
+            return hit
+        uri = product_images.data_uri(db, key, picture_cache)
+        if uri is not None:
+            if len(_SIGN_PICTURES) >= _SIGN_PICTURES_MAX:
+                _SIGN_PICTURES.clear()
+            _SIGN_PICTURES[key] = uri
+        return uri
 
     scopes: List[Dict[str, Any]] = []
     for pair in pairs:
@@ -1483,6 +1517,12 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
                 # does not change what was priced, and a stale label helps nobody.
                 "scope_label": scope.scope_label if scope else "",
                 "scope_total": Decimal(pair.scope_total or 0),
+                # The PDF's column set for this scope, from the one shared definition
+                # (QUOTE-SIGN-COLUMNS): the page renders these, it keeps no list of its own.
+                "columns": [
+                    {"key": key, "label": label}
+                    for key, label in quotation_columns.for_lines(lines)
+                ],
                 "lines": [
                     {
                         # The handle a suggested change names. Only lines of this issue are
@@ -1497,9 +1537,13 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
                         "item_label": _item_number(line, position),
                         "description": line.description_snapshot,
                         "technical_spec": line.technical_spec,
+                        "image_url": _picture(line.image_attachment_id),
+                        "drawing_url": _picture(line.drawing_attachment_id),
                         "brand": line.brand_snapshot,
                         "product_code": line.product_code_snapshot,
                         "quantity": Decimal(line.quantity or 0),
+                        # Printed after the quantity, as the PDF's QTY cell does ("2 pcs").
+                        "uom": line.uom,
                         "unit_price": Decimal(line.unit_price or 0),
                         "complete_set": line.complete_set,
                         "band_label": line.band_label,
