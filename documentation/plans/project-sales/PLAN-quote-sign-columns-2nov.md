@@ -1,6 +1,6 @@
 # PLAN: customer sign page shows the quotation's own columns (QUOTE-SIGN-COLUMNS)
 
-Status: in progress (small fix track: one shared column definition, no migration, no auth change)
+Status: PR #2106 open, reviewed READY, awaiting owner hand-test (small fix track: no migration, no auth change)
 
 ## Journey
 
