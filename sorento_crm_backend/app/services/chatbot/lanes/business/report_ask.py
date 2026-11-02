@@ -1788,7 +1788,6 @@ def _fresh_args(
     if filters is None:
         return None, line
     unbound = filters.pop("_unbound", [])
-    carried_unbound: list[str] = []  # a carried customer not applied (`scope` below): said, never the sole-subject line
     args.update(filters)
     if plan["account_types"]:
         args["account_types"] = plan["account_types"]
@@ -1829,16 +1828,14 @@ def _fresh_args(
             held = _held_ids(_dict(scope.get("held")), "customer_ids", name)
             if not held:
                 continue  # not held: its entity went to the resolver (`from_object`)
-            if staff_principal.lacks(db, staff_principal.CUSTOMERS_VIEW):
-                held = []  # the customer gate holds for a carried customer too
             inside = _in_company(db, "customer", held, scope.get("company")) or _customer_in(db, name, scope.get("company"))
             inside = [i for i in inside if linked is None or i in linked]
             if inside:
                 customer_ids.extend(i for i in inside if i not in customer_ids)
             else:
-                # Not applied, and the ask still runs: the message named the company, not this carried customer.
+                # The reply a word with no row in the named company gets (`_word_filters`), carried or typed.
                 company_name = scope.get("company_name") or "that company"
-                carried_unbound.append(f"Customer {name} (not in {company_name})")
+                unbound.append((f"Customer {name} (not in {company_name})", f"I don't know '{name}' as a customer in {company_name}."))
     if parse_output.get("self_reference") is True and not customer_ids:
         # "my ...": the engine's scope rows, a linked contact's own accounts, whether a dealer or office staff. A
         # dealer's ask naming no customer sends none: the route forces its links itself.
@@ -1888,8 +1885,6 @@ def _fresh_args(
         if not set(args) - _NON_FILTER_ARGS - {"date_from", "date_to", "top_n"}:
             return None, unbound[0][1]  # the word was the only subject: said, and the ask
         args["_unbound"] = [text for text, _line in unbound]  # popped by `settle`; never a route param
-    if carried_unbound:
-        args["_carried_unbound"] = carried_unbound  # popped by `settle`; never a route param
     return args, None
 
 
@@ -2312,7 +2307,6 @@ def _settle(
     if args is None:
         return None, line
     not_applied = args.pop("_unbound", [])
-    carried_not_applied = args.pop("_carried_unbound", [])
     kind_ask = args.pop("_kind_ask", None)
     covered = args.pop("_covered", False)
     from app.services.reports.ask_params import _asked_number
@@ -2423,8 +2417,6 @@ def _settle(
     extras.update(company_extras)
     if not_applied:
         extras["not_applied"] = not_applied
-    if carried_not_applied:
-        extras["carried_not_applied"] = carried_not_applied  # said on the Not applied line, never asked about
     if parse_output.get("capability_from") == "outstanding":
         extras["kind_ask"] = True  # the basis question is the three kinds (Q2)
     if period is None and (args.get("basis") in OUTSTANDING_KINDS or extras.get("kind_ask")):
@@ -2687,7 +2679,6 @@ def _drill(
         return None, line
     kind_ask = own.pop("_kind_ask", None)
     own.pop("_covered", None)
-    own.pop("_carried_unbound", None)
     group_by = own.get("group_by")
     if group_by is None:
         return None, CATALOGUE_LINE
@@ -3286,15 +3277,19 @@ def _fresh_ids(db: Any, hint: str, word: str) -> list[str]:
 
 
 def _customer_in(db: Any, name: str, company: Any) -> list[str]:
-    """The one customer of `company` whose name is `name` (the Held report line prints it as stored, case aside), through
-    the permission-gated customer resolver typed customers use (`business_services.customers_named`); none when no
-    company is named, when no row has it, or when several share it (a shared name is never widened)."""
-    if db is None or not company or not name:
+    """The one customer of `company` whose stored name is `name` (the Held report line prints it as stored, case aside),
+    for a principal that may read customers; none when no company is named, when no row has it, or when several share it
+    (a shared name is never widened)."""
+    if db is None or not company or not name or staff_principal.lacks(db, staff_principal.CUSTOMERS_VIEW):
         return []
-    folded = " ".join(name.split()).casefold()
-    named = [i for i, n in business_services.customers_named(db, name) if " ".join(str(n).split()).casefold() == folded]
-    inside = _in_company(db, "customer", named, company)
-    return inside if len(inside) == 1 else []
+    from sqlalchemy import func
+
+    from app.models.order import Customer
+
+    rows = db.query(Customer.id).filter(
+        func.lower(Customer.customer_name) == " ".join(name.split()).casefold(), Customer.company_id == str(company)
+    ).limit(2).all()
+    return [str(rows[0][0])] if len(rows) == 1 else []
 
 
 def _held_ids(held: dict[str, Any], param: str, name: str) -> list[str]:
