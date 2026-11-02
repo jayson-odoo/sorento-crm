@@ -304,8 +304,13 @@ def _rows(session_factory) -> list[StockAsk]:
 
 @pytest.fixture
 def live(session_factory, monkeypatch, stub_access):
+    from datetime import date
+
+    import app.services.incoming_stock_service as incoming
     from app.main import app
 
+    # Fix B marks a past told date "(delayed)": today is pinned before the fixed 2026 dates.
+    monkeypatch.setattr(incoming, "today_myt", lambda: date(2026, 1, 1))
     try:
         yield lambda **seed: (
             _seed(session_factory, **seed),
