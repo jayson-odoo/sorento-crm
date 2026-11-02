@@ -235,6 +235,16 @@ class PriceTagRequestLine(Base):
         ForeignKey("product_combos.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # PRICETAG-TEMPLATE-PER-PRODUCT: the tag template this line prints with -
+    # the salesperson's pick when the product allows several, the single one
+    # filled in on save when it allows one, NULL when it allows none (the
+    # designer's family rule then applies, as before). SET NULL: deleting a
+    # template must not be blocked by a request.
+    tag_template_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{DEALER_KIT_SCHEMA}.tag_template.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     # What the package guard found at submit, for marketing to read (D2). NULL =
     # clean. Submit is never refused for a package reason.
     package_warning = Column(Text, nullable=True)

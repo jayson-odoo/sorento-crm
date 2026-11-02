@@ -30,7 +30,8 @@ R2. Product page, Overview tab, new section "Price tag templates" under Combos: 
     `dealer_kit.tag_templates.manage` (marketing); anyone who can view the product sees the list.
     Empty state: heading + hint, no button.
 R3. Bulk assignment, Dealer Kit > Tag Templates, row action "Assign to products": pick brands,
-    categories and model families (any mix, matched as AND across kinds, OR within a kind), see
+    categories, item classes and model families (each a multi-select; any mix, matched as AND
+    across kinds, OR within a kind; an all-empty filter is refused), see
     the matching product count, then Add or Remove that template for all of them. Same
     `dealer_kit.tag_templates.manage` permission.
 R4. Price tag request line (portal form and the CRM's My Requests copy of it, same component):
@@ -39,20 +40,32 @@ R4. Price tag request line (portal form and the CRM's My Requests copy of it, sa
       ("Pick a tag template for this line."); Save Draft accepts none.
     - product with NONE (and every product-set line): today's family rule, unchanged, no field.
     The choice is stored on the line (`price_tag_request_lines.tag_template_id`, SET NULL).
-    The server refuses a template that is not one of the product's allowed published ones (422).
+    A sent template that is not one of the product's published links is dropped (stored as no
+    pick, so Submit asks again), never stored and never given its own error: no way to probe
+    whether some other template id exists.
 R5. Live preview on the request form: a "Preview" section that draws each line's tag with its
     template (picked, single, or the family default) and the line's real data and price
     (promotion or typed selling price, list/selling mode), through the same `DesignViewer` /
     `TagSheetRenderer` the proof uses. It redraws as lines, prices or the template change
-    (debounced). It is a preview, not the proof: from `proof_ready` the real design section takes
-    over as today.
-R6. Marketing's designer opens a line's tag on the line's stored template when there is one
-    (instead of the family guess). "Use template..." still lists every template, so marketing can
-    still override.
+    (debounced).
+    No selling price for a "no selling price" brand (Cabana, lane CABANA-NO-SELLING-PRICE #2104):
+    the preview resolves through the SAME `line_pricing` / `resolve_tags_live` the proof and the
+    PDF use, so #2104's reader fix (price tags in Selling mode) covers the preview with no rule of
+    its own here. A test in this lane asserts it once #2104's brand flag is on main.
+R6. (revised for PRICETAG-SELF-APPROVAL #2101: the salesperson approves his own tag, marketing
+    leaves the normal flow.) The final tag IS the template, auto-filled: each line's template
+    (pick, single link, first link, else the family default) bound to the line's resolved data.
+    One builder, `lib/dealer-kit/request-tags.ts` (`tagForTag` + arrange), draws it for this lane's
+    live preview and for #2101's "generated tag" the salesperson approves, so what he approves is
+    what he previewed. Split proposed to #2101: this lane owns the product links, the line's
+    template pick, the preview endpoint and the builder; #2101 owns turning it into the request's
+    saved tag sheet at approve and the status flow. Marketing's designer is only for an escalated
+    request, and opens each tag on the line's stored template instead of the family guess
+    ("Use template..." still lists every template).
 R7. Editing an approved request (allowed by the 2 Nov ruling) may change the template too, same
     rules as R4.
 
-## Examples (shapes, not real records: the sandbox has no dev data and this repo is public)
+## Examples (shapes for now; real masked dev rows requested from crew, crew-data-request on #2100)
 
 E1. A basin `SRT WB...` linked to one template "Basin A5": the line shows "Template: Basin A5", no
     picker; the preview draws Basin A5; marketing's designer opens on Basin A5.
@@ -77,7 +90,13 @@ E5. A linked template is unpublished: it disappears from E2's select; if it was 
   `price_tag_request_service.py` and `PriceTagRequestForm.tsx`; this lane only adds line fields
   and a preview section, no status flow changes.
 
-## Questions (with my recommendation)
+## Answers (crew, 2 Nov, from owner rulings)
+
+Q1 (c) model family AND item class, each a multi-select filter, beside brand and category. Q2 (a).
+Q3 (a). Q4 (a), decided from the ruling's wording; the PR body says so, so the owner can bump it.
+Q5 (a).
+
+## Questions (as asked)
 
 Q1. "Series" for bulk assignment: products have no series column. (a) model family (`family_code`
     from the code), (b) item class, (c) both. Recommendation: (c), cheap to offer both since both

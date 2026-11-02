@@ -41,7 +41,7 @@ from app.schemas.price_tag import (
     ReviewCommentResponse,
     TagItemLookupItem,
 )
-from app.services.dealer_kit import tag_data_service
+from app.services.dealer_kit import product_tag_template_service, tag_data_service
 from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
 from app.services.error_handler import AppException, handle_not_found
 from app.services import price_tag_review_service
@@ -462,6 +462,10 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
         # first, because "you have no dealer" is more use than a guard message about
         # a line on a request that was never going to be accepted anyway.
         PriceTagRequestService.validate_submittable(req)
+        # PRICETAG-TEMPLATE-PER-PRODUCT: a product with several published
+        # templates needs the salesperson's pick before marketing gets it.
+        with company_scope(db, frozenset({req.company_id})):
+            product_tag_template_service.require_line_templates(db, req)
         # The set guard used to refuse here. Warn and allow instead (D2, AC-S2-7):
         # a guarded line with no package carries a `package_warning` marketing reads
         # and the request goes through.

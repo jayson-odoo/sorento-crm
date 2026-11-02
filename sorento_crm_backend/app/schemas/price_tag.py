@@ -70,6 +70,10 @@ class PriceTagRequestLineCreate(BaseModel):
     # candidates are known.
     promotion_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
+    # PRICETAG-TEMPLATE-PER-PRODUCT: the salesperson's template pick. Checked
+    # in the service against the product's published links; anything else is
+    # dropped, never stored.
+    tag_template_id: Optional[str] = None
 
 
 class PriceTagReviseLineIn(BaseModel):
@@ -98,6 +102,7 @@ class PriceTagReviseLineIn(BaseModel):
     quantity: int = Field(default=1, ge=1)
     remarks: Optional[str] = None
     promotion_id: Optional[str] = None
+    tag_template_id: Optional[str] = None
     manual_sell_price: Optional[ManualSellPrice] = None
 
 
@@ -237,6 +242,10 @@ class PriceTagRequestLineResponse(BaseModel):
     # while live), so the read-only line reads "<name> (expired <date>)".
     promotion_expired_on: Optional[date] = None
     manual_sell_price: Optional[Decimal] = None
+    # PRICETAG-TEMPLATE-PER-PRODUCT: the stored template pick, and its name
+    # (resolved, not stored - a bare id is never shown).
+    tag_template_id: Optional[str] = None
+    tag_template_name: Optional[str] = None
     # D3 (S7): why `sell_price` is what it is - `manual` | `promotion` |
     # `list`. Resolved alongside `list_price`/`sell_price`, same reason.
     sell_price_basis: Optional[str] = None
