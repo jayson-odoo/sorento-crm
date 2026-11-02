@@ -25,3 +25,15 @@ Notes:
 - Sidebar navigation needed the throwaway DB's tenant modules and Super Admin permissions seeded;
   the first screenshots before the brand/product company fix showed blank brands because the seed
   rows had no company (real rows always do).
+
+## Canvas flow (mock v5, 3 Nov)
+
+- `06-v5-wc-page.png`: the tab with no table: pickers, the page strip (cover, items, a left-out page
+  greyed with "-"), the open page with Leave out / Add accessory.
+- `07-v5-area-typed.png`: the AREA spot clicked on the open page; it started as the Section heading
+  `UNIT` (stored area empty), typed `unit & podium facilities`, Enter: saved as
+  `UNIT & PODIUM FACILITIES` (DB row checked) and the page re-rendered with it.
+- Put back on the left-out page: the thumbnail got its number back (`4 SRTFT...`).
+- Not verified in this browser: drag in the strip. A keyboard attempt did nothing because the handle
+  was not focusable (fixed in 95f990d82f with `tabIndex={0}`), and the dev server then hit the
+  sandbox's background time limit. Crew's browser pass should drag one thumbnail.
