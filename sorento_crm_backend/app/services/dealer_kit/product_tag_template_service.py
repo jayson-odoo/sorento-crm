@@ -436,7 +436,7 @@ def preview(db: Session, *, price_mode: str, lines: list[dict], viewer) -> dict:
         PriceTagRequestLinePart,
         PriceTagRequestTag,
     )
-    from app.services.dealer_kit import tag_data_service, tag_sheet_export_service
+    from app.services.dealer_kit import tag_data_service
     from app.services.dealer_kit.pricing import line_pricing
 
     selling = price_mode == "selling"
@@ -524,12 +524,26 @@ def preview(db: Session, *, price_mode: str, lines: list[dict], viewer) -> dict:
 
     request.lines = [line for _, line in built]
     rows = tag_data_service.resolve_tags_live(db, request) if built else []
-    code_by_line = {row["line_id"]: row.get("code") for row in rows}
+    return _with_templates(db, rows, built)
 
-    links = published_links(db, [line.product_id for _, line in built if line.product_id])
+
+def _with_templates(db: Session, rows: list[dict], keyed_lines: list[tuple[str, object]]) -> dict:
+    """Pick each line's template, then the media maps for rows + templates.
+
+    ``keyed_lines`` is ``(key, line)``: the client's key on the form, the real
+    line id for a saved request. Pick order: the line's own pick when it is
+    one of the product's published links, else its first link, else the
+    family default among every published price tag template.
+    """
+    from app.services.dealer_kit import tag_sheet_export_service
+
+    code_by_line = {}
+    for row in rows:
+        code_by_line.setdefault(row["line_id"], row.get("code"))
+    links = published_links(db, [line.product_id for _, line in keyed_lines if line.product_id])
     everything: Optional[list[TagTemplate]] = None
     templates: dict[str, dict] = {}
-    for key, line in built:
+    for key, line in keyed_lines:
         allowed = links.get(str(line.product_id), []) if line.product_id else []
         chosen = next((t for t in allowed if t.id == line.tag_template_id), None)
         if chosen is None and allowed:
@@ -545,8 +559,21 @@ def preview(db: Session, *, price_mode: str, lines: list[dict], viewer) -> dict:
 
     combined_doc = {
         "layers": [
-            layer for payload in templates.values() for layer in (payload["doc"] or {}).get("layers", [])
+            layer
+            for payload in templates.values()
+            for layer in (payload["doc"] or {}).get("layers", [])
         ]
     }
     rows, media = tag_sheet_export_service.design_media(db, None, combined_doc, rows=rows)
     return {"lines": rows, "templates": templates, **media}
+
+
+def preview_for_request(db: Session, request) -> dict:
+    """The same answer for a SAVED request (PRICETAG-SELF-APPROVAL #2101's
+    approve screen): rows carry the request's real line and tag ids,
+    ``templates`` is keyed by the real line id, and the data is the
+    resolver's own (pins included), exactly what the proof would draw."""
+    from app.services.dealer_kit import tag_data_service
+
+    rows = list(tag_data_service.resolve_request_line_data(db, request))
+    return _with_templates(db, rows, [(line.id, line) for line in request.lines or []])

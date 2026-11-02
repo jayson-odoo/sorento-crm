@@ -859,6 +859,20 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
         with nothing written. Same gate, viewer and company scope as
         `line-pricing`, so the price drawn is the price the form already shows."""
         _assert_visible(db, token.contact_id)
+        if payload.request_id:
+            # A saved request of THIS contact's own (404 otherwise, same as the
+            # detail route), resolved under the request's own company.
+            request_id = validate_uuid_path(payload.request_id, resource="Price tag request")
+            req = _require_own_request(db, token, request_id)
+            with company_scope(db, frozenset({req.company_id})):
+                result = product_tag_template_service.preview_for_request(db, req)
+            return TagPreviewOut(
+                lines=[ResolvedLineData.model_validate(row) for row in result["lines"]],
+                templates=result["templates"],
+                assets=result["assets"],
+                images=result["images"],
+                fonts=result["fonts"],
+            )
         with company_scope(db, frozenset({_resolve_company(db, token)})):
             result = product_tag_template_service.preview(
                 db,

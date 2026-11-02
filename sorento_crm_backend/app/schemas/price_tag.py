@@ -1661,8 +1661,13 @@ class TagPreviewLineIn(BaseModel):
 
 
 class TagPreviewIn(BaseModel):
+    """Either the form in progress (``lines``) or a saved request of the
+    caller's own (``request_id``, #2101's approve screen). ``request_id``
+    wins when both are sent."""
+
     price_mode: Literal["list", "selling"] = "list"
     lines: list[TagPreviewLineIn] = Field(default_factory=list, max_length=50)
+    request_id: Optional[str] = None
 
 
 class TagPreviewTemplate(BaseModel):
