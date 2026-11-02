@@ -164,6 +164,7 @@ WRITE_ROUTES = {
     ("POST", "/attachments"): None,
     ("DELETE", "/attachments/{link_id}"): None,
     ("POST", "/lookups/line-pricing"): None,
+    ("POST", "/lookups/tag-preview"): None,
     ("POST", "/sales-opportunities"): "sales.opportunities.add",
     ("PATCH", "/sales-opportunities/{opportunity_id}"): "sales.opportunities.edit",
     ("POST", "/submissions/new_product_application"): "procurement.new_product_applications.create",
