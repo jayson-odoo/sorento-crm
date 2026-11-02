@@ -170,11 +170,36 @@ def render(body_html: Optional[str], context: Dict[str, Any]) -> Optional[str]:
     if not body_html:
         return body_html
 
-    def _replace(match: "re.Match[str]") -> str:
+    from app.services.quotation_cover_service import MAX_HTML
+
+    def _value(match: "re.Match[str]") -> Optional[str]:
         token = match.group(1)
         if token not in MERGE_FIELD_TOKENS:
-            return match.group(0)
+            return None
         return _as_text(context.get(token))
+
+    # Size the result before building it: the values are not capped, so a repeated token with a
+    # large value would otherwise build gigabytes before any limit could see it.
+    total = len(body_html)
+    for match in _TOKEN_PATTERN.finditer(body_html):
+        value = _value(match)
+        if value is not None:
+            total += len(value) - len(match.group(0))
+            if total > MAX_HTML:
+                break
+    if total > MAX_HTML:
+        raise AppException(
+            status_code=422,
+            message=(
+                "The text with its merge fields filled in is too long "
+                f"(over {MAX_HTML} characters)."
+            ),
+            code="quotation_template_rendered_too_long",
+        )
+
+    def _replace(match: "re.Match[str]") -> str:
+        value = _value(match)
+        return match.group(0) if value is None else value
 
     return _TOKEN_PATTERN.sub(_replace, body_html)
 
