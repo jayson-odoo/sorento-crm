@@ -2480,10 +2480,12 @@ export function FulfilmentBoardPanel({
           setGuideEmail((current) => ({ ...current, status: 'failed' }));
       }
     })();
-    // `buildConfirmOrders` and the mutation are read on this render; re-run on a new board or
-    // a changed decision (a newer save taken in, a remark kept), so the words follow the press.
+    // `buildConfirmOrders` and the mutation are read on this render; re-run on a new board read
+    // or a changed decision (a newer save taken in, a remark kept), so the words follow the press.
+    // `rawBoard.dataUpdatedAt`, never `board.data`: the latter is rebuilt on renders
+    // (`uncoverChangedLines`), and depending on it re-ran this effect into a render loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [guideOpen, guideRefreshing, guideRefreshFailed, board.data, draftWithoutPreMark]);
+  }, [guideOpen, guideRefreshing, guideRefreshFailed, rawBoard.dataUpdatedAt, draftWithoutPreMark]);
 
   /**
    * OI-SPLIT-GUIDE (UAC F26): the board's own Split delivery gets the same Remark facts for
