@@ -54,7 +54,10 @@ export interface SpecSheetPage {
   drawing_attachment_id: string | null;
   accessories: SpecSheetAccessory[];
   picked: string[];
+  /** Typed on the page, else `area_default`. */
   area: string;
+  /** The Section heading the line sits under on the Lines tab (owner, mock v5). */
+  area_default: string;
   comment: string;
   marker: string;
   hidden: boolean;
