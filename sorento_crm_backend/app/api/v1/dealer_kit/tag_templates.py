@@ -21,6 +21,10 @@ from app.schemas.price_tag import (
     ProductTagData,
     ResolvePreviewIn,
     ResolvePreviewOut,
+    TemplateAssignFilter,
+    TemplateAssignIn,
+    TemplateAssignOut,
+    TemplateAssignPreviewOut,
     TagTemplateCreate,
     TagTemplateFromTagCreate,
     TagTemplatePublishIn,
@@ -361,3 +365,42 @@ def restore_tag_template_version(
     db.commit()
     db.refresh(t)
     return _response_for(t)
+
+
+# ---------------------------------------------------------------------------
+# PRICETAG-TEMPLATE-PER-PRODUCT: bulk assignment to products
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{template_id}/assign/preview", response_model=TemplateAssignPreviewOut)
+def preview_template_assignment(
+    template_id: str,
+    payload: TemplateAssignFilter,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """How many products the filter matches, and how many already carry the
+    template - the dialog's live count."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return TemplateAssignPreviewOut(
+        **product_tag_template_service.bulk_preview(db, template_id, payload.model_dump())
+    )
+
+
+@router.post("/{template_id}/assign", response_model=TemplateAssignOut)
+def assign_template_to_products(
+    template_id: str,
+    payload: TemplateAssignIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_MANAGE),
+):
+    """Add the template to (or remove it from) every product the filter matches."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    data = payload.model_dump()
+    result = product_tag_template_service.bulk_assign(
+        db, template_id, data, data["action"], user_id=_user_id(user)
+    )
+    db.commit()
+    return TemplateAssignOut(**result)

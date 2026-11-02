@@ -37,6 +37,27 @@ from app.services.error_handler import AppException
 
 TEMPLATE_REQUIRED_MESSAGE = "Pick a tag template for this line."
 
+# PS-SPEC-SHEET (#2103) keeps its project spec sheet pages (`spec_cover`,
+# `spec_page`, 16:9) in the same table. They are never a price tag: not
+# linkable, not assignable, never auto-picked or used as a family default.
+NON_PRICE_TAG_FAMILY_PREFIX = "spec_"
+
+
+def is_price_tag_family(family: Optional[str]) -> bool:
+    return not (family or "").startswith(NON_PRICE_TAG_FAMILY_PREFIX)
+
+
+def _price_tag_only(query: Query) -> Query:
+    return query.filter(~TagTemplate.family.startswith(NON_PRICE_TAG_FAMILY_PREFIX))
+
+
+def _not_a_price_tag() -> AppException:
+    return AppException(
+        status_code=422,
+        message="This template is not a price tag template.",
+        code="NOT_A_PRICE_TAG_TEMPLATE",
+    )
+
 
 def _scoped(db: Session, model) -> Query:
     query = db.query(model)
@@ -80,7 +101,7 @@ def published_links(db: Session, product_ids: Iterable[str]) -> dict[str, list[T
     if not ids:
         return {}
     rows = (
-        _scoped(db, TagTemplate)
+        _price_tag_only(_scoped(db, TagTemplate))
         .join(ProductTagTemplate, ProductTagTemplate.template_id == TagTemplate.id)
         .filter(
             ProductTagTemplate.product_id.in_(ids),
@@ -127,11 +148,13 @@ def set_product_templates(
             wanted.append(tid)
     if wanted:
         found = {
-            row.id
+            row.id: row
             for row in _scoped(db, TagTemplate).filter(TagTemplate.id.in_(wanted)).all()
         }
         if len(found) != len(wanted):
             raise _not_found("Tag template")
+        if any(not is_price_tag_family(row.family) for row in found.values()):
+            raise _not_a_price_tag()
 
     existing = {
         link.template_id: link
@@ -201,6 +224,8 @@ def _template_or_404(db: Session, template_id: str) -> TagTemplate:
     )
     if template is None:
         raise _not_found("Tag template")
+    if not is_price_tag_family(template.family):
+        raise _not_a_price_tag()
     return template
 
 
@@ -299,6 +324,20 @@ def require_line_templates(db: Session, request) -> None:
             )
 
 
+def template_item(template: TagTemplate) -> dict:
+    """``ProductTagTemplateItem``: what the product page and the line read."""
+    version = template.published_version
+    size = (version.print_size if version is not None else template.print_size) or {}
+    return {
+        "id": template.id,
+        "name": template.name,
+        "family": template.family,
+        "published": template.published_version_id is not None,
+        "width_mm": size.get("width_mm"),
+        "height_mm": size.get("height_mm"),
+    }
+
+
 def template_names(db: Session, template_ids: Iterable[str]) -> dict[str, str]:
     ids = {tid for tid in (_uuid_or_none(t) for t in template_ids) if tid}
     if not ids:
@@ -347,7 +386,7 @@ def _published_templates(db: Session) -> list[TagTemplate]:
     """Every published template, in the request designer's own order
     (``list_tag_templates``: family, then name)."""
     return (
-        _scoped(db, TagTemplate)
+        _price_tag_only(_scoped(db, TagTemplate))
         .filter(TagTemplate.published_version_id.isnot(None))
         .order_by(TagTemplate.family, TagTemplate.name)
         .all()

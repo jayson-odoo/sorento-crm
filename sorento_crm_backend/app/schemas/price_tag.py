@@ -1600,3 +1600,82 @@ class RequestVersionSummary(BaseModel):
     commit_message: Optional[str] = None
     created_by_name: Optional[str] = None
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# PRICETAG-TEMPLATE-PER-PRODUCT
+# ---------------------------------------------------------------------------
+
+
+class ProductTagTemplateItem(BaseModel):
+    """One template linked to a product, as the product page and the request
+    line read it. ``published`` False = linked but offered nowhere until it is
+    published again."""
+
+    id: str
+    name: str
+    family: str
+    published: bool
+    width_mm: Optional[float] = None
+    height_mm: Optional[float] = None
+
+
+class ProductTagTemplatesUpdate(BaseModel):
+    template_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class TemplateAssignFilter(BaseModel):
+    """Which products a bulk assignment reaches: AND across kinds, OR within."""
+
+    brand_ids: list[str] = Field(default_factory=list, max_length=500)
+    category_ids: list[str] = Field(default_factory=list, max_length=500)
+    item_class_ids: list[str] = Field(default_factory=list, max_length=500)
+    family_codes: list[str] = Field(default_factory=list, max_length=500)
+
+
+class TemplateAssignIn(TemplateAssignFilter):
+    action: Literal["add", "remove"]
+
+
+class TemplateAssignPreviewOut(BaseModel):
+    matched: int
+    already_linked: int
+
+
+class TemplateAssignOut(BaseModel):
+    changed: int
+
+
+class TagPreviewLineIn(BaseModel):
+    """One line of the form in progress, as the live preview reads it."""
+
+    key: str = Field(..., min_length=1, max_length=64)
+    line_type: str = Field(..., pattern=r"^(product|product_set)$")
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+    combo_id: Optional[str] = None
+    parts: list[LinePartIn] = Field(default_factory=list, max_length=50)
+    promotion_id: Optional[str] = None
+    manual_sell_price: Optional[ManualSellPrice] = None
+    tag_template_id: Optional[str] = None
+
+
+class TagPreviewIn(BaseModel):
+    price_mode: Literal["list", "selling"] = "list"
+    lines: list[TagPreviewLineIn] = Field(default_factory=list, max_length=50)
+
+
+class TagPreviewTemplate(BaseModel):
+    id: str
+    name: str
+    family: str
+    doc: dict
+    print_size: dict
+
+
+class TagPreviewOut(DesignMediaMixin):
+    """Per line key: the template to draw and the resolved tag data
+    (``lines[].line_id`` is the client's key). Nothing is written."""
+
+    lines: list[ResolvedLineData] = []
+    templates: dict[str, TagPreviewTemplate] = {}
