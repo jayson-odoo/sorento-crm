@@ -133,8 +133,23 @@ def _sheet(tag_ids: list[str]) -> dict:
     }
 
 
+def _placed_tag_ids(db, request_id: str) -> list[str]:
+    """Each printed tag as many times as its quantity: what the client builder seats."""
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    db.expire_all()
+    req = PriceTagRequestService.get_request(db, request_id)
+    return [
+        tag.id
+        for line in req.lines
+        for tag in line.tags or []
+        if not tag.print_excluded
+        for _ in range(max(tag.quantity or 0, 1))
+    ]
+
+
 def _approve(c, db, request_id: str, doc: dict | None = None):
-    body = {"doc": doc if doc is not None else _sheet(_tag_ids(db, request_id))}
+    body = {"doc": doc if doc is not None else _sheet(_placed_tag_ids(db, request_id))}
     return c.post(f"{_BASE}/{request_id}/approve", json=body)
 
 
@@ -704,6 +719,84 @@ class TestTheServerWritesTheTagContent:
         assert "RM 1.00 NETT" not in str(placed["layers"])
         assert placed["x_mm"] == 12
         assert "junk" not in saved
+
+    def test_the_saved_layers_are_the_templates_bound_to_the_line(self, client):
+        """N2: the rebuild copies the published layers and binds groups to the line."""
+        from app.models.dealer_kit import TagTemplate, TagTemplateVersion
+
+        c, db, state = client
+        template = db.query(TagTemplate).filter(TagTemplate.id == state["template_id"]).first()
+        version = (
+            db.query(TagTemplateVersion)
+            .filter(TagTemplateVersion.id == template.published_version_id)
+            .first()
+        )
+        group = {
+            "id": "grp",
+            "type": "group",
+            "x_mm": 0,
+            "y_mm": 0,
+            "width_mm": 40,
+            "height_mm": 20,
+            "rotation_deg": 0,
+            "z_index": 1,
+            "props": {"kind": "group", "binding": {"product_id": "someone-else"}, "children": []},
+        }
+        version.doc = {**version.doc, "layers": [*version.doc["layers"], group]}
+        db.commit()
+        body = _submitted(c, db)
+        product_id = _row(db, body["id"]).lines[0].product_id
+
+        _approve(c, db, body["id"])
+
+        placed = _versions(db, body["id"])[0].doc["sheets"][0]["tags"][0]
+        expected = [*version.doc["layers"][:-1], {**group, "props": {**group["props"], "binding": {"product_id": product_id}}}]
+        assert placed["layers"] == expected
+
+    def test_a_sheet_that_leaves_a_tag_out_is_refused(self, client):
+        """N1: every printed tag is placed exactly its quantity of times."""
+        c, db, _ = client
+        body = _submitted(c, db)
+        row = _row(db, body["id"])
+        row.lines[0].tags[0].quantity = 3
+        db.commit()
+        tag_id = _tag_ids(db, body["id"])[0]
+
+        res = _approve(c, db, body["id"], _sheet([tag_id]))
+
+        assert res.status_code == 422, res.text
+        assert _versions(db, body["id"]) == []
+        assert _approve(c, db, body["id"], _sheet([tag_id] * 3)).status_code == 200
+
+    def test_a_not_printed_tag_may_be_left_out(self, client):
+        c, db, _ = client
+        product_a = _seed_product(db)
+        product_b = _seed_product(db)
+        payload = _payload(product_a)
+        payload["lines"].append({"line_type": "product", "product_id": product_b})
+        created = c.post(_BASE, json=payload).json()
+        c.post(f"{_BASE}/{created['id']}/submit")
+        row = _row(db, created["id"])
+        row.lines[1].tags[0].print_excluded = True
+        db.commit()
+        printed = row.lines[0].tags[0].id
+
+        res = _approve(c, db, created["id"], _sheet([printed]))
+
+        assert res.status_code == 200, res.text
+
+    def test_a_non_finite_position_is_clamped_not_a_500(self, client):
+        c, db, _ = client
+        body = _submitted(c, db)
+        doc = _sheet(_tag_ids(db, body["id"]))
+        doc["sheets"][0]["tags"][0]["x_mm"] = "nan"
+        doc["sheets"][0]["tags"][0]["y_mm"] = "Infinity"
+
+        res = _approve(c, db, body["id"], doc)
+
+        assert res.status_code == 200, res.text
+        placed = _versions(db, body["id"])[0].doc["sheets"][0]["tags"][0]
+        assert (placed["x_mm"], placed["y_mm"]) == (0, 0)
 
     def test_a_tag_placed_more_often_than_its_quantity_is_refused(self, client):
         c, db, _ = client

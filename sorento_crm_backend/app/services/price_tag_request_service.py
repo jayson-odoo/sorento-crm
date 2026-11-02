@@ -14,6 +14,7 @@ The status graph:
 """
 import copy
 import logging
+import math
 import uuid
 from typing import Optional
 from datetime import date, datetime, timedelta
@@ -1726,8 +1727,10 @@ Marketing's own work is not part of the form's payload, so it is captured
         """``(sheet id, [placement])`` from a client sheet, checked (R3).
 
         A tag sheet; at most ``_MAX_SHEETS`` sheets; every placement prints one
-        of this request's tags and no tag more often than its quantity (or once,
-        for a tag marked Not printed, which arrange never seats anyway).
+        of this request's tags. Every printed tag is placed exactly as many times
+        as its quantity (review N1: a sheet that leaves a tag out would print a
+        PDF silently missing it); a tag marked Not printed may be placed up to
+        its quantity, since the export drops it anyway.
         """
         def refuse(message: str):
             return AppException(status_code=422, message=message, code="INVALID_DOC")
@@ -1741,6 +1744,12 @@ Marketing's own work is not part of the form's payload, so it is captured
             tag.id: max(int(tag.quantity or 0), 1)
             for line in request.lines
             for tag in line.tags or []
+        }
+        excluded = {
+            tag.id
+            for line in request.lines
+            for tag in line.tags or []
+            if tag.print_excluded
         }
         seen: dict[str, int] = {}
         out: list[tuple[str, list[dict]]] = []
@@ -1760,6 +1769,18 @@ Marketing's own work is not part of the form's payload, so it is captured
             out.append((str(sheet.get("id") or f"sheet-{len(out) + 1}")[:64], tags))
         if not seen:
             raise refuse("The tag sheet has no tags on it.")
+        short = [
+            tag_id
+            for tag_id, wanted in quantity.items()
+            if tag_id not in excluded and seen.get(tag_id, 0) != wanted
+        ]
+        if short:
+            raise AppException(
+                status_code=422,
+                message="The tag sheet leaves out some of this request's tags. Reload and try again.",
+                code="INVALID_DOC",
+                detail=",".join(short),
+            )
         return out
 
     @staticmethod
@@ -1778,8 +1799,16 @@ Marketing's own work is not part of the form's payload, so it is captured
         import copy as _copy
         from app.services.dealer_kit import product_tag_template_service
 
-        sheets = PriceTagRequestService._placements(request, doc)
         templates = product_tag_template_service.preview_for_request(db, request)["templates"]
+        if any(line.id not in templates for line in request.lines if line.tags):
+            # The screen draws nothing for such a line, so its tags are missing
+            # from the sheet: say why rather than "leaves out some tags".
+            raise AppException(
+                status_code=422,
+                message="An item on this request has no tag template. Escalate it to marketing.",
+                code="NO_TEMPLATE",
+            )
+        sheets = PriceTagRequestService._placements(request, doc)
         line_by_tag = {
             tag.id: line for line in request.lines for tag in line.tags or []
         }
@@ -1789,6 +1818,9 @@ Marketing's own work is not part of the form's payload, so it is captured
                 n = float(value)
             except (TypeError, ValueError):
                 n = 0.0
+            if not math.isfinite(n):
+                # JSONB refuses NaN/Infinity, which would surface as a 500.
+                n = low
             return min(max(n, low), high)
 
         imposition_in = doc.get("imposition") if isinstance(doc.get("imposition"), dict) else {}
