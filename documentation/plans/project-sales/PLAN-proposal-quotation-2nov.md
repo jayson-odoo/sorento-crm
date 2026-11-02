@@ -87,9 +87,12 @@ version (PO binding, samples, SO draft) keeps working.
   rollback undoes the save; the screen re-sends with `qty_over_reason`). PO already has a reason -> nothing.
 - `serialize_pos` adds `qty_over_reason`, `qty_over_reason_at`, `qty_over_reason_by_name`.
 
-### Party types
-- `PARTY_TYPES` gains `tender_party`, `subcontractor` (`project_reference_service.py:26`); FE party type
-  labels "Tender party", "Subcontractor".
+### Party types and the "To" picker
+- `PARTY_TYPES` gains `tender_party` only (`project_reference_service.py:26`); FE label "Tender party".
+  PS-REGISTRATION-V3 (#2099) owns `subcontractor` and `interior_designer` (agreed on #2097, 2 Nov).
+- The proposal "To" picker reuses #2099's read: `GET /api/v1/projects/{project_id}/parties`
+  (`project_party_contact_service.list_project_parties`, FE `useProjectParties(projectId)`). Wired after
+  #2099 merges (merge main, then wire); until then the recipient block stays as today.
 
 ### Bot / reports
 - `GET /project-sales/projects/{id}/quotations` rows gain `document_kind` and `document_no`; MCP catalog text
