@@ -211,6 +211,7 @@ import { QuotationScopesTab } from './QuotationScopesTab';
 import {
   QuotationHeaderTab,
   QuotationSignaturesTab,
+  QuotationCoverLetterTab,
   QuotationTermsTab,
 } from './QuotationDocumentTabPanels';
 
@@ -2002,6 +2003,38 @@ describe('QuotationDocumentClient cover page fields', () => {
 
     const inner = await screen.findByText('INNER ITEM');
     await expectTermsClass(inner);
+  });
+
+  it('polish 2: the Cover letter read panel keeps prose and not the terms class', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({ cover_letter_html: '<p>LETTER ONE</p><p>LETTER TWO</p>' }),
+    );
+    renderScreen(<QuotationCoverLetterTab />);
+
+    const one = await screen.findByText('LETTER ONE');
+    const loaders = import.meta.glob('/lib/terms-html.ts') as Record<
+      string,
+      () => Promise<{ TERMS_HTML_CLASS: string }>
+    >;
+    const { TERMS_HTML_CLASS } = await loaders['/lib/terms-html.ts']();
+    const tokens = String(TERMS_HTML_CLASS).split(/\s+/).filter(Boolean);
+    const chain: HTMLElement[] = [];
+    for (let el = one.parentElement; el && el !== document.body && chain.length < 6; el = el.parentElement) {
+      chain.push(el);
+    }
+    expect(chain.some((el) => el.classList.contains('prose'))).toBe(true);
+    expect(chain.some((el) => tokens.every((t) => el.classList.contains(t)))).toBe(false);
+  });
+
+  it('polish 2: the Email line comes before the Attn line in the To block', async () => {
+    getQuotationDocument.mockResolvedValue(coverDocument());
+    renderScreen(<QuotationHeaderTab />);
+
+    const email = await screen.findByText('Email:');
+    const attn = screen.getByText('Attn:');
+    expect(
+      email.compareDocumentPosition(attn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it('polish: Email shows inline in the To block as "Email:" then the address, like Attn', async () => {
