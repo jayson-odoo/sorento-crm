@@ -1180,7 +1180,7 @@ def test_the_pdf_shows_one_quotation_no_row_built_from_document_no_and_issue_no(
         document, issue = _one_line_issue(db)
         # Guards old issues (UAC F1/F2): force layout 1.
         db.flush()
-        db.execute(text("update projects.quotation_issues set layout_version = 1 where id = :i"), {"i": str(issue.id)})
+        db.execute(text("update quotation_issues set layout_version = 1 where id = :i"), {"i": str(issue.id)})
         db.expire_all()
         issue.our_ref_text = f"{document.document_no} (R{issue.issue_no})"
         db.flush()

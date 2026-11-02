@@ -540,7 +540,7 @@ def test_sign_page_our_ref_is_built_from_document_no_and_issue_no_not_the_stored
         record = qdocs.issue(db, document=document, actor_user_id=owner)
         # Guards old issues (UAC F1/F2): force layout 1.
         db.flush()
-        db.execute(text("update projects.quotation_issues set layout_version = 1 where id = :i"), {"i": str(record.id)})
+        db.execute(text("update quotation_issues set layout_version = 1 where id = :i"), {"i": str(record.id)})
         db.expire_all()
         record.our_ref_text = f"{document.document_no} (R{record.issue_no})"
         db.flush()
