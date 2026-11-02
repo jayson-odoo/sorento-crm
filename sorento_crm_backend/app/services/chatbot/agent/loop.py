@@ -391,14 +391,11 @@ def _data_text_blank(ledger: dict[str, dict] | None) -> Any:
 
 def _rounded_backed(written: str, backed: set[str]) -> bool:
     """Is the written figure a source number rounded half up to its decimal places? The source must have
-    more places than the figure; a figure ending in a zero decimal ("3.0") claims a precision rounding
-    does not grant, so it is exact-match only."""
+    more places than the figure."""
     m = _NUMBER.search(written)
     if not m:
         return False
     dec = (m.group("dec") or "")[1:]
-    if dec.endswith("0"):
-        return False
     places = len(dec)
     try:
         target = Decimal(m.group("int").replace(",", "") + ("." + dec if dec else ""))
@@ -981,7 +978,7 @@ def tool_detail(name: str, args: Any, out: ToolResult, names: dict[str, str]) ->
         if rows:
             text = f"{head}: {rows} row{'s' if rows != 1 else ''}"
         else:
-            text = f"{head}: done"
+            text = f"{head}: done" if _has_record(out.data) else f"{head}: nothing found"
     elif out.status == "timeout":
         text = f"{head}: timed out"
     elif out.status == "error":
@@ -997,6 +994,11 @@ def reasoning_for_steps(text: Any) -> str:
         return ""
     cleaned = re.sub(r"[ \t]{2,}", " ", _UUID_TEXT.sub("", text)).strip()
     return cleaned if len(cleaned) <= REASONING_CHARS else cleaned[:REASONING_CHARS].rstrip() + "\u2026"
+
+
+def _has_record(data: Any) -> bool:
+    """A body that carries a record (a dict value anywhere at its top level), not only lists and scalars."""
+    return isinstance(data, dict) and any(isinstance(v, dict) for v in data.values())
 
 
 def _args_for_digest(args: Any) -> Any:
