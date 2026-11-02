@@ -236,3 +236,26 @@ def test_each_staff_feedback_row_names_its_scope_id(fb):
     assert ids[str(fb.w.trap.id)] == str(fb.w.unit_scope.id)
     assert ids[str(fb.w.plain.id)] == str(fb.w.guard_scope.id)
     assert all(row["scope_label"] for row in request["rows"])
+
+
+def test_handled_on_a_note_older_than_the_listed_page_answers_with_that_note(fb, monkeypatch):
+    """The staff list is capped to the latest requests; ticking a note in an older one must not 500."""
+    from app.services import quotation_amendment_service as amend
+
+    monkeypatch.setattr(amend, "FEEDBACK_LIST_LIMIT", 1)
+    assert _send(fb, [_item(fb.w.trap, "note", note="old")]).status_code == 200
+    from app.models.projects import QuotationAmendmentRequestRow
+
+    fb.db.expire_all()
+    old_row = (
+        fb.db.query(QuotationAmendmentRequestRow)
+        .filter(QuotationAmendmentRequestRow.note == "old")
+        .one()
+    )
+    assert _send(fb, [_item(fb.w.trap, "note", note="new")]).status_code == 200
+    response = fb.client.patch(f"{_root(fb)}/feedback/{old_row.id}", json={"handled": True})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["id"] == str(old_row.id)
+    assert body["note"] == "old"
+    assert body["handled_at"] is not None

@@ -354,10 +354,14 @@ def _record_requested(
 # ------------------------------------------------------------------ staff
 
 
-def feedback_for_document(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
+def feedback_for_document(
+    db: Session, document: ProjectQuotationDocument, *, request_id: Optional[str] = None
+) -> Dict[str, Any]:
     """The latest requests on the document, newest first, rows in line order.
 
     ``open_count`` counts every unhandled row of the document, not just the ones listed.
+    ``request_id`` lists that one request instead, however old: the Handled tick answers with its
+    row, which can sit in a request older than the latest page.
     """
     from app.models.user import User
 
@@ -374,11 +378,15 @@ def feedback_for_document(db: Session, document: ProjectQuotationDocument) -> Di
         )
         .scalar()
     ) or 0
-    requests = (
+    query = (
         db.query(QuotationAmendmentRequest, ProjectQuotationIssue)
         .join(ProjectQuotationIssue, ProjectQuotationIssue.id == QuotationAmendmentRequest.issue_id)
         .filter(ProjectQuotationIssue.document_id == document.id)
-        .order_by(QuotationAmendmentRequest.submitted_at.desc(), QuotationAmendmentRequest.id)
+    )
+    if request_id is not None:
+        query = query.filter(QuotationAmendmentRequest.id == str(request_id))
+    requests = (
+        query.order_by(QuotationAmendmentRequest.submitted_at.desc(), QuotationAmendmentRequest.id)
         .limit(FEEDBACK_LIST_LIMIT)
         .all()
     )

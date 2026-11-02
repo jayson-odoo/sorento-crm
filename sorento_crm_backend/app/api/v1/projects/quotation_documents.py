@@ -800,7 +800,7 @@ def handle_quotation_feedback_row(
         validate_uuid_path(row_id, resource="Note")
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
-        amendments.set_handled(
+        row = amendments.set_handled(
             db,
             document=document,
             row_id=row_id,
@@ -808,9 +808,16 @@ def handle_quotation_feedback_row(
             actor_user_id=current_user["id"],
         )
         db.commit()
-        feedback = amendments.feedback_for_document(db, document)
+        # Read back through the row's OWN request: the document list is capped to the latest
+        # requests, and an older note must still answer with itself rather than a 500.
+        feedback = amendments.feedback_for_document(
+            db, document, request_id=str(row.request_id)
+        )
         return next(
-            row for request in feedback["requests"] for row in request["rows"] if row["id"] == row_id
+            item
+            for request in feedback["requests"]
+            for item in request["rows"]
+            if item["id"] == str(row.id)
         )
     except Exception as exc:
         db.rollback()
