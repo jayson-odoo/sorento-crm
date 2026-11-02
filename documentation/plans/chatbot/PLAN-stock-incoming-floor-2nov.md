@@ -1,7 +1,7 @@
 # PLAN: the stock check and the ETA ask tell one shipment the same date (STOCK-INCOMING-FLOOR)
 
-Status: in progress, small fix track (size S: under 300 changed lines, no migration, no auth/RBAC
-change, no new ingest surface). Fix A building; Fix B waits for the owner.
+Status: built, in review; small fix track (size S: under 300 changed lines, no migration, no auth/RBAC
+change, no new ingest surface). Fix A built; Fix B waits for the owner.
 UAC: `stock-incoming-floor-2nov-acceptance-criteria.md`.
 
 ## Problem (production WhatsApp, 2 Nov 2026)

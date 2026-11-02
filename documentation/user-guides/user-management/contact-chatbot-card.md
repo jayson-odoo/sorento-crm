@@ -16,6 +16,11 @@ scroll to the **Chatbot** card.
   just going quiet on that topic, **Stock denial lanes** on
   **[Chatbot settings](chatbot-settings.md)** also has to be switched on - that is a separate,
   system-wide switch.)
+* **ETA buffer days** - on by default. When on, every arrival date the bot tells this contact
+  is the shipment's date plus the product's **ETA offset (days)** (set on the product, else on
+  its category). A stock check counts a shipment as incoming while the date this contact is told
+  is today or later, so a stock check and a question about the ETA name the same date. When off,
+  the contact is told the shipment's own date.
 * **Episode recall** - whether the bot may pull details back in from an earlier closed topic in
   this same conversation when the contact refers back to it (e.g. "same report as yesterday"),
   instead of asking everything over again. This overrides the system-wide default set on
