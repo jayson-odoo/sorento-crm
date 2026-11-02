@@ -961,3 +961,57 @@ def test_a_hand_picked_accessory_carries_its_own_quoted_price_and_the_tab_view_s
             shown = _public(page)
             assert not any(k.startswith("_") for k in shown)
             assert all(not any(k.startswith("_") for k in a) for a in shown["accessories"])
+
+
+def test_a_zero_priced_line_carries_no_price_and_the_page_list_route_never_returns_one():
+    """B3: zero = no separate charge, printed blank (as the quotation PDF). B4: the GET route's
+    page list carries no price at any depth."""
+    import json
+
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c = _chain(db)
+        # A component quoted at zero after its parent, picked under the WC.
+        hose = _product(db, c["category"].id, c["uom"], description=f"{MARKER} spare hose")
+        from app.services import project_quotation_document_service as qdocs
+        from app.services import project_quotation_service as quotes
+
+        quotes.revise(db, quotation=c["scope"], actor_user_id=c["owner"])
+        _line(db, c, c["scope"], {"product_id": hose.id, "unit_price": "0"})
+        issue = _issue(db, c["document"], c["owner"])
+        t = _templates(db, c)
+        set_key = f"set:{c['set'].id}"
+        spec.save_settings(
+            db,
+            c["document"],
+            {
+                "cover_template_id": t["cover"].id,
+                "page_template_id": t["page"].id,
+                "rows": [{"key": set_key, "accessories": [hose.id, c["basin"].id]}],
+            },
+        )
+        row = spec.build_print_payload(db, c["document"], issue)["resolvedData"][set_key]
+        assert [p["list_price"] for p in row["parts"]] == [None, None, None, 100.0]
+        assert qdocs is not None
+
+        client, originals = _client(db, c["owner"])
+        try:
+            got = client.get(_url(c), params={"issue_id": issue.id})
+            assert got.status_code == 200, got.text
+            pages = got.json()["pages"]
+            assert pages, "the page list is not empty"
+
+            def keys(value):
+                if isinstance(value, dict):
+                    for k, v in value.items():
+                        yield k
+                        yield from keys(v)
+                elif isinstance(value, list):
+                    for v in value:
+                        yield from keys(v)
+
+            assert not [k for k in keys(pages) if k.startswith("_")]
+            assert "_price" not in json.dumps(got.json())
+        finally:
+            _restore(originals)

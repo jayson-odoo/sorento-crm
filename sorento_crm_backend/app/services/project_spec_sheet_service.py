@@ -449,8 +449,12 @@ def pages(
 def _quoted(line: ProjectQuotationLine) -> Optional[float]:
     """The issued line's quoted unit price (owner Q-B, 2 Nov 23:29). A template prints it only
     where the designer placed a price (the price tag designer's List Price slot or price
-    badge); a template without one prints no price at all."""
-    return float(line.unit_price) if line.unit_price is not None else None
+    badge); a template without one prints no price at all. Zero prints nothing."""
+    # Zero means "no separate charge" (a component quoted after its priced parent), and prints
+    # blank, the same rule as the quotation PDF's `_line_money`: a printed 0 reads as a free product.
+    if line.unit_price is None or float(line.unit_price) == 0:
+        return None
+    return float(line.unit_price)
 
 
 # ----------------------------------------------------------------------------- print
