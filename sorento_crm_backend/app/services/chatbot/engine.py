@@ -4427,20 +4427,47 @@ def _states_a_domain(verdict: dict[str, Any], held_domains: tuple[str, ...]) -> 
     return names_its_own_domain(verdict) and not held_widening
 
 
+def _held_value(value: Any) -> bool:
+    """A focus value that holds something: not None, empty or False, at any depth (a mode-only
+    date window and an id-only customer row hold; an `extra` kind left with no rows does not)."""
+    if isinstance(value, dict):
+        return any(_held_value(v) for v in value.values())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_held_value(v) for v in value)
+    return value not in (None, "", False)
+
+
+def _holds_beyond_reset_keeps(focus: Any) -> bool:
+    """CHAT-RESET-CAPABILITY: does the focus hold anything a reset would clear, i.e. any field
+    outside RESET_KEEPS? Read off every field, not `chat_state._subject` alone, which shows the
+    parser only named values and leaves out id-only rows and `outstanding_brand_ids`."""
+    return any(
+        _held_value(getattr(focus, f.name)) for f in dataclasses_fields(focus) if f.name not in RESET_KEEPS
+    )
+
+
 def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
     """Release gate #1829, round 12 (EVAL-BENCH contacts 01, 02, 30; captain ruling option A): an
     all-broaden (`entity_op` clear or `broaden_axis` all) with `scope_intent` null and no domain or
     asks of its own (any `domain_hint`, so an idea's ideate stays out), over a session with no open
     question, no task of any status and no stored list, has nothing to widen: it is "clear all". A
-    held subject is allowed (the trace's turns held products and the inventory domain). Whether the
+    held subject is required (CHAT-RESET-CAPABILITY, below) and may be anything beyond RESET_KEEPS
+    (the trace's turns held products and the inventory domain). Whether the
     message states anything else is the seam's own `_stated_beside_a_reset`. Round 12b (reviewer
     B1 / S1): a question the focus holds (`chat_state._focus_questions`: a set clarify, the count
     question, the other-brands offer) or a set being listed is open too,
     and a family widening (`broaden_to` other than all, `family` true) is stated; round 12c:
-    `family` false is the exact code alone, no widening."""
+    `family` false is the exact code alone, no widening.
+
+    CHAT-RESET-CAPABILITY: over a new chat or a session a Reset already emptied
+    (`_holds_beyond_reset_keeps`) there is nothing to clear, so the parser's all-broaden (it flips
+    to it on a capability question, read as clarification) is no reset and the message takes
+    today's path."""
     if state is None:
         return False
     focus = state.focus
+    if not _holds_beyond_reset_keeps(focus):
+        return False
     return (
         (verdict.get("entity_op") == "clear" or verdict.get("broaden_axis") == "all")
         and not verdict.get("scope_intent")
