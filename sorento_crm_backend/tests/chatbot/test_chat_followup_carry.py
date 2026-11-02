@@ -400,19 +400,40 @@ def test_u7_guard_every_other_ranking_keeps_its_own_rules(frame):
     assert _stamp(_verdict("reuse"), _focus(frame)) is None
 
 
-def test_u9_guard_a_company_total_with_no_customer_keeps_asking_its_basis():
-    """SALES-TOTAL-ASK (owner, 27 Oct): the basis hold is for a held customer only."""
-    held = _stamp(_verdict("reuse"), _focus({k: v for k, v in TOTAL.items() if k != "customer_ids"}))
+NO_CUSTOMER = {k: v for k, v in TOTAL.items() if k != "customer_ids"}
+NO_BASIS = {k: v for k, v in TOTAL.items() if k != "basis"}
+GONE_CUSTOMER = [
+    {"entities": [NAMED]}, {"broaden_axis": "customer", "broaden_to": "all"}, {"self_reference": True},
+]
+GONE_IDS = ["a-customer-named", "all-customers", "my-sales"]
+
+
+def test_u9_guard_a_company_total_carries_the_chosen_basis():
+    """R3, crew ruling 2 Nov (a19581183): a basis chosen in the conversation carries on every follow-up; a read with none
+    chosen still asks. A company total with no customer held carries the basis the user chose."""
+    held = _stamp(_verdict("reuse"), _focus(NO_CUSTOMER))
+    assert held and held["basis"] == NO_CUSTOMER["basis"] and held["date_from"] == "2026-10-01", held
+
+
+def test_u9b_guard_a_company_total_with_no_basis_chosen_still_asks_it():
+    """R3, crew ruling 2 Nov (a19581183): a basis chosen in the conversation carries; a read with none chosen still asks."""
+    held = _stamp(_verdict("reuse"), _focus({k: v for k, v in NO_CUSTOMER.items() if k != "basis"}))
     assert held and "basis" not in held and held["date_from"] == "2026-10-01", held
 
 
-@pytest.mark.parametrize(
-    "over",
-    [{"entities": [NAMED]}, {"broaden_axis": "customer", "broaden_to": "all"}, {"self_reference": True}],
-    ids=["a-customer-named", "all-customers", "my-sales"],
-)
-def test_u10_guard_when_the_customer_goes_the_basis_is_not_held_for_it(over):
-    assert "basis" not in (_stamp({**_verdict("reuse"), **over}, _focus(TOTAL)) or {})
+@pytest.mark.parametrize("over", GONE_CUSTOMER, ids=GONE_IDS)
+def test_u10_guard_when_the_customer_goes_the_chosen_basis_is_still_carried(over):
+    """R3, crew ruling 2 Nov (a19581183): a basis chosen in the conversation carries on every follow-up; a read with none
+    chosen still asks. The customer is gone (named, all, my sales); the basis stays."""
+    held = _stamp({**_verdict("reuse"), **over}, _focus(TOTAL)) or {}
+    assert held.get("basis") == TOTAL["basis"], held
+    assert "customer_ids" not in held, held
+
+
+@pytest.mark.parametrize("over", GONE_CUSTOMER, ids=GONE_IDS)
+def test_u10b_guard_when_the_customer_goes_and_no_basis_was_chosen_none_is_held(over):
+    """R3, crew ruling 2 Nov (a19581183): a basis chosen in the conversation carries; a read with none chosen still asks."""
+    assert "basis" not in (_stamp({**_verdict("reuse"), **over}, _focus(NO_BASIS)) or {})
 
 
 @pytest.mark.parametrize("frame", [TOTAL, {**TOTAL, "group_by": "product"}], ids=["total", "ranking"])
@@ -423,13 +444,23 @@ def test_u11_a_failed_turn_between_ends_nothing_the_customer_stays(frame):
 
 
 @pytest.mark.parametrize("words", ["customers", None], ids=["typed", "a-guess-the-parser-did-not-type"])
-def test_u12_a_customer_axis_holds_no_customer_and_no_basis_only_when_typed(words):
+def test_u12_a_customer_axis_holds_no_customer_only_when_typed_and_the_chosen_basis_carries(words):
+    """R3, crew ruling 2 Nov (a19581183): a basis chosen in the conversation carries on every follow-up; a read with none
+    chosen still asks. A typed customer axis drops the customer; the chosen basis stays either way."""
     verdict = {**_verdict("reuse"), "group_by": "customer", "by_words": words}
     held = _stamp(verdict, _focus(TOTAL)) or {}
     if words:
-        assert "customer_ids" not in held and "basis" not in held, held
+        assert "customer_ids" not in held, held
     else:
         assert held.get("customer_ids") == [U1, U2], held
+    assert held.get("basis") == TOTAL["basis"], held
+
+
+def test_u12b_a_typed_customer_axis_with_no_basis_chosen_holds_none():
+    """R3, crew ruling 2 Nov (a19581183): a basis chosen in the conversation carries; a read with none chosen still asks."""
+    verdict = {**_verdict("reuse"), "group_by": "customer", "by_words": "customers"}
+    held = _stamp(verdict, _focus(NO_BASIS)) or {}
+    assert "customer_ids" not in held and "basis" not in held, held
 
 
 def test_u8_guard_a_held_customer_never_crosses_out_of_a_sales_answer():

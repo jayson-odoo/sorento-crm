@@ -105,9 +105,12 @@ def test_r8_2_a_new_axis_replacing_the_open_ask_keeps_all_four_and_asks_only_the
 
 def test_r8_3_a_ranking_right_after_the_total_never_asks_the_period(console, monkeypatch) -> None:
     _total(console, monkeypatch)
+    # R3, crew ruling 2 Nov (a19581183): a basis chosen in the conversation carries on every follow-up (the total ran
+    # "delivered", so it is not asked again); a read with none chosen still asks. The count and measure are still asked.
     text, log = _say_all(console, monkeypatch, _row3(), "by salesppl")
     assert _ran(log) == [] and PERIOD_Q not in text, (text, log)
-    assert HOW_MANY in text and BASIS_Q in text and "quantity or" in text.lower(), text
+    assert BASIS_Q not in text, text
+    assert HOW_MANY in text and "quantity or" in text.lower(), text
     answer = _v63(top_n=5, measure="qty", rank_by="quantity", basis="delivered", open_question_answer=dict(FILL))
     text, log = _say_all(console, monkeypatch, answer, "top 5, qty, delivered")
     _runs_with_all_four(log, "sales_agent")
