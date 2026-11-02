@@ -1779,7 +1779,6 @@ Marketing's own work is not part of the form's payload, so it is captured
                 status_code=422,
                 message="The tag sheet leaves out some of this request's tags. Reload and try again.",
                 code="INVALID_DOC",
-                detail=",".join(short),
             )
         return out
 

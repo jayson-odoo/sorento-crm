@@ -885,3 +885,18 @@ class TestStaffCannotSendBackToNew:
 
         assert exc.value.status_code == 409
         assert _row(db, body["id"]).status == "approved"
+
+
+def test_a_short_sheet_refusal_carries_no_ids(client):
+    """The toast reads `detail` before `message`; ids never reach the UI."""
+    c, db, _ = client
+    body = _submitted(c, db)
+    row = _row(db, body["id"])
+    row.lines[0].tags[0].quantity = 2
+    db.commit()
+
+    res = _approve(c, db, body["id"], _sheet(_tag_ids(db, body["id"])))
+
+    assert res.status_code == 422
+    assert res.json().get("detail") in (None, "")
+    assert "leaves out" in res.json()["message"]
