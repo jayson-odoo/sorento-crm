@@ -1646,3 +1646,36 @@ def test_at35_d3_refine_naming_the_word_and_a_customer_reads_every_company_in_pl
     refine = _rank(_word(), _customer(bot), group_by=None, top_n=None, ranking_refine=True, **JAN)
     text, calls = bot.say(refine, "cabana for the customer")
     assert calls == [] and text.strip() == QUESTION, (text, calls)
+
+
+# ============================================================================================= round 4
+
+
+def test_at_split_by_account_type_with_the_kind_word_as_an_entity_runs_the_split(bot, seeded) -> None:
+    """The live parser sends the kind word itself ("account type", kind_said "account type") as an entity beside the
+    split. An entity whose word is its own `kind_said` names no value, so no stored type is looked up."""
+    bot.extra_body = {
+        "group_label": "Account type",
+        "rows": [
+            {"rank": 1, "name": "CABANA", "qty": 40, "amount": 100400.0},
+            {"rank": 2, "name": "CERAMIC", "qty": 20, "amount": 50000.0},
+        ],
+        "total_count": 2, "total": {"qty": 60, "amount": 150400.0},
+    }
+    kind = _word("account type", "account_type", None, "account type")
+    text, calls = bot.say(
+        _status(
+            "sales_analysis", _e("AGENT A", "sales_agent"), kind, group_by="account_type", by_words="account type",
+            measure="amount", sales_basis="invoiced", basis="invoiced", **JAN,
+        ),
+        "AGENT invoiced January by account type",
+    )
+    assert "No account type" not in text, text
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "account_type" and args["sales_agent_ids"] == [bot.ids["agent"]], args
+    assert not args.get("account_types"), args
+    assert "1. CABANA" in text and "2. CERAMIC" in text, text
+    # Control: "account type 4" says the kind AND a value, so the value is still the filter.
+    value = _word("4", "account_type", None, "account type")
+    text, calls = bot.say(_sales(value), "account type 4 sales in Jan")
+    assert _only_report_ask(calls)["account_types"] == ["4"], calls
