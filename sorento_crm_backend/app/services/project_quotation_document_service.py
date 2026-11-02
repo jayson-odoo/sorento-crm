@@ -245,7 +245,7 @@ def _render_templates_onto(
     context = templates.build_document_context(db, document=document) if design else None
     if design is not None:
         if not (payload.get("cover_closing_html") or "").strip():
-            closing = (getattr(design, "design", None) or {}).get("closing_html")
+            closing = (design.design or {}).get("closing_html")
             document.cover_closing_html = templates.render(closing, context) or None
         if not (payload.get("cover_letter_html") or "").strip():
             document.cover_letter_html = templates.render(design.body_html, context) or None
@@ -419,7 +419,7 @@ def letter_templates(db: Session, *, project: Project) -> Dict[str, Optional[str
     design = templates.active_template(
         db, company_id=project.company_id, kind=templates.TEMPLATE_KIND_COVER_PAGE
     )
-    out["cover_closing_html"] = (getattr(design, "design", None) or {}).get("closing_html") or None if design else None
+    out["cover_closing_html"] = (design.design or {}).get("closing_html") or None if design else None
     for field, kind in (
         ("cover_letter_html", templates.TEMPLATE_KIND_COVER_LETTER),
         ("terms_html", templates.TEMPLATE_KIND_TERMS),

@@ -73,13 +73,11 @@ function LetterPanel({
 /**
  * The Cover letter tab: page 1 as it will print (the active design with this quotation's values),
  * and, in an edit session, the Intro text and Closing text printed above and below its rows.
- *
- * The editors are wrapped in a label so each has a visible name; its click is swallowed so a click
- * on the editor's padding does not press the first toolbar button.
  */
 export function QuotationCoverLetterPanel({
   cover,
   isLoading = false,
+  error,
   html,
   closingHtml,
   onChange,
@@ -87,6 +85,8 @@ export function QuotationCoverLetterPanel({
 }: {
   cover: CoverPageData | undefined;
   isLoading?: boolean;
+  /** The preview call's failure message, shown as one line in place of the card. */
+  error?: string | null;
   html?: string | null;
   closingHtml?: string | null;
   /** Set only in an edit session. Absent means this is a read: the preview alone. */
@@ -95,44 +95,30 @@ export function QuotationCoverLetterPanel({
 }) {
   return (
     <div className="space-y-4">
-      {cover || isLoading ? (
+      {error && !cover ? (
+        <EmptyLine>{`Could not show the cover page. ${error}`}</EmptyLine>
+      ) : (
         <Card>
           <CardContent className="min-w-0 py-5">
             <CoverPagePreview cover={cover} isLoading={isLoading} />
           </CardContent>
         </Card>
-      ) : (
-        // The preview could not be built: the saved letter still reads, as it did before.
-        !onChange && (
-          <LetterPanel
-            title="Cover letter"
-            html={html ?? null}
-            emptyHint="No cover letter on this quotation yet."
-            placeholder=""
-          />
-        )
       )}
       {onChange && onClosingChange && (
         <Card>
           <CardContent className="min-w-0 space-y-4 py-5">
-            <label className="block min-w-0 space-y-1.5" onClick={(event) => event.preventDefault()}>
-              <span className="text-sm font-medium">Intro text</span>
-              <RichTextEditor
-                value={html ?? ''}
-                onChange={onChange}
-                placeholder="The letter the customer reads before the prices"
-                minHeight={140}
-              />
-            </label>
-            <label className="block min-w-0 space-y-1.5" onClick={(event) => event.preventDefault()}>
-              <span className="text-sm font-medium">Closing text</span>
-              <RichTextEditor
-                value={closingHtml ?? ''}
-                onChange={onClosingChange}
-                placeholder="Closing text"
-                minHeight={140}
-              />
-            </label>
+            <RichTextEditor
+              value={html ?? ''}
+              onChange={onChange}
+              placeholder="Intro text"
+              minHeight={140}
+            />
+            <RichTextEditor
+              value={closingHtml ?? ''}
+              onChange={onClosingChange}
+              placeholder="Closing text"
+              minHeight={140}
+            />
           </CardContent>
         </Card>
       )}

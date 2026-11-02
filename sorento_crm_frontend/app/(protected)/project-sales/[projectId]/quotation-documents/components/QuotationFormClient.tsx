@@ -663,6 +663,7 @@ export function QuotationFormClient({
               <QuotationCoverLetterPanel
                 cover={coverPreview.data}
                 isLoading={coverPreview.isLoading}
+                error={coverPreview.error?.message}
                 html={letter.cover_letter_html ?? saved.data?.cover_letter_html ?? ''}
                 closingHtml={letter.cover_closing_html ?? saved.data?.cover_closing_html ?? ''}
                 onChange={(html) => {

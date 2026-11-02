@@ -232,12 +232,6 @@ def _date_text(value: Any) -> str:
     return ""
 
 
-def terms_without_numbering(raw: Optional[str]) -> str:
-    """The cleaned terms for the pages after the total: as written, but an ordered list never
-    auto-numbers (the clauses carry the numbers their author typed)."""
-    return clean_terms_html(raw).replace("<ol>", '<ul class="plain">').replace("</ol>", "</ul>")
-
-
 def issue_values(
     db: Session, document: Any, issue: Any, project: Optional[Project] = None
 ) -> Dict[str, str]:

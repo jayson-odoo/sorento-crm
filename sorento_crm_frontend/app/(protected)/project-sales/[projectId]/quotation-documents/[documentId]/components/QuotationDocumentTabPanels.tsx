@@ -34,7 +34,7 @@ export function QuotationCoverLetterTab() {
     <QuotationCoverLetterPanel
       cover={preview.data}
       isLoading={preview.isLoading}
-      html={document.cover_letter_html}
+      error={preview.error?.message}
     />
   );
 }

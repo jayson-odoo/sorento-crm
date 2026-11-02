@@ -62,7 +62,6 @@ from app.services.quotation_cover_service import (
     cover_reference,
     cover_rows,
     design_of,
-    terms_without_numbering,
     layout_of,
 )
 from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
@@ -651,9 +650,9 @@ def _designed_cover_html(
 
 
 def _plain_terms_html(issue: ProjectQuotationIssue) -> str:
-    """Layout 3 with the Terms row hidden: the terms after the total, as written and cleaned,
-    never auto-numbered."""
-    terms = terms_without_numbering(issue.terms_rendered)
+    """Layout 3 with the Terms row hidden: the terms after the total, exactly as the cleaning
+    leaves them (a list the author typed stays a list, nothing is numbered for them)."""
+    terms = clean_terms_html(issue.terms_rendered)
     if not terms:
         return ""
     return (
@@ -848,7 +847,7 @@ _COVER_STYLE = """
   .cover-closing { margin: 18px 0 0; }
   .terms-plain p { margin: 0 0 4px; }
   .terms-plain ul { margin: 0; padding-left: 18px; list-style: disc; }
-  .terms-plain ul.plain { padding-left: 0; list-style: none; }
+  .terms-plain ol { margin: 0; padding-left: 18px; list-style: decimal; }
 """
 
 
