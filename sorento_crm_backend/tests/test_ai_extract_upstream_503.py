@@ -677,6 +677,32 @@ def test_an_upload_of_up_to_6_pages_is_still_one_call(db, monkeypatch, form_key,
     assert provider.calls == [[f"p{k}" for k in range(1, pages + 1)]]
 
 
+def test_an_8_photo_complaint_is_exactly_one_extract_call(db, monkeypatch):
+    """Review, round 4 (crew ruling a17992588): a complaint lists a few affected products, so a
+    split buys no speed, and read apart its photos gave near-duplicate rows and one group's
+    defect description. Only price tag, purchase and sponsorship uploads are split."""
+    _pages(monkeypatch, 8)
+    provider = _PagesProvider()
+    _use(monkeypatch, provider)
+
+    AIExtractService(db).extract("portal.complaint", _pdf())
+
+    assert provider.calls == [[f"p{k}" for k in range(1, 9)]]
+
+
+@pytest.mark.parametrize(
+    "form_key", ["portal.price_tag_request", "portal.purchase_request", "portal.sponsorship_form"]
+)
+def test_the_three_list_forms_split_past_6_pages(db, monkeypatch, form_key):
+    _pages(monkeypatch, 8)
+    provider = _PagesProvider()
+    _use(monkeypatch, provider)
+
+    AIExtractService(db).extract(form_key, _pdf())
+
+    assert sorted(provider.calls) == [["p1", "p2"], ["p3", "p4"], ["p5", "p6"], ["p7", "p8"]]
+
+
 @pytest.mark.parametrize("form_key", ["portal.stock_inquiry", "master.product_fields"])
 def test_a_form_without_line_items_is_never_split(db, monkeypatch, form_key):
     """Its answer is one set of fields, not rows per page: read apart, fields would be lost."""
@@ -713,9 +739,7 @@ def test_a_video_is_not_split_its_frames_are_read_together(db, monkeypatch):
     provider = _PagesProvider()
     _use(monkeypatch, provider)
 
-    AIExtractService(db).extract(
-        "portal.complaint", [ExtractFile(filename="zzt.mp4", mime="video/mp4", data=b"zzt")]
-    )
+    AIExtractService(db).extract(FORM, [ExtractFile(filename="zzt.mp4", mime="video/mp4", data=b"zzt")])
 
     assert provider.calls == [[f"p{k}" for k in range(1, 9)]]
 
