@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 #: Server-injected, never model-chosen.
 GUARD_PARAMS = ("contact_id", "space_id")
 #: Characters of JSON one tool result may carry back to the model.
-RESULT_CHAR_CAP = 12_000
+RESULT_CHAR_CAP = 16_000
 
 
 @dataclass(frozen=True)
@@ -1141,17 +1141,22 @@ def dispatch(
     return out
 
 
-def _round_computed_floats(node: Any) -> Any:
-    """A float with more than 5 decimal places is computed noise (an average, a rate): 2 places for the model.
-    Stored values have 5 places or fewer and are untouched."""
+def _tidy_read_data(node: Any) -> Any:
+    """What the model is given of a read: empty values (None, "", [], {}, and a dict left empty by this pass)
+    dropped at any depth, 0 / 0.0 / False / "0" kept; a float with more than 5 decimal places is computed noise
+    (an average, a rate) and goes to 2 places. Stored values have 5 places or fewer and are untouched."""
     if isinstance(node, dict):
-        return {k: _round_computed_floats(v) for k, v in node.items()}
+        out = {k: _tidy_read_data(v) for k, v in node.items()}
+        return {k: v for k, v in out.items() if not _is_blank(v)}
     if isinstance(node, list):
-        return [_round_computed_floats(v) for v in node]
+        return [v for v in (_tidy_read_data(v) for v in node) if not _is_blank(v)]
     if isinstance(node, float) and math.isfinite(node):
-        places = -Decimal(repr(node)).as_tuple().exponent
-        return round(node, 2) if places > 5 else node
+        return round(node, 2) if -Decimal(repr(node)).as_tuple().exponent > 5 else node
     return node
+
+
+def _is_blank(value: Any) -> bool:
+    return value is None or (isinstance(value, (str, list, dict)) and len(value) == 0)
 
 
 def _dispatch_inner(
@@ -1278,7 +1283,7 @@ def _dispatch_inner(
         drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
     if _is_empty(data, tool.render):
         return ToolResult("empty", data={"applied_filters": filters}, message=NO_ROWS_MESSAGE)
-    data, more = cap_result(_round_computed_floats(data))
+    data, more = cap_result(_tidy_read_data(data))
     _collect_uuids(data, seen)
     message = (
         f"{more} more rows did not fit in this result. They are not on the next page: "
