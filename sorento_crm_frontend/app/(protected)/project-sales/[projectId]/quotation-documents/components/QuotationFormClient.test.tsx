@@ -1245,3 +1245,131 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
     );
   });
 });
+
+/**
+ * QUOTE-COVER-PAGE (UAC B1, B2): Email and Quotation Purpose on the Header tab, Payment Terms and
+ * Validity on the Terms tab, Prepared By read-only under the header. On create they prefill from
+ * the project's main contact email and the active terms template; Save carries all four.
+ */
+describe('QuotationFormClient cover page fields', () => {
+  const withEmail = (extra: Partial<Project> = {}) =>
+    project({
+      customer_id: 'cust-1',
+      customer_name: 'Gamuda Builders Sdn Bhd',
+      customer_attn: 'Lim Wei Ming',
+      owner_name: 'Ahmad Faizal',
+      ...({ customer_email: 'lim.weiming@example.test' } as unknown as Partial<Project>),
+      ...extra,
+    });
+  const templates = {
+    cover_letter_html: '<p>Dear {{attn_name}}</p>',
+    terms_html: '<p>Valid 30 days</p>',
+    payment_terms: '30 days net',
+    validity: '60 days',
+  };
+
+  it('create prefills Email from the project customer email', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue(templates);
+    renderForm();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Email')).toHaveValue('lim.weiming@example.test'),
+    );
+    expect(screen.getByLabelText('Quotation Purpose')).toHaveValue('');
+  });
+
+  it('create prefills Payment Terms and Validity from the letter templates', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue(templates);
+    renderForm();
+
+    await openTab('Terms');
+    expect(await screen.findByLabelText('Payment Terms')).toHaveValue('30 days net');
+    expect(screen.getByLabelText('Validity')).toHaveValue('60 days');
+  });
+
+  it('shows Prepared By read-only on the Header tab as the project salesperson', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue(templates);
+    renderForm();
+
+    expect(await screen.findByText('Prepared By')).toBeInTheDocument();
+    expect(screen.getByText('Ahmad Faizal')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Prepared By')).not.toBeInTheDocument();
+  });
+
+  it('Save sends recipient_email_snapshot, quotation_purpose, payment_terms and validity', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue(templates);
+    renderForm();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Email')).toHaveValue('lim.weiming@example.test'),
+    );
+    fireEvent.change(screen.getByLabelText('Quotation Purpose'), {
+      target: { value: 'Supply of sanitary ware' },
+    });
+    await openTab('Terms');
+    fireEvent.change(await screen.findByLabelText('Validity'), { target: { value: '90 days' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({
+      recipient_email_snapshot: 'lim.weiming@example.test',
+      quotation_purpose: 'Supply of sanitary ware',
+      payment_terms: '30 days net',
+      validity: '90 days',
+    });
+  });
+
+  it('with no active template Payment Terms and Validity start empty and Save still works', async () => {
+    getProject.mockResolvedValue(withEmail());
+    getQuotationLetterTemplates.mockResolvedValue({ cover_letter_html: null, terms_html: null });
+    renderForm();
+
+    await openTab('Terms');
+    expect(await screen.findByLabelText('Payment Terms')).toHaveValue('');
+    expect(screen.getByLabelText('Validity')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+  });
+
+  it('edit opens with the saved values and PATCH carries a changed Payment Terms', async () => {
+    getQuotationDocument.mockResolvedValue(
+      document({
+        ...({
+          recipient_email_snapshot: 'saved@example.test',
+          quotation_purpose: 'Saved purpose',
+          payment_terms: 'Saved payment',
+          validity: 'Saved validity',
+        } as unknown as Partial<QuotationDocument>),
+      }),
+    );
+    renderForm('d1');
+
+    await waitFor(() => expect(screen.getByLabelText('Email')).toHaveValue('saved@example.test'));
+    expect(screen.getByLabelText('Quotation Purpose')).toHaveValue('Saved purpose');
+    await openTab('Terms');
+    const pay = await screen.findByLabelText('Payment Terms');
+    expect(pay).toHaveValue('Saved payment');
+    fireEvent.change(pay, { target: { value: 'Changed payment' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(updateQuotationDocument.mock.calls[0][2]).toMatchObject({
+      payment_terms: 'Changed payment',
+      validity: 'Saved validity',
+    });
+  });
+
+  it('edit shows Prepared By from the saved quotation, not the project owner', async () => {
+    getProject.mockResolvedValue(withEmail({ owner_name: 'Wrong Project Owner' }));
+    getQuotationDocument.mockResolvedValue(
+      document({ ...({ prepared_by: 'Saved Creator' } as unknown as Partial<QuotationDocument>) }),
+    );
+    renderForm('d1');
+
+    expect(await screen.findByText('Saved Creator')).toBeInTheDocument();
+    expect(screen.queryByText('Wrong Project Owner')).not.toBeInTheDocument();
+  });
+});

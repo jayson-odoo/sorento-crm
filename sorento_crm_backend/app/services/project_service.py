@@ -1340,6 +1340,7 @@ def _customers_for(db: Session, customer_ids: List[str]) -> Dict[str, Dict[str, 
             or row.mobile_number
             or (contact.phone or contact.mobile if contact else None),
             "customer_attn": contact.full_name if contact else None,
+            "customer_email": contact.email if contact else None,
         }
     return out
 
@@ -1350,13 +1351,19 @@ def _customer_fields(
     if customer:
         if with_contact:
             return customer
-        return {**customer, "customer_phone": None, "customer_attn": None}
+        return {
+            **customer,
+            "customer_phone": None,
+            "customer_attn": None,
+            "customer_email": None,
+        }
     return {
         "customer_id": None,
         "customer_name": None,
         "customer_code": None,
         "customer_phone": None,
         "customer_attn": None,
+        "customer_email": None,
     }
 
 

@@ -39,8 +39,9 @@ def read_quotation_for_signing(
 ):
     """What the customer sees: the quotation as issued, read-only.
 
-    Rendered from the ISSUE, not from live rows, so the page cannot show them something different
-    from the PDF they were sent.
+    The letter, terms, payment terms, validity and totals are read from the ISSUE (frozen when it
+    was issued). The header (attn, recipient, date, subject, signatory) is read live from the
+    document, exactly as the PDF reads it.
     """
     try:
         record = svc.get_issue_by_sign_token(db, token)

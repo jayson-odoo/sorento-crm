@@ -123,6 +123,11 @@ class ParserConfig:
     # not (production v92) would answer null on every parse, which the sales ranking reads as "no axis typed",
     # so its schema carries no such key and `parse` drops it from the verdict (`without_by_words`).
     by_words: bool = True
+    # SALES-ACCOUNT-TYPE PR 2: the prompt in use defines `kind_said` (an entity key: did the message itself say brand or
+    # account type) and the `Known account types` line. False for a bare config: a text that does not define them gets
+    # neither the key in its schema nor the line in its user turn.
+    kind_said: bool = False
+    account_types: bool = False
     # REPORT-SMART-L R9: the prompt in use names the `Sales channels:` line, so the user turn prints it
     # (owner ruling 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule
     # that names it; production v63 names none). True keeps the line for a bare config.
@@ -896,6 +901,31 @@ def without_by_words(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+#: SALES-ACCOUNT-TYPE PR 2: the raw template words that turn the entity key and the user-turn line on.
+KIND_SAID_WORD = "kind_said"
+KNOWN_ACCOUNT_TYPES_WORD = "Known account types"
+
+
+def with_kind_said(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` with the entity key `kind_said` (the word of the message that says brand or account type;
+    null: a bare word), last in the entity's `properties` and `required` (required and nullable, as strict mode needs)."""
+    out = copy.deepcopy(schema)
+    entity = out["properties"]["entities"]["items"]
+    entity["properties"]["kind_said"] = {"type": ["string", "null"]}
+    entity["required"] = [*[k for k in entity["required"] if k != "kind_said"], "kind_said"]
+    return out
+
+
+def with_account_type_axis(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` whose `group_by` enum also offers `account_type` (before null), for a prompt that defines the
+    Known account types line. The base enum is pinned and stays as it is for every other text."""
+    out = copy.deepcopy(schema)
+    enum = out["properties"]["group_by"]["enum"]
+    if "account_type" not in enum:
+        out["properties"]["group_by"]["enum"] = [*[v for v in enum if v is not None], "account_type", None]
+    return out
+
+
 #: SALES-TARGET-CHAT slice 2: the raw template line that turns the `opportunity` key on (the
 #: `sales_channels` pattern: the schema follows the prompt, never the other way round).
 OPPORTUNITY_LINE = '== LOG OPPORTUNITY: order_status "log_opportunity", domain_hint "order" =='
@@ -942,7 +972,8 @@ def with_message_language(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def closed_lists_schema(
-    items: list[str], *, state: bool = False, report_fields: bool = True, by_words: bool = True
+    items: list[str], *, state: bool = False, report_fields: bool = True, by_words: bool = True, kind_said: bool = False,
+    account_types: bool = False,
 ) -> dict[str, Any]:
     """The strict schema of a CLOSED LISTS version: the production one (the CHAT-STATE one
     when the version also asks for `state_changes`), with each entity's `listed_item` held
@@ -961,7 +992,9 @@ def closed_lists_schema(
     )
     entity["required"] = [*entity["required"], "listed_item"]
     schema = schema if report_fields else without_report_fields(schema)
-    return schema if by_words else without_by_words(schema)
+    schema = schema if by_words else without_by_words(schema)
+    schema = with_kind_said(schema) if kind_said else schema
+    return with_account_type_axis(schema) if account_types else schema
 
 
 #: The stored parser reasoning efforts; anything else (a typo, "none", an effort this list does not hold) is `off`.
@@ -1072,13 +1105,15 @@ def resolve_config(
     # REPORT-SMART-L: the schema follows the prompt, as `state_block` does.
     report_fields = "compare_to" in (raw_template or "")
     by_words = "by_words" in (raw_template or "")
+    kind_said = KIND_SAID_WORD in (raw_template or "")
     sales_channels = context_mod.SALES_CHANNELS_LINE in (raw_template or "")
     json_schema = None
     if closed_lists:
         from app.services.chatbot_prompt_vars import closed_list_enum
 
         json_schema = closed_lists_schema(
-            closed_list_enum(db), state=state_block, report_fields=report_fields, by_words=by_words
+            closed_list_enum(db), state=state_block, report_fields=report_fields, by_words=by_words,
+            kind_said=kind_said, account_types=KNOWN_ACCOUNT_TYPES_WORD in (raw_template or ""),
         )
         if OPPORTUNITY_LINE in (raw_template or ""):
             json_schema = with_opportunity(json_schema)
@@ -1098,6 +1133,8 @@ def resolve_config(
         state_block=state_block,
         report_fields=report_fields,
         by_words=by_words,
+        kind_said=kind_said,
+        account_types=KNOWN_ACCOUNT_TYPES_WORD in (raw_template or ""),
         sales_channels=sales_channels,
         opportunity=OPPORTUNITY_LINE in (raw_template or ""),
         category_pick=CATEGORY_PICK_ASK in (raw_template or ""),
@@ -1210,6 +1247,7 @@ def build_user_block(
     brands: list[dict[str, Any]] | None = None,
     open_question: dict[str, Any] | None = None,
     recent_exchanges: list[tuple[str, str]] | None = None,
+    account_types: list[str] | None = None,
 ) -> str:
     """The user turn, in the same two lines the n8n `AI Agent` node sends.
 
@@ -1287,6 +1325,11 @@ def build_user_block(
         # #1262 slice 9 (F1a): one line, deduped by name (`context.known_brands_line`,
         # shared with the memory lane's assembler so both print the same line).
         lines.append(brands_line)
+    types_line = context_mod.known_account_types_line(account_types)
+    if types_line:
+        # SALES-ACCOUNT-TYPE PR 2: the stored debtor types of the contact's company, next to the brands. Passed only
+        # for a prompt that defines the line and a contact that is not customer-scoped (`engine`).
+        lines.append(types_line)
     exchanges = context_mod.recent_exchange_lines(recent_exchanges, previous)
     if exchanges:
         lines.append("Recent exchanges, oldest first:")
@@ -1368,6 +1411,8 @@ def _base_schema(config: ParserConfig) -> dict[str, Any]:
     schema = PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA
     schema = schema if config.report_fields else without_report_fields(schema)
     schema = schema if config.by_words else without_by_words(schema)
+    schema = with_kind_said(schema) if config.kind_said else schema
+    schema = with_account_type_axis(schema) if config.account_types else schema
     schema = with_opportunity(schema) if config.opportunity else schema
     return with_message_language(schema) if config.message_language else schema
 
