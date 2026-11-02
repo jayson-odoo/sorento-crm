@@ -440,7 +440,7 @@ describe('the overview, read as sections', () => {
   it('groups the facts under named sections instead of one undifferentiated list', () => {
     renderDetail();
 
-    for (const heading of ['The development', 'Value and timing', 'Consultants']) {
+    for (const heading of ['The development', 'Value and timing', 'Parties']) {
       expect(screen.getByText(heading)).toBeInTheDocument();
     }
     // The old catch-all title is gone; if it comes back, so has the wall of fields.
@@ -454,6 +454,32 @@ describe('the overview, read as sections', () => {
 
     expect(screen.getByText('Address')).toBeInTheDocument();
     expect(screen.getByText('123 Jalan Setia')).toBeInTheDocument();
+  });
+
+  it('PS-REGISTRATION-V3 shows the linked parties by role, a role with none as a dash', () => {
+    projectFixture = project({
+      party_links: [
+        { role: 'subcontractor', party_id: 's1', name: 'Sub One' },
+        { role: 'subcontractor', party_id: 's2', name: 'Sub Two' },
+        { role: 'interior_designer', party_id: 'i1', name: 'ID Studio' },
+      ],
+    });
+
+    renderDetail();
+
+    expect(screen.getByText('Subcontractors')).toBeInTheDocument();
+    expect(screen.getByText('Sub One, Sub Two')).toBeInTheDocument();
+    expect(screen.getByText('ID Studio')).toBeInTheDocument();
+    expect(screen.getByText('Trading houses')).toBeInTheDocument();
+  });
+
+  it('PS-REGISTRATION-V3 shows the project\'s own lead source when it has no lead', () => {
+    projectFixture = project({ lead_id: null, lead_source: 'tender_notice' });
+
+    renderDetail();
+
+    expect(screen.getByText('Tender notice')).toBeInTheDocument();
+    expect(screen.getByText('Registered directly, with no lead before it.')).toBeInTheDocument();
   });
 
   it('names the project template a To-do list template (owner meeting, 29 Oct)', () => {

@@ -2708,3 +2708,28 @@ register(
         label="Delete quotation",
     )
 )
+
+
+def _delete_project_party_contact(db: Session, payload: dict):
+    """The same hard delete `DELETE /project-sales/parties/{id}/contacts/{cid}` runs
+    (PS-REGISTRATION-V3 rule 4). Stakeholders copied from it keep their copy."""
+    from app.models.projects import ProjectPartyContact
+    from app.services import project_party_contact_service as contacts
+    from app.services.error_handler import handle_not_found
+
+    row = db.query(ProjectPartyContact).filter(ProjectPartyContact.id == _entity_id(payload)).first()
+    if row is None:
+        raise handle_not_found("Contact", _entity_id(payload))
+    return contacts.delete_contact(db, row)
+
+
+register(
+    FormAction(
+        key="project_party_contact.delete",
+        entity_types=("project_party_contact",),
+        execute=_delete_project_party_contact,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.parties.edit",
+        label="Delete party contact",
+    )
+)
