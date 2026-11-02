@@ -203,3 +203,41 @@ def test_stage_on_detail_through_the_flow(world):
     assert _move(world, d["id"], "customer_confirmed", date="2026-11-20").status_code == 200
     assert _move(world, d["id"], "delivered", date="2026-11-25").status_code == 200
     assert _get(world, d["id"])["stage"] == "delivery"
+
+
+# ------------------------------------------------------------------ list: stage filter + sort
+
+
+def _rows(w, **params):
+    res = w.api.as_(w.coord).get(SR, params=params)
+    assert res.status_code == 200, res.text
+    return res.json()["data"]
+
+
+def test_stage_filter_is_multi_select_and_finds_delivered(world):
+    from .test_sample_requests_core import _delivered
+
+    submitted = _submitted(world)
+    done = _delivered(world)
+    draft = _draft(world)["id"]
+
+    processing = {r["id"] for r in _rows(world, stage="processing", limit=200)}
+    assert submitted in processing and done not in processing and draft not in processing
+
+    delivery = {r["id"] for r in _rows(world, stage="delivery", limit=200)}
+    assert done in delivery and submitted not in delivery
+
+    both = {r["id"] for r in _rows(world, stage=["processing", "delivery"], limit=200)}
+    assert {submitted, done} <= both and draft not in both
+
+
+def test_delivery_date_sort_follows_the_proposed_date(world):
+    early = _submitted(world, delivery_date="2026-12-01")
+    late = _submitted(world, delivery_date="2026-12-05")
+    # The team pushes the early one past the late one.
+    assert _move(
+        world, early, "processing", date_feasible=False, proposed_delivery_date=FUTURE
+    ).status_code == 200
+
+    ids = [r["id"] for r in _rows(world, sort="delivery_date", dir="asc", limit=200)]
+    assert ids.index(late) < ids.index(early)
