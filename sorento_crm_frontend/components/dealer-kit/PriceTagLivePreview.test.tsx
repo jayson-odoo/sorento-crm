@@ -12,6 +12,7 @@ vi.mock('@/components/dealer-kit/DesignViewer', () => ({
 }));
 
 import { emptyDraftLine, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
+import type { TagPreviewResponse } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import { PriceTagLivePreview, previewLines, previewPayload } from './PriceTagLivePreview';
 
 const template = {
@@ -22,14 +23,14 @@ const template = {
   print_size: { width_mm: 80, height_mm: 50 },
 };
 
-function response(keys: string[]) {
+function response(keys: string[]): TagPreviewResponse {
   return {
     lines: keys.map((key) => ({ line_id: key, tag_id: key, code: `C-${key}`, name: key, images: [] })),
     templates: Object.fromEntries(keys.map((key) => [key, template])),
     assets: {},
     images: {},
     fonts: [],
-  } as never;
+  } as unknown as TagPreviewResponse;
 }
 
 const line = (patch: Partial<DraftLine>): DraftLine => ({ ...emptyDraftLine(), ...patch });
