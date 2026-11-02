@@ -52,6 +52,9 @@ export interface TagRequestLine {
   product_id: string | null;
   product_set_id: string | null;
   quantity: number;
+  /** PRICETAG-TEMPLATE-PER-PRODUCT: the template this line prints with (the
+   *  salesperson's pick, or the product's single link). Null = family rule. */
+  tag_template_id?: string | null;
 }
 
 /**
@@ -82,11 +85,17 @@ export interface TagRequestTag {
  * that cannot be started is worse than a tag in the wrong layout.
  */
 export function defaultTemplateFor(
-  line: Pick<TagRequestLine, 'line_type'>,
+  line: Pick<TagRequestLine, 'line_type'> & { tag_template_id?: string | null },
   templates: TagTemplate[],
   code?: string,
 ): TagTemplate | null {
   if (templates.length === 0) return null;
+  // PRICETAG-TEMPLATE-PER-PRODUCT: the line's stored template wins whenever it
+  // is one of the published templates on offer.
+  const stored = line.tag_template_id
+    ? templates.find((t) => t.id === line.tag_template_id)
+    : undefined;
+  if (stored) return stored;
   const family = lineFamily(line, code);
   return (
     templates.find((t) => t.family === family) ??
@@ -933,4 +942,55 @@ export function tagsFromDoc(doc: TagSheetDoc | null): Map<string, PlacedTag> {
     }
   }
   return masters;
+}
+
+// ---------------------------------------------------------------------------
+// The whole sheet, built from templates (PRICETAG-TEMPLATE-PER-PRODUCT R6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every tag of a request, each cloned from its line's template and arranged
+ * into sheets: the "template, auto-filled" tag with no designer step.
+ *
+ * ONE builder for two callers so they cannot drift: the request form's live
+ * preview (synthetic tag ids, one tag per form line) and the salesperson's
+ * approve screen (PRICETAG-SELF-APPROVAL, the request's REAL tag ids). Every
+ * placement keys on `requestTag.id`, so a document built here is the one a
+ * saved request's server accepts. A tag whose line has no template in
+ * `templatesByLine` gets no placement.
+ *
+ * `templatesByLine` is keyed by `requestTag.line.id`. The sheet grid follows
+ * the template's own `print_size.sheet` when it names the tag's exact size,
+ * as the designer's own arrange does.
+ */
+export function buildRequestSheet(
+  tags: TagRequestTag[],
+  templatesByLine: Record<string, TagTemplate | undefined>,
+  newId: () => string,
+): TagSheetDoc {
+  const items: ArrangeItem[] = [];
+  const byId = new Map<string, TagTemplate>();
+  for (const requestTag of tags) {
+    const template = templatesByLine[requestTag.line.id];
+    if (!template) continue;
+    byId.set(template.id, template);
+    items.push({
+      tag: tagForTag(requestTag, template, newId()),
+      quantity: requestTag.quantity,
+      print_excluded: requestTag.print_excluded,
+    });
+  }
+  const gridForSize: SizeGridLookup = (width_mm, height_mm, templateId) => {
+    const template = byId.get(templateId);
+    return template?.print_size.sheet &&
+      template.print_size.width_mm === width_mm &&
+      template.print_size.height_mm === height_mm
+      ? template.print_size.sheet
+      : null;
+  };
+  return {
+    kind: 'tag_sheet',
+    imposition: DEFAULT_IMPOSITION,
+    sheets: autoArrange(items, gridForSize).sheets,
+  };
 }

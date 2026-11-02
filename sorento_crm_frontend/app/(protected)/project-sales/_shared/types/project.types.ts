@@ -19,7 +19,60 @@ export type PartyType =
   | 'architect'
   | 'main_contractor'
   | 'trading_house'
-  | 'consultant';
+  | 'consultant'
+  | 'subcontractor'
+  | 'interior_designer'
+  | 'tender_party';
+
+/** Roles a project links beyond developer, architect and main contractor (PS-REGISTRATION-V3). */
+export type PartyLinkRole =
+  | 'subcontractor'
+  | 'trading_house'
+  | 'tender_party'
+  | 'consultant'
+  | 'interior_designer';
+
+export interface PartyLink {
+  role: PartyLinkRole;
+  party_id: string;
+  name?: string | null;
+}
+
+/** A person at a party: the master a registration picks from. */
+export interface PartyContact {
+  id: string;
+  party_id: string;
+  name: string;
+  job_title?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  is_active: boolean;
+}
+
+export interface PartyContactBody {
+  name?: string;
+  job_title?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  is_active?: boolean;
+}
+
+/** One (role, party) on a project with the project's people at that party. */
+export interface PartyOnProject {
+  party_id: string;
+  party_type: PartyType;
+  role: string;
+  name: string;
+  phone: string | null;
+  contacts: {
+    stakeholder_id: string;
+    party_contact_id: string | null;
+    name: string;
+    job_title: string | null;
+    phone: string | null;
+    email: string | null;
+  }[];
+}
 
 export type InfluenceLevel = 'high' | 'medium' | 'low';
 
@@ -36,6 +89,8 @@ export interface ProjectParty {
   customer_name?: string | null;
   is_active: boolean;
   project_count?: number | null;
+  /** Active contacts at this party (PS-REGISTRATION-V3). */
+  contact_count?: number;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -174,6 +229,8 @@ export interface Project {
   architect_name?: string | null;
   main_contractor_party_id?: string | null;
   main_contractor_name?: string | null;
+  /** Several trading houses, subcontractors, tender parties; one consultant / ID (PS-REGISTRATION-V3). */
+  party_links?: PartyLink[];
   estimated_sales_value?: string | null;
   launch_date?: string | null;
   expected_delivery_from?: string | null;
@@ -251,8 +308,14 @@ export interface ProjectRegisterBody {
   launch_date?: string | null;
   expected_delivery_from?: string | null;
   expected_delivery_to?: string | null;
-  /** Required on create; edit leaves it optional (PROJECT-REGISTER-V2 A4). */
+  /** Optional everywhere (PS-REGISTRATION-V3 rule 9). */
   customer_id?: string | null;
+  /** A value of the lookup set `project_lead_source`; required on Register / Submit. */
+  lead_source?: string | null;
+  /** Present replaces every link; absent keeps them. */
+  party_links?: PartyLink[];
+  /** Register only: party contacts copied into the project's stakeholders. */
+  contact_ids?: string[];
   /**
    * Only for a user holding `projects.registrations.submit` without edit: false saves a
    * draft, true submits it for approval (PROJECT-REGISTER-V2 J1).
@@ -484,13 +547,10 @@ export interface TaskHistoryEntry {
  */
 export type LeadOutcome = 'open' | 'qualified' | 'disqualified';
 
-export type LeadSource =
-  | 'site_visit'
-  | 'architect'
-  | 'contractor'
-  | 'dealer'
-  | 'inbound'
-  | 'other';
+/** A value of the editable lookup set `project_lead_source` (PS-REGISTRATION-V3 Q4); the
+ * seed is site_visit, architect, contractor, dealer, inbound, bci, referral, tender_notice,
+ * existing_customer, interior_designer, other, and Settings may add more. */
+export type LeadSource = string;
 
 export interface LeadDuplicateHint {
   lead_id: string;
@@ -621,6 +681,10 @@ export interface ProjectQuotation {
   id: string;
   project_id: string;
   scope_label: string;
+  /** PS-PROPOSAL-QUOTATION: the document this scope sits on, and its kind. */
+  document_id?: string | null;
+  document_no?: string | null;
+  document_kind?: 'proposal' | 'quotation' | null;
   series_id?: string | null;
   series_name?: string | null;
   notes?: string | null;
@@ -1204,6 +1268,13 @@ export interface ProjectPurchaseOrder {
   published_sales_order_count?: number;
   model_mismatch_count: number;
   price_mismatch_count: number;
+  /** PS-PROPOSAL-QUOTATION: why the project's POs order more than the quotation quotes. */
+  qty_over_reason?: string | null;
+  qty_over_reason_at?: string | null;
+  qty_over_reason_by_name?: string | null;
+  /** The kind of document the PO is checked against (proposal | quotation) and its number. */
+  checked_against_kind?: 'proposal' | 'quotation' | null;
+  checked_against_label?: string | null;
 
   /** AC-F9a: erosion since v1 as a NUMBER, not a flag. Null percent = no baseline. */
   v1_total?: string | null;
@@ -1280,6 +1351,8 @@ export interface PurchaseOrderLineBulkItem extends Omit<PurchaseOrderLineBody, '
  * `lines` out entirely is how a header-only save (the record-a-PO modal) leaves them alone.
  */
 export interface ProjectPurchaseOrderSaveBody extends Partial<ProjectPurchaseOrderBody> {
+  /** PS-PROPOSAL-QUOTATION: sent on the second save after a 409 `po_qty_over_quoted`. */
+  qty_over_reason?: string | null;
   lines?: PurchaseOrderLineBulkItem[];
 }
 

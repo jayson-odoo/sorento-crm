@@ -25,6 +25,7 @@ import {
   listQuotationIssues,
   listQuotationViews,
   logQuotationWhatsAppOpened,
+  makeQuotation,
   moveQuotationApproval,
   previewQuotationCover,
   queueQuotationIssuePdf,
@@ -34,6 +35,7 @@ import {
   signQuotationDocument,
   updateQuotationDocument,
   updateQuotationScope,
+  documentNoun,
   type QuotationDocument,
   type QuotationCoverPreviewBody,
   type QuotationDocumentBody,
@@ -146,6 +148,14 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
    * per-scope line queries are invalidated alongside the document. Refreshing only the document
    * would leave the line editor still offering edits the server now refuses.
    */
+  /** The noun of the document this hook works on, read from the cache (it is on screen). */
+  const cachedNoun = () =>
+    documentNoun(
+      documentId
+        ? queryClient.getQueryData<QuotationDocument>(quotationDocumentKey(projectId, documentId))
+        : undefined,
+    );
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: [DOCUMENTS_KEY, projectId] });
     queryClient.invalidateQueries({ queryKey: [ISSUES_KEY, projectId] });
@@ -168,7 +178,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     mutationFn: (body: QuotationDocumentBody = {}) => createQuotationDocument(projectId, body),
     onSuccess: (document: QuotationDocument) => {
       invalidate();
-      toast.success(`Quotation ${document.document_no} created`);
+      toast.success(`Proposal ${document.document_no} created`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -176,9 +186,9 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
   const update = useMutation({
     mutationFn: ({ id, body }: { id: string; body: QuotationDocumentBody }) =>
       updateQuotationDocument(projectId, id, body),
-    onSuccess: () => {
+    onSuccess: (document: QuotationDocument) => {
       invalidate();
-      toast.success('Quotation saved');
+      toast.success(`${documentNoun(document)} saved`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -187,7 +197,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     mutationFn: (id: string) => deleteQuotationDocument(projectId, id),
     onSuccess: () => {
       invalidate();
-      toast.success('Quotation deleted');
+      toast.success(`${cachedNoun()} deleted`);
     },
     // The server's 422 names withdrawal as the way out of an issued quotation, so it is shown
     // rather than replaced with a generic failure.
@@ -240,7 +250,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
       signQuotationDocument(projectId, id, body),
     onSuccess: () => {
       invalidate();
-      toast.success('Quotation signed');
+      toast.success(`${cachedNoun()} signed`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -333,6 +343,17 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /** PS-PROPOSAL-QUOTATION: a won project's proposal revision becomes its quotation. */
+  const makeQuotationFrom = useMutation({
+    mutationFn: ({ id, issueId }: { id: string; issueId: string }) =>
+      makeQuotation(projectId, id, issueId),
+    onSuccess: (document: QuotationDocument) => {
+      invalidate();
+      toast.success(`Quotation ${document.document_no} made`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   /** The issued workbook, queued the same way and reported the same way. */
   const issueXlsx = useMutation({
     mutationFn: ({ id, issueId }: { id: string; issueId: string }) =>
@@ -360,6 +381,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     signLink,
     issuePdf,
     issueXlsx,
+    makeQuotationFrom,
     documentId,
   };
 }

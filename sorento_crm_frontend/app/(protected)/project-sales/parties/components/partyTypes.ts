@@ -1,7 +1,7 @@
 import type { PartyType } from '../../_shared/types/project.types';
 
 /**
- * The five kinds of organisation a project references, with the one sentence that
+ * The kinds of organisation a project references, with the one sentence that
  * explains why each is a party rather than a customer.
  *
  * Shared by the list filter, the create/edit form and the detail page so a type can
@@ -20,7 +20,10 @@ export const PARTY_TYPE_OPTIONS: { value: PartyType; label: string; hint: string
   },
   { value: 'main_contractor', label: 'Main contractor', hint: 'Builds it.' },
   { value: 'trading_house', label: 'Trading house', hint: 'Buys on the project’s behalf.' },
-  { value: 'consultant', label: 'Consultant', hint: 'QS, M&E, ID and similar.' },
+  { value: 'consultant', label: 'Consultant', hint: 'QS, M&E and similar.' },
+  { value: 'subcontractor', label: 'Subcontractor', hint: 'Builds a package under the main contractor.' },
+  { value: 'interior_designer', label: 'Interior designer', hint: 'Specifies finishes. The ID.' },
+  { value: 'tender_party', label: 'Tender party', hint: 'Calls or runs the tender.' },
 ];
 
 export const TYPE_LABEL: Record<string, string> = Object.fromEntries(

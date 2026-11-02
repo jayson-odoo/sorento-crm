@@ -81,7 +81,7 @@ def test_b3_a_lead_that_never_had_a_customer_can_still_be_updated(v2):
 
 
 def _register(w, **body):
-    return as_user(w, w.owner).post(LIST, json=body)
+    return as_user(w, w.owner).post(LIST, json={"lead_source": "site_visit", **body})
 
 
 def test_e1_registering_without_a_lead_succeeds_and_links_none(v2):

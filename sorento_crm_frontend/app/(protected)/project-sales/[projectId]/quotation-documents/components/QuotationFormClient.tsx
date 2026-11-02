@@ -164,6 +164,26 @@ function todayIso(): string {
  * company templates. Status rules are the server's: a scope the customer holds shows its lines
  * read-only, and a scope any version of which was sent cannot be removed.
  */
+
+/** The page title: "New proposal", or the document's number (PS-PROPOSAL-QUOTATION). */
+export function formTitle({
+  isEdit,
+  documentNo,
+  kind,
+}: {
+  isEdit: boolean;
+  documentNo?: string | null;
+  kind?: string | null;
+}): string {
+  if (!isEdit) return 'New proposal';
+  return documentNo ?? `Edit ${kind === 'quotation' ? 'quotation' : 'proposal'}`;
+}
+
+/** The Save button: "Save proposal" / "Save quotation". */
+export function saveLabel(kind?: string | null): string {
+  return kind === 'quotation' ? 'Save quotation' : 'Save proposal';
+}
+
 export function QuotationFormClient({
   projectId,
   documentId,
@@ -349,9 +369,11 @@ export function QuotationFormClient({
   const backPath = isEdit
     ? `/project-sales/${projectId}/quotation-documents/${documentId}`
     : `/project-sales/${projectId}?tab=quotations`;
-  const title = isEdit
-    ? (saved.data?.document_no ?? 'Edit quotation')
-    : 'New quotation';
+  const title = formTitle({
+    isEdit,
+    documentNo: saved.data?.document_no,
+    kind: saved.data?.kind,
+  });
   const letterReady = isEdit || letterSeeded;
 
   // What the Cover letter tab previews: the header and text as typed, saved or not. A saved
@@ -522,7 +544,7 @@ export function QuotationFormClient({
               disabled={isSaving || loading || failed || !letterReady}
               onClick={() => void save()}
             >
-              {isSaving ? 'Saving...' : 'Save quotation'}
+              {isSaving ? 'Saving...' : saveLabel(saved.data?.kind)}
             </Button>
           </>
         }

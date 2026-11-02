@@ -66,6 +66,7 @@ class ProjectPartyResponse(ProjectPartyBase):
     id: str
     customer_name: Optional[str] = None
     project_count: Optional[int] = None
+    contact_count: int = 0
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -188,6 +189,19 @@ class ClashPreviewResponse(BaseModel):
 # ------------------------------------------------------------------- projects
 
 
+class ProjectPartyLinkIn(BaseModel):
+    """A party playing a role on the project (PS-REGISTRATION-V3 Q5): several per role allowed."""
+
+    role: str = Field(..., max_length=32)
+    party_id: str
+
+
+class ProjectPartyLinkOut(BaseModel):
+    role: str
+    party_id: str
+    name: Optional[str] = None
+
+
 class ProjectRegisterRequest(BaseModel):
     """AC-C3. Only title is structurally required.
 
@@ -207,11 +221,15 @@ class ProjectRegisterRequest(BaseModel):
     # lead another project already carries is refused.
     lead_id: Optional[str] = None
     admin_ref: Optional[str] = Field(None, max_length=64)
-    # Required to register or submit (422 project_customer_required); a draft and an edit
-    # may leave it out.
+    # Optional everywhere (owner 2 Nov, PS-REGISTRATION-V3 rule 9).
     customer_id: Optional[str] = None
     # A salesperson holding only the submit grant: false saves a draft, true submits it.
     submit: bool = False
+    # Required to register or submit (422 project_lead_source_required); a draft may leave it out.
+    lead_source: Optional[str] = Field(None, max_length=32)
+    party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
+    # Party contacts picked at registration, copied into the project's stakeholders (rule 6).
+    contact_ids: Optional[List[str]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -237,6 +255,9 @@ class ProjectUpdateRequest(BaseModel):
     # identity: it is the string written on every piece of paper for this job, and
     # without it nobody can tie a document back to the file it belongs to.
     admin_ref: Optional[str] = Field(None, max_length=64)
+    lead_source: Optional[str] = Field(None, max_length=32)
+    # Present = replace every link; absent = keep them.
+    party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -336,6 +357,7 @@ class ProjectResponse(BaseModel):
     # page renders as "registered directly" rather than as an empty section.
     lead_id: Optional[str] = None
     lead_code: Optional[str] = None
+    # The project's own lead source (PS-REGISTRATION-V3), else its lead's.
     lead_source: Optional[str] = None
     lead_created_at: Optional[datetime] = None
     lead_owner_user_id: Optional[str] = None
@@ -370,6 +392,7 @@ class ProjectResponse(BaseModel):
     architect_name: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
     main_contractor_name: Optional[str] = None
+    party_links: List[ProjectPartyLinkOut] = Field(default_factory=list)
     estimated_sales_value: Optional[Decimal] = None
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
@@ -1226,6 +1249,11 @@ class ProjectQuotationResponse(ProjectQuotationBase):
     id: str
     project_id: str
     series_name: Optional[str] = None
+    # PS-PROPOSAL-QUOTATION: the document this scope sits on, and whether it is a proposal or the
+    # project's quotation.
+    document_id: Optional[str] = None
+    document_no: Optional[str] = None
+    document_kind: Optional[str] = None
 
     outcome: str = "open"
     loss_reason: Optional[str] = None
@@ -1636,6 +1664,8 @@ class ProjectPurchaseOrderUpdate(BaseModel):
     po_date: Optional[date] = None
     po_amount: Optional[Decimal] = None
     notes: Optional[str] = None
+    # PS-PROPOSAL-QUOTATION soft stop: sent on the second save after a 409 po_qty_over_quoted.
+    qty_over_reason: Optional[str] = Field(None, max_length=2000)
     lines: Optional[List["ProjectPurchaseOrderLineWrite"]] = Field(
         None,
         description=(
@@ -1677,6 +1707,13 @@ class ProjectPurchaseOrderResponse(BaseModel):
     published_sales_order_count: int = 0
     model_mismatch_count: int = 0
     price_mismatch_count: int = 0
+    # PS-PROPOSAL-QUOTATION: the salesperson's reason for ordering above the quotation.
+    qty_over_reason: Optional[str] = None
+    qty_over_reason_at: Optional[datetime] = None
+    qty_over_reason_by_name: Optional[str] = None
+    # The kind of document the bound version belongs to (proposal | quotation).
+    checked_against_kind: Optional[str] = None
+    checked_against_label: Optional[str] = None
 
     # AC-F9a: erosion since v1, as a number rather than a flag. A negotiation is
     # SUPPOSED to move the price; management wants the size of the move.
@@ -2048,6 +2085,7 @@ class ProjectQuotationIssueResponse(BaseModel):
     document_id: str
     issue_no: int
     our_ref_text: Optional[str] = None
+    revision_label: Optional[str] = None
     issued_at: Optional[datetime] = None
     issued_by: Optional[str] = None
     issued_by_name: Optional[str] = None
@@ -2122,9 +2160,27 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     approval_rejected_reason: Optional[str] = None
     requires_approval: bool = False
     below_floor_line_count: int = 0
+    # PS-PROPOSAL-QUOTATION: quotation lines priced below the proposal revision it came from.
+    below_proposal_count: int = 0
+
+    # PS-PROPOSAL-QUOTATION: proposal or quotation, and the link between them.
+    kind: str = "proposal"
+    source_issue_id: Optional[str] = None
+    source_document_id: Optional[str] = None
+    source_label: Optional[str] = None
+    quotation_document_id: Optional[str] = None
+    recipient_party_type: Optional[str] = None
+    current_revision_label: Optional[str] = None
+    next_revision_label: Optional[str] = None
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class MakeQuotationRequest(BaseModel):
+    """PS-PROPOSAL-QUOTATION: the issued proposal revision a won project's quotation is made from."""
+
+    issue_id: str = Field(min_length=1)
 
 
 class QuotationApprovalMoveRequest(BaseModel):
@@ -2390,9 +2446,13 @@ class QuotationSignScopeLine(BaseModel):
     item_label: Optional[str] = None
     description: Optional[str] = None
     technical_spec: Optional[str] = None
+    # Inline data URIs (the PDF's own downscaled bytes), never a storage key or signed link.
+    image_url: Optional[str] = None
+    drawing_url: Optional[str] = None
     brand: Optional[str] = None
     product_code: Optional[str] = None
     quantity: Decimal = Decimal("0")
+    uom: Optional[str] = None
     unit_price: Decimal = Decimal("0")
     complete_set: Optional[str] = None
     band_label: Optional[str] = None
@@ -2400,9 +2460,16 @@ class QuotationSignScopeLine(BaseModel):
     amount: Optional[Decimal] = None
 
 
+class QuotationSignColumn(BaseModel):
+    key: str
+    label: str
+
+
 class QuotationSignScope(BaseModel):
     scope_label: str
     scope_total: Decimal = Decimal("0")
+    # The quotation's own column set for this scope (`app.services.quotation_columns`).
+    columns: List[QuotationSignColumn] = Field(default_factory=list)
     lines: List[QuotationSignScopeLine] = Field(default_factory=list)
 
 
@@ -2457,6 +2524,8 @@ class QuotationSignPageResponse(BaseModel):
     """
 
     our_ref: Optional[str] = None
+    # PS-PROPOSAL-QUOTATION: proposal | quotation, so the page names what the customer holds.
+    document_kind: str = "proposal"
     # The cover page rows (layout 2); null for an issue from before the cover page.
     cover_rows: Optional[List[QuotationCoverRow]] = None
     # Layout 3 (QUOTE-COVER-DESIGN): the design copied at send; null for layouts 1 and 2.
@@ -2493,3 +2562,64 @@ class QuotationSignPageResponse(BaseModel):
     can_sign: bool = True
     # accepted | superseded | amendment_open | amendment_applied, or null when signable.
     sign_blocked_reason: Optional[str] = None
+
+
+# --------------------------------------------------------------- party contacts (PS-REGISTRATION-V3)
+
+
+class ProjectPartyContactCreate(BaseModel):
+    name: str = Field(..., max_length=255)
+    job_title: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=150)
+    is_active: bool = True
+
+
+class ProjectPartyContactUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    job_title: Optional[str] = Field(None, max_length=120)
+    phone: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=150)
+    is_active: Optional[bool] = None
+
+
+class ProjectPartyContactResponse(BaseModel):
+    id: str
+    party_id: str
+    name: str
+    job_title: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    is_active: bool = True
+
+
+class ProjectPartyPerson(BaseModel):
+    stakeholder_id: str
+    party_contact_id: Optional[str] = None
+    name: str
+    job_title: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+
+
+class ProjectPartyOnProject(BaseModel):
+    """One (role, party) on a project, with the project's people at that party. Shape kept
+    stable for PS-PROPOSAL-QUOTATION's recipient picker."""
+
+    party_id: str
+    party_type: str
+    role: str
+    name: str
+    phone: Optional[str] = None
+    contacts: List[ProjectPartyPerson] = Field(default_factory=list)
+
+
+class ProjectPartyPhoneFill(BaseModel):
+    phone: str = Field(..., max_length=50)
+    stakeholder_id: Optional[str] = None
+
+
+class ProjectPartyPhoneFillResponse(BaseModel):
+    party_id: str
+    stakeholder_id: Optional[str] = None
+    phone: str

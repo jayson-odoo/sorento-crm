@@ -7,14 +7,60 @@ or prices first. It also covers asking for a missing drawing or photo of a produ
 This is the **Project Sales** quotation (inside a project). The older **Commercial >
 Quotations** screen is a different module.
 
+## Proposals and the quotation
+
+What you send while the project is still being negotiated is a **proposal**. Once the project is
+**Won**, you turn one proposal revision into the project's **quotation**. The customer's POs are
+checked against the quotation, not against the proposals.
+
+* A proposal can go to any party on the project: the tender party, a trading house, the main
+  contractor or a subcontractor. Make one proposal per party when they get different prices.
+* Proposal revisions are lettered: `PRJQ-2026-0005-A`, then `-B`, `-C`. A proposal that was
+  already sent as `-R1` before this change keeps counting `-R2`, `-R3`.
+* When you send a revision whose unit price for a product differs from the previous revision of
+  the same proposal, management gets an alert with the old and new price. The revision still goes
+  out. A quantity-only change sends no alert.
+* The quotation has its own number (for example `QT-2026-0001`) and its own revisions `-R1`, `-R2`.
+
 ## Where to find it
 
 1. Open **Project Sales > Projects** and open the project.
-2. Click the **Quotation** tab. Each quotation document is listed with its number (for example
-   `PRJQ-2026-0003`) and revision (**R1**, **R2** ...).
-3. Click a quotation to open it. Its **Lines** tab holds the priced lines.
+2. Click the **Proposals** tab. Each proposal is listed with its number, the **Kind** column
+   (**Proposal** or **Quotation**) and its latest revision. The project's quotation is listed first.
+3. Click one to open it. Its **Lines** tab holds the priced lines.
 
-To start a new one, use **New quotation** from the project's **Quotation** tab.
+To start a new proposal, use **Add a proposal** on the project's **Proposals** tab.
+
+## Make the quotation (project Won)
+
+1. Mark the project Won (the customer signing a proposal does this, or set the scope's outcome).
+2. Open the proposal the customer agreed to and choose **Make quotation** from the actions menu.
+   It only shows on a sent proposal of a Won project that has no quotation yet.
+3. Pick the revision (newest first) and click **Make quotation**.
+4. The quotation opens. It carries that revision's party, letter, terms and lines; lost scopes are
+   left out. Its header shows **From** with a link back to the proposal revision, and the proposal
+   shows **Quotation** with a link to it.
+5. Sign it and send it like a proposal. The customer can sign it on the same kind of link.
+
+A project has one quotation. If you picked the wrong revision, delete the quotation before it is
+sent and make it again.
+
+### A further discount needs approval
+
+On the quotation, a line priced **below** the same product's price on the proposal revision it came
+from needs a manager's approval before you can send it (*One line is priced below the proposal*).
+The same **Send for approval** flow as the minimum price applies. A higher price, or a quantity
+change, needs nothing.
+
+## PO quantity above the quotation
+
+When the POs of a project together order more of a product than the quotation quotes, saving or
+confirming the PO opens **More than quoted**, one line per product (for example *32MM TAIL PIECE
+COUPLING: 13 ordered, 10 quoted.*). Type a reason (for example *Variation order VO-3*) and click
+**Save**. The PO saves, shows a **Qty over quote** badge (hover for the reason), and management is
+told. You are asked once per PO.
+
+Once a project has a quotation, a new PO cannot be checked against a proposal.
 
 ## Fill the cover page
 
@@ -23,20 +69,22 @@ first card on the customer's sign link. It replaces the separate Excel cover she
 cover page design (set by an admin in **Quotation Templates > Cover page**) decides the title, the
 letterhead, which rows show and in what order, and their printed names. Without a design it shows,
 in this order: **Reference No.**, **Date**, **Attn**, **Company**, **Contact**, **Add**, **Email**,
-**Quotation Purpose**, **Terms & Conditions**, **Payment Terms**, **Validity**, **Prepared By**.
+**Proposal Purpose** (**Quotation Purpose** on the quotation), **Terms & Conditions**, **Payment
+Terms**, **Validity**, **Prepared By**. Where a design keeps the standard title and Purpose name,
+they follow the document too: PROPOSAL on a proposal, QUOTATION on a quotation.
 
 ### See it before you send: the Cover letter tab
 
-* The **Cover letter** tab shows page 1 as it will print, with this quotation's values. Before the
-  first save the reference reads `NEW-R1`; after that it shows the next revision number.
+* The **Cover letter** tab shows page 1 as it will print, with this document's values. Before the
+  first save the reference reads `NEW-R1`; after that it shows the next revision.
 * In edit mode, type the **Intro text** (above the rows) and **Closing text** (below the rows) for
-  this customer. A new quotation starts with the design's wording, with fields such as the
-  project name already filled in. Changes here affect this quotation only.
+  this customer. A new document starts with the design's wording, with fields such as the
+  project name already filled in. Changes here affect this document only.
 * The preview follows your unsaved changes on every tab.
-* A quotation's old free-text cover letter is now its intro text.
+* An old free-text cover letter is now the intro text.
 
-* **Reference No.** is the quotation number with its revision and the project name (for example
-  `PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES`). The same reference shows on the price pages and
+* **Reference No.** is the proposal or quotation number with its revision and the project name
+  (for example `PRJQ-2026-0042-B SERI MUTIARA RESIDENCES`). The same reference shows on the price pages and
   on the sign link. You do not type your own code any more.
 * On the **Header** tab: **Email** sits under **Phone** and fills from the customer's main contact
   on a new quotation. **Quotation Purpose** sits under **Subject** and is optional.
@@ -127,6 +175,12 @@ The link opens a sign page that matches the PDF:
   contact** (your name and phone).
 * One **Quotation** card. Each section is a row with its item count and total; with more than one
   section they start closed. The last row is **Total amount**.
+* Each section's table has the same columns as that section in the PDF, in the same order and
+  with the same headings: **ITEM**, **PRODUCT IMAGE** (only when a line in that section has a
+  photo, as in the PDF), **TECHNICAL SPEC** (the line's drawing), **DESCRIPTION**, **BRAND**,
+  **PRODUCT CODE**, **QTY**, **UNIT RATE (RM)**, **COMPLETE SET** and **GRAND TOTAL**. The
+  customer sees the photos and drawings without signing in. On a phone they scroll the table
+  sideways; no column is left out.
 * To accept, the customer types **Your name**, ticks *I have read and agree to the Terms and
   conditions.*, signs in **Sign here** and clicks **Sign and accept**. If they skip a step, the
   page tells them which one. The terms they agree to are the ones on the cover page card.

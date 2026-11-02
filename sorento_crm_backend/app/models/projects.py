@@ -100,6 +100,9 @@ PARTY_ARCHITECT = "architect"
 PARTY_MAIN_CONTRACTOR = "main_contractor"
 PARTY_TRADING_HOUSE = "trading_house"
 PARTY_CONSULTANT = "consultant"
+PARTY_SUBCONTRACTOR = "subcontractor"
+PARTY_INTERIOR_DESIGNER = "interior_designer"
+PARTY_TENDER_PARTY = "tender_party"
 
 
 class ProjectParty(Base, CompanyScopedMixin):
@@ -142,6 +145,68 @@ class ProjectParty(Base, CompanyScopedMixin):
         Index("ix_project_parties_name", "name"),
         {"schema": "projects"},
     )
+
+
+class ProjectPartyContact(Base, CompanyScopedMixin):
+    """A person at a party (PS-REGISTRATION-V3 rule 4): the master a registration picks from.
+
+    Registration copies a picked contact into the project's stakeholders, so a person who
+    later changes firm does not rewrite who was on an old project. Phone is optional (owner
+    2 Nov): it can be filled at WhatsApp send time.
+    """
+
+    __tablename__ = "party_contacts"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    party_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="CASCADE"), nullable=False
+    )
+    name = Column(String(255), nullable=False)
+    job_title = Column(String(120), nullable=True)
+    phone = Column(String(50), nullable=True)
+    email = Column(String(150), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default="true", default=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_project_party_contacts_party", "party_id"),
+        {"schema": "projects"},
+    )
+
+
+#: The roles a project links to through `party_links`; the role IS the party's type. Developer,
+#: architect and main contractor stay single columns where they always were. Owner 2 Nov ~21:40
+#: (Q5 b): several trading houses, subcontractors and tender parties; one of each other role.
+PARTY_LINK_SINGLE_ROLES = ("consultant", "interior_designer")
+PARTY_LINK_ROLES = (
+    PARTY_SUBCONTRACTOR,
+    PARTY_TRADING_HOUSE,
+    PARTY_CONSULTANT,
+    PARTY_INTERIOR_DESIGNER,
+    PARTY_TENDER_PARTY,
+)
+
+
+class ProjectPartyLink(Base):
+    """A party playing a role on one project, beyond the three single-party columns."""
+
+    __tablename__ = "party_links"
+    __table_args__ = (
+        Index("ix_project_party_links_party", "party_id"),
+        {"schema": "projects"},
+    )
+
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    role = Column(String(32), primary_key=True)
+    party_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="RESTRICT"), primary_key=True
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
 
 class ProjectType(Base, CompanyScopedMixin):
@@ -400,6 +465,9 @@ class ProjectSalesProfile(Base):
     main_contractor_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
+    # Where the project came from (PS-REGISTRATION-V3 rule 8): a value of the editable lookup
+    # set `project_lead_source`, the same list leads use. Required to register or submit.
+    lead_source = Column(String(32), nullable=True)
     estimated_sales_value = Column(Numeric(15, 2), nullable=True)
     launch_date = Column(Date, nullable=True)
     # An explicit window overrides the launch_date + lag derivation wherever set.
@@ -460,6 +528,12 @@ class ProjectStakeholder(Base, CompanyScopedMixin):
     role_id = Column(
         UUID(as_uuid=False),
         ForeignKey("projects.template_roles.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    # The party contact this row was copied from at registration (PS-REGISTRATION-V3 rule 6).
+    party_contact_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.party_contacts.id", ondelete="SET NULL"),
         nullable=True,
     )
     person_name = Column(String(255), nullable=False)
@@ -691,14 +765,23 @@ LEAD_SOURCE_CONTRACTOR = "contractor"
 LEAD_SOURCE_DEALER = "dealer"
 LEAD_SOURCE_INBOUND = "inbound"
 LEAD_SOURCE_OTHER = "other"
+#: The seed of the editable lookup set `project_lead_source` (PS-REGISTRATION-V3 Q4), shared by
+#: leads and projects. The set, once it exists, is the list; this tuple answers only where it
+#: was never seeded (a database built by create_all).
 LEAD_SOURCES = (
     LEAD_SOURCE_SITE_VISIT,
     LEAD_SOURCE_ARCHITECT,
     LEAD_SOURCE_CONTRACTOR,
     LEAD_SOURCE_DEALER,
     LEAD_SOURCE_INBOUND,
+    "bci",
+    "referral",
+    "tender_notice",
+    "existing_customer",
+    "interior_designer",
     LEAD_SOURCE_OTHER,
 )
+LEAD_SOURCE_SET_KEY = "project_lead_source"
 
 # The lookup set the disqualification reason must come from (AC-O6). A free-text
 # reason cannot be reported on, and "not interested" typed nine different ways is
@@ -1134,6 +1217,12 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     cover_closing_html = Column(Text, nullable=True)
     terms_html = Column(Text, nullable=True)
 
+    # PS-SPEC-SHEET: the spec sheet's settings (templates, revision printed, and per item the page
+    # order, Area, Comment, Marker, Hide and hand-picked accessories). Keyed by product id or
+    # ``set:<id>`` rather than by line id, so they survive a new revision. Shape and validation in
+    # ``project_spec_sheet_service``. NULL = never set up.
+    spec_sheet = Column(JSONB(none_as_null=True), nullable=True)
+
     signatory_name = Column(String(120), nullable=True)
     signatory_phone = Column(String(60), nullable=True)
     # The internal signature held on the DRAFT, so signing and issuing are separate acts: a person
@@ -1162,6 +1251,22 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     # already been answered.
     approval_rejected_reason = Column(Text, nullable=True)
 
+    # PS-PROPOSAL-QUOTATION. Every document is a PROPOSAL until a won project converts one issued
+    # proposal revision into the project's QUOTATION: the same row shape, so the editor, issue,
+    # sign page, PDF and approval gate all work on it unchanged. `source_issue_id` is the proposal
+    # revision it was made from (the baseline a further discount is compared with).
+    kind = Column(String(16), nullable=False, server_default="proposal", default="proposal")
+    source_issue_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "projects.quotation_issues.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_quotation_documents_source_issue",
+        ),
+        nullable=True,
+    )
+
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -1172,6 +1277,13 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
         Index("ix_project_quotation_documents_project", "project_id"),
         Index("ix_project_quotation_documents_approval_status", "approval_status_id"),
         UniqueConstraint("company_id", "document_no", name="uq_project_quotation_documents_no"),
+        CheckConstraint("kind IN ('proposal', 'quotation')", name="ck_quotation_documents_kind"),
+        Index(
+            "uq_quotation_documents_one_quotation",
+            "project_id",
+            unique=True,
+            postgresql_where=text("kind = 'quotation'"),
+        ),
         {"schema": "projects"},
     )
 
@@ -1263,6 +1375,10 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
     # The exact string printed as `Our Ref`, kept rather than recomputed: it is what the customer
     # will quote back, and the format may change.
     our_ref_text = Column(String(120), nullable=True)
+    # The revision as printed after the document number: 'A', 'B' ... for a proposal first issued
+    # after PS-PROPOSAL-QUOTATION, 'R1', 'R2' ... for a quotation and for every issue that existed
+    # before (backfilled), so nothing already sent changes its name.
+    revision_label = Column(String(8), nullable=True)
 
     issued_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     issued_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -1873,6 +1989,13 @@ class ProjectPurchaseOrder(Base, CompanyScopedMixin):
 
     approved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_at = Column(DateTime(timezone=False), nullable=True)
+    # PS-PROPOSAL-QUOTATION soft stop: why the project's POs order more of a product than the
+    # quotation quoted. Asked once per PO, shown to management, never a block.
+    qty_over_reason = Column(Text, nullable=True)
+    qty_over_reason_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    qty_over_reason_at = Column(DateTime(timezone=False), nullable=True)
     countersigned_by = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

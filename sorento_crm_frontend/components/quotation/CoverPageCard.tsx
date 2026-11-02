@@ -15,9 +15,12 @@ function text(value: string | null | undefined): string {
 export function SenderRow({
   name,
   logoUrl,
+  noun = 'Quotation',
 }: {
   name: string | null | undefined;
   logoUrl: string | null | undefined;
+  /** "Quotation" or "Proposal": the word the document prints for itself. */
+  noun?: string;
 }) {
   return (
     <div className="flex min-w-0 items-center gap-3">
@@ -31,7 +34,7 @@ export function SenderRow({
       )}
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Quotation from
+          {`${noun} from`}
         </p>
         <p className="min-w-0 break-words text-base font-semibold">
           {text(name)}
@@ -54,10 +57,12 @@ export function CoverPageCard({
   cover,
   testId = 'cover-page-card',
   wide = false,
+  noun = 'Quotation',
 }: {
   cover: CoverPageData;
   testId?: string;
   wide?: boolean;
+  noun?: string;
 }) {
   const designed =
     cover.cover_title !== undefined && cover.cover_title !== null;
@@ -69,7 +74,7 @@ export function CoverPageCard({
     <Card data-testid={testId}>
       <CardContent className="space-y-4 py-5">
         {letterhead && (
-          <SenderRow name={cover.sender_name} logoUrl={cover.sender_logo_url} />
+          <SenderRow name={cover.sender_name} logoUrl={cover.sender_logo_url} noun={noun} />
         )}
         {title && (
           <p className="min-w-0 break-words text-lg font-semibold tracking-wide">

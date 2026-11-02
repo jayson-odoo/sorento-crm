@@ -69,6 +69,26 @@ Every suggestion arrives already filled in, ready to post exactly as shown. Ther
   Confirm, for a short window after you click it - see
   [Undo last confirm](local-buy-and-borrow-source.md#undo-last-confirm).
 
+### What the Review split page shows
+
+Confirm opens on **Review split**, one page per order. The page prints what the purchasing email
+will say, line for line:
+
+* It reads the board again as it opens, so a decision you saved a moment ago (on this tab or on
+  another one) is what it shows. You don't need to refresh the page first.
+* If the board can't be read again (it took too long), the page says so and offers **Retry**.
+  Nothing can be confirmed or changed from it until a read succeeds.
+* If the same line was saved again somewhere else after this tab last read it, the board takes
+  the newer decision and tells you which line changed. Saving from a tab that still shows the
+  older decision is refused, and the board reloads the newer one.
+* A line delivered in full that AutoCount still changed (for example a new date) shows the old
+  date under **Delivery date** and the new one under **New date**, the same Was and Now the email
+  prints.
+* When your saved decision is not what AutoCount's change now suggests, the page flags the line:
+  "AutoCount moved this line: suggestion Buy 3, you keep Borrow 3". **Keep** leaves your
+  decision as it is. **Take suggestion** drops your saved decision so the line takes the change's
+  suggestion. Either way the order can still be confirmed.
+
 ## What Confirm does to Order Inquiries
 
 Carrying out a suggestion writes to the **Order Inquiries** page:

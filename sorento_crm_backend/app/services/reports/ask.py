@@ -274,7 +274,7 @@ def _empty(status: str = "ok", message: Optional[str] = None) -> dict[str, Any]:
 
 def _params(
     db: Session, entry: dict[str, Any], filters: dict[str, list[str]], warehouse_codes: list[str], policy: Any,
-    date_from: date, date_to: date,
+    date_from: date, date_to: date, capped_by_policy: bool = True,
 ) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
     """The engine params of a sales ask, or the body to answer with instead (a filter resolving to nothing is zero rows,
     a refused location the refusal)."""
@@ -290,7 +290,9 @@ def _params(
         params[word] = list(values)
 
     if "location" in entry["filters"]:  # a document-level basis has no location to cap
-        location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
+        location_ids, refusal, nothing = resolve_locations(
+            db, warehouse_codes, policy, capped_by_policy=capped_by_policy
+        )
         if refusal is not None:
             return params, _empty("refused", refusal)
         if nothing:
@@ -317,6 +319,7 @@ def run_ask(
     top_n: Optional[int] = None,
     scope_customers: Optional[list[str]] = None,
     also: tuple[str, ...] = (),
+    capped_by_policy: bool = True,
 ) -> dict[str, Any]:
     """The ranked rows, their cut and the whole set's total. `filters` maps a spec word to
     RESOLVED ids (channel: `dealer` / `project`); `warehouse_codes` are the raw codes named.
@@ -332,7 +335,7 @@ def run_ask(
         )
     entry = CATALOGUE["sales"][basis]
     definition = entry["definition"]
-    params, stop = _params(db, entry, filters, warehouse_codes, policy, date_from, date_to)
+    params, stop = _params(db, entry, filters, warehouse_codes, policy, date_from, date_to, capped_by_policy)
     if stop is not None:
         return stop
 
@@ -412,7 +415,7 @@ DOCUMENT_LISTS: dict[str, dict[str, Any]] = {
 
 def document_rows(
     db: Session, *, basis: str, filters: dict[str, list[str]], warehouse_codes: list[str], policy: Any,
-    company_grants: Any, date_from: date, date_to: date,
+    company_grants: Any, date_from: date, date_to: date, capped_by_policy: bool = True,
 ) -> list[dict[str, Any]]:
     """Item 7 (owner 29 Oct, as before #1922): every outstanding document behind the figure, one row each, its lines
     rolled up (products and locations joined), latest first and undated last (owner R23, 13 Sep). The SAME definition,
@@ -420,7 +423,7 @@ def document_rows(
     from app.services.reports import engine
 
     shape, entry = DOCUMENT_LISTS[basis], CATALOGUE["sales"][basis]
-    params, stop = _params(db, entry, filters, warehouse_codes, policy, date_from, date_to)
+    params, stop = _params(db, entry, filters, warehouse_codes, policy, date_from, date_to, capped_by_policy)
     if stop is not None:
         return []
     ctx = engine.resolve(db, entry["definition"], params, company_grants=frozenset(str(c) for c in company_grants or ()))

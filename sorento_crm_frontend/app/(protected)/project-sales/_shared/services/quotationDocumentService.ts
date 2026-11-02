@@ -161,6 +161,21 @@ export type QuotationDocument = {
   requires_approval?: boolean;
   /** How many such lines, so the block can say how much there is to look at. */
   below_floor_line_count?: number;
+  /** Quotation lines priced below the proposal revision it was made from (a further discount). */
+  below_proposal_count?: number;
+
+  /** PS-PROPOSAL-QUOTATION: a proposal, or the won project's quotation made from one. */
+  kind?: QuotationDocumentKind;
+  /** On a quotation: the proposal revision it was made from, e.g. "PRJQ-2026-0003-B". */
+  source_issue_id?: string | null;
+  source_document_id?: string | null;
+  source_label?: string | null;
+  /** On a proposal: the quotation made from one of its revisions, when there is one. */
+  quotation_document_id?: string | null;
+  recipient_party_type?: string | null;
+  current_revision_label?: string | null;
+  /** What the next Send prints: "C" on a proposal, "R2" on a quotation or a legacy proposal. */
+  next_revision_label?: string | null;
 
   /**
    * What the customer did with the revision they are CURRENTLY holding (S17).
@@ -185,10 +200,19 @@ export type QuotationDocument = {
   last_viewed_at?: string | null;
 };
 
+export type QuotationDocumentKind = 'proposal' | 'quotation';
+
+/** "Proposal" or "Quotation": the word every screen prints for a document. */
+export function documentNoun(document?: { kind?: QuotationDocumentKind | null } | null): string {
+  return document?.kind === 'quotation' ? 'Quotation' : 'Proposal';
+}
+
 export type QuotationIssue = {
   id: string;
   document_id: string;
   issue_no: number;
+  /** "A", "B" on a proposal; "R1", "R2" on a quotation and on anything issued before the split. */
+  revision_label?: string | null;
   our_ref_text: string | null;
   issued_at: string | null;
   issued_by: string | null;
@@ -321,6 +345,24 @@ export async function createQuotationDocument(
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to create the quotation'));
+  return response.json();
+}
+
+/**
+ * PS-PROPOSAL-QUOTATION: turn one issued proposal revision of a WON project into its quotation.
+ * Refused with 409 `project_not_won` / `project_has_quotation`; returns the new quotation.
+ */
+export async function makeQuotation(
+  projectId: string,
+  proposalId: string,
+  issueId: string,
+): Promise<QuotationDocument> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${proposalId}/make-quotation`,
+    { method: 'POST', body: JSON.stringify({ issue_id: issueId }) },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to make the quotation'));
   return response.json();
 }
 

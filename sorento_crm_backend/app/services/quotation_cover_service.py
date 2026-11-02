@@ -133,7 +133,7 @@ def layout_of(issue: Any) -> int:
 def cover_reference(document: Any, issue: Any, project: Optional[Project]) -> str:
     from app.services.project_quotation_document_service import quotation_no
 
-    number = quotation_no(document.document_no, issue.issue_no)
+    number = quotation_no(document.document_no, issue.issue_no, issue.revision_label)
     title = (project.title or "").strip() if project is not None else ""
     return f"{number} {title}" if title else number
 
@@ -270,9 +270,12 @@ def issue_values(
     }
 
 
-def rows_for_design(values: Dict[str, str], design: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+def rows_for_design(
+    values: Dict[str, str], design: Optional[Dict[str, Any]] = None, noun: str = "Quotation"
+) -> List[Dict[str, Any]]:
     """Ordered ``{key, label, text}`` rows (terms carries ``html``): the design's shown rows in its
-    order with its labels, empty rows dropped. No design = the #2088 cover."""
+    order with its labels, empty rows dropped. No design = the #2088 cover. An unchanged default
+    Purpose label follows the document's noun (Proposal / Quotation, PS-PROPOSAL-QUOTATION)."""
     design = design or DEFAULT_DESIGN
     rows: List[Dict[str, Any]] = []
     for item in design["rows"]:
@@ -281,6 +284,8 @@ def rows_for_design(values: Dict[str, str], design: Optional[Dict[str, Any]] = N
         if not item.get("shown", True) or not value:
             continue
         label = (item.get("label") or "").strip() or ROW_LABELS[key]
+        if key == "purpose" and label == ROW_LABELS["purpose"]:
+            label = f"{noun} Purpose"
         if key == "terms":
             rows.append({"key": key, "label": label, "html": value})
         else:
@@ -296,7 +301,20 @@ def cover_rows(
     design: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """The rows of one issue (or of a draft shaped like one) under ``design``."""
-    return rows_for_design(issue_values(db, document, issue, project), design)
+    from app.services.project_quotation_document_service import document_noun
+
+    return rows_for_design(
+        issue_values(db, document, issue, project), design, document_noun(document)
+    )
+
+
+def cover_title(design: Dict[str, Any], noun: str = "Quotation") -> str:
+    """The title a design prints: as the admin wrote it, except the unchanged default, which
+    follows the document's noun (PROPOSAL / QUOTATION), as the #2088 cover does."""
+    title = (design.get("title") or "").strip()
+    if title.upper() == str(DEFAULT_DESIGN["title"]).upper():
+        return noun.upper()
+    return title
 
 
 def design_of(issue: Any) -> Dict[str, Any]:
@@ -312,11 +330,12 @@ def cover_payload(
     closing: Optional[str],
     sender_name: Optional[str],
     sender_logo_url: Optional[str],
+    noun: str = "Quotation",
 ) -> Dict[str, Any]:
     """The cover as the sign page, the Cover letter tab and the designer preview all read it."""
     return {
         "cover_rows": rows,
-        "cover_title": design.get("title", ""),
+        "cover_title": cover_title(design, noun),
         "cover_show_letterhead": bool(design.get("show_letterhead", True)),
         "cover_intro_html": clean_terms_html(intro),
         "cover_closing_html": clean_terms_html(closing),

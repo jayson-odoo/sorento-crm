@@ -97,13 +97,13 @@ def test_rw4_a_pending_project_never_blocks_a_staff_registration_of_the_same_tit
     c = as_user(world, world.staff)
     same = c.post(
         f"{STAFF}/",
-        json={"title": "Setia Alam Phase 3B", "developer_party_id": dev.id, "customer_id": customer_id,
+        json={"lead_source": "site_visit", "title": "Setia Alam Phase 3B", "developer_party_id": dev.id, "customer_id": customer_id,
               "lead_id": lead_a},
     )
     assert same.status_code == 201, same.text
     near = c.post(
         f"{STAFF}/",
-        json={"title": "setia alam ph 3c", "developer_party_id": dev.id, "customer_id": customer_id,
+        json={"lead_source": "site_visit", "title": "setia alam ph 3c", "developer_party_id": dev.id, "customer_id": customer_id,
               "lead_id": lead_b},
     )
     assert near.status_code == 201, near.text

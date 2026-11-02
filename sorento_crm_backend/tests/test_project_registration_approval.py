@@ -780,7 +780,7 @@ def test_b10_staff_direct_registration_still_refuses_a_blocking_clash(world):
     c = as_user(world, world.staff)
     first = c.post(
         f"{STAFF}/",
-        json={"title": "Setia Alam Phase 3B", "developer_party_id": dev.id, "customer_id": customer_id,
+        json={"lead_source": "site_visit", "title": "Setia Alam Phase 3B", "developer_party_id": dev.id, "customer_id": customer_id,
               "lead_id": lead_a},
     )
     assert first.status_code == 201, first.text
@@ -788,7 +788,7 @@ def test_b10_staff_direct_registration_still_refuses_a_blocking_clash(world):
     assert first.json()["project_code"] == ppf_code(5)
     second = c.post(
         f"{STAFF}/",
-        json={"title": "setia alam ph 3b", "developer_party_id": dev.id, "customer_id": customer_id,
+        json={"lead_source": "site_visit", "title": "setia alam ph 3b", "developer_party_id": dev.id, "customer_id": customer_id,
               "lead_id": lead_b},
     )
     assert second.status_code == 409, second.text
@@ -823,7 +823,7 @@ def test_e1_state_and_mukim_on_register_get_and_update(world):
     c = as_user(world, world.staff)
     made = c.post(
         f"{STAFF}/",
-        json={"title": "ZZT FIELDS TOWER", "state": "Selangor", "mukim": "Petaling",
+        json={"lead_source": "site_visit", "title": "ZZT FIELDS TOWER", "state": "Selangor", "mukim": "Petaling",
               "customer_id": customer_id, "lead_id": lead_id},
     )
     assert made.status_code == 201, made.text
@@ -845,7 +845,7 @@ def test_e1_a_project_without_them_returns_nulls(world):
     lead_id = staff_lead(world.db, world.company_id, world.staff, customer_id)
     world.db.commit()
     made = as_user(world, world.staff).post(
-        f"{STAFF}/", json={"title": "ZZT PLAIN TOWER", "customer_id": customer_id, "lead_id": lead_id}
+        f"{STAFF}/", json={"lead_source": "site_visit", "title": "ZZT PLAIN TOWER", "customer_id": customer_id, "lead_id": lead_id}
     )
     assert made.status_code == 201, made.text
     body = made.json()

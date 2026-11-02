@@ -143,6 +143,8 @@ function productFromLineParent(line: LineTagData): ProductTagData {
     barcode: line.barcode,
     currency: line.currency,
     price_tag_description: line.price_tag_description,
+    brand: line.brand,
+    drawing: line.drawing ?? null,
   };
 }
 
@@ -164,8 +166,28 @@ function productFromPart(part: TagPartData): ProductTagData {
     barcode: part.barcode ?? null,
     currency: part.currency,
     price_tag_description: part.price_tag_description,
+    brand: part.brand,
+    drawing: part.drawing ?? null,
   };
 }
+
+/** PS-SPEC-SHEET: what a layer pointed at a missing part reads on a `strict_parts` line - a
+ *  product with nothing to say, so its slots and tokens print blank instead of the parent. */
+const EMPTY_PART_PRODUCT: ProductTagData = {
+  id: '',
+  code: '',
+  name: '',
+  dimensions: '',
+  spec_lines: [],
+  specs: [],
+  images: [],
+  list_price: null,
+  offer_price: null,
+  promotion_id: null,
+  barcode: null,
+  brand: '',
+  drawing: null,
+};
 
 /**
  * D7: the product data a layer actually reads, once its own `subjectPart` is
@@ -197,6 +219,7 @@ export function subjectOf(
     return { kind: 'product', product: productFromLineParent(data.line) };
   }
   const part = data.line.parts[subjectPart];
+  if (!part && data.line.strict_parts) return { kind: 'product', product: EMPTY_PART_PRODUCT };
   return {
     kind: 'product',
     product: part ? productFromPart(part) : productFromLineParent(data.line),
@@ -463,6 +486,9 @@ export function slotImageAttachmentId(
       : null;
   }
   if (layer.props.kind !== 'image') return null;
+
+  // PS-SPEC-SHEET: the Drawing slot is handed the subject's drawing alone (`slotImagesOf`).
+  if (layer.slot_binding === 'drawing') return images[0]?.attachment_id ?? null;
 
   // Combo Photo (AC-4.3): the combo's cover leads the line's images already, and a
   // pinned photo source does not apply - the combo's own picture is the point.
@@ -1183,6 +1209,51 @@ export function layerDisplay(
   }
 }
 
+/** PS-SPEC-SHEET: the technical drawing of whatever is bound, or null. */
+export function drawingOf(data: TagBindingData | null | undefined): TagImage | null {
+  if (data?.kind === 'product') return data.product.drawing ?? null;
+  if (data?.kind === 'line') return data.line.drawing ?? null;
+  return null;
+}
+
+/** A spec value that means Yes: the registry's boolean, however it arrived. */
+function isYes(value: string | undefined): boolean {
+  return ['yes', 'true', '1', 'y'].includes((value ?? '').trim().toLowerCase());
+}
+
+/**
+ * PS-SPEC-SHEET: whether a layer prints against this data (`TagLayer.show_when`).
+ *
+ * A layer with no condition always prints, so every price tag reads exactly as before. A
+ * `part` condition holds when the LINE has that part (an accessory row on a page with one
+ * accessory hides its second row); a `spec` condition holds when the layer's own subject has
+ * that spec reading Yes (the Rimless badge). Print-side only: the editor canvas draws every
+ * layer, because a designer cannot place what they cannot see.
+ */
+export function layerShownFor(
+  layer: Pick<TagLayer, 'show_when' | 'props'>,
+  data: TagBindingData | null | undefined,
+): boolean {
+  const when = layer.show_when;
+  if (!when) return true;
+  if (when.part != null && when.part >= 0) {
+    const parts = data?.kind === 'line' ? data.line.parts ?? [] : [];
+    if (!parts[when.part]) return false;
+  }
+  if (when.spec) {
+    const subject = subjectOf(data, layer);
+    const specs =
+      subject?.kind === 'product'
+        ? subject.product.specs ?? []
+        : subject?.kind === 'line'
+          ? subject.line.specs ?? []
+          : [];
+    const spec = specs.find((row) => row.key === when.spec);
+    if (!spec || !isYes(spec.value)) return false;
+  }
+  return true;
+}
+
 /** The photos of whatever is bound. A set has none of its own. */
 export function imagesOf(data: TagBindingData | null | undefined): TagImage[] {
   if (data?.kind === 'product') return data.product.images;
@@ -1196,6 +1267,10 @@ export function slotImagesOf(
   layer: Pick<TagLayer, 'slot_binding' | 'props'>,
   data: TagBindingData | null | undefined,
 ): TagImage[] {
+  if (layer.slot_binding === 'drawing') {
+    const drawing = drawingOf(subjectOf(data, layer));
+    return drawing ? [drawing] : [];
+  }
   return imagesOf(layer.slot_binding === 'combo_image' ? data : subjectOf(data, layer));
 }
 

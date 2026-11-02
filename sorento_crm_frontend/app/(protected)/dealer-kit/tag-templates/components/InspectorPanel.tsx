@@ -39,6 +39,7 @@ import type {
   ShapeType,
   SlotBinding,
   TagLayer,
+  LayerShowWhen,
   TagLayerProps,
   TagPartData,
 } from '@/lib/dealer-kit/tag-template-types';
@@ -47,7 +48,7 @@ import { isCropped } from '@/lib/dealer-kit/image-crop';
 import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
 import { priceBadgeInsets, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import { isDynamic } from '@/lib/dealer-kit/product-block';
-import { hasSubjectAwareToken } from '@/lib/dealer-kit/merge-fields';
+import { hasSubjectAwareToken, type SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
 
@@ -65,6 +66,8 @@ const SLOT_BINDING_OPTIONS: SearchableSelectOption[] = [
   { value: 'combo_topups', label: 'Combo Top-ups', group: 'Combo' },
   { value: '__none__', label: '(None)' },
   { value: 'product_image', label: 'Product Image' },
+  // PS-SPEC-SHEET: the technical drawing (quotation line's frozen drawing on a spec sheet).
+  { value: 'drawing', label: 'Drawing' },
   { value: 'code', label: 'Code' },
   { value: 'name', label: 'Name' },
   { value: 'dimensions', label: 'Dimensions' },
@@ -229,6 +232,10 @@ interface InspectorPanelProps {
   subjectParts?: TagPartData[];
   /** The parent's own code, for the picker's first entry. */
   subjectParentCode?: string | null;
+  /** PS-SPEC-SHEET: a spec sheet page template, so layers can carry "Show only when". */
+  specSheet?: boolean;
+  /** The spec registry keys, for the "Show only when spec is Yes" picker. */
+  specKeys?: SpecKeyOption[];
 }
 
 export function InspectorPanel({
@@ -254,6 +261,8 @@ export function InspectorPanel({
   onToggleEditPoints,
   subjectParts,
   subjectParentCode,
+  specSheet = false,
+  specKeys,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -455,6 +464,15 @@ export function InspectorPanel({
               parts={subjectParts ?? []}
               parentCode={subjectParentCode ?? ''}
               onChange={updateProps}
+            />
+          )}
+
+          {/* -- PS-SPEC-SHEET: print this layer only when the page's data says so -- */}
+          {specSheet && (
+            <ShowWhenInspector
+              layer={layer}
+              specKeys={specKeys ?? []}
+              onChange={(show_when) => update({ show_when })}
             />
           )}
 
@@ -1378,6 +1396,76 @@ function GroupBindingInspector({
           Use template...
         </Button>
       )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Show only when (PS-SPEC-SHEET)
+// ---------------------------------------------------------------------------
+
+/**
+ * Two optional conditions, both must hold for the layer to print: the page has accessory N
+ * (an accessory row, its frame and its photo), and the layer's product has a Yes spec (a
+ * Rimless or Accessible badge). The canvas keeps drawing the layer either way.
+ */
+function ShowWhenInspector({
+  layer,
+  specKeys,
+  onChange,
+}: {
+  layer: TagLayer;
+  specKeys: SpecKeyOption[];
+  onChange: (show_when: LayerShowWhen | null) => void;
+}) {
+  const partId = useId();
+  const specId = useId();
+  const when = layer.show_when ?? {};
+  const set = (next: LayerShowWhen) => {
+    const clean: LayerShowWhen = {};
+    if (next.part != null) clean.part = next.part;
+    if (next.spec) clean.spec = next.spec;
+    onChange(Object.keys(clean).length ? clean : null);
+  };
+  const partOptions: SearchableSelectOption[] = [1, 2, 3].map((n) => ({
+    value: String(n - 1),
+    label: `Accessory ${n} exists`,
+  }));
+  const specOptions: SearchableSelectOption[] = specKeys.map((key) => ({
+    value: key.key,
+    label: `${key.label} is Yes`,
+  }));
+  return (
+    <section>
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Show only when
+      </h4>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor={partId} className="sr-only">
+          Accessory
+        </Label>
+        <SearchableSelect
+          id={partId}
+          size="sm"
+          clearable
+          placeholder="Any page"
+          value={when.part != null ? String(when.part) : ''}
+          onChange={(v: string) => set({ ...when, part: v === '' ? null : Number(v) })}
+          options={partOptions}
+        />
+        <Label htmlFor={specId} className="sr-only">
+          Spec
+        </Label>
+        <SearchableSelect
+          id={specId}
+          size="sm"
+          clearable
+          placeholder="Any product"
+          value={when.spec ?? ''}
+          onChange={(v: string) => set({ ...when, spec: v || null })}
+          options={specOptions}
+        />
+      </div>
     </section>
   );
 }
