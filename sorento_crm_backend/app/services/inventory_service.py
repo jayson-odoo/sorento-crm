@@ -654,13 +654,17 @@ class StockService:
         self.requested_warehouse_ids: Optional[set[str]] = None
     
     @staticmethod
-    def _shipments_from_today(db: Session, product_ids: list[str], regions) -> dict:
-        """The dealer's incoming read: shipments with a packing list whose ETA is today or
-        later (CHAT-FIND round 3: a past ETA was printed as the day stock comes)."""
+    def _shipments_from_today(
+        db: Session, product_ids: list[str], regions, offsets: dict[str, int]
+    ) -> dict:
+        """The dealer's incoming read: shipments with a packing list whose TOLD date (the
+        promised date plus `offsets`, `eta_policy.told_offsets`) is today or later (CHAT-FIND
+        round 3: a past ETA was printed as the day stock comes; STOCK-INCOMING-FLOOR: floored
+        before the padding, a shipment the ETA ask told as coming read "no incoming")."""
         from app.services import incoming_stock_service as incoming
 
         return incoming.earliest_packing_list_shipment(
-            db, product_ids, regions=regions, not_before=incoming.today_myt()
+            db, product_ids, regions=regions, not_before=incoming.today_myt(), offsets=offsets
         )
 
     def list_stock(
@@ -1675,7 +1679,7 @@ class StockService:
         from app.models.product import ProductCategory
         from app.models.resources import Attachment
         from app.services.incoming_stock_service import _attachment_payload
-        from app.services.eta_policy import rules_for_contact, visible_eta
+        from app.services.eta_policy import rules_for_contact, told_offsets, visible_eta
         from app.services.stock_ask_branch import branch as compute_branch
         from app.services.stock_ask_branch import short_of
         from app.services.stock_ask_limits import effective as effective_limits
@@ -1713,7 +1717,14 @@ class StockService:
         # R5: the earliest still-incoming shipment with a packing list, any
         # location, per product on this page.
         contact_rules = rules_for_contact(self.db, resolved_contact_id)
-        eta_by_product = self._shipments_from_today(self.db, query_ids, contact_rules.regions)
+        # STOCK-INCOMING-FLOOR: the days each product's told ETA adds, read ONCE through the
+        # incoming routes' own offset read; the today floor and the printed ETA both use it.
+        told_offset = told_offsets(
+            self.db, [products_by_id.get(pid) for pid in query_ids], contact_rules
+        )
+        eta_by_product = self._shipments_from_today(
+            self.db, query_ids, contact_rules.regions, told_offset
+        )
 
         # R7: the asking contact's own "Packing list allowed" toggle, resolved once
         # off `resolved_contact_id` - the SAME internal id this whole call's policy
@@ -1776,7 +1787,7 @@ class StockService:
                 ),
             }
             if ask is not None and product is not None and category is not None:
-                x, y = effective_limits(product, category)
+                x, _y = effective_limits(product, category)
                 # R2: X unset (product AND its own category both NULL) is a fact the
                 # B1 agent-notification reason needs ("no cap set for <category>"),
                 # distinct from a category that explicitly opted in with X = 0.
@@ -1808,8 +1819,11 @@ class StockService:
                 entry["category_name"] = category.category_name
                 if entry["branch"] == "incoming" and shipment is not None:
                     _shipment_id, eta_date, attachment_id = shipment
-                    # Issue #1328: `+ y` only when this contact's ETA offset switch is on.
-                    entry["eta"] = visible_eta(eta_date, y, contact_rules).strftime("%d/%m/%Y")
+                    # Issue #1328: padded only when this contact's ETA offset switch is on;
+                    # by the offset the today floor used (one code, one offset).
+                    entry["eta"] = visible_eta(
+                        eta_date, told_offset.get(pid, 0), contact_rules
+                    ).strftime("%d/%m/%Y")
                     # PRODUCT-ALTERNATIVES: a nested alternative names its ETA only; the
                     # packing list file goes out for the product asked about, never for
                     # an `Alternative:` line (the engine sends top-level entries' files).

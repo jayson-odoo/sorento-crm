@@ -151,6 +151,21 @@ def _offsets_by_product_code(db: Session, codes: Iterable[str]) -> dict[str, int
     return out
 
 
+def told_offsets(db: Session, products: Iterable[Any], rules: ContactEtaRules) -> dict[str, int]:
+    """`{product id: days}` this contact's told ETA adds to the product's promised date.
+
+    The stock check's one read of the padding (STOCK-INCOMING-FLOOR, 2 Nov 2026): the same
+    by-code offsets the incoming routes pad with (`_offsets_by_product_code`), so the stock check
+    and the ETA ask tell one shipment one date. 0 for every product when the switch is off."""
+    products = [p for p in products if p is not None]
+    if not rules.offset_applied:
+        return {str(p.id): 0 for p in products}
+    by_code = _offsets_by_product_code(db, [p.product_code for p in products])
+    return {
+        str(p.id): by_code.get((p.product_code or "").strip().lower(), 0) for p in products
+    }
+
+
 def _offsets_by_shipment(
     db: Session, rows: Iterable[dict[str, Any]]
 ) -> dict[tuple[Optional[str], str], int]:
