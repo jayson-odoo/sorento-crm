@@ -197,8 +197,8 @@ def test_the_upload_activity_query_reads_the_composite_not_the_whole_table():
         conn.exec_driver_sql(
             "INSERT INTO integration_log (id, integration_channel, business_table, business_id, status, created_at) "
             "SELECT gen_random_uuid(), 'n8n', "
-            "CASE WHEN n % 3 = 0 THEN 'attachments' ELSE 'orders' END, gen_random_uuid(), "
-            "CASE WHEN n % 5 = 0 THEN 'failed' ELSE 'success' END, now() - (n || ' minutes')::interval "
+            "CASE WHEN mod(n, 3) = 0 THEN 'attachments' ELSE 'orders' END, gen_random_uuid(), "
+            "CASE WHEN mod(n, 5) = 0 THEN 'failed' ELSE 'success' END, now() - (n || ' minutes')::interval "
             "FROM generate_series(1, 60000) n"
         )
         ids = [
