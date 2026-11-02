@@ -1529,11 +1529,14 @@ def _refuse_ids_in(**texts: Any) -> None:
     from app.services.error_handler import handle_validation_error
 
     for label, text in texts.items():
-        # An id hidden by invisible marks is still an id: look at the text as it reads (NFKC) with every format
-        # character (Cf) and combining mark (Mn) removed. Accents, Chinese and emoji elsewhere stay allowed.
-        seen = unicodedata.normalize("NFKC", str(text or ""))
-        seen = "".join(c for c in seen if unicodedata.category(c) not in ("Cf", "Mn"))
-        if _UUID_TEXT.search(seen):
+        # Two parts, both so the card shows exactly what is sent. (1) An invisible format character (Cf) is refused
+        # outright, except the joiners U+200D and U+200C that emoji and some scripts need; accents, Chinese and emoji
+        # stay allowed. (2) An id hidden by marks is still an id: the pattern runs on the text as it reads (NFKC)
+        # with every Cf and combining mark (Mn) removed.
+        value = str(text or "")
+        invisible = any(unicodedata.category(c) == "Cf" and c not in ("\u200d", "\u200c") for c in value)
+        seen = "".join(c for c in unicodedata.normalize("NFKC", value) if unicodedata.category(c) not in ("Cf", "Mn"))
+        if invisible or _UUID_TEXT.search(seen):
             raise handle_validation_error(f"The {label} holds a record id. Say it in words and propose again.")
 
 
