@@ -1,7 +1,8 @@
 # PLAN: CONFIRM-PREVIEW-STALE
 
-Status: in review, PR #2091 (small fix track: no migration, no auth/RBAC change). Items 1-3 here;
-item 4 is a stacked follow-up PR (crew ruling, 2 Nov).
+Status: in review, round 2, PR #2091. Track: standard (the diff is past the ~300 line small fix
+limit; no migration, no auth/RBAC change). Items 1-3 here; item 4 is a stacked follow-up PR
+(crew ruling, 2 Nov). UAC: `confirm-preview-stale-2nov-acceptance-criteria.md`.
 
 Owner report (2 Nov 2026, Fulfilment Planning): a sales order whose lines are all delivered in
 full, with a pending AutoCount change on one line (date 28/09 -> 02/11; suggestion Borrow 3 ->
@@ -50,3 +51,21 @@ with red tests that include the #1362 case.
 Tests: `tests/scm/test_confirm_preview_delivered_change.py` (red first); vitest
 `FulfilmentBoardPanel.confirmGuide.test.tsx` "CONFIRM-PREVIEW-STALE" (3 of 4 red first),
 `ConfirmGuideDialog.moved.test.tsx`, `_shared/lib/confirmPreviewFresh.test.ts`.
+
+## Round 2 (crew browser pass + reviewer, 2 Nov)
+
+- A failed re-read on Confirm open (a slow board timing out) read as done, so the guide showed the
+  tab's older decision with Next on, and Take suggestion from that view deleted the other tab's
+  newer decision. Now the page shows a Retry; Next, Keep, Take suggestion and Confirm stay off
+  until a read succeeds.
+- The server refuses a draft save or Undo based on an older decision: PUT body / DELETE query
+  `based_on_saved_at`; a stored draft saved after it answers 409 `board_line_draft_newer`
+  (absent: last writer wins). The board re-reads on that 409.
+- The moved warning compares compositions by kind and qty (`partsBreakdown`), never words (an
+  incoming share read "from BRW" on one side only); a bare approval reads the proposal.
+- `saved_at` bookkeeping follows every server draft the tab adopts; Undo and a covered line drop it.
+- `line_plans`: a line AutoCount CLOSED because it was delivered in full is not CANCEL ALL; it reads
+  its change words (every delivered line on the 20 Oct copy is closed).
+- Hand test: the board is under Supply Chain > Project Demand > Fulfilment Planning in the staff
+  sidebar (`config/menu.config.tsx:390-396`); the Project Sales entry exists only in the compact
+  menu (`:2260`). Not a bug.

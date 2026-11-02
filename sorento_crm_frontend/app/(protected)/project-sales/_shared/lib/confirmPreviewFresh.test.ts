@@ -4,7 +4,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { newerServerDraftKeys, suggestionMovedOf } from './confirmPreviewFresh';
-import type { BoardChangeAnnotation } from './boardChangeAnnotations';
+import { annotationOf, type BoardChangeAnnotation } from './boardChangeAnnotations';
+import type { PlanningChangeRow } from '../types/planningChange.types';
 import type { BoardContribution, BoardDecision } from '../types/fulfilmentPlanning.types';
 
 const draftAt = (key: string, savedAt: string) => ({
@@ -63,7 +64,15 @@ describe('suggestionMovedOf', () => {
 
   it('says nothing for a pre-mark, a rejection, or a line no change names', () => {
     const annotations = [changed('Use own location 3 from BRW-BB')];
-    expect(suggestionMovedOf(contribution, { verdict: 'approved', preMarked: true }, annotations)).toBeNull();
+    // A pre-mark that WOULD read differently (Buy 3 against the change's reserve) still says
+    // nothing: it is the board's own suggestion, not a decision anybody saved.
+    expect(
+      suggestionMovedOf(
+        contribution,
+        { verdict: 'approved', preMarked: true, buy_qty: '3' } as BoardDecision,
+        annotations,
+      ),
+    ).toBeNull();
     expect(suggestionMovedOf(contribution, { verdict: 'rejected' } as BoardDecision, annotations)).toBeNull();
     expect(suggestionMovedOf(contribution, buy3, [])).toBeNull();
     expect(suggestionMovedOf(contribution, buy3, [changed(null)])).toBeNull();
@@ -78,3 +87,56 @@ describe('suggestionMovedOf', () => {
     expect(moved?.suggestion).toBe('Use own location 3 from BRW-BB');
   });
 });
+
+/** A real change row, through the board's own `annotationOf` (review round 1, should-fix 2). */
+function rowWith(composition: Record<string, unknown>): BoardChangeAnnotation {
+  return annotationOf(
+    {
+      id: 'row-1',
+      line_no: 10,
+      so_line_no: 10,
+      item_code: 'ZZT-ITEM-1',
+      kind: 'date_moved',
+      from: { qty: '3', required_date: '2026-09-28' },
+      to: { qty: '3', required_date: '2026-11-02' },
+      composition,
+      applied_state: 'pending',
+    } as unknown as PlanningChangeRow,
+    'SO000001',
+    'BRW-BB',
+  );
+}
+
+const withIncomingSource = {
+  ...contribution,
+  sources: [{ kind: 'timely_spo', rung: 'incoming', qty: '3', location: 'BRW' }],
+} as unknown as BoardContribution;
+
+describe('suggestionMovedOf against a real change row', () => {
+  it('an incoming share equal to the change reads as the same, wherever one side names a place', () => {
+    const annotation = rowWith({ timely_spo_qty: '3', reserve: [], borrow: [], buy_qty: '0' });
+    const saved = { verdict: 'amended', timely_spo_qty: '3', reserve: [], borrow: [], buy_qty: '0' } as BoardDecision;
+    expect(suggestionMovedOf(withIncomingSource, saved, [annotation])).toBeNull();
+  });
+
+  it('a Buy equal to the change reads as the same', () => {
+    const annotation = rowWith({ timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '3' });
+    const saved = { verdict: 'amended', timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '3' } as BoardDecision;
+    expect(suggestionMovedOf(contribution, saved, [annotation])).toBeNull();
+  });
+
+  it('a Buy the planner keeps against a change that now reserves is flagged', () => {
+    const annotation = rowWith({
+      timely_spo_qty: '0',
+      reserve: [{ warehouse_id: 'wh-own', location: 'BRW-BB', qty: '3' }],
+      borrow: [],
+      buy_qty: '0',
+    });
+    const saved = { verdict: 'amended', timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '3' } as BoardDecision;
+    const moved = suggestionMovedOf(contribution, saved, [annotation]);
+    expect(moved).not.toBeNull();
+    expect(moved?.kept).toContain('3');
+    expect(moved?.suggestion).toContain('3');
+  });
+});
+
