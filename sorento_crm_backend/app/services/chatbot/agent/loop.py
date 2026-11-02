@@ -441,14 +441,23 @@ def _found_ids(ledger: dict[str, dict]) -> set[str]:
             for r in entry["data"].get("results") or []:
                 if r.get("status") == "found":
                     ids.update(str(m.get("id")).lower() for m in r.get("matches") or [])
-        elif entry["status"] == "ok":
+    return ids
+
+
+def _returned_ids(ledger: dict[str, dict]) -> set[str]:
+    """Ids of records this turn's ok reads returned (a ported read may be narrowed by them; the others need a
+    clean resolve, `_found_ids`)."""
+    ids: set[str] = set()
+    for entry in ledger.values():
+        if entry["name"] != RESOLVE and entry["status"] == "ok":
             ids |= _record_ids(entry["data"])
     return ids
 
 
 def _record_ids(data: Any) -> set[str]:
-    """The `id` of each record an ok read returned: a row of a list (top level, or a list value of the top-level
-    dict), or the detail record itself (the dict's own `id`, or a nested record dict's `id`). Never `*_id`."""
+    """A record's own `id`, never another nested dict's (a `customer: {id}` reference) and never a `*_id`: each
+    row of a list (top level, or a list value of the top-level dict), the top-level dict's own `id`, and the
+    detail envelope's `response` or `record` own `id`."""
     found: set[str] = set()
 
     def take(record: Any) -> None:
@@ -460,12 +469,12 @@ def _record_ids(data: Any) -> set[str]:
             take(row)
     elif isinstance(data, dict):
         take(data)
+        take(data.get("response"))  # a detail envelope's record
+        take(data.get("record"))
         for value in data.values():
             if isinstance(value, list):
                 for row in value:
                     take(row)
-            else:
-                take(value)
     return found
 
 
@@ -488,11 +497,13 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
         return False
     if entry["name"] in PORTED_READS and entry["status"] == "empty":
         # An unfiltered empty read says "none found". One narrowed by an assignee says nothing about the whole;
-        # one narrowed by ids says "none" only for ids this turn resolved cleanly (an ambiguous one is not found).
+        # one narrowed by ids says "none" only for ids this turn resolved cleanly or an ok read returned (an ambiguous
+        # one is not found).
         if entry["args"].get("assigned_to"):
             return False
         ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
-        return all(i in found for i in ids)
+        returned = _returned_ids(ledger)
+        return all(i in found or i in returned for i in ids)
     if entry["name"] in (writes.FIND_COMPLAINTS, writes.FIND_PROJECTS):
         # An empty find backs a claim for the term it searched, and only that term.
         term = _fold_text(str(entry["args"].get("query") or ""))
@@ -587,7 +598,8 @@ def violation_message(bad_numbers: list[str], bad_not_found: list[str], empty_te
     if bad_not_found:
         parts.append(
             "these not_found items are not backed by a crm_resolve not_found term or by an empty "
-            "result whose ids came from crm_resolve: " + "; ".join(bad_not_found)
+            "result whose ids came from crm_resolve (a project, complaint or request read may also name an id an earlier "
+            "read returned): " + "; ".join(bad_not_found)
         )
     return "Fix and call answer again. " + "; ".join(parts) + "."
 

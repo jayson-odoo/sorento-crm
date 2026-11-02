@@ -1532,11 +1532,11 @@ def _refuse_ids_in(**texts: Any) -> None:
         # Two parts, both so the card shows exactly what is sent. (1) An invisible format character (Cf) is refused
         # outright, except the joiners U+200D and U+200C that emoji and some scripts need; accents, Chinese and emoji
         # stay allowed. (2) An id hidden by marks is still an id: the pattern runs on the text as it reads (NFKC)
-        # with every Cf and combining mark (Mn) removed.
+        # with every Cf and combining mark (Mn) removed, and on the raw text too (stripping can itself join an id).
         value = str(text or "")
         invisible = any(unicodedata.category(c) == "Cf" and c not in ("\u200d", "\u200c") for c in value)
         seen = "".join(c for c in unicodedata.normalize("NFKC", value) if unicodedata.category(c) not in ("Cf", "Mn"))
-        if invisible or _UUID_TEXT.search(seen):
+        if invisible or _UUID_TEXT.search(value) or _UUID_TEXT.search(seen):
             raise handle_validation_error(f"The {label} holds a record id. Say it in words and propose again.")
 
 
