@@ -55,19 +55,20 @@ party's contacts; lead source recorded; customer optional"), 30 Oct ("never re-a
 ## Rules (recommended)
 
 Selections
-1. Become selections: **Subcontractor, Trading house, Consultant, Interior designer** (new, each a party select of its
-   type with the existing "Create <type>" row, same as Architect), **Lead source** (new), **Area** (see Q3).
+1. Become selections: **Subcontractors, Trading houses, Tender parties** (several each), **Consultant, Interior
+   designer** (one each), **Lead source** (new, lookup set `project_lead_source`), **Area** (lookup set
+   `my_district_<state>`, filtered by the picked State; a new State clears the Area).
 2. Stay as they are: Title (it is the name), Registered company / SPV (an identity, typed), Address, Reference (admin's
    filing string), value and dates (typed numbers). **Location is dropped from the register form** (State + Area say it;
    the column stays and still shows and edits on the project page so old rows keep their text).
-3. Party types gain `subcontractor` and `interior_designer` (the "ID" from the ruling). Parties page filter and form list
-   them. One party per role on the form, the same shape as Architect / Main contractor today (new columns
-   `sales_profile.subcontractor_party_id`, `trading_house_party_id`, `consultant_party_id`, `interior_designer_party_id`);
-   see Q5.
+3. Party types gain `subcontractor`, `interior_designer` and `tender_party`. Parties page filter and form list them.
+   The new roles are rows of `projects.party_links`; the server refuses a party of the wrong type for the role
+   (422 `project_party_role_mismatch`) and a second consultant or interior designer (422 `project_party_role_single`).
 
 Party contacts
-4. New master `projects.party_contacts`: party, name *, job title, phone, email, active. Managed on the party's dialog
-   (Parties page) as a small table with Add / edit / remove (remove = the deferred delete, no confirm).
+4. New master `projects.party_contacts`: party, name *, job title, phone, email, active. Managed in a Contacts
+   section on the party's page with Add / Edit / Delete (Delete = the deferred `project_party_contact.delete`, 10 s,
+   no confirm). A salesperson with only the submit grant can READ contacts to pick them.
 5. On the register form, under each picked party, a **Contacts** multi-select lists that party's active contacts, with a
    "Add contact '<text>'" row that creates one on the party (needs `projects.parties.edit`, same as the party create row).
 6. Register writes each picked contact as a `stakeholders` row on the project (party_id, name, job title, phone, email
@@ -76,10 +77,11 @@ Party contacts
 7. Changing or clearing a party on the form drops that party's contact picks.
 
 Lead source
-8. **Lead source** selection in Details, required on Register (and on Submit for approval); drafts stay free. Stored on
-   `sales_profile.lead_source`; values from one list shared with leads (`LEAD_SOURCES`), so lead and project report on
-   the same buckets. A project made by Qualify copies its lead's source. Old projects stay NULL ("Not recorded").
-   Proposed list: see Q4.
+8. **Lead source** selection, required on Register (and on Submit for approval); drafts stay free. Stored on
+   `sales_profile.lead_source`; values from the lookup set `project_lead_source`, which leads validate against too
+   (where the set was never seeded, e.g. a create_all test DB, the seed tuple `LEAD_SOURCES` answers). A project made
+   by Qualify copies its lead's source. Old projects stay NULL. The project page shows the project's own source,
+   else its lead's.
 
 Customer optional
 9. Customer is optional on Register, Submit and draft submit: the three `require_customer` calls go, the asterisk goes.
@@ -108,7 +110,7 @@ WhatsApp send: choose the parties (owner 2 Nov ~21:20)
 
 ## Examples (dev data)
 
-The sandbox cannot reach the dev copy. Examples come from `ps-registration-v3-dev-examples.sql` (read-only), asked
+Still owed by crew (data request on #2099). The sandbox cannot reach the dev copy. Examples come from `ps-registration-v3-dev-examples.sql` (read-only), asked
 through a `crew-data-request:` comment; crew masks names. Wanted: (1) a project with architect + main contractor set,
 (2) one with no customer, (3) how leads.source and informant_source are spread, (4) distinct mukim values per state,
 (5) stakeholders that carry a party_id.
@@ -136,6 +138,7 @@ through a `crew-data-request:` comment; crew masks names. Wanted: (1) a project 
 - **Q1** answered 2 Nov ~21:20: phone not mandatory.
 - **Q2** answered 2 Nov ~21:20: the WhatsApp send picks the project's parties, a missing number is filled and saved to
   the party (rules 10-13).
+- **Q3** answered (a), **Q4** answered (seed list plus ID and Referral), **Q5** answered (b). Original wording kept below.
 - **Q3 Area (mukim): selection from where?** (a) a new lookup set of districts per state, seeded once from the distinct
   values already typed (crew data request) and editable in Settings; (b) stays free text. Recommend (a) only if the dev
   data shows few distinct values per state; otherwise (b).

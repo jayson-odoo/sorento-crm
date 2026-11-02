@@ -100,7 +100,7 @@ table.grid td{border-bottom:1px solid var(--border);padding:8px;white-space:nowr
 </style>
 </head>
 <body><div class="doc">
-<h1>Register a project v3 (PS-REGISTRATION-V3 mock v1)</h1>
+<h1>Register a project v3 (PS-REGISTRATION-V3 mock v2, as built)</h1>
 <p class="sub">Step 2 "Details" of the create wizard. Static; existing components only; every callout names its component and repo path (FE = sorento_crm_frontend/). Every name, phone and code is invented (public repo). Dashed purple tags = a card question drawn with the recommended answer.</p>
 
 <h2 class="ft">A. Register a project, step 2 Details (1280)</h2>
@@ -114,9 +114,9 @@ table.grid td{border-bottom:1px solid var(--border);padding:8px;white-space:nowr
 <div class="prodhdr">Details</div>
 <div style="border:1px solid #d4d4d8;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:14px">
  <div><div class="b xs">Registered company / SPV</div><div class="inp ph">Optional</div></div>
- <div class="rel"><span class="co pin">1</span><div class="b xs">Lead source <span class="req">*</span> <span class="dtag">Q4</span></div><div class="inp">Architect referral <span class="muted">&#9662;</span></div></div>
+ <div></div>
  <div><div class="b xs">State</div><div class="inp">Selangor <span class="muted">&#9662;</span></div></div>
- <div class="rel"><span class="co pin">2</span><div class="b xs">Area <span class="dtag">Q3 (a)</span></div><div class="inp">Petaling <span class="muted">&#9662;</span></div></div>
+ <div class="rel"><span class="co pin">2</span><div class="b xs">Area <span class="dtag">Q3 (a) districts of the State</span></div><div class="inp">Petaling <span class="muted">&#9662;</span></div></div>
  <div style="grid-column:1/3"><div class="b xs">Address</div><div class="inp ta ph">Optional</div></div>
  <div><div class="b xs">Reference</div><div class="inp ph">e.g. PS26-0143</div></div>
  <div><div class="b xs">Estimated value (RM)</div><div class="inp">850,000</div></div>
@@ -130,31 +130,33 @@ table.grid td{border-bottom:1px solid var(--border);padding:8px;white-space:nowr
  <div><div class="b xs">Main contractor</div><div class="inp">Binaan Sampel Sdn Bhd <span class="muted">&times;</span></div>
    <div class="b xs" style="margin-top:6px">Contacts</div><div class="inp"><span><span class="badge2">Example Two, QS (013-000 2222) &times;</span> <span class="badge2">Example Three, PM &times;</span></span><span class="muted">&#9662;</span></div>
    <div class="dd"><div class="hl">Example Four, Site supervisor</div><div class="b" style="color:var(--primary)">+ Add contact "Example Five" <span class="co">6</span></div></div></div>
- <div class="rel"><span class="co pin">7</span><div class="b xs">Subcontractor <span class="dtag">Q5 (a) one</span></div><div class="inp ph">Search subcontractors</div></div>
- <div><div class="b xs">Trading house</div><div class="inp ph">Search trading houses</div></div>
- <div><div class="b xs">Consultant</div><div class="inp ph">Search consultants</div></div>
- <div><div class="b xs">Interior designer</div><div class="inp ph">Search interior designers</div></div>
+ <div class="rel"><span class="co pin">7</span><div class="b xs">Subcontractors <span class="dtag">Q5 (b) several</span></div><div class="inp"><span><span class="badge2">Sub Contoh A &times;</span> <span class="badge2">Sub Contoh B &times;</span></span><span class="muted">&#9662;</span></div></div>
+ <div><div class="b xs">Trading houses <span class="dtag">several</span></div><div class="inp ph">Search trading houses</div></div>
+ <div><div class="b xs">Tender parties <span class="dtag">several</span></div><div class="inp ph">Search tender parties</div></div>
+ <div><div class="b xs">Consultant <span class="dtag">one</span></div><div class="inp ph">Search consultants</div></div>
+ <div><div class="b xs">Interior designer <span class="dtag">one</span></div><div class="inp ph">Search interior designers</div></div>
 </div>
 
-<div class="prodhdr rel"><span>Customer and salesperson</span><span class="co">8</span></div>
+<div class="prodhdr rel"><span>Lead source, customer and salesperson</span><span class="co">8</span></div>
 <div style="border:1px solid #d4d4d8;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:14px">
+ <div class="rel"><span class="co pin">1</span><div class="b xs">Lead source <span class="req">*</span> <span class="dtag">Q4 editable list</span></div><div class="inp">Referral <span class="muted">&#9662;</span></div></div>
  <div><div class="b xs">Customer</div><div class="inp ph">Search customers (optional)</div></div>
  <div><div class="b xs">Salesperson</div><div class="inp">Sales A <span class="muted">&#9662;</span></div></div>
 </div>
 <div style="display:flex;justify-content:space-between;margin-top:16px"><span class="btn out">Back</span><span><span class="btn out">Save draft</span> <span class="btn">Register</span></span></div>
 </div></div></div></div></div>
 <div class="notes"><ol>
-<li><span class="co">1</span><div><b>Lead source: new, required on Register / Submit.</b>One list shared with leads. Drafts free.<span class="ref">SearchableSelect FE/components/common/SearchableSelect.tsx, clearable off when required; list = BE/models/projects.py LEAD_SOURCES</span></div></li>
+<li><span class="co">1</span><div><b>Lead source: new, required on Register / Submit.</b>One list shared with leads, editable in Settings (lookup set project_lead_source). Drafts free. In the always-open bottom section, because Details starts folded.<span class="ref">SearchableSelect FE/components/common/SearchableSelect.tsx, clearable off when required; list = BE/models/projects.py LEAD_SOURCES</span></div></li>
 <li><span class="co">2</span><div><b>Area becomes a selection</b> filtered by State (if Q3 = a), a stored old value still shows as itself, as State does today.<span class="ref">SearchableSelect; pattern ProjectForm.tsx:725-745</span></div></li>
 <li><span class="co">3</span><div><b>Location removed from the register form only.</b><span class="ref">ProjectForm.tsx:713-719</span></div></li>
 <li><span class="co">4</span><div><b>New section "Parties and contacts"</b> takes Architect + Main contractor out of Details and adds four party selects.<span class="ref">FormSection FE/components/common/FormSection.tsx</span></div></li>
 <li><span class="co">5</span><div><b>Contacts under each picked party</b>: that party's active contacts. Register copies each pick into the project's Stakeholders. Clearing the party clears its picks.<span class="ref">SearchableMultiSelect FE/components/common/SearchableMultiSelect.tsx; shows on FE/app/(protected)/project-sales/[projectId]/components/StakeholdersPanel.tsx</span></div></li>
 <li><span class="co">6</span><div><b>Add contact row</b> opens a small dialog: Name *, Job title, Phone, Email (phone optional, owner 2 Nov). Needs projects.parties.edit, same as the party create row.<span class="ref">createOption prop, SearchableMultiSelect.createOption.test.tsx</span></div></li>
-<li><span class="co">7</span><div><b>Four new party selects</b>, each with "Create &lt;type&gt;" like Architect today. One per role.<span class="ref">partyCreateOption, ProjectForm.tsx:828-848</span></div></li>
+<li><span class="co">7</span><div><b>Five new party pickers</b>: several subcontractors, trading houses, tender parties; one consultant and one interior designer (owner Q5 b). Contacts picker under each picked party.<span class="ref">partyCreateOption, ProjectForm.tsx:828-848</span></div></li>
 <li><span class="co">8</span><div><b>Customer is optional</b>: no asterisk, server no longer refuses.<span class="ref">ProjectForm.tsx:888-893; BE require_customer removed</span></div></li>
 </ol></div></div>
 
-<h2 class="ft">B. Parties page, edit a party: contacts (1280 dialog)</h2>
+<h2 class="ft">B. A party's Contacts (as built: a section on the party's page, same table)</h2>
 <div class="layout"><div class="frame" style="width:640px;padding:20px">
 <div class="b" style="font-size:16px">Edit party</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
