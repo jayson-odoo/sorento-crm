@@ -428,6 +428,7 @@ def revise(
             floor_value_applied=line.floor_value_applied,
             floor_level_applied=line.floor_level_applied,
             is_below_floor=line.is_below_floor,
+            is_discounted=line.is_discounted,
             sort_order=line.sort_order,
             notes=line.notes,
         )
@@ -663,6 +664,36 @@ def line_floor(
     )
 
 
+def line_default_price(
+    db: Session,
+    *,
+    line: ProjectQuotationLine,
+    quotation: ProjectQuotation,
+    series_pricing: Optional[Dict[str, tuple]] = None,
+) -> Optional[Decimal]:
+    """The price a line opens at, which any lower price discounts (PS-QUOTE-RULES R1).
+
+    The series' selling price where the scope's series names one for this product or set, else
+    the list price snapshot. The same rule the line editor fills a new line by
+    (``QuotationVersionEditor.fillFromProduct`` / ``fillFromSet``). None when neither is known:
+    a price with nothing to compare against is not a discount.
+    """
+    stated = None
+    if quotation.series_id:
+        if line.product_set_id:
+            row = pricing.series_set_pricing_map(db, quotation.series_id).get(line.product_set_id)
+        else:
+            rows = (
+                series_pricing
+                if series_pricing is not None
+                else pricing.series_pricing_map(db, quotation.series_id)
+            )
+            row = rows.get(line.product_id) if line.product_id else None
+        stated = row[0] if row else None
+    value = stated if stated is not None else line.list_price_snapshot
+    return Decimal(value) if value is not None else None
+
+
 def _apply_guardrails(
     db: Session,
     *,
@@ -701,6 +732,8 @@ def _apply_guardrails(
             product=product,
             membership=membership,
         )
+    default = line_default_price(db, line=line, quotation=quotation, series_pricing=series_pricing)
+    line.is_discounted = default is not None and Decimal(line.unit_price or 0) < default
     floor = line_floor(
         db,
         line=line,
@@ -1215,6 +1248,7 @@ def recompute_version(
             bool(line.is_below_floor),
             line.floor_value_applied,
             line.floor_level_applied,
+            bool(line.is_discounted),
         )
         event = _apply_guardrails(
             db,
@@ -1232,6 +1266,7 @@ def recompute_version(
             bool(line.is_below_floor),
             line.floor_value_applied,
             line.floor_level_applied,
+            bool(line.is_discounted),
         )
         if before == after:
             continue
@@ -1591,6 +1626,7 @@ def serialize_lines(
             "floor_value_applied": line.floor_value_applied,
             "floor_level_applied": line.floor_level_applied,
             "is_below_floor": line.is_below_floor,
+            "is_discounted": line.is_discounted,
             "sort_order": line.sort_order,
             "notes": line.notes,
         }

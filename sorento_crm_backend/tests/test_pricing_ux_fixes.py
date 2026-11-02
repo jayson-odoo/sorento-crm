@@ -281,4 +281,6 @@ def test_w2_the_approval_permission_reads_minimum_price():
     from app.rbac.permission_registry import PERMISSION_REGISTRY
 
     entry = next(e for e in PERMISSION_REGISTRY if e["slug"] == "projects.quotations.approve")
-    assert entry["name"] == "Approve Quotations Below Minimum Price"
+    # PS-QUOTE-RULES: the grant now covers any discount and off-series lines; still no "floor".
+    assert entry["name"] == "Approve Quotation Discounts and Off-Series Lines"
+    assert "floor" not in entry["name"].lower()

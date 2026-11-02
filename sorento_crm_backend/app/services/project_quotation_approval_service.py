@@ -52,6 +52,9 @@ logger = logging.getLogger(__name__)
 
 ENTITY_TYPE = "quotation"
 
+# The project rung a discount request moves a project to (B2). Prod made it in the admin editor.
+FINAL_NEGOTIATION_KEY = "final_negotiation"
+
 STATUS_DRAFT = "draft"
 STATUS_PENDING = "pending_approval"
 # A rejected quotation asked again (RESUBMITTED-STATUS): decided exactly like pending.
@@ -136,8 +139,65 @@ def below_floor_line_count(db: Session, document: ProjectQuotationDocument) -> i
     )
 
 
+def _flagged_line_count(db: Session, document: ProjectQuotationDocument, flag) -> int:
+    """How many current lines carry ``flag``, read from the STORED flag (AC-E7)."""
+    version_ids = current_version_ids(db, document)
+    if not version_ids:
+        return 0
+    return int(
+        db.query(func.count(ProjectQuotationLine.id))
+        .filter(ProjectQuotationLine.version_id.in_(version_ids), flag.is_(True))
+        .scalar()
+        or 0
+    )
+
+
+def discounted_line_count(db: Session, document: ProjectQuotationDocument) -> int:
+    """Lines priced below their default price (PS-QUOTE-RULES R1): any discount."""
+    return _flagged_line_count(db, document, ProjectQuotationLine.is_discounted)
+
+
+def off_series_line_count(db: Session, document: ProjectQuotationDocument) -> int:
+    """Lines outside the scope's series (B1)."""
+    return _flagged_line_count(db, document, ProjectQuotationLine.is_non_standard)
+
+
+def counts(db: Session, document: ProjectQuotationDocument) -> Dict[str, int]:
+    """The three reasons, together, for messages and the payload."""
+    return {
+        "discounted": discounted_line_count(db, document),
+        "below_floor": below_floor_line_count(db, document),
+        "off_series": off_series_line_count(db, document),
+    }
+
+
 def requires_approval(db: Session, document: ProjectQuotationDocument) -> bool:
-    return below_floor_line_count(db, document) > 0
+    """Any discount (a below-floor line is one too) or any off-series line (R2)."""
+    c = counts(db, document)
+    return bool(c["discounted"] or c["below_floor"] or c["off_series"])
+
+
+def _lines(n: int) -> str:
+    return "One line is" if n == 1 else f"{n} lines are"
+
+
+def reasons_text(c: Dict[str, int]) -> str:
+    """"1 line is outside the project's series and 2 lines are below the minimum price".
+
+    Below-floor outranks plain discount in the wording, because it is the stronger fact; a
+    discount that stays above the minimum price is "priced below the default price".
+    """
+    parts = []
+    if c.get("off_series"):
+        parts.append(f"{_lines(c['off_series'])} outside the project's series")
+    if c.get("below_floor"):
+        parts.append(f"{_lines(c['below_floor'])} priced below the minimum price")
+    other = max(0, (c.get("discounted") or 0) - (c.get("below_floor") or 0))
+    if other:
+        parts.append(f"{_lines(other)} priced below the default price")
+    text = " and ".join(parts)
+    # Only the first word keeps its capital.
+    return text[:1] + text[1:].replace("One line", "one line")
 
 
 # ------------------------------------------------------------------ the graph
@@ -189,29 +249,176 @@ def _status_by_key(db: Session, key: str) -> Status:
     return row
 
 
+# ------------------------------------------------------------------ the routing
+#
+# PS-QUOTE-RULES R4-R7 (owner ruling 2 Nov ~21:20): one approver per request, from data an admin
+# edits, never a hard-coded person. Walked in order, the first eligible candidate wins:
+#   1. an off-series line -> System Settings "off-series approver" (CK today);
+#   2. the project's own override (`projects.discount_approver_user_id`);
+#   3. the project owner's superior, and up THEIR superior line (regional manager, then CK);
+#   4. the configured default quotation approver (System Settings);
+#   5. nobody resolves -> Send for approval is refused, never "anyone holding the grant".
+# A candidate is skipped when inactive, when it is the requester, or when it lacks the grant;
+# a skipped superior hands on to their own superior.
+
+_ADMIN_ROLE_SLUGS = frozenset({"admin", "superadmin"})
+_CHAIN_LIMIT = 10  # a superior loop in the data must end the walk, not hang the request
+
+
+def _user(db: Session, user_id: Optional[str]):
+    from app.models.user import User
+
+    if not user_id:
+        return None
+    return db.query(User).filter(User.id == str(user_id)).first()
+
+
+def _eligible(db: Session, user_id: Optional[str], *, requester_id: Optional[str]) -> bool:
+    from app.models.user import UserStatus
+    from app.services.user_service import UserPermissionService
+
+    user = _user(db, user_id)
+    if user is None or str(user.id) == str(requester_id or ""):
+        return False
+    if user.status != UserStatus.ACTIVE.value or user.is_trashed or user.is_integration:
+        return False
+    return APPROVE_PERMISSION in UserPermissionService(db).get_user_permission_slugs(user.id)
+
+
+def superior_chain(db: Session, user_id: Optional[str]) -> list[str]:
+    """``user_id``'s superiors, nearest first, cycle-safe."""
+    chain: list[str] = []
+    seen = {str(user_id)} if user_id else set()
+    current = _user(db, user_id)
+    while current is not None and current.superior_id and len(chain) < _CHAIN_LIMIT:
+        nxt = str(current.superior_id)
+        if nxt in seen:
+            break
+        seen.add(nxt)
+        chain.append(nxt)
+        current = _user(db, nxt)
+    return chain
+
+
+def _first_eligible_from(
+    db: Session, user_id: Optional[str], *, requester_id: Optional[str]
+) -> Optional[str]:
+    """``user_id`` if eligible, else the nearest eligible superior above them."""
+    if not user_id:
+        return None
+    for candidate in [str(user_id), *superior_chain(db, user_id)]:
+        if _eligible(db, candidate, requester_id=requester_id):
+            return candidate
+    return None
+
+
+def _setting(db: Session, column: str) -> Optional[str]:
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting).first()
+    return getattr(row, column, None) if row is not None else None
+
+
+def off_series_approver_id(db: Session) -> Optional[str]:
+    return _setting(db, "off_series_approver_user_id")
+
+
+def default_approver_id(db: Session) -> Optional[str]:
+    """The configured last resort (crew answer to R4.4): never "anyone holding the grant",
+    because on prod that grant is also held by customer-service staff and an integration."""
+    return _setting(db, "default_quotation_approver_user_id")
+
+
+def route_approver(
+    db: Session,
+    document: ProjectQuotationDocument,
+    *,
+    requester_id: Optional[str],
+) -> Optional[str]:
+    """Who this request goes to (R4). The one resolver, also for the quotation after WON (R8)."""
+    project = _project_of(db, document)
+    candidates: list[Optional[str]] = []
+    if off_series_line_count(db, document):
+        candidates.append(off_series_approver_id(db))
+    if project is not None:
+        candidates.append(getattr(project, "discount_approver_user_id", None))
+        # The owner's superior: the discount is the owner's even when a colleague pressed Send.
+        # No owner, or an owner with no superior: the requester's own superior.
+        owner = project.owner_user_id
+        start = superior_chain(db, owner)[:1] if owner else []
+        if not start and requester_id:
+            start = superior_chain(db, requester_id)[:1]
+        candidates.extend(start)
+    candidates.append(default_approver_id(db))
+    # A size ceiling (manager up to X%, above that the next level) slots in HERE, as one more
+    # candidate ahead of the superior, once the owner rules on it. Not built: no rule yet.
+    for candidate in candidates:
+        found = _first_eligible_from(db, candidate, requester_id=requester_id)
+        if found:
+            return found
+    return None
+
+
+def _is_admin(db: Session, user_id: Optional[str]) -> bool:
+    from app.services.user_service import UserPermissionService
+
+    if not user_id:
+        return False
+    return bool(UserPermissionService(db).get_user_role_slugs(user_id) & _ADMIN_ROLE_SLUGS)
+
+
+def may_decide(
+    db: Session,
+    document: ProjectQuotationDocument,
+    *,
+    actor_user_id: Optional[str],
+    permissions: Iterable[str],
+) -> bool:
+    """R5: the routed approver, anyone above them on the superior line, or an admin.
+
+    A request routed to nobody (or raised before routing existed) is decided as before: any
+    holder of the grant.
+    """
+    if APPROVE_PERMISSION not in set(permissions or ()):
+        return False
+    routed = getattr(document, "approver_user_id", None)
+    if not routed:
+        return True
+    actor = str(actor_user_id or "")
+    if actor == str(routed) or actor in superior_chain(db, routed):
+        return True
+    return _is_admin(db, actor_user_id)
+
+
 # ------------------------------------------------------------------- the gate
 
 
 def assert_issuable(db: Session, document: ProjectQuotationDocument) -> None:
-    """Refuse to issue a below-floor quotation that no manager has approved.
+    """Refuse to issue a discounted or off-series quotation that nobody has approved.
 
-    Says how many lines rather than only that something is wrong, because the block on the
-    screen has to be actionable: "two lines" tells the salesperson there is a second one to
-    look at after they have fixed the obvious one.
+    Says how many lines and why, because the block on the screen has to be actionable. The
+    code stays ``quotation_below_floor_pending_approval`` whenever a line is below the minimum
+    price (the screen already handles it), ``quotation_off_series_pending_approval`` when the
+    only reason is the series, else ``quotation_discount_pending_approval``.
     """
-    below = below_floor_line_count(db, document)
-    if not below:
+    c = counts(db, document)
+    if not (c["discounted"] or c["below_floor"] or c["off_series"]):
         return
     if current_key(db, document) == STATUS_APPROVED:
         return
+    if c["below_floor"]:
+        code = "quotation_below_floor_pending_approval"
+    elif c["off_series"] and not c["discounted"]:
+        code = "quotation_off_series_pending_approval"
+    else:
+        code = "quotation_discount_pending_approval"
     raise AppException(
         status_code=422,
         message=(
-            f"{'One line is' if below == 1 else f'{below} lines are'} priced below the "
-            "minimum price, so this quotation needs a manager's approval before it can be sent "
-            "to the customer."
+            f"{reasons_text(c)}, so this quotation needs a manager's approval before it can be "
+            "sent to the customer."
         ),
-        code="quotation_below_floor_pending_approval",
+        code=code,
     )
 
 
@@ -414,33 +621,146 @@ def move(
     status_service.assert_transition_allowed(
         db, ENTITY_TYPE, from_id, to_status_id, scope_id=None
     )
+    routed_to = None
+    if target.key in AWAITING_KEYS:
+        # R4: routed once per press and frozen, so a later change of superior or override does
+        # not move a request that is already waiting. Resolved BEFORE the rung moves, so a
+        # refusal leaves the document exactly where it was.
+        routed_to = route_approver(db, document, requester_id=actor_user_id)
+        if routed_to is None:
+            raise AppException(
+                status_code=422,
+                message=(
+                    "Nobody is set up to approve this quotation. Ask an admin to set your "
+                    "superior, this project's discount approver, or the default quotation "
+                    "approver in Settings."
+                ),
+                code="quotation_approver_not_configured",
+            )
     _set_status(db, document, target)
 
     if target.key in AWAITING_KEYS:
-        below = below_floor_line_count(db, document)
+        c = counts(db, document)
+        document.approver_user_id = routed_to
+        db.flush()
+        approver = _user(db, document.approver_user_id)
+        reasons = reasons_text(c) if any(c.values()) else "no line needs it"
+        routed = f" Sent to {approver.name}." if approver is not None and approver.name else ""
         _record(
             db,
             document,
             template="quotation_approval_requested",
             body_text=(
                 f"{_actor_name(db, actor_user_id)} asked for approval on quotation "
-                f"{document.document_no} ({below} line{'' if below == 1 else 's'} below minimum price)."
+                f"{document.document_no} ({reasons[:1].lower() + reasons[1:]}).{routed}"
             ),
             actor_user_id=actor_user_id,
-            payload={"below_floor_line_count": below},
+            payload={
+                "below_floor_line_count": c["below_floor"],
+                "discounted_line_count": c["discounted"],
+                "off_series_line_count": c["off_series"],
+                "approver_user_id": document.approver_user_id,
+            },
         )
+        if c["discounted"] or c["below_floor"]:
+            _enter_final_negotiation(db, document, actor_user_id=actor_user_id)
     return document
 
 
-def _assert_can_decide(permissions: Iterable[str]) -> None:
+def _enter_final_negotiation(
+    db: Session, document: ProjectQuotationDocument, *, actor_user_id: Optional[str]
+) -> None:
+    """B2: a discount request puts the project in Final Negotiation (owner ruling 2 Nov).
+
+    Raises the critical flag (its clock starts only on the way in), and moves the stage forward
+    to the `final_negotiation` rung when the project's graph has one and the project sits on an
+    open rung before it. A system move, like PO received: Spec In has no edge to Final
+    Negotiation on prod and the rule is the owner's, not the graph's. Never backwards, never
+    out of a closed rung, and nothing undoes it when the discount is withdrawn or rejected (R8 of
+    the card): the negotiation happened.
+    """
+    project = _project_of(db, document)
+    if project is None:
+        return
+    from app.services.project_service import set_critical
+
+    set_critical(project, True)
+
+    from app.status_engine.registry import get_status_entity
+
+    entity = get_status_entity("project")
+    scope_id = entity.scope_for(project) if entity is not None else None
+    target = None
+    for scope in ([scope_id, None] if scope_id is not None else [None]):
+        target = (
+            db.query(Status)
+            .filter(
+                Status.entity_type == "project",
+                Status.key == FINAL_NEGOTIATION_KEY,
+                Status.scope_id.is_(None) if scope is None else Status.scope_id == scope,
+            )
+            .first()
+        )
+        if target is not None:
+            break
+    current = (
+        db.query(Status).filter(Status.id == project.status_id).first()
+        if project.status_id
+        else None
+    )
+    if target is None:
+        logger.info(
+            "project %s: no '%s' rung configured; critical flag raised only",
+            project.id,
+            FINAL_NEGOTIATION_KEY,
+        )
+        db.flush()
+        return
+    if current is None or current.id == target.id or current.is_terminal:
+        db.flush()
+        return
+    if (current.sort_order or 0) >= (target.sort_order or 0):
+        db.flush()
+        return
+    project.status_id = target.id
+    db.flush()
+    from app.services import project_activity_service as activity
+
+    activity.record_project_event(
+        db,
+        project=project,
+        template="stage_changed",
+        payload={"to_status_id": str(target.id), "reason": "discount_requested"},
+        actor_id=actor_user_id,
+    )
+    db.flush()
+
+
+def _assert_can_decide(
+    db: Session,
+    document: ProjectQuotationDocument,
+    actor_user_id: Optional[str],
+    permissions: Iterable[str],
+) -> None:
     if APPROVE_PERMISSION not in set(permissions or ()):
         raise AppException(
             status_code=403,
             message=(
-                "Only a sales manager can approve or reject pricing below the minimum price "
+                "Only a sales manager can approve or reject a discount or an off-series line "
                 "on a quotation."
             ),
             code="quotation_approval_forbidden",
+        )
+    if not may_decide(db, document, actor_user_id=actor_user_id, permissions=permissions):
+        approver = _user(db, document.approver_user_id)
+        who = approver.name if approver is not None and approver.name else "another approver"
+        raise AppException(
+            status_code=403,
+            message=(
+                f"This approval is with {who}. Only they, someone they report to, or an "
+                "admin can decide it."
+            ),
+            code="quotation_approval_not_routed_to_you",
         )
 
 
@@ -452,7 +772,7 @@ def approve(
     permissions: Iterable[str],
 ) -> ProjectQuotationDocument:
     """The manager accepts the below-floor pricing. The next Issue press then proceeds."""
-    _assert_can_decide(permissions)
+    _assert_can_decide(db, document, actor_user_id, permissions)
     target = _status_by_key(db, STATUS_APPROVED)
     status_service.assert_transition_allowed(
         db, ENTITY_TYPE, _from_status_id(db, document), target.id, scope_id=None
@@ -485,7 +805,7 @@ def reject(
     than only in the feed: "rejected" with no reason leaves the salesperson guessing which line
     to move, which is the conversation this gate exists to make explicit.
     """
-    _assert_can_decide(permissions)
+    _assert_can_decide(db, document, actor_user_id, permissions)
     cleaned = " ".join((reason or "").split())
     if not cleaned:
         raise AppException(
@@ -587,13 +907,15 @@ def notify_requested(
             return
         from app.services import project_notify_service as notify
 
+        c = counts(db, document)
         notify.notify_quotation_approval_requested(
             db,
             project=project,
             document=document,
             resubmitted=current_key(db, document) == STATUS_RESUBMITTED,
             press=str(_press_count(db, document)),
-            below=below_floor_line_count(db, document),
+            below=c["below_floor"],
+            reasons=reasons_text(c) if any(c.values()) else None,
             requester_id=actor_user_id,
             requester_name=_actor_name(db, actor_user_id),
         )
@@ -664,12 +986,18 @@ def serialize_approval(db: Session, document: ProjectQuotationDocument) -> Dict[
     reads them to decide whether to render the gate at all.
     """
     status = status_of(db, document)
-    below = below_floor_line_count(db, document)
+    c = counts(db, document)
+    approver = _user(db, getattr(document, "approver_user_id", None))
     return {
         "approval_status_id": str(status.id) if status is not None else None,
         "approval_status_key": status.key if status is not None else None,
         "approval_status_label": status.label if status is not None else None,
         "approval_rejected_reason": document.approval_rejected_reason,
-        "requires_approval": below > 0,
-        "below_floor_line_count": below,
+        "requires_approval": bool(c["discounted"] or c["below_floor"] or c["off_series"]),
+        "below_floor_line_count": c["below_floor"],
+        "discounted_line_count": c["discounted"],
+        "off_series_line_count": c["off_series"],
+        "approval_reasons": reasons_text(c) if any(c.values()) else None,
+        "approver_user_id": str(approver.id) if approver is not None else None,
+        "approver_name": (approver.name or approver.email) if approver is not None else None,
     }

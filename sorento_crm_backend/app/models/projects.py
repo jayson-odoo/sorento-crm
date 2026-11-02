@@ -297,6 +297,11 @@ class Project(Base, CompanyScopedMixin):
     # negotiation does not drag the card backwards and corrupt stage durations.
     is_critical = Column(Boolean, nullable=False, server_default="false", default=False)
     critical_at = Column(DateTime(timezone=False), nullable=True)
+    # "This project's discounts go straight to <user>" (PS-QUOTE-RULES R4.2). NULL routes by
+    # the owner's superior.
+    discount_approver_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     management_support = Column(Text, nullable=True)
     management_notes = Column(Text, nullable=True)
 
@@ -1153,6 +1158,11 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     # cleared the moment it leaves `rejected` so the screen cannot quote a rejection that has
     # already been answered.
     approval_rejected_reason = Column(Text, nullable=True)
+    # Who this request was routed to (PS-QUOTE-RULES R4), frozen when Send for approval is
+    # pressed so a later change of superior or override does not move a request already waiting.
+    approver_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -1690,6 +1700,9 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
     floor_value_applied = Column(Numeric(12, 2), nullable=True)
     floor_level_applied = Column(String(24), nullable=True)
     is_below_floor = Column(Boolean, nullable=False, server_default="false", default=False)
+    # Priced below its default price (series selling price, else list price) when saved
+    # (PS-QUOTE-RULES R1). Any discount needs approval, so this, not the floor, gates Issue.
+    is_discounted = Column(Boolean, nullable=False, server_default="false", default=False)
 
     sort_order = Column(Integer, nullable=False, server_default="0", default=0)
     notes = Column(Text, nullable=True)

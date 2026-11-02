@@ -709,7 +709,11 @@ def serialize_projects(
     permissions = permissions or set()
     is_manager = MANAGE_PERMISSION in permissions
 
-    owner_names = _name_map(db, [p.owner_user_id for p in projects])
+    owner_names = _name_map(
+        db,
+        [p.owner_user_id for p in projects]
+        + [getattr(p, "discount_approver_user_id", None) for p in projects],
+    )
     party_names = _party_name_map(
         db, [p.developer_party_id for p in projects]
     )
@@ -871,6 +875,8 @@ def serialize_projects(
                 "critical_at": project.critical_at,
                 "management_support": project.management_support,
                 "management_notes": project.management_notes,
+                "discount_approver_user_id": project.discount_approver_user_id,
+                "discount_approver_name": owner_names.get(project.discount_approver_user_id),
                 "registered_company_name": (
                     profile.registered_company_name if profile else None
                 ),
@@ -1306,6 +1312,28 @@ def update_project(
 
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
+
+    if "discount_approver_user_id" in payload:
+        # Routing an approval is a manager act (PS-QUOTE-RULES R4.2), like reassigning the owner:
+        # a salesperson must not pick who approves their own discount.
+        wanted = payload["discount_approver_user_id"] or None
+        if wanted != project.discount_approver_user_id:
+            if MANAGE_PERMISSION not in (permissions or set()):
+                raise AppException(
+                    status_code=403,
+                    message="Only a sales manager can choose who approves this project's discounts.",
+                    code="project_discount_approver_forbidden",
+                )
+            if wanted is not None:
+                from app.models.user import User
+
+                if db.query(User.id).filter(User.id == str(wanted)).first() is None:
+                    raise AppException(
+                        status_code=422,
+                        message="That approver does not exist.",
+                        code="project_discount_approver_unknown",
+                    )
+            project.discount_approver_user_id = wanted
 
     apply_sales_details(db, project, payload)
     return project
