@@ -2733,3 +2733,32 @@ describe('QuotationVersionEditor holds the page\'s Save while columns change (re
     await waitFor(() => expect(setColumnsBusy).toHaveBeenLastCalledWith(false));
   });
 });
+
+describe('QuotationVersionEditor B1: a header gains its first column (fix round 2)', () => {
+  it('keeps the header\'s quantity: Save sends 995 under the new column', async () => {
+    const before = [
+      { key: 'bt', label: 'Break tank', cols: [] as { key: string; label: string }[] },
+      { key: 'a', label: 'Type A', cols: [{ key: 'a1', label: 'Kitchen' }] },
+    ];
+    let stored = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: before });
+    listQuotationVersions.mockImplementation(async () => [stored]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '995.00', qty_cells: { bt: '995.00' } })]);
+    replaceQuotationColumns.mockImplementation(
+      async (_versionId: string, columns: { key: string; cols: { key: string }[] }[]) => {
+        stored = { ...stored, matrix_columns: columns as typeof before };
+        const first = columns[0].cols[0].key;
+        // The server's own move-in (set_columns).
+        return { version: stored, lines: [line({ quantity: '995.00', qty_cells: { [first]: '995.00' } })] };
+      },
+    );
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+    const first = replaceQuotationColumns.mock.calls[0][1][0].cols[0].key as string;
+    await waitFor(() =>
+      expect(stagedBody()[0]).toMatchObject({ qty_cells: { [first]: '995.00' }, quantity: '995.00' }),
+    );
+    expect(stagedBody()[0].qty_cells).not.toHaveProperty('bt');
+  });
+});

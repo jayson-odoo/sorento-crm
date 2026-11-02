@@ -37,6 +37,10 @@ function typeHeader(key: string, label: string, bh: string): MatrixHeader {
   };
 }
 
+function col(key: string, label: string) {
+  return { key, label };
+}
+
 const UNIT: MatrixHeader[] = [
   typeHeader('a', 'Type A - 1 BH', '1 BH'),
   typeHeader('b', 'Type B - 2 BH', '2 BH'),
@@ -248,6 +252,33 @@ describe('reshapeCells (R12)', () => {
       cells: { 'c-bal': '3' },
       quantity: '3.00',
     });
+  });
+
+  it('B1: a header that gains its first column moves its own quantity into it', () => {
+    const before: MatrixHeader[] = [
+      { key: 'bt', label: 'Break tank', cols: [] },
+      { key: 'a', label: 'Type A', cols: [col('a1', 'Kitchen')] },
+    ];
+    const after: MatrixHeader[] = [
+      { key: 'bt', label: 'Break tank', cols: [col('bt1', 'Column 1')] },
+      { key: 'a', label: 'Type A', cols: [col('a1', 'Kitchen')] },
+    ];
+    expect(reshapeCells(before, after, { bt: '995', a1: '5' }, '1000.00')).toEqual({
+      cells: { bt1: '995', a1: '5' },
+      quantity: '1000.00',
+    });
+  });
+
+  it('B1: the move never overwrites a value already in that first column', () => {
+    const before: MatrixHeader[] = [
+      { key: 'bt', label: 'Break tank', cols: [] },
+      { key: 'a', label: 'Type A', cols: [] },
+    ];
+    const after: MatrixHeader[] = [
+      { key: 'bt', label: 'Break tank', cols: [col('bt1', 'One')] },
+      { key: 'a', label: 'Type A', cols: [] },
+    ];
+    expect(reshapeCells(before, after, { bt: '7', bt1: '3' }, '10.00').cells).toEqual({ bt1: '3' });
   });
 
   it('leaves a scope with no columns alone', () => {
