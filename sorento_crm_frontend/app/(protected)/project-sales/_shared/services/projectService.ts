@@ -4,6 +4,9 @@ import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import { qtyOverAwareError } from '../lib/qtyOverQuote';
 import type { MatrixHeader } from '../lib/quotationMatrix';
 import type {
+  PartyContact,
+  PartyContactBody,
+  PartyOnProject,
   ClashPreview,
   MediaKind,
   MediaEscalationResult,
@@ -438,14 +441,24 @@ export async function listParties(
     include_inactive?: boolean;
     page?: number;
     limit?: number;
+    /** Server-side sort (PS-REGISTRATION-V3, owner rule): name, party_type, is_active,
+     * project_count, contact_count, customer_name. */
+    sort?: string;
+    dir?: 'asc' | 'desc';
   } = {},
 ): Promise<ListEnvelope<ProjectParty>> {
-  const sp = new URLSearchParams();
-  if (params.party_type) sp.set('party_type', params.party_type);
-  if (params.query) sp.set('query', params.query);
-  if (params.include_inactive) sp.set('include_inactive', 'true');
-  if (params.page) sp.set('page', String(params.page));
-  if (params.limit) sp.set('limit', String(params.limit));
+  const sp = buildDataGridParams(
+    {
+      pageIndex: (params.page ?? 1) - 1,
+      pageSize: params.limit ?? 50,
+      sorting: params.sort ? [{ id: params.sort, desc: params.dir === 'desc' }] : [],
+      searchQuery: params.query,
+    },
+    {
+      party_type: params.party_type,
+      include_inactive: params.include_inactive ? 'true' : undefined,
+    },
+  );
   const query = sp.toString();
   const response = await apiFetch(`${BASE}/parties/${query ? `?${query}` : ''}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load parties'));
@@ -1475,4 +1488,70 @@ export async function removeSeriesProduct(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to remove the product'));
+}
+
+
+// ------------------------------------------------------------ party contacts (PS-REGISTRATION-V3)
+
+/** One party by id (the party page; the list reads only its first page). Null when gone. */
+export async function getParty(partyId: string): Promise<ProjectParty | null> {
+  const response = await apiFetch(`${BASE}/parties/${partyId}`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the party'));
+  return response.json();
+}
+
+export async function listPartyContacts(partyId: string): Promise<PartyContact[]> {
+  const response = await apiFetch(`${BASE}/parties/${partyId}/contacts`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load contacts'));
+  return (await response.json()).data;
+}
+
+export async function createPartyContact(
+  partyId: string,
+  body: PartyContactBody,
+): Promise<PartyContact> {
+  const response = await apiFetch(`${BASE}/parties/${partyId}/contacts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to add the contact'));
+  return response.json();
+}
+
+export async function updatePartyContact(
+  partyId: string,
+  contactId: string,
+  body: PartyContactBody,
+): Promise<PartyContact> {
+  const response = await apiFetch(`${BASE}/parties/${partyId}/contacts/${contactId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the contact'));
+  return response.json();
+}
+
+/** The project's parties by role, with the project's people at each. */
+export async function getPartiesOnProject(projectId: string): Promise<PartyOnProject[]> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/parties`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the parties'));
+  return (await response.json()).data;
+}
+
+/** Saves a number typed at send time to a party (or a person at it) that had none. */
+export async function fillPartyPhone(
+  projectId: string,
+  partyId: string,
+  body: { phone: string; stakeholder_id?: string | null },
+): Promise<{ party_id: string; stakeholder_id: string | null; phone: string }> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/parties/${partyId}/phone`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the number'));
+  return response.json();
 }

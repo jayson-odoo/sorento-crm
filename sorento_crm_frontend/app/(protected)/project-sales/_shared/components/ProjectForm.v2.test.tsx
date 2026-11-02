@@ -65,8 +65,9 @@ vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-
   useBrandSelectQuery: () => ({ data: [{ id: 'b1', brand_name: 'CONTOH Brand' }], isLoading: false }),
 }));
 vi.mock('@/hooks/useLookupSetOptions', () => ({
-  useLookupSetOptions: () => ({
-    data: [
+  // PS-REGISTRATION-V3: the lead source list is its own lookup set.
+  useLookupSetOptions: (key: string) => ({
+    data: key === 'project_lead_source' ? [{ value: 'site_visit', label: 'Site visit' }] : [
       { value: 'Johor', label: 'Johor' },
       { value: 'Selangor', label: 'Selangor' },
     ],
@@ -355,7 +356,12 @@ async function pickAsync(label: string | RegExp, typed: string, optionName: stri
 }
 // LEAD-GOVERNS-REGISTER D2: a new project's Customer comes from the picked Lead, so "pickCustomer"
 // now picks the lead whose customer is Aman Hartanah CONTOH.
-const pickCustomer = (typed = 'Aman') => pickAsync(/^Customer/, typed, /Aman Hartanah CONTOH/);
+// PS-REGISTRATION-V3: Register / Submit need a lead source and the customer is optional, so
+// every register flow picks the lead source here, beside the customer.
+const pickCustomer = async (typed = 'Aman') => {
+  fireEvent.change(screen.getByLabelText(/^Lead source/), { target: { value: 'site_visit' } });
+  await pickAsync(/^Customer/, typed, /Aman Hartanah CONTOH/);
+};
 function openDetails() {
   const header = screen.getByRole('button', { name: /^Details/ });
   if (header.getAttribute('aria-expanded') !== 'true') fireEvent.click(header);
@@ -393,7 +399,7 @@ async function toDetails(text = 'Setia Alam Phase 3B') {
   fireEvent.click(screen.getByRole('button', { name: 'Check' }));
   await screen.findByText('No clash');
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-  await screen.findByRole('button', { name: /^Customer and salesperson/ });
+  await screen.findByRole('button', { name: /^Lead source, customer and salesperson/ });
 }
 
 describe('A1 title first, as a textarea', () => {
@@ -421,7 +427,7 @@ describe('A2 Customer and salesperson (AC-L1)', () => {
     await toDetails();
     expect(screen.queryByRole('button', { name: /^Salesperson and customer/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Lead, customer and salesperson/ })).toBeNull();
-    const header = screen.getByRole('button', { name: /^Customer and salesperson/ });
+    const header = screen.getByRole('button', { name: /^Lead source, customer and salesperson/ });
     const section = header.closest('[data-slot="card"]') as HTMLElement;
     expect(within(section).getByLabelText('Salesperson')).toBeInTheDocument();
     expect(within(section).getByLabelText(/^Customer/)).toBeInTheDocument();
@@ -431,7 +437,7 @@ describe('A2 Customer and salesperson (AC-L1)', () => {
     renderForm();
     await toDetails();
     openDetails();
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
     fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'Pavilion' } });
     expect(screen.queryByRole('button', { name: /Create lead/ })).toBeNull();
   });
@@ -467,7 +473,7 @@ describe('A3 Customer is an async search over the customers select', () => {
 });
 
 describe('A4 Register needs title and a Customer (AC-L1)', () => {
-  it('AC-L1 create: disabled with a title only, enabled once a Customer is picked, sends customer_id and no lead_id key', async () => {
+  it('AC-L1 create: disabled with a title only, enabled once the lead source is picked (PS-REGISTRATION-V3), sends customer_id and no lead_id key', async () => {
     renderForm();
     await toDetails('Menara Baru CONTOH');
     const register = screen.getByRole('button', { name: 'Register project' });
@@ -485,7 +491,7 @@ describe('A4 Register needs title and a Customer (AC-L1)', () => {
   it('AC-L5 edit: Save changes is enabled and sends no lead_id key', () => {
     renderForm({ mode: 'edit', project: editProject() });
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
   });
 });
 
@@ -697,7 +703,7 @@ describe('J1 salesperson footer', () => {
     expect(screen.queryByRole('button', { name: 'Register project' })).toBeNull();
   });
 
-  it('submit-only user: Save draft needs only a title; Submit for approval also needs a Customer', async () => {
+  it('submit-only user: Save draft needs only a title; Submit for approval also needs a lead source (PS-REGISTRATION-V3)', async () => {
     granted = new Set(['projects.registrations.submit']);
     renderForm();
     await toDetails('Draf Menara CONTOH');
@@ -942,7 +948,7 @@ describe('J3c a submit-only user has Customer and no Lead (AC-L1)', () => {
     renderForm();
     await toDetails();
     expect(screen.getByLabelText(/^Customer/)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
   });
 });
 

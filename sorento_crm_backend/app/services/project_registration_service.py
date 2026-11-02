@@ -78,6 +78,7 @@ _CRM_DETAIL_KEYS = (
     "mukim",
     "architect_party_id",
     "main_contractor_party_id",
+    "lead_source",
     "estimated_sales_value",
     "launch_date",
     "expected_delivery_from",
@@ -722,16 +723,6 @@ def portal_submit(
 # ------------------------------------------------------------------ CRM salesperson (J)
 
 
-def require_customer(customer_id: Optional[str]) -> None:
-    """A registration needs its customer (PROJECT-REGISTER-V2 A5)."""
-    if not customer_id:
-        raise AppException(
-            status_code=422,
-            message="Pick the customer before registering.",
-            code="project_customer_required",
-        )
-
-
 def _to_pending(project: Project) -> bool:
     """Draft or rejected -> pending or resubmitted, the state change `portal_submit` makes.
     Returns True when it is a resubmission."""
@@ -750,9 +741,10 @@ def crm_register(
     db: Session, *, company_id: str, user_id: str, payload: Dict[str, Any], submit: bool
 ) -> Project:
     """A salesperson who holds only the submit grant saves a draft (title only) or submits a
-    new registration (customer required). The caller commits and, when ``submit``, notifies
+    new registration (lead source required, customer optional: PS-REGISTRATION-V3). The caller commits and, when ``submit``, notifies
     with `notify(db, project, "submitted")` AFTER the commit."""
     from app.models.user import User
+    from app.services import project_party_contact_service as party_contacts
     from app.services import project_service
     from app.services.project_clash_service import normalise_project_title
     from app.services.sales.portal_agent import agents_for_contact
@@ -766,8 +758,7 @@ def crm_register(
     customer_id = payload.get("customer_id")
     payload = {**payload, "customer_id": customer_id}
     project_service.check_company_refs(db, company_id, payload)
-    if submit:
-        require_customer(customer_id)
+    party_contacts.assert_lead_source(db, payload.get("lead_source"), required=submit)
     contact_id = db.query(User.respond_contact_id).filter(User.id == str(user_id)).scalar()
     agents = agents_for_contact(db, contact_id) if contact_id else []
     details = {k: payload[k] for k in _CRM_DETAIL_KEYS if k in payload}
@@ -805,6 +796,7 @@ def crm_register(
             )
             db.flush()
             project_service.apply_sales_details(db, project, details)
+            party_contacts.apply_registration_extras(db, project, payload)
             if submit:
                 _to_pending(project)
             db.flush()
@@ -835,8 +827,9 @@ def crm_submit(
         project_service.update_project(
             db, project, payload, actor_user_id=user_id, permissions=permissions
         )
-    profile = db.get(ProjectSalesProfile, project.id)
-    require_customer(getattr(profile, "customer_id", None))
+    from app.services.project_party_contact_service import require_lead_source_on_profile
+
+    require_lead_source_on_profile(db, project)
     if not _clean(project.title):
         raise AppException(
             status_code=422, message="A project title is required.", code="project_title_required"

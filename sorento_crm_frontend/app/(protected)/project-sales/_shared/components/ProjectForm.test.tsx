@@ -77,6 +77,20 @@ vi.mock('../services/projectService', async (importOriginal) => {
 
 type Option = { value: string; label: string };
 
+// PS-REGISTRATION-V3: the lead source and district lists are lookup sets.
+vi.mock('@/hooks/useLookupSetOptions', () => ({
+  useLookupSetOptions: (key: string) => ({
+    data:
+      key === 'project_lead_source'
+        ? [{ value: 'site_visit', label: 'Site visit' }]
+        : key.startsWith('my_district_')
+          ? [{ value: 'Petaling', label: 'Petaling' }]
+          : [{ value: 'Selangor', label: 'Selangor' }],
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
+
 vi.mock('@/components/common/SearchableSelect', () => {
   function StaticSelect({
     id,
@@ -351,7 +365,7 @@ async function toDetails(text = 'Setia Alam Phase 3B') {
   fireEvent.click(screen.getByRole('button', { name: 'Check' }));
   await screen.findByText('No clash');
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-  await screen.findByRole('button', { name: /^Customer and salesperson/ });
+  await screen.findByRole('button', { name: /^Lead source, customer and salesperson/ });
 }
 
 async function fillWho() {
@@ -374,8 +388,15 @@ async function fillWho() {
   );
 }
 
-/** AC-L1: a new project's Customer is the search picker; nothing fills it from a lead. */
+/** PS-REGISTRATION-V3: Register needs a lead source (customer optional). */
+function pickLeadSource() {
+  fireEvent.change(screen.getByLabelText(/^Lead source/), { target: { value: 'site_visit' } });
+}
+
+/** AC-L1: a new project's Customer is the search picker; nothing fills it from a lead. Picks
+ * the required lead source too, since every caller goes on to Register. */
 async function pickCustomer() {
+  pickLeadSource();
   await pickParty(/^Customer/, 'Aman', 'Aman Hartanah');
 }
 
@@ -433,7 +454,7 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
       'aria-expanded',
       'false',
     );
-    expect(screen.getByRole('button', { name: /^Customer and salesperson/ })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /^Lead source, customer and salesperson/ })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
@@ -441,7 +462,7 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
 
   it('edit mode opens every section', () => {
     renderForm({ mode: 'edit', project: baseProject() });
-    for (const name of [/Who and what/, /^Details/, /^Customer and salesperson/]) {
+    for (const name of [/Who and what/, /^Details/, /^Lead source, customer and salesperson/]) {
       expect(screen.getByRole('button', { name })).toHaveAttribute('aria-expanded', 'true');
     }
   });
@@ -449,14 +470,14 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
   it('opens Details by itself once Who and what is filled, then never reopens it by hand', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
-    await waitFor(() => expect(screen.getByLabelText('Location')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText('Address')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /^Details/ })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
 
     fireEvent.click(screen.getByRole('button', { name: /^Details/ }));
-    expect(screen.queryByLabelText('Location')).toBeNull();
+    expect(screen.queryByLabelText('Address')).toBeNull();
 
     // The title lives on the Check step now: go back, change it, Check and come forward again.
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
@@ -465,7 +486,7 @@ describe('ProjectForm: sections (AC-PF033, AC-PF034)', () => {
     });
     fireEvent.blur(screen.getByLabelText(/project title/i));
     await toDetails();
-    expect(screen.queryByLabelText('Location')).toBeNull();
+    expect(screen.queryByLabelText('Address')).toBeNull();
   });
 });
 
@@ -712,22 +733,27 @@ describe('ProjectForm: Salesperson (AC-PF040-043)', () => {
 });
 
 describe('ProjectForm: no lead on registration (AC-L1)', () => {
-  it('AC-L1 will not register a project without a customer', async () => {
+  it('PS-REGISTRATION-V3 registers without a customer, but not without a lead source', async () => {
     renderForm({ mode: 'create' });
     await fillWho();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeDisabled();
-    await pickCustomer();
+    pickLeadSource();
     expect(screen.getByRole('button', { name: 'Register project' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
+    await waitFor(() => expect(registerProject).toHaveBeenCalledTimes(1));
+    const body = registerProject.mock.calls[0][0] as Record<string, unknown>;
+    expect(body).toMatchObject({ lead_source: 'site_visit' });
+    expect(body).not.toHaveProperty('customer_id');
   });
 
   it('AC-L1 shows no Lead field and no Create lead option, in create or edit', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
     expect(screen.queryByRole('button', { name: /Create lead/ })).toBeNull();
     cleanup();
     renderForm({ mode: 'edit', project: baseProject() });
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
   });
 
   it('AC-L1 the register body carries the picked customer_id and no lead_id key', async () => {
@@ -757,7 +783,8 @@ describe('ProjectForm: create submit (AC-PF024)', () => {
     fireEvent.change(screen.getByLabelText('Registered company / SPV'), {
       target: { value: 'Setia SPV' },
     });
-    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Setia Alam' } });
+    // No Location on the register form (PS-REGISTRATION-V3 rule 2).
+    expect(screen.queryByLabelText('Location')).toBeNull();
     fireEvent.change(screen.getByLabelText('Address'), {
       target: { value: '123 Jalan Setia' },
     });
@@ -777,7 +804,8 @@ describe('ProjectForm: create submit (AC-PF024)', () => {
           developer_party_id: 'd1',
           type_id: 'ty2',
           registered_company_name: 'Setia SPV',
-          location: 'Setia Alam',
+          location: null,
+          lead_source: 'site_visit',
           address: '123 Jalan Setia',
           admin_ref: 'PS26-0099',
           estimated_sales_value: '500000',
