@@ -1,7 +1,6 @@
 # PLAN: a bundled row's (i) lists each host's own change
 
-Status: Track: small fix - ready for PR review. Worktree `sorento_crm-oi-sheet-date`,
-branch `feat/oi-bundled-row-host-change`. Backend and frontend, one PR.
+Status: shipped (merged in #1018, 18 Sep 2026)
 
 UAC: `oi-bundled-row-host-change-acceptance-criteria.md`.
 

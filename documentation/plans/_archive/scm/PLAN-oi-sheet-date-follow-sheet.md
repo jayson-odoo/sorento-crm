@@ -1,10 +1,6 @@
 # PLAN: order inquiry sheet - follow the sheet's own delivery date
 
-Status: Track: small fix - ready for PR review. Reverses section 7.4 of
-`PLAN-scm-oi-sheet-pairing-repair.md`. Lane worktree `sorento_crm-oi-sheet-date`, branch
-`fix/oi-sheet-date-follow-sheet`, PR #1004. DB `sorento_oisd_ci` (its own; `sorento_oibf_ci`
-belongs to the #1003 lane and was not touched again after the first round's mistake).
-Backend + a one-line frontend type/tile addition (S4, fix round 1).
+Status: shipped (merged in #1004, 18 Sep 2026)
 
 UAC: `oi-sheet-date-follow-sheet-acceptance-criteria.md`.
 
