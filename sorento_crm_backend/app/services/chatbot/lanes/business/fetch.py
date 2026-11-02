@@ -1337,6 +1337,14 @@ def entity_ids_transformer(
     if isinstance(predicate, dict) and predicate.get("certificate_ids"):
         out["certificate_ids"] = predicate["certificate_ids"]
 
+    # SUPPLIER-ASK fix round 9: the structural guard. A supplier-scoped turn never lists without a supplier filter.
+    supplier_scope = jsc.get(semantic_input, "supplier_scope") if isinstance(semantic_input, dict) else None
+    if isinstance(supplier_scope, dict) and tool_name in SUPPLIER_GUARDED_TOOLS and not out.get("supplier_ids"):
+        raise SupplierScopeViolation(
+            f"{tool_name} would list without the supplier this turn is about",
+            line=str(supplier_scope.get("line") or ""),
+        )
+
     # PLAN-chatbot-customer-scope-29sep.md D4, the LAST step before `contact_id`: a
     # customer-scoped contact's `customer_ids` are its linked customers on every
     # customer-scoped tool, whatever the earlier steps built. Defence in depth behind
@@ -1429,6 +1437,31 @@ class ScopeViolation(ToolNotAllowed):
     def __init__(self, message: str, *, dropped: list[str] | None = None) -> None:
         super().__init__(message)
         self.dropped: list[str] = list(dropped or [])
+
+
+class SupplierScopeViolation(ScopeViolation):
+    """SUPPLIER-ASK fix round 9 (crew sweep at c5333b37: 全部 under the supplier question listed every customer's orders;
+    "outstanding PO for zzqqxx supplier" once listed the PO book): a turn about a supplier (`ctx["supplier_scope"]`,
+    set by the engine) reached a list tool with no `supplier_ids`. Never a tool call; `run_fetch` answers with the
+    scope's own line (the supplier question again, or "couldn't find a supplier")."""
+
+    def __init__(self, message: str, *, line: str) -> None:
+        super().__init__(message)
+        self.line = line
+
+
+#: The list tools a supplier-scoped turn may never run without `supplier_ids`: the PO book (the only one that takes
+#: them) and the customer-side lists an order-side reading would fall to.
+SUPPLIER_GUARDED_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_procurement_po_placed_list",
+        "crm_order_management_orders_list",
+        "crm_order_management_orders_by_product_list",
+        "crm_outstanding_report",
+        "crm_report_ask",
+        "crm_sales_report",
+    }
+)
 
 
 #: The MCP tools that return per-customer data: every catalogue tool whose `query_params`

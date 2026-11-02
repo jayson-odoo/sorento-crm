@@ -668,7 +668,9 @@ def _visible_reference_kinds(ctx: dict[str, Any]) -> list[str]:
 def _allowed_entity_types(ctx: dict[str, Any], entities: list[Any]) -> list[Any]:
     """The entities' hints, with every reference hint (a typed number whose kind may be any
     visible one) replaced by the kinds this asker may probe."""
-    hints = [jsc.get(x, "hint") for x in entities]
+    # SUPPLIER-ASK fix round 9 (crew turn 36f11957, "太阳的" with hint null): an entity with no kind names no type to
+    # allow; passed through as None it failed the resolver request's validation and the turn lost its resolve.
+    hints = [h for h in (jsc.get(x, "hint") for x in entities) if isinstance(h, str) and h]
     if not any(h in REFERENCE_NARROW for h in hints):
         return hints
     out = [h for h in hints if h not in REFERENCE_NARROW]

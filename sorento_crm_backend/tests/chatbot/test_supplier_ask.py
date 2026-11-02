@@ -1864,3 +1864,119 @@ def test_a_fresh_process_reads_the_stored_vectors_on_the_turn_before_falling_bac
     ll._cache.clear()
     usable = ll.usable_embedder(rows, embed)
     assert usable is not embed and not calls, "a failed load falls back to the cached rows; no row is embedded"
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 9 (crew re-check at c5333b37): a supplier-scoped turn never reaches a list tool without a supplier filter.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("tool", sorted(fetch_mod.SUPPLIER_GUARDED_TOOLS))
+def test_the_tool_boundary_refuses_a_list_without_the_supplier_of_a_supplier_scoped_turn(tool):
+    trigger = {
+        "tool": tool, "entities": [], "contact_id": "c-1",
+        "semantic_input": {"supplier_scope": {"line": "Which one do you mean?"}},
+    }
+    with pytest.raises(fetch_mod.SupplierScopeViolation) as refused:
+        fetch_mod.entity_ids_transformer(trigger, space_id=None)
+    assert refused.value.line == "Which one do you mean?"
+    fetch_mod.entity_ids_transformer({**trigger, "semantic_input": {}}, space_id=None)  # no scope: as before
+
+
+def test_a_scoped_po_list_with_its_supplier_passes_the_guard():
+    sid = str(uuid.uuid4())
+    trigger = {
+        "tool": PO_TOOL, "contact_id": "c-1", "semantic_input": {"supplier_scope": {"line": "x"}},
+        "access": {"attributes": [SUPPLIER_GRANT]},
+        "entities": [{"entity_type": "supplier", "uuid": sid, "canonical_code": "ZZTSUP-TY01"}],
+    }
+    assert fetch_mod.entity_ids_transformer(trigger, space_id=None).get("supplier_ids") == [sid]
+
+
+@pytest.mark.parametrize("aside", ["broaden", "order-flip", "bare"])
+def test_an_answer_over_the_supplier_question_never_lists_without_a_supplier(session_factory, monkeypatch, aside):
+    """Crew turns 4cfda57c / 872cb7a6 (全部 listed every customer's orders) and 10d8d75c: whatever the parser read the
+    answer as, the turn either lists the picked suppliers or asks again; never a list with no supplier."""
+    _three_taiyang(session_factory, monkeypatch)
+    qf = {
+        "broaden": _parser_output(message_type="business_query", intent_hint="check_po", domain_hint="purchase_order",
+                                  entities=[], broaden_axis="all", broaden_to="all", scope_intent="broaden"),
+        "order-flip": _parser_output(message_type="business_query", intent_hint="check_order", domain_hint="order",
+                                     order_status="outstanding", status="outstanding", entities=[]),
+        "bare": _parser_output(message_type="answer", intent_hint=None, domain_hint=None, entities=[]),
+    }[aside]
+    reply, captured, _s = _span_turn(session_factory, monkeypatch, "全部", list_resolver.Span("全部"), set(), qf=qf)
+    lists = [(n, a) for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS]
+    assert not [a for _n, a in lists if not a.get("supplier_ids")], (reply, captured)
+
+
+def test_an_unknown_supplier_word_never_lists_the_po_book(session_factory, monkeypatch):
+    """Crew turn 4ff1d7b8: 'outstanding PO for zzqqxx supplier' once listed the PO book with no supplier filter."""
+    _office_world(session_factory)
+    qf = _parser_output(
+        domain_hint="purchase_order", intent_hint="check_po", order_status=None,
+        entities=[{"raw": "zzqqxx", "hint": "supplier", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, captured, _s = _span_turn(
+        session_factory, monkeypatch, "outstanding PO for zzqqxx supplier", list_resolver.Span("zzqqxx", "supplier"), set(), qf=qf,
+    )
+    assert not [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS and not a.get("supplier_ids")], (reply, captured)
+
+
+def test_crews_all_emission_over_the_supplier_question_lists_the_three_suppliers_pos(session_factory, monkeypatch):
+    """Crew turns 4cfda57c / 872cb7a6: 全部 parsed as picked [1, 2, 3] with domain purchase_order, status outstanding
+    (flipped to order) and the message's own domain; the order list ran for every customer. The picked suppliers decide
+    the side: their open POs."""
+    _reply, three = _three_taiyang(session_factory, monkeypatch)
+    qf = _parser_output(
+        message_type="business_query", intent_hint="check_po", domain_hint="purchase_order", order_status="outstanding",
+        status="outstanding", document=["PO"], entity_op="reuse", entities=[], reference_positions=[1, 2, 3],
+        open_question_answer={"mode": "pick", "items": [], "picked": [1, 2, 3], "qty_for_all": None},
+        broaden_axis="supplier", broaden_to="all", domain_in_message=True,
+    )
+    reply, captured, _s = _span_turn(session_factory, monkeypatch, "全部", list_resolver.Span("全部"), set(), qf=qf)
+    assert not [n for n, _a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS and n != PO_TOOL], (reply, captured)
+    calls = _po_calls(captured)
+    assert calls and set(calls[0].get("supplier_ids") or []) == three, (reply, captured)
+
+
+def test_crews_step3_customer_pick_with_po_document_asks_the_kind_on_the_sales_side(session_factory, monkeypatch):
+    """Crew turns 1f34fcce / 027619e3 / 03df31ef: the customer pick came back with domain purchase_order and document
+    PO; the reply was 'Could not find purchase order for customer orionis'. The PO document is the purchase thread's."""
+    _office_world(session_factory)
+    _seed_customer(session_factory, f"{ORIONIS} (PROJECT)")
+    _seed_named(session_factory, ORIONIS, "ZZTSUP-OR01")
+    owner = _parser_output(
+        domain_hint="purchase_order", intent_hint="check_po", order_status="outstanding", status="outstanding",
+        entities=[{"raw": "orionis", "hint": "supplier", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, _c, _s = _span_turn(
+        session_factory, monkeypatch, "Outstandinf for orionis", list_resolver.Span("orionis", "product_code"), set(), qf=owner,
+    )
+    position = next(int(ln.split(". ", 1)[0]) for ln in reply.splitlines() if "(customer)" in ln)
+    pick = _parser_output(
+        message_type="business_query", intent_hint="check_po", domain_hint="purchase_order", status=None, order_status=None,
+        document=["PO"], entity_op="replace_combine", reference_positions=[position],
+        open_question_answer={"mode": "pick", "items": [], "picked": [position], "qty_for_all": None},
+        entities=[{"raw": "orionis", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, _c, _s = _span_turn(
+        session_factory, monkeypatch, str(position), list_resolver.Span(str(position)), set(), qf=pick, attributes=OWNER_GRANTS,
+    )
+    assert "Undelivered orders or pending delivery?" in reply, reply
+
+
+def test_crews_unknown_supplier_with_no_parser_entity_never_lists_the_po_book(session_factory, monkeypatch):
+    """Crew turn 4ff1d7b8: no parser entity at all; only the span pass typed 'zzqqxx' a supplier. The PO book ran with
+    no filter."""
+    _office_world(session_factory)
+    qf = _parser_output(domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"], entities=[])
+    reply, captured, _s = _span_turn(
+        session_factory, monkeypatch, "outstanding PO for zzqqxx supplier", list_resolver.Span("zzqqxx", "supplier"), set(), qf=qf,
+    )
+    assert not [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS and not a.get("supplier_ids")], (reply, captured)
+
+
+def test_a_hintless_entity_never_breaks_the_resolver_request():
+    """Crew turn 36f11957: '太阳的' with hint null reached `allowed_entity_types` as None and the resolver request failed."""
+    assert resolve_gate._allowed_entity_types({}, [{"raw": "太阳的", "hint": None}, {"raw": "x", "hint": "supplier"}]) == ["supplier"]

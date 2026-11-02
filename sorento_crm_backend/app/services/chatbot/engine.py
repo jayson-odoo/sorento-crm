@@ -488,10 +488,82 @@ def _open_supplier_question_again(
     ) or holds_supplier_row(resolved):
         return None
     lines = [
-        f"{o.get('position')}. {o.get('label')}"
-        for o in pending.options if isinstance(o, dict) and o.get("label")
+        f"{o.get('position')}. {o.get('label') or o.get('code')}"
+        for o in pending.options if isinstance(o, dict) and (o.get("label") or o.get("code"))
     ]
     return "\n".join(["Which one do you mean?", *lines]) if lines else None
+
+
+def _side_of_the_picked_party(verdict: dict[str, Any], pending: Any) -> dict[str, Any]:
+    """SUPPLIER-ASK fix round 9 (owner ruling, 2 Nov: the entity kind decides the side; crew turns 1f34fcce / 027619e3 /
+    03df31ef / 4cfda57c / 872cb7a6): a message that picks options of the open question that are all one party kind is
+    on that party's side, whatever domain the parser carried from the thread or its status flipped. A customer reads
+    the sales side (the outstanding report; a PO document is the purchase thread's and is dropped), a supplier the
+    purchase side (its order-side status set aside, as `supplier_ask_reads_purchase_orders` does). Returns a new
+    verdict, or the same one when the message picks no party."""
+    if pending is None or not getattr(pending, "options", None):
+        return verdict
+    positions = [p for p in jsc.array(verdict.get("reference_positions")) if isinstance(p, int) and not isinstance(p, bool)]
+    by_position = {o.get("position"): o for o in pending.options if isinstance(o, dict)}
+    picked = [by_position.get(p) for p in positions]
+    if not positions or any(o is None for o in picked):
+        return verdict
+    kinds = {jsc.lower_or_empty(o.get("entity_type")) for o in picked}
+    if len(kinds) != 1 or not kinds <= {"customer", "supplier"}:
+        return verdict
+    kind = next(iter(kinds))
+    domain = jsc.lower_or_empty(verdict.get("domain_hint"))
+    if kind == "customer" and domain == "purchase_order":
+        return {
+            **verdict, "domain_hint": "order", "intent_hint": "check_order",
+            "document": [d for d in jsc.array(verdict.get("document")) if d != "PO"],
+        }
+    if kind == "supplier" and domain in ("order", "sales", "purchase_order"):
+        set_aside = verdict.get("order_status") or verdict.get("status")
+        out = {**verdict, "domain_hint": "purchase_order", "intent_hint": "check_po", "order_status": None}
+        if set_aside:
+            out["sales_side_status"] = set_aside
+            out["status"] = None
+        return out if out != verdict else verdict
+    return verdict
+
+
+def _supplier_scope(
+    state_in: Any, state_out: Any, verdict: dict[str, Any], domains: Any, asker_sees_suppliers: bool,
+    prep: Any = None,
+) -> dict[str, Any] | None:
+    """SUPPLIER-ASK fix round 9 (owner ruling, 2 Nov: the entity kind decides the side; crew: "a supplier-scoped ask must
+    NEVER fall through to an unfiltered list"): whether this turn is about a supplier, and what it says when a list tool
+    would run without one (`fetch.SupplierScopeViolation`). About a supplier: this message names one, the supplier
+    question was open when it arrived, or the purchase side runs with a supplier held. None otherwise (and always for
+    an asker who may not see suppliers: their supplier words are refused earlier)."""
+    if not asker_sees_suppliers:
+        return None
+    named = [
+        jsc.nullish_str(e.get("raw")).strip() for e in jsc.array(verdict.get("entities"))
+        if isinstance(e, dict) and e.get("current_message") is True and jsc.lower_or_empty(e.get("hint")) == "supplier"
+    ]
+    # The span model typed a supplier in this message (crew turn 4ff1d7b8: "zzqqxx", no parser entity at all).
+    named += [t for t in (getattr(prep, "supplier_typed", None) or []) if t not in named]
+    pending = getattr(state_in, "pending", None)
+    asked = pending is not None and getattr(pending, "kind", None) == "supplier_pick" and bool(pending.options)
+    focus = getattr(state_out, "focus", None)
+    held = bool(((getattr(focus, "extra", None) or {}).get("supplier") or [])) and "purchase_order" in set(jsc.array(domains))
+    if not (named or asked or held):
+        return None
+    if asked:
+        lines = [
+            f"{o.get('position')}. {o.get('label') or o.get('code')}"
+            for o in pending.options if isinstance(o, dict) and (o.get("label") or o.get("code"))
+        ]
+        line = "\n".join(["Which one do you mean?", *lines])
+    elif named:
+        from app.services.chatbot.lanes.business.resolve_gate import SUPPLIER_NOT_FOUND_LINE
+
+        line = SUPPLIER_NOT_FOUND_LINE.format(raw=named[0])
+    else:
+        line = ""
+    return {"line": line}
 
 
 def _bare_both_over_not_two(pending: Any, message: str) -> bool:
@@ -1501,6 +1573,9 @@ class _SpanPrep:
     # Review round 5-6 (B1): span text -> every (list, row id, line) a span reading named, so the untyped party read
     # adds to what the span pass found instead of replacing it.
     span_rows: dict[str, list[tuple[str, str, str]]] = field(default_factory=dict)
+    # Fix round 9 (crew turn 4ff1d7b8): the spans the span model typed `supplier`, placed or not; a turn naming one is
+    # supplier-scoped even when the parser returned no entity for it (`_supplier_scope`).
+    supplier_typed: list[str] = field(default_factory=list)
 
 
 def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | None:
@@ -1971,6 +2046,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 prep.span_kinds = _span_kinds([*resolutions, *readings])
                 prep.supplier_customers = _supplier_customers([*resolutions, *readings])
                 prep.span_rows = _span_rows([*resolutions, *readings])
+                prep.supplier_typed = [s.text for s in answer.spans if getattr(s, "type", None) == "supplier" and s.text]
                 span_keys = {h.row.key for hs in hits.values() for h in hs}
                 near_rows: list[dict[str, Any]] = []
                 # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
@@ -6511,6 +6587,10 @@ def _run_stages_body(  # noqa: PLR0915
         if asker_sees_suppliers:
             from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
 
+            picked_side = _side_of_the_picked_party(verdict, getattr(state_in, "pending", None))
+            if picked_side is not verdict:
+                turn_trace.add("party_pick_side", {"domain": picked_side.get("domain_hint")})
+                verdict = picked_side
             _with_party_readings(verdict, span_prep)
             with_spans = _with_span_suppliers(verdict, span_prep)
             if with_spans is not verdict:
@@ -8354,6 +8434,11 @@ def _run_stages_body(  # noqa: PLR0915
                     ctx=ctx,
                     verdict=verdict,
                     focus=state_out.focus,
+                    # SUPPLIER-ASK fix round 9: the turn's supplier scope, the guard at the tool boundary.
+                    supplier_scope=_supplier_scope(
+                        state_in, state_out, verdict, plan.domains if plan is not None else [], asker_sees_suppliers,
+                        span_prep,
+                    ),
                     compatible_entities=compatible_entities,
                     predicate=predicate,
                     unplaced=unplaced_tokens,

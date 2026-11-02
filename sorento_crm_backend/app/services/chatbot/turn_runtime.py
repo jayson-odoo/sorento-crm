@@ -3965,6 +3965,7 @@ def make_tool_runner(
     not_checked: list[str] | None = None,
     asked_promo_filter: dict[str, list[str]] | None = None,
     profile: Any = None,
+    supplier_scope: dict[str, Any] | None = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -4088,6 +4089,8 @@ def make_tool_runner(
             # The contact's customer scope (`engine._customer_scope_gate`), read by
             # `lanes.business.run_fetch`; a lane-only key, never on the engine's own ctx.
             "customer_scope": customer_scope,
+            # SUPPLIER-ASK fix round 9: the turn's supplier scope (`engine._supplier_scope`), guarded at the tool call.
+            "supplier_scope": supplier_scope,
             # CHAT-LANGUAGE: read by `output_structurer` (render-only).
             "localizer": localizer,
             # PHOTO-SEND-CAP: link mode prints each file's link under its row
