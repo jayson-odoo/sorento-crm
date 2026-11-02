@@ -890,3 +890,32 @@ def test_sec_b_a_dealers_carried_customer_never_widens_to_another_customer(rdeal
     t2 = _v("sales_report", _ra(basis="invoiced", customers=[own, other], **Y), _e(other, "customer"), continuation=True, **YR)
     text, calls = rdealer.say(t2, f"and {other}")
     assert not any(other_id in (a.get("customer_ids") or []) for a in _ran(calls)), f"SEC: a dealer's report ran for another customer: {_ran(calls)}"
+
+
+def test_b4c_a_held_customer_of_a_shared_name_stays_the_one_held(rbot, world) -> None:
+    """Two Sorento customers share a name; the held frame holds ONE of them (state injected, the way a list pick
+    elsewhere would leave it). The name carried back with a new period must send only that id: a fresh lookup of the
+    name would send both, so only the held name -> id map can answer it (SC-5)."""
+    from tests._mc_lookup_seed import customer
+
+    sorento, _mocha = world
+    name = "ZZ SAME TRADING"
+    db = rbot.console.session_factory()
+    try:
+        both = sorted(customer(db, company_id=DEFAULT_COMPANY_ID, name=name).id for _ in range(2))
+        db.commit()
+    finally:
+        db.close()
+    held_id = both[1]
+    first = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], **Y), _ent(AGENT_1, "sales_agent"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(first, "sorento sales for agent a 2026 invoiced")
+    assert _ran(calls), f"setup: {text!r}"
+    frame = rbot.console.session_vars["focus"]["sales_ranking_frame"]
+    frame["customer_ids"] = [held_id]
+    frame.setdefault("names", {})["customer_ids"] = {held_id: name}
+    again = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], customers=[name], date_from="2025-01-01", date_to="2025-12-31"), continuation=True, entity_op="reuse", date_filter_start="2025-01-01", date_filter_end="2025-12-31")
+    text, calls = rbot.say(again, "and 2025")
+    _prefix, held = _held_line(rbot.blocks[-1])
+    assert held["customers"] == [name], f"B4c: the Held report line shows {held['customers']}, want [{name!r}]"
+    ran = _ran(calls)
+    assert ran and ran[0].get("customer_ids") == [held_id], f"B4c: want only the held customer, got {ran[0].get('customer_ids') if ran else text!r}"
