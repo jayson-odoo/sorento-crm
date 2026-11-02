@@ -235,21 +235,42 @@ describe('Cover page design editor (A3, A4)', () => {
     );
   });
 
-  it('a handle moves a row down by keyboard (dnd-kit sortable: Space, ArrowDown, Space)', async () => {
-    renderPage();
-    await openAddDesign();
-    const handles = screen.getAllByRole('button', { name: /drag/i });
-    handles[0].focus();
-    fireEvent.keyDown(handles[0], { key: ' ', code: 'Space' });
-    fireEvent.keyDown(handles[0], { key: 'ArrowDown', code: 'ArrowDown' });
-    fireEvent.keyDown(handles[0], { key: ' ', code: 'Space' });
-    await waitFor(
-      () => {
-        const keys = (previewCalls().at(-1)?.body?.design as typeof savedDesign).rows.map((r) => r.key);
-        expect(keys.slice(0, 2)).toEqual(['date', 'reference']);
-      },
-      { timeout: 4000 },
-    );
+  it('a handle moves a row down by keyboard and the save body carries the new order', async () => {
+    const rect = (top: number) => ({
+      top, bottom: top + 40, left: 0, right: 300, width: 300, height: 40, x: 0, y: top, toJSON() {},
+    });
+    const spy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        const handles = screen.queryAllByRole('button', { name: /drag/i });
+        const row = handles.map((h) => h.closest('li,tr,[data-row],div')).findIndex((r) => r && r.contains(this));
+        return rect(row >= 0 ? row * 40 : 0) as DOMRect;
+      });
+    try {
+      renderPage();
+      await openAddDesign();
+      const handles = screen.getAllByRole('button', { name: /drag/i });
+      handles[0].focus();
+      fireEvent.keyDown(handles[0], { key: ' ', code: 'Space' });
+      await new Promise((r) => setTimeout(r, 30));
+      fireEvent.keyDown(document, { key: 'ArrowDown', code: 'ArrowDown' });
+      await new Promise((r) => setTimeout(r, 30));
+      fireEvent.keyDown(document, { key: ' ', code: 'Space' });
+      await waitFor(
+        () => {
+          const keys = (previewCalls().at(-1)?.body?.design as typeof savedDesign).rows.map((r) => r.key);
+          expect(keys.slice(0, 2)).toEqual(['date', 'reference']);
+        },
+        { timeout: 4000 },
+      );
+      fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Reordered' } });
+      fireEvent.click(screen.getAllByRole('button', { name: /^(Add|Save|Create)/ }).at(-1)!);
+      await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.body?.kind === 'cover_page')).toBe(true));
+      const sent = calls.find((c) => c.method === 'POST' && c.body?.kind === 'cover_page')!.body!;
+      expect((sent.design as typeof savedDesign).rows.slice(0, 2).map((r) => r.key)).toEqual(['date', 'reference']);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('save sends the design and the intro as body_html, and needs a name', async () => {

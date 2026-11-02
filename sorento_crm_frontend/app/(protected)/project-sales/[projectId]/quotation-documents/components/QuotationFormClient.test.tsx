@@ -961,7 +961,7 @@ describe('QuotationFormClient letter on create (AC-QF056)', () => {
 
     await openTab('Cover letter');
     const letter = await screen.findByRole('textbox', {
-      name: 'The letter the customer reads before the prices',
+      name: 'Intro text',
     });
     expect(letter).toHaveValue('<p>Dear {{attn_name}}</p>');
     fireEvent.change(letter, { target: { value: '<p>Dear {{attn_name}}, edited</p>' } });
@@ -986,7 +986,7 @@ describe('QuotationFormClient letter on create (AC-QF056)', () => {
     await openTab('Cover letter');
     expect(
       await screen.findByRole('textbox', {
-        name: 'The letter the customer reads before the prices',
+        name: 'Intro text',
       }),
     ).toHaveValue('');
     fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));

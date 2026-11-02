@@ -2018,25 +2018,32 @@ describe('QuotationDocumentClient cover page fields', () => {
     await expectTermsClass(inner);
   });
 
-  it('polish 2: the Cover letter read panel keeps prose and not the terms class', async () => {
+  it('the Cover letter read tab shows the preview card with the intro and no separate letter panel', async () => {
+    coverPreview.mockReset();
+    coverPreview.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            cover_title: 'QUOTATION',
+            cover_show_letterhead: true,
+            cover_rows: [{ key: 'reference', label: 'Reference No.', text: 'SRT/Q/2026/0141-R1 Menara Test' }],
+            cover_intro_html: '<p>LETTER ONE</p><p>LETTER TWO</p>',
+            cover_closing_html: '',
+            sender_name: 'Sorento Sdn Bhd',
+            sender_logo_url: null,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
     getQuotationDocument.mockResolvedValue(
       quotationDocument({ cover_letter_html: '<p>LETTER ONE</p><p>LETTER TWO</p>' }),
     );
     renderScreen(<QuotationCoverLetterTab />);
 
-    const one = await screen.findByText('LETTER ONE');
-    const loaders = import.meta.glob('/lib/terms-html.ts') as Record<
-      string,
-      () => Promise<{ TERMS_HTML_CLASS: string }>
-    >;
-    const { TERMS_HTML_CLASS } = await loaders['/lib/terms-html.ts']();
-    const tokens = String(TERMS_HTML_CLASS).split(/\s+/).filter(Boolean);
-    const chain: HTMLElement[] = [];
-    for (let el = one.parentElement; el && el !== document.body && chain.length < 6; el = el.parentElement) {
-      chain.push(el);
-    }
-    expect(chain.some((el) => el.classList.contains('prose'))).toBe(true);
-    expect(chain.some((el) => tokens.every((t) => el.classList.contains(t)))).toBe(false);
+    expect(await screen.findByText('LETTER ONE')).toBeInTheDocument();
+    expect(screen.getByText('LETTER TWO')).toBeInTheDocument();
+    expect(screen.getAllByText('LETTER ONE')).toHaveLength(1);
+    expect(screen.queryByText('Cover letter', { selector: '[data-slot="card-title"]' })).toBeNull();
   });
 
   it('polish 2: the Email line comes before the Attn line in the To block', async () => {

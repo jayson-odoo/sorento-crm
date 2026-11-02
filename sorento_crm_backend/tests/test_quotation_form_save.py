@@ -570,6 +570,7 @@ class _FakeTemplate:
         self.body_html = body_html
         self.payment_terms = None
         self.validity = None
+        self.design = None
 
 
 def _fake_templates(monkeypatch):

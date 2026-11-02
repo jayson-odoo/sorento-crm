@@ -190,7 +190,12 @@ def test_pdf_layout_3_terms_row_hidden_prints_terms_after_the_total_unnumbered()
         before, after = html.split("TOTAL AMOUNT", 1)
         assert f"{MARKER} clause one" not in before and f"{MARKER} closing line" not in before
         assert f"{MARKER} clause one" in after and f"{MARKER} closing line" in after
-        assert "<ol" not in after
+        # printed as written: the user's own <ol> is kept, a user <ul> stays nested, and no
+        # heading or dash line is wrapped into the old one-<li>-per-line list.
+        assert "<ol>" in after and after.count("<ul>") == 2
+        assert not re.search(r"<li>\s*(<strong>)?\s*" + MARKER + r" Heading line", after)
+        assert not re.search(r"<li>\s*-\s*" + MARKER + " dash line", after)
+        assert f"- {MARKER} dash line" in after
 
 
 def test_pdf_layout_3_terms_row_shown_prints_terms_on_page_one_only():
