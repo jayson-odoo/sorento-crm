@@ -206,8 +206,8 @@ def earliest_packing_list_shipment(
     locations still qualifies (AC-SA307 - this read has no location dimension to
     filter by in the first place).
 
-    `not_before` (CHAT-FIND round 3, crew live check 13 Oct 2026): a shipment whose promised
-    date is before that day does not qualify. A past date cannot be told to a dealer as the day it
+    `not_before` (CHAT-FIND round 3, crew live check 13 Oct 2026): a shipment whose told date
+    (promised date plus its `offsets` entry, below) is before that day does not qualify. A past date cannot be told to a dealer as the day it
     comes (R10 has no "to be confirmed" answer), so the next dated one answers, else none.
     The dealer availability read passes today (`StockService._shipments_from_today`).
 

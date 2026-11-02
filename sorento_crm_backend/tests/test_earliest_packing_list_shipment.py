@@ -328,16 +328,20 @@ def test_a_past_revised_date_alone_is_no_incoming(db):
 
 
 def test_offsets_floor_each_product_on_its_own_told_date(db):
+    """Both products hold the same two shipments; only `padded` is told its 20/10 one as
+    03/11. `bare` (no offset) is told its next one. What a told date already past says on
+    its own is Fix B (owner), not pinned here."""
     padded, bare = _product(db, "FLOORPAD"), _product(db, "FLOORBARE")
     for p, number in ((padded, "S-FLOOR-PAD"), (bare, "S-FLOOR-BARE")):
         _line(db, _shipment(db, eta=date(2026, 10, 20), number=number, attachment_id=_attachment(db)), p)
+        _line(db, _shipment(db, eta=date(2026, 11, 10), number=number + "-2", attachment_id=_attachment(db)), p)
     db.commit()
 
     got = earliest_packing_list_shipment(
         db, [padded, bare], not_before=date(2026, 11, 2), offsets={padded: 14}
     )
     assert got[padded][1] == date(2026, 10, 20)
-    assert bare not in got
+    assert got[bare][1] == date(2026, 11, 10)
 
 
 def test_offsets_pick_the_earliest_shipment_still_ahead_once_told(db):
