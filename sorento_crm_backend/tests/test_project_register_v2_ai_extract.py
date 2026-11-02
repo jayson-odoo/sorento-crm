@@ -263,6 +263,8 @@ def test_c6_a_provider_failure_is_503_with_a_plain_message(v2, monkeypatch, clea
     res = _post(v2, v2.owner)
     assert res.status_code == 503, res.text
     assert res.json()["code"] == "ai_extract_provider_failed"
+    # Owner ruling, 2 Nov: staff routes give the same plain message as the portal.
+    assert res.json()["message"] == "Could not read the file just now, please try again."
     assert "zzt-provider-secret-trace" not in res.text
 
 

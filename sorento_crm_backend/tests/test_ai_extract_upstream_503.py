@@ -24,7 +24,7 @@ from app.main import app  # noqa: F401  MUST be first app import (circular impor
 from app.services.ai_extract import extract_service
 from app.services.ai_extract.extract_service import AIExtractService, ExtractFile
 from app.services.error_handler import AppException
-from app.services.llm_provider import ChatResult, GeminiProvider, OpenAIProvider
+from app.services.llm_provider import ChatResult, GeminiProvider, OpenAIProvider, ResponseTruncated
 from tests._pg_fixture import blank_session, unique_code
 from tests._portal_grant import grant_portal_forms
 
@@ -81,29 +81,38 @@ def db():
 
 
 # ---------------------------------------------------------------------------
-# AC-1 / AC-2: provider failure -> 503 with the provider's own text
+# AC-1 / AC-2: provider failure -> 503 with a plain message; the provider's own text
+# (account details, billing hints) stays in the server log. Owner ruling, 2 Nov.
 # ---------------------------------------------------------------------------
 
+PLAIN_FAILED = "Could not read the file just now, please try again."
+PLAIN_TOO_LONG = "This file is too long to read in one go; try fewer pages."
+RAW = "zzt-raw Error code: 401 - incorrect API key sk-zzt1234; top up credits in Google AI Studio"
 
-def test_provider_failure_is_503_carrying_the_providers_message(db, monkeypatch):
-    _use(monkeypatch, _Raises(RuntimeError("zzt-incorrect-api-key-provided")))
 
-    with pytest.raises(AppException) as caught:
+def test_provider_failure_is_503_with_a_plain_message_and_the_raw_text_in_the_log(
+    db, monkeypatch, caplog
+):
+    _use(monkeypatch, _Raises(RuntimeError(RAW)))
+
+    with caplog.at_level("WARNING"), pytest.raises(AppException) as caught:
         AIExtractService(db).extract(FORM, _text_file())
 
     assert caught.value.status_code == 503
     assert caught.value.code == "ai_extract_provider_failed"
-    assert "zzt-incorrect-api-key-provided" in caught.value.message
+    assert caught.value.message == PLAIN_FAILED
+    assert RAW not in str(caught.value.detail)
+    assert RAW in caplog.text
 
 
-def test_portal_extract_route_answers_503_json_not_a_502(monkeypatch):
-    """The owner's surface: the portal Extract button. A 502 is what Cloudflare swaps for HTML."""
+def _portal_post(monkeypatch, provider):
+    """POST the portal Extract button's route as a real portal contact; the provider is faked."""
     from app.database import get_db
     from app.models.access import RespondContact
     from app.models.company import RespondContactCompany
     from app.models.portal import PortalToken
 
-    _use(monkeypatch, _Raises(RuntimeError("zzt-quota-exceeded")))
+    _use(monkeypatch, provider)
 
     with blank_session() as s:
 
@@ -142,11 +151,43 @@ def test_portal_extract_route_answers_503_json_not_a_502(monkeypatch):
                 )
         finally:
             app.dependency_overrides.clear()
+    return res
+
+
+@pytest.mark.parametrize(
+    "exc, code, message",
+    [
+        (RuntimeError(RAW), "ai_extract_provider_failed", PLAIN_FAILED),
+        (
+            ResponseTruncated(f"Gemini stopped early: MAX_TOKENS ({RAW})"),
+            "ai_extract_too_long",
+            PLAIN_TOO_LONG,
+        ),
+    ],
+)
+def test_portal_extract_route_answers_503_plain_json_never_the_raw_error(
+    monkeypatch, exc, code, message
+):
+    """The owner's surface: the portal Extract button. A 502 is what Cloudflare swaps for HTML,
+    and a dealer must never read the provider's own error text."""
+    res = _portal_post(monkeypatch, _Raises(exc))
 
     assert res.status_code == 503, res.text
     assert res.headers["content-type"].startswith("application/json")
-    assert res.json()["code"] == "ai_extract_provider_failed"
-    assert "zzt-quota-exceeded" in res.json()["message"]
+    assert res.json()["code"] == code
+    assert res.json()["message"] == message
+    assert "zzt-raw" not in res.text
+    assert "sk-zzt1234" not in res.text
+
+
+def test_portal_extract_route_never_echoes_an_unusable_answer(monkeypatch):
+    """A non-JSON answer is the model's own text (it can quote the document): plain message."""
+    res = _portal_post(monkeypatch, _Answers(f"not json {RAW}"))
+
+    assert res.status_code == 503, res.text
+    assert res.json()["code"] == "ai_extract_bad_json"
+    assert res.json()["message"] == PLAIN_FAILED
+    assert "zzt-raw" not in res.text
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +251,9 @@ def test_a_timed_out_call_is_503_saying_45_seconds(db, monkeypatch):
 
 def test_a_slow_provider_ends_at_the_timeout_not_the_sdk_default(db, monkeypatch):
     """Real Gemini code path, a server that answers in 3 s, the cap lowered to 0.5 s:
-    the extract ends near 0.5 s with the timeout message (in production: near 45 s)."""
+    the extract ends at the cap with the timeout message (in production: near 45 s). Gemini
+    never waits less than 1 s per request (`llm_provider.py` `remaining()`), so "at the cap"
+    here is about 1 s, still well short of the 3 s the server would take."""
     answer_after = 3.0
 
     def _slow_server(method, url, *, timeout=None, **kwargs):
@@ -242,7 +285,13 @@ def test_a_slow_provider_ends_at_the_timeout_not_the_sdk_default(db, monkeypatch
 
 @pytest.mark.parametrize(
     "content, code",
-    [("", "ai_extract_empty_response"), ("no json here", "ai_extract_bad_json"), ("[1, 2]", "ai_extract_bad_json")],
+    [
+        ("", "ai_extract_empty_response"),
+        ("no json here", "ai_extract_bad_json"),
+        ("[1, 2]", "ai_extract_bad_json"),
+        # Reviewer: an answer cut off mid-object reaches the brace-extraction branch.
+        ('{"values": {"a": 1}, "products": [', "ai_extract_bad_json"),
+    ],
 )
 def test_an_unusable_answer_is_503(db, monkeypatch, content, code):
     _use(monkeypatch, _Answers(content))
@@ -252,6 +301,7 @@ def test_an_unusable_answer_is_503(db, monkeypatch, content, code):
 
     assert caught.value.status_code == 503
     assert caught.value.code == code
+    assert caught.value.message == PLAIN_FAILED
 
 
 def test_a_failed_storage_read_on_the_field_extract_is_503(db, monkeypatch):
@@ -306,3 +356,107 @@ def test_no_config_row_and_no_label_is_a_clear_400_not_openai(db, monkeypatch):
     assert caught.value.status_code == 400
     assert caught.value.code == "ai_extract_no_provider"
     assert built == []
+
+
+# ---------------------------------------------------------------------------
+# AC-7 / AC-8. Production logs, 2 Nov: five portal price tag extracts answered 502 after
+# 13-14 s with "Gemini stopped early: MAX_TOKENS (response truncated; thinking 0, answer
+# 6138 tokens)". The extract asked for 4096 answer tokens; on gemini-3.x the call's
+# maxOutputTokens is that plus 2049 thinking room, 6145, which a big promo PDF overruns.
+# ---------------------------------------------------------------------------
+
+
+def _gemini_needing(answer_tokens: int, seen: list):
+    """A Gemini whose JSON answer needs `answer_tokens` output tokens. Under that cap it stops
+    on MAX_TOKENS with half an answer, as production did on a big file."""
+
+    def _request(self, method, path, *, json_body=None, params=None, timeout=None):
+        cap = json_body["generationConfig"]["maxOutputTokens"]
+        seen.append(cap)
+        if cap < answer_tokens:
+            return {
+                "candidates": [
+                    {
+                        "content": {"parts": [{"text": '{"products": [{"product_code": "ZZT-1"'}]},
+                        "finishReason": "MAX_TOKENS",
+                    }
+                ],
+                "usageMetadata": {
+                    "promptTokenCount": 900,
+                    "candidatesTokenCount": cap - 7,
+                    "thoughtsTokenCount": 0,
+                    "totalTokenCount": 900 + cap - 7,
+                },
+            }
+        return {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": '{"products": [{"product_code": "ZZT-1", "product_name": "ZZT one"}]}'}]
+                    },
+                    "finishReason": "STOP",
+                }
+            ],
+            "usageMetadata": {
+                "promptTokenCount": 900,
+                "candidatesTokenCount": answer_tokens,
+                "thoughtsTokenCount": 0,
+                "totalTokenCount": 900 + answer_tokens,
+            },
+        }
+
+    return _request
+
+
+def test_the_extract_asks_for_16384_answer_tokens(db, monkeypatch):
+    provider = _Answers("{}")
+    _use(monkeypatch, provider)
+
+    AIExtractService(db).extract(FORM, _text_file())
+
+    assert provider.calls[0]["max_tokens"] == 16384
+
+
+def test_a_file_that_overran_the_old_cap_now_reads(db, monkeypatch):
+    """Production's case: an answer of about 6138 tokens (9000 here, past the old 6145 cap)."""
+    seen: list = []
+    monkeypatch.setattr(GeminiProvider, "_request", _gemini_needing(9000, seen))
+    _use(monkeypatch, GeminiProvider(api_key="ZZT-key"), name="gemini", model="gemini-3.5-flash")
+
+    result = AIExtractService(db).extract(FORM, _text_file())
+
+    assert [p.product_code for p in result.products] == ["ZZT-1"]
+    assert seen and seen[0] >= 16384, seen
+
+
+def test_an_answer_too_long_even_now_is_503_saying_so(db, monkeypatch):
+    """Real Gemini path, an answer no cap holds: MAX_TOKENS answers 503 with the plain words."""
+    seen: list = []
+    monkeypatch.setattr(GeminiProvider, "_request", _gemini_needing(10**6, seen))
+    _use(monkeypatch, GeminiProvider(api_key="ZZT-key"), name="gemini", model="gemini-3.5-flash")
+
+    with pytest.raises(AppException) as caught:
+        AIExtractService(db).extract(FORM, _text_file())
+
+    assert caught.value.status_code == 503
+    assert caught.value.code == "ai_extract_too_long"
+    assert caught.value.message == PLAIN_TOO_LONG
+
+
+def test_a_truncated_answer_from_any_provider_is_503_too_long(db, monkeypatch):
+    """A fake provider raising the shared truncation error, whatever the vendor."""
+    _use(
+        monkeypatch,
+        _Raises(
+            ResponseTruncated(
+                "Gemini stopped early: MAX_TOKENS (response truncated; thinking 0, answer 6138 tokens)."
+            )
+        ),
+    )
+
+    with pytest.raises(AppException) as caught:
+        AIExtractService(db).extract(FORM, _text_file())
+
+    assert caught.value.status_code == 503
+    assert caught.value.code == "ai_extract_too_long"
+    assert caught.value.message == PLAIN_TOO_LONG
