@@ -4,7 +4,7 @@
   validity (free text, per quotation).
 * ``projects.quotation_templates`` + payment_terms, validity (defaults beside the terms template).
 * ``projects.quotation_issues`` + layout_version (1 = before the cover page, 2 = cover page
-  first); existing rows take 1 from the default.
+  first, plus payment_terms and validity frozen at issue); existing rows take 1 from the default.
 
 Plan: documentation/plans/projects/PLAN-quote-cover-page-02nov.md. Additive and guarded so a
 re-run, or a dev DB built by create_all, is harmless.
@@ -40,13 +40,22 @@ def upgrade() -> None:
     op.execute(
         """
         ALTER TABLE projects.quotation_issues
-            ADD COLUMN IF NOT EXISTS layout_version SMALLINT NOT NULL DEFAULT 1
+            ADD COLUMN IF NOT EXISTS layout_version SMALLINT NOT NULL DEFAULT 1,
+            ADD COLUMN IF NOT EXISTS payment_terms TEXT,
+            ADD COLUMN IF NOT EXISTS validity TEXT
         """
     )
 
 
 def downgrade() -> None:
-    op.execute("ALTER TABLE projects.quotation_issues DROP COLUMN IF EXISTS layout_version")
+    op.execute(
+        """
+        ALTER TABLE projects.quotation_issues
+            DROP COLUMN IF EXISTS layout_version,
+            DROP COLUMN IF EXISTS payment_terms,
+            DROP COLUMN IF EXISTS validity
+        """
+    )
     op.execute(
         """
         ALTER TABLE projects.quotation_templates

@@ -179,7 +179,7 @@ export function QuotationDocumentHeader({
   liveGrandTotal?: string | null;
   /** Issued by and Opened, per scope version, for the details beside the refs. */
   details?: QuotationHeaderDetail[];
-  /** The project's salesperson, a read on the cover page (never typed here). */
+  /** Fallback when the document carries no prepared_by yet (the create form). */
   preparedBy?: string | null;
   /**
    * Set only in an edit session, exactly like the letter panels' own `onChange`. Absent means
@@ -362,9 +362,9 @@ export function QuotationDocumentHeader({
             <Field label="Quotation Purpose" wide value={document.quotation_purpose} />
           </div>
         ) : null}
-        {preparedBy ? (
+        {document.prepared_by ?? preparedBy ? (
           <div className="min-w-0 md:col-span-2">
-            <Field label="Prepared By" wide value={preparedBy} />
+            <Field label="Prepared By" wide value={document.prepared_by ?? preparedBy} />
           </div>
         ) : null}
       </CardContent>

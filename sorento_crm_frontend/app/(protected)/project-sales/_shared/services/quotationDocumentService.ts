@@ -110,6 +110,8 @@ export type QuotationDocument = {
   quotation_purpose?: string | null;
   payment_terms?: string | null;
   validity?: string | null;
+  /** The project's salesperson, as the cover page prints it. */
+  prepared_by?: string | null;
   attn_name: string | null;
   subject_title: string | null;
   cover_letter_html: string | null;

@@ -20,6 +20,8 @@ COVER_LAYOUT = 2
 _ALLOWED = {"p", "strong", "em", "u", "ul", "ol", "li"}
 _RENAMED = {"b": "strong", "i": "em"}
 _DROPPED = {"script", "style", "iframe", "object", "embed"}
+_VOID_DROPPED = {"embed"}
+_HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
 
 
 def layout_of(issue: Any) -> int:
@@ -47,8 +49,16 @@ class _TermsCleaner(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: Any) -> None:
         tag = _RENAMED.get(tag, tag)
+        if tag in _VOID_DROPPED:
+            return
         if tag in _DROPPED:
             self.skip += 1
+            return
+        if tag in _HEADINGS:
+            if self.skip:
+                return
+            self.handle_starttag("p", attrs)
+            self.handle_starttag("strong", attrs)
             return
         if self.skip:
             return
@@ -71,6 +81,12 @@ class _TermsCleaner(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = _RENAMED.get(tag, tag)
+        if tag in _HEADINGS:
+            self.handle_endtag("strong")
+            self.handle_endtag("p")
+            return
+        if tag in _VOID_DROPPED:
+            return
         if tag in _DROPPED:
             if self.skip:
                 self.skip -= 1
@@ -117,15 +133,17 @@ def _date_text(value: Any) -> str:
     return ""
 
 
-def cover_rows(db: Session, document: Any, issue: Any) -> List[Dict[str, Any]]:
-    """Ordered ``{key, label, text}`` rows (terms carries ``html``), empty rows dropped."""
+def cover_rows(
+    db: Session, document: Any, issue: Any, project: Optional[Project] = None
+) -> List[Dict[str, Any]]:
+    """Ordered ``{key, label, text}`` rows (terms carries ``html``), empty rows dropped.
+
+    Terms, payment terms and validity come off the issue (frozen at issue); the rest is live.
+    """
     from app.services.project_quotation_template_service import salesperson_of
 
-    project = (
-        db.query(Project).filter(Project.id == document.project_id).first()
-        if document.project_id
-        else None
-    )
+    if project is None and document.project_id:
+        project = db.query(Project).filter(Project.id == document.project_id).first()
 
     def clean(value: Any) -> str:
         return str(value).strip() if value is not None else ""
@@ -141,8 +159,8 @@ def cover_rows(db: Session, document: Any, issue: Any) -> List[Dict[str, Any]]:
         ("purpose", "Quotation Purpose", clean(document.quotation_purpose)),
     ]
     tail = [
-        ("payment_terms", "Payment Terms", clean(document.payment_terms)),
-        ("validity", "Validity", clean(document.validity)),
+        ("payment_terms", "Payment Terms", clean(issue.payment_terms)),
+        ("validity", "Validity", clean(issue.validity)),
         ("prepared_by", "Prepared By", clean(salesperson_of(db, project, document))),
     ]
     rows: List[Dict[str, Any]] = [

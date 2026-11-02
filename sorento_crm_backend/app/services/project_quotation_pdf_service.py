@@ -817,7 +817,6 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
     cover = ""
     style = _STYLE
     reference = None
-    terms = _terms_html(issue)
     if layout_of(issue) >= COVER_LAYOUT:
         project = (
             db.query(Project).filter(Project.id == document.project_id).first()
@@ -825,9 +824,11 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
             else None
         )
         reference = cover_reference(document, issue, project)
-        cover = _cover_html(cover_rows(db, document, issue), letterhead)
+        cover = _cover_html(cover_rows(db, document, issue, project), letterhead)
         style = _STYLE + _COVER_STYLE
         terms = ""
+    else:
+        terms = _terms_html(issue)
 
     return f"""<!doctype html><html><head><meta charset="utf-8"/>
 <style>{style}</style></head><body>

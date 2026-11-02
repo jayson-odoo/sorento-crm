@@ -19,15 +19,9 @@ import { useQuotationDocumentScreen } from './QuotationDocumentContext';
  * owner on that strip: "this one should be in header details".
  */
 export function QuotationHeaderTab() {
-  const { projectId, document, project } = useQuotationDocumentScreen();
+  const { projectId, document } = useQuotationDocumentScreen();
   const details = useQuotationHeaderDetails(projectId, document.scopes ?? []);
-  return (
-    <QuotationDocumentHeader
-      document={document}
-      details={details}
-      preparedBy={project.owner_name ?? null}
-    />
-  );
+  return <QuotationDocumentHeader document={document} details={details} />;
 }
 
 export function QuotationCoverLetterTab() {

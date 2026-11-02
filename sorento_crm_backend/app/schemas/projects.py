@@ -1916,10 +1916,10 @@ class ProjectQuotationDocumentBase(BaseModel):
     signatory_name: Optional[str] = None
     signatory_phone: Optional[str] = None
     # Cover page (QUOTE-COVER-PAGE).
-    recipient_email_snapshot: Optional[str] = None
-    quotation_purpose: Optional[str] = None
-    payment_terms: Optional[str] = None
-    validity: Optional[str] = None
+    recipient_email_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
+    payment_terms: Optional[str] = Field(default=None, max_length=2000)
+    validity: Optional[str] = Field(default=None, max_length=2000)
 
 
 class ProjectQuotationFormScopeCreate(BaseModel):
@@ -2067,6 +2067,8 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     document_no: str
     # What the customer quotes back: the number plus the revision they hold.
     our_ref: Optional[str] = None
+    # The project's salesperson (owner, else the creator), as the cover page prints it.
+    prepared_by: Optional[str] = None
 
     recipient_party_id: Optional[str] = None
     recipient_name_snapshot: Optional[str] = None
@@ -2147,8 +2149,8 @@ class QuotationReviseRequest(BaseModel):
 class QuotationTemplateBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     body_html: str = Field(min_length=1)
-    payment_terms: Optional[str] = None
-    validity: Optional[str] = None
+    payment_terms: Optional[str] = Field(default=None, max_length=2000)
+    validity: Optional[str] = Field(default=None, max_length=2000)
 
 
 class QuotationTemplateCreate(QuotationTemplateBase):
@@ -2168,8 +2170,8 @@ class QuotationTemplateUpdate(BaseModel):
 
     name: Optional[str] = Field(default=None, max_length=150)
     body_html: Optional[str] = None
-    payment_terms: Optional[str] = None
-    validity: Optional[str] = None
+    payment_terms: Optional[str] = Field(default=None, max_length=2000)
+    validity: Optional[str] = Field(default=None, max_length=2000)
 
 
 class QuotationTemplateResponse(QuotationTemplateBase):

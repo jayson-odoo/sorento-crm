@@ -1262,6 +1262,9 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
     # 1 = the layout before the cover page, 2 = cover page first. No python default on purpose:
     # only issue() opts in, so every other path keeps layout 1.
     layout_version = Column(SmallInteger, nullable=False, server_default="1")
+    # Frozen with the terms at issue.
+    payment_terms = Column(Text, nullable=True)
+    validity = Column(Text, nullable=True)
     grand_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
 
     pdf_attachment_id = Column(
