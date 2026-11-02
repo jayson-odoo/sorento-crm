@@ -78,15 +78,16 @@ project sales order and on a dealer (retail) one.
 
 ## Consignment lines
 
-A consignment's goods already sit at its own consignment location, so its line is planned there.
+A consignment's goods sit at its own consignment location. While that location is outside
+fulfilment planning, the line is planned there.
 
-* The suggestion is a **Borrow** of the whole quantity still out (ordered less returned) from the
-  consignment's own location, never a **Buy**.
-* A **Borrow** from the consignment's own location goes nowhere: no order inquiry row and no line
-  in the purchasing email. With a **Buy** beside it, the email names only the order, for example
-  **ORDER 4**.
-* A **Borrow** from any other location is owed back there, and a **Buy** you add goes to
-  purchasing in the order inquiry the usual way.
+* The suggestion is a **Borrow** of the whole quantity still out (ordered less cancelled and
+  returned) from the consignment's own location, never a **Buy**.
+* Confirmed, a **Borrow** is owed back at the location it came from, the consignment's own
+  included, exactly as on a sales order: purchasing gets an **ORDER BACK** row in the order
+  inquiry and a line in the purchasing email. With a **Buy** beside it, that line reads both, for
+  example **ORDER BACK 6 & ORDER 4**.
+* A **Buy** you add goes to purchasing in the order inquiry the usual way.
 
 ## Finding a dealer order
 
