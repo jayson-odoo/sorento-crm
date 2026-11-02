@@ -616,3 +616,84 @@ def notify_po_mismatch(
         # alerted is the same conversation.
         dedup_key=f"{po.id}:po_mismatch:{'|'.join(kinds)}",
     )
+
+
+def notify_proposal_price_changed(
+    db: Session,
+    *,
+    project: Project,
+    document,
+    record,
+    changes: List[Dict[str, Any]],
+) -> int:
+    """PS-PROPOSAL-QUOTATION rule 3: a proposal revision went out with a unit price that differs
+    from the previous revision of the same proposal. Management only; not a gate."""
+    if not changes:
+        return 0
+    from app.services.project_quotation_document_service import issue_no_text
+
+    reference = issue_no_text(document.document_no, record)
+    shown = ", ".join(
+        f"{c.get('product_code') or c.get('description') or 'unnamed line'} "
+        f"RM {Decimal(str(c.get('old_price') or 0)):,.2f} -> RM {Decimal(str(c.get('new_price') or 0)):,.2f}"
+        for c in changes[:5]
+    )
+    more = "" if len(changes) <= 5 else f" and {len(changes) - 5} more"
+    to = document.recipient_name_snapshot or "the customer"
+    return _send(
+        db,
+        user_ids=management_user_ids(db, project.company_id),
+        notif_type="project_proposal_price_changed",
+        title=f"{project_label(project)}: proposal price changed ({reference})",
+        body=f"{reference} to {to}: {shown}{more}.",
+        data={
+            "project_id": str(project.id),
+            "project_code": project.project_code,
+            "document_id": str(document.id),
+            "issue_id": str(record.id),
+            "reference": reference,
+            "change_count": len(changes),
+            "link": _approval_link(project, document),
+        },
+        project_id=str(project.id),
+        dedup_key=f"{record.id}:proposal_price_changed",
+    )
+
+
+def notify_po_qty_over(
+    db: Session,
+    *,
+    project: Project,
+    po,
+    products: List[Dict[str, Any]],
+    reason: str,
+    actor_name: Optional[str] = None,
+) -> int:
+    """PS-PROPOSAL-QUOTATION rule 6: the project's POs order more of a product than the quotation
+    quoted, and the salesperson gave a reason. Management and the owner are told."""
+    shown = ", ".join(
+        f"{p.get('product_code') or p.get('description') or 'unnamed line'} "
+        f"ordered {Decimal(str(p.get('ordered') or 0)).normalize():f}, "
+        f"quoted {Decimal(str(p.get('quoted') or 0)).normalize():f}"
+        for p in products[:5]
+    )
+    more = "" if len(products) <= 5 else f" and {len(products) - 5} more"
+    recipients = management_user_ids(db, project.company_id)
+    if project.owner_user_id:
+        recipients.append(str(project.owner_user_id))
+    return _send(
+        db,
+        user_ids=recipients,
+        notif_type="project_po_qty_over_quote",
+        title=f"{project_label(project)}: PO {po.po_number} orders more than the quotation",
+        body=f"{shown}{more}. Reason{f' ({actor_name})' if actor_name else ''}: {reason}",
+        data={
+            "project_id": str(project.id),
+            "project_code": project.project_code,
+            "po_id": str(po.id),
+            "po_number": po.po_number,
+            "product_count": len(products),
+        },
+        project_id=str(project.id),
+        dedup_key=f"{po.id}:po_qty_over_quote",
+    )

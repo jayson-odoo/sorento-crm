@@ -400,37 +400,7 @@ def revise(
     db.flush()
 
     for line in list_lines(db, live.id):
-        copy = ProjectQuotationLine(
-            company_id=quotation.company_id,
-            version_id=nxt.id,
-            product_id=line.product_id,
-            product_set_id=line.product_set_id,
-            set_parts_snapshot=line.set_parts_snapshot,
-            product_code_snapshot=line.product_code_snapshot,
-            description_snapshot=line.description_snapshot,
-            list_price_snapshot=line.list_price_snapshot,
-            image_attachment_id=line.image_attachment_id,
-            drawing_attachment_id=line.drawing_attachment_id,
-            # The printed columns: a revision is the same quotation with some prices moved,
-            # and dropping these silently re-typed the bill-of-quantities layout to nothing.
-            item_label=line.item_label,
-            brand_snapshot=line.brand_snapshot,
-            technical_spec=line.technical_spec,
-            complete_set=line.complete_set,
-            band_label=line.band_label,
-            is_rate_only=line.is_rate_only,
-            unit_price=line.unit_price,
-            quantity=line.quantity,
-            uom=line.uom,
-            unit_type=line.unit_type,
-            line_total=line.line_total,
-            is_non_standard=line.is_non_standard,
-            floor_value_applied=line.floor_value_applied,
-            floor_level_applied=line.floor_level_applied,
-            is_below_floor=line.is_below_floor,
-            sort_order=line.sort_order,
-            notes=line.notes,
-        )
+        copy = copy_line(line, version_id=nxt.id, company_id=quotation.company_id)
         db.add(copy)
         if line_map is not None:
             line_map[str(line.id)] = copy
@@ -453,6 +423,51 @@ def revise(
         )
         db.flush()
     return nxt
+
+
+def copy_line(
+    line: ProjectQuotationLine, *, version_id: str, company_id: Optional[str]
+) -> ProjectQuotationLine:
+    """A new line on ``version_id`` carrying everything ``line`` priced and printed.
+
+    The one copy a revision and a proposal-to-quotation conversion both use, so a column added to
+    the line is carried by both or by neither.
+    """
+    return ProjectQuotationLine(
+        company_id=company_id,
+        version_id=version_id,
+        product_id=line.product_id,
+        product_set_id=line.product_set_id,
+        set_parts_snapshot=line.set_parts_snapshot,
+        product_code_snapshot=line.product_code_snapshot,
+        description_snapshot=line.description_snapshot,
+        list_price_snapshot=line.list_price_snapshot,
+        image_attachment_id=line.image_attachment_id,
+        drawing_attachment_id=line.drawing_attachment_id,
+        # The printed columns: a revision is the same quotation with some prices moved,
+        # and dropping these silently re-typed the bill-of-quantities layout to nothing.
+        item_label=line.item_label,
+        brand_snapshot=line.brand_snapshot,
+        technical_spec=line.technical_spec,
+        complete_set=line.complete_set,
+        band_label=line.band_label,
+        is_rate_only=line.is_rate_only,
+        unit_price=line.unit_price,
+        quantity=line.quantity,
+        uom=line.uom,
+        unit_type=line.unit_type,
+        line_total=line.line_total,
+        is_non_standard=line.is_non_standard,
+        floor_value_applied=line.floor_value_applied,
+        floor_level_applied=line.floor_level_applied,
+        is_below_floor=line.is_below_floor,
+        sort_order=line.sort_order,
+        notes=line.notes,
+    )
+
+
+def recalculate_total(db: Session, version: ProjectQuotationVersion) -> None:
+    _recalculate_total(db, version)
 
 
 def delete_quotation(db: Session, quotation: ProjectQuotation) -> None:

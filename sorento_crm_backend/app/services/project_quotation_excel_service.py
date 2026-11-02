@@ -310,7 +310,7 @@ def _write_letterhead(
     row += 1
     # Built from document_no + issue_no, the number the sign page and the PDF print.
     for label, value in (
-        ("Quotation No.", quotation_no(document.document_no, issue.issue_no)),
+        ("Quotation No.", quotation_no(document.document_no, issue.issue_no, issue.revision_label)),
         ("Your Ref", _text(document.your_ref)),
         ("Date", _date_text(document.doc_date or issue.issued_at)),
     ):
@@ -352,7 +352,7 @@ def _write_light_header(
     Its scope label follows immediately below, written by the scope block itself, so a page found
     on a desk answers both "which quotation" and "which scope".
     """
-    _put(sheet, row, 1, f"Quotation No.: {quotation_no(document.document_no, issue.issue_no)}")
+    _put(sheet, row, 1, f"Quotation No.: {quotation_no(document.document_no, issue.issue_no, issue.revision_label)}")
     return row + 2
 
 

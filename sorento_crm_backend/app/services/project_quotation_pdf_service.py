@@ -454,7 +454,7 @@ def _header_html(
     refs = [
         (
             "Quotation No.",
-            _cell(reference or quotation_no(document.document_no, issue.issue_no)),
+            _cell(reference or quotation_no(document.document_no, issue.issue_no, issue.revision_label)),
         ),
         ("Your Ref", _cell(document.your_ref)),
     ]
@@ -851,7 +851,7 @@ def build_filename(issue: ProjectQuotationIssue) -> str:
             .filter(ProjectQuotationDocument.id == issue.document_id)
             .scalar()
         )
-    ref = quotation_no(document_no, issue.issue_no) if document_no else f"R{issue.issue_no}"
+    ref = quotation_no(document_no, issue.issue_no, issue.revision_label) if document_no else f"R{issue.issue_no}"
     safe = re.sub(r"[^A-Za-z0-9]+", "-", ref).strip("-") or "quotation"
     return f"quotation-{safe}.pdf"
 

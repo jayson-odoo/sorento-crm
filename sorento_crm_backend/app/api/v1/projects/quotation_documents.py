@@ -921,7 +921,7 @@ def _queue_issue_export(
         # Named up front so the drawer reads as the quotation it is while still pending; the
         # task overwrites it with the renderer's own name once it knows it.
         filename=(
-            f"quotation-{svc.quotation_no(document.document_no, record.issue_no)}"
+            f"quotation-{svc.quotation_no(document.document_no, record.issue_no, record.revision_label)}"
             f".{suffix}"
         ).replace("/", "-"),
     )

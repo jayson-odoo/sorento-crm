@@ -116,7 +116,196 @@ def _version_or_422(
             message="That quotation version belongs to a different project.",
             code="po_version_foreign_project",
         )
+    # PS-PROPOSAL-QUOTATION rule 6: once the project has a quotation, a PO is checked against it.
+    # Only a NEW binding is refused: a PO bound to a proposal before the quotation existed keeps
+    # its comparison, which is what it was recorded against.
+    held = project_quotation_document(db, project.id)
+    if held is not None and str(quotation.document_id) != str(held.id):
+        raise AppException(
+            status_code=422,
+            message="This project has a quotation; check the PO against it.",
+            code="po_bind_proposal_refused",
+        )
     return version
+
+
+# ------------------------------------------------- PS-PROPOSAL-QUOTATION
+
+
+def project_quotation_document(db: Session, project_id: str):
+    """The project's quotation (kind 'quotation'), or None while it only has proposals."""
+    from app.services.project_quotation_document_service import project_quotation
+
+    return project_quotation(db, project_id)
+
+
+def _po_line_key(line: ProjectPurchaseOrderLine) -> Optional[str]:
+    if line.product_id:
+        return str(line.product_id)
+    code = (line.product_code or "").strip().upper()
+    return f"code:{code}" if code else None
+
+
+def qty_over_quotation(db: Session, project_id: str) -> List[Dict[str, Any]]:
+    """Products whose total quantity over the project's live POs checked against the quotation
+    is above what the quotation quotes now (its scopes' current versions).
+
+    A PO counts when it is bound to any version of a quotation scope and is not superseded. A
+    product the quotation does not quote at all is a model mismatch, flagged per line already, so
+    it is left out here rather than reported twice.
+    """
+    from app.services import project_quotation_document_service as documents
+    from app.services.project_quotation_approval_service import current_version_ids
+
+    quotation = project_quotation_document(db, project_id)
+    if quotation is None:
+        return []
+
+    quoted: Dict[str, Decimal] = {}
+    names: Dict[str, Dict[str, Any]] = {}
+    version_ids = current_version_ids(db, quotation)
+    if version_ids:
+        for line in (
+            db.query(ProjectQuotationLine)
+            .filter(ProjectQuotationLine.version_id.in_(version_ids))
+            .all()
+        ):
+            key = documents.line_key(line)
+            if key is None or line.is_rate_only:
+                continue
+            # A set line has no product id on either side of a PO line, so it is matched on code.
+            if key.startswith("set:"):
+                code = (line.product_code_snapshot or "").strip().upper()
+                if not code:
+                    continue
+                key = f"code:{code}"
+            quoted[key] = quoted.get(key, Decimal("0")) + Decimal(line.quantity or 0)
+            names.setdefault(
+                key,
+                {"product_code": line.product_code_snapshot, "description": line.description_snapshot},
+            )
+            # A product line is also findable by the code the PO printed.
+            code = (line.product_code_snapshot or "").strip().upper()
+            if line.product_id and code:
+                names.setdefault(f"alias:{code}", {"key": key})
+
+    scope_ids = [
+        row[0]
+        for row in db.query(ProjectQuotation.id)
+        .filter(ProjectQuotation.document_id == quotation.id)
+        .all()
+    ]
+    if not scope_ids:
+        return []
+    from app.models.project_so import PO_STATUS_SUPERSEDED
+
+    lines = (
+        db.query(ProjectPurchaseOrderLine)
+        .join(ProjectPurchaseOrder, ProjectPurchaseOrder.id == ProjectPurchaseOrderLine.po_id)
+        .join(
+            ProjectQuotationVersion,
+            ProjectQuotationVersion.id == ProjectPurchaseOrder.quotation_version_id,
+        )
+        .filter(
+            ProjectPurchaseOrder.project_id == project_id,
+            ProjectPurchaseOrder.status != PO_STATUS_SUPERSEDED,
+            ProjectQuotationVersion.quotation_id.in_(scope_ids),
+        )
+        .all()
+    )
+    ordered: Dict[str, Decimal] = {}
+    for line in lines:
+        key = _po_line_key(line)
+        if key is None:
+            continue
+        if key not in quoted and key.startswith("code:"):
+            alias = names.get(f"alias:{key[5:]}")
+            if alias:
+                key = alias["key"]
+        if key not in quoted:
+            continue
+        ordered[key] = ordered.get(key, Decimal("0")) + Decimal(line.quantity or 0)
+
+    return [
+        {
+            "key": key,
+            "product_code": names[key]["product_code"],
+            "description": names[key]["description"],
+            "ordered": ordered[key],
+            "quoted": quoted[key],
+        }
+        for key in sorted(ordered, key=lambda k: str(names[k].get("product_code") or k))
+        if ordered[key] > quoted[key]
+    ]
+
+
+def enforce_qty_over(
+    db: Session,
+    po: ProjectPurchaseOrder,
+    *,
+    reason: Optional[str],
+    actor_user_id: Optional[str],
+) -> None:
+    """The soft stop (rule 6, owner Q5 a): one reason per PO, never a hard block.
+
+    Called after a save or a confirm has written the PO's lines. Nothing over, or the PO already
+    carries a reason: nothing to do. Over with a reason: it is stored and management is told.
+    Over without one: 409 ``po_qty_over_quoted`` naming the products; the route's rollback undoes
+    the save and the screen sends it again with the reason.
+    """
+    if (po.qty_over_reason or "").strip():
+        return
+    over = qty_over_quotation(db, po.project_id)
+    if not over:
+        return
+    text_reason = (reason or "").strip()
+    products = [
+        {
+            "product_code": row["product_code"],
+            "description": row["description"],
+            "ordered": str(row["ordered"]),
+            "quoted": str(row["quoted"]),
+        }
+        for row in over
+    ]
+    if not text_reason:
+        raise AppException(
+            status_code=409,
+            message=(
+                "The POs of this project order more than the quotation quotes. "
+                "Give a reason to save."
+            ),
+            code="po_qty_over_quoted",
+            details={"products": products},
+        )
+    from datetime import datetime
+
+    po.qty_over_reason = text_reason[:2000]
+    po.qty_over_reason_by = actor_user_id
+    po.qty_over_reason_at = datetime.utcnow()
+    db.flush()
+
+    project = db.query(Project).filter(Project.id == po.project_id).first()
+    if project is None:
+        return
+    from app.services import project_notify_service as notify
+    from app.services.project_service import resolve_user_names
+
+    actor_name = (
+        resolve_user_names(db, [actor_user_id]).get(str(actor_user_id)) if actor_user_id else None
+    )
+    try:
+        with db.begin_nested():
+            notify.notify_po_qty_over(
+                db,
+                project=project,
+                po=po,
+                products=products,
+                reason=po.qty_over_reason,
+                actor_name=actor_name,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("PO qty-over alert not sent: po=%s (%s)", po.id, exc)
 
 
 def create_po(
