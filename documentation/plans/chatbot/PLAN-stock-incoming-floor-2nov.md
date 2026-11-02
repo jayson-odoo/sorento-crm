@@ -93,6 +93,12 @@ The rules of the shared read:
 Unchanged: a windowed ETA ask ("arriving next week"), `/shipments` (no product), staff and non-dealer
 contacts, the in-stock and too-big branches, and all wording other than the date list.
 
+The ETA field revoke (security review; crew ruling (a)): a dealer whose gated
+`estimated_arrival_date` is revoked gets no dates on either path. The ETA ask keeps "No ETA" (the
+shared read is skipped when the field is denied), and the stock check now honours the same revoke and
+says "No stock, No ETA." for a shipment still coming. That closes a gap that predates this PR: the
+stock check never called the field gate. AC-SIF13, AC-SIF14.
+
 Fix A's today floor (`earliest_packing_list_shipment(not_before, offsets)`, `told_offsets`) has no job
 left once a past told date stays incoming, so it is removed rather than kept as a dead path.
 

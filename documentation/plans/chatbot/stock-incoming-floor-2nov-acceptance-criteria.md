@@ -31,3 +31,16 @@ Plan: `PLAN-stock-incoming-floor-2nov.md`. Fake codes and dates only. "Dealer" =
   dealer replying in ms or zh reads the dates with the marker translated.
 - **AC-SIF12** Unchanged: a windowed ETA ask, `/shipments`, staff and non-dealer contacts, the
   `in_stock` and `too_big` answers, and every sentence other than the date list.
+
+## The ETA field revoke (security review of Fix B; crew ruling (a), 2 Nov 2026)
+
+A revoked field must not leak through the other path. Before this PR the stock check ignored the
+revoke; that pre-existing gap is fixed here.
+
+- **AC-SIF13** A dealer whose gated `estimated_arrival_date` field is revoked (per contact or on the
+  agent) is told "No ETA" by the ETA ask: `etas == []` on both `/list` and `/by-product`, as on main.
+  The shared read does not put the dates back.
+- **AC-SIF14** The same dealer's stock check, for a product with no stock and a shipment still coming,
+  answers `incoming` with no date. The reply reads "CODE x 2: ❌ No stock, No ETA." (ms "Tiada stok,
+  Tiada ETA.", zh "没有库存，暂无 ETA。"), never "No stock and no incoming" and never a date. A product
+  with nothing coming still reads "No stock and no incoming".
