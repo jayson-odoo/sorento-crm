@@ -450,9 +450,13 @@ def line_plans(
     for line_id, f in facts.items():
         base_qty, base_date = f.base()
         in_full = f.delivered_in_full(sitting_on)
+        # CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026, "popup = email = Excel"): a line delivered
+        # in full that a PENDING change names still prints that change's Was -> Now, as the
+        # purchasing email does off the change row (28/09 -> 02/11); only a delivered line
+        # with nothing pending reads blank.
         moves = (
             handover_moves(base_qty, base_date, f.now_qty, f.now_date)
-            if f.shows_change and not in_full
+            if f.shows_change and (f.pending or not in_full)
             else {}
         )
         new_qty = f.now_qty if "qty" in moves else None
@@ -489,9 +493,14 @@ def line_plans(
             base_qty=base_qty,
             base_date=base_date,
             tell_qty=not involved and f.shows_change,
-            # AutoCount cancelled the line: the email's CANCEL ALL.
+            # AutoCount cancelled the line: the email's CANCEL ALL. A line it CLOSED because it
+            # was delivered in full is not cancelled (CONFIRM-PREVIEW-STALE, crew pass 2 Nov):
+            # it reads its change's words.
             cancelled=f.core is not None
-            and (f.core.line_status or "open") in ("closed", "cancelled"),
+            and (
+                (f.core.line_status or "open") == "cancelled"
+                or ((f.core.line_status or "open") == "closed" and not in_full)
+            ),
             was_item_code=was_item_code,
         )
         plan = LinePlan(

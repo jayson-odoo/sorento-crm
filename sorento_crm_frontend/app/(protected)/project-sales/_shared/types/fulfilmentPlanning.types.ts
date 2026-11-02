@@ -2684,6 +2684,11 @@ export interface ConfirmManyBody {
   batch_id?: string | null;
   /** Run the press and roll it back: the answer names what it WOULD raise (FULFIL-CONFIRM-SCOPE v2). */
   preview?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE (review round 3, S3): with `preview`, the guided Confirm's own dry run
+   * for the email's words. The server records no refusal for it.
+   */
+  quiet?: boolean;
 }
 
 /** One order inquiry row a previewed press would raise. */
@@ -2770,6 +2775,11 @@ export interface ConfirmManyOrderResult {
   /** The per-order twin of `ConfirmResult.lines_fulfilled_skipped` (#1362). */
   lines_fulfilled_skipped?: number | null;
   /**
+   * CONFIRM-PREVIEW-STALE: on a dry run only, the purchasing email's own lines for this order,
+   * rendered by the same builder the real send uses. The guided Confirm prints their REMARK.
+   */
+  email_lines?: ConfirmEmailLine[] | null;
+  /**
    * #1362 (owner, 29 Sep 2026): lines the server's recheck refused, left out so the rest of
    * the order confirmed. Each keeps its saved decision.
    */
@@ -2836,4 +2846,14 @@ export interface PlanningHistoryEvent {
 
 export interface PlanningHistory {
   events: PlanningHistoryEvent[];
+}
+
+/** One line of the purchasing email a Confirm would send (CONFIRM-PREVIEW-STALE). */
+export interface ConfirmEmailLine {
+  /** The planning line it is told for. Addressing only, never rendered. */
+  so_line_id: string;
+  item_code?: string | null;
+  qty?: string | null;
+  delivery_date?: string | null;
+  remark: string;
 }
