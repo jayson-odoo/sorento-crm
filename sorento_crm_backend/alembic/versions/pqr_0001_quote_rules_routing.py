@@ -53,13 +53,19 @@ def upgrade() -> None:
         "ADD COLUMN IF NOT EXISTS default_quotation_approver_user_id VARCHAR "
         "REFERENCES users(id) ON DELETE SET NULL"
     )
+    # Matched on the SLUG alone: the row's current name depends on how far a database got
+    # through earlier renames ("Approve Below-Floor Quotations" from 330, "... Below Minimum
+    # Price" from pux_0001; the dev copy is a restore that predates the latter). Idempotent: a
+    # re-run, or a row already carrying the new name, changes nothing.
     op.execute(
         "UPDATE user_permissions SET name = '" + NEW_PERMISSION_NAME + "' "
-        "WHERE slug = 'projects.quotations.approve' AND name = '" + OLD_PERMISSION_NAME + "'"
+        "WHERE slug = 'projects.quotations.approve' "
+        "AND name IS DISTINCT FROM '" + NEW_PERMISSION_NAME + "'"
     )
 
 
 def downgrade() -> None:
+    # Back to the name the previous head (pux_0001) leaves, whatever the row said before.
     op.execute(
         "UPDATE user_permissions SET name = '" + OLD_PERMISSION_NAME + "' "
         "WHERE slug = 'projects.quotations.approve' AND name = '" + NEW_PERMISSION_NAME + "'"
