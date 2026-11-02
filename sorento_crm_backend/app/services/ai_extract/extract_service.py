@@ -48,6 +48,7 @@ from app.services.llm_provider import (
     ChatResult,
     ImagePart,
     LLMProvider,
+    ResponseTruncated,
     get_provider,
     is_timeout,
     resolve_api_key,
@@ -90,6 +91,17 @@ EXTRACT_PROVIDER_TIMEOUT_SECONDS = 45.0
 # answers 503, never 502: Cloudflare replaces an origin 502/504 with its own HTML page, which
 # hid the reason from the dialog. Cloudflare's Error Pages do not apply to 503.
 UPSTREAM_FAILED_STATUS = 503
+# The answer budget. Production, 2 Nov: a big promo PDF's line list ran past 4096 answer tokens
+# (Gemini "MAX_TOKENS ... answer 6138 tokens"). 16384 is what every provider this runs on takes
+# in one non-streamed call (gpt-4o / 4o-mini output cap 16,384; Anthropic non-streaming
+# ceiling `ANTHROPIC_NONSTREAMING_MAX_TOKENS` 21,333; Gemini flash far above), and about what
+# fits in the 45 s cap at the speed production measured (6138 tokens in 13-14 s). Output is
+# billed as used, so an unused budget costs nothing.
+EXTRACT_MAX_OUTPUT_TOKENS = 16384
+# Owner ruling, 2 Nov: the provider's own error text (account details, billing hints) never
+# reaches a portal contact or a staff screen; it goes to the server log only.
+PROVIDER_FAILED_MESSAGE = "Could not read the file just now, please try again."
+TOO_LONG_MESSAGE = "This file is too long to read in one go; try fewer pages."
 
 # Forms that ship a separate items-list section. Complaints now capture one
 # line per affected product (code + quantity), so they receive a `products`
@@ -365,7 +377,7 @@ class AIExtractService:
                 images=image_parts,
                 response_format={"type": "json_object"},
                 temperature=0.0,
-                max_tokens=4096,
+                max_tokens=EXTRACT_MAX_OUTPUT_TOKENS,
                 model=model_name,
                 timeout=EXTRACT_PROVIDER_TIMEOUT_SECONDS,
             )
@@ -373,6 +385,12 @@ class AIExtractService:
             logger.warning(
                 "ai_extract provider call failed (%s %s): %s", provider_name, model_name, exc
             )
+            if isinstance(exc, ResponseTruncated):
+                raise AppException(
+                    status_code=UPSTREAM_FAILED_STATUS,
+                    message=TOO_LONG_MESSAGE,
+                    code="ai_extract_too_long",
+                ) from exc
             if is_timeout(exc):
                 raise AppException(
                     status_code=UPSTREAM_FAILED_STATUS,
@@ -385,7 +403,7 @@ class AIExtractService:
                 ) from exc
             raise AppException(
                 status_code=UPSTREAM_FAILED_STATUS,
-                message=f"AI provider call failed: {exc}",
+                message=PROVIDER_FAILED_MESSAGE,
                 code="ai_extract_provider_failed",
             ) from exc
         elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -851,9 +869,10 @@ class AIExtractService:
 
     def _parse_json(self, content: str) -> dict[str, Any]:
         if not content:
+            logger.warning("ai_extract provider returned an empty response")
             raise AppException(
                 status_code=UPSTREAM_FAILED_STATUS,
-                message="AI provider returned an empty response.",
+                message=PROVIDER_FAILED_MESSAGE,
                 code="ai_extract_empty_response",
             )
         text = content.strip()
@@ -872,21 +891,24 @@ class AIExtractService:
                 try:
                     data = json.loads(text[start : end + 1])
                 except json.JSONDecodeError:
+                    logger.warning("ai_extract provider returned non-JSON content: %s", exc)
                     raise AppException(
                         status_code=UPSTREAM_FAILED_STATUS,
-                        message=f"AI provider returned non-JSON content: {exc}",
+                        message=PROVIDER_FAILED_MESSAGE,
                         code="ai_extract_bad_json",
                     ) from exc
             else:
+                logger.warning("ai_extract provider returned non-JSON content: %s", exc)
                 raise AppException(
                     status_code=UPSTREAM_FAILED_STATUS,
-                    message=f"AI provider returned non-JSON content: {exc}",
+                    message=PROVIDER_FAILED_MESSAGE,
                     code="ai_extract_bad_json",
                 ) from exc
         if not isinstance(data, dict):
+            logger.warning("ai_extract provider returned a non-object JSON value")
             raise AppException(
                 status_code=UPSTREAM_FAILED_STATUS,
-                message="AI provider returned a non-object JSON value.",
+                message=PROVIDER_FAILED_MESSAGE,
                 code="ai_extract_bad_json",
             )
         return data

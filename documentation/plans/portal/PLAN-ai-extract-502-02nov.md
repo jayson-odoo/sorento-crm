@@ -21,15 +21,18 @@ settings." That text is `sorento_crm_frontend/lib/api-client.ts:36-38`, reached 
   route goes through (portal and my-requests via `app/api/v1/public/ai_extract.py:86`, master-data
   `app/api/v1/master_data/ai_extract_field.py:81`, project register `app/api/v1/projects/projects.py:215`).
 - One rule: an upstream failure inside the extract (AI provider, its answer, the storage read) answers
-  **503** with the JSON message. 503 because Cloudflare's Error Pages do not apply to 503
+  **503** with a plain JSON message. 503 because Cloudflare's Error Pages do not apply to 503
   (developers.cloudflare.com/rules/custom-errors), and the repo already answers 503 for an unreachable AI
   dependency (`app/api/v1/system/ai_assistant.py:265`). 424 has no precedent in the repo (0 uses).
 - Timeout: one constant, 45 s, passed as `timeout=` to `provider.chat`. Every provider already treats a
   caller-set timeout as "no SDK retries" (`llm_provider.py:528-530`, `:890-892`; Gemini has no retry loop).
   A timeout answers 503 with its own message (`code=ai_extract_provider_timeout`), detected by the shared
   `is_timeout` (`llm_provider.py:1985`).
-- Project register keeps its plain message (never echoes provider text), now keyed to 503
-  (`projects.py:218-224`).
+- Plain messages only (owner ruling, 2 Nov, round 2): the provider's raw error (account details,
+  billing text) never reaches a portal contact or a staff screen; it goes to the server log.
+  Provider busy/failed or an unusable answer: "Could not read the file just now, please try again."
+  Truncated answer: "This file is too long to read in one go; try fewer pages." (`ai_extract_too_long`).
+  The project register route's own rewrite (`projects.py:218-224`) goes: the service is safe at source.
 - Frontend: no change. `extractApiError` already shows a JSON body's `message`
   (`lib/api-client.ts`), so a 503 JSON reaches the dialog as the app's own text.
 
@@ -48,6 +51,17 @@ vendor is the bug this removes.
 An install whose configured provider IS openai still calls OpenAI; that is operator config, not the
 fallback. With this fix its failure (dead key, quota) now reaches the dialog as the provider's message.
 
+## Round 2: production cause (owner's prod logs, 2 Nov)
+
+Five portal extracts answered 502 after 13-14 s with "Gemini stopped early: MAX_TOKENS (response
+truncated; thinking 0, answer 6138 tokens)". The extract hard-coded `max_tokens=4096`; on gemini-3.x the
+call's `maxOutputTokens` is that plus 2049 thinking room (`llm_provider.py` `_gemini_thinking`), 6145.
+Fix: raise the answer budget to 16384 (`EXTRACT_MAX_OUTPUT_TOKENS`), not split per page/file: one
+constant against a split that would need per-call line merging and dedupe. 16384 is what every provider
+takes in one non-streamed call (gpt-4o/4o-mini cap 16,384; Anthropic non-streaming ceiling 21,333) and
+about what the 45 s cap holds at production's measured speed. A truncation that still happens
+(`ResponseTruncated`) answers 503 with the too-long message.
+
 ## Measured (dev copy, read-only)
 
 `ai_assistant_usage_logs` feature=ai_extract: 840 successful calls, max 10.3 s, 0 over 30 s
@@ -56,15 +70,19 @@ fallback. With this fix its failure (dead key, quota) now reaches the dialog as 
 ## Tests (red first)
 
 `tests/test_ai_extract_upstream_503.py`:
-1. Provider raises: portal route answers 503, JSON `message` carries the provider's text, code
-   `ai_extract_provider_failed`.
-2. Provider raises on the master-data ai-extract-field route: 503 JSON.
+1. Provider raises: 503 plain message, raw text only in the log; over HTTP on the portal route the raw
+   text never appears in the body (provider failure, truncation, non-JSON answer).
+2. A storage read failure on the master-data field extract: 503.
 3. The provider receives `timeout=45` (the constant), so its SDK retries are off.
 4. Slow provider: a call that times out answers 503 `ai_extract_provider_timeout` with the 45 s message,
    ending at the timeout (fake provider honours the passed timeout).
-5. Empty / non-JSON provider answer: 503.
+5. Empty / non-JSON / cut-off provider answer: 503 plain message.
+7. Round 2: the call asks for 16384 answer tokens; a 9000-token Gemini answer that overran the old cap
+   now reads; an answer no cap holds is 503 `ai_extract_too_long`; any provider's `ResponseTruncated`
+   is 503 too-long.
 6. No config row and no label: 400 `ai_extract_no_provider`, no provider built.
-Updated: `tests/test_project_register_v2_ai_extract.py::test_c6_a_provider_failure_*` expects 503.
+Updated: `tests/test_project_register_v2_ai_extract.py::test_c6_a_provider_failure_*` expects 503 and the
+same plain message.
 
 ## Follow-up (not changed here)
 

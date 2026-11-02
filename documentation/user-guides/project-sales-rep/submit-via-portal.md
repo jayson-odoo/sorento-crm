@@ -44,7 +44,13 @@ Complaints support an **AI Extract** shortcut to pre-fill the form from a photo,
 
 If the upload doesn't return useful values, dismiss the dialog and fill the form manually.
 
-If the AI reader itself fails, the dialog says why (for example the AI service refused the request) and offers **Retry**. A read that takes longer than 45 seconds is stopped with *"The AI reader did not answer within 45 seconds and was stopped. Try again, or send fewer pages."* The same applies to the **Extract with AI** action on a price tag request's sales order file.
+If the AI reader itself fails, the dialog shows one of these messages instead of values:
+
+* *"This file is too long to read in one go; try fewer pages."* - the file lists more than one read can hold. Split it (for example send the pages with the lines you need) and extract each part.
+* *"The AI reader did not answer within 45 seconds and was stopped. Try again, or send fewer pages."*
+* *"Could not read the file just now, please try again."* - the AI service was busy or refused the request.
+
+The same messages appear on the **Extract with AI** action on a price tag request's sales order file, where **Retry** runs the read again.
 
 ## Save as draft
 
