@@ -591,3 +591,31 @@ def test_sec_the_phone_fill_is_audited(v2):
     assert any((r.new_values or {}).get("phone") == "+60135551111" for r in rows), [
         (r.action, r.new_values) for r in rows
     ]
+
+
+# ------------------------------------------------------------------ review round 1
+
+
+def test_rv_deleting_a_party_linked_by_role_is_409_not_500(v2):
+    sub = _party(v2, "subcontractor")
+    assert _register(v2, party_links=[{"role": "subcontractor", "party_id": sub.id}]).status_code == 201
+    res = as_user(v2, v2.owner).delete(f"{PARTIES}/{sub.id}")
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "project_party_in_use"
+
+
+def test_rv_project_count_counts_a_project_once_when_linked_and_a_contact_was_picked(v2):
+    sub = _party(v2, "subcontractor")
+    person = _contact(v2, sub)
+    res = _register(v2, party_links=[{"role": "subcontractor", "party_id": sub.id}], contact_ids=[person.id])
+    assert res.status_code == 201, res.text
+    assert as_user(v2, v2.owner).get(f"{PARTIES}/{sub.id}").json()["project_count"] == 1
+    rows = _parties_listed(v2, party_type="subcontractor", sort="project_count", dir="desc")
+    assert next(r for r in rows if r["id"] == sub.id)["project_count"] == 1
+
+
+def test_rv_an_inactive_contact_cannot_be_picked(v2):
+    arch = _party(v2, "architect")
+    retired = _contact(v2, arch, is_active=False)
+    res = _register(v2, architect_party_id=arch.id, contact_ids=[retired.id])
+    assert res.status_code == 422, res.text

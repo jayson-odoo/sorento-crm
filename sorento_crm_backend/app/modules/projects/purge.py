@@ -100,6 +100,8 @@ from app.models.projects import (
     ProjectSeriesCategory,
     ProjectSeriesProduct,
     ProjectSeriesSet,
+    ProjectPartyContact,
+    ProjectPartyLink,
     ProjectStakeholder,
     ProjectTakeoverRequest,
     ProjectTask,
@@ -219,6 +221,10 @@ PURGE_ORDER: List[Type] = [
     ProjectCollaborator,
     # RESTRICT on project_stakeholders.role_id: this MUST precede ProjectTemplateRole.
     ProjectStakeholder,
+    # RESTRICT on party_links.party_id: links MUST precede ProjectParty (PS-REGISTRATION-V3).
+    ProjectPartyLink,
+    # Stakeholders point at contacts (SET NULL), contacts CASCADE off their party.
+    ProjectPartyContact,
     ProjectBrand,
     ProjectSalesProfile,
     CustomerItemCodeMap,

@@ -53,28 +53,32 @@ INFLUENCE_LEVELS = ("high", "medium", "low")
 # ------------------------------------------------------------------- parties
 
 
+def _project_ids_by_party():
+    """``(party_id, project_id)`` for every way a party is on a project: as developer, as a
+    stakeholder's firm, or linked by role. UNION, so a party that is both linked and the firm of
+    a picked contact counts the project once (review item 3)."""
+    from sqlalchemy import union
+
+    return union(
+        db_select(Project.developer_party_id.label("party_id"), Project.id.label("project_id")).where(
+            Project.developer_party_id.isnot(None)
+        ),
+        db_select(ProjectStakeholder.party_id, ProjectStakeholder.project_id).where(
+            ProjectStakeholder.party_id.isnot(None)
+        ),
+        db_select(ProjectPartyLink.party_id, ProjectPartyLink.project_id),
+    ).subquery("party_projects")
+
+
 def _project_count_expr():
-    """Projects a party is on: as developer, as a stakeholder's firm, or linked by role. The
-    list sorts by it on the server and ``serialize_parties`` shows the same number."""
-    as_developer = (
-        db_select(func.count(Project.id))
-        .where(Project.developer_party_id == ProjectParty.id)
+    """Distinct projects a party is on; the list sorts by it and ``serialize_parties`` shows it."""
+    on = _project_ids_by_party()
+    return (
+        db_select(func.count(func.distinct(on.c.project_id)))
+        .where(on.c.party_id == ProjectParty.id)
         .correlate(ProjectParty)
         .scalar_subquery()
     )
-    as_stakeholder = (
-        db_select(func.count(func.distinct(ProjectStakeholder.project_id)))
-        .where(ProjectStakeholder.party_id == ProjectParty.id)
-        .correlate(ProjectParty)
-        .scalar_subquery()
-    )
-    as_link = (
-        db_select(func.count(func.distinct(ProjectPartyLink.project_id)))
-        .where(ProjectPartyLink.party_id == ProjectParty.id)
-        .correlate(ProjectParty)
-        .scalar_subquery()
-    )
-    return as_developer + as_stakeholder + as_link
 
 
 def _contact_count_expr():
@@ -159,24 +163,11 @@ def serialize_parties(db: Session, parties: List[ProjectParty]) -> List[Dict[str
         return []
 
     party_ids = [p.id for p in parties]
+    on = _project_ids_by_party()
     counts = dict(
-        db.query(Project.developer_party_id, func.count(Project.id))
-        .filter(Project.developer_party_id.in_(party_ids))
-        .group_by(Project.developer_party_id)
-        .all()
-    )
-    stakeholder_counts = dict(
-        db.query(
-            ProjectStakeholder.party_id, func.count(func.distinct(ProjectStakeholder.project_id))
-        )
-        .filter(ProjectStakeholder.party_id.in_(party_ids))
-        .group_by(ProjectStakeholder.party_id)
-        .all()
-    )
-    link_counts = dict(
-        db.query(ProjectPartyLink.party_id, func.count(func.distinct(ProjectPartyLink.project_id)))
-        .filter(ProjectPartyLink.party_id.in_(party_ids))
-        .group_by(ProjectPartyLink.party_id)
+        db.query(on.c.party_id, func.count(func.distinct(on.c.project_id)))
+        .filter(on.c.party_id.in_(party_ids))
+        .group_by(on.c.party_id)
         .all()
     )
     contact_counts = dict(
@@ -215,9 +206,7 @@ def serialize_parties(db: Session, parties: List[ProjectParty]) -> List[Dict[str
             # As developer, plus as a firm someone on the project belongs to. An
             # architect is never the developer, so a developer-only count would read
             # zero for every architect and make the list look broken.
-            "project_count": counts.get(party.id, 0)
-            + stakeholder_counts.get(party.id, 0)
-            + link_counts.get(party.id, 0),
+            "project_count": counts.get(party.id, 0),
             "contact_count": contact_counts.get(party.id, 0),
             "created_at": party.created_at,
             "updated_at": party.updated_at,
@@ -337,6 +326,20 @@ def delete_party(db: Session, party: ProjectParty) -> None:
             message=(
                 f'"{party.name}" is the developer on {as_developer} project(s). '
                 "Deactivate it instead of deleting."
+            ),
+            code="project_party_in_use",
+        )
+    # A party linked by role (PS-REGISTRATION-V3) is held by an ON DELETE RESTRICT FK too.
+    linked = (
+        db.query(func.count(func.distinct(ProjectPartyLink.project_id)))
+        .filter(ProjectPartyLink.party_id == party.id)
+        .scalar()
+    )
+    if linked:
+        raise AppException(
+            status_code=409,
+            message=(
+                f'"{party.name}" is on {linked} project(s). Deactivate it instead of deleting.'
             ),
             code="project_party_in_use",
         )

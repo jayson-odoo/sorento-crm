@@ -53,6 +53,8 @@
     "projects.takeover_requests",
     "projects.collaborators",
     "projects.stakeholders",
+    "projects.party_links",
+    "projects.party_contacts",
     "projects.brands",
     "projects.sales_profile",
     "projects.customer_item_code_map",

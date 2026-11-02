@@ -92,6 +92,10 @@ BORN_AFTER_THE_MOVE = frozenset({
     # suggested quantities and prices on an issue, born straight into `projects`.
     "quotation_amendment_requests",
     "quotation_amendment_request_rows",
+    # PS-REGISTRATION-V3 (#2099, migration psr3_0001_party_contacts): the people at a party and
+    # the parties a project links by role, born straight into `projects`.
+    "party_contacts",
+    "party_links",
 })
 
 MIGRATION = (

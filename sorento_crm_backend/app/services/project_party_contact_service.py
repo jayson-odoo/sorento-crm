@@ -275,6 +275,8 @@ def add_registered_contacts(db: Session, project: Project, contact_ids: Iterable
         .filter(
             ProjectPartyContact.id.in_(ids),
             ProjectPartyContact.company_id == project.company_id,
+            # A deactivated contact is not offered, so it cannot be picked either.
+            ProjectPartyContact.is_active.is_(True),
         )
         .all()
     )
