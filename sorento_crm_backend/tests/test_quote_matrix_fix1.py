@@ -259,3 +259,48 @@ def test_handled_on_a_note_older_than_the_listed_page_answers_with_that_note(fb,
     assert body["id"] == str(old_row.id)
     assert body["note"] == "old"
     assert body["handled_at"] is not None
+
+
+# ------------------------------------------------------------------ header gains its first col
+
+from .test_quote_matrix_service import _lines_url, _put_columns, env  # noqa: E402,F401
+
+
+def test_a_leaf_header_that_gains_its_first_col_keeps_its_quantity(env):
+    from decimal import Decimal
+
+    leaf = [{"key": "ta", "label": "TYPE A", "cols": []}, {"key": "tb", "label": "TYPE B", "cols": []}]
+    assert _put_columns(env, leaf).status_code == 200
+    # The 7 moved into the first leaf (the header key) when columns first appeared.
+    assert env.client.put(
+        f"{_lines_url(env.version.id)}/{env.line.id}", json={"qty_cells": {"ta": 3, "tb": 4}}
+    ).status_code == 200
+
+    grown = [
+        {"key": "ta", "label": "TYPE A", "cols": [{"key": "ta_1bh", "label": "1 BH"}]},
+        leaf[1],
+    ]
+    response = _put_columns(env, grown)
+    assert response.status_code == 200, response.text
+    (line,) = response.json()["lines"]
+    assert line["qty_cells"] == {"ta_1bh": "3.00", "tb": "4.00"}
+    assert Decimal(str(line["quantity"])) == Decimal("7")
+    assert Decimal(str(response.json()["version"]["total_amount"])) == Decimal("700.00")
+
+
+def test_a_header_gaining_several_cols_puts_the_quantity_in_the_first_only(env):
+    leaf = [{"key": "ta", "label": "TYPE A", "cols": []}]
+    assert _put_columns(env, leaf).status_code == 200
+    grown = [
+        {"key": "ta", "label": "TYPE A", "cols": [{"key": "c1", "label": "1"}, {"key": "c2", "label": "2"}]}
+    ]
+    (line,) = _put_columns(env, grown).json()["lines"]
+    assert line["qty_cells"] == {"c1": "7.00"}
+
+
+def test_removing_the_last_col_still_drops_its_cells(env):
+    grown = [{"key": "ta", "label": "TYPE A", "cols": [{"key": "c1", "label": "1"}]}]
+    assert _put_columns(env, grown).status_code == 200
+    back = [{"key": "ta", "label": "TYPE A", "cols": []}]
+    (line,) = _put_columns(env, back).json()["lines"]
+    assert line["qty_cells"] == {}

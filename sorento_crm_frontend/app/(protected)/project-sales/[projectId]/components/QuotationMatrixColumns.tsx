@@ -310,7 +310,7 @@ function LabelEditor({
             }
           }}
         >
-          <GripVertical className="size-3.5" aria-hidden />
+          <GripVertical className="size-3" aria-hidden />
         </button>
         <Input
           ref={inputRef}
@@ -340,7 +340,7 @@ function LabelEditor({
           className="shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-50"
           onClick={() => matrix.startRemoval(itemKey)}
         >
-          <X className="size-3.5" aria-hidden />
+          <X className="size-3" aria-hidden />
         </button>
       </div>
       {canAddCol && (
@@ -561,14 +561,36 @@ export function MatrixAmountFooterLines({ total }: { total: string | null }) {
 
 const NUMERIC = 'px-1 align-top';
 
-function leafColumn(key: string, title: string, rowSpanHeader = false): ColumnDef<MatrixGridRow> {
+/** A leaf column's narrowest width while its label is an input: room for grip, ~8 characters, x. */
+export const EDIT_LEAF_MIN_WIDTH = 104;
+const EDIT_LEAF_MAX_WIDTH = 200;
+
+/**
+ * A leaf column's width. Read: a number fits 72px. Edit: the label is an input between a grip
+ * and an x, so the column grows with the label (about 7px a character at text-xs, plus 44px for
+ * the grip, the x and padding), never under `EDIT_LEAF_MIN_WIDTH`.
+ */
+export function leafColumnWidth(label: string, editable: boolean, rowSpanHeader = false): number {
+  if (!editable) return rowSpanHeader ? 96 : 72;
+  const fit = 44 + label.trim().length * 7;
+  return Math.min(EDIT_LEAF_MAX_WIDTH, Math.max(EDIT_LEAF_MIN_WIDTH + (rowSpanHeader ? 8 : 0), fit));
+}
+
+function leafColumn(
+  key: string,
+  title: string,
+  label: string,
+  editable: boolean,
+  rowSpanHeader = false,
+): ColumnDef<MatrixGridRow> {
+  const size = leafColumnWidth(label, editable, rowSpanHeader);
   return {
     id: leafColumnId(key),
     header: LeafHeader,
     cell: LeafCell,
     footer: LeafFooter,
-    size: rowSpanHeader ? 96 : 72,
-    minSize: 56,
+    size,
+    minSize: editable ? EDIT_LEAF_MIN_WIDTH : 56,
     enableHiding: false,
     meta: {
       headerTitle: title,
@@ -589,9 +611,9 @@ export function buildMatrixColumns(
   editable: boolean,
 ): ColumnDef<MatrixGridRow>[] {
   const groups: ColumnDef<MatrixGridRow>[] = headers.map((header, index) => {
-    if (header.cols.length === 0) return leafColumn(header.key, header.label, true);
+    if (header.cols.length === 0) return leafColumn(header.key, header.label, header.label, editable, true);
     const children: ColumnDef<MatrixGridRow>[] = header.cols.map((col) =>
-      leafColumn(col.key, `${header.label} / ${col.label}`),
+      leafColumn(col.key, `${header.label} / ${col.label}`, col.label, editable),
     );
     if (editable) {
       children.push({
