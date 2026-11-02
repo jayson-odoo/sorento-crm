@@ -146,3 +146,69 @@ def test_f2_the_planners_line_remark_is_frozen_with_the_batch_confirm(api):
     supply = ProjectSupplyService(s.db)
     frozen = supply.frozen_lines_of(supply.active_decision(str(s.order.id)))
     assert frozen[str(s.l10.id)].get("remark") == OWN, frozen[str(s.l10.id)]
+
+
+# Speed: the guide's dry run is bounded the way Simulate is (5 s lock timeout), and a dry run
+# that hit it answers in words, not a database error.
+
+
+def test_the_dry_run_sets_a_five_second_lock_timeout(api):
+    import sqlalchemy as sa
+
+    s = _seed(api, pending=True)
+    seen: list = []
+
+    def _spy(conn, cursor, statement, *_a):
+        if "lock_timeout" in statement:
+            seen.append(statement)
+
+    engine = s.db.get_bind()
+    sa.event.listen(engine, "before_cursor_execute", _spy)
+    try:
+        preview = _press_with_remark(s, preview=True)
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", _spy)
+    assert preview.status_code == 200, preview.text
+    assert seen == ["SET LOCAL lock_timeout = '5s'"], seen
+
+
+def test_the_real_press_sets_no_lock_timeout(api):
+    import sqlalchemy as sa
+
+    s = _seed(api, pending=True)
+    seen: list = []
+
+    def _spy(conn, cursor, statement, *_a):
+        if "lock_timeout" in statement:
+            seen.append(statement)
+
+    engine = s.db.get_bind()
+    sa.event.listen(engine, "before_cursor_execute", _spy)
+    try:
+        real = _press_with_remark(s, preview=False)
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", _spy)
+    assert real.status_code == 200, real.text
+    assert seen == [], seen
+
+
+def test_a_dry_run_that_waited_out_the_lock_says_so(api, monkeypatch):
+    from sqlalchemy.exc import OperationalError
+
+    from app.services.project_supply_service import (
+        PREVIEW_LOCK_BUSY_MESSAGE,
+        ProjectSupplyService,
+    )
+
+    class _Busy(Exception):
+        pgcode = "55P03"
+
+    def _locked(self, *_a, **_k):
+        raise OperationalError("SELECT ... FOR UPDATE", {}, _Busy("lock timeout"))
+
+    s = _seed(api, pending=True)
+    monkeypatch.setattr(ProjectSupplyService, "get_order", _locked)
+    preview = _press_with_remark(s, preview=True)
+    assert preview.status_code == 200, preview.text
+    result = preview.json()["results"][0]
+    assert result["ok"] is False and result["error"] == PREVIEW_LOCK_BUSY_MESSAGE, result

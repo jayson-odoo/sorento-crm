@@ -642,6 +642,12 @@ def _preview_move_facts(move: Any) -> Tuple[Any, ...]:
     )
 
 
+#: A dry run that waited past its lock timeout behind another save of the same order.
+PREVIEW_LOCK_BUSY_MESSAGE = (
+    "Another change to this order is being saved right now. Try again in a moment."
+)
+
+
 def _error_detail(exc: Exception) -> Tuple[str, Optional[List[Dict[str, Any]]]]:
     """What went wrong, and which lines it named, off any exception `confirm` can raise.
 
@@ -12044,6 +12050,15 @@ class ProjectSupplyService:
             if preview:
                 self.db.info["confirm_preview"] = True
             try:
+                if preview:
+                    # CONFIRM-REMARK-FIX: a dry run must not sit on a lock behind a real save,
+                    # the same bound Simulate takes (`SIMULATE_LOCK_TIMEOUT`). SET LOCAL: the
+                    # preview's own rollback below restores the session's value.
+                    from app.services.confirm_simulation import SIMULATE_LOCK_TIMEOUT
+
+                    self.db.execute(
+                        text(f"SET LOCAL lock_timeout = '{SIMULATE_LOCK_TIMEOUT}'")
+                    )
                 order = self.get_order(pso_id)
                 assert_can_act(self.db, order)
                 only = getattr(entry, "only_line_ids", None)
@@ -12142,6 +12157,11 @@ class ProjectSupplyService:
             except Exception as exc:  # noqa: BLE001 - every order must get an answer
                 self.db.rollback()
                 message, failing_lines = _error_detail(exc)
+                if preview:
+                    from app.services.confirm_simulation import is_lock_busy
+
+                    if is_lock_busy(exc):
+                        message = PREVIEW_LOCK_BUSY_MESSAGE
                 if raw_errors:
                     from app.services.confirm_simulation import error_text
 
