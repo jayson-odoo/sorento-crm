@@ -95,9 +95,12 @@ function specLine(over: Partial<LineTagData> = {}): TagBindingData {
 function priceTagLine(): TagBindingData {
   const data = specLine();
   if (data.kind !== 'line') throw new Error('line');
-  const { doc: _d, area: _a, comment: _c, marker: _m, strict_parts: _s, brand: _b, drawing: _dr, ...rest } =
-    data.line;
-  return { kind: 'line', line: rest as LineTagData };
+  // A price tag row carries none of the spec sheet fields.
+  const line: Partial<LineTagData> = { ...data.line };
+  for (const field of ['doc', 'area', 'comment', 'marker', 'strict_parts', 'brand', 'drawing'] as const) {
+    delete line[field];
+  }
+  return { kind: 'line', line: line as LineTagData };
 }
 
 describe('spec sheet merge fields', () => {
