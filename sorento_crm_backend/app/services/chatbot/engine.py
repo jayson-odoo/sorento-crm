@@ -1553,14 +1553,13 @@ def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> d
     if not spans:
         return verdict
     entities = [e for e in jsc.array(verdict.get("entities")) if isinstance(e, dict)]
-    named = {
-        jsc.nullish_str(e.get("raw")).strip().casefold()
-        for e in entities if e.get("current_message") is not False
-    }
+    mine = [e for e in entities if e.get("current_message") is not False]
+    named = {jsc.nullish_str(e.get("raw")).strip().casefold() for e in mine}
+    picked = {jsc.nullish_str(e.get("canonical_code")).strip() for e in mine}
     added = [
         {"raw": text, "hint": "supplier", "canonical_code": key, "current_message": True, "confident": True}
         for text, key in spans.items()
-        if text.strip().casefold() not in named
+        if text.strip().casefold() not in named and key not in picked
     ]
     if not added:
         return verdict
@@ -1687,7 +1686,9 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
             hits, group_categories=prep.group_categories, row_ids=prep.row_ids, supplier_ids=prep.supplier_ids
         )
         if not prep.supplier_ids:
+            # No supplier id line in this parser: nothing binds a supplier by its row id, so no span adds one either.
             prep.supplier_groups = {}
+            prep.supplier_spans = {}
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
         lookup_event["hits"] = [
             {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}

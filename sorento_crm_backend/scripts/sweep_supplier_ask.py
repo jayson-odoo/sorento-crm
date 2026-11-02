@@ -8,8 +8,10 @@ console pin also runs its paired span prompt, `engine._span_override`). Each cas
 Spend: a dry run writes no usage row, so each turn is priced off its own trace (every `prompt_tokens` /
 `completion_tokens` / `cached_tokens` the trace holds, the parser's `understood` facts and the span pass's
 `span_extract` event included) against `llm_model_prices`. A model with no price row is charged
-`--unpriced-usd` per call (conservative). The sweep stops BEFORE the next turn once the running total plus the
-dearest turn so far would pass `--cap-usd` (default 0.50). One ledger line per turn is appended to `--ledger`
+`--unpriced-usd` per call, and so is a turn whose trace reports no tokens at all (a call that writes none there,
+such as the clarifier, would otherwise count as free). The sweep stops BEFORE the next turn once the running total
+plus the dearest turn so far (at least `--unpriced-usd`) would pass `--cap-usd` (default 0.50). That is a
+projection, not a meter: a turn dearer than every earlier one can still go past the cap, by at most its own cost. One ledger line per turn is appended to `--ledger`
 (JSON lines: case, turn, text, model, tokens, usd, running usd).
 
 Usage, from `sorento_crm_backend/` with the copy's backend env (`DATABASE_URL`, provider keys) in place:
@@ -18,12 +20,13 @@ Usage, from `sorento_crm_backend/` with the copy's backend env (`DATABASE_URL`, 
         --ledger ../state/ledger/supplier-ask-sweep.jsonl --out /tmp/supplier-sweep.md
 
 Writes a Markdown table (case, turn, text, verdict, tool, supplier ids, window, reply first line, usd) to `--out`
-and prints it. Exit 1 when any graded turn FAILs, 2 when the cap stopped the sweep.
+and prints it. Exit 1 when any graded turn FAILs, 2 when the cap stopped the sweep, 3 when the pinned parser
+version does not exist.
 
 Grading (per turn, `expect`):
-  ask        the reply asks (numbered lines) and no PO / order list ran
+  ask        the reply asks (numbered lines, never the order-kind clarifier) and no PO / order list ran
   po:N       the PO list ran with exactly N supplier ids (po:N+ = at least N)
-  miss       no list ran without a supplier filter (a refusal or a not-found line)
+  miss       no PO / order list ran at all (a refusal or a not-found line)
   not_po     a control turn: the PO list did not run with a supplier
 A turn whose message named a supplier FAILs whenever any PO or order list ran without `supplier_ids`, whatever the
 expectation. `from` / `to` check the PO tool's `expected_date_from` / `expected_date_to`.
@@ -142,6 +145,11 @@ def _usd(calls: list[dict[str, Any]], prices: dict[str, tuple[Decimal, Decimal, 
     return total
 
 
+def _cap_reached(spent: Decimal, dearest: Decimal, floor: Decimal, cap: Decimal) -> bool:
+    """Whether the next turn may not run: the total so far plus the dearest turn so far (never less than `floor`)."""
+    return spent + max(dearest, floor) > cap
+
+
 def _tool_events(trace: Any) -> list[tuple[str, dict[str, Any]]]:
     out = []
     for e in trace or []:
@@ -159,8 +167,10 @@ def _grade(turn: Turn, reply: str, tools: list[tuple[str, dict[str, Any]]], name
         return "FAIL", "a list ran without a supplier filter"
     kind, _, count = turn.expect.partition(":")
     if kind == "ask":
-        ok = asked and not lists
-        why = "" if ok else "expected a question and no list"
+        from app.services.chatbot.lanes.business.report_ask import KIND_QUESTION
+
+        ok = asked and not lists and KIND_QUESTION not in reply
+        why = "" if ok else "expected the supplier question and no list"
     elif kind == "po":
         n = len(po[0].get("supplier_ids") or []) if po else 0
         want = int(count.rstrip("+"))
@@ -171,7 +181,8 @@ def _grade(turn: Turn, reply: str, tools: list[tuple[str, dict[str, Any]]], name
         if ok and turn.date_to is not None and po[0].get("expected_date_to") != turn.date_to:
             ok, why = False, f"expected_date_to {po[0].get('expected_date_to')} != {turn.date_to}"
     elif kind == "miss":
-        ok, why = True, ""
+        ok = not lists
+        why = "" if ok else "expected no list for a supplier nothing matches"
     elif kind == "not_po":
         ok = not [a for a in po if a.get("supplier_ids")]
         why = "" if ok else "a control turn ran the PO list with a supplier"
@@ -209,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if pinned is None:
         print(f"refused: no chatbot_semantic_parser v{args.parser_version}", file=sys.stderr)
-        return 1
+        return 3
     prices = _price_table(db)
     run_id = f"supplier-sweep-{uuid.uuid4().hex[:8]}"
     rows: list[str] = [
@@ -223,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         for case in cases:
             session_vars: dict[str, Any] | None = {}
             for i, turn in enumerate(case.turns, 1):
-                if spent + dearest > args.cap_usd:
+                if _cap_reached(spent, dearest, args.unpriced_usd, args.cap_usd):
                     capped = True
                     break
                 result = console_service.run_console_turn(
@@ -233,7 +244,7 @@ def main(argv: list[str] | None = None) -> int:
                 row = db.query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first() if result.turn_id else None
                 trace = (row.trace if row is not None else None) or []
                 calls = _token_calls(trace)
-                usd = _usd(calls, prices, args.unpriced_usd)
+                usd = _usd(calls, prices, args.unpriced_usd) if calls else args.unpriced_usd
                 spent += usd
                 dearest = max(dearest, usd)
                 tools = _tool_events(trace)

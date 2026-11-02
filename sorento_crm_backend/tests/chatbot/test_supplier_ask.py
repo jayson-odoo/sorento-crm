@@ -471,7 +471,7 @@ def _seed_prompts(db) -> str:
     ).first()
     parser_row = AIPromptVersion(
         name="chatbot_semantic_parser", version=(int(top[0]) if top else 0) + 1, type="text",
-        template="ZZT parser\n== LOOKUP SPANS ==\nrules", variables=["current_date"], config_json={"blocks_hash": "x"},
+        template="ZZT parser\nYears compared (\"2025 vs 2026\") run from 1 January.\n== LOOKUP SPANS ==\nrules", variables=["current_date"], config_json={"blocks_hash": "x"},
     )
     db.add(parser_row)
     db.flush()
@@ -513,6 +513,7 @@ def test_the_migration_publishes_a_paired_span_and_parser_version_unlabelled_onc
     ).one()
     assert sask.SUPPLIER_TYPE_LINE in span_row.template and sask.NAME_MEANING_SENTENCE in span_row.template
     assert sask.PARSER_SUPPLIER_LINE in parser_row.template and "== LOOKUP SPANS ==" in parser_row.template
+    assert parser_row.template.count(sask.AFTER_YEAR_SENTENCE) == 1, "fix round 3: the bounded-year rule is published"
     assert parser_row.config_json["span_prompt_version_id"] == str(span_row.id)
     assert parser_row.config_json["blocks_hash"] == "x", "the base version's config rides along"
     assert _labels(db) == labels, "no production label moves"
@@ -638,7 +639,7 @@ def _seed_named(session_factory, name: str, code: str) -> str:
 
 
 def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver.Span, near: set[str], *,
-               qf: dict[str, Any] | None = None, attributes=STAFF_GRANTS):
+               qf: dict[str, Any] | None = None, attributes=STAFF_GRANTS, supplier_ids: bool = True):
     import functools
 
     from app.services import contact_field_reveal_service
@@ -647,7 +648,7 @@ def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver
 
     monkeypatch.setattr(
         parser_mod, "ParserConfig",
-        functools.partial(parser_mod.ParserConfig, lookup_spans=True, supplier_ids=True),
+        functools.partial(parser_mod.ParserConfig, lookup_spans=True, supplier_ids=supplier_ids),
     )
     monkeypatch.setattr(span_extract, "resolve_config", lambda db, **kw: span_extract.SpanConfig(
         "sys", 1, "openai", "gpt-zz", "ZZ-key", "label"))
@@ -1004,7 +1005,6 @@ def test_the_owner_all_over_the_supplier_question_lists_all_three_and_names_each
     _office_world(session_factory)
     twin_same = _seed_named(session_factory, SUPPLIER, "ZZTSUP-TY09")
     third = _seed_named(session_factory, THIRD, "ZZTSUP-TY03")
-    from tests.chatbot.test_supplier_ask import _seed_suppliers as _unused  # noqa: F401
     span = list_resolver.Span("taiyang", "supplier")
     reply, captured, _seen = _span_turn(
         session_factory, monkeypatch, "outstanding PO for taiyang", span, {"taiyang", SUPPLIER, THIRD},
@@ -1037,6 +1037,14 @@ def test_the_envelope_names_its_supplier_subjects_with_their_codes():
         entities,
     )
     assert env["supplier_subjects"] == [f"{SUPPLIER} (400-X006)", f"{SUPPLIER} (400-X008)"], env
+    # The section header reads the envelope as the composer does: every supplier whole, with its code.
+    from types import SimpleNamespace
+
+    from app.services.chatbot.turn.compose import _section_subjects
+
+    assert _section_subjects(env, SimpleNamespace(focus=None)) == [
+        "SRTW2600", f"{SUPPLIER} (400-X006)", f"{SUPPLIER} (400-X008)"
+    ]
 
 
 def test_the_header_keeps_two_suppliers_of_one_trading_name_apart_with_their_codes():
@@ -1096,3 +1104,29 @@ def test_the_po_list_date_line_names_the_expected_date():
     window = {"date_filter_start": "2026-01-01", "date_filter_end": None}
     assert turn_runtime._date_line(window, PO_TOOL) == "Expected date: 01/01/2026"
     assert turn_runtime._date_line(window, "crm_outstanding_report") == "Order date: 01/01/2026"
+
+
+def test_a_parser_without_the_supplier_id_line_never_turns_a_span_into_a_supplier(session_factory, monkeypatch):
+    """Review round 3 (B1): a parser version that runs the span pass but lacks the supplier id line binds no supplier by
+    id, so a span on suppliers adds none (it would only be refused as not found)."""
+    _office_world(session_factory)
+    qf = _parser_output(
+        domain_hint="purchase_order", intent_hint="check_po", order_status="outstanding",
+        entities=[{"raw": "SRTW2600", "hint": "product", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    span = list_resolver.Span(NATIVE, "customer")
+    reply, _captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstaing for 太阳 for SRTW2600", span, {NATIVE, SUPPLIER}, qf=qf,
+        supplier_ids=False,
+    )
+    assert "couldn't find a supplier" not in reply, reply
+
+
+def test_a_supplier_the_parser_already_bound_by_id_is_not_added_twice():
+    import types
+
+    from app.services.chatbot import engine as engine_mod
+
+    prep = types.SimpleNamespace(supplier_spans={"太阳": "id-1"})
+    verdict = {"entities": [{"raw": "Taiyang", "hint": "supplier", "canonical_code": "id-1", "current_message": True}]}
+    assert engine_mod._with_span_suppliers(verdict, prep) is verdict

@@ -388,6 +388,12 @@ def _header_subjects(entities: list[Any], whole: Any = ()) -> list[str]:
     return out
 
 
+def _section_subjects(env: dict[str, Any], state: State) -> list[Any]:
+    """A section header's subjects: the envelope's entities named once each, a supplier whole with its code
+    (`supplier_subjects`), a product with its quantity."""
+    return _with_quantities(_header_subjects(env.get("entities") or [], env.get("supplier_subjects")), state)
+
+
 #: The most subjects a section header names one by one; past it the header counts them.
 HEADER_SUBJECT_MAX = 5
 
@@ -668,7 +674,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # The domain label is policy wording, not a value: it reads in the reply's language
         # wherever a composer sentence below prints it.
         shown_label = localizer.sentence(label) if isinstance(label, str) else label
-        subjects = _with_quantities(_header_subjects(entities, env.get("supplier_subjects")), state)
+        subjects = _section_subjects(env, state)
         # W6 (owner hand test round 2, turn 1): a long subject list is counted, never
         # dumped as one line of codes ("*stock* for BRBC22102W, BRBC22108W-1A, ...").
         codes = (

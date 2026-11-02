@@ -37,3 +37,28 @@ def test_turn_cost_reads_every_token_block_and_charges_unpriced_calls():
     assert [c["model"] for c in calls] == ["m1", "m2"]
     usd = sweep._usd(calls, {"m1": (Decimal("0.10"), Decimal("0.01"), Decimal("0.40"))}, Decimal("0.01"))
     assert usd == Decimal("0.11")
+
+
+def test_the_order_kind_clarifier_is_not_the_supplier_question_and_a_miss_runs_no_list():
+    from app.services.chatbot.lanes.business.report_ask import KIND_QUESTION
+
+    ask = sweep.Turn("outstaing for 太阳 for SRTW2600 in 2026", "ask")
+    assert sweep._grade(ask, f"{KIND_QUESTION}\n1. Undelivered orders\n2. Pending delivery", [], True)[0] == "FAIL"
+    assert sweep._grade(ask, "Which one?\n1. A (X1)", [(sweep.PO_TOOL, {"supplier_ids": ["a"]})], True)[0] == "FAIL"
+    miss = sweep.Turn("outstanding PO for zzqqxx supplier", "miss")
+    assert sweep._grade(miss, "x", [(sweep.PO_TOOL, {"supplier_ids": ["a"]})], True)[0] == "FAIL"
+    assert sweep._grade(miss, "Sorry, I couldn't find a supplier called \"zzqqxx\".", [], True)[0] == "PASS"
+
+
+def test_the_cap_stops_before_a_turn_that_would_pass_it():
+    cap, floor = Decimal("0.50"), Decimal("0.01")
+    assert not sweep._cap_reached(Decimal("0"), Decimal("0"), floor, cap)
+    assert not sweep._cap_reached(Decimal("0.48"), Decimal("0.02"), floor, cap)
+    assert sweep._cap_reached(Decimal("0.48"), Decimal("0.03"), floor, cap)
+    assert sweep._cap_reached(Decimal("0.495"), Decimal("0"), floor, cap), "an unpriced turn still costs the floor"
+
+
+def test_cached_tokens_are_priced_at_the_cached_rate():
+    calls = [{"model": "m1", "prompt": 1_000_000, "completion": 0, "cached": 500_000}]
+    usd = sweep._usd(calls, {"m1": (Decimal("0.10"), Decimal("0.02"), Decimal("0.40"))}, Decimal("0.01"))
+    assert usd == Decimal("0.06")
