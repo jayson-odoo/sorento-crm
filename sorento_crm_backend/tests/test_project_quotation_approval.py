@@ -109,6 +109,13 @@ def _manager(db) -> str:
     db.add(role)
     db.flush()
     db.add(UserRolePermission(id=_uid(), role_id=role.id, permission_id=perm.id))
+    # Routing also needs the project view: an approver must be able to open the quotation.
+    view = db.query(UserPermission).filter(UserPermission.slug == "projects.projects.view").first()
+    if view is None:
+        view = UserPermission(id=_uid(), slug="projects.projects.view", name="View projects")
+        db.add(view)
+        db.flush()
+    db.add(UserRolePermission(id=_uid(), role_id=role.id, permission_id=view.id))
     db.add(UserRoleAssignment(id=_uid(), user_id=user_id, role_id=role.id))
     from app.models.company import UserCompany
 

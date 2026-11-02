@@ -444,7 +444,9 @@ def test_a_line_at_or_above_its_default_price_is_not_a_discount_and_never_gated(
 # --------------------------------------------------------------- R4-R7: routing
 
 
-def _approver(db, name: str, *, superior: str | None = None, grant: bool = True) -> str:
+def _approver(
+    db, name: str, *, superior: str | None = None, grant: bool = True, view: bool = True
+) -> str:
     """An active user, optionally holding the approve grant through a role, with a superior."""
     from app.models.user import (
         User,
@@ -481,6 +483,14 @@ def _approver(db, name: str, *, superior: str | None = None, grant: bool = True)
         db.add(role)
         db.flush()
         db.add(UserRolePermission(id=_uid(), role_id=role.id, permission_id=perm.id))
+        if view:
+            # Opening the quotation needs the project view grant (crew B1).
+            seen = db.query(UserPermission).filter(UserPermission.slug == VIEW).first()
+            if seen is None:
+                seen = UserPermission(id=_uid(), slug=VIEW, name="View projects")
+                db.add(seen)
+                db.flush()
+            db.add(UserRolePermission(id=_uid(), role_id=role.id, permission_id=seen.id))
         db.add(UserRoleAssignment(id=_uid(), user_id=user_id, role_id=role.id))
         db.flush()
     return user_id
@@ -513,6 +523,7 @@ def _org(db, owner: str) -> dict:
 
 
 APPROVE = "projects.quotations.approve"
+VIEW = "projects.projects.view"
 
 
 def test_a_discount_routes_to_the_owners_superior_and_only_they_or_above_decide():
@@ -855,3 +866,36 @@ def test_the_payload_says_whether_this_viewer_may_decide():
         assert qdocs.serialize_document(db, document, viewer_id=north)["viewer_may_decide"] is False
         assert qdocs.serialize_document(db, document, viewer_id=owner)["viewer_may_decide"] is False
         assert qdocs.serialize_document(db, document)["viewer_may_decide"] is None
+
+
+# ------------------------------------------------- crew browser pass B1: only people who can open it
+
+
+def test_a_superior_who_cannot_open_projects_is_skipped_up_the_line():
+    """Crew B1 (3 Nov): on the dev copy the project sales manager role holds the approve grant
+    but not `projects.projects.view`, so a request routed there could not even be opened."""
+    from app.models.user import User
+
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        ck = _approver(db, "CK")
+        blind = _approver(db, "Manager Without View", superior=ck, view=False)
+        db.query(User).filter(User.id == owner).update({"superior_id": blind})
+        db.flush()
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        _ask(db, document, owner)
+        assert document.approver_user_id == ck
+
+
+def test_nobody_who_can_open_it_means_nobody_is_set_up():
+    from app.services import project_quotation_approval_service as approval
+
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        _settings(db).default_quotation_approver_user_id = _approver(db, "Blind", view=False)
+        db.flush()
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        with pytest.raises(AppException) as refused:
+            _ask(db, document, owner, ensure_default=False)
+        assert refused.value.detail["code"] == "quotation_approver_not_configured"
+        assert approval.current_key(db, document) is None

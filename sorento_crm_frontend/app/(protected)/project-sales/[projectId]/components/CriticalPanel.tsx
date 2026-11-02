@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { getUserLookup } from '@/services/userSelectService';
+import { parseDateTimeAsUTC } from '@/lib/helpers';
 import { useUpdateProject } from '../../_shared/hooks/useProjects';
 import type { Project } from '../../_shared/types/project.types';
 import { InfoHint } from './InfoHint';
@@ -79,7 +80,7 @@ export function CriticalPanel({ project }: { project: Project }) {
             been in negotiation. The rule behind the flag moved to the icon above. */}
         {project.is_critical && (
           <p className="text-xs text-muted-foreground">
-            Raised {formatDate(project.critical_at) ?? 'recently'}
+            Raised {formatCriticalDate(project.critical_at) ?? 'recently'}
             {project.critical_at
               ? ` · ${daysSince(project.critical_at)} days in negotiation`
               : ''}
@@ -180,19 +181,24 @@ export function CriticalPanel({ project }: { project: Project }) {
   );
 }
 
-function formatDate(iso?: string | null): string | null {
+/**
+ * The server stores `critical_at` as naive UTC. Read it as UTC and show the Malaysia date: a
+ * flag raised at 06:46 MYT on 3 Nov is 22:46 UTC on 2 Nov, and must read "03 Nov".
+ */
+export function formatCriticalDate(iso?: string | null): string | null {
   if (!iso) return null;
-  const date = new Date(iso);
+  const date = parseDateTimeAsUTC(iso);
   if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleDateString('en-MY', {
+  return new Intl.DateTimeFormat('en-GB', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
-  });
+    timeZone: 'Asia/Kuala_Lumpur',
+  }).format(date);
 }
 
 function daysSince(iso: string): number {
-  const then = new Date(iso).getTime();
+  const then = parseDateTimeAsUTC(iso).getTime();
   if (Number.isNaN(then)) return 0;
   return Math.max(0, Math.floor((Date.now() - then) / 86_400_000));
 }

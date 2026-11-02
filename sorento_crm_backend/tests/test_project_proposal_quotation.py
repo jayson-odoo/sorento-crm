@@ -25,6 +25,11 @@ from app.services.error_handler import AppException
 
 from ._pg_fixture import blank_session
 
+# PS-QUOTE-RULES: any price below the list price is a discount that needs approval before
+# Issue. These tests price lines for their own arithmetic, so the list price sits below every
+# price they use, and no line is a discount unless a test says so.
+FIXTURE_LIST_PRICE = "1.00"
+
 MARKER = "zzt-ppq"
 QUOTE_PREFIX = f"{MARKER}/QT/"
 
@@ -81,7 +86,7 @@ def _product(db) -> Product:
         product_name=f"{MARKER} WC Suite",
         category_id=category.id,
         base_uom_id=uom.id,
-        list_price=Decimal("300.00"),
+        list_price=Decimal(FIXTURE_LIST_PRICE),
     )
     db.add(row)
     db.flush()

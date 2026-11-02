@@ -65,6 +65,8 @@ STATUS_REJECTED = "rejected"
 STATUS_ISSUED = "issued"
 
 APPROVE_PERMISSION = "projects.quotations.approve"
+# What opening a quotation of another salesperson's project needs (quotation_documents.READ).
+VIEW_PERMISSION = "projects.projects.view"
 
 # The rungs a salesperson may move to themselves. Everything else on the graph belongs to an act
 # with its own rules (a permission, a reason, an actual issue), so the generic move route refuses
@@ -347,9 +349,9 @@ def _eligible(
     requester_id: Optional[str],
     company_id: Optional[str],
 ) -> bool:
-    """Active, a person, holds the grant, and may work in the quotation's company (the same
-    company rule ``project_notify_service.approver_user_ids`` applies): an approver who cannot
-    open the project cannot decide it."""
+    """Active, a person, holds the grant AND the project view, and may work in the quotation's
+    company (the company rule ``project_notify_service.approver_user_ids`` applies): an approver
+    who cannot open the project cannot decide it."""
     from app.models.company import UserCompany
     from app.models.user import UserStatus
     from app.services.user_service import UserPermissionService
@@ -366,7 +368,10 @@ def _eligible(
         is None
     ):
         return False
-    return APPROVE_PERMISSION in UserPermissionService(db).get_user_permission_slugs(user.id)
+    slugs = UserPermissionService(db).get_user_permission_slugs(user.id)
+    # Crew B1 (3 Nov): holding the grant is not enough, the approver must be able to OPEN the
+    # quotation, which needs the full project view (`view_own` reaches only their own projects).
+    return APPROVE_PERMISSION in slugs and VIEW_PERMISSION in slugs
 
 
 def superior_chain(db: Session, user_id: Optional[str]) -> list[str]:
