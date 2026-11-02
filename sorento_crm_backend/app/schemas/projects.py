@@ -2353,6 +2353,7 @@ class QuotationSignScopeLine(BaseModel):
     brand: Optional[str] = None
     product_code: Optional[str] = None
     quantity: Decimal = Decimal("0")
+    uom: Optional[str] = None
     unit_price: Decimal = Decimal("0")
     complete_set: Optional[str] = None
     band_label: Optional[str] = None

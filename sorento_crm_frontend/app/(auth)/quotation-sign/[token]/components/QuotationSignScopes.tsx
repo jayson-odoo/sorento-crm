@@ -104,6 +104,12 @@ function Picture({ src, alt }: { src?: string | null; alt: string }) {
   );
 }
 
+/** The QTY cell as the PDF prints it: the count, then the unit when there is one ("2 pcs"). */
+function withUom(line: QuotationSignLine): string {
+  const uom = line.uom?.trim();
+  return uom ? `${formatQty(line.quantity)} ${uom}` : formatQty(line.quantity);
+}
+
 /** Description, with any typed technical-spec text from before drawings beneath it, as the PDF. */
 function Description({ line }: { line: QuotationSignLine }) {
   return (
@@ -409,7 +415,7 @@ function ScopeTable({
                               format={formatQty}
                             />
                           ) : (
-                            formatQty(line.quantity)
+                            withUom(line)
                           ),
                         unit_rate:
                           amendment && answers.get(`${line.id}:unit_price`) ? (

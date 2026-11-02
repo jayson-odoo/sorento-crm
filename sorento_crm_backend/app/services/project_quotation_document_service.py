@@ -1538,6 +1538,8 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
                         "brand": line.brand_snapshot,
                         "product_code": line.product_code_snapshot,
                         "quantity": Decimal(line.quantity or 0),
+                        # Printed after the quantity, as the PDF's QTY cell does ("2 pcs").
+                        "uom": line.uom,
                         "unit_price": Decimal(line.unit_price or 0),
                         "complete_set": line.complete_set,
                         "band_label": line.band_label,

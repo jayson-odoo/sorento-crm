@@ -101,6 +101,8 @@ export type QuotationSignLine = {
   brand: string | null;
   product_code: string | null;
   quantity: string;
+  /** Printed after the quantity, as the PDF's QTY cell does ("2 pcs"). */
+  uom?: string | null;
   unit_price: string;
   complete_set: string | null;
   band_label: string | null;

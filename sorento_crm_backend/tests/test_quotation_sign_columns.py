@@ -111,6 +111,9 @@ def test_the_sign_page_line_carries_its_photo_and_drawing_as_inline_bytes(monkey
 
         assert with_photo["image_url"].startswith("data:image/jpeg;base64,")
         assert with_photo["drawing_url"].startswith("data:image/jpeg;base64,")
+        # QTY's unit travels too: the PDF prints "4 NO", so the page must be able to.
+        assert with_photo["uom"]
+        assert with_photo["uom"] == without["uom"]
         assert without["image_url"] is None
         assert without["drawing_url"] is None
 

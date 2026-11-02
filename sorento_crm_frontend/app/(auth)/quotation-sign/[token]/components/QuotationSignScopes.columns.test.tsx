@@ -38,7 +38,7 @@ function line(
 
 const LINES = [
   line('l1', '1', { image_url: PHOTO, drawing_url: DRAWING }),
-  line('l2', '2', { technical_spec: 'Typed spec text' }),
+  line('l2', '2', { technical_spec: 'Typed spec text', uom: 'pcs' }),
 ];
 
 function headers(): string[] {
@@ -81,6 +81,8 @@ describe('QuotationSignScopes columns', () => {
     ).toHaveAttribute('src', DRAWING);
     // Typed spec text from before drawings sits under the description, as on the PDF.
     const secondRow = document.querySelectorAll('tbody tr')[1];
+    // QTY carries the unit, as the PDF's QTY cell does.
+    expect(secondRow.querySelectorAll('td')[6].textContent).toBe('2 pcs');
     expect(secondRow.querySelectorAll('td')[3].textContent).toContain(
       'Typed spec text',
     );
