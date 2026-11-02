@@ -67,6 +67,7 @@ import type {
   DebtorOption,
   PriceMode,
   TagItemOption,
+  TagPreviewLineInput,
 } from '../lib/price-tag-request-service';
 import * as portalPriceTagRequest from '../lib/price-tag-request-service';
 import {
@@ -85,13 +86,16 @@ import {
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { PriceTagLinesTable } from '@/components/dealer-kit/PriceTagLinesTable';
 import { PriceTagLinesView } from '@/components/dealer-kit/PriceTagLinesView';
+import { PriceTagLivePreview } from '@/components/dealer-kit/PriceTagLivePreview';
 import {
   usePriceTagLineEditor,
   type PriceTagLineLookups,
 } from '@/hooks/usePriceTagLineEditor';
 import {
   draftLinesPayload,
+  lineNeedsTemplate,
   lineToDraft,
+  MISSING_TAG_TEMPLATE,
   type DraftLine,
 } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { ChangeRequestPayload } from '@/lib/dealer-kit/review-comments';
@@ -181,6 +185,19 @@ function lineErrorToast(fields: string[], message: string): void {
   toast.error(`Line ${index + 1}: ${message}`);
 }
 
+/**
+ * A service call that may not exist (PRICETAG-TEMPLATE-PER-PRODUCT's two
+ * lookups on an injected client that predates them). Reading a missing
+ * export off a strict module mock throws rather than answering undefined.
+ */
+function optionalCall<T>(read: () => T | undefined): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
 /** Bring the first complaint into view, after the render that drew it. */
 function scrollToFirstProblem(): void {
   setTimeout(() => {
@@ -237,8 +254,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       lookupTagItems: (query) => svc().lookupTagItems(query),
       lookupProductCombos: (productId) => svc().lookupProductCombos(productId),
       lookupLinePricing: (mode, lines) => svc().lookupLinePricing(mode, lines),
+      // PRICETAG-TEMPLATE-PER-PRODUCT. Read at call time and guarded: a
+      // service without it (an older mock) answers "no templates".
+      lookupProductTagTemplates: (productId) => {
+        const fn = optionalCall(() => svc().lookupProductTagTemplates);
+        return fn ? fn(productId) : Promise.resolve([]);
+      },
     };
   }, [client]);
+  const previewLookup = useCallback(
+    (mode: PriceMode, previewRows: TagPreviewLineInput[]) => {
+      const fn = optionalCall(
+        () => clientService(client, 'priceTagRequest', portalPriceTagRequest).lookupTagPreview,
+      );
+      return fn ? fn(mode, previewRows) : Promise.reject(new Error('Preview unavailable'));
+    },
+    [client],
+  );
   const designCalls = useMemo(
     () => ({
       loadDesign: (id: string) => client.getPriceTagDesign(id),
@@ -1150,16 +1182,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ---- Submit (D48b: the button is live, the click explains itself) ----
   const handleSubmit = useCallback(async () => {
     const { next, emptyRows } = collectProblems();
-    if (Object.keys(next).length > 0 || emptyRows.length > 0) {
+    // PRICETAG-TEMPLATE-PER-PRODUCT (AC-10): a product with several templates
+    // needs the salesperson's pick; named on the row, like an empty one.
+    const templateRows = lines.flatMap((l, index) => (lineNeedsTemplate(l) ? [index] : []));
+    if (Object.keys(next).length > 0 || emptyRows.length > 0 || templateRows.length > 0) {
       setServerMessage(null);
       setFieldErrors(next);
       setLines((prev) =>
         prev.map((l, index) => ({
           ...l,
-          guard_error: emptyRows.includes(index) ? EMPTY_LINE : null,
+          guard_error: emptyRows.includes(index)
+            ? EMPTY_LINE
+            : templateRows.includes(index)
+              ? MISSING_TAG_TEMPLATE
+              : null,
         })),
       );
-      openSectionForProblems(next, emptyRows.length > 0);
+      openSectionForProblems(next, emptyRows.length > 0 || templateRows.length > 0);
       scrollToFirstProblem();
       return;
     }
@@ -1963,6 +2002,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             <Plus className="size-3.5 mr-1" /> Add line
           </Button>
         </div>
+
+        {/* PRICETAG-TEMPLATE-PER-PRODUCT R5: the tags as they will look, from
+            the first item on, redrawn as the lines change. */}
+        <PriceTagLivePreview
+          lines={lines}
+          priceMode={priceMode}
+          lookupTagPreview={previewLookup}
+          docNumber={request?.doc_number}
+        />
       </FormSection>
 
       {/* Price - mode only (D1/AC-S1-3, owner ruling 15 Sep): Selling is

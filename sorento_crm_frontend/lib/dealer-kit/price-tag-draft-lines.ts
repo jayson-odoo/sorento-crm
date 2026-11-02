@@ -12,6 +12,7 @@ import type {
   PriceTagLineType,
   PriceTagRequestLineInput,
   ProductComboOption,
+  ProductTagTemplateOption,
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 
@@ -71,6 +72,13 @@ export interface DraftLine {
   /** The last `lookupLinePricing` answer for this line's key, or null before
    *  the first response lands. */
   pricing: LinePricingResult | null;
+  // ---- PRICETAG-TEMPLATE-PER-PRODUCT ----
+  /** The salesperson's template pick, or the product's single link. Null = none. */
+  tag_template_id?: string | null;
+  /** The product's published templates, answered once per product. */
+  tag_templates?: ProductTagTemplateOption[];
+  /** Which product `tag_templates` was answered for; anything else = not asked yet. */
+  tag_templates_for?: string | null;
 }
 
 /**
@@ -98,6 +106,7 @@ export interface DraftLineSource {
   }>;
   promotion_id?: string | null;
   manual_sell_price?: number | null;
+  tag_template_id?: string | null;
 }
 
 let partKeySeq = 0;
@@ -304,7 +313,44 @@ export function lineToDraft(line: DraftLineSource): DraftLine {
     promotion_locked: line.promotion_id != null,
     manual_sell_price: line.manual_sell_price ?? null,
     pricing: null,
+    // The templates lookup answers the options once the line is on screen.
+    tag_template_id: line.tag_template_id ?? null,
+    tag_templates: [],
+    tag_templates_for: null,
   };
+}
+
+/**
+ * PRICETAG-TEMPLATE-PER-PRODUCT: the Template field's state for a line.
+ * `none` = no field (no published link, or a set line), `single` = shown as
+ * text, `many` = the salesperson picks; `loading` until the lookup answered
+ * for this line's current product.
+ */
+export type LineTemplateState =
+  | { kind: 'none' }
+  | { kind: 'loading' }
+  | { kind: 'single'; template: ProductTagTemplateOption }
+  | { kind: 'many'; options: ProductTagTemplateOption[]; picked: ProductTagTemplateOption | null };
+
+export function lineTemplateState(line: DraftLine): LineTemplateState {
+  if (line.line_type !== 'product' || !line.product_id) return { kind: 'none' };
+  if (line.tag_templates_for !== line.product_id) return { kind: 'loading' };
+  const options = line.tag_templates ?? [];
+  if (options.length === 0) return { kind: 'none' };
+  if (options.length === 1) return { kind: 'single', template: options[0] };
+  return {
+    kind: 'many',
+    options,
+    picked: options.find((o) => o.id === line.tag_template_id) ?? null,
+  };
+}
+
+/** The Submit-time check (AC-10, client side): a many-template line needs a pick. */
+export const MISSING_TAG_TEMPLATE = 'Pick a tag template for this line.';
+
+export function lineNeedsTemplate(line: DraftLine): boolean {
+  const state = lineTemplateState(line);
+  return state.kind === 'many' && state.picked === null;
 }
 
 /** AC-S2-8. `alternatives` is gone; `combo_id` and the part rows go in its
@@ -333,5 +379,6 @@ export function draftLinesPayload(lines: DraftLine[]): PriceTagRequestLineInput[
     // `setManualSellPrice` already set on it.
     promotion_id: l.promotion_id,
     manual_sell_price: l.manual_sell_price,
+    tag_template_id: l.line_type === 'product' ? (l.tag_template_id ?? null) : null,
   }));
 }

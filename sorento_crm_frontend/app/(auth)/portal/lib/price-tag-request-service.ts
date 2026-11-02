@@ -89,6 +89,8 @@ import { extractApiError } from '@/lib/api-client';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { filenameFromContentDisposition, saveBlobAs } from '@/lib/save-blob';
 import type { PrintBy } from '@/lib/dealer-kit/print-collection';
+import type { LineTagData, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
+import type { TagFont } from '@/lib/dealer-kit/fonts';
 import type {
   ChangeRequestPayload,
   ReviewComment,
@@ -189,6 +191,41 @@ export interface PriceTagRequestLine {
   list_price?: number | null;
   sell_price?: number | null;
   sell_price_basis?: 'manual' | 'promotion' | 'list' | null;
+  /** PRICETAG-TEMPLATE-PER-PRODUCT: the template this line prints with, and its name. */
+  tag_template_id?: string | null;
+  tag_template_name?: string | null;
+}
+
+/** One template a product may print with (PRICETAG-TEMPLATE-PER-PRODUCT). */
+export interface ProductTagTemplateOption {
+  id: string;
+  name: string;
+  family: string;
+  published: boolean;
+  width_mm: number | null;
+  height_mm: number | null;
+}
+
+/** One form line, as the live preview reads it. `key` comes back as the row's `line_id`. */
+export interface TagPreviewLineInput {
+  key: string;
+  line_type: PriceTagLineType;
+  product_id: string | null;
+  product_set_id: string | null;
+  combo_id: string | null;
+  parts: LinePartIn[];
+  promotion_id: string | null;
+  manual_sell_price: number | null;
+  tag_template_id: string | null;
+}
+
+/** `POST /lookups/tag-preview`: per line key, the template to draw and the resolved data. */
+export interface TagPreviewResponse {
+  lines: LineTagData[];
+  templates: Record<string, TagTemplate>;
+  assets: Record<string, string>;
+  images: Record<string, string>;
+  fonts: TagFont[];
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch.
@@ -364,6 +401,8 @@ export type PriceTagRequestLineInput = {
   // create, update AND revise (the same `payloadLines()` builds all three).
   promotion_id?: string | null;
   manual_sell_price?: number | null;
+  /** PRICETAG-TEMPLATE-PER-PRODUCT: the salesperson's pick (null = none). */
+  tag_template_id?: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -552,6 +591,33 @@ export function makePriceTagRequestService(
       `${LOOKUPS}/product-combos/${encodeURIComponent(productId)}`,
     );
     return unwrap<ProductCombosLookup>(res, 'Failed to load the packages for this product');
+  }
+
+  /**
+   * The published templates a picked product may print with
+   * (PRICETAG-TEMPLATE-PER-PRODUCT): one = used automatically, several = the
+   * salesperson picks, none = no field. Called once per product pick.
+   */
+  async function lookupProductTagTemplates(
+    productId: string,
+  ): Promise<ProductTagTemplateOption[]> {
+    const res = await fetcher(
+      `${LOOKUPS}/product-tag-templates/${encodeURIComponent(productId)}`,
+    );
+    return unwrap<ProductTagTemplateOption[]>(res, 'Failed to load the tag templates for this product');
+  }
+
+  /** The live preview: the form's lines in progress, nothing saved. */
+  async function lookupTagPreview(
+    priceMode: PriceMode,
+    lines: TagPreviewLineInput[],
+  ): Promise<TagPreviewResponse> {
+    const res = await fetcher(`${LOOKUPS}/tag-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ price_mode: priceMode, lines }),
+    });
+    return unwrap<TagPreviewResponse>(res, 'Failed to draw the preview');
   }
 
   // ---------------------------------------------------------------------------
@@ -858,6 +924,8 @@ export function makePriceTagRequestService(
     lookupProductSets,
     lookupTagItems,
     lookupProductCombos,
+    lookupProductTagTemplates,
+    lookupTagPreview,
     lookupLinePricing,
     listRequests,
     listRequestsAsSummaries,
@@ -886,6 +954,8 @@ export const {
   lookupProductSets,
   lookupTagItems,
   lookupProductCombos,
+  lookupProductTagTemplates,
+  lookupTagPreview,
   lookupLinePricing,
   listRequests,
   listRequestsAsSummaries,

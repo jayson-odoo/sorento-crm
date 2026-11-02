@@ -1707,6 +1707,36 @@ for _key, _fn, _label in (
     )
 
 
+def _unassign_tag_template_products(db: Session, payload: dict):
+    """PRICETAG-TEMPLATE-PER-PRODUCT: the bulk "Remove from N products" -
+    an unlink, so it parks (5s, reversible: Add puts the links back). The
+    filter is re-applied at commit, under the requester's own scope."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.bulk_assign(
+        db,
+        _entity_id(payload),
+        {
+            key: payload.get(key) or []
+            for key in ("brand_ids", "category_ids", "item_class_ids", "family_codes")
+        },
+        "remove",
+        user_id=payload.get("requested_by_id"),
+    )
+
+
+register(
+    FormAction(
+        key="tag_template.unassign_products",
+        entity_types=("tag_template",),
+        execute=_unassign_tag_template_products,
+        window=WINDOW_REVERSIBLE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Remove tag template from products",
+    )
+)
+
+
 def _delete_tag_size_preset(db: Session, payload: dict):
     """Both callers - the `/dealer-kit/tag-sizes` listing's row menu and the
     request designer's Tag Size control (the saved-size `x`) - park through

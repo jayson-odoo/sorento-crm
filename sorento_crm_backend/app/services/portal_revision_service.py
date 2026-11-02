@@ -424,6 +424,10 @@ def _convert_ptag_revise_line(raw: dict, idx: int) -> dict:
         converted["promotion_id"] = clean.get("promotion_id")
     if "manual_sell_price" in raw:
         converted["manual_sell_price"] = clean.get("manual_sell_price")
+    # PRICETAG-TEMPLATE-PER-PRODUCT: same "sent vs not sent" rule as the
+    # price basis above - absent means carry the old line's pick.
+    if "tag_template_id" in raw:
+        converted["tag_template_id"] = clean.get("tag_template_id")
     return converted
 
 
@@ -528,6 +532,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 ],
                 old.promotion_id,
                 old.manual_sell_price,
+                old.tag_template_id,
             )
             for old in row.lines
         }
@@ -540,6 +545,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                     parts,
                     promotion_id,
                     manual_sell_price,
+                    tag_template_id,
                 ) = old_by_key[key]
                 line["included_accessories"] = included_accessories
                 # Same carry-over reason as `included_accessories` above, now
@@ -561,6 +567,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 # overriding a deliberate clear.
                 line.setdefault("promotion_id", promotion_id)
                 line.setdefault("manual_sell_price", manual_sell_price)
+                line.setdefault("tag_template_id", tag_template_id)
         # Security review (this round): a revision is a PORTAL CONTACT
         # writing, exactly like create/update - `replace_lines` with no
         # viewer falls back to `staff_viewer()` (`is_internal_copy=True`),
@@ -582,6 +589,12 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
 
     with company_scope(db, frozenset({row.company_id})):
         PriceTagRequestService.replace_lines(db, row, converted, viewer=viewer)
+        # PRICETAG-TEMPLATE-PER-PRODUCT: a revision is a submit-grade save, so
+        # a many-template line still needs its pick (the refusal rolls the
+        # whole revise transaction back with it).
+        from app.services.dealer_kit import product_tag_template_service
+
+        product_tag_template_service.require_line_templates(db, row)
     # Where the retired set guard ran, the D2 warning is stamped instead - on the
     # rows that now exist, so submit and revise cannot answer differently.
     PriceTagRequestService.apply_package_warnings(db, row)
