@@ -581,8 +581,11 @@ function LineRow({
       {templateState.kind === 'single' && (
         <tr className="align-top">
           <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
+            {/* Sticky + capped to the viewport: the table scrolls sideways at
+                375px, and a sub-row spanning every column otherwise runs past
+                the card's right edge (browser pass). */}
             <p
-              className="truncate border-l-2 border-border pl-3 text-xs text-muted-foreground"
+              className="sticky left-0 max-w-[calc(100vw-6rem)] truncate border-l-2 border-border pl-3 text-xs text-muted-foreground sm:max-w-none"
               title={templateState.template.name}
             >
               Template: {templateState.template.name}
@@ -593,7 +596,7 @@ function LineRow({
       {templateState.kind === 'many' && (
         <tr className="align-top">
           <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
-            <div className="border-l-2 border-border pl-3">
+            <div className="sticky left-0 max-w-[calc(100vw-6rem)] border-l-2 border-border pl-3 sm:max-w-none">
               <SearchableSelect
                 clearable
                 truncateTriggerLabel

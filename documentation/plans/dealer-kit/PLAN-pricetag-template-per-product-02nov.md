@@ -1,7 +1,6 @@
 # PLAN: price tag templates per product (auto-pick or choose, live preview)
 
-Status: building (track: full L lane, migration + security review). Card answers assumed on the
-recommendations (Q1 c, Q2 a, Q3 a, Q4 a, Q5 a) until crew answers.
+Status: in review (track: full L lane, migration + security review). Card answered (Q1 c, Q2 a, Q3 a, Q4 a, Q5 a), mock approved; reviewer READY, security blocker fixed, browser pass done.
 
 Lane: PRICETAG-TEMPLATE-PER-PRODUCT. Card: `CARD-pricetag-template-per-product-02nov.md`.
 UAC: `pricetag-template-per-product-acceptance-criteria.md`. Mock:
@@ -42,7 +41,34 @@ UAC: `pricetag-template-per-product-acceptance-criteria.md`. Mock:
 ## Tests (red first)
 
 - pytest: links CRUD + RBAC, bulk preview/assign + empty-filter refusal, line rule
-  (single fills, many refuses at submit, invalid refused, set line refused), portal lookup scope,
+  (single fills, many refuses at submit, invalid dropped, set line dropped), portal lookup scope,
   preview writes nothing and returns the chosen template, migration up/down.
 - vitest: section (manager vs viewer vs empty), line Template cell (one / many / none), preview
   builds one tag per line, designer default prefers the stored template.
+
+## Browser evidence run (cloud sandbox, agent-browser 0.27.0, 2 Nov)
+
+Stack: backend uvicorn :8000 on `.env.ci-tests` (sorento_test, bootstrapped), `npm run dev` :3000.
+Seed (ZZT names): every module installed; a non-admin staff role with every permission except
+`dealer_kit.price_tag_requests.view/.process` (My Requests refuses admins), a workspace, a sales
+agent + customer for the contact; product A (one live template), B (two live templates, different
+sizes), C (none).
+
+1. PASS. Product B > Overview lists both templates; removing one and adding it back each sent
+   `PUT /dealer-kit/products/{id}/tag-templates` 200, toast "Price tag templates saved". Product C
+   shows "No price tag templates" + hint, no button.
+2. PASS. Sidebar Dealer Kit > Room Designer > Tag Templates > row "Assign to products": empty
+   filter disables both buttons and says "Pick at least one brand, category, item class or model
+   family."; brand picked: "3 products match, 2 already have this template"; Add sent
+   `POST /assign` 200, toast "Added to 1 product"; Remove showed a "Removing in Ns" toast with
+   Cancel (no confirm), Cancel kept all links (DB count).
+3. PASS. Price Tag Requests > Create: product A line shows "Template: <name>" and the Preview
+   appears on the first item (`/my-requests/lookups/tag-preview` 200); product B shows the "Tag
+   template" select, Submit without a pick shows "Pick a tag template for this line." on the row
+   and sends nothing; picking the large template redraws as Sheet 1 / 2; product C has no field
+   and draws on the family default.
+4. 375px: product page, dialog and list usable. The form's Template sub-row ran past the card edge
+   inside the sideways-scrolling lines table; fixed (sticky, viewport-capped sub-row).
+
+Screenshots kept (cap 2): `evidence-pricetag-template-per-product/2-assign-dialog-brand-picked-1280.png`,
+`3-form-product-B-picked-large-1280.png`.
