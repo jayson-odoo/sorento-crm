@@ -113,7 +113,12 @@ export function QuotationSpecSheetTab() {
           title="No items on this revision"
           hint="Add a product or product set line to the quotation."
         />
-      ) : !ready ? null : preview.isLoading ? (
+      ) : !ready ? (
+        <EmptyState
+          title="Pick a cover and a page template"
+          hint="The pages show here once both are picked."
+        />
+      ) : preview.isLoading ? (
         <Skeleton className="aspect-video w-full" />
       ) : preview.error || !preview.data ? (
         <EmptyState
@@ -315,6 +320,9 @@ function SpecSheetPages({
   const fullPayload = { ...payload, page_id: '', source: 'version' } as TagSheetDesignPayload;
   const natural = sheetPixelSize(payload.doc ?? null);
   const thumbScale = natural.width > 0 ? THUMB_WIDTH / natural.width : 0;
+  // The template decides the page size (16:9 in the sample, any size allowed), so the
+  // thumbnail and its drag handle follow it rather than assume 16:9.
+  const thumbHeight = natural.height > 0 ? natural.height * thumbScale : (THUMB_WIDTH * 9) / 16;
 
   return (
     <div className="flex min-w-0 flex-col gap-3" data-testid="spec-sheet-pages">
@@ -326,6 +334,7 @@ function SpecSheetPages({
           payload={fullPayload}
           sheet={sheetIndex.get(COVER)}
           scale={thumbScale}
+          height={thumbHeight}
         />
         <Sortable
           value={items}
@@ -344,6 +353,7 @@ function SpecSheetPages({
                   payload={fullPayload}
                   sheet={sheetIndex.get(page.key)}
                   scale={thumbScale}
+                  height={thumbHeight}
                   handle={
                     canEdit ? (
                       <SortableItemHandle
@@ -352,7 +362,7 @@ function SpecSheetPages({
                         // (Space, arrows, Space).
                         tabIndex={0}
                         className="absolute left-1 top-1 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
-                        style={{ width: THUMB_WIDTH, height: (THUMB_WIDTH * 9) / 16 }}
+                        style={{ width: THUMB_WIDTH, height: thumbHeight }}
                         onClick={() => setSelected(page.key)}
                       />
                     ) : null
@@ -416,6 +426,7 @@ function PageThumb({
   payload,
   sheet,
   scale,
+  height,
   handle,
 }: {
   label: string;
@@ -425,6 +436,7 @@ function PageThumb({
   payload: TagSheetDesignPayload;
   sheet: number | undefined;
   scale: number;
+  height: number;
   handle?: React.ReactNode;
 }) {
   return (
@@ -436,7 +448,7 @@ function PageThumb({
     >
       <div
         className="overflow-hidden rounded-sm bg-muted"
-        style={{ width: THUMB_WIDTH, height: (THUMB_WIDTH * 9) / 16 }}
+        style={{ width: THUMB_WIDTH, height }}
         onClick={onSelect}
         aria-hidden
       >
@@ -526,6 +538,8 @@ function OpenPage({
   const [width, setWidth] = React.useState(0);
   const [editing, setEditing] = React.useState<EditableField | null>(null);
   const [draft, setDraft] = React.useState('');
+  // Escape unmounts the input, which can fire its blur: the flag stops that blur from saving.
+  const cancelled = React.useRef(false);
 
   React.useLayoutEffect(() => {
     const node = box.current;
@@ -552,10 +566,12 @@ function OpenPage({
 
   const start = (field: EditableField) => {
     if (!page) return;
+    cancelled.current = false;
     setDraft(page[field]);
     setEditing(field);
   };
   const finish = () => {
+    if (cancelled.current) return;
     if (page && editing && draft !== page[editing]) {
       const value = editing === 'area' ? draft.trim().toUpperCase() : draft;
       onChange({ [editing]: value } as Partial<SpecSheetPage>);
@@ -564,7 +580,7 @@ function OpenPage({
   };
 
   if (page?.hidden) {
-    return <EmptyState title="Left out of the spec sheet" hint="Put back prints this page again." />;
+    return <EmptyState title="Left out of the spec sheet" hint="Put back to print it." />;
   }
 
   return (
@@ -591,7 +607,10 @@ function OpenPage({
                 onBlur={finish}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') finish();
-                  if (e.key === 'Escape') setEditing(null);
+                  if (e.key === 'Escape') {
+                    cancelled.current = true;
+                    setEditing(null);
+                  }
                 }}
                 style={style}
                 className="h-auto rounded-sm bg-background px-1 py-0 text-xs"

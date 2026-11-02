@@ -56,6 +56,27 @@ vi.mock('@/components/dealer-kit/ScaledSheet', () => ({
   PX_PER_MM: 96 / 25.4,
 }));
 
+// The shared Sortable, reduced to what the tab hands it: a test can "drop" a new order.
+let dropOrder: ((next: unknown[]) => void) | null = null;
+vi.mock('@/components/ui/sortable', () => ({
+  Sortable: ({
+    value,
+    onValueChange,
+    children,
+  }: {
+    value: unknown[];
+    onValueChange: (next: unknown[]) => void;
+    children: React.ReactNode;
+  }) => {
+    dropOrder = (next) => onValueChange(next ?? value);
+    return <div>{children}</div>;
+  },
+  SortableItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  SortableItemHandle: (props: Record<string, unknown>) => (
+    <div aria-label={props['aria-label'] as string} />
+  ),
+}));
+
 let canEdit = true;
 vi.mock('./QuotationDocumentContext', () => ({
   useQuotationDocumentScreen: () => ({ projectId: 'p1', documentId: 'd1', canEdit }),
@@ -156,6 +177,7 @@ function sheet(key: string) {
             : [
                 textLayer('area', 'AREA : {{line.area}}', 110),
                 textLayer('comment', 'COMMENT : {{ line.comment }}', 130),
+                textLayer('marker', '{{product.code}} {{line.marker}}', 150),
               ],
       },
     ],
@@ -347,5 +369,92 @@ describe('Spec sheet tab (canvas flow)', () => {
     expect(screen.queryByRole('button', { name: 'Edit Area' })).toBeNull();
     expect(screen.queryByTestId('spec-sheet-leave-out')).toBeNull();
     expect(screen.queryByLabelText('Drag SRTWB0002 to reorder')).toBeNull();
+  });
+});
+
+
+describe('Spec sheet tab (review round)', () => {
+  it('numbers printed pages only: a left-out page shows "-" and the next page closes up', async () => {
+    const base = view();
+    getSpecSheet.mockResolvedValue(
+      view({ pages: [base.pages[0], { ...base.pages[1], hidden: true }, base.pages[2]] }),
+    );
+    renderTab();
+
+    const strip = await screen.findByTestId('spec-sheet-strip');
+    expect(within(strip).getByRole('button', { name: '- SRTWB0002' })).toBeInTheDocument();
+    expect(within(strip).getByRole('button', { name: '3 SRTBT0006' })).toBeInTheDocument();
+  });
+
+  it('the marker spot types the page marker', async () => {
+    getSpecSheet.mockResolvedValue(view());
+    saveSpecSheet.mockResolvedValue(view());
+    renderTab();
+
+    await openPage('SRTWB0002');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Marker' }));
+    const input = screen.getByRole('textbox', { name: 'Marker' });
+    fireEvent.change(input, { target: { value: '**' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(saveSpecSheet).toHaveBeenCalled());
+    expect(saveSpecSheet.mock.calls[0][2].rows[1]).toMatchObject({ key: 'basin', marker: '**' });
+  });
+
+  it('Escape leaves the page as it was and saves nothing', async () => {
+    getSpecSheet.mockResolvedValue(view());
+    renderTab();
+
+    await openPage('SRTWB0002');
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Comment' }));
+    const input = screen.getByRole('textbox', { name: 'Comment' });
+    fireEvent.change(input, { target: { value: 'not this' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    fireEvent.blur(input);
+
+    expect(screen.queryByRole('textbox', { name: 'Comment' })).toBeNull();
+    // The save is a mutation (async): give it time to fire before saying it did not.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(saveSpecSheet).not.toHaveBeenCalled();
+  });
+
+  it('dropping a page in a new place saves the rows in that order', async () => {
+    getSpecSheet.mockResolvedValue(view());
+    saveSpecSheet.mockResolvedValue(view());
+    renderTab();
+
+    await screen.findByTestId('spec-sheet-strip');
+    const [wc, basin, trap] = view().pages;
+    dropOrder?.([basin, wc, trap]);
+
+    await waitFor(() => expect(saveSpecSheet).toHaveBeenCalled());
+    expect(saveSpecSheet.mock.calls[0][2].rows.map((r: { key: string }) => r.key)).toEqual([
+      'basin',
+      'set:wc',
+      'trap',
+    ]);
+  });
+
+  it('a page that already hosts a pick is not offered as an accessory', async () => {
+    const base = view();
+    getSpecSheet.mockResolvedValue(
+      view({ pages: [{ ...base.pages[0], picked: ['other'] }, base.pages[1], base.pages[2]] }),
+    );
+    renderTab();
+
+    await openPage('SRTWB0002');
+    fireEvent.click(screen.getByRole('combobox', { name: /Add accessory/i }));
+    expect(await screen.findByRole('option', { name: /SRTBT0006/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /SRTWC0001-RL/ })).toBeNull();
+  });
+
+  it('templates published but not picked: says to pick them instead of a blank area', async () => {
+    getSpecSheet.mockResolvedValue(
+      view({ settings: { ...view().settings, cover_template_id: null, page_template_id: null } }),
+    );
+    renderTab();
+
+    expect(await screen.findByText('Pick a cover and a page template')).toBeInTheDocument();
+    expect(getSpecSheetPreview).not.toHaveBeenCalled();
   });
 });

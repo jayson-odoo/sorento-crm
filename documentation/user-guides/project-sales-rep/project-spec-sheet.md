@@ -11,7 +11,7 @@ The pages are designed once by marketing as templates (see "Designing the templa
 3. **Revision**: the latest issued revision is picked for you. Pick an older one if the customer is working from it. A quotation that was never sent shows **No issued revision yet**: issue a revision first.
 4. Pick the **Cover template** and the **Page template**. **Single item template** is optional: when set, an item with no accessories uses it; when empty, every page uses the page template.
 5. The pages show as a strip of thumbnails, the cover first, then one page per quoted item in quotation order. Click a thumbnail to open that page large, exactly as it prints (**Previous** / **Next** walk the strip). On the open page:
-   - **AREA**: starts as the **Section heading** the line sits under on the **Lines** tab (for example `UNIT`). Click it on the page to type something else, for example `UNIT & PODIUM FACILITIES`; it prints in capitals.
+   - **AREA**: starts as the **Section heading** the line sits under on the **Lines** tab (for example `UNIT`). Click it on the page to type something else, for example `UNIT & PODIUM FACILITIES`; it prints in capitals. Clearing it puts the Section heading back; to print no area, leave the line without a Section heading.
    - **COMMENT** and the marker next to the code: click them on the page to type.
    - **Leave out**: the page is not printed (for example a sealant); it stays in the strip, greyed, with **Put back**. The quotation is not changed.
    - **Add accessory**: puts another quoted item on this page instead of its own page (for example a bottle trap under a basin). A product set (a WC with its angle valve and flexible hose) brings its other parts by itself.
