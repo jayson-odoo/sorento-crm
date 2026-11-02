@@ -8,6 +8,7 @@
  * `projectService`, and no Next route handler for any of it.
  */
 import { apiFetch } from '@/lib/api';
+import { qtyOverAwareError } from '../lib/qtyOverQuote';
 import { extractApiError } from '@/lib/api-client';
 import type {
   POAnnotationEditBody,
@@ -141,15 +142,19 @@ export async function retryPOExtraction(versionId: string): Promise<POVersion | 
 }
 
 /** 409 while any annotation is still proposed. The message is shown where the button is. */
-export async function confirmPOVersion(versionId: string): Promise<POVersion | null> {
+export async function confirmPOVersion(
+  versionId: string,
+  qtyOverReason?: string | null,
+): Promise<POVersion | null> {
   const response = await apiFetch(
     `${BASE}/purchase-order-versions/${versionId}/confirm`,
     {
       method: 'POST',
+      // PS-PROPOSAL-QUOTATION: sent only on the second press after a 409 po_qty_over_quoted.
+      ...(qtyOverReason ? { body: JSON.stringify({ qty_over_reason: qtyOverReason }) } : {}),
     },
   );
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Could not confirm this PO'));
+  if (!response.ok) throw await qtyOverAwareError(response, 'Could not confirm this PO');
   return asVersionOrNull(await readJson(response));
 }
 

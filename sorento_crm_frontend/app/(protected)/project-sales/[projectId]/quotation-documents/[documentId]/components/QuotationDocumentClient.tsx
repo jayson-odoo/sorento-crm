@@ -158,6 +158,7 @@ export function QuotationDocumentClient({
     onEdit: startEditing,
     onDeleted: () => router.push(`/project-sales/${projectId}?tab=quotations`),
     surface: 'inline',
+    projectOutcome: project.data?.outcome ?? null,
   });
 
   if (document.isLoading || project.isLoading) {

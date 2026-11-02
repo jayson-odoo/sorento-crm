@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumbs';
 import { useQuotationDocument } from '../../../../_shared/hooks/useQuotationDocuments';
+import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
 
 /**
  * The page title is the document NUMBER, not the id in the URL (no UUIDs in the
@@ -28,7 +29,10 @@ export function QuotationDocumentPageHeader({
   documentId: string;
 }) {
   const document = useQuotationDocument(projectId, documentId);
-  const title = document.data?.document_no ?? 'Quotation Document';
+  // PS-PROPOSAL-QUOTATION: the noun says which one this is, "Proposal PRJQ-..." / "Quotation QT-...".
+  const title = document.data
+    ? `${documentNoun(document.data)} ${document.data.document_no}`
+    : 'Proposal';
   return (
     <PageHeader
       title={title}

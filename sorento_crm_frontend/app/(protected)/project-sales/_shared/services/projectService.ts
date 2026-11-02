@@ -1,6 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { qtyOverAwareError } from '../lib/qtyOverQuote';
 import type {
   ClashPreview,
   MediaKind,
@@ -1281,7 +1282,8 @@ export async function updatePurchaseOrder(
     method: 'PUT',
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the PO'));
+  // A 409 `po_qty_over_quoted` carries the products, so the screen can ask for the reason.
+  if (!response.ok) throw await qtyOverAwareError(response, 'Failed to save the PO');
   return response.json();
 }
 

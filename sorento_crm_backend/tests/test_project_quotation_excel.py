@@ -417,10 +417,10 @@ def test_the_first_sheet_carries_the_letterhead_and_the_rest_carry_the_reference
         workbook = qxlsx.build_issue_workbook(db, issued)
 
         first = _values(workbook.worksheets[0])
-        # QUOTE-SIGN-PAGE AC2.6: the same "Quotation No." as the sign page and the PDF.
-        number = f"{document.document_no}-R{issued.issue_no}"
+        # QUOTE-SIGN-PAGE AC2.6: the same "Proposal No." as the sign page and the PDF.
+        number = f"{document.document_no}-A"
         assert number in first
-        assert "Quotation No." in first
+        assert "Proposal No." in first
         assert "Our Ref" not in first
         assert f"{MARKER}/NC/2026/007" in first
         assert f"{MARKER} Level 8, Menara Lama, Kuala Lumpur" in first
@@ -1090,7 +1090,7 @@ def test_the_export_returns_bytes_that_open_as_a_real_workbook_named_after_the_r
         assert isinstance(payload, bytes)
         assert payload[:2] == b"PK"  # a zip container, which is what an xlsx is
         assert filename.endswith(".xlsx")
-        assert "R1" in filename
+        assert filename.startswith("proposal-") and "-A." in filename
         # Same stem as the PDF: the two artifacts of one issue sit together in a folder.
         assert filename[: -len(".xlsx")] == qpdf.build_filename(issued)[: -len(".pdf")]
 
@@ -1233,7 +1233,7 @@ def test_a_component_of_a_set_leaves_its_money_cells_empty_not_zero():
 
 
 def test_the_workbook_prints_the_built_quotation_no_even_for_an_old_stored_text():
-    """AC2.6 / AC2.3: `<document_no>-R<issue_no>`, never the stored `(R1)` text."""
+    """AC2.6 / AC2.3: `<document_no>-A` (a new proposal), never the stored `(R1)` text."""
     from app.services import project_quotation_document_service as qdocs
     from app.services import project_quotation_excel_service as qxlsx
     from app.services import project_quotation_service as quotes
@@ -1256,7 +1256,7 @@ def test_the_workbook_prints_the_built_quotation_no_even_for_an_old_stored_text(
         db.flush()
 
         workbook = qxlsx.build_issue_workbook(db, issued)
-        number = f"{document.document_no}-R{issued.issue_no}"
+        number = f"{document.document_no}-A"
         for sheet in workbook.worksheets:
             joined = " | ".join(str(v) for v in _values(sheet))
             assert number in joined
