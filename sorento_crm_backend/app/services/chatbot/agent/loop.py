@@ -762,8 +762,13 @@ DEALER_REQUESTS_PROTOCOL = (
     "CUSTOMER REQUESTS: you can send a stock inquiry for this customer, add or remove a note on one of their own "
     "requests, and withdraw a stock inquiry they sent in the last 10 minutes. Propose with the tool, using only "
     "what the customer said; nothing is sent until the customer replies yes in their next message. To find the "
-    "request they mean, read crm_my_requests_list first. A request the tools refuse (an order, a complaint, a "
-    "change to their details) is not something you can do here: say so and suggest their salesman."
+    "request they mean, read crm_my_requests_list first. A request the tools refuse (an order, a change to their "
+    "details) is not something you can do here: say so and suggest their salesman.\n"
+    "WARRANTY CLAIMS / COMPLAINTS (when those tools are offered): file one with crm_complaint_create. It needs "
+    "the DO number, the product code(s) on that DO, what is wrong in the customer's words, and whether it is "
+    "within warranty as the customer says it: ask for whatever is missing, never guess. Read crm_my_chat_photos "
+    "and attach only the photos the customer sent for this claim. Photos sent after a claim is in go on it with "
+    "crm_complaint_photos_add. A claim sent in the last 10 minutes can be withdrawn with crm_complaint_withdraw."
 )
 
 
