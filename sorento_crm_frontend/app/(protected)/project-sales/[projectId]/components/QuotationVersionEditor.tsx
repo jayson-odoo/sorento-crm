@@ -19,6 +19,8 @@ import {
 import type { ProductSetLineRef } from '@/app/(protected)/master-data-management/product-sets/types/productSet.types';
 import type { ProductLineRef } from '@/app/(protected)/master-data-management/products/types/product.types';
 import {
+  useProjectQuotationVersions,
+  useQuotationColumnsMutation,
   useQuotationLines,
   useQuotationRecomputeMutation,
   useQuotationVersions,
@@ -28,15 +30,19 @@ import {
 import type {
   Project,
   ProjectQuotation,
+  QuotationFeedbackRow,
   QuotationLine,
   QuotationLineBulkItem,
   QuotationRecomputeResult,
   StagedQuotationLine,
 } from '../../_shared/types/project.types';
+import { hasColumns, reshapeCells, type MatrixHeader } from '../../_shared/lib/quotationMatrix';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
-import { QuotationLinesGrid, type QuotationLinesReview } from './QuotationLinesGrid';
+import { QuotationLinesGrid, type QuotationLinesMatrix } from './QuotationLinesGrid';
 import {
+  cellsPatch,
   completeSetText,
+  draftCells,
   lineErrors,
   serverToDraft,
   toBody,
@@ -110,20 +116,17 @@ export function QuotationVersionEditor({
   seriesId,
   edit,
   locked = false,
-  review,
-  suggestedOnly = false,
-  reviewVersionId = null,
+  feedback,
+  siblingScopes,
 }: {
   project: Project;
-  /** The customer's suggestions to decide on the lines (QUOTE-CUSTOMER-AMEND). A read only. */
-  review?: QuotationLinesReview;
-  /** With a review: show only the lines the customer made a suggestion on. */
-  suggestedOnly?: boolean;
   /**
-   * The version the review's rows name, when it is not the current one: a scope where somebody
-   * opened a draft by hand after issuing. The editor opens on it and the review is decided there.
+   * Open customer feedback on this document (PS-QUOTE-MATRIX): marked on the lines it names, in
+   * whichever version holds them.
    */
-  reviewVersionId?: string | null;
+  feedback?: QuotationFeedbackRow[];
+  /** The document's other scopes, offered by Copy columns from while editing. */
+  siblingScopes?: ProjectQuotation[];
   /** The quotation is locked for approval: no per-scope revise is offered. */
   locked?: boolean;
   /**
@@ -153,10 +156,13 @@ export function QuotationVersionEditor({
     [versions.data],
   );
   const current = rows.find((version) => version.is_current) ?? null;
-  const selected =
-    rows.find((version) => version.id === selectedId) ??
-    rows.find((version) => version.id === reviewVersionId) ??
-    current;
+  const selected = rows.find((version) => version.id === selectedId) ?? current;
+  // The version's column headers (PS-QUOTE-MATRIX); `[]` is today's single Qty column.
+  const matrixColumns = React.useMemo<MatrixHeader[]>(
+    () => selected?.matrix_columns ?? [],
+    [selected?.matrix_columns],
+  );
+  const withCells = hasColumns(matrixColumns);
 
   const lines = useQuotationLines(selected?.id);
 
@@ -412,11 +418,12 @@ export function QuotationVersionEditor({
         id: line.id,
         key: line.id,
         line,
-        draft: serverToDraft(line),
+        draft: serverToDraft(line, withCells),
         removed: false,
       })),
     );
   }, [
+    withCells,
     isEditing,
     isUnsaved,
     lines.isFetching,
@@ -441,42 +448,89 @@ export function QuotationVersionEditor({
             id: line.id,
             key: line.id,
             line,
-            draft: serverToDraft(line),
+            draft: serverToDraft(line, withCells),
             removed: false,
           })),
-    [gridEditing, sortedLines, staged],
+    [gridEditing, sortedLines, staged, withCells],
   );
 
-  // The review applies on the version the customer holds only: the suggestions name its lines.
-  // That is the current one, or the issued one under a hand-made draft (`reviewVersionId`).
-  const gridReview =
-    !gridEditing && selected && selected.id === (reviewVersionId ?? current?.id) ? review : undefined;
-  const suggestedIds = React.useMemo(
+  /**
+   * The header editor (PS-QUOTE-MATRIX R11): only on the editable version, in an edit session.
+   * A change is written at once (the server moves quantities in and out); the lines staged in
+   * this session are reshaped by the same rule, so unsaved typing survives the change.
+   */
+  const columnsMutation = useQuotationColumnsMutation(project.id);
+  const stagedRef = React.useRef(staged);
+  stagedRef.current = staged;
+  const stageForColumns = edit?.stage;
+  const versionForColumns = selected?.id ?? null;
+  const canEditColumns =
+    gridEditing && !isUnsaved && Boolean(selected?.is_editable) && project.can_edit;
+  const siblingVersions = useProjectQuotationVersions(canEditColumns ? siblingScopes : undefined);
+  const copySources = React.useMemo(
     () =>
-      gridReview && suggestedOnly
-        ? new Set(gridReview.rows.map((row) => row.line_id))
-        : null,
-    [gridReview, suggestedOnly],
+      (canEditColumns ? (siblingScopes ?? []) : []).map((scope) => ({
+        label: scope.scope_label,
+        columns:
+          siblingVersions.rows.find(
+            (row) => row.quotation.id === scope.id && row.version.is_current,
+          )?.version.matrix_columns ?? [],
+      })),
+    [canEditColumns, siblingScopes, siblingVersions.rows],
   );
-  const withoutSuggestions = suggestedIds
-    ? gridLines.filter((line) => !line.line || !suggestedIds.has(line.line.id)).length
-    : 0;
+  const changeColumns = React.useCallback(
+    async (next: MatrixHeader[]) => {
+      if (!versionForColumns) return;
+      const before = matrixColumns;
+      try {
+        const result = await columnsMutation.mutateAsync({
+          versionId: versionForColumns,
+          columns: next,
+        });
+        const after = result.version.matrix_columns ?? next;
+        const held = stagedRef.current;
+        if (held && stageForColumns) {
+          stageForColumns(
+            held.map((line) => {
+              const reshaped = reshapeCells(
+                before,
+                after,
+                draftCells(line.draft),
+                line.draft.quantity ?? '',
+              );
+              return { ...line, draft: { ...line.draft, ...cellsPatch(reshaped.cells, reshaped.quantity) } };
+            }),
+          );
+        }
+      } catch {
+        // The mutation already toasted the reason; the header stays as the server has it.
+      }
+    },
+    [columnsMutation, matrixColumns, stageForColumns, versionForColumns],
+  );
+  const matrix = React.useMemo<QuotationLinesMatrix>(
+    () => ({
+      columns: matrixColumns,
+      onChange: canEditColumns ? (next) => void changeColumns(next) : undefined,
+      saving: columnsMutation.isPending,
+      copySources,
+    }),
+    [canEditColumns, changeColumns, columnsMutation.isPending, copySources, matrixColumns],
+  );
 
   // Matched on the LIVE draft, so a description typed seconds ago is already findable, plus the
   // saved code the draft does not carry as text.
   const needle = lineSearch.trim().toLowerCase();
   const rowFilter = React.useMemo(() => {
-    if (!needle && !suggestedIds) return undefined;
+    if (!needle) return undefined;
     return (line: StagedQuotationLine) =>
-      (!suggestedIds || (line.line !== null && suggestedIds.has(line.line.id))) &&
-      (!needle ||
-        [
-          line.line?.product_code,
-          line.draft.description,
-          line.draft.brand_snapshot,
-          line.draft.band_label,
-        ].some((value) => (value ?? '').toLowerCase().includes(needle)));
-  }, [needle, suggestedIds]);
+      [
+        line.line?.product_code,
+        line.draft.description,
+        line.draft.brand_snapshot,
+        line.draft.band_label,
+      ].some((value) => (value ?? '').toLowerCase().includes(needle));
+  }, [needle]);
 
   const stageLines = edit?.stage;
   const toggleRemoved = edit?.toggleRemoved;
@@ -600,9 +654,7 @@ export function QuotationVersionEditor({
                 ? 'No lines yet.'
                 : 'This version was frozen without any lines.'
           }
-          filterEmptyHint={
-            needle ? `No line matches "${lineSearch.trim()}".` : 'No suggestions on this scope.'
-          }
+          filterEmptyHint={`No line matches "${lineSearch.trim()}".`}
           fetchProducts={fetchProducts}
           resolveProduct={resolveProduct}
           productCodeOf={productCodeOf}
@@ -625,14 +677,9 @@ export function QuotationVersionEditor({
           brandOptions={brandOptions}
           onStage={gridEditing ? stageLines : undefined}
           onToggleRemoved={gridEditing ? toggleRemoved : undefined}
-          review={gridReview}
+          matrix={matrix}
+          feedback={feedback}
         />
-      )}
-
-      {withoutSuggestions > 0 && (
-        <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
-          {`${withoutSuggestions} ${withoutSuggestions === 1 ? 'line' : 'lines'} without suggestions`}
-        </p>
       )}
 
       {revising && current && quotation && (

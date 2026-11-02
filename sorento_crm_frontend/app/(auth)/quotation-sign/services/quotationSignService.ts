@@ -1,4 +1,5 @@
 import { extractApiError } from '@/lib/api-client';
+import type { MatrixHeader } from '@/app/(protected)/project-sales/_shared/lib/quotationMatrix';
 
 /**
  * The customer's counter-sign page. PUBLIC: a token is the only credential.
@@ -11,8 +12,9 @@ import { extractApiError } from '@/lib/api-client';
  *   sends it.)
  *   POST /api/v1/public/quotation-sign/{token}/amendment-request -> QuotationSignPage (same shape)
  *
- * `amendment-request` carries the customer's suggested quantities and prices (QUOTE-CUSTOMER-AMEND).
- * While one is open the issue cannot be signed (`accept` answers 409 `quotation_amendment_open`).
+ * `amendment-request` carries the customer's FEEDBACK (PS-QUOTE-MATRIX R19): notes on an item or
+ * on one cell, each with an optional hint (a quantity, a price, removal, another model). It may be
+ * sent more than once and never blocks signing; nothing in it is accepted or applied.
  *
  * Both decisions answer with the whole page, so the browser settles on the new state without a
  * second fetch. `request-changes` answers 409 on a quotation that is already accepted: the
@@ -103,12 +105,16 @@ export type QuotationSignLine = {
   is_rate_only: boolean;
   /** Null on a rate-only line: the money column prints the words instead of a zero. */
   amount: string | null;
+  /** PS-QUOTE-MATRIX: quantity per column on a scope with column headers. */
+  qty_cells?: Record<string, string> | null;
 };
 
 export type QuotationSignScope = {
   scope_label: string;
   scope_total: string;
   lines: QuotationSignLine[];
+  /** PS-QUOTE-MATRIX: the scope's column headers; `[]` or absent = one Qty column. */
+  matrix_columns?: MatrixHeader[] | null;
 };
 
 /** One cover page row. The terms row carries `html`, every other row `text`. */
@@ -154,48 +160,52 @@ export type QuotationSignPage = {
   changes_requested_note: string | null;
   changes_requested_by_name: string | null;
   is_changes_requested: boolean;
-  /** The customer's suggested changes on this issue, or null when none were sent. */
-  amendment_request: QuotationSignAmendment | null;
+  /**
+   * Feedback already sent on this issue, when the page carries it: read only to mark what already
+   * has a note (amber corner / dot). Null when none was sent.
+   */
+  amendment_request?: QuotationSignAmendment | null;
   /** The later revision's `Quotation No.` when this one was replaced, else null. */
   superseded_by_ref: string | null;
   can_sign: boolean;
   /** The one reason Sign is off, or null when the issue can be signed. */
-  sign_blocked_reason: 'accepted' | 'superseded' | 'amendment_open' | 'amendment_applied' | null;
+  sign_blocked_reason: 'accepted' | 'superseded' | null;
 };
 
+/** One note already sent, as far as this page reads it: what it points at. */
 export type QuotationSignAmendmentRow = {
   id: string;
   line_id: string;
-  field: 'quantity' | 'unit_price' | 'remove';
-  value_from: string | null;
-  /** Null for a removal. */
-  value_to: string | null;
-  decision: 'pending' | 'accepted' | 'rejected';
-  decision_reason: string | null;
+  cell_key?: string | null;
 };
 
 export type QuotationSignAmendment = {
   id: string;
-  status: 'open' | 'applied' | 'superseded';
   submitted_at: string | null;
-  requester_name: string | null;
-  note: string | null;
   rows: QuotationSignAmendmentRow[];
 };
 
+export type QuotationFeedbackKind = 'note' | 'quantity' | 'unit_price' | 'remove' | 'model_swap';
+
 /**
- * One suggestion submit. Only changed lines go; quantity and price are decimal STRINGS (null when
- * that field is unchanged), and a removal carries neither.
+ * One feedback item: a note on a whole item, or on one cell (`cell_key`, kinds `note` and
+ * `quantity` only). `value` is the hint as a decimal STRING (a quantity, a price, or a swap's
+ * optional price); `model` is the other model as typed.
  */
-export type QuotationSignAmendmentBody = {
-  requester_name: string | null;
-  note: string | null;
-  lines: Array<{
-    line_id: string;
-    quantity: string | null;
-    unit_price: string | null;
-    remove: boolean;
-  }>;
+export type QuotationFeedbackItem = {
+  line_id: string;
+  cell_key?: string;
+  kind: QuotationFeedbackKind;
+  value?: string;
+  model?: string;
+  note?: string;
+};
+
+/** One submit: items, and/or a free note. At least one of the two. */
+export type QuotationFeedbackBody = {
+  items: QuotationFeedbackItem[];
+  note?: string | null;
+  requester_name?: string | null;
 };
 
 export type QuotationSignAcceptBody = {
@@ -238,9 +248,9 @@ export async function acceptQuotation(
   return response.json();
 }
 
-export async function submitAmendmentRequest(
+export async function submitQuotationFeedback(
   token: string,
-  body: QuotationSignAmendmentBody,
+  body: QuotationFeedbackBody,
 ): Promise<QuotationSignPage> {
   const response = await fetch(signUrl(`/${encodeURIComponent(token)}/amendment-request`), {
     method: 'POST',
@@ -249,7 +259,7 @@ export async function submitAmendmentRequest(
   });
   if (!response.ok) {
     throw new QuotationSignError(
-      await extractApiError(response, 'Your suggestions could not be sent.'),
+      await extractApiError(response, 'Your feedback could not be sent.'),
       response.status,
     );
   }

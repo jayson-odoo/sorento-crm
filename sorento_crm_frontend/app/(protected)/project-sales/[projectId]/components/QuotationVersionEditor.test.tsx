@@ -50,6 +50,7 @@ const deleteQuotationLine = vi.fn();
 const replaceQuotationLines = vi.fn();
 const recomputeQuotationVersion = vi.fn();
 const judgeQuotationLine = vi.fn();
+const replaceQuotationColumns = vi.fn();
 // Fix round 2: the service the coder must add to _shared/services/projectService.ts, read through
 // the hook `useQuotationLineImages(productId)` in _shared/hooks/useProjects.ts.
 const getQuotationLineImages = vi.fn();
@@ -71,6 +72,7 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
     replaceQuotationLines: (...args: unknown[]) => replaceQuotationLines(...args),
     recomputeQuotationVersion: (...args: unknown[]) => recomputeQuotationVersion(...args),
     judgeQuotationLine: (...args: unknown[]) => judgeQuotationLine(...args),
+    replaceQuotationColumns: (...args: unknown[]) => replaceQuotationColumns(...args),
     getQuotationLineImages: (...args: unknown[]) => getQuotationLineImages(...args),
     getSeriesSetRows: (...args: unknown[]) => getSeriesSetRows(...args),
   };
@@ -2596,101 +2598,44 @@ describe('QuotationVersionEditor product picker, code only (QUOTE-UI-POLISH AC-Q
   });
 });
 
-describe('QuotationVersionEditor review: suggested lines only (QUOTE-CUSTOMER-AMEND)', () => {
-  it('shows only the suggested lines and folds the rest into one row, until it is turned off', async () => {
-    listQuotationLines.mockResolvedValue([
-      line({ id: 'l1', product_code: 'SRT-WC-01', description: 'Wall-hung WC', sort_order: 0 }),
-      line({ id: 'l2', product_code: 'BM107', description: 'Basin tap body', sort_order: 1 }),
-      line({ id: 'l3', product_code: 'SH-9', description: 'Shower head', sort_order: 2 }),
-    ]);
-    const review = {
-      rows: [
-        {
-          id: 'r1',
-          line_id: 'l2',
-          field: 'quantity' as const,
-          value_from: '10.00',
-          value_to: '8.00',
-          decision: 'pending' as const,
-          decision_reason: null,
-        },
-      ],
-      onDecide: vi.fn(),
-    };
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    const view = (suggestedOnly: boolean) => (
-      <QueryClientProvider client={client}>
-        <QuotationVersionEditor
-          project={project()}
-          quotation={QUOTATION}
-          review={review}
-          suggestedOnly={suggestedOnly}
-        />
-      </QueryClientProvider>
+describe('QuotationVersionEditor column headers (PS-QUOTE-MATRIX)', () => {
+  it('starts a grid from + Column header: written at once, and the staged quantity moves into it', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: [] });
+    // The server as it stands: the versions read answers whatever the last write left.
+    let stored = editable;
+    listQuotationVersions.mockImplementation(async () => [stored]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '10.00' })]);
+    replaceQuotationColumns.mockImplementation(
+      async (_versionId: string, columns: { key: string; label: string; cols: [] }[]) => {
+        stored = { ...editable, matrix_columns: columns };
+        return {
+          version: stored,
+          lines: [line({ quantity: '10.00', qty_cells: { [columns[0].key]: '10.00' } })],
+        };
+      },
     );
-    const { rerender } = render(view(true));
+    await renderEditing();
 
-    expect(await screen.findByText('Basin tap body')).toBeInTheDocument();
-    expect(screen.queryByText('Wall-hung WC')).not.toBeInTheDocument();
-    expect(screen.queryByText('Shower head')).not.toBeInTheDocument();
-    expect(screen.getByText('2 lines without suggestions')).toBeInTheDocument();
-    // Still line 2: hiding does not renumber.
-    expect(itemNumbers()).toEqual(['2']);
+    fireEvent.click(screen.getByRole('button', { name: 'Column header' }));
 
-    rerender(view(false));
-    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
-    expect(screen.queryByText(/lines without suggestions/)).not.toBeInTheDocument();
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+    const [versionId, columns] = replaceQuotationColumns.mock.calls[0];
+    expect(versionId).toBe('v2');
+    expect(columns).toEqual([{ key: expect.any(String), label: 'Header 1', cols: [] }]);
+    // The header is on screen as an editable label, and Qty has made way for it.
+    expect(await screen.findByRole('textbox', { name: 'Column header Header 1' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Total qty' })).toBeInTheDocument();
+    // The staged line carries the quantity in the new column, so Save sends it there.
+    await waitFor(() =>
+      expect(stagedBody()[0]).toMatchObject({ qty_cells: { [columns[0].key]: '10.00' }, quantity: '10.00' }),
+    );
+    expectNothingWritten();
   });
-});
 
-describe('QuotationVersionEditor review on a scope with a hand-made draft (fix round 3, S3b)', () => {
-  it('opens on the ISSUED version the suggestions name, and they can be decided there', async () => {
-    // v1 went to the customer; somebody opened v2 by hand since. The rows name v1's lines.
-    listQuotationVersions.mockResolvedValue([
-      version({ id: 'v1', version_no: 1, is_issued: true, total_amount: '9000.00' }),
-      version({ id: 'v2', version_no: 2, is_current: true, total_amount: '9000.00' }),
-    ]);
-    listQuotationLines.mockImplementation(async (versionId: string) =>
-      versionId === 'v1'
-        ? [line({ id: 'l-issued', version_id: 'v1', product_id: 'p1' })]
-        : [line({ id: 'l-draft', version_id: 'v2', product_id: 'p1' })],
-    );
-    const onDecide = vi.fn();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
-    render(
-      <QueryClientProvider client={client}>
-        <QuotationVersionEditor
-          project={project()}
-          quotation={QUOTATION}
-          review={{
-            rows: [
-              {
-                id: 'r1',
-                line_id: 'l-issued',
-                field: 'quantity',
-                value_from: '10.00',
-                value_to: '8.00',
-                decision: 'pending',
-                decision_reason: null,
-              },
-            ],
-            onDecide,
-          }}
-          reviewVersionId="v1"
-          suggestedOnly
-        />
-      </QueryClientProvider>,
-    );
-
-    const reject = await screen.findByRole('button', {
-      name: 'Reject suggested quantity on SRT-WC-01',
-    });
-    expect(listQuotationLines).toHaveBeenCalledWith('v1');
-    expect(reject).toBeEnabled();
-    expect(screen.queryByText('No suggestions on this scope.')).toBeNull();
+  it('offers no column editing on a version that is not editable', async () => {
+    listQuotationVersions.mockResolvedValue(VERSIONS);
+    listQuotationLines.mockResolvedValue([line()]);
+    await renderEditing();
+    expect(screen.queryByRole('button', { name: 'Column header' })).toBeNull();
   });
 });

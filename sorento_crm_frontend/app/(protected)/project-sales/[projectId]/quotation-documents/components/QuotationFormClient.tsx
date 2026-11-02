@@ -870,6 +870,11 @@ function FormLines({
                 quotation={savedRow}
                 seriesId={active.series_id || null}
                 edit={scopeEditing}
+                // Copy columns from: the document's other SAVED scopes (an unsaved one has none).
+                siblingScopes={scopes
+                  .filter((scope) => scope.id && scope.id !== active.id)
+                  .map((scope) => quotations.find((row) => row.id === scope.id))
+                  .filter((row): row is ProjectQuotation => Boolean(row))}
               />
             )}
           </CardContent>
