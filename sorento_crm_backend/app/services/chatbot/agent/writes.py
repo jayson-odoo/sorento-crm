@@ -2588,7 +2588,7 @@ def _ticket_summary(args: dict, before: dict) -> str:
         text += f" ({', '.join(extras)})"
     if _line(args.get("description")):
         text += f", described as {_in_full(args['description'])}"
-    return text + ". You can review it before it is submitted."
+    return text + "."
 
 
 def _ticket_execute(db, user: dict, args: dict) -> dict:

@@ -1265,4 +1265,9 @@ def _dispatch_inner(
         return ToolResult("empty", data={"applied_filters": filters}, message=NO_ROWS_MESSAGE)
     data, more = cap_result(data)
     _collect_uuids(data, seen)
-    return ToolResult("ok", data=data, more=more)
+    message = (
+        f"{more} more rows did not fit in this result. They are not on the next page: "
+        "narrow the read with a filter to see them."
+        if more > 0 else ""
+    )
+    return ToolResult("ok", data=data, more=more, message=message)
