@@ -64,6 +64,7 @@ const BrandFormSchema = z.object({
   // false for the placeholder brands OTHERS and NO LOGO, which record the
   // absence of a brand rather than name a real one.
   is_searchable: z.boolean(),
+  no_promo_selling_price: z.boolean(),
   // The company whose dealers get this brand from the access-sheet upload; null = a project brand.
   dealer_company_id: z.string().nullable(),
 });
@@ -99,6 +100,7 @@ export default function BrandFormDialog({
       flows_to_purchasing: true,
       chatbot_weight: 0,
       is_searchable: true,
+      no_promo_selling_price: false,
       dealer_company_id: null,
     },
   });
@@ -115,6 +117,7 @@ export default function BrandFormDialog({
           flows_to_purchasing: brand.flows_to_purchasing,
           chatbot_weight: brand.chatbot_weight ?? 0,
           is_searchable: brand.is_searchable ?? true,
+          no_promo_selling_price: brand.no_promo_selling_price ?? false,
           dealer_company_id: brand.dealer_company_id ?? null,
         });
       } else if (copyFromBrand) {
@@ -128,6 +131,7 @@ export default function BrandFormDialog({
           // A copy never takes the preference of the brand it was copied from.
           chatbot_weight: 0,
           is_searchable: copyFromBrand.is_searchable ?? true,
+          no_promo_selling_price: copyFromBrand.no_promo_selling_price ?? false,
           dealer_company_id: copyFromBrand.dealer_company_id ?? null,
         });
       } else {
@@ -140,6 +144,7 @@ export default function BrandFormDialog({
           flows_to_purchasing: true,
           chatbot_weight: 0,
           is_searchable: true,
+          no_promo_selling_price: false,
           dealer_company_id: null,
         });
       }
@@ -157,6 +162,7 @@ export default function BrandFormDialog({
         flows_to_purchasing: data.flows_to_purchasing,
         chatbot_weight: data.chatbot_weight,
         is_searchable: data.is_searchable,
+        no_promo_selling_price: data.no_promo_selling_price,
         dealer_company_id: data.dealer_company_id || null,
       };
 
@@ -350,6 +356,24 @@ export default function BrandFormDialog({
                 <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                   <div className="space-y-0.5">
                     <FormLabel className="text-base">Customers can ask for this brand</FormLabel>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="no_promo_selling_price"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">Promotions carry no selling price</FormLabel>
                   </div>
                   <FormControl>
                     <Switch

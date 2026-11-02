@@ -2102,6 +2102,9 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     changes_requested_note: Optional[str] = None
     changes_requested_by_name: Optional[str] = None
     customer_decision: Optional[str] = None
+    # PS-QUOTE-VIEWS: counted customer opens of the LATEST issue's sign link.
+    view_count: int = 0
+    last_viewed_at: Optional[datetime] = None
 
     # AC-H1 gates issuing on the signature, so it has to survive a page refresh. Forward-declared
     # because the signature schema is defined further down; resolved by the model_rebuild below.
@@ -2230,6 +2233,29 @@ class QuotationSignatureRequest(BaseModel):
 class QuotationSignAcceptRequest(QuotationSignatureRequest):
     # The customer ticked "I have read and agree to the Terms and conditions."
     terms_accepted: bool = False
+
+
+class QuotationSignViewRequest(BaseModel):
+    """The sign page's beacon (PS-QUOTE-VIEWS): a random id the browser keeps, never a person.
+
+    Stored only as a digest, and only for the 30-minute de-duplication.
+    """
+
+    visitor_id: str = Field(min_length=8, max_length=128)
+
+
+class QuotationSignViewResponse(BaseModel):
+    counted: bool
+
+
+class QuotationIssueViewResponse(BaseModel):
+    """One row of a document's view log: when, which revision, what kind of device."""
+
+    id: str
+    viewed_at: datetime
+    issue_no: int
+    our_ref: str
+    device: str
 
 
 class QuotationSignChangesRequest(BaseModel):

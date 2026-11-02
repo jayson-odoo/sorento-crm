@@ -46,6 +46,7 @@ from app.models.projects import (
 from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_image_service as quotation_images
 from app.services import project_quotation_service as scope_service
+from app.services import quotation_view_service as _views
 from app.services.error_handler import AppException
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
@@ -846,6 +847,9 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
         # so it is resolved once here rather than re-expressed on the counter-sign page, the
         # Signatures badge, the document banner and the list column.
         "customer_decision": _customer_decision(latest),
+        # PS-QUOTE-VIEWS: the customer's counted opens of the revision they hold now. Older
+        # revisions' opens are in the view log, not here.
+        **_views.summary_for_issue(db, latest),
         # S15. The screen reads all six of these to decide whether to show the price-floor
         # block at all, so they are present on EVERY document rather than only on a gated one:
         # absent would be as bad as wrong. Spread from one function so this manual dict and the
