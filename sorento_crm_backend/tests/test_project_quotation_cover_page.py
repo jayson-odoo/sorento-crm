@@ -71,7 +71,7 @@ def _full_document(db, env, *, purpose=f"{MARKER} Supply of sanitary ware", term
     document.attn_name = f"{MARKER} Kelly"
     document.signatory_name = f"{MARKER} Signer Only"
     document.recipient_name_snapshot = f"{MARKER} Nadi Cergas Sdn Bhd"
-    document.recipient_phone_snapshot = "03-2222 3333"
+    document.recipient_phone_snapshot = "012-345 6789"
     document.recipient_address_snapshot = f"{MARKER} Level 8, Menara Lama\nKuala Lumpur"
     document.recipient_email_snapshot = f"{MARKER}@zzt.test"
     document.quotation_purpose = purpose
@@ -244,7 +244,7 @@ def test_cover_rows_in_uac_order_with_reference_and_cleaned_terms():
         )
         assert by["attn"]["text"] == f"{MARKER} Kelly"
         assert by["company"]["text"] == f"{MARKER} Nadi Cergas Sdn Bhd"
-        assert by["contact"]["text"] == "03-2222 3333"
+        assert by["contact"]["text"] == "012-345 6789"
         assert "Menara Lama" in by["address"]["text"] and "\n" in by["address"]["text"]
         assert by["email"]["text"] == f"{MARKER}@zzt.test"
         assert by["payment_terms"]["text"] == f"{MARKER} 30 days net"
@@ -330,7 +330,7 @@ def test_pdf_layout_2_values_prepared_by_email_contact_and_letterhead():
         env = _setup(db)
         _doc, _rec, html = _html_of(db, env)
         assert f"{MARKER}@zzt.test" in html
-        assert "03-2222 3333" in html
+        assert "012-345 6789" in html
         cover = html[: html.index(f"{MARKER} Townhouse")]
         assert re.search(r"PREPARED BY:.*?Baser Ramli", cover, re.S)
         assert "QUOTATION" in cover
