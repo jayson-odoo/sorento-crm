@@ -1072,6 +1072,45 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     expect(block.querySelectorAll('input')).toHaveLength(0);
   });
 
+  /** A consignment line delivered in full, the board carrying the given saved words. */
+  async function openDeliveredConsignment(words: string | null) {
+    const read = LINE3_READ();
+    read.lines = [
+      {
+        ...wireLine(3, 'ZZT-ITEM-1C', 10, '2026-09-20', {
+          line_id: 'pl-1-3',
+          delivered_qty: 10,
+          now_qty: 0,
+          split_state: 'applied',
+          split_view: { status: 'confirmed' },
+        }),
+        delivered_in_full: true,
+      } as never,
+    ];
+    serveSplits({ 'pso-so-1': read });
+    const board = mapContributions(
+      withDraft(boardOf([SO1_L3]), ['pl-1-3'], words ? { 'pl-1-3': words } : {}),
+      (entry) => ({ ...entry, so_doc_type: 'consignment' }),
+    );
+    await mountWith(board, ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    return within(page).findByTestId('split-line-3');
+  }
+
+  it('F28b: a consignment delivered in full with saved words says it goes to purchasing', async () => {
+    const block = await openDeliveredConsignment('ORDER BACK');
+    expect(block).toHaveTextContent('Consignment: goes to purchasing');
+    expect(block).not.toHaveTextContent('nothing goes to purchasing');
+    expect(block.querySelectorAll('input')).toHaveLength(0);
+  });
+
+  it('F28c: a consignment delivered in full with no saved words says nothing goes to purchasing', async () => {
+    const block = await openDeliveredConsignment(null);
+    expect(block).toHaveTextContent('Consignment: nothing goes to purchasing');
+    expect(block).not.toHaveTextContent('Delivered in full');
+  });
+
   /** The board after a draft remark was saved: the contribution carries the stored words. */
   function boardWithStoredRemark(remark: string | null) {
     return mapContributions(oneDraftBoard(), (entry) =>
