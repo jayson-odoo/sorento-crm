@@ -2311,8 +2311,11 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
     await walkConfirmGuide();
 
     await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
-    // CONFIRM-PREVIEW-STALE round 3: the guide's own email dry run may run (rolled back);
-    // nothing is POSTED.
+    // CONFIRM-PREVIEW-STALE round 3: only the guide's quiet email dry run may run; the press
+    // itself runs no dry run after the failed adopt, and posts nothing.
+    expect(
+      previewConfirmMany.mock.calls.filter(([body]) => !(body as { quiet?: boolean }).quiet),
+    ).toHaveLength(0);
     expect(confirmMany).not.toHaveBeenCalled();
     // Nothing was committed, so the work is still the planner's.
     expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
@@ -4634,8 +4637,10 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    // The press's own dry run plus the guide's email dry run on open (round 3).
-    expect(previewConfirmMany).toHaveBeenCalled();
+    // ONE press dry run per press; the guide's quiet email dry runs are not the press's.
+    expect(
+      previewConfirmMany.mock.calls.filter(([body]) => !(body as { quiet?: boolean }).quiet),
+    ).toHaveLength(1);
     const [body] = confirmMany.mock.calls[0] as [
       { orders: { lines: { project_line_id: string }[]; only_line_ids?: string[] }[]; preview?: boolean },
     ];
@@ -4840,6 +4845,30 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
 
     const block = await screen.findByTestId('board-confirm-results');
     expect(block).toHaveTextContent('SO403340: has nothing to confirm');
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+
+  it("posts nothing when the press's own dry run fails, and Confirm is offered again", async () => {
+    // The guide's quiet email dry run answers; only the press's own dry run fails (the case
+    // this test pinned before the guide ran one of its own).
+    getPlanningBoard.mockResolvedValue(twoLines());
+    previewConfirmMany.mockImplementation((body: { quiet?: boolean; orders: { pso_id: string }[] }) =>
+      body.quiet
+        ? Promise.resolve({
+            results: body.orders.map((order) => ({ pso_id: order.pso_id, ok: true, preview: true })),
+          })
+        : Promise.reject(new Error('Network down')),
+    );
+
+    renderPanel(['SO403340']);
+    await walkConfirmGuide();
+
+    await waitFor(() =>
+      expect(
+        previewConfirmMany.mock.calls.filter(([body]) => !(body as { quiet?: boolean }).quiet),
+      ).toHaveLength(1),
+    );
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
     expect(confirmMany).not.toHaveBeenCalled();
   });
 

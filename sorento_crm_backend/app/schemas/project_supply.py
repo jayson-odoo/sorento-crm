@@ -634,6 +634,10 @@ class ConfirmManyBody(BaseModel):
     #: Run every order exactly as a real press and roll it back instead of committing; each
     #: ok order then answers with the order inquiry rows and transfers it would raise.
     preview: bool = False
+    #: CONFIRM-PREVIEW-STALE (review round 3, S3): with `preview`, the guided Confirm's own
+    #: dry run for the email's words, re-run on open and on each save. Records no refusal
+    #: (`_record_refusals`); the press's own dry run and the real press still do.
+    quiet: bool = False
 
 
 class PreviewInquiryRow(BaseModel):

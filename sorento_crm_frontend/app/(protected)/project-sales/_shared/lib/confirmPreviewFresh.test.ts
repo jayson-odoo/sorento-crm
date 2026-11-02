@@ -3,7 +3,7 @@
  * newer save, and a saved decision that differs from AutoCount's pending suggestion is said.
  */
 import { describe, expect, it } from 'vitest';
-import { newerServerDraftKeys, queuedPerKey, suggestionMovedOf } from './confirmPreviewFresh';
+import { emailPreviewBody, newerServerDraftKeys, queuedPerKey, suggestionMovedOf } from './confirmPreviewFresh';
 import { annotationOf, type BoardChangeAnnotation } from './boardChangeAnnotations';
 import type { PlanningChangeRow } from '../types/planningChange.types';
 import type { BoardContribution, BoardDecision } from '../types/fulfilmentPlanning.types';
@@ -179,5 +179,20 @@ describe('queuedPerKey', () => {
     await expect(failing).rejects.toThrow('refused');
     await expect(next).resolves.toBe('ran');
     expect(idle).toEqual(['idle']);
+  });
+});
+
+describe('emailPreviewBody (review round 3, S3)', () => {
+  const order = (pso_id: string) => ({ pso_id, lines: [] }) as never;
+
+  it('is quiet, and leaves out an order with no planning record yet', () => {
+    const body = emailPreviewBody({ orders: [order('pso-1'), order('')] } as never);
+    expect(body?.quiet).toBe(true);
+    expect(body?.orders.map((o) => o.pso_id)).toEqual(['pso-1']);
+  });
+
+  it('is null when nothing is left to preview', () => {
+    expect(emailPreviewBody({ orders: [order('')] } as never)).toBeNull();
+    expect(emailPreviewBody(null)).toBeNull();
   });
 });

@@ -104,3 +104,16 @@ changes while it is open) and prints each line's email REMARK; a line the email 
 no remark; an order the dry run did not preview (not adopted, refused) keeps the board's words. The
 review waits for it; a failed dry run shows the same Retry. Tests: BE red-first, both crew cases
 equal the email the real press dispatches; vitest the page prints the dry run's words.
+
+### Round 3 review fixes (S1 to S4, crew ruling (a))
+
+- S1: one quiet email dry run per board read (keyed on the read, started a tick after it so the
+  read's decisions are in the body); after the first words the sheet stays up with the last words
+  and only Next / Confirm wait (`wordsLoading`). Take suggestion re-reads the board.
+- S3: the email dry run is `quiet` (the route records no refusal for it) and leaves out orders
+  with no planning record (`emailPreviewBody`).
+- S2: pins restored: no press dry run after a failed adopt, one press dry run per press, the
+  press's own dry run failing (email dry run fine), walking the pages runs no press.
+- S4: a two-line order (DELAY on one, ADVANCE on the other) pins each line's own email row and
+  the whole list against the real send (the zip). The builder's only REMARK transform is the
+  mockup prefix, which no backend test covers yet.

@@ -2684,6 +2684,11 @@ export interface ConfirmManyBody {
   batch_id?: string | null;
   /** Run the press and roll it back: the answer names what it WOULD raise (FULFIL-CONFIRM-SCOPE v2). */
   preview?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE (review round 3, S3): with `preview`, the guided Confirm's own dry run
+   * for the email's words. The server records no refusal for it.
+   */
+  quiet?: boolean;
 }
 
 /** One order inquiry row a previewed press would raise. */

@@ -113,6 +113,7 @@ export function ConfirmGuideDialog({
   preparing = false,
   refreshing = false,
   refreshFailed = false,
+  wordsLoading = false,
   onRetryRefresh,
   onTakeSuggestion,
   prepareErrors,
@@ -149,6 +150,11 @@ export function ConfirmGuideDialog({
    * holds may be older than the server. Nothing is written from it until a Retry succeeds.
    */
   refreshFailed?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE review round 3 (S1): the email's words are being read again after a
+   * save. The sheet stays up with the last words; only Next and Confirm wait.
+   */
+  wordsLoading?: boolean;
   onRetryRefresh?: () => void;
   /** CONFIRM-PREVIEW-STALE: drop the saved decision so the line takes AutoCount's suggestion. */
   onTakeSuggestion?: (key: string) => Promise<unknown> | void;
@@ -300,7 +306,7 @@ export function ConfirmGuideDialog({
     }
   };
   const pressConfirm = async () => {
-    if (posting || refreshing || stale) return;
+    if (posting || refreshing || stale || wordsLoading) return;
     setPosting(true);
     if (await runConfirm(new Map(pages.map((entry) => [entry.salesOrderId, remarkOf(entry)])))) {
       onClose();
@@ -325,6 +331,7 @@ export function ConfirmGuideDialog({
     !readFailed &&
     !unready &&
     !stale &&
+    !wordsLoading &&
     !dirty;
 
   return (
@@ -632,7 +639,7 @@ export function ConfirmGuideDialog({
             <Button
               type="button"
               data-testid="confirm-guide-confirm"
-              disabled={posting || refreshing || stale}
+              disabled={posting || refreshing || stale || wordsLoading}
               onClick={() => void pressConfirm()}
             >
               {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
