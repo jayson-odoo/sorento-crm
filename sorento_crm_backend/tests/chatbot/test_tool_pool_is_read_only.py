@@ -20,9 +20,11 @@ deployed backend image has no copy of `sorento_crm_mcp` (compose builds it with
 so a catalogue read on the turn path would raise in every container and `run_fetch`'s broad
 `except` would turn every live business turn into "MCP tool X failed".
 
-This file is where the frozen set and the catalogue are held together. It imports the
-catalogue, which IS available in CI and in a checkout, and asserts the set equals the
-catalogue's own answer, so drift in either direction fails here rather than in production.
+This file is where the frozen set and the catalogue are held together. It reads the
+catalogue through `_load_catalog_specs`, which returns the backend's verbatim copy
+(`app/services/mcp_catalog_copy.py`, pinned byte for byte to the MCP file by
+`tests/test_mcp_catalog_in_image.py`), and asserts the set equals the catalogue's own
+answer, so drift in either direction fails here rather than in production.
 """
 from __future__ import annotations
 
@@ -193,9 +195,10 @@ def test_the_turn_path_never_reads_the_catalogue() -> None:
     container and take every live business turn down through `run_fetch`'s broad `except`.
 
     **Two doors, not one.** `mcp_tool_capability_service` is banned here as well, because
-    it is the back way to the same place: `_load_catalog_specs` inside it is what actually
-    imports the package, so a turn-path file that reaches for that module has the identical
-    failure with none of the obvious spelling. It is a perfectly good import everywhere
+    it is the back way to the same place: until ASSISTANT-CATALOG-500 `_load_catalog_specs`
+    inside it climbed to the package and took the AI panel down that way (it now reads the
+    backend's copy, but the turn path still has no business building capability documents).
+    It is a perfectly good import everywhere
     else - the seed script and the embedding backfill both use it - just never on a path a
     customer's message runs down.
 

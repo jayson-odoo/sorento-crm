@@ -15,15 +15,13 @@ the table keeps who granted or revoked a key and when, rather than losing that
 history on the next save.
 
 WHICH KEYS EXIST is a frozen literal here, not a read of `mcp_tools.restricted_fields`
-at request time. `mcp_tool_registry_service.sync_catalog` still writes that column at
-startup by importing `sorento_crm_mcp.catalog` - but the deployed backend image is built
-from `context: ./sorento_crm_backend` only (see `sorento_crm/docker-compose.yml` and
-`.github/workflows/deploy.yml`), `sorento_crm_mcp` is not in `requirements.txt`, and no
-volume mounts it in, so that import raises `ModuleNotFoundError` in every container and
-the startup sync never runs - the column stays at its migration-488 default of `[]`
-forever on prod, and this checklist read "No restricted field exists yet" even though the
-catalogue declares three. A local checkout works because the dev venv happens to have the
-MCP package installed, which is exactly what hid the bug. The precedent is
+at request time. When this literal was introduced, `mcp_tool_registry_service.sync_catalog`
+imported `sorento_crm_mcp.catalog`, which the deployed backend image (built from
+`context: ./sorento_crm_backend` only) does not contain, so the startup sync never ran
+there, the column sat at its migration-488 default of `[]` on prod, and this checklist
+read "No restricted field exists yet" even though the catalogue declared three. The sync
+now reads the backend's own catalog copy (MCP-REGISTRY-IMAGE, 2 Nov 2026); the literal
+stays because a request-time read would still depend on a boot having synced. The precedent is
 `app/services/chatbot/lanes/business/fetch.py::CHATBOT_READ_ONLY_TOOLS`: a frozen set the
 container CAN read, kept honest by a CI test (`tests/chatbot/test_field_reveal_keys_pinned_to_catalog.py`)
 that imports the catalogue - which CI and a checkout both can - and asserts the two agree.

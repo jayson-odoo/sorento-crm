@@ -1554,7 +1554,13 @@ class AIAssistantChatService:
         portal_intent = bool(
             re.search(r"intent:\s*(stock_inquiry|complaint|purchase_request|sponsorship_form)\b", (standalone_query or "").lower())
         )
-        selected_tools = rank_tools(standalone_query, enabled_tools, top_k, portal_intent=portal_intent)
+        try:
+            selected_tools = rank_tools(standalone_query, enabled_tools, top_k, portal_intent=portal_intent)
+        except Exception:
+            # A broken ranking (the catalog missing from the image, ASSISTANT-CATALOG-500) costs this
+            # turn its tools, not the whole turn: the agent loop still answers, without tools.
+            logger.exception("AI assistant tool ranking failed; answering this turn without tools")
+            return [], []
         sources = [
             {"title": c["tool_name"], "chunk_text": c["chunk_text"], "score": c["score"],
              "why_selected": c["why_selected"], "is_current": True}

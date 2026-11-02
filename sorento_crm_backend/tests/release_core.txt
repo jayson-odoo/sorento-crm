@@ -34,6 +34,9 @@ tests/test_audit_actor_contract.py
 tests/test_conversation_n8n_contract.py
 tests/chatbot/test_contracts.py
 tests/chatbot/test_import_boundary.py
+# The backend's verbatim copy of the MCP catalog (ASSISTANT-CATALOG-500): a catalog-only
+# change selects no backend test, so the drift guard rides every release. No DB, <1 s.
+tests/test_mcp_catalog_in_image.py
 
 # Chatbot core golden, plus the replays that failed a release or a nightly.
 tests/chatbot/test_turn_replay.py
