@@ -533,17 +533,17 @@ def notify_quotation_amendment_requested(
     request,
     line_count: int,
 ) -> int:
-    """The customer suggested quantities or prices on the quotation link (QUOTE-CUSTOMER-AMEND).
+    """The customer left feedback notes on the quotation link (QUOTE-CUSTOMER-AMEND).
 
     Same recipients as a free-text request (the owner, else management), and on WhatsApp as
-    well as in-app and email, the channels the approval alerts use: until somebody answers,
-    the customer cannot sign. One notice per request, so the dedup key is the request.
+    well as in-app and email, the channels the approval alerts use. One notice per request, so
+    the dedup key is the request.
     """
     reference = getattr(record, "our_ref_text", None) or getattr(document, "document_no", "")
     who = (getattr(request, "requester_name", None) or "").strip() or "The customer"
     if line_count:
         lines = f"{line_count} line{'' if line_count == 1 else 's'}"
-        text = f"{who} suggested changes to {lines} on {reference}."
+        text = f"{who} left feedback on {lines} on {reference}."
     else:
         text = f"{who} sent a note on {reference}."
     note = " ".join((getattr(request, "note", None) or "").split())
@@ -560,7 +560,7 @@ def notify_quotation_amendment_requested(
         db,
         user_ids=recipients,
         notif_type="project_quotation_amendment_requested",
-        title=f"{project_label(project)}: changes suggested on {reference}",
+        title=f"{project_label(project)}: feedback on {reference}",
         body=text,
         data={
             **_approval_data(project, document),

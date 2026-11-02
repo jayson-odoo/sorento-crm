@@ -46,6 +46,7 @@ from app.models.projects import (
     ProjectQuotationVersion,
 )
 from app.services import project_pricing_service as pricing
+from app.services import quotation_matrix as matrix
 from app.services.error_handler import AppException
 
 OUTCOME_OPEN_Q = QUOTATION_OUTCOME_OPEN
@@ -73,6 +74,7 @@ LINE_FIELDS = (
     "drawing_attachment_id",
     "unit_price",
     "quantity",
+    "qty_cells",
     "uom",
     "unit_type",
     "sort_order",
@@ -395,6 +397,7 @@ def revise(
         issued_by=actor_user_id,
         total_amount=live.total_amount,
         notes=live.notes,
+        matrix_columns=live.matrix_columns,
     )
     db.add(nxt)
     db.flush()
@@ -454,6 +457,7 @@ def copy_line(
         is_rate_only=line.is_rate_only,
         unit_price=line.unit_price,
         quantity=line.quantity,
+        qty_cells=line.qty_cells,
         uom=line.uom,
         unit_type=line.unit_type,
         line_total=line.line_total,
@@ -974,6 +978,19 @@ def _write_line(
         )
         db.add(line)
 
+    # With columns the cells own the quantity (a payload quantity is ignored); without them a
+    # non-empty cell map is refused. Checked before the line is mutated, so a bad cell stores nothing.
+    columns = version.matrix_columns or []
+    if columns:
+        cells = (
+            matrix.normalise_cells(columns, payload["qty_cells"])
+            if "qty_cells" in payload
+            else (line.qty_cells if line is not None else None)
+        )
+        payload = {**payload, "qty_cells": cells, "quantity": matrix.cells_total(cells)}
+    elif "qty_cells" in payload:
+        payload = {**payload, "qty_cells": matrix.normalise_cells(columns, payload["qty_cells"])}
+
     for field in LINE_FIELDS:
         if field in payload:
             value = payload[field]
@@ -1138,6 +1155,39 @@ def replace_lines(
     db.flush()
     _recalculate_total(db, version)
     return written
+
+
+def set_columns(
+    db: Session, *, version: ProjectQuotationVersion, columns: Any
+) -> List[ProjectQuotationLine]:
+    """Replace the version's column layout and carry every line's cells with it, atomically.
+
+    First columns take the quantity in, the last removal leaves the sum behind, anything else
+    drops the cells of a removed leaf. Totals are recomputed here so the caller reads one state.
+    """
+    assert_editable(db, version)
+    new = matrix.validate_columns(columns)
+    old = version.matrix_columns or []
+    keep = set(matrix.leaf_keys(new))
+    first = matrix.leaf_keys(new)[:1]
+    lines = list_lines(db, version.id)
+    for line in lines:
+        if not new:
+            line.qty_cells = None
+        elif not old:
+            qty = Decimal(line.quantity or 0).quantize(_CENTS)
+            line.qty_cells = {first[0]: f"{qty:.2f}"} if qty > 0 else None
+        else:
+            kept = {k: v for k, v in (line.qty_cells or {}).items() if k in keep}
+            line.qty_cells = kept or None
+            line.quantity = matrix.cells_total(kept)
+        line.line_total = (
+            Decimal(line.unit_price or 0) * Decimal(line.quantity or 0)
+        ).quantize(_CENTS)
+    version.matrix_columns = new or None
+    db.flush()
+    _recalculate_total(db, version)
+    return lines
 
 
 def delete_line(
@@ -1569,6 +1619,7 @@ def serialize_versions(
             "issued_on": version.issued_on,
             "total_amount": version.total_amount,
             "notes": version.notes,
+            "matrix_columns": list(version.matrix_columns or []),
             "created_at": version.created_at,
         }
         for version in versions
@@ -1624,6 +1675,7 @@ def serialize_lines(
             "is_below_floor": line.is_below_floor,
             "sort_order": line.sort_order,
             "notes": line.notes,
+            "qty_cells": dict(line.qty_cells or {}),
         }
         for line in lines
     ]

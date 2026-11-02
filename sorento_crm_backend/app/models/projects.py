@@ -1348,7 +1348,7 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
 
 AMENDMENT_STATUSES = ("open", "applied", "superseded")
-AMENDMENT_FIELDS = ("quantity", "unit_price", "remove")
+AMENDMENT_FIELDS = ("quantity", "unit_price", "remove", "model_swap", "note")
 AMENDMENT_DECISIONS = ("pending", "accepted", "rejected")
 
 
@@ -1388,12 +1388,6 @@ class QuotationAmendmentRequest(Base, CompanyScopedMixin):
     )
 
     __table_args__ = (
-        Index(
-            "uq_quotation_amendment_requests_open",
-            "issue_id",
-            unique=True,
-            postgresql_where=text("status = 'open'"),
-        ),
         CheckConstraint(
             "status IN ('open', 'applied', 'superseded')",
             name="ck_quotation_amendment_requests_status",
@@ -1430,15 +1424,28 @@ class QuotationAmendmentRequestRow(Base, CompanyScopedMixin):
     decision_reason = Column(String(500), nullable=True)
     decided_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     decided_at = Column(DateTime(timezone=False), nullable=True)
+    # PS-QUOTE-MATRIX: a row is a feedback note. cell_key points at one quantity cell, hint_text
+    # carries a model-swap name, and staff only tick it handled (nothing is ever applied).
+    cell_key = Column(String(40), nullable=True)
+    note = Column(Text, nullable=True)
+    hint_text = Column(String(200), nullable=True)
+    handled_at = Column(DateTime(timezone=False), nullable=True)
+    handled_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint(
-            "request_id", "line_id", "field", name="uq_quotation_amendment_rows_line_field"
+        # One cell note per (line, field, cell); COALESCE so the item-level row (no cell) is unique too.
+        Index(
+            "uq_quotation_amendment_rows_line_field",
+            "request_id",
+            "line_id",
+            "field",
+            text("(COALESCE(cell_key, ''))"),
+            unique=True,
         ),
         CheckConstraint(
-            "field IN ('quantity', 'unit_price', 'remove')",
+            "field IN ('quantity', 'unit_price', 'remove', 'model_swap', 'note')",
             name="ck_quotation_amendment_rows_field",
         ),
         CheckConstraint(
@@ -1627,6 +1634,8 @@ class ProjectQuotationVersion(Base, CompanyScopedMixin):
     )
     issued_on = Column(Date, nullable=True)
     total_amount = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
+    # PS-QUOTE-MATRIX: [{"key","label","cols":[{"key","label"}]}]; NULL or [] = a plain scope.
+    matrix_columns = Column(JSONB(none_as_null=True), nullable=True)
     notes = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -1704,6 +1713,8 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
 
     unit_price = Column(Numeric(12, 2), nullable=False, server_default="0", default=0)
     quantity = Column(Numeric(12, 2), nullable=False, server_default="1", default=1)
+    # PS-QUOTE-MATRIX: {leaf_key: "<2dp decimal>"}; NULL on a plain scope. `quantity` is its sum.
+    qty_cells = Column(JSONB(none_as_null=True), nullable=True)
     uom = Column(String(50), nullable=True)
     unit_type = Column(String(24), nullable=True)
     line_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)

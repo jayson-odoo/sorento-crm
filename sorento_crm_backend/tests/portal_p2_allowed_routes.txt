@@ -82,7 +82,7 @@ GET /projects/{project_id}/purchase-orders
 GET /projects/{project_id}/quotation-documents
 GET /projects/{project_id}/quotation-documents/letter-templates
 GET /projects/{project_id}/quotation-documents/{document_id}
-GET /projects/{project_id}/quotation-documents/{document_id}/amendment-request
+GET /projects/{project_id}/quotation-documents/{document_id}/feedback
 GET /projects/{project_id}/quotation-documents/{document_id}/issues
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx
@@ -135,6 +135,7 @@ GET /stock-debt/{product_id}/cell
 PATCH /config/series/{series_id}/products/{product_id}
 PATCH /config/series/{series_id}/sets/{product_set_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}
+PATCH /projects/{project_id}/quotation-documents/{document_id}/feedback/{row_id}
 PATCH /projects/{project_id}/quotation-documents/{document_id}/scopes/{quotation_id}
 POST /config/price-floors
 POST /config/quotation-templates
@@ -192,7 +193,6 @@ POST /projects/{project_id}/approve
 POST /projects/{project_id}/purchase-orders
 POST /projects/{project_id}/purchase-orders/upload
 POST /projects/{project_id}/quotation-documents
-POST /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/apply
 POST /projects/{project_id}/quotation-documents/{document_id}/approval-revise
 POST /projects/{project_id}/quotation-documents/{document_id}/approval-status
 POST /projects/{project_id}/quotation-documents/{document_id}/approve
@@ -254,13 +254,13 @@ PUT /fulfilment-planning/lines/{contribution_key}/draft
 PUT /leads/{lead_id}
 PUT /planning-changes/{batch_id}/rows/{row_id}
 PUT /projects/{project_id}
-PUT /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/rows/{row_id}
 PUT /projects/{project_id}/stakeholders/{stakeholder_id}
 PUT /projects/{project_id}/tasks/{task_id}
 PUT /purchase-order-versions/{po_version_id}
 PUT /purchase-order-versions/{po_version_id}/lines/{line_id}
 PUT /purchase-orders/{po_id}
 PUT /purchase-orders/{po_id}/lines/{line_id}
+PUT /quotation-versions/{version_id}/columns
 PUT /quotation-versions/{version_id}/lines
 PUT /quotation-versions/{version_id}/lines/{line_id}
 PUT /quotations/{quotation_id}
