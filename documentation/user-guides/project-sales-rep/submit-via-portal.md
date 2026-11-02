@@ -124,8 +124,9 @@ Some products are sold as a catalogue package: a cabinet that goes out with a ta
   option with its print size (for example *80 x 50 mm*). Pick the one you want before you submit:
   Submit with it empty shows *"Pick a tag template for this line."* on that row. Save Draft does not
   ask.
-* **A product with no template linked**, and every set, shows no field; marketing's usual layout for
-  that kind of product is used.
+* **A product with no template linked** shows no field and is not drawn in the Preview: under it
+  the Preview reads *"No tag template yet for <code>."* Ask marketing to link one, or escalate the
+  request to them. A set shows no field and uses marketing's furniture set template.
 * **Preview** appears under the lines as soon as the first item is on the form. It draws each line's
   tag with its template, the product's details and the price you chose (list price, the line's
   promotion, or the price you typed), one tag per line, and redraws a moment after you change an

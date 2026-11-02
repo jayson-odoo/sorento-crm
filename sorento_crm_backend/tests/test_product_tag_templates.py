@@ -546,7 +546,11 @@ class TestPreview:
         assert out["templates"]["k2"]["id"] == b
         # The PUBLISHED version's doc, never the draft.
         assert out["templates"]["k2"]["doc"]["layers"][0]["props"]["text"] == "published-B"
-        assert out["templates"]["k3"]["id"] == mirror
+        # #2101: an unlinked product gets NO template, even with its family's
+        # template published - the salesperson must not approve a layout
+        # nobody chose for this product. Its data still resolves.
+        assert "k3" not in out["templates"]
+        assert mirror
         assert "k4" not in out["templates"]
         assert {row["line_id"] for row in out["lines"]} == {"k1", "k2", "k3"}
         assert all(row["code"] for row in out["lines"])
@@ -725,3 +729,28 @@ def test_product_lookup_is_scoped(env):
     set_company_scope(db, frozenset({"11111111-1111-1111-1111-111111111111"}))
     assert product_tag_template_service.product_exists(db, product) is False
     set_company_scope(db, frozenset({SORENTO}))
+
+
+def test_preview_set_line_takes_only_an_exact_furniture_set_template(env):
+    """Card Q4: a set keeps the family rule, but never the ala carte / first
+    template chain (#2101)."""
+    from app.models.product_set import ProductSet
+
+    db, c, _ = env
+    ref = _reference(db)
+    member = _product(db, ref)
+    _template(db, "Plain", family="ala_carte")
+    product_set = ProductSet(
+        id=str(uuid.uuid4()), set_code=unique_code("SET"), name=unique_code("Set"), company_id=SORENTO
+    )
+    db.add(product_set)
+    db.flush()
+    body = {"lines": [{"key": "s", "line_type": "product_set", "product_set_id": product_set.id}]}
+
+    out = c.post(f"{PORTAL}/lookups/tag-preview", json=body).json()
+    assert "s" not in out["templates"]
+
+    furniture = _template(db, "Furniture", family="furniture_set")
+    out = c.post(f"{PORTAL}/lookups/tag-preview", json=body).json()
+    assert out["templates"]["s"]["id"] == furniture
+    assert member

@@ -1,19 +1,36 @@
 /** PRICETAG-TEMPLATE-PER-PRODUCT R5 / AC-16: the request form's live preview. */
+import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/components/dealer-kit/DesignViewer', () => ({
   __esModule: true,
-  default: ({ title, payload, emptyMessage }: { title: string; payload: unknown; emptyMessage: string }) => (
+  default: ({
+    title,
+    payload,
+    emptyMessage,
+    footer,
+  }: {
+    title: string;
+    payload: unknown;
+    emptyMessage: string;
+    footer?: React.ReactNode;
+  }) => (
     <div data-testid="viewer">
       {title}:{payload ? 'drawn' : emptyMessage}
+      {footer}
     </div>
   ),
 }));
 
 import { emptyDraftLine, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
 import type { TagPreviewResponse } from '@/app/(auth)/portal/lib/price-tag-request-service';
-import { PriceTagLivePreview, previewLines, previewPayload } from './PriceTagLivePreview';
+import {
+  linesWithoutTemplate,
+  PriceTagLivePreview,
+  previewLines,
+  previewPayload,
+} from './PriceTagLivePreview';
 
 const template = {
   id: 'tpl',
@@ -92,5 +109,26 @@ describe('PriceTagLivePreview', () => {
     });
     render(<PriceTagLivePreview lines={[line({ key: 'a', product_id: 'p1' })]} priceMode="list" lookupTagPreview={lookup} />);
     await waitFor(() => expect(screen.getByTestId('viewer')).toHaveTextContent('Preview unavailable'));
+  });
+
+  it('names the items that have no template under the drawn tags', async () => {
+    const answer = response(['a', 'b']);
+    delete (answer as unknown as { templates: Record<string, unknown> }).templates.b;
+    const lookup = vi.fn(async () => answer);
+    render(
+      <PriceTagLivePreview
+        lines={[line({ key: 'a', product_id: 'p1' }), line({ key: 'b', product_id: 'p2' })]}
+        priceMode="list"
+        lookupTagPreview={lookup}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('preview-missing')).toHaveTextContent('No tag template yet for C-b.'));
+  });
+});
+
+describe('linesWithoutTemplate', () => {
+  it('falls back to the form code when no row came back', () => {
+    const sent = previewLines([line({ key: 'x', product_id: 'p9' })]);
+    expect(linesWithoutTemplate(sent, { ...response([]), templates: {} }, { x: 'FORM-X' })).toEqual(['FORM-X']);
   });
 });

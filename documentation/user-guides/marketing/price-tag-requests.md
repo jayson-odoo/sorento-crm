@@ -247,8 +247,9 @@ on the request form and which template a tag starts from in the designer.
 
 * **One template linked**: every request line for the product uses it on its own.
 * **Two or more**: the salesperson picks one on the line before submitting.
-* **None**: nothing changes; the tag starts from the template whose family matches the product code,
-  as before.
+* **None**: the salesperson's Preview draws nothing for that product and names it, so it reaches
+  you as an escalation; in the designer the tag still starts from the template whose family matches
+  the product code. Link templates before salespeople start approving their own tags.
 
 Only a **Live** (published) template counts. A linked template you unpublish stays linked but is
 not offered until you publish it again. Spec sheet templates are never offered here.

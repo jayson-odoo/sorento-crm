@@ -435,17 +435,6 @@ def _published_templates(db: Session) -> list[TagTemplate]:
     )
 
 
-def _family_default(templates: list[TagTemplate], family: str) -> Optional[TagTemplate]:
-    """`defaultTemplateFor` in lib/dealer-kit/request-tags.ts, server side."""
-    if not templates:
-        return None
-    return (
-        next((t for t in templates if t.family == family), None)
-        or next((t for t in templates if t.family == "ala_carte"), None)
-        or templates[0]
-    )
-
-
 def template_payload(template: TagTemplate) -> dict:
     """A template as the request designer reads it: the PUBLISHED version's
     doc and print size, never the draft."""
@@ -578,8 +567,15 @@ def _with_templates(db: Session, rows: list[dict], keyed_lines: list[tuple[str, 
 
     ``keyed_lines`` is ``(key, line)``: the client's key on the form, the real
     line id for a saved request. Pick order: the line's own pick when it is
-    one of the product's published links, else its first link, else the
-    family default among every published price tag template.
+    one of the product's published links, else its first link.
+
+    A PRODUCT line with no published link gets NO template (#2101 browser
+    pass): since the salesperson approves his own tag, a silent family
+    fallback let him approve another product's layout (CKS821 drew a
+    template carrying bathroom furniture text). The preview says which items
+    have none and #2101's Approve refuses them (NO_TEMPLATE, escalate). A SET
+    line keeps the family rule (card Q4), but only an exact
+    ``furniture_set`` template, never the ala carte / first-template chain.
     """
     from app.services.dealer_kit import tag_sheet_export_service
 
@@ -594,12 +590,11 @@ def _with_templates(db: Session, rows: list[dict], keyed_lines: list[tuple[str, 
         chosen = next((t for t in allowed if t.id == line.tag_template_id), None)
         if chosen is None and allowed:
             chosen = allowed[0]
-        if chosen is None:
+        if chosen is None and line.line_type == "product_set":
             if everything is None:
                 everything = _published_templates(db)
-            chosen = _family_default(
-                everything, family_for(line.line_type, code_by_line.get(key))
-            )
+            family = family_for(line.line_type, code_by_line.get(key))
+            chosen = next((t for t in everything if t.family == family), None)
         if chosen is not None:
             templates[key] = template_payload(chosen)
 

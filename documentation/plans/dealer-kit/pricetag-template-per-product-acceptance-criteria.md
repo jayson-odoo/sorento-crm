@@ -46,7 +46,8 @@ Plan: `PLAN-pricetag-template-per-product-02nov.md`. Card: `CARD-pricetag-templa
 ## Live preview
 
 - AC-15 Portal `POST /public/portal/lookups/tag-preview {price_mode, lines[]}` answers, per line
-  key, the template to draw (the line's pick, else its single link, else its first link, else the
+  key, the template to draw (the line's pick, else its single link, else its first link; a product
+  with no link gets none, a set line only an exact furniture_set template - #2101; formerly the
   family default among published templates) with that version's doc, the resolved tag data and the
   media maps. No row is written.
 - AC-16 The request form shows a "Preview" section (while the request is not yet at a status that

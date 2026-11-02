@@ -59,6 +59,24 @@ export function previewLines(lines: DraftLine[]): TagPreviewLineInput[] {
     }));
 }
 
+/**
+ * The items the preview could not draw: a product with no linked template gets
+ * none (no silent fallback, #2101), named by its code so the salesperson knows
+ * which line to escalate. Codes come off the resolved rows, the form's own code
+ * when a row is missing.
+ */
+export function linesWithoutTemplate(
+  sent: TagPreviewLineInput[],
+  response: TagPreviewResponse,
+  codeByKey: Record<string, string> = {},
+): string[] {
+  const rowCode = new Map(response.lines.map((row) => [row.line_id, row.code]));
+  return sent
+    .filter((line) => !response.templates[line.key])
+    .map((line) => rowCode.get(line.key) || codeByKey[line.key] || '')
+    .filter(Boolean);
+}
+
 /** The response, drawn: one synthetic tag per line, keyed by the line's form key. */
 export function previewPayload(
   sent: TagPreviewLineInput[],
@@ -99,6 +117,13 @@ export function PriceTagLivePreview({ lines, priceMode, lookupTagPreview, docNum
   const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [missing, setMissing] = useState<string[]>([]);
+  const codeByKey = useMemo(
+    () => Object.fromEntries(lines.map((line) => [line.key, line.code])),
+    [lines],
+  );
+  const codeByKeyRef = useRef(codeByKey);
+  codeByKeyRef.current = codeByKey;
   const askSeq = useRef(0);
   const sentRef = useRef(sent);
   sentRef.current = sent;
@@ -106,6 +131,7 @@ export function PriceTagLivePreview({ lines, priceMode, lookupTagPreview, docNum
   useEffect(() => {
     if (sentRef.current.length === 0) {
       setPayload(null);
+      setMissing([]);
       setLoading(false);
       return;
     }
@@ -117,6 +143,7 @@ export function PriceTagLivePreview({ lines, priceMode, lookupTagPreview, docNum
         .then((response) => {
           if (ask !== askSeq.current) return; // a newer edit is on its way
           setPayload(previewPayload(lines, response));
+          setMissing(linesWithoutTemplate(lines, response, codeByKeyRef.current));
           setFailed(false);
         })
         .catch(() => {
@@ -134,9 +161,18 @@ export function PriceTagLivePreview({ lines, priceMode, lookupTagPreview, docNum
 
   if (sent.length === 0) return null;
 
+  // Shown under the drawn tags; with nothing drawn at all the empty state says it.
+  const missingNote =
+    !failed && payload && missing.length > 0 ? (
+      <p className="text-sm text-muted-foreground" data-testid="preview-missing">
+        No tag template yet for {missing.join(', ')}.
+      </p>
+    ) : null;
+
   return (
     <DesignViewer
       title="Preview"
+      footer={missingNote}
       docNumber={docNumber || 'Preview'}
       payload={failed ? null : payload}
       loading={loading && payload === null}
@@ -144,7 +180,7 @@ export function PriceTagLivePreview({ lines, priceMode, lookupTagPreview, docNum
       emptyHint={
         failed
           ? 'The preview could not be drawn.'
-          : 'Marketing has not published a tag template these items can use.'
+          : 'Marketing has not linked a tag template to these items yet.'
       }
     />
   );
