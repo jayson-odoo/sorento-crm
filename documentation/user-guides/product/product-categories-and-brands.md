@@ -59,6 +59,7 @@ The brand form fields:
 * **Active Status** - switch.
 * **Description** - optional, up to 2000 characters.
 * **Access Levels** - visibility codes (e.g. **dealer**, **end_user**). These scope which contacts can see products of this brand in the portal / promotion product search. Leaving it empty applies no extra visibility restriction.
+* **Promotions carry no selling price** - switch, off by default. Turn it on for a brand whose promotions never state a selling price (Cabana). Promotion lines on this brand then keep no selling price or discount: an uploaded flyer's prices for it are dropped, the promotion editor refuses a typed one, and price tags, the chatbot and the portal show the list price instead. A price typed on a price tag line still wins.
 
 There is also a brand **detail** page (`/master-data-management/brands/{id}`). Edit and **Duplicate** actions are available on list rows.
 
