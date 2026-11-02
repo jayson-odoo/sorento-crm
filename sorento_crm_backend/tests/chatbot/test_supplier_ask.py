@@ -124,14 +124,12 @@ def _po_calls(captured) -> list[dict[str, Any]]:
 
 def test_a_po_domain_ask_for_a_supplier_filters_by_it(session_factory, monkeypatch):
     """"POs for supplier X" parsed straight into the purchase_order domain."""
-    ids = _seed_suppliers(session_factory)
-    _seed_contact(session_factory, variables={})
-    _make_staff(session_factory)
+    ids = _staff_world(session_factory)
     _reply, captured = _turn(
         session_factory, monkeypatch, _ask("taiyang", None, domain="purchase_order"), "POs for taiyang"
     )
     calls = _po_calls(captured)
-    assert calls and calls[0].get("supplier_ids") == [ids["ours"]], captured
+    assert calls and calls[0].get("supplier_ids") == [ids["ours"]], (_reply, captured)
 
 
 def _seed_twin(session_factory) -> str:

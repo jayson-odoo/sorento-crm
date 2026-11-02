@@ -1870,6 +1870,50 @@ ORDER_PARTY_HINTS = frozenset(
 )
 
 
+#: Fix round on #2066: said when the message names a supplier the turn cannot bind.
+SUPPLIER_NOT_VISIBLE_LINE = "Sorry, that supplier isn't under your account."
+SUPPLIER_NOT_FOUND_LINE = "Sorry, I couldn't find a supplier called \"{raw}\"."
+
+
+def unbound_supplier_refusal(
+    verdict: dict[str, Any], resolved: Any, asker_sees_suppliers: bool
+) -> str | None:
+    """Fix round on #2066 (owner hand test, console turn 52faa07d): a supplier the message names is a filter the
+    fetch must carry, so when it cannot be bound the turn says so instead of fetching with no supplier at all.
+    Returns the refusal line, or None when the message names no supplier or a supplier row was bound (one row,
+    or several for the picker). An asker `contracts.supplier_visible` refuses is told it is not under their
+    account; for one who may see suppliers, a word no supplier row matches is named back."""
+    named = [
+        jsc.nullish_str(jsc.get(e, "raw")).strip() or jsc.nullish_str(jsc.get(e, "canonical_code")).strip()
+        for e in jsc.array(verdict.get("entities"))
+        if isinstance(e, dict)
+        and e.get("current_message") is not False
+        and jsc.lower_or_empty(jsc.get(e, "hint")) == "supplier"
+    ]
+    if not named:
+        return None
+    if not asker_sees_suppliers:
+        return SUPPLIER_NOT_VISIBLE_LINE
+    if _holds_supplier_row(resolved):
+        return None
+    return SUPPLIER_NOT_FOUND_LINE.format(raw=named[0])
+
+
+def _holds_supplier_row(resolved: Any) -> bool:
+    """Whether the resolver's answer carries any supplier row: per token (`resolutions`), the AND answer
+    (`intersection`) or the per-kind map; the same places `without_rows_of` clears."""
+    if not isinstance(resolved, dict):
+        return False
+    rows: list[Any] = [*jsc.array(resolved.get("intersection"))]
+    for resolution in jsc.array(resolved.get("resolutions")):
+        if isinstance(resolution, dict):
+            rows += jsc.array(resolution.get("matches"))
+    by_type = resolved.get("by_entity_type")
+    if isinstance(by_type, dict) and any(str(k).lower() == "supplier" and jsc.array(v) for k, v in by_type.items()):
+        return True
+    return any(jsc.lower_or_empty(jsc.get(r, "entity_type")) == "supplier" for r in rows if isinstance(r, dict))
+
+
 def supplier_ask_reads_purchase_orders(verdict: dict[str, Any]) -> dict[str, Any]:
     """SUPPLIER-ASK (owner, 1 Nov 2026: "outstanding for supplier X yes the open POs not yet
     received"): what is outstanding with a supplier is our purchase orders to it, so an

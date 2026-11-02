@@ -1252,6 +1252,29 @@ def _may_see_suppliers(db: Session, resolved: str) -> bool:
     return SUPPLIER_GRANT in contact_field_reveal_service.granted_keys(db, resolved)
 
 
+def _asker_is_office_staff(db: Session, contact_pk: Any, contact_respond_id: Any, space_id: Any) -> bool:
+    """SUPPLIER-ASK fix round (#2066): the turn's one staff test for suppliers, the same one the Supplier block uses.
+    A staff principal is an office user; a contact is staff when it holds an ACTIVE office access type
+    (`contact_customer_scope.is_office_staff`). No contact row, or a lookup error, is not staff (fail closed)."""
+    if staff_principal.current() is not None:
+        return True
+    from app.services.contact_customer_scope import is_office_staff
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    if not contact_pk:
+        # Memory intake degraded (no pk on the turn): resolve the contact the way the Supplier block does.
+        contact_pk = _guarded(
+            db,
+            lambda: resolve_contact_with_null_workspace_fallback(
+                db, contact_id=str(contact_respond_id), space_id=(str(space_id).strip() or None) if space_id else None
+            ),
+            None,
+        )
+    if not contact_pk:
+        return False
+    return bool(_guarded(db, lambda: is_office_staff(db, str(contact_pk)), False))
+
+
 def _guarded(db: Session, fn: Any, default: Any) -> Any:
     """`fn()` in its own savepoint; `default` (fail closed) when it raises, with the session still usable."""
     try:
@@ -6087,7 +6110,13 @@ def _run_stages_body(  # noqa: PLR0915
         # POs, for an asker who may see suppliers (staff with the supplier reveal); for anyone
         # else the supplier word is dropped at the resolver (`resolve_gate.resolve_entity_body`).
         # One staff check for the turn: the swap here and the resolver ctx below both read it.
-        asker_sees_suppliers = supplier_visible(access.get("attributes"), is_staff_profile(state_in.profile))
+        # Fix round on #2066 (console turn 52faa07d): "staff" here is the office ACCESS TYPE, the rule the
+        # Supplier list itself uses (`_may_see_suppliers`), never `chatbot_profile.tier` (NULL on most office contacts).
+        asker_sees_suppliers = supplier_visible(
+            access.get("attributes"), _asker_is_office_staff(
+                db, remembered_before.get("_contact_pk"), contact_respond_id, default_space_id(db)
+            )
+        )
         if asker_sees_suppliers:
             from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
 
@@ -6923,6 +6952,17 @@ def _run_stages_body(  # noqa: PLR0915
                 account_question, scope_refused, staff_level_refused = str(staff_account_refusal), True, True
             elif gate_refusal:
                 account_question = gate_refusal
+            # Fix round on #2066 (console turn 52faa07d): a supplier this message names that the turn cannot bind
+            # (dropped for an asker who may not see suppliers, or matching no supplier row) stops the fetch here.
+            # A bound supplier, one row or several (the picker), passes; never a list with no supplier filter.
+            from app.services.chatbot.lanes.business.resolve_gate import unbound_supplier_refusal
+
+            supplier_refusal = (
+                None if scope_refused
+                else unbound_supplier_refusal(verdict, (resolver_payload or {}).get("resolved"), asker_sees_suppliers)
+            )
+            if supplier_refusal:
+                account_question, scope_refused = supplier_refusal, True
             # CHATBOT-SELFREF-SCOPE R4: every scope decision is on the trace, with its
             # reason and the ids it dropped, so a refusal explains itself.
             screened_refused = False
@@ -6949,7 +6989,9 @@ def _run_stages_body(  # noqa: PLR0915
                     {
                         "refused": "customer_not_permitted",
                         "reason": (
-                            "account_unnamed"
+                            "supplier_not_bound"
+                            if supplier_refusal
+                            else "account_unnamed"
                             if account_unnamed_n is not None
                             else "account_level_absent"
                             if staff_level_refused
