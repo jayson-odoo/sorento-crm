@@ -1163,13 +1163,19 @@ def set_columns(
     """Replace the version's column layout and carry every line's cells with it, atomically.
 
     First columns take the quantity in, the last removal leaves the sum behind, anything else
-    drops the cells of a removed leaf. Totals are recomputed here so the caller reads one state.
+    drops the cells of a removed leaf. The one exception: a header that was itself a leaf (no
+    cols) and gains cols keeps its cells, moved into its first col, so no total moves (R12).
+    Totals are recomputed here so the caller reads one state.
     """
     assert_editable(db, version)
     new = matrix.validate_columns(columns)
     old = version.matrix_columns or []
     keep = set(matrix.leaf_keys(new))
     first = matrix.leaf_keys(new)[:1]
+    was_leaf = {h["key"] for h in old if not (h.get("cols") or [])}
+    grew = {
+        h["key"]: h["cols"][0]["key"] for h in new if h["key"] in was_leaf and (h.get("cols") or [])
+    }
     lines = list_lines(db, version.id)
     for line in lines:
         if not new:
@@ -1178,7 +1184,12 @@ def set_columns(
             qty = Decimal(line.quantity or 0).quantize(_CENTS)
             line.qty_cells = {first[0]: f"{qty:.2f}"} if qty > 0 else None
         else:
-            kept = {k: v for k, v in (line.qty_cells or {}).items() if k in keep}
+            cells = dict(line.qty_cells or {})
+            for header_key, first_col in grew.items():
+                moved = cells.pop(header_key, None)
+                if moved is not None and first_col not in cells:
+                    cells[first_col] = moved
+            kept = {k: v for k, v in cells.items() if k in keep}
             line.qty_cells = kept or None
             line.quantity = matrix.cells_total(kept)
         line.line_total = (
