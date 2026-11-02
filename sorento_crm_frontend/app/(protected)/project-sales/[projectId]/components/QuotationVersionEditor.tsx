@@ -486,8 +486,8 @@ export function QuotationVersionEditor({
     [canEditColumns, siblingScopes, siblingVersions.rows],
   );
   const changeColumns = React.useCallback(
-    async (next: MatrixHeader[]) => {
-      if (!versionForColumns) return;
+    async (next: MatrixHeader[]): Promise<boolean> => {
+      if (!versionForColumns) return false;
       const before = matrixColumns;
       try {
         const result = await columnsMutation.mutateAsync({
@@ -509,8 +509,11 @@ export function QuotationVersionEditor({
             }),
           );
         }
+        return true;
       } catch {
-        // The mutation already toasted the reason; the header stays as the server has it.
+        // The mutation already toasted the reason; the grid puts the header back as the
+        // server has it.
+        return false;
       }
     },
     [columnsMutation, matrixColumns, stageForColumns, versionForColumns],
@@ -554,7 +557,7 @@ export function QuotationVersionEditor({
   const matrix = React.useMemo<QuotationLinesMatrix>(
     () => ({
       columns: matrixColumns,
-      onChange: canEditColumns ? (next) => void changeColumns(next) : undefined,
+      onChange: canEditColumns ? changeColumns : undefined,
       saving: columnsMutation.isPending,
       copySources,
       onRemovalPending: setRemovalPending,

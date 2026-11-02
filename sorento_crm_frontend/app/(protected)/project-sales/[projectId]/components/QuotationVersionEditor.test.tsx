@@ -2762,3 +2762,38 @@ describe('QuotationVersionEditor B1: a header gains its first column (fix round 
     expect(stagedBody()[0].qty_cells).not.toHaveProperty('bt');
   });
 });
+
+describe('QuotationVersionEditor fix round 3 (M2a): a new header is typed into before the server answers', () => {
+  const columns = [{ key: 'a', label: 'Type A', cols: [] as { key: string; label: string }[] }];
+
+  it('shows the new header focused and selected while the column write is still on its way', async () => {
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
+    ]);
+    listQuotationLines.mockResolvedValue([line({ qty_cells: { a: '10.00' } })]);
+    replaceQuotationColumns.mockImplementation(() => new Promise(() => {}));
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    const input = screen.getByRole('textbox', { name: 'Column header Header 2' }) as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 'Header 2'.length]);
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+  });
+
+  it('takes the new header back and toasts when the write is refused', async () => {
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
+    ]);
+    listQuotationLines.mockResolvedValue([line({ qty_cells: { a: '10.00' } })]);
+    replaceQuotationColumns.mockRejectedValue(new Error('Column labels must be unique'));
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    expect(screen.getByRole('textbox', { name: 'Column header Header 2' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Column header Header 2' })).toBeNull(),
+    );
+    expect(toast.error).toHaveBeenCalledWith('Column labels must be unique');
+  });
+});

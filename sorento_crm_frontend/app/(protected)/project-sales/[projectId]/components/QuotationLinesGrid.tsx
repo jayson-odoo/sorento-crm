@@ -157,7 +157,7 @@ export interface QuotationLinesMatrix {
   /** `[]` is today's single Qty column. */
   columns: MatrixHeader[];
   /** Present on an editable version in an edit session: every header change, whole. */
-  onChange?: (next: MatrixHeader[]) => void;
+  onChange?: (next: MatrixHeader[]) => void | Promise<boolean | void>;
   /** A column write is on its way. */
   saving?: boolean;
   /** The document's other scopes, for Copy columns from. */
@@ -1140,7 +1140,16 @@ export function QuotationLinesGrid({
   matrix,
   feedback,
 }: QuotationLinesGridProps) {
-  const headers = React.useMemo(() => matrix?.columns ?? [], [matrix?.columns]);
+  /**
+   * The header as last edited here, ahead of the server: a header or column just added is on
+   * screen (focused, its name selected) the moment it is asked for, not when the write answers,
+   * so typing that starts at once is not lost (fix round 3, M2a). Dropped when the server's
+   * columns arrive, and rolled back when the write fails.
+   */
+  const [optimistic, setOptimistic] = React.useState<MatrixHeader[] | null>(null);
+  const serverColumns = matrix?.columns;
+  React.useEffect(() => setOptimistic(null), [serverColumns]);
+  const headers = React.useMemo(() => optimistic ?? serverColumns ?? [], [optimistic, serverColumns]);
   const isMatrix = hasColumns(headers);
   const columnsEditable = editing && Boolean(matrix?.onChange);
   const [bandOpen, setBandOpen] = React.useState<Set<string>>(() => new Set());
@@ -1506,7 +1515,18 @@ export function QuotationLinesGrid({
   headersRef.current = headers;
   const onMatrixChange = matrix?.onChange;
   const change = React.useCallback(
-    (next: MatrixHeader[]) => onMatrixChange?.(next),
+    (next: MatrixHeader[]) => {
+      if (!onMatrixChange) return;
+      headersRef.current = next;
+      setOptimistic(next);
+      void Promise.resolve(onMatrixChange(next)).then(
+        // The write already said why it failed (a toast); the header goes back to the server's.
+        (ok) => {
+          if (ok === false) setOptimistic(null);
+        },
+        () => setOptimistic(null),
+      );
+    },
     [onMatrixChange],
   );
   /** Adds an item and asks for its label box to take the caret once it is drawn. */

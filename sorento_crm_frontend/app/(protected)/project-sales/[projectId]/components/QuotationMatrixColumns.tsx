@@ -224,8 +224,6 @@ function LabelEditor({
   const [over, setOver] = React.useState(false);
   React.useEffect(() => setValue(label), [label]);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
-  /** Set by the focus a click made, so that click's mouseup does not drop the selection. */
-  const justFocused = React.useRef(false);
   // Layout effect: a label just added takes the caret before the browser paints, not a frame
   // later, so typing that starts at once lands in it.
   React.useLayoutEffect(() => {
@@ -321,26 +319,27 @@ function LabelEditor({
           variant="sm"
           value={value}
           maxLength={60}
-          disabled={matrix.saving}
+          // Never disabled while a column write is on its way: a name just added is typed into
+          // at once. The rename commits on blur, by when that write has normally answered.
           aria-label={kind === 'header' ? `Column header ${label}` : `Column ${label}`}
           title={value}
           className="h-7 w-full min-w-0 flex-1 px-1 text-center text-xs font-medium"
           onChange={(event) => setValue(event.target.value)}
-          // Renaming replaces the label: select it all in the focus handler itself, so the
-          // first keystroke after a click already types over it (no timer, no frame).
+          // Renaming replaces the label, so the first click selects it all. A browser focuses an
+          // input as mousedown's DEFAULT action and then drops the caret under the pointer,
+          // which undid a select() made on focus. So that first mousedown is taken over: no
+          // default, focus and select here, in the same handler. A click on a name that already
+          // has focus is left to the browser, to place the caret.
           onMouseDown={(event) => {
-            justFocused.current = document.activeElement !== event.currentTarget;
-          }}
-          onFocus={(event) => event.currentTarget.select()}
-          onMouseUp={(event) => {
-            if (!justFocused.current) return;
-            justFocused.current = false;
+            const input = event.currentTarget;
+            if (event.button !== 0 || document.activeElement === input || input.disabled) return;
             event.preventDefault();
+            input.focus();
+            input.select();
           }}
-          onBlur={() => {
-            justFocused.current = false;
-            commit();
-          }}
+          // Keyboard focus (Tab) selects it all too.
+          onFocus={(event) => event.currentTarget.select()}
+          onBlur={commit}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault();

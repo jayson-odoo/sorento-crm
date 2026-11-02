@@ -551,17 +551,116 @@ describe('readable column labels in edit mode (browser pass finding)', () => {
 });
 
 describe('renaming selects the label at once (fix round 2: selected ~0.4s late)', () => {
-  it('selects the whole label in the focus handler itself, and a click does not undo it', () => {
+  // The click path is pinned by fix round 3's M2b (the real event sequence); this is the Tab path.
+  it('selects the whole label when focus arrives from the keyboard', () => {
     renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange: vi.fn() } });
     const input = screen.getAllByRole('textbox', { name: 'Column Balcony' })[0] as HTMLInputElement;
-    fireEvent.mouseDown(input);
-    fireEvent.focus(input);
+    act(() => input.focus());
     // Synchronously: no timer, no animation frame, nothing to await.
     expect([input.selectionStart, input.selectionEnd]).toEqual([0, 'Balcony'.length]);
-    const mouseUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
-    input.dispatchEvent(mouseUp);
-    // The click that focused it must not drop the caret into the text and lose the selection.
-    expect(mouseUp.defaultPrevented).toBe(true);
-    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 'Balcony'.length]);
+  });
+});
+
+describe('fix round 3: the widths the table renders, not the column defs', () => {
+  it('M1: under table-layout fixed, every edit-mode quantity column renders at least 120px', () => {
+    renderGrid({
+      lines: [staged(TRAP, true)],
+      editing: true,
+      matrix: {
+        columns: [...UNIT, { key: 'bt', label: 'Break tank', cols: [] }],
+        onChange: vi.fn(),
+      },
+    });
+    const table = document.querySelector('table') as HTMLTableElement;
+    // Fixed layout reads widths from <col>, else from the FIRST row, where a column header
+    // spans its columns and splits its width evenly: a 120px column then lays out at ~85px.
+    const cols = Array.from(table.querySelectorAll(':scope > colgroup > col')) as HTMLElement[];
+    const headerRows = table.querySelectorAll('thead tr');
+    const leafCount = Array.from(headerRows).reduce(
+      (count, tr) =>
+        count +
+        Array.from(tr.querySelectorAll('th')).filter((th) =>
+          th.querySelector('input[aria-label^="Column "]:not([aria-label^="Column header "])') ||
+          th.querySelector('input[aria-label="Column header Break tank"]'),
+        ).length,
+      0,
+    );
+    expect(leafCount).toBe(7);
+    const leafWidths = cols
+      .filter((col) => col.dataset.columnId?.startsWith('mx-cell:'))
+      .map((col) => parseInt(col.style.width, 10));
+    expect(leafWidths).toHaveLength(7);
+    for (const width of leafWidths) expect(width).toBeGreaterThanOrEqual(120);
+    // One <col> per visible leaf column, in order, so the fixed layout has nothing to split.
+    expect(cols).toHaveLength(table.querySelectorAll('tbody tr:first-child > td').length);
+  });
+});
+
+describe('fix round 3: a click on a name selects all of it', () => {
+  /** What one mouse click fires, in order, as a browser fires it. */
+  function realClick(target: HTMLElement) {
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 });
+    fireEvent.pointerDown(target, { button: 0 });
+    target.dispatchEvent(down);
+    // A browser focuses the input only as mousedown's default action.
+    if (!down.defaultPrevented && document.activeElement !== target) {
+      target.focus();
+      // ...and then drops the caret where the pointer is, which is what lost the selection.
+      (target as HTMLInputElement).setSelectionRange(3, 3);
+    }
+    fireEvent.mouseUp(target, { button: 0 });
+    fireEvent.click(target, { button: 0 });
+    return down;
+  }
+
+  it('M2b: the first click on an unfocused name selects it whole; a second click may place the caret', () => {
+    renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange: vi.fn() } });
+    const input = screen.getAllByRole('textbox', { name: 'Column Balcony' })[0] as HTMLInputElement;
+
+    const first = realClick(input);
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe(input.value.length);
+    expect(first.defaultPrevented).toBe(true);
+
+    // Focused already: the browser's own caret placement is left alone.
+    const second = realClick(input);
+    expect(second.defaultPrevented).toBe(false);
+  });
+});
+
+describe('fix round 3: a new name is there to type into at once (M2a)', () => {
+  it('shows a new header focused and selected before the server answers', () => {
+    // The write never answers in this test: what is on screen is the grid's own.
+    const onChange = vi.fn(() => new Promise<boolean>(() => {}));
+    renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange } });
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+
+    const input = screen.getByRole('textbox', { name: 'Column header Header 4' }) as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 'Header 4'.length]);
+    expect(input).toBeEnabled();
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a new column under its header at once, and takes it back if the write fails', async () => {
+    let fail: (ok: boolean) => void = () => {};
+    const onChange = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          fail = resolve;
+        }),
+    );
+    renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a column under Type A - 1 BH' }));
+    const input = screen.getByRole('textbox', { name: 'Column Column 3' });
+    expect(document.activeElement).toBe(input);
+
+    await act(async () => {
+      fail(false);
+    });
+    expect(screen.queryByRole('textbox', { name: 'Column Column 3' })).toBeNull();
   });
 });
