@@ -76,8 +76,11 @@ will say, line for line:
 
 * It reads the board again as it opens, so a decision you saved a moment ago (on this tab or on
   another one) is what it shows. You don't need to refresh the page first.
+* If the board can't be read again (it took too long), the page says so and offers **Retry**.
+  Nothing can be confirmed or changed from it until a read succeeds.
 * If the same line was saved again somewhere else after this tab last read it, the board takes
-  the newer decision and tells you which line changed.
+  the newer decision and tells you which line changed. Saving from a tab that still shows the
+  older decision is refused, and the board reloads the newer one.
 * A line delivered in full that AutoCount still changed (for example a new date) shows the old
   date under **Delivery date** and the new one under **New date**, the same Was and Now the email
   prints.
