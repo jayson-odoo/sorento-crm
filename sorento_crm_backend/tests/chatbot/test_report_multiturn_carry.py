@@ -453,3 +453,54 @@ def test_mc10_the_first_sales_ask_of_a_fresh_conversation_with_no_basis_asks_the
     ask = _v("sales_report", _ent(AGENT_1, "sales_agent"), domain_in_message=True, **YEAR)
     text, calls = c.say(1, ask, "sales for agent a 2026")
     assert calls == [] and text.strip() == BASIS_Q, f"turn 1: want the basis question, got {text!r}"
+
+
+# ------------------------------------------------------------------------------------------ review findings
+
+
+def test_mc11c_two_agents_one_only_in_the_other_company_drops_the_company_and_asks(bot) -> None:
+    """Q1: a follow-up naming AGENT A (held company has it) and AGENT M (only the other company has it) is not a subject
+    the held company covers: the company is dropped and asked, and nothing runs (never AGENT A alone, AGENT M dropped)."""
+    sorento, mocha = _world(bot)
+    c = Convo(bot)
+    _sorento_held(c, sorento)
+    follow = _v(
+        "sales_analysis", _ent(AGENT_1, "sales_agent"), _ent(AGENT_M, "sales_agent"), sales_basis="invoiced",
+        entity_op="replace_combine", continuation=True, **YEAR,
+    )
+    text, calls = c.say(2, follow, "for sales agents agent a and agent m")
+    ran = [a for n, a in calls if n == TOOL]
+    assert not ran, f"turn 2: ran {ran} though {AGENT_M} is only in {mocha}\n" + "\n".join(c.log)
+    assert f"{sorento} or {mocha}?" in text, f"turn 2: want the company question, got {text!r}\n" + "\n".join(c.log)
+
+
+def test_mc9b_a_declared_company_pick_with_another_filter_word_does_not_drop_the_word(bot) -> None:
+    """The open ask holds account type CABANA (carried by both companies) and asks the company. The reply "mocha, for
+    ceramic" carries the declared pick of Mocha AND an account_type entity "ceramic" (kind_said "account type"). Either it
+    runs Mocha with CERAMIC, or it is read as a new ask; it must never run Mocha with the old CABANA."""
+    sorento, mocha = _world(bot)
+    db = bot.console.session_factory()
+    try:
+        _ledger(db, MOCHA_ID, "ZZT MOCHA LEDGER THREE [A/C IV]", "CABANA")
+        db.commit()
+    finally:
+        db.close()
+    c = Convo(bot)
+    ask = _v(
+        "sales_analysis", _ent("cabana", "account_type", None, "account type"), sales_basis="invoiced", group_by="month",
+        domain_in_message=True, **YEAR,
+    )
+    text, calls = c.say(1, ask, "cabana account type by month 2026 invoiced")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, f"setup: want the company question, got {text!r}"
+    reply = _v(
+        "sales_analysis", _ent("ceramic", "account_type", None, "account type"), sales_basis="invoiced", group_by="month",
+        entity_op="replace_combine", continuation=True, open_question_answer=_pick_of(2),
+        escalation={"company_pick": mocha, "is_escalation_confirmation": False}, **YEAR,
+    )
+    text, calls = c.say(2, reply, "mocha, for ceramic")
+    for n, args in calls:
+        stale = n == TOOL and args.get("account_types") == ["CABANA"] and args.get("company") == MOCHA_ID
+        assert not stale, f"turn 2: ran Mocha with the old CABANA, the word 'ceramic' was dropped: {args}\n" + "\n".join(c.log)
+    assert not any(
+        n == TOOL and args.get("company") == MOCHA_ID and args.get("account_types") != ["CERAMIC"] for n, args in calls
+    ), f"turn 2: Mocha ran without CERAMIC: {calls}\n" + "\n".join(c.log)
