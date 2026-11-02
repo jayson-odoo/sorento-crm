@@ -99,6 +99,11 @@ export type QuotationScopeEditing = {
   seed: (versionId: string, lines: StagedQuotationLine[]) => void;
   stage: (lines: StagedQuotationLine[]) => void;
   toggleRemoved: (key: string) => void;
+  /**
+   * PS-QUOTE-MATRIX: true while a column removal counts down or a column write is on its way.
+   * The page's Save waits: a line write racing a column write 422s on cells under a removed key.
+   */
+  setColumnsBusy?: (busy: boolean) => void;
 };
 
 /**
@@ -537,12 +542,22 @@ export function QuotationVersionEditor({
     [scopeNotes, sourceLines, sortedLines],
   );
 
+  const [removalPending, setRemovalPending] = React.useState(false);
+  const setColumnsBusy = edit?.setColumnsBusy;
+  const columnsBusy = removalPending || columnsMutation.isPending;
+  React.useEffect(() => {
+    setColumnsBusy?.(columnsBusy);
+  }, [columnsBusy, setColumnsBusy]);
+  // Leaving the scope never leaves the page's Save waiting on a grid that is gone.
+  React.useEffect(() => () => setColumnsBusy?.(false), [setColumnsBusy]);
+
   const matrix = React.useMemo<QuotationLinesMatrix>(
     () => ({
       columns: matrixColumns,
       onChange: canEditColumns ? (next) => void changeColumns(next) : undefined,
       saving: columnsMutation.isPending,
       copySources,
+      onRemovalPending: setRemovalPending,
     }),
     [canEditColumns, changeColumns, columnsMutation.isPending, copySources, matrixColumns],
   );

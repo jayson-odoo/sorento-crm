@@ -51,6 +51,8 @@ const replaceQuotationLines = vi.fn();
 const recomputeQuotationVersion = vi.fn();
 const judgeQuotationLine = vi.fn();
 const replaceQuotationColumns = vi.fn();
+/** The page's Save gate (PS-QUOTE-MATRIX): what the editor reports as a column-busy scope. */
+const setColumnsBusy = vi.fn();
 // Fix round 2: the service the coder must add to _shared/services/projectService.ts, read through
 // the hook `useQuotationLineImages(productId)` in _shared/hooks/useProjects.ts.
 const getQuotationLineImages = vi.fn();
@@ -352,6 +354,7 @@ function Harness({
             stage: (lines: Parameters<typeof stageScope>[1]) =>
               stageScope(QUOTATION.id, lines),
             toggleRemoved: (key: string) => toggleRemoved(QUOTATION.id, key),
+            setColumnsBusy,
           }
         : null,
     [isEditing, scopes, seedScope, stageScope, toggleRemoved],
@@ -2692,5 +2695,41 @@ describe('QuotationVersionEditor feedback marks on the draft (PS-QUOTE-MATRIX fi
     expect(screen.getAllByTestId('matrix-feedback-corner')).toHaveLength(1);
     expect(screen.getAllByTestId('line-feedback-dot')).toHaveLength(1);
     expect(listQuotationLines).toHaveBeenCalledWith('v1');
+  });
+});
+
+describe('QuotationVersionEditor holds the page\'s Save while columns change (review nit)', () => {
+  it('reports busy while a removal counts down and while the column write is on its way', async () => {
+    const columns = [
+      { key: 'a', label: 'Type A', cols: [] },
+      { key: 'b', label: 'Type B', cols: [] },
+    ];
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns });
+    listQuotationVersions.mockResolvedValue([editable]);
+    listQuotationLines.mockResolvedValue([line({ qty_cells: { a: '4.00', b: '6.00' } })]);
+    let finish: (value: unknown) => void = () => {};
+    replaceQuotationColumns.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await renderEditing();
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(false);
+
+    // Parked: Save waits. Undone: Save is back.
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Type A' }));
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo removing Type A' }));
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(false);
+
+    // A column write in flight holds it too, until the server answers.
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    await waitFor(() => expect(replaceQuotationColumns).toHaveBeenCalledTimes(1));
+    expect(setColumnsBusy).toHaveBeenLastCalledWith(true);
+    await act(async () => {
+      finish({ version: editable, lines: [line({ qty_cells: { a: '4.00', b: '6.00' } })] });
+    });
+    await waitFor(() => expect(setColumnsBusy).toHaveBeenLastCalledWith(false));
   });
 });

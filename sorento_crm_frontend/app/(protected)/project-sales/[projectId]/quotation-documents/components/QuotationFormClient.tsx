@@ -241,6 +241,9 @@ export function QuotationFormClient({
   const details = useQuotationHeaderDetails(isEdit ? projectId : undefined, keptScopes);
   const [error, setError] = React.useState<string | null>(null);
   const [isSaving, setIsSaving] = React.useState(false);
+  // A grid column removal counting down, or a column write on its way (PS-QUOTE-MATRIX): Save
+  // waits, because lines sent across a column write 422 on cells under a removed key.
+  const [columnsBusy, setColumnsBusy] = React.useState(false);
   /** Anything typed since the page opened. Drives the warning on leaving the site. */
   const [dirty, setDirty] = React.useState(false);
 
@@ -511,7 +514,7 @@ export function QuotationFormClient({
             </Button>
             <Button
               type="button"
-              disabled={isSaving || loading || failed || !letterReady}
+              disabled={isSaving || columnsBusy || loading || failed || !letterReady}
               onClick={() => void save()}
             >
               {isSaving ? 'Saving...' : saveLabel(saved.data?.kind)}
@@ -580,6 +583,7 @@ export function QuotationFormClient({
                 onSelect={setActiveKey}
                 scopeTotal={scopeTotal}
                 edit={edit}
+                onColumnsBusy={setColumnsBusy}
                 canRemoveSaved={canRemoveSaved}
                 onAddScope={() => setAddingScope(true)}
                 onEditScope={setEditingScopeKey}
@@ -755,6 +759,7 @@ function FormLines({
   onSelect,
   scopeTotal,
   edit,
+  onColumnsBusy,
   canRemoveSaved,
   onAddScope,
   onEditScope,
@@ -768,6 +773,7 @@ function FormLines({
   onSelect: (key: string) => void;
   scopeTotal: (scope: FormScope) => string;
   edit: ReturnType<typeof useQuotationEditSession>;
+  onColumnsBusy: (busy: boolean) => void;
   canRemoveSaved: boolean;
   onAddScope: () => void;
   onEditScope: (key: string) => void;
@@ -795,8 +801,9 @@ function FormLines({
       seed: (versionId, lines) => seedScope(key, versionId, lines),
       stage: (lines) => stageScope(key, lines),
       toggleRemoved: (lineKey) => toggleRemoved(key, lineKey),
+      setColumnsBusy: onColumnsBusy,
     };
-  }, [activeKeyForEdit, seedScope, stageScope, stagedScopes, toggleRemoved]);
+  }, [activeKeyForEdit, onColumnsBusy, seedScope, stageScope, stagedScopes, toggleRemoved]);
 
   if (!active) {
     return (

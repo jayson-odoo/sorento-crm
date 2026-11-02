@@ -459,3 +459,42 @@ describe('a parked column removal (fix round 1)', () => {
     expect(onChange.mock.calls[0][0][2].cols.map((item: { key: string }) => item.key)).toEqual(['c-bh']);
   });
 });
+
+describe('the page\'s Save waits for a parked removal (review nit)', () => {
+  it('reports a removal pending while it counts down, and not once undone or committed', () => {
+    vi.useFakeTimers();
+    const onChange = vi.fn();
+    const onRemovalPending = vi.fn();
+    renderGrid({
+      lines: [staged(TRAP, true)],
+      editing: true,
+      matrix: { columns: UNIT, onChange, onRemovalPending },
+    });
+    expect(onRemovalPending).toHaveBeenLastCalledWith(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Type A - 1 BH' }));
+    expect(onRemovalPending).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Undo removing Type A - 1 BH' }));
+    expect(onRemovalPending).toHaveBeenLastCalledWith(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Type A - 1 BH' }));
+    expect(onRemovalPending).toHaveBeenLastCalledWith(true);
+    act(() => {
+      vi.advanceTimersByTime(COLUMN_REMOVAL_MS + 100);
+    });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onRemovalPending).toHaveBeenLastCalledWith(false);
+  });
+
+  it('reports not pending when the grid goes away mid-countdown (the write takes over)', () => {
+    const onRemovalPending = vi.fn();
+    const view = renderGrid({
+      lines: [staged(TRAP, true)],
+      editing: true,
+      matrix: { columns: UNIT, onChange: vi.fn(), onRemovalPending },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Type A - 1 BH' }));
+    view.unmount();
+    expect(onRemovalPending).toHaveBeenLastCalledWith(false);
+  });
+});

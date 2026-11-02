@@ -162,6 +162,8 @@ export interface QuotationLinesMatrix {
   saving?: boolean;
   /** The document's other scopes, for Copy columns from. */
   copySources?: { label: string; columns: MatrixHeader[] }[];
+  /** True while a removal counts down: the page's Save waits for it (its cells would 422). */
+  onRemovalPending?: (pending: boolean) => void;
 }
 
 /**
@@ -1578,7 +1580,21 @@ export function QuotationLinesGrid({
   React.useEffect(() => {
     if (!columnsEditable) commitPending();
   }, [columnsEditable, commitPending]);
-  React.useEffect(() => commitPending, [commitPending]);
+  const onRemovalPending = matrix?.onRemovalPending;
+  const onRemovalPendingRef = React.useRef(onRemovalPending);
+  onRemovalPendingRef.current = onRemovalPending;
+  const isRemovalPending = pending !== null;
+  React.useEffect(() => {
+    onRemovalPending?.(isRemovalPending);
+  }, [isRemovalPending, onRemovalPending]);
+  React.useEffect(
+    () => () => {
+      commitPending();
+      // Gone mid-countdown: the removal is now a write (the editor tracks that), not a countdown.
+      onRemovalPendingRef.current?.(false);
+    },
+    [commitPending],
+  );
 
   const updateCell = React.useCallback(
     (rowKey: string, leafKey: string, value: string) => {
