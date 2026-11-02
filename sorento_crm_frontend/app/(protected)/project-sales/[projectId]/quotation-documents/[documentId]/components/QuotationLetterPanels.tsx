@@ -33,12 +33,15 @@ function LetterPanel({
   html,
   emptyHint,
   placeholder,
+  readClass = 'prose prose-sm max-w-none break-words text-sm',
   onChange,
 }: {
   title: string;
   html: string | null;
   emptyHint: React.ReactNode;
   placeholder: string;
+  /** Class of the read-mode HTML block. */
+  readClass?: string;
   /** Set only in an edit session. Absent means this is a read. */
   onChange?: (html: string) => void;
 }) {
@@ -54,7 +57,7 @@ function LetterPanel({
           <RichTextEditor value={html ?? ''} onChange={onChange} placeholder={placeholder} />
         ) : html ? (
           <div
-            className={TERMS_HTML_CLASS}
+            className={readClass}
             dangerouslySetInnerHTML={sanitizedHtml(html)}
           />
         ) : (
@@ -131,6 +134,7 @@ export function QuotationTermsPanel({
         title="Terms and conditions"
         html={html}
         onChange={onChange}
+        readClass={TERMS_HTML_CLASS}
         placeholder="The clauses the customer holds us to"
         emptyHint="No terms on this quotation yet."
       />
