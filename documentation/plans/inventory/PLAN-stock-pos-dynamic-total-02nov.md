@@ -1,6 +1,6 @@
 # PLAN: Stock position totals follow the visible columns
 
-Status: Review (2 Nov). Track: small fix (no migration, no RBAC change, no new ingest surface; the diff runs ~350 lines with tests and docs, a little over the ~300 guide). Q1 answered (a): both totals follow visibility.
+Status: Merge-ready (2 Nov): reviewer READY, browser pass 1280/375 green. Track: small fix (no migration, no RBAC change, no new ingest surface; the diff runs ~350 lines with tests and docs, a little over the ~300 guide). Q1 answered (a): both totals follow visibility.
 
 Lane: STOCK-POS-DYNAMIC-TOTAL. Owner request 2 Nov ~23:20, Inventory > Stock position: the total of
 incoming and on-hand "needs to be dynamic according to the columns shown in the table ... if I hide
