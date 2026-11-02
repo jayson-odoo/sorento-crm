@@ -386,6 +386,7 @@ def test_5_make_quotation_copies_the_picked_revision_and_skips_lost_scopes():
         proposal.validity = f"{MARKER} 60 days"
         proposal.signatory_name = f"{MARKER} Signer"
         proposal.signatory_phone = "0111111111"
+        proposal.spec_sheet = {"templates": ["zzt-ppq"], "items": {}}
         db.flush()
 
         record = _issue(db, proposal, owner)
@@ -418,6 +419,8 @@ def test_5_make_quotation_copies_the_picked_revision_and_skips_lost_scopes():
         assert quotation.validity == f"{MARKER} 60 days"
         assert quotation.signatory_name == f"{MARKER} Signer"
         assert quotation.signatory_phone == "0111111111"
+        # PS-SPEC-SHEET (#2103): the spec sheet settings travel too.
+        assert quotation.spec_sheet == {"templates": ["zzt-ppq"], "items": {}}
         # The name and phone travel; the signature itself does not.
         assert quotation.signatory_signature_id is None
 
