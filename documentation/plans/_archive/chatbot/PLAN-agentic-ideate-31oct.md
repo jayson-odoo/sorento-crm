@@ -1,6 +1,6 @@
 # PLAN: ideas through the agent, and routing that follows the agent's tools (AGENTIC-IDEATE)
 
-**Status:** PR #2038, main merged with #2054 and #2056. Owner's first hand test led to a label rewording, and the reviewer passed that delta. Review of the merge with #2051 added one fix: New conversation ends the asked-back hold (AC-R3b-11). Crew's hidden gate on the new label
+**Status:** MERGED (PR #2038; S6 test-mode exit shipped in #2053). History: PR #2038, main merged with #2054 and #2056. Owner's first hand test led to a label rewording, and the reviewer passed that delta. Review of the merge with #2051 added one fix: New conversation ends the asked-back hold (AC-R3b-11). Crew's hidden gate on the new label
 and the owner's retest are still to come. Track: size M, lead pattern.
 UAC: `agentic-ideate-31oct-acceptance-criteria.md`. No screen changes, so Phase 1 (frontend mock) does not apply.
 

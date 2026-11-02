@@ -44,6 +44,16 @@ Complaints support an **AI Extract** shortcut to pre-fill the form from a photo,
 
 If the upload doesn't return useful values, dismiss the dialog and fill the form manually.
 
+On a price tag, purchase or sponsorship request, a long list (more than six pages) is read in up to four parts at once, so it still comes back in well under a minute. A complaint is always read in one go. If some parts could not be read, the rows from the other pages still show, with a line above them such as *"Pages 7-9 could not be read, try them again."* Extract those pages again (for example from a file with just those pages) to add their rows.
+
+If the AI reader fails for the whole file, the dialog shows one of these messages instead of values:
+
+* *"This file is too long to read in one go; try fewer pages."* - the file lists more than one read can hold. Split it (for example send the pages with the lines you need) and extract each part.
+* *"The AI reader did not answer within 45 seconds and was stopped. Try again, or send fewer pages."*
+* *"Could not read the file just now, please try again."* - the AI service was busy or refused the request.
+
+The same messages appear on the **Extract with AI** action on a price tag request's sales order file, where **Retry** runs the read again.
+
 ## Save as draft
 
 Click **Save as draft** at the bottom of the form. Toast: *"Draft saved."* The submission keeps the **Draft** status - visible to you on the dashboard, not yet visible to project sales admin / manager / purchasing.

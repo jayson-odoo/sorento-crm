@@ -27,6 +27,8 @@ export function QuotationTemplateDialog({
   const { create, update } = useQuotationTemplateMutations('terms');
   const [name, setName] = React.useState(template?.name ?? '');
   const [bodyHtml, setBodyHtml] = React.useState(template?.body_html ?? '');
+  const [paymentTerms, setPaymentTerms] = React.useState(template?.payment_terms ?? '');
+  const [validity, setValidity] = React.useState(template?.validity ?? '');
   const pending = create.isPending || update.isPending;
 
   return (
@@ -39,7 +41,12 @@ export function QuotationTemplateDialog({
         <form
           onSubmit={async (event) => {
             event.preventDefault();
-            const body = { name: name.trim(), body_html: bodyHtml };
+            const body = {
+              name: name.trim(),
+              body_html: bodyHtml,
+              payment_terms: paymentTerms.trim() || null,
+              validity: validity.trim() || null,
+            };
             try {
               if (template) {
                 await update.mutateAsync({ id: template.id, body });
@@ -64,6 +71,24 @@ export function QuotationTemplateDialog({
                 maxLength={150}
                 required
               />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="min-w-0 space-y-1.5">
+                <Label htmlFor="quotation-template-payment-terms">Payment Terms</Label>
+                <Input
+                  id="quotation-template-payment-terms"
+                  value={paymentTerms}
+                  onChange={(event) => setPaymentTerms(event.target.value)}
+                />
+              </div>
+              <div className="min-w-0 space-y-1.5">
+                <Label htmlFor="quotation-template-validity">Validity</Label>
+                <Input
+                  id="quotation-template-validity"
+                  value={validity}
+                  onChange={(event) => setValidity(event.target.value)}
+                />
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label>

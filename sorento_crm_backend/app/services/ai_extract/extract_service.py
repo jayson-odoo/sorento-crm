@@ -24,6 +24,7 @@ import logging
 import os
 import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Iterable, Literal
 
@@ -48,7 +49,9 @@ from app.services.llm_provider import (
     ChatResult,
     ImagePart,
     LLMProvider,
+    ResponseTruncated,
     get_provider,
+    is_timeout,
     resolve_api_key,
     resolve_model,
 )
@@ -80,6 +83,43 @@ ALLOWED_TEXT_MIMES = {"text/plain"}
 _TEXT_EXTS = (".txt",)
 TEXT_MAX_CHARS = 200_000
 
+# AI-EXTRACT-502. The provider call's own cap, under the host proxy's 60 s, so a hung call ends
+# with the app's answer rather than a proxy page. A caller-set timeout also turns the SDK's own
+# retries off (`llm_provider` OpenAI / Anthropic build their client with `max_retries=0`; Gemini
+# has no retry loop). Dev copy, 28 Oct: 840 successful extracts, slowest 10.3 s.
+EXTRACT_PROVIDER_TIMEOUT_SECONDS = 45.0
+# Every upstream failure inside an extract (the AI provider, its answer, the storage read)
+# answers 503, never 502: Cloudflare replaces an origin 502/504 with its own HTML page, which
+# hid the reason from the dialog. Cloudflare's Error Pages do not apply to 503.
+UPSTREAM_FAILED_STATUS = 503
+# The answer budget. Production, 2 Nov: a big promo PDF's line list ran past 4096 answer tokens
+# (Gemini "MAX_TOKENS ... answer 6138 tokens"). 16384 is what every provider this runs on takes
+# in one non-streamed call (gpt-4o / 4o-mini output cap 16,384; Anthropic non-streaming
+# ceiling `ANTHROPIC_NONSTREAMING_MAX_TOKENS` 21,333; Gemini flash far above), and about what
+# fits in the 45 s cap at the speed production measured (6138 tokens in 13-14 s). Output is
+# billed as used, so an unused budget costs nothing.
+EXTRACT_MAX_OUTPUT_TOKENS = 16384
+# Owner ruling, 2 Nov: the provider's own error text (account details, billing hints) never
+# reaches a portal contact or a staff screen; it goes to the server log only.
+PROVIDER_FAILED_MESSAGE = "Could not read the file just now, please try again."
+TOO_LONG_MESSAGE = "This file is too long to read in one go; try fewer pages."
+# Crew browser pass, 2 Nov: a 12-page / 336-row price list is more than one call answers inside
+# the 45 s cap. A multi-page upload is read as at most this many page groups at once, each call
+# with its own cap. Group size is ceil(pages / 4), so every group runs in ONE wave and the whole
+# read still ends inside one call's cap (plus render), under the host proxy's 60 s.
+MAX_PARALLEL_CALLS = 4
+# Only an upload of MORE pages than this is split: crew read 6 pages / 168 rows in 34 s in one
+# call, and anything smaller reads better whole (review: a 2-photo complaint split in two lost its
+# second DO number).
+SPLIT_ABOVE_PAGES = 6
+# The forms whose answer is a long list of rows, one block per page. Not the complaint (crew ruling,
+# 2 Nov: it lists a few affected products, so a split buys no speed, and read apart its photos gave
+# near-duplicate rows and one group's defect description), and not a field-only form (one set of
+# fields, not rows per page).
+SPLIT_FORMS: frozenset[str] = frozenset(
+    {"portal.price_tag_request", "portal.purchase_request", "portal.sponsorship_form"}
+)
+
 # Forms that ship a separate items-list section. Complaints now capture one
 # line per affected product (code + quantity), so they receive a `products`
 # array too. stock_inquiry / master.* still keep product codes inline.
@@ -95,6 +135,126 @@ FORMS_WITH_LINE_ITEMS: frozenset[str] = frozenset(
 
 def _form_has_line_items(form_key: str) -> bool:
     return form_key in FORMS_WITH_LINE_ITEMS
+
+
+def _is_video(f: "ExtractFile") -> bool:
+    return (f.mime or "").lower() in ALLOWED_VIDEO_MIMES or f.filename.lower().endswith(_VIDEO_EXTS)
+
+
+def _page_groups(parts: list[ImagePart], *, split: bool) -> list[list[ImagePart]]:
+    """Consecutive pages in at most MAX_PARALLEL_CALLS groups (one wave). The caller decides
+    `split` (a SPLIT_FORMS form, past SPLIT_ABOVE_PAGES, no video: a clip's frames show the same
+    products and read apart come back as near-copies)."""
+    if not split or len(parts) <= 1:
+        return [parts]
+    size = -(-len(parts) // MAX_PARALLEL_CALLS)
+    return [parts[i : i + size] for i in range(0, len(parts), size)]
+
+
+@dataclass
+class _GroupRead:
+    """One page group's outcome: the billed result, its parsed answer, or the failure."""
+
+    result: ChatResult | None = None
+    parsed: dict[str, Any] | None = None
+    error: AppException | None = None
+
+
+def _provider_failure(exc: Exception, provider_name: str, model_name: str) -> AppException:
+    """The plain 503 a provider failure answers; the provider's own text goes to the log only."""
+    logger.warning("ai_extract provider call failed (%s %s): %s", provider_name, model_name, exc)
+    if isinstance(exc, ResponseTruncated):
+        failure = AppException(
+            status_code=UPSTREAM_FAILED_STATUS,
+            message=TOO_LONG_MESSAGE,
+            code="ai_extract_too_long",
+        )
+    elif is_timeout(exc):
+        failure = AppException(
+            status_code=UPSTREAM_FAILED_STATUS,
+            message=(
+                "The AI reader did not answer within "
+                f"{EXTRACT_PROVIDER_TIMEOUT_SECONDS:g} seconds and was stopped. "
+                "Try again, or send fewer pages."
+            ),
+            code="ai_extract_provider_timeout",
+        )
+    else:
+        failure = AppException(
+            status_code=UPSTREAM_FAILED_STATUS,
+            message=PROVIDER_FAILED_MESSAGE,
+            code="ai_extract_provider_failed",
+        )
+    failure.__cause__ = exc
+    return failure
+
+
+def _is_blank(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == {}
+
+
+def _merge_answers(answers: list[dict[str, Any]]) -> dict[str, Any]:
+    """Page groups' JSON answers as one, in page order. A single-value field takes the first
+    non-empty value; a list field (DO numbers, codes) gathers every group's entries, each once.
+    Product rows are concatenated, and a row exactly equal to one from an EARLIER group (a line
+    printed on two pages, a repeated header) is dropped. Repeats inside one group stay: that
+    read saw them on the same pages, as a single call always did."""
+    if len(answers) == 1:
+        return answers[0]
+    merged: dict[str, Any] = {}
+    rows: list[Any] = []
+    earlier: set[str] = set()
+    for answer in answers:
+        mine: set[str] = set()
+        for key, value in answer.items():
+            if key == "products":
+                for row in value if isinstance(value, list) else []:
+                    marker = json.dumps(row, sort_keys=True, default=str)
+                    if marker in earlier:
+                        continue
+                    rows.append(row)
+                    mine.add(marker)
+            elif isinstance(value, list) and isinstance(merged.get(key), list):
+                merged[key] = merged[key] + [v for v in value if v not in merged[key]]
+            elif _is_blank(merged.get(key)):
+                merged[key] = value
+        earlier |= mine
+    if any("products" in answer for answer in answers):
+        merged["products"] = rows
+    return merged
+
+
+def _sum_usage(results: list[ChatResult]) -> ChatResult:
+    if len(results) == 1:
+        return results[0]
+    return ChatResult(
+        content="",
+        prompt_tokens=sum(int(r.prompt_tokens or 0) for r in results),
+        completion_tokens=sum(int(r.completion_tokens or 0) for r in results),
+        total_tokens=sum(int(r.total_tokens or 0) for r in results),
+        cached_tokens=sum(int(getattr(r, "cached_tokens", 0) or 0) for r in results),
+    )
+
+
+def _unread_pages_note(groups: list[list[ImagePart]], reads: list["_GroupRead"]) -> str | None:
+    """"Pages 7-9 could not be read, try them again." for the groups that failed, or None."""
+    failed: list[int] = []
+    page = 0
+    for group, outcome in zip(groups, reads):
+        if outcome.parsed is None:
+            failed.extend(range(page + 1, page + len(group) + 1))
+        page += len(group)
+    if not failed:
+        return None
+    spans: list[list[int]] = []
+    for n in failed:
+        if spans and spans[-1][1] == n - 1:
+            spans[-1][1] = n
+        else:
+            spans.append([n, n])
+    words = [str(a) if a == b else f"{a}-{b}" for a, b in spans]
+    listed = words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+    return f"{'Page' if len(failed) == 1 else 'Pages'} {listed} could not be read, try them again."
 
 
 def extract_prompt_key(form_key: str) -> str:
@@ -158,6 +318,9 @@ class ExtractResult(BaseModel):
     usage: TokenUsage = TokenUsage()
     model: str | None = None
     provider: str | None = None
+    # Set when some page groups of a multi-page read failed: names those pages in plain words
+    # ("Pages 7-9 could not be read, try them again."). The rows above come from the rest.
+    note: str | None = None
 
 
 # ---- Inputs ---------------------------------------------------------------
@@ -264,7 +427,7 @@ class AIExtractService:
                 "ai_extract attachment download failed (id=%s): %s", attachment_id, exc
             )
             raise AppException(
-                status_code=502,
+                status_code=UPSTREAM_FAILED_STATUS,
                 message="Failed to load attachment bytes from storage.",
                 code="ai_extract_attachment_download_failed",
             ) from exc
@@ -340,44 +503,61 @@ class AIExtractService:
 
         self._form_key = form_key
         provider, provider_name, model_name = self._resolve_provider()
-        messages = self._build_messages(
+        has_line_items = _form_has_line_items(form_key)
+        groups = _page_groups(
+            image_parts,
+            split=form_key in SPLIT_FORMS
+            and len(image_parts) > SPLIT_ABOVE_PAGES
+            and not any(_is_video(f) for f in files),
+        )
+        # Pasted text is read once, with the first group. Messages are built here, on the
+        # request thread, because they read the prompt from the database.
+        first_messages = self._build_messages(
             form_key,
             schema,
             guidance,
-            has_line_items=_form_has_line_items(form_key),
+            has_line_items=has_line_items,
             pasted_text=pasted_text,
         )
-        started = time.perf_counter()
-        try:
-            result: ChatResult = provider.chat(
-                messages=messages,
-                images=image_parts,
-                response_format={"type": "json_object"},
-                temperature=0.0,
-                max_tokens=4096,
-                model=model_name,
+        other_messages = (
+            self._build_messages(
+                form_key, schema, guidance, has_line_items=has_line_items, pasted_text=""
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("ai_extract provider call failed: %s", exc)
-            raise AppException(
-                status_code=502,
-                message=f"AI provider call failed: {exc}",
-                code="ai_extract_provider_failed",
-            ) from exc
+            if len(groups) > 1 and pasted_text
+            else first_messages
+        )
+
+        def read(index: int) -> _GroupRead:
+            return self._read_group(
+                provider,
+                provider_name,
+                model_name,
+                first_messages if index == 0 else other_messages,
+                groups[index],
+            )
+
+        started = time.perf_counter()
+        if len(groups) == 1:
+            reads = [read(0)]
+        else:
+            with ThreadPoolExecutor(max_workers=MAX_PARALLEL_CALLS) as pool:
+                reads = list(pool.map(read, range(len(groups))))  # page order, not finish order
         elapsed_ms = int((time.perf_counter() - started) * 1000)
 
-        parsed = self._parse_json(result.content)
+        answers = [r.parsed for r in reads if r.parsed is not None]
+        if not answers:
+            first_error = reads[0].error
+            assert first_error is not None
+            raise first_error
+        parsed = _merge_answers(answers)
         values, per_field = self._validate_and_canonicalize(parsed, schema)
-        products = (
-            self._extract_products(parsed)
-            if _form_has_line_items(form_key)
-            else []
-        )
+        products = self._extract_products(parsed) if has_line_items else []
+        billed = _sum_usage([r.result for r in reads if r.result is not None])
 
         self._log_usage(
             provider_name=provider_name,
             model=model_name,
-            result=result,
+            result=billed,
             elapsed_ms=elapsed_ms,
             user_id=user_id,
             contact_id=portal_contact_id,
@@ -391,13 +571,42 @@ class AIExtractService:
             products=products,
             per_field=per_field,
             usage=TokenUsage(
-                prompt_tokens=result.prompt_tokens,
-                completion_tokens=result.completion_tokens,
-                total_tokens=result.total_tokens,
+                prompt_tokens=billed.prompt_tokens,
+                completion_tokens=billed.completion_tokens,
+                total_tokens=billed.total_tokens,
             ),
             model=model_name,
             provider=provider_name,
+            note=_unread_pages_note(groups, reads),
         )
+
+    def _read_group(
+        self,
+        provider: LLMProvider,
+        provider_name: str,
+        model_name: str,
+        messages: list[dict[str, Any]],
+        images: list[ImagePart],
+    ) -> "_GroupRead":
+        """One AI call for one page group, inside its own cap. Never raises: a failure comes
+        back as the AppException the request would answer, so the other groups' rows survive
+        it. Runs on a worker thread, so it touches no database session."""
+        try:
+            result: ChatResult = provider.chat(
+                messages=messages,
+                images=images,
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                max_tokens=EXTRACT_MAX_OUTPUT_TOKENS,
+                model=model_name,
+                timeout=EXTRACT_PROVIDER_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return _GroupRead(error=_provider_failure(exc, provider_name, model_name))
+        try:
+            return _GroupRead(result=result, parsed=self._parse_json(result.content))
+        except AppException as exc:
+            return _GroupRead(result=result, error=exc)
 
     # ----- Provider ---------------------------------------------------------
 
@@ -426,7 +635,15 @@ class AIExtractService:
         label_provider, label_model = (
             agent_model(self.db, extract_prompt_key(key)) if key else (None, None)
         )
-        provider_name = label_provider or (cfg.provider if cfg else "openai") or "openai"
+        # No hard-coded vendor: `ai_assistant_configs.provider` is NOT NULL (default "openai"),
+        # so this is reached only with no config row, and a guessed vendor is not a setting.
+        provider_name = label_provider or (cfg.provider if cfg else None)
+        if not provider_name:
+            raise AppException(
+                status_code=400,
+                message="No AI provider is set. Choose one in System → AI Assistant Settings.",
+                code="ai_extract_no_provider",
+            )
         model_name = resolve_model(cfg, provider_name, label_model)
         api_key = resolve_api_key(cfg, provider_name)
         if not api_key:
@@ -819,9 +1036,10 @@ class AIExtractService:
 
     def _parse_json(self, content: str) -> dict[str, Any]:
         if not content:
+            logger.warning("ai_extract provider returned an empty response")
             raise AppException(
-                status_code=502,
-                message="AI provider returned an empty response.",
+                status_code=UPSTREAM_FAILED_STATUS,
+                message=PROVIDER_FAILED_MESSAGE,
                 code="ai_extract_empty_response",
             )
         text = content.strip()
@@ -840,21 +1058,24 @@ class AIExtractService:
                 try:
                     data = json.loads(text[start : end + 1])
                 except json.JSONDecodeError:
+                    logger.warning("ai_extract provider returned non-JSON content: %s", exc)
                     raise AppException(
-                        status_code=502,
-                        message=f"AI provider returned non-JSON content: {exc}",
+                        status_code=UPSTREAM_FAILED_STATUS,
+                        message=PROVIDER_FAILED_MESSAGE,
                         code="ai_extract_bad_json",
                     ) from exc
             else:
+                logger.warning("ai_extract provider returned non-JSON content: %s", exc)
                 raise AppException(
-                    status_code=502,
-                    message=f"AI provider returned non-JSON content: {exc}",
+                    status_code=UPSTREAM_FAILED_STATUS,
+                    message=PROVIDER_FAILED_MESSAGE,
                     code="ai_extract_bad_json",
                 ) from exc
         if not isinstance(data, dict):
+            logger.warning("ai_extract provider returned a non-object JSON value")
             raise AppException(
-                status_code=502,
-                message="AI provider returned a non-object JSON value.",
+                status_code=UPSTREAM_FAILED_STATUS,
+                message=PROVIDER_FAILED_MESSAGE,
                 code="ai_extract_bad_json",
             )
         return data

@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import pytest
 
-from sorento_crm_mcp.catalog import CATALOG
-from sorento_crm_mcp.presenters import _report_ask
-from tests._pg_fixture import blank_session
-from tests.chatbot.agent._seed import seed_agent_contact
-from tests.chatbot.agent.test_agent_round5c import Mcp, Provider, answer_call, asks, call
+# The backend image ships no `sorento_crm_mcp` package ("Validate backend imports"): skip there, run where the MCP
+# package is importable, as tests/chatbot/test_photo_rows_by_product.py does.
+CATALOG = pytest.importorskip("sorento_crm_mcp.catalog").CATALOG
+_report_ask = pytest.importorskip("sorento_crm_mcp.presenters")._report_ask
+
+from tests._pg_fixture import blank_session  # noqa: E402
+from tests.chatbot.agent._seed import seed_agent_contact  # noqa: E402
+from tests.chatbot.agent.test_agent_round5c import Mcp, Provider, answer_call, asks, call  # noqa: E402
 
 PERIOD = {"date_from": "2026-01-01", "date_to": "2026-12-31"}
 

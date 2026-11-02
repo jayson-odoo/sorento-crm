@@ -2,8 +2,11 @@
 
 import * as React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { sanitizedHtml } from '@/lib/sanitize';
+import { TERMS_HTML_CLASS } from '@/lib/terms-html';
 
 /**
  * The prose half of the quotation: the letter the customer reads before the prices, and the
@@ -30,12 +33,15 @@ function LetterPanel({
   html,
   emptyHint,
   placeholder,
+  readClass = 'prose prose-sm max-w-none break-words text-sm',
   onChange,
 }: {
   title: string;
   html: string | null;
   emptyHint: React.ReactNode;
   placeholder: string;
+  /** Class of the read-mode HTML block. */
+  readClass?: string;
   /** Set only in an edit session. Absent means this is a read. */
   onChange?: (html: string) => void;
 }) {
@@ -51,7 +57,7 @@ function LetterPanel({
           <RichTextEditor value={html ?? ''} onChange={onChange} placeholder={placeholder} />
         ) : html ? (
           <div
-            className="prose prose-sm max-w-none break-words text-sm"
+            className={readClass}
             dangerouslySetInnerHTML={sanitizedHtml(html)}
           />
         ) : (
@@ -83,17 +89,55 @@ export function QuotationCoverLetterPanel({
 export function QuotationTermsPanel({
   html,
   onChange,
+  paymentTerms = null,
+  validity = null,
+  onFieldChange,
 }: {
   html: string | null;
   onChange?: (html: string) => void;
+  paymentTerms?: string | null;
+  validity?: string | null;
+  /** Set only in an edit session, with `onChange`. */
+  onFieldChange?: (patch: { payment_terms?: string | null; validity?: string | null }) => void;
 }) {
+  const fields = [
+    { id: 'quotation-payment-terms', label: 'Payment Terms', key: 'payment_terms', value: paymentTerms },
+    { id: 'quotation-validity', label: 'Validity', key: 'validity', value: validity },
+  ] as const;
+  const shown = onFieldChange ? fields : fields.filter((field) => (field.value ?? '').trim());
   return (
-    <LetterPanel
-      title="Terms and conditions"
-      html={html}
-      onChange={onChange}
-      placeholder="The clauses the customer holds us to"
-      emptyHint="No terms on this quotation yet."
-    />
+    <div className="space-y-4">
+      {shown.length > 0 && (
+        <Card>
+          <CardContent className="grid gap-4 py-5 sm:grid-cols-2">
+            {shown.map((field) =>
+              onFieldChange ? (
+                <div key={field.key} className="min-w-0 space-y-1.5">
+                  <Label htmlFor={field.id}>{field.label}</Label>
+                  <Input
+                    id={field.id}
+                    value={field.value ?? ''}
+                    onChange={(event) => onFieldChange({ [field.key]: event.target.value || null })}
+                  />
+                </div>
+              ) : (
+                <div key={field.key} className="min-w-0 space-y-1">
+                  <p className="text-sm text-muted-foreground">{field.label}</p>
+                  <p className="min-w-0 break-words text-sm font-medium">{field.value}</p>
+                </div>
+              ),
+            )}
+          </CardContent>
+        </Card>
+      )}
+      <LetterPanel
+        title="Terms and conditions"
+        html={html}
+        onChange={onChange}
+        readClass={TERMS_HTML_CLASS}
+        placeholder="The clauses the customer holds us to"
+        emptyHint="No terms on this quotation yet."
+      />
+    </div>
   );
 }

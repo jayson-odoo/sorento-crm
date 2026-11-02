@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-KNOWLEDGE P2 W1 - the agent answers WhatsApp contacts (read only, knowledge included)
 
-Status: BUILT, owner hand test PASS 1 Nov ("2053 ok to merge"); S1-S4 + S6 reviewed (reviewer READY, security PASS). Track: L. Moves to _archive when #2053 merges. UAC: `agentic-knowledge-w1-acceptance-criteria.md`.
+Status: MERGED #2053 (65d074f57c, 1 Nov); owner hand test PASS 1 Nov; S1-S4 + S6 reviewed (reviewer READY, security PASS). Track: L. UAC: `agentic-knowledge-w1-acceptance-criteria.md`.
 Card: `PLAN-agentic-knowledge-p2-31oct.md` (v2.1). Lane PR #2053, `crew-lane: AGENTIC-KNOWLEDGE-P2`.
 
 ## Owner answers (31 Oct, verbatim: "Wq1 a, wq2 b, shoundlt always go to marketing la, wq3 a, wq4 i just open

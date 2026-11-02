@@ -83,6 +83,11 @@ ALLOWED = {
     # `console_service.run_console_turn`, the console page's own path, pinned to one parser version. A developer
     # tool run by hand against a copy, not core, not on any request path.
     "scripts/sweep_supplier_ask.py",
+    # AGENTIC-WA-W2 router wording measure and gate: read-only developer tools run by crew. They build the
+    # router's exact Jev input (`router._router_prompt`, `agent_tool_labels`, `portal_writes`), which no route
+    # exposes, and write nothing.
+    "scripts/measure_router_dealer_asks.py",
+    "scripts/gate_router_variant_b.py",
     # EVAL-BENCH (#1745) live replay test: drives `replay.py live` through the real engine and
     # patches `engine`, `head.parser` and `lanes.ideate` directly to block the network and the
     # ideation offload; `/chat/turn` has no seam for those. Bench tooling, not core, not on a

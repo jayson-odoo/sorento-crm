@@ -105,6 +105,40 @@ describe('AIExtractDialog', () => {
     );
   });
 
+  // AI-EXTRACT-502: a big file is read in page groups; pages whose read failed come back as a
+  // plain note beside the rows that did read.
+  it('shows the note naming pages that could not be read, beside the rows', async () => {
+    (aiExtractFromFiles as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...mockExtractResult,
+      note: 'Pages 7-9 could not be read, try them again.',
+    });
+    renderDialog(vi.fn());
+
+    const input = screen.getByTestId('ai-extract-file-input') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [makeFile('promo.pdf', 'application/pdf')], writable: false });
+    fireEvent.change(input);
+    fireEvent.click(screen.getByTestId('ai-extract-run'));
+
+    await waitFor(() => screen.getByTestId('ai-extract-review'));
+    expect(screen.getByTestId('ai-extract-note')).toHaveTextContent(
+      'Pages 7-9 could not be read, try them again.',
+    );
+    expect(screen.getByTestId('ai-extract-field-customer_name')).toBeInTheDocument();
+  });
+
+  it('shows no note when every page was read', async () => {
+    (aiExtractFromFiles as ReturnType<typeof vi.fn>).mockResolvedValue(mockExtractResult);
+    renderDialog(vi.fn());
+
+    const input = screen.getByTestId('ai-extract-file-input') as HTMLInputElement;
+    Object.defineProperty(input, 'files', { value: [makeFile('do.png')], writable: false });
+    fireEvent.change(input);
+    fireEvent.click(screen.getByTestId('ai-extract-run'));
+
+    await waitFor(() => screen.getByTestId('ai-extract-review'));
+    expect(screen.queryByTestId('ai-extract-note')).toBeNull();
+  });
+
   it('keeps the field review table inside a phone-width dialog (PROJECT-REGISTER-V2, 375 px)', async () => {
     (aiExtractFromFiles as ReturnType<typeof vi.fn>).mockResolvedValue(mockExtractResult);
     renderDialog(vi.fn());

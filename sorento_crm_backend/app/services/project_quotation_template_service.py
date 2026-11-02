@@ -202,6 +202,17 @@ def _long_date(value: Optional[date]) -> str:
     return f"{value.day} {value.strftime('%B')} {value.year}"
 
 
+def salesperson_of(db: Session, project: Any, document: Any) -> Optional[str]:
+    """The project's salesperson: the owner's name, else whoever created the quotation."""
+    from app.models.user import User
+
+    owner_id = (project.owner_user_id if project is not None else None) or document.created_by
+    if not owner_id:
+        return None
+    owner = db.query(User).filter(User.id == owner_id).first()
+    return owner.name if owner else None
+
+
 def build_document_context(
     db: Session, *, document: ProjectQuotationDocument
 ) -> Dict[str, Any]:
@@ -212,7 +223,6 @@ def build_document_context(
     party, so a letter rendered today and a letter rendered next year read the same.
     """
     from app.models.company import Company
-    from app.models.user import User
     from app.services import project_quotation_document_service as documents
 
     project = (
@@ -230,11 +240,7 @@ def build_document_context(
         )
         developer_name = party.name if party else None
 
-    salesperson_name = None
-    owner_id = (project.owner_user_id if project is not None else None) or document.created_by
-    if owner_id:
-        owner = db.query(User).filter(User.id == owner_id).first()
-        salesperson_name = owner.name if owner else None
+    salesperson_name = salesperson_of(db, project, document)
 
     company_name = None
     if document.company_id:
@@ -389,6 +395,8 @@ def create_template(
         kind=kind,
         name=name,
         body_html=body_html,
+        payment_terms=payload.get("payment_terms"),
+        validity=payload.get("validity"),
         is_active=wants_active,
         created_by=actor_user_id,
     )
@@ -427,6 +435,9 @@ def update_template(
             )
         assert_tokens_known(body_html)
         template.body_html = body_html
+    for field in ("payment_terms", "validity"):
+        if field in payload:
+            setattr(template, field, payload[field])
     db.flush()
     return template
 
@@ -475,6 +486,8 @@ def serialize_template(template: QuotationTemplate) -> Dict[str, Any]:
         "kind": template.kind,
         "name": template.name,
         "body_html": template.body_html,
+        "payment_terms": template.payment_terms,
+        "validity": template.validity,
         "is_active": bool(template.is_active),
         "created_at": template.created_at,
         "updated_at": template.updated_at,

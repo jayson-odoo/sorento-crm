@@ -32,7 +32,13 @@ export function QuotationCoverLetterTab() {
 
 export function QuotationTermsTab() {
   const { document } = useQuotationDocumentScreen();
-  return <QuotationTermsPanel html={document.terms_html} />;
+  return (
+    <QuotationTermsPanel
+      html={document.terms_html}
+      paymentTerms={document.payment_terms ?? null}
+      validity={document.validity ?? null}
+    />
+  );
 }
 
 export function QuotationSignaturesTab() {

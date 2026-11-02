@@ -373,7 +373,12 @@ def test_fr4_r2_an_unlinked_contact_is_told_of_no_write_or_user_read(db, jev):
 
     labels = _sent_labels(db, jev, contact)
 
-    assert labels == []
+    # AGENTIC-WA-W2: no staff write or user read, only the contact's own dealer requests (portal gates).
+    from app.services.chatbot.agent import portal_writes
+    from app.services.chatbot.agent.tools import TOOL_LABELS
+
+    assert labels == [TOOL_LABELS[n] for n in portal_writes.offered_for_contact(db, contact["respond_id"])]
+    assert labels, "an unlinked contact with the default portal forms has its dealer requests"
     assert IDEA_LABEL not in labels
 
 
