@@ -1022,13 +1022,39 @@ def test_r2_4b_the_measure_question_is_free_and_the_object_fills_it(rbot, world)
     assert ran and ran[0].get("measure") == "amount", f"R3-4: want measure amount, got {ran[0].get('measure') if ran else text!r}"
 
 
-def test_r3_4_with_the_basis_also_owed_the_measure_question_is_never_numbered(rbot, world) -> None:
+def test_r3_4_the_measure_question_carries_no_options_and_a_bare_number_does_not_settle_it(bot, monkeypatch, world) -> None:
+    """With the basis also owed the reply is the owner's ask-all format, as with the flag off. The measure question has
+    no offered options (they would collide with the ask-all numbers): none in the stored slot, none in the parser's
+    Open question line, and a typed "2" with the object's measure null does not settle the measure."""
     sorento, _mocha = world
-    t1 = _v("sales_ranking", _ra(group_by="customer", top_n=5, company=sorento, **Y), group_by="customer", top_n=5, rank_direction="top", sales_company=sorento, domain_in_message=True, **YR)
-    text, calls = rbot.say(t1, "top 5 customers sorento 2026")
-    assert not calls, f"setup: {text!r}"
-    assert not re.search(r"^\s*\d+[.)]\s", text.replace("Invoiced, delivered", ""), re.M) or MEASURE_Q not in text, f"R3-4: the measure question is numbered as an option list: {text!r}"
-    assert not (MEASURE_Q in text and re.search(r"^\s*\d+[.)]\s", text, re.M)), f"R3-4: {text!r}"
+
+    def ranking() -> dict[str, Any]:
+        return _v(
+            "sales_ranking", _ra(group_by="customer", top_n=5, company=sorento, **Y), group_by="customer", top_n=5,
+            rank_direction="top", sales_company=sorento, domain_in_message=True, **YR,
+        )
+
+    off_text, off_calls = bot.say(ranking(), "top 5 customers sorento 2026")  # flag off
+    assert not off_calls, f"baseline: {off_text!r}"
+    bot.console.session_vars = {}
+    _flag_on(bot.console, monkeypatch)
+    _record_blocks(bot, monkeypatch)
+    text, calls = bot.say(ranking(), "top 5 customers sorento 2026")
+    assert not calls and text == off_text, f"R3-4 (1): flag on {text!r} differs from flag off {off_text!r}"
+    slot = bot.console.session_vars["focus"]["required_ask"]
+    stored = [*(slot.get("options") or []), *((slot.get("extras") or {}).get("options") or [])]
+    offered = [o for o in stored if "uantity" in str(o) or "mount" in str(o)]
+    assert not offered, f"R3-4 (2): the stored slot offers the measure options {offered}"
+    t2 = _v("sales_ranking", _ra(group_by="customer", top_n=5, company=sorento, **Y), entity_op="reuse", continuation=True, open_question_answer=_pick_of(2), reference_positions=[2])
+    text, calls = bot.say(t2, "2")
+    open_line = next((ln for ln in bot.blocks[-1].splitlines() if ln.startswith("Open question")), "")
+    assert "Quantity" not in open_line and "Amount" not in open_line, f"R3-4 (2): the Open question line offers the measure options: {open_line!r}"
+    ran = _ran(calls)
+    assert not (ran and ran[0].get("measure")), f"R3-4 (3): a typed 2 with the object's measure null settled the measure: {ran[0].get('measure') if ran else ''}"
+    t3 = _v("sales_ranking", _ra(basis="delivered", group_by="customer", top_n=5, measure="amount", company=sorento, **Y), basis="delivered", entity_op="reuse", continuation=True)
+    text, calls = bot.say(t3, "delivered by amount")
+    ran = _ran(calls)
+    assert ran and ran[0].get("measure") == "amount", f"R3-4 (3): an object measure amount did not run by amount: {ran or text!r}"
 
 
 def _top10(sorento: str) -> dict[str, Any]:
