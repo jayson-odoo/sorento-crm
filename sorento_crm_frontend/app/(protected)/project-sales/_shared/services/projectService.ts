@@ -2,6 +2,9 @@ import { apiFetch } from '@/lib/api';
 import { splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
+  PartyContact,
+  PartyContactBody,
+  PartyOnProject,
   ClashPreview,
   MediaKind,
   MediaEscalationResult,
@@ -436,6 +439,10 @@ export async function listParties(
     include_inactive?: boolean;
     page?: number;
     limit?: number;
+    /** Server-side sort (PS-REGISTRATION-V3, owner rule): name, party_type, is_active,
+     * project_count, contact_count, customer_name. */
+    sort?: string;
+    dir?: 'asc' | 'desc';
   } = {},
 ): Promise<ListEnvelope<ProjectParty>> {
   const sp = new URLSearchParams();
@@ -444,6 +451,10 @@ export async function listParties(
   if (params.include_inactive) sp.set('include_inactive', 'true');
   if (params.page) sp.set('page', String(params.page));
   if (params.limit) sp.set('limit', String(params.limit));
+  if (params.sort) {
+    sp.set('sort', params.sort);
+    sp.set('dir', params.dir ?? 'asc');
+  }
   const query = sp.toString();
   const response = await apiFetch(`${BASE}/parties/${query ? `?${query}` : ''}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load parties'));
@@ -1454,4 +1465,62 @@ export async function removeSeriesProduct(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to remove the product'));
+}
+
+
+// ------------------------------------------------------------ party contacts (PS-REGISTRATION-V3)
+
+export async function listPartyContacts(partyId: string): Promise<PartyContact[]> {
+  const response = await apiFetch(`${BASE}/parties/${partyId}/contacts`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load contacts'));
+  return (await response.json()).data;
+}
+
+export async function createPartyContact(
+  partyId: string,
+  body: PartyContactBody,
+): Promise<PartyContact> {
+  const response = await apiFetch(`${BASE}/parties/${partyId}/contacts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to add the contact'));
+  return response.json();
+}
+
+export async function updatePartyContact(
+  partyId: string,
+  contactId: string,
+  body: PartyContactBody,
+): Promise<PartyContact> {
+  const response = await apiFetch(`${BASE}/parties/${partyId}/contacts/${contactId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the contact'));
+  return response.json();
+}
+
+/** The project's parties by role, with the project's people at each. */
+export async function getPartiesOnProject(projectId: string): Promise<PartyOnProject[]> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/parties`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the parties'));
+  return (await response.json()).data;
+}
+
+/** Saves a number typed at send time to a party (or a person at it) that had none. */
+export async function fillPartyPhone(
+  projectId: string,
+  partyId: string,
+  body: { phone: string; stakeholder_id?: string | null },
+): Promise<{ party_id: string; stakeholder_id: string | null; phone: string }> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/parties/${partyId}/phone`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the number'));
+  return response.json();
 }
