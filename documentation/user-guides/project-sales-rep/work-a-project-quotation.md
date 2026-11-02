@@ -206,8 +206,8 @@ of a quotation can be laid out that way. A section with no grid stays exactly as
 
 On the section's **Lines** tab, while the revision is still a draft:
 
-1. Click **Add a column header** (the narrow column at the far right of the table) and type its
-   name, for example *TYPE A - 1 BH* or *LEVEL 9*. Your lines' current quantities move into the
+1. Click **+ Column header** under the table (once the grid exists it is also the narrow column at
+   the far right) and type its name, for example *TYPE A - 1 BH* or *LEVEL 9*. Your lines' current quantities move into the
    new column, so no total changes.
 2. Click **+** (*Add a column*) after a header to add the columns under it, for example *1 BH*,
    *KITCHEN*, *YARD*, *BALCONY* or *SURAU M*, *JANITOR*. A header with no columns under it is one
@@ -218,7 +218,8 @@ On the section's **Lines** tab, while the revision is still a draft:
 4. **Copy columns from** on the table's toolbar copies another section's headers and columns (not
    its quantities), so the second LEVEL sheet takes seconds.
 
-Column changes save as you make them: **Cancel** on the edit session does not undo them.
+Column changes save as you make them: **Cancel** on the edit session does not undo them. The
+quantities you type save when you click **Save**, like any other change to the lines.
 
 Every column you already use stays: photo, drawing, product code, description, brand, UOM, rate,
 complete set, rate only, and the section headings (*Bathroom*, *Kitchen and yard*). Only the
