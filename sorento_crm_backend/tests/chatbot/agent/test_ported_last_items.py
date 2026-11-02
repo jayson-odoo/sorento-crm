@@ -415,3 +415,128 @@ def test_an_empty_read_with_assigned_to_set_does_not_back_a_not_found_claim(name
 def test_an_empty_read_with_neither_still_backs_it(name, args):
     _, bad = agent_loop.verify_answer(_claim(), _entry(name, "empty", args), "any closed complaints")
     assert bad == []
+
+
+# ------------------------------------------------------------------ H1: ids an ok result returned count as found
+# Plan: PLAN-agentic-unify-tools-1nov.md, "Review of the post-READY should-fixes, 3 Nov", H1.
+
+
+def _ok(name, data, args=None):
+    return {"name": name, "status": "ok", "args": args or {}, "data": data}
+
+
+def _empty_read(name, args):
+    return {"f1": {"name": name, "status": "empty", "args": args, "data": None}}
+
+
+def _nf_bad(ledger, what="quotations for ZZT tower"):
+    return agent_loop.verify_answer(_claim(what), ledger, "q")[1]
+
+
+def test_H1_an_empty_quotations_read_for_a_project_from_a_find_row_backs_none():
+    pid = str(uuid.uuid4())
+    ledger = {
+        "p1": _ok("crm_projects_find", {"rows": [{"id": pid, "title": "ZZT tower"}]}, {"query": "ZZT tower"}),
+        **_empty_read("crm_project_quotations_list", {"project_id": pid}),
+    }
+    assert _nf_bad(ledger) == []
+
+
+def test_H1_an_empty_quotations_read_for_a_project_from_a_list_row_backs_none():
+    pid = str(uuid.uuid4())
+    ledger = {
+        "p1": _ok("crm_projects_list", {"data": [{"id": pid, "title": "ZZT tower"}]}),
+        **_empty_read("crm_project_quotations_list", {"project_id": pid}),
+    }
+    assert _nf_bad(ledger) == []
+
+
+def test_H1_an_empty_quotations_read_for_the_record_of_a_detail_read_backs_none():
+    pid = str(uuid.uuid4())
+    ledger = {
+        "p1": _ok("crm_project_detail", {"record": {"id": pid, "title": "ZZT tower"}, "quotations": []}),
+        **_empty_read("crm_project_quotations_list", {"project_id": pid}),
+    }
+    assert _nf_bad(ledger) == []
+
+
+def test_H1_an_empty_event_log_read_for_a_tracking_from_a_list_row_backs_none():
+    tid = str(uuid.uuid4())
+    ledger = {
+        "t1": _ok("crm_sla_conversation_tracking_list", {"data": [{"id": tid, "status": "open"}]}),
+        **_empty_read("crm_sla_conversation_event_logs_list", {"tracking_id": tid}),
+    }
+    assert _nf_bad(ledger, "events for the tracking") == []
+
+
+def test_H1_an_id_only_in_an_ambiguous_resolve_match_backs_nothing():
+    pid, other = str(uuid.uuid4()), str(uuid.uuid4())
+    ledger = {
+        "r1": _ok(agent_tools.RESOLVE, {"results": [
+            {"term": "ZZT", "status": "ambiguous", "matches": [{"id": pid}, {"id": other}]}]}),
+        **_empty_read("crm_project_quotations_list", {"project_id": pid}),
+    }
+    assert _nf_bad(ledger) == ["quotations for ZZT tower"]
+
+
+def test_H1_every_id_must_be_found_not_any():
+    pid, nowhere = str(uuid.uuid4()), str(uuid.uuid4())
+    ledger = {
+        "p1": _ok("crm_projects_list", {"data": [{"id": pid, "title": "ZZT tower"}]}),
+        **_empty_read("crm_project_quotations_list", {"project_ids": [pid, nowhere]}),
+    }
+    assert _nf_bad(ledger) == ["quotations for ZZT tower"]
+
+
+def test_H1_an_assignee_narrowing_never_backs_none_even_with_a_found_id():
+    pid = str(uuid.uuid4())
+    ledger = {
+        "p1": _ok("crm_projects_list", {"data": [{"id": pid, "title": "ZZT tower"}]}),
+        **_empty_read("crm_project_quotations_list", {"project_id": pid, "assigned_to": "someone"}),
+    }
+    assert _nf_bad(ledger) == ["quotations for ZZT tower"]
+
+
+# ------------------------------------------------------------------ H2: the id check sees through invisible marks
+
+_ID = str(uuid.uuid4())
+
+
+def _refused(text) -> bool:
+    from app.services.chatbot.agent import writes
+
+    try:
+        writes._refuse_ids_in(note=text)
+    except Exception:  # noqa: BLE001 - the validation error the card shows
+        return True
+    return False
+
+
+@pytest.mark.parametrize("text", [
+    "Fixed \U0001F468‍\U0001F4BB today",           # zero-width joiner
+    "Fixed ❤️‍\U0001F525 today",          # heart on fire
+    "Flag \U0001F3F4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f here",  # subdivision flag
+    "Zero‌width non joiner",
+], ids=["zwj_emoji", "heart_fire", "subdivision_flag", "zwnj"])
+def test_H2_joined_emoji_and_non_joiner_text_is_allowed(text):
+    assert not _refused(text)
+
+
+@pytest.mark.parametrize("text", [
+    _ID[:4] + "͏" + _ID[4:],
+    _ID.translate({ord(c): ord(c) + 0xFEE0 for c in "0123456789abcdef-" if c != "-"}),
+    _ID[:4] + "️" + _ID[4:],
+], ids=["combining_grapheme_joiner", "full_width", "variation_selector"])
+def test_H2_an_id_hidden_by_a_mark_or_written_full_width_is_refused(text):
+    assert _refused(f"see {text}")
+
+
+@pytest.mark.parametrize("text", [_ID, _ID[:4] + "​" + _ID[4:]], ids=["plain", "zero_width_space"])
+def test_H2_a_plain_or_zero_width_hidden_id_is_still_refused(text):
+    assert _refused(f"see {text}")
+
+
+@pytest.mark.parametrize("text", ["café", "café", "你好天", "\U0001F600"],
+                         ids=["precomposed", "decomposed", "chinese", "emoji"])
+def test_H2_ordinary_text_is_allowed(text):
+    assert not _refused(text)
