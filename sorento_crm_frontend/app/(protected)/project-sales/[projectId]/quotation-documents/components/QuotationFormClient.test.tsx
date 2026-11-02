@@ -171,13 +171,19 @@ vi.mock('@/components/ui/rich-text-editor', () => ({
     value,
     onChange,
     placeholder,
+    id,
+    'aria-labelledby': labelledBy,
   }: {
     value: string;
     onChange: (html: string) => void;
     placeholder?: string;
+    id?: string;
+    'aria-labelledby'?: string;
   }) => (
     <textarea
-      aria-label={placeholder}
+      id={id}
+      aria-labelledby={labelledBy}
+      aria-label={labelledBy ? undefined : placeholder}
       value={value}
       onChange={(event) => onChange(event.target.value)}
     />
@@ -1453,5 +1459,17 @@ describe('QuotationFormClient cover page preview and editors', () => {
       cover_letter_html: '<p>Intro typed</p>',
       cover_closing_html: '<p>Closing typed</p>',
     });
+  });
+});
+
+
+/** QUOTE-COVER-DESIGN round 2: the editors' names come from a visible label, not the placeholder. */
+describe('QuotationFormClient cover editor labels', () => {
+  it('Intro text and Closing text are named by their label with seeded text present', async () => {
+    renderForm();
+    await openTab('Cover letter');
+    const intro = await screen.findByRole('textbox', { name: 'Intro text' });
+    expect(intro).toHaveValue('<p>Dear {{attn_name}}</p>');
+    expect(screen.getByRole('textbox', { name: 'Closing text' })).toBeInTheDocument();
   });
 });

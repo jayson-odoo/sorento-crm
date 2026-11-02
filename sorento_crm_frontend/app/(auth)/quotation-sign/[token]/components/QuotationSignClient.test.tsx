@@ -1072,3 +1072,22 @@ describe('QuotationSignClient designed cover guards', () => {
     expect(screen.queryByText('OLD LETTER BODY')).not.toBeInTheDocument();
   });
 });
+
+
+describe('QuotationSignClient designed cover with no rows (round 2)', () => {
+  it('keys on cover_title: empty cover_rows still renders the title, intro and closing', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({
+        cover_rows: [],
+        cover_title: 'OFFER SHEET',
+        cover_show_letterhead: true,
+        cover_intro_html: '<p>INTRO WORDS</p>',
+        cover_closing_html: '<p>CLOSING WORDS</p>',
+      } as Partial<QuotationSignPage>),
+    );
+    renderPage();
+    expect(await screen.findByText('OFFER SHEET')).toBeInTheDocument();
+    expect(screen.getByText('INTRO WORDS')).toBeInTheDocument();
+    expect(screen.getByText('CLOSING WORDS')).toBeInTheDocument();
+  });
+});

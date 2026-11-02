@@ -217,3 +217,24 @@ def test_document_patch_round_trips_the_closing(doc_api):
     )
     assert patched.status_code == 200, patched.text
     assert patched.json()["cover_closing_html"] == f"<p>{MARKER} closing</p>"
+
+
+def test_cover_default_endpoint_returns_the_default_design(api):
+    from app.services.quotation_cover_service import DEFAULT_DESIGN
+
+    client, *_ = api
+    res = client.get(f"{TEMPLATES}/cover-default")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body == DEFAULT_DESIGN
+    assert [r["key"] for r in body["rows"]] == KEYS and [r["label"] for r in body["rows"]] == LABELS
+    assert body["title"] == "QUOTATION" and body["show_letterhead"] is True
+
+
+def test_cover_default_endpoint_is_gated_like_the_list(api):
+    from .test_quote_cover_design_preview import without
+
+    client, *_ = api
+    assert client.get(f"{TEMPLATES}/cover-default").status_code == 200
+    with without("projects.types.view"):
+        assert client.get(f"{TEMPLATES}/cover-default").status_code == 403

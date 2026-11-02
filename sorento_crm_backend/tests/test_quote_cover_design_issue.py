@@ -314,3 +314,29 @@ def test_editing_the_document_letter_and_closing_after_send_leaves_pdf_and_sign_
         assert f"{MARKER} intro line" in body_after["cover_intro_html"]
         assert f"{MARKER} closing words" in body_after["cover_closing_html"]
         assert "EDITED LATER" not in body_after["cover_intro_html"] + body_after["cover_closing_html"]
+
+
+def _style_of(html):
+    import re
+
+    return "".join(re.findall(r"<style[^>]*>(.*?)</style>", html, re.S))
+
+
+def test_layout_2_html_has_exactly_the_2088_style_and_layout_3_adds_the_designed_css():
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        env = _setup(db)
+        record = _issue(db, prepared(db, env), env["owner"])
+        html3 = qpdf.build_issue_html(db, record)
+        db.flush()
+        db.execute(
+            text("update quotation_issues set layout_version = 2, cover_design = null where id = :i"),
+            {"i": str(record.id)},
+        )
+        db.expire_all()
+        html2 = qpdf.build_issue_html(db, record)
+    designed_css = qpdf._DESIGNED_COVER_STYLE
+    assert designed_css.strip() and designed_css not in html2
+    assert designed_css in html3
+    assert _style_of(html2).strip() == (qpdf._STYLE + qpdf._COVER_STYLE).strip()

@@ -40,10 +40,18 @@ function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+let defaultOverrideLabel: string | null = null;
+
 function handle(url: string, init?: RequestInit): Response {
   const method = (init?.method ?? 'GET').toUpperCase();
   const body = init?.body ? JSON.parse(String(init.body)) : null;
   calls.push({ url, method, body });
+  if (url.includes('/quotation-templates/cover-default')) {
+    const rows = savedDesign.rows.map((r, i) =>
+      i === 0 && defaultOverrideLabel ? { ...r, label: defaultOverrideLabel } : r,
+    );
+    return json({ ...savedDesign, rows });
+  }
   if (url.includes('/quotation-templates/merge-fields')) {
     return json({
       data: [{ token: 'project_title', placeholder: '{{project_title}}', label: 'Project title', example: 'X' }],
@@ -103,11 +111,23 @@ vi.mock('@/components/ui/rich-text-editor', () => ({
     value,
     onChange,
     placeholder,
+    id,
+    'aria-labelledby': labelledBy,
   }: {
     value: string;
     onChange: (html: string) => void;
     placeholder?: string;
-  }) => <textarea aria-label={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />,
+    id?: string;
+    'aria-labelledby'?: string;
+  }) => (
+    <textarea
+      id={id}
+      aria-labelledby={labelledBy}
+      aria-label={labelledBy ? undefined : placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  ),
 }));
 
 import { QuotationTemplatesClient } from './QuotationTemplatesClient';
@@ -138,6 +158,7 @@ const previewCalls = () => calls.filter((c) => c.url.includes('/quotation-templa
 
 beforeEach(() => {
   calls.length = 0;
+  defaultOverrideLabel = null;
 });
 
 describe('Quotation Templates: Terms and Cover page tabs (A1, A2)', () => {
@@ -320,5 +341,25 @@ describe('Deactivate a cover design (fix round 1)', () => {
     renderPage();
     await screen.findByText('Standard 2026');
     expect(screen.queryByRole('button', { name: 'Deactivate' })).toBeNull();
+  });
+});
+
+
+describe('QUOTE-COVER-DESIGN round 2 (designer)', () => {
+  it('Intro text and Closing text have a visible label linked to the editor, not the placeholder', async () => {
+    renderPage();
+    await openAddDesign();
+    fireEvent.change(screen.getByLabelText('Intro text'), { target: { value: '<p>seeded intro</p>' } });
+    expect(screen.getByRole('textbox', { name: 'Intro text' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Closing text' })).toBeInTheDocument();
+    expect(screen.getByText('Intro text').tagName).not.toBe('TEXTAREA');
+  });
+
+  it('the Add form fills its rows from the cover-default endpoint', async () => {
+    defaultOverrideLabel = 'Zz Default Label';
+    renderPage();
+    await openAddDesign();
+    expect(calls.some((c) => c.method === 'GET' && c.url.endsWith('/quotation-templates/cover-default'))).toBe(true);
+    expect(await screen.findByDisplayValue('Zz Default Label')).toBeInTheDocument();
   });
 });
