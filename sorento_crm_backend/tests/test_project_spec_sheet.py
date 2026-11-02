@@ -666,3 +666,119 @@ def test_accessible_is_a_yes_no_spec_beside_rimless():
     assert entry["data_type"] == "boolean"
     assert entry["label"] == "Accessible (OKU)"
     assert keys.index("is_accessible") == keys.index("is_rimless") + 1
+
+
+# ------------------------------------------------------------------ routes (rule 15)
+
+ROUTE_SLUGS = ["projects.projects.view", "projects.projects.edit", "projects.projects.manage"]
+
+
+def _client(db, user_id, slugs=ROUTE_SLUGS):
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+    from app.services.company_scope_resolver import apply_company_scope
+    from app.services.user_service import UserPermissionService
+
+    actor = {"id": user_id, "email": f"{user_id}@zzt.test", "role": "user"}
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: dict(actor)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+    app.dependency_overrides[apply_company_scope] = lambda: None
+    originals = (
+        UserPermissionService.check_user_has_permission,
+        UserPermissionService.get_user_permission_slugs,
+    )
+    UserPermissionService.check_user_has_permission = lambda self, uid, slug: slug in slugs
+    UserPermissionService.get_user_permission_slugs = lambda self, uid: list(slugs)
+    return TestClient(app), originals
+
+
+def _restore(originals):
+    from app.main import app
+    from app.services.user_service import UserPermissionService
+
+    UserPermissionService.check_user_has_permission = originals[0]
+    UserPermissionService.get_user_permission_slugs = originals[1]
+    app.dependency_overrides.clear()
+
+
+def _url(c, suffix=""):
+    return (
+        f"/api/v1/project-sales/projects/{c['project'].id}/quotation-documents/"
+        f"{c['document'].id}/spec-sheet{suffix}"
+    )
+
+
+def test_routes_read_save_preview_and_export(monkeypatch):
+    queued = []
+    monkeypatch.setattr(
+        "app.services.queue_service.enqueue_job", lambda *a, **k: queued.append((a, k))
+    )
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        client, originals = _client(db, c["owner"])
+        try:
+            got = client.get(_url(c))
+            assert got.status_code == 200, got.text
+            body = got.json()
+            assert body["issue_id"] == c["issue"].id
+            assert [p["code"] for p in body["pages"]] == [
+                c["basin"].product_code,
+                c["pedestal"].product_code,
+            ]
+            assert {t["cover"].id} <= {row["id"] for row in body["templates"]["cover"]}
+            assert {t["page"].id, t["single"].id} <= {row["id"] for row in body["templates"]["page"]}
+            assert body["issues"][0]["id"] == c["issue"].id
+
+            put = client.put(
+                _url(c),
+                json={
+                    "cover_template_id": t["cover"].id,
+                    "page_template_id": t["page"].id,
+                    "rows": [{"key": c["basin"].id, "area": "Pantry"}],
+                },
+            )
+            assert put.status_code == 200, put.text
+            assert put.json()["settings"]["cover_template_id"] == t["cover"].id
+            assert put.json()["pages"][0]["area"] == "Pantry"
+
+            preview = client.get(_url(c, "/preview"))
+            assert preview.status_code == 200, preview.text
+            assert len(preview.json()["doc"]["sheets"]) == 3
+
+            exported = client.post(_url(c, "/export"))
+            assert exported.status_code == 200, exported.text
+            assert exported.json()["kind"] == "quotation_spec_sheet_pdf"
+            assert len(queued) == 1
+
+            bad = client.put(_url(c), json={"page_template_id": t["cover"].id})
+            assert bad.status_code == 422
+            assert bad.json().get("code") == "spec_sheet_template_invalid" or "template" in bad.text
+        finally:
+            _restore(originals)
+
+
+def test_saving_needs_the_edit_right_and_reading_does_not():
+    with blank_session() as db:
+        c = _chain(db)
+        client, originals = _client(db, c["owner"], slugs=["projects.projects.view"])
+        try:
+            assert client.get(_url(c)).status_code == 200
+            assert client.put(_url(c), json={"rows": []}).status_code == 403
+        finally:
+            _restore(originals)
+
+
+def test_a_revision_of_another_document_is_not_found():
+    with blank_session() as db:
+        c = _chain(db)
+        client, originals = _client(db, c["owner"])
+        try:
+            other = client.get(_url(c), params={"issue_id": str(uuid.uuid4())})
+            assert other.status_code == 404
+        finally:
+            _restore(originals)
