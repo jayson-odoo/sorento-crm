@@ -8,7 +8,9 @@ Python 3.12, `vitest run` on touched `*.test.ts(x)` (+ `components/ui/*.inventor
 if `components/ui/` changed), the em-dash/en-dash guard (which skips
 `sorento_crm_backend/alembic/data/*.txt`, verbatim owner text a data migration loads), and a 200 KB cap on
 any added or modified `*.png` vs `origin/main` (compress with `pngquant`
-before pushing). Under 60s.
+before pushing), and, when either file changed, that the backend copy
+`sorento_crm_backend/app/services/mcp_catalog_copy.py` still equals
+`sorento_crm_mcp/sorento_crm_mcp/catalog.py`. Under 60s.
 
 Install once per clone (worktrees share the main checkout's config):
 `git config core.hooksPath scripts/git-hooks`

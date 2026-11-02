@@ -176,6 +176,22 @@ else
 fi
 rm -f /tmp/pii-guard.$$
 
+# --- e3. backend copy of the MCP catalog -----------------------------------
+# The backend image has no sorento_crm_mcp/, so the backend carries a verbatim
+# copy (tests/test_mcp_catalog_in_image.py is the CI guard). PR CI selects
+# backend tests only for backend code, so a catalog-only change would first
+# meet that guard at release; catch it here instead.
+MCP_CATALOG=sorento_crm_mcp/sorento_crm_mcp/catalog.py
+BACKEND_CATALOG_COPY=sorento_crm_backend/app/services/mcp_catalog_copy.py
+if git diff --name-only origin/main...HEAD -- "$MCP_CATALOG" "$BACKEND_CATALOG_COPY" | grep -q .; then
+  if cmp -s "$MCP_CATALOG" "$BACKEND_CATALOG_COPY"; then
+    ok "mcp-catalog-copy"
+  else
+    fail "mcp-catalog-copy"
+    echo "pre-push:   resync: cp $MCP_CATALOG $BACKEND_CATALOG_COPY"
+  fi
+fi
+
 # --- f. oversized PNG guard ------------------------------------------------
 PNG_MAX_BYTES=204800
 PNG_HITS=""
