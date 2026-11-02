@@ -572,3 +572,18 @@ class TestDetailFlags:
 
         assert detail["self_review"] is False
         assert detail["can_escalate"] is False
+
+
+class TestCopy:
+    def test_submitted_says_the_tag_waits_for_him(self):
+        from app.services.price_tag_notify import _copy
+
+        line = _copy("submitted", doc_number="PT-1", link="", ctx={})
+        assert line == "PT-1 received. Your tag is ready for you to check and approve."
+
+    def test_escalation_is_confirmed(self):
+        from app.services.price_tag_notify import _copy
+
+        assert _copy("new", doc_number="PT-1", link="", ctx={}) == (
+            "PT-1 sent to marketing with your note."
+        )
