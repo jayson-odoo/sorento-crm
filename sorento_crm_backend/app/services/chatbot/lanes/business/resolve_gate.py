@@ -1900,12 +1900,12 @@ def unbound_supplier_refusal(
         return None
     if not asker_sees_suppliers:
         return SUPPLIER_NOT_VISIBLE_LINE
-    if _holds_supplier_row(resolved):
+    if holds_supplier_row(resolved):
         return None
     return SUPPLIER_NOT_FOUND_LINE.format(raw=named[0])
 
 
-def _holds_supplier_row(resolved: Any) -> bool:
+def holds_supplier_row(resolved: Any) -> bool:
     """Whether the resolver's answer carries any supplier row: per token (`resolutions`) or the AND answer
     (`intersection`, which `by_entity_type` is built from)."""
     if not isinstance(resolved, dict):

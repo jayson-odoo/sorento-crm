@@ -1127,6 +1127,75 @@ def test_a_supplier_the_parser_already_bound_by_id_is_not_added_twice():
 
     from app.services.chatbot import engine as engine_mod
 
-    prep = types.SimpleNamespace(supplier_spans={"太阳": "id-1"})
+    prep = types.SimpleNamespace(supplier_spans={"太阳": "id-1"}, supplier_groups={"id-1": [("id-1", "A (X1)")]})
     verdict = {"entities": [{"raw": "Taiyang", "hint": "supplier", "canonical_code": "id-1", "current_message": True}]}
     assert engine_mod._with_span_suppliers(verdict, prep) is verdict
+
+
+def test_a_counted_header_still_names_every_supplier():
+    """Fix round 4 (crew console pass, 'extra' step 4): the PO header read '未找到 7 items 的 PO。' with no supplier named."""
+    from app.services.chatbot.turn.compose import HEADER_SUBJECT_MAX, _header_codes
+
+    a, b = f"{SUPPLIER} (400-X006)", f"{SUPPLIER} (400-X008)"
+    products = [f"SRTW26{i:02d}" for i in range(HEADER_SUBJECT_MAX)]
+    env = {"domain": "purchase_order", "supplier_subjects": [a, b]}
+    assert _header_codes([*products, a, b], env) == f"{HEADER_SUBJECT_MAX} items, {a}, {b}"
+    assert _header_codes(["SRTW2600", a], env) == f"SRTW2600, {a}"
+    assert _header_codes(products + ["SRTW2699"], {"domain": "inventory"}) == f"{HEADER_SUBJECT_MAX + 1} products"
+
+
+@pytest.mark.parametrize("hint,canonical", [("customer", None), ("supplier", None), ("supplier", "太阳")])
+def test_the_owner_turn_1_misreads_still_ask_which_supplier(session_factory, monkeypatch, hint, canonical):
+    """Fix round 4 (crew sweep: owner turn 1 x5 on v194, 2 of 5 asked): the parser named 太阳 as a CUSTOMER under the
+    order/sales report, or as a supplier with no row id, though the span list placed 太阳 on the three supplier rows
+    alone. The scores decide: the turn asks which supplier, never the order kind question or 'couldn't find'."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    _office_world(session_factory)
+    _seed_twin(session_factory)
+    _seed_named(session_factory, THIRD, "ZZTSUP-TY03")
+    qf = _parser_output(
+        domain_hint="sales" if hint == "customer" else "purchase_order",
+        intent_hint="check_sales" if hint == "customer" else "check_po",
+        order_status="outstanding", status="outstanding", date_filter_start="2026-01-01",
+        entities=[
+            {"raw": "SRTW2600", "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+            {"raw": NATIVE, "hint": hint, "canonical_code": canonical, "current_message": True, "confident": True},
+        ],
+    )
+    span = list_resolver.Span(NATIVE, "supplier", meaning="Taiyang")
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstaing for 太阳 for SRTW2600 after 2025", span,
+        {NATIVE, "Taiyang", SUPPLIER, "ZZT TAIYANG SANITARY CO LTD", THIRD}, qf=qf,
+    )
+    assert report_ask.KIND_QUESTION not in reply and "couldn't find a supplier" not in reply, reply
+    assert not _fetch_calls(captured), f"no list before the pick: {captured}"
+    assert len([ln for ln in reply.splitlines() if ln[:1].isdigit()]) == 3, reply
+
+
+def test_both_over_three_suppliers_asks_again_and_lists_nothing(session_factory, monkeypatch):
+    """Fix round 4 (crew sweep 'both-over-three'): 'both' names two options; over three it picks none of them, so the
+    question stays open. v194 read it as every position and listed all three."""
+    reply, _three = _three_taiyang(session_factory, monkeypatch)
+    pick = _parser_output(
+        message_type="answer", intent_hint=None, domain_hint=None, entities=[], reference_positions=[1, 2, 3],
+    )
+    again, captured, _s = _span_turn(session_factory, monkeypatch, "both", list_resolver.Span("both"), set(), qf=pick)
+    assert not _po_calls(captured), (again, captured)
+    assert len([ln for ln in again.splitlines() if ln[:1].isdigit()]) == 3, again
+    one = _parser_output(message_type="answer", intent_hint=None, domain_hint=None, entities=[], reference_positions=[1])
+    _r, captured, _s = _span_turn(session_factory, monkeypatch, "1", list_resolver.Span("1"), set(), qf=one)
+    calls = _po_calls(captured)
+    assert calls and len(calls[0].get("supplier_ids") or []) == 1, (_r, captured)
+
+
+def test_a_non_answer_over_the_supplier_question_never_lists_without_a_supplier(session_factory, monkeypatch):
+    """Round 3's hole: an aside over the open supplier question ran the PO list with the held, unsettled supplier
+    word skipped (no `supplier_ids`). The question is asked again instead."""
+    _three_taiyang(session_factory, monkeypatch)
+    aside = _parser_output(
+        message_type="business_query", intent_hint="check_po", domain_hint="purchase_order", entities=[],
+        broaden_axis="all", broaden_to="all",
+    )
+    again, captured, _s = _span_turn(session_factory, monkeypatch, "all", list_resolver.Span("all"), set(), qf=aside)
+    assert not [a for a in _po_calls(captured) if not a.get("supplier_ids")], (again, captured)

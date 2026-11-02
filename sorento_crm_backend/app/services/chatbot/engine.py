@@ -465,6 +465,42 @@ def _bare_roster_positions(pending: Any, message: str) -> list[int] | None:
     return positions
 
 
+def _open_supplier_question_again(
+    state: Any, verdict: dict[str, Any], resolved: Any, domains: Any
+) -> str | None:
+    """SUPPLIER-ASK fix round 4 (crew sweep 'both-over-three'): the supplier question is still open, this message did
+    not answer it (no position, no supplier of its own) and the turn would list purchase orders with no supplier bound:
+    the held supplier word is the unsettled one the question asks about, so the question is asked again, never a
+    list without a supplier filter. None otherwise."""
+    from app.services.chatbot.lanes.business.resolve_gate import SUPPLIER_FETCH_DOMAINS, holds_supplier_row
+
+    pending = getattr(state, "pending", None)
+    if pending is None or getattr(pending, "kind", None) != "supplier_pick" or not pending.options:
+        return None
+    if verdict.get("reference_positions") or not set(jsc.array(domains)) & SUPPLIER_FETCH_DOMAINS:
+        return None
+    if any(
+        isinstance(e, dict) and e.get("current_message") is not False and jsc.lower_or_empty(e.get("hint")) == "supplier"
+        for e in jsc.array(verdict.get("entities"))
+    ) or holds_supplier_row(resolved):
+        return None
+    lines = [
+        f"{o.get('position')}. {o.get('label')}"
+        for o in pending.options if isinstance(o, dict) and o.get("label")
+    ]
+    return "\n".join(["Which one do you mean?", *lines]) if lines else None
+
+
+def _bare_both_over_not_two(pending: Any, message: str) -> bool:
+    """A message that is nothing but "both" over an open numbered roster that does not offer exactly two options
+    (read in code, as `_bare_roster_positions` reads a bare "all")."""
+    if pending is None or not turn_pending.is_roster(pending.kind) or not pending.options:
+        return False
+    if str(message or "").strip().lower().rstrip(".!") != "both":
+        return False
+    return len([o for o in pending.options if isinstance(o, dict)]) != 2
+
+
 #: AVAIL-MODE-REPLIES rule 4 (owner, 2 Oct 2026): a message that is nothing but "all" over
 #: an availability-mode stock pick. The parser's prompt reads "all" / "semua" over a pick as
 #: EVERY position, which is indistinguishable from "1,2,3" by then, so the engine reads the
@@ -906,6 +942,17 @@ def _with_the_engine_pick(verdict: dict[str, Any], pending: Any, message: str) -
             "reference_positions": [],
             "open_question_answer": {"mode": "all", "picked": [], "items": [], "qty_for_all": None},
             "broaden_axis": "all",
+        }
+    if _bare_both_over_not_two(pending, message):
+        # SUPPLIER-ASK fix round 4 (crew sweep 'both-over-three'): "both" names two options; over three it picks
+        # none, so it is no answer and the question stays open (v194 read it as every position).
+        return {
+            **verdict,
+            "reference_positions": [],
+            "open_question_answer": None,
+            "broaden_axis": None,
+            "broaden_to": None,
+            "scope_intent": None,
         }
     positions = _bare_roster_positions(pending, message)
     if positions is None:
@@ -1581,26 +1628,44 @@ def _supplier_spans(resolutions: list[list_resolver.Resolution]) -> dict[str, st
 
 
 def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> dict[str, Any]:
-    """SUPPLIER-ASK fix round 3 (#2066, owner turn 4, d1bdf144): "outstaing for 太阳 for SRTW2600 in 2026" - the span
-    pass placed 太阳 on the three supplier rows (typed customer) and the parser returned the product alone, so the
-    supplier was lost and the order clarifier fired. A span placed on suppliers alone that no entity of this message
-    names (its raw, as typed) joins the verdict as a supplier entity carrying the row id; the id binds that span's
-    whole group (`resolve_gate.bind_span_suppliers`), so a near tie is still asked. Returns a new verdict."""
+    """SUPPLIER-ASK: a span the lookup placed on supplier rows ALONE (no customer, product or brand row scored) is this
+    message's supplier, whatever the parser made of it. The scores decide, never a word. Returns a new verdict.
+
+    * Fix round 3 (owner turn 4, d1bdf144): the parser returned no entity for it (the product alone). It joins the
+      verdict as a supplier entity carrying the row id; the id binds the span's whole group
+      (`resolve_gate.bind_span_suppliers`), so a near tie is still asked.
+    * Fix round 4 (crew sweep, owner turn 1 repeated 5 times on v194): the parser named it (its raw, as typed) but as a
+      customer, so the turn went to the order report ("Undelivered orders or pending delivery?"), or as a supplier with
+      no row id, so nothing bound it ("couldn't find a supplier"). That entity becomes the supplier with the row id.
+    An entity already carrying an id of the span's group is left as it is."""
     spans = prep.supplier_spans if prep is not None else {}
     if not spans:
         return verdict
-    entities = [e for e in jsc.array(verdict.get("entities")) if isinstance(e, dict)]
-    mine = [e for e in entities if e.get("current_message") is not False]
-    named = {jsc.nullish_str(e.get("raw")).strip().casefold() for e in mine}
-    picked = {jsc.nullish_str(e.get("canonical_code")).strip() for e in mine}
-    added = [
-        {"raw": text, "hint": "supplier", "canonical_code": key, "current_message": True, "confident": True}
-        for text, key in spans.items()
-        if text.strip().casefold() not in named and key not in picked
-    ]
-    if not added:
-        return verdict
-    return {**verdict, "entities": [*jsc.array(verdict.get("entities")), *added]}
+    groups = prep.supplier_groups if prep is not None else {}
+    out: list[Any] = []
+    covered: set[str] = set()
+    changed = False
+    for e in jsc.array(verdict.get("entities")):
+        text = jsc.nullish_str(e.get("raw")).strip() if isinstance(e, dict) else ""
+        key = next((k for t, k in spans.items() if t.strip().casefold() == text.casefold()), None) if text else None
+        if key is None or e.get("current_message") is False:
+            out.append(e)
+            continue
+        covered.add(key)
+        if jsc.nullish_str(e.get("canonical_code")).strip() in groups and e.get("hint") == "supplier":
+            out.append(e)
+            continue
+        out.append({**e, "hint": "supplier", "canonical_code": key})
+        changed = True
+    picked = {
+        jsc.nullish_str(e.get("canonical_code")).strip()
+        for e in out if isinstance(e, dict) and e.get("current_message") is not False
+    }
+    for text, key in spans.items():
+        if key not in covered and key not in picked:
+            out.append({"raw": text, "hint": "supplier", "canonical_code": key, "current_message": True, "confident": True})
+            changed = True
+    return {**verdict, "entities": out} if changed else verdict
 
 
 def _hits_of(resolutions: list[list_resolver.Resolution]) -> dict[str, list[lookup_lists.Hit]]:
@@ -6205,7 +6270,12 @@ def _run_stages_body(  # noqa: PLR0915
                 # The parser named no entity for it; the scores did, and the id binds that span's supplier group.
                 turn_trace.add(
                     "supplier_span",
-                    {"added": [e.get("raw") for e in with_spans["entities"][len(verdict.get("entities") or []):]]},
+                    {
+                        "before": [(e.get("raw"), e.get("hint")) for e in jsc.array(verdict.get("entities")) if isinstance(e, dict)],
+                        "suppliers": [
+                            e.get("raw") for e in with_spans["entities"] if isinstance(e, dict) and e.get("hint") == "supplier"
+                        ],
+                    },
                 )
                 verdict = with_spans
 
@@ -7056,6 +7126,10 @@ def _run_stages_body(  # noqa: PLR0915
                     verdict, (resolver_payload or {}).get("resolved"), asker_sees_suppliers, plan.domains
                 )
             )
+            if not supplier_refusal and not scope_refused and asker_sees_suppliers:
+                supplier_refusal = _open_supplier_question_again(
+                    state_out, verdict, (resolver_payload or {}).get("resolved"), plan.domains
+                )
             if supplier_refusal:
                 account_question, scope_refused = supplier_refusal, True
             # CHATBOT-SELFREF-SCOPE R4: every scope decision is on the trace, with its

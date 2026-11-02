@@ -394,6 +394,19 @@ def _section_subjects(env: dict[str, Any], state: State) -> list[Any]:
     return _with_quantities(_header_subjects(env.get("entities") or [], env.get("supplier_subjects")), state)
 
 
+def _header_codes(subjects: list[Any], env: dict[str, Any]) -> str:
+    """What a section header says the answer is for: every subject by name up to `HEADER_SUBJECT_MAX`, else a count.
+    SUPPLIER-ASK fix round 4 (owner, "未找到 7 items 的 PO"): a counted header still names each supplier (whole, with
+    its code) and counts only the rest, so the reply always says whose purchase orders these are."""
+    if len(subjects) <= HEADER_SUBJECT_MAX:
+        return ", ".join(str(s) for s in subjects)
+    whole = {str(s).strip() for s in (env.get("supplier_subjects") or [])}
+    named = [str(s) for s in subjects if str(s).strip() in whole]
+    rest = len(subjects) - len(named)
+    word = "products" if env.get("domain") in _PRODUCT_DOMAINS else "items"
+    return ", ".join([*([f"{rest} {word}"] if rest else []), *named])
+
+
 #: The most subjects a section header names one by one; past it the header counts them.
 HEADER_SUBJECT_MAX = 5
 
@@ -677,11 +690,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         subjects = _section_subjects(env, state)
         # W6 (owner hand test round 2, turn 1): a long subject list is counted, never
         # dumped as one line of codes ("*stock* for BRBC22102W, BRBC22108W-1A, ...").
-        codes = (
-            ", ".join(subjects)
-            if len(subjects) <= HEADER_SUBJECT_MAX
-            else f"{len(subjects)} {'products' if env.get('domain') in _PRODUCT_DOMAINS else 'items'}"
-        )
+        codes = _header_codes(subjects, env)
         # A counted-set answer (AC-1316, "10 taps have certificates.") carries its OWN
         # header, computed off the qualifying total and the class word rather than the
         # domain label - it wins over the generic
