@@ -26,8 +26,11 @@ Complaint form is visible. Linked staff contacts are unchanged.
   names another customer. No row is written.
 - C-6 Each product code must be on one of the named DOs.
 - C-7 Lookup fields (within warranty, complaint type, defects discovered, customer type) take an active option of
-  their set (value or label); a wrong value is refused with the options listed. An omitted optional one takes the
-  set's binding default; with no default it is asked for (refused as missing).
+  the SAME set the portal form shows (value or label); a wrong value is refused with the options listed. A value
+  the model passes must also be something the customer said in this chat (the option's value, label or an admin
+  keyword; for within warranty, the customer speaking about the warranty): otherwise nothing is proposed and the
+  refusal carries the real options to ask for (`data.ask_customer`). An omitted optional one takes the set's
+  binding default; with no default it is asked for the same way. No confirm block while any is missing.
 - C-8 Pre-fills as the portal form: complaint date today, salesperson = the contact's name, customer name = the
   DO's debtor, contact person / number = the contact's own name and WhatsApp number unless given.
 - C-9 `photo_ids` come from `crm_my_chat_photos` this turn, must be the contact's own stored chat images of the

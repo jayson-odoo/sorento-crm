@@ -910,10 +910,67 @@ _LOOKUPS = (
 )
 
 
-def _lookup(db, column: str, value: Any) -> tuple[str | None, str | None]:
-    """(value, label) of a complaint lookup: an active option matched on value or label; an omitted one takes the
-    binding default the portal form pre-selects, except within warranty, which only the dealer says (S2-Q3)."""
-    from app.models.lookup import LookupBinding, LookupOption
+#: How much of the customer's own chat the claim's dropdown check reads (the newest part).
+DEALER_WORDS_CHARS = 4000
+
+
+def dealer_words(history: list[dict], text: str) -> str:
+    """The customer's own messages of this conversation (the verbatim turns, never the model-written running
+    summary) and this turn's text: what a claim's dropdown values must come from."""
+    from app.services.chatbot.agent.memory import SUMMARY_PREFIX
+
+    said = [
+        str(m.get("content") or "") for m in history
+        if m.get("role") == "user" and not str(m.get("content") or "").startswith(SUMMARY_PREFIX)
+    ]
+    return "\n".join([*said, str(text or "")])[-DEALER_WORDS_CHARS:]
+
+
+def _fold(value: Any) -> str:
+    return " ".join(re.sub(r"[_\W]+", " ", str(value or "").casefold()).split())
+
+
+def _said(words: str, phrases: list[str]) -> bool:
+    """Does the customer's text hold one of the phrases as whole words (case, spacing and punctuation folded)?
+    A phrase in a script without spaces (Chinese) is matched as written."""
+    folded = f" {_fold(words)} "
+    for phrase in phrases:
+        p = _fold(phrase)
+        if p and (f" {p} " in folded or (not p.isascii() and p in folded)):
+            return True
+    return False
+
+
+def _options(db, set_id) -> list:
+    from app.models.lookup import LookupOption
+
+    return (
+        db.query(LookupOption)
+        .filter(LookupOption.set_id == set_id, LookupOption.is_active.is_(True))
+        .order_by(LookupOption.sort_order)
+        .all()
+    )
+
+
+def _ask(column: str, options: list) -> tuple[str, list[str]]:
+    return dict(_LOOKUPS)[column], [o.label for o in options]
+
+
+#: Words that show the customer spoke about the warranty itself (en / ms / zh): then "within warranty" is their
+#: answer read from their words, not a guess (crew console pass, 2 Nov).
+_WARRANTY_WORDS = ("warranty", "warranties", "guarantee", "waranti", "jaminan", "保修", "保固", "保用")
+
+
+def _lookup(db, column: str, value: Any, words: str) -> tuple[str | None, str | None, tuple | None]:
+    """(value, label, ask) of a complaint dropdown, from the same option list the portal form shows.
+
+    - A value the model passed must be an active option (value or label) AND something the customer said in
+      the chat: the option's value, label or one of its admin keywords (crew console pass, 2 Nov: never a
+      guess the customer would only see in the confirm block).
+    - Omitted: the binding default the portal form pre-selects (S2-Q3 (a)), except within warranty, which only
+      the customer says. No default means it must be asked: `ask` names the field and its real options.
+    """
+    from app.models.lookup import LookupBinding, LookupOptionKeyword
     from app.services.error_handler import handle_validation_error
 
     binding = (
@@ -924,23 +981,24 @@ def _lookup(db, column: str, value: Any) -> tuple[str | None, str | None]:
     )
     typed = _line(value)
     if binding is None:
-        return (typed or None), (typed or None)
-    options = (
-        db.query(LookupOption)
-        .filter(LookupOption.set_id == binding.set_id, LookupOption.is_active.is_(True))
-        .order_by(LookupOption.sort_order)
-        .all()
-    )
+        return (typed or None), (typed or None), None
+    options = _options(db, binding.set_id)
     if not typed:
-        if column == "within_warranty":
-            return None, None
-        hit = next((o for o in options if o.value == binding.default_value), None)
-        return (hit.value, hit.label) if hit else (None, None)
+        hit = None if column == "within_warranty" else next(
+            (o for o in options if o.value == binding.default_value), None
+        )
+        return (hit.value, hit.label, None) if hit else (None, None, _ask(column, options))
     hit = next((o for o in options if typed.casefold() in (o.value.casefold(), o.label.casefold())), None)
     if hit is None:
-        label = dict(_LOOKUPS)[column]
-        raise handle_validation_error(f"{label} must be one of: {', '.join(o.label for o in options)}.")
-    return hit.value, hit.label
+        raise handle_validation_error(
+            f"{dict(_LOOKUPS)[column]} must be one of: {', '.join(o.label for o in options)}. Ask the customer."
+        )
+    keywords = [k for (k,) in db.query(LookupOptionKeyword.keyword).filter(LookupOptionKeyword.option_id == hit.id)]
+    if column == "within_warranty":
+        keywords += list(_WARRANTY_WORDS)
+    if not _said(words, [hit.value, hit.value.replace("_", " "), hit.label, *keywords]):
+        return None, None, _ask(column, options)
+    return hit.value, hit.label, None
 
 
 def _claim(db, token, args: dict) -> dict:
@@ -975,8 +1033,21 @@ def _claim(db, token, args: dict) -> dict:
         if _line(args.get(key)):
             payload[key] = str(args[key]).strip()
     labels: dict[str, str] = {}
+    asks: list[tuple[str, list[str]]] = []
+    words = str(args.get("_dealer_words") or "")
     for column, _label in _LOOKUPS:
-        payload[column], labels[column] = _lookup(db, column, args.get(column))
+        payload[column], labels[column], ask = _lookup(db, column, args.get(column), words)
+        if ask:
+            asks.append(ask)
+    if asks:
+        # Never a value the customer did not give: ask with the real options (in the data, which the message's
+        # length cap would cut), and propose nothing.
+        refusal = handle_validation_error(
+            "Not proposed. Ask the customer to choose " + ", ".join(f for f, _ in asks)
+            + ". Offer only the options listed in data.ask_customer; no other value exists."
+        )
+        refusal.agent_data = {"ask_customer": {field: labels for field, labels in asks}}
+        raise refusal
     missing = missing_on_submit(
         COMPLAINT, SimpleNamespace(**{**payload, "product_code": ", ".join(l["product_code"] for l in lines)})
     )
@@ -1539,6 +1610,7 @@ PORTAL_WRITES: dict[str, WriteDef] = {
         execute=_photos_add_execute,
         record_key="submission_id",
         changes=_photos_add_changes,
+        note_in_reply=True,
         runs_as="contact",
     ),
     CP_PHOTO_REMOVE: WriteDef(
@@ -1565,9 +1637,10 @@ PORTAL_WRITES: dict[str, WriteDef] = {
         execute=_photo_remove_execute,
         record_key="file_id",
         changes=_photo_remove_changes,
+        note_in_reply=True,
         runs_as="contact",
     ),
 }
 
 #: What the loop adds to a dealer write's arguments (never the model: `_args_problem` refuses unknown keys).
-LOOP_ARGS = ("_is_test",)
+LOOP_ARGS = ("_is_test", "_dealer_words")

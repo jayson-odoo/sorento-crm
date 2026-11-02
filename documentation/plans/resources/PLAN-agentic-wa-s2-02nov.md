@@ -171,3 +171,19 @@ pre-fix code:
 - Complaint date = the business day (Asia/Kuala_Lumpur); the confirm line also shows date, salesperson, address
   and project; extension and size refusals tested (kill-test survivor M3c).
 - S2-Q5 (owner): duplicate handling removed entirely, a second claim goes through as on the portal.
+
+### Crew console pass at e6c95c8722 (2 Nov), round 2
+
+Passed: the security case, warranty asked, the photo list, undo, duplicate allowed, add photo later. Failed and
+fixed (red-first):
+
+1. With no binding default the three dropdowns were refused as "Still missing" without their options, so the model
+   offered options that do not exist and once guessed all three. Now: the loop passes the customer's own chat
+   words (`_dealer_words`, verbatim turns plus this turn, never the running summary; the model cannot set it), a
+   dropdown value must be one the customer said (value, label or admin keyword; within warranty: the customer
+   spoke about the warranty), and a refusal carries the real options in `data.ask_customer`. Nothing is
+   proposed, so no confirm block, while any is missing. Limit: a non-English answer matches only through an
+   admin keyword on the option (lookup admin), else the agent asks again.
+2. A DO in the agent's own words above the block read "(not verified)": numbers in a code-built proposal summary
+   now back the answer (`loop.verify_answer`).
+3. Console: the photo add / remove confirm now carries "Test turn: nothing was sent." (`note_in_reply`).

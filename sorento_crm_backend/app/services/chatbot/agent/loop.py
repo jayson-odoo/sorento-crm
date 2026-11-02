@@ -404,6 +404,10 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
     for entry in ledger.values():
         if entry["status"] == "ok":
             backed |= _number_leaves(entry["data"]) | _column_totals(entry["data"])
+        elif entry["status"] == "proposed" and isinstance(entry["data"], dict):
+            # A proposal's summary is built by code from checked values (a DO number, a quantity), so the
+            # answer may repeat them (crew console pass, 2 Nov: "(not verified)" on a claim's DO).
+            backed |= _number_leaves({"summary": entry["data"].get("summary")})
     user_forms = _supported_forms([user_text])
     bad_numbers: list[str] = []
     for _, _, written, forms in _figures(text):
@@ -548,7 +552,7 @@ def proposal_block(lines: list[str]) -> str:
 
 def _propose(
     db, ctx, name: str, args: Any, steps: list[dict], seen_ids: set[str], action_id: str, user_text: str = "",
-    is_test: bool = True,
+    is_test: bool = True, dealer_words: str = "",
 ) -> ToolResult:
     if len(steps) >= actions.MAX_STEPS:
         return ToolResult("invalid", message=f"At most {actions.MAX_STEPS} changes per confirmation.")
@@ -559,6 +563,10 @@ def _propose(
     if portal_writes.is_portal_tool(name):
         # A console turn is a test: its confirm writes nothing (owner W2-Q3 (a)). Set here, never by the model.
         loop_args = {"_is_test": is_test}
+        if name == portal_writes.CP_CREATE:
+            # What the customer said in this conversation, so a claim's dropdowns hold only values they gave
+            # (crew console pass, 2 Nov). Never the model's words or the running summary.
+            loop_args["_dealer_words"] = dealer_words
     out, step = writes.propose_step(db, ctx, name, args, seen_ids=seen_ids, loop_args=loop_args)
     if step is None:
         return out
@@ -1129,7 +1137,9 @@ def _run(
         messages: list[dict] = [{"role": "system", "content": system}]
         if context_before and waiting is None:
             messages.append({"role": "user", "content": context_before})
-        messages.extend(memory.history_messages(db, conv))
+        history = memory.history_messages(db, conv)
+        messages.extend(history)
+        dealer_words = portal_writes.dealer_words(history, text) if dealer else ""
         if waiting is not None:
             messages.append({"role": "assistant", "content": waiting_reference(waiting)})
         if context_after and waiting is None:
@@ -1281,7 +1291,7 @@ def _run(
                     # pending proposal, whatever the model names.
                     out = ToolResult("denied", message=f"{name} is not a tool you may use.")
                 elif name in writes.WRITES or name in portal_writes.PORTAL_WRITES:
-                    out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text, is_test)
+                    out = _propose(db, ctx, name, args, steps, seen_ids, action_id, text, is_test, dealer_words)
                 elif name in portal_writes.PORTAL_READS:
                     out = portal_writes.run_read(db, ctx, name, args, seen_ids)
                 elif name in writes.USER_READS:

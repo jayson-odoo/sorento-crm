@@ -495,7 +495,8 @@ def test_c7_an_omitted_lookup_with_no_default_is_asked_for(db, store):
 
     out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do))
 
-    assert step is None and "complaint_type" in out.message
+    assert step is None and "complaint type" in out.message
+    assert out.data["ask_customer"]["complaint type"] == ["Product defect", "Delivery"]
 
 
 def test_c8_the_complaint_date_is_the_malaysian_business_day(db, store, monkeypatch):
@@ -1153,8 +1154,10 @@ def test_cp1_a_dropdown_with_no_default_is_asked_with_its_real_options(db, store
     out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do))
 
     assert step is None
-    for real in ("Product defect", "Delivery", "After installation", "Before installation", "Dealer", "End user"):
-        assert real in out.message, (real, out.message)
+    asked = out.data["ask_customer"]
+    assert asked == {"complaint type": ["Product defect", "Delivery"],
+                     "defects discovered": ["After installation", "Before installation"],
+                     "customer type": ["Dealer", "End user"]}
 
 
 def test_cp1_a_dropdown_value_the_dealer_never_said_is_refused(db, store):
@@ -1167,7 +1170,7 @@ def test_cp1_a_dropdown_value_the_dealer_never_said_is_refused(db, store):
     out, step = _propose(db, _ctx(db, contact), CP_CREATE, args, words=WORDS + ", product defect after installation")
 
     assert step is None
-    assert "customer type" in out.message and "Dealer" in out.message and "End user" in out.message
+    assert out.data["ask_customer"] == {"customer type": ["Dealer", "End user"]}
 
 
 def test_cp1_dropdown_values_the_dealer_said_are_accepted(db, store):
@@ -1189,7 +1192,7 @@ def test_cp1_within_warranty_the_dealer_never_said_is_refused(db, store):
 
     out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do), words="ELP3754 leaking after 3 months")
 
-    assert step is None and "within warranty" in out.message and "Not sure" in out.message
+    assert step is None and out.data["ask_customer"] == {"within warranty": ["Yes", "No", "Not sure"]}
 
 
 def test_cp1_an_admin_keyword_counts_as_the_dealers_words(db, store):
@@ -1258,3 +1261,15 @@ def test_cp3_a_console_photo_add_confirm_says_nothing_was_sent(db, store):
 
     assert "Test turn: nothing was sent." in outcome.notes
     assert _files_on(db, "complaint", cid) == []
+
+
+def test_cp1_the_model_cannot_pass_the_dealers_words_itself(db, store):
+    from app.services.chatbot.agent import writes
+
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+    args = {**_claim(do, customer_type="End user"), "_dealer_words": "end user"}
+
+    out, step = writes.propose_step(db, _ctx(db, contact), CP_CREATE, args, seen_ids=set(), loop_args={"_is_test": False})
+
+    assert step is None and "Unknown argument" in out.message

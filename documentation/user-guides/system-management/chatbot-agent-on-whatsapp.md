@@ -81,9 +81,12 @@ fields and the same checks. It needs four things from the dealer and asks for an
 * whether it is **within warranty**, as the dealer says it. The agent never fills this in itself.
 
 Everything else is filled as the portal form fills it: today's date, the dealer as salesperson and
-as contact person (unless the dealer names a site contact), the customer from the delivery order,
-and the usual choices for complaint type, defects discovered and customer type unless the dealer
-says otherwise.
+as contact person (unless the dealer names a site contact) and the customer from the delivery order.
+Complaint type, defects discovered and customer type take the dealer's answer, chosen from the same
+options the portal form shows; where the form has a default (set in the lookup admin) and the dealer
+says nothing, the default is used. Without a default the agent asks, listing the real options, and
+it never picks one for the dealer. An answer in Malay or Chinese is understood when the option has a
+matching keyword in the lookup admin; otherwise the agent asks again.
 
 **Photos.** The agent can attach photos the dealer sent in the WhatsApp chat in the last 24 hours
 (up to 10 to choose from, and no more than the portal's own limit per complaint). It can only use
