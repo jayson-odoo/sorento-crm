@@ -76,7 +76,11 @@ def decide_route(
         return RouteDecision("chat", f"not_eligible:{refusal}")
     if has_media:
         return RouteDecision("chat", "media")
-    if user is not None and agent_actions.pending_action(db, contact_respond_id, user_id=str(user.id)) is not None:
+    # The agent's own question keeps the reply on the agent (R3): a linked user's proposal, or a contact
+    # principal's own (user_id "", AGENTIC-WA-W2); a staff user's proposal never holds a contact's turn.
+    owner = str(user.id) if user is not None else ""
+    # A contact's console test proposal never holds its WhatsApp message (test=False).
+    if agent_actions.pending_action(db, contact_respond_id, user_id=owner, test=False if user is None else None) is not None:
         return RouteDecision("agent", "pending_action")
 
     # `None` = the contact's stored session, `{}` = a console Reset (remembers nothing).
@@ -100,7 +104,9 @@ def decide_route(
     if prompt is None:
         return RouteDecision("chat", "router_failed:no_prompt")
     instructions, criteria, model = prompt
-    criteria = _with_agent_tools(_with_open_page(criteria), agent_tool_labels(db, user))
+    criteria = _with_agent_tools(
+        _with_open_page(criteria), agent_tool_labels(db, user, contact_respond_id=contact_respond_id)
+    )
 
     state = _state(db, contact_respond_id, text)
     started = time.perf_counter()
@@ -290,7 +296,7 @@ def _router_prompt(db) -> tuple[str, dict[str, Any], str] | None:
     return instructions, criteria, row[1] or jev_client.DEFAULT_MODEL
 
 
-def agent_tool_labels(db=None, user=None) -> list[str]:
+def agent_tool_labels(db=None, user=None, *, contact_respond_id: str | None = None) -> list[str]:
     """Plain labels of what the agent can do: every write, then every per-user read. `tools.REGISTRY`
     (stock, ETA, cost) is left out on purpose: the bot answers those lookups too and the static
     criteria text already covers them. A tool without a label is skipped (a guard test catches it).
@@ -305,6 +311,14 @@ def agent_tool_labels(db=None, user=None) -> list[str]:
         label = agent_tools.TOOL_LABELS.get(name)
         if label and label not in labels:
             labels.append(label)
+    if db is not None and user is None and contact_respond_id:
+        # A contact principal's dealer requests (AGENTIC-WA-W2), under the portal's own gates for that contact.
+        from app.services.chatbot.agent import portal_writes
+
+        for name in portal_writes.offered_for_contact(db, contact_respond_id):
+            label = agent_tools.TOOL_LABELS.get(name)
+            if label and label not in labels:
+                labels.append(label)
     return labels
 
 
