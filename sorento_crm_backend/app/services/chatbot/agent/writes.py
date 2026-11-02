@@ -52,6 +52,9 @@ class WriteDef:
     execute_takes_before: bool = False
     #: True = the step's `note` is repeated in a chat reply by code, and kept from the model (a link it must not invent).
     note_in_reply: bool = False
+    #: "user": read_before / execute get the user dict (`run_as_user`). "contact": they get the contact's transient
+    #: portal token (`portal_writes.run_as_contact`); the portal's own gates decide (AGENTIC-WA-W2).
+    runs_as: str = "user"
 
 
 @dataclass(frozen=True)
@@ -169,6 +172,27 @@ def run_as_user(
         set_company_scope(db, previous)
 
 
+def write_def(name: Any) -> "WriteDef | None":
+    """The write of that name: a staff write (`WRITES`) or a dealer write (`portal_writes.PORTAL_WRITES`)."""
+    from app.services.chatbot.agent import portal_writes
+
+    if not isinstance(name, str):
+        return None
+    return WRITES.get(name) or portal_writes.PORTAL_WRITES.get(name)
+
+
+def may_propose(db, ctx, definition: "WriteDef") -> bool:
+    """A staff write: the slug, for the linked user and the console operator. A dealer write: the contact's
+    portal gates (`portal_writes.may_use`); no user slug is read."""
+    from app.services.chatbot.agent import portal_writes
+
+    if definition.runs_as == "contact":
+        return portal_writes.may_use(db, ctx, definition.name)
+    if getattr(ctx, "principal", "user") == "contact":
+        return False
+    return holds_ctx(db, ctx, definition.user_permission)
+
+
 def _principal_real_user() -> str | None:
     principal = staff_principal.current()
     return principal.real_user_id if principal is not None else None
@@ -178,6 +202,12 @@ def read_before_all(db, ctx, definition: "WriteDef", args: dict) -> dict:
     """`read_before` as the linked user and again as the console operator: either refusing refuses the
     step. The linked user's reading is the one kept. The operator is checked FIRST, so a step it may not
     propose makes no outside call as the linked user (the ideas lookup)."""
+    if definition.runs_as == "contact":
+        from app.services.chatbot.agent import portal_writes
+
+        return portal_writes.run_as_contact(
+            db, ctx, lambda token: definition.read_before(db, token, args), tool_name=definition.name
+        )
     first = people(ctx)
     before = None
     for pid in [*first[1:], *first[:1]]:
@@ -504,10 +534,12 @@ def propose_step(
 ) -> tuple[ToolResult, dict | None]:
     """Check a write call and read the record as it is now. Never writes. Success returns the
     "proposed" result and the step to store; any failure returns a typed result and no step."""
-    definition = WRITES.get(name) if isinstance(name, str) else None
+    definition = write_def(name)
     if definition is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use."), None
-    if panel_closed(name) or not holds_ctx(db, ctx, definition.user_permission):
+    if panel_closed(name) or not may_propose(db, ctx, definition):
+        if definition.runs_as == "contact":
+            return ToolResult("denied", message=f"{name} is not a tool you may use."), None
         return ToolResult("denied", message=f"{name} is outside this user's access."), None
     if name == CREATE_IDEA and staff_principal.current() is not None:
         # A panel turn runs as a test turn, so an idea would be a test idea: keep the Ideas board link instead.

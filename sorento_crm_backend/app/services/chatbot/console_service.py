@@ -779,7 +779,10 @@ def console_thread(db: Session, *, contact_respond_id: str, run_id: str) -> dict
     except AgentRefused:
         ctx = None
     if ctx is not None:
-        waiting = agent_actions.pending_action(db, contact_respond_id, user_id=ctx.user_id)
+        # The console shows a contact's own TEST proposal only, never its live WhatsApp one (AGENTIC-WA-W2).
+        waiting = agent_actions.pending_action(
+            db, contact_respond_id, user_id=ctx.user_id, test=True if ctx.principal == "contact" else None
+        )
         pending = agent_actions.pending_dict(waiting) if waiting is not None else None
         conv = agent_memory.latest_conversation(db, contact_respond_id)
         if conv is not None and agent_memory.belongs_to(conv, ctx.user_id, grants_hash(ctx)):
