@@ -353,7 +353,7 @@ export function useUpdatePromotionProductPrice() {
     }: {
       promotionId: string;
       lineId: string;
-      promotionPrice: number;
+      promotionPrice?: number;
       dealerDiscountPercent: number | null;
       listPrice: number;
     }) =>

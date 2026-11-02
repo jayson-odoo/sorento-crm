@@ -1888,3 +1888,21 @@ def test_stock_compact_never_prints_an_unassigned_line():
     assert [f["label"] for f in fields] == ["Product Code", "Total", "BRW", "MWH"]
     assert fields[1]["granted_value"] == "54 (O/S: 0)"
     assert "12" not in json.dumps(out)
+
+
+def test_promotion_product_of_a_no_selling_price_brand_says_so():
+    """CABANA-NO-SELLING-PRICE: a blank Selling Price let the chatbot say the price is
+    "defined inside the flyer"; the presenter states there is none, list price only."""
+    out = env("crm_marketing_promotion_products_list", {
+        "data": [
+            {"selling_price": None, "no_selling_price": True,
+             "product": {"product_code": "C-FH10", "list_price": 100}},
+            {"selling_price": 80, "no_selling_price": False,
+             "product": {"product_code": "KS-001", "list_price": 100}},
+        ],
+    })
+    flagged, normal = ({x["label"]: x["value"] for x in i["fields"]} for i in out["items"])
+    assert flagged["Selling Price"].startswith("None.")
+    assert "List Price" in flagged["Selling Price"]
+    assert flagged["List Price"] == "MYR 100.00"
+    assert normal["Selling Price"] == "MYR 80.00"

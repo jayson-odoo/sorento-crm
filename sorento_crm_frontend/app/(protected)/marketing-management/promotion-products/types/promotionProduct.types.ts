@@ -6,6 +6,8 @@ export interface PromotionProductListItem {
   promotion_id: string;
   product_id: string;
   promotion_price?: number | null;
+  /** The brand's promotions carry no selling price (Cabana): show none, not list price. */
+  no_selling_price?: boolean;
   display_order: number;
   created_at: Date;
   updated_at: Date;
