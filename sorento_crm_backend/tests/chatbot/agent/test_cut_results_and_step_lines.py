@@ -81,6 +81,22 @@ def test_F4_an_ok_list_of_three_rows_still_ends_3_rows():
     assert tool_detail("crm_projects_list", {}, out, {}).endswith("3 rows")
 
 
+def test_F4_an_ok_result_of_only_scalars_ends_done():
+    out = ToolResult("ok", data={"total_sales": 1234.5, "currency": "RM"})
+    text = tool_detail("crm_order_analytics", {}, out, {})
+    assert text.endswith("done"), text
+
+
+def test_F4_an_ok_result_with_no_data_ends_done():
+    text = tool_detail("crm_order_analytics", {}, ToolResult("ok", data=None), {})
+    assert text.endswith("done"), text
+
+
+def test_F4_an_ok_body_of_only_empty_lists_still_ends_nothing_found():
+    text = tool_detail("crm_projects_list", {}, ToolResult("ok", data={"asks": []}), {})
+    assert text.endswith("nothing found"), text
+
+
 # ------------------------------------------------------------------ F5
 
 
