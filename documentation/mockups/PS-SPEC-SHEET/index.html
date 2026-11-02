@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Project spec sheet (mock v1)</title>
+<title>Project spec sheet (mock v2)</title>
 <style>
 /* App tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/QUOTE-COVER-PAGE.
    Spec pages are drawn at 338.7 x 190.5 mm scaled to 880 x 495 px (16:9), as TagSheetRenderer draws a sheet. */
@@ -85,7 +85,7 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 </head>
 <body>
 <div class="doc">
-<h1>Project spec sheet <span class="newtag">MOCK v1</span></h1>
+<h1>Project spec sheet <span class="newtag">MOCK v2</span></h1>
 <p class="intro">PS-SPEC-SHEET. A cover page plus one page per quoted item, designed as tag templates and printed from an issued revision.
 Data is masked (project title, ref, names and phones are placeholders; codes are illustrative). Behaviour card:
 <code>documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md</code>.</p>
@@ -110,15 +110,15 @@ Data is masked (project title, ref, names and phones are placeholders; codes are
       <thead><tr><th></th><th>Page</th><th></th><th>Item</th><th>Accessories</th><th>Area</th><th>Comment</th><th>Marker</th><th>Print</th></tr></thead>
       <tbody>
         <tr><td class="grip">&#8942;&#8942;</td><td>1</td><td colspan="7"><b>Cover</b> &middot; <span class="meta">Project catalogue cover</span></td></tr>
-        <tr><td class="grip">&#8942;&#8942;</td><td>2</td><td><span class="thumb"></span></td><td title="SORENTO SRTWC0001-RL Wall hung WC"><b>SRTWC0001-RL</b><br><span class="meta">Wall hung WC</span></td><td><span class="badge">2 (set)</span></td><td><div class="inp">UNIT</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp">*</div></td><td><span class="sw"></span></td></tr>
-        <tr><td class="grip">&#8942;&#8942;</td><td>3</td><td><span class="thumb"></span></td><td><b>SRTWB0002</b><br><span class="meta">Counter top basin</span></td><td><span class="badge">1</span></td><td><div class="inp">UNIT &amp; PODIUM FACILITIES</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw"></span></td></tr>
-        <tr><td class="grip">&#8942;&#8942;</td><td>4</td><td><span class="thumb"></span></td><td><b>SRTBM0003</b><br><span class="meta">Basin mixer</span></td><td><span class="badge warn">2 of 3 fit</span></td><td><div class="inp">PANTRY (TYPE A)</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw"></span></td></tr>
-        <tr><td class="grip">&#8942;&#8942;</td><td>5</td><td><span class="thumb"></span></td><td><b>SRTFT0004</b><br><span class="meta">Floor trap</span></td><td><span class="meta">none</span></td><td><div class="inp">TOILET (ALL TYPE)</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw"></span></td></tr>
+        <tr><td class="grip">&#8942;&#8942;</td><td>2</td><td><span class="thumb"></span></td><td title="SORENTO SRTWC0001-RL Wall hung WC"><b>SRTWC0001-RL</b><br><span class="meta">Wall hung WC</span></td><td title="Set parts: SRTAV0010, SRTFH0011"><span class="badge">2 set parts</span></td><td><div class="inp">UNIT</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp">*</div></td><td><span class="sw"></span></td></tr>
+        <tr><td class="grip">&#8942;&#8942;</td><td>3</td><td><span class="thumb"></span></td><td><b>SRTWB0002</b><br><span class="meta">Counter top basin</span></td><td><div class="inp" title="Hand-picked from this revision">SRTBT0006</div></td><td><div class="inp">UNIT &amp; PODIUM FACILITIES</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw"></span></td></tr>
+        <tr><td class="grip">&#8942;&#8942;</td><td>4</td><td><span class="thumb"></span></td><td><b>SRTBM0003</b><br><span class="meta">Basin mixer</span></td><td><span class="badge warn" title="Template has 2 accessory rows">2 of 3 fit</span></td><td><div class="inp">PANTRY (TYPE A)</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw"></span></td></tr>
+        <tr><td class="grip">&#8942;&#8942;</td><td>5</td><td><span class="thumb"></span></td><td><b>SRTFT0004</b><br><span class="meta">Floor trap</span></td><td><div class="inp ph">Pick</div></td><td><div class="inp">TOILET (ALL TYPE)</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw"></span></td></tr>
         <tr style="opacity:.55"><td class="grip">&#8942;&#8942;</td><td>&ndash;</td><td><span class="thumb"></span></td><td><b>SRTSV0005</b><br><span class="meta">Silicone sealant</span></td><td><span class="meta">none</span></td><td><div class="inp ph">Area</div></td><td><div class="inp ph">Comment</div></td><td><div class="inp ph"></div></td><td><span class="sw off"></span></td></tr>
       </tbody>
     </table>
     </div>
-    <div class="cap">Area input: SearchableSelect-style combobox, free text allowed, suggests areas already typed on this sheet. Marker column shown only if Q1 = (c). Rows save on blur (no Save button); the header Export uses the saved state.</div>
+    <div class="cap">Area input: SearchableSelect-style combobox, free text allowed, suggests areas already typed on this sheet. Accessories: set parts (frozen on the line, read only) plus items hand-picked from this revision (SearchableMultiSelect); a picked item leaves its own page (SRTBT0006 bottle trap is now under page 3). Marker = free text (Q1 c). Rows save on blur (no Save button); the header Export uses the saved state.</div>
   </div>
 </div>
 </section>
@@ -195,14 +195,14 @@ Data is masked (project title, ref, names and phones are placeholders; codes are
   <div class="ed">
     <div class="col"><h5>Insert field</h5>
       <div class="grp">Document <span class="newtag">NEW</span></div>
-      <div class="li">Project title</div><div class="li">Ref</div><div class="li">Prepared by</div><div class="li">Prepared by phone</div><div class="li">Date</div>
-      <div class="grp">Line</div><div class="li on">Area <span class="newtag">NEW</span></div><div class="li">Comment <span class="newtag">NEW</span></div><div class="li">Marker <span class="newtag">Q1</span></div>
+      <div class="li">Project title</div><div class="li">Ref (Your ref, else quotation no)</div><div class="li">Your ref</div><div class="li">Quotation no</div><div class="li">Prepared by</div><div class="li">Prepared by phone</div><div class="li">Date</div>
+      <div class="grp">Line</div><div class="li on">Area <span class="newtag">NEW</span></div><div class="li">Comment <span class="newtag">NEW</span></div><div class="li">Marker <span class="newtag">NEW</span></div>
       <div class="grp">Product</div><div class="li">Brand <span class="newtag">NEW</span></div><div class="li">Code</div><div class="li">Name</div><div class="li">Dimensions</div><div class="li">Spec lines</div>
     </div>
     <div class="col" style="background:#fafafa;display:flex;align-items:center;justify-content:center;min-height:220px"><span class="meta">canvas (TagCanvasEditor), preview against a picked product or set</span></div>
     <div class="col"><h5>Layer: badge image</h5>
       <div class="fld" style="margin-bottom:10px"><label>Binds to</label><div class="sel">Library asset: Rimless icon</div></div>
-      <div class="fld" style="margin-bottom:10px"><label>Show only when spec is Yes <span class="newtag">NEW</span></label><div class="sel">Rimless</div></div>
+      <div class="fld" style="margin-bottom:10px"><label>Show only when spec is Yes <span class="newtag">NEW</span></label><div class="sel">Rimless</div><div class="meta" style="margin-top:4px">or Accessible (new spec key)</div></div>
       <div class="fld" style="margin-bottom:10px"><label>Image slot</label><div class="sel">Drawing <span class="newtag">NEW</span></div></div>
       <div class="fld"><label>Subject</label><div class="sel">Part 1</div></div>
     </div>

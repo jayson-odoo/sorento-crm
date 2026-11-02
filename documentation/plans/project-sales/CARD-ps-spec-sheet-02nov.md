@@ -1,6 +1,14 @@
-# CARD: PS-SPEC-SHEET v1 (2 Nov 2026)
+# CARD: PS-SPEC-SHEET v2 (2 Nov 2026)
 
-**Status:** Plan (card asked on the lane PR; building on the recommendations, adjusted when answered).
+**Status:** Build (answers in). Track: L.
+
+**Crew answers on v1 (dfd2f5be), 2 Nov:** Q1 (c) a free marker per page (crew asks the owner what the stars
+mean, non-blocking). Q2: offer both `{{doc.your_ref}}` and `{{doc.quotation_no}}` (same `quotation_no()` as
+`cover_reference`, `BE/services/quotation_cover_service.py:31-36`); `{{doc.ref}}` is (a) and the default
+template prints it. Q3: (a) set parts + (c) hand-pick; NOT (b) position grouping (owner: no implicit
+matching). Q4 (a) free-text comment, blank prints an empty box. Q5 (a) add an `is_accessible` spec key next
+to `is_rimless`. Sample Q7: no product code starts with BBT; print the line's code as quoted.
+#2100 already excludes families starting `spec_` from product links (`NON_PRICE_TAG_FAMILY_PREFIX`).
 Track: L (one migration, new template families, new print payload, new document tab).
 
 Owner, 2 Nov ~21:05: "the spec sheet needs to follow the PDF that I shared (R1 - C2 - PROJECT CATALOG).
@@ -63,9 +71,11 @@ No prices, no page numbers. Two layouts: "with accessories" (19 pages) and "sing
 3. **Pages**: page 1 = the cover template. Then one page per ITEM, in quotation order (scope order, then
    line order), unless the salesperson reorders them on the tab.
 4. **Item** = one quotation line with a product or a set. A set line prints its driver part as the main
-   item and the other parts as accessory rows (the frozen `set_parts_snapshot`). A product line followed
-   by zero-priced, non-rate-only product lines takes those as its accessory rows (Q3). Free-text lines
-   (no product, no set) print nothing.
+   item and the other parts as accessory rows (the frozen `set_parts_snapshot`). Nothing is grouped by
+   position (Q3). Free-text lines (no product, no set) print nothing.
+4a. **Hand-picked accessories** (Q3 c): on a page row, "Accessories" picks other items of the same
+   revision; a picked item prints as an accessory row of that page and no longer gets a page of its own.
+   Set parts come first, hand-picked after. Unpicking gives the item its page back.
 5. **Same product twice** (two scopes, or a line repeated): ONE page, at its first position. Key = product
    id, else `set:<set id>` (sample: 35 pages, 35 different codes).
 6. **Templates**: two new families, `Spec sheet cover` (`spec_cover`) and `Spec sheet page`
@@ -77,16 +87,16 @@ No prices, no page numbers. Two layouts: "with accessories" (19 pages) and "sing
    refuses with "Page templates must be the same size as the cover". The sample's 338.7 x 190.5 mm is
    simply the size the designer gives the templates (Q5 of the owner list: no fixed A4).
 8. **New fields a template can place** (Insert field, new group "Document"): `{{doc.project_title}}`,
-   `{{doc.ref}}`, `{{doc.prepared_by}}`, `{{doc.prepared_by_phone}}`, `{{doc.date}}` (`02 NOV 2026`),
-   `{{line.area}}`, `{{line.comment}}`, and `{{product.brand}}`. Cover and page templates both get them.
+   `{{doc.ref}}` (Your ref, else quotation no), `{{doc.your_ref}}`, `{{doc.quotation_no}}`, `{{doc.prepared_by}}`, `{{doc.prepared_by_phone}}`, `{{doc.date}}` (`02 NOV 2026`),
+   `{{line.area}}`, `{{line.comment}}`, `{{line.marker}}` (Q1 c), and `{{product.brand}}`. Cover and page templates both get them.
 9. **Accessory rows**: layers pointed at part 1 / part 2 (the editor's existing subject picker). On a
    spec page a layer pointed at a part the item does not have draws NOTHING (today it falls back to the
    parent, which would print the main item twice).
 10. **Drawing**: a new image slot `Drawing`: the line's frozen drawing; for an accessory, its product's
     first "Technical Specifications" file. No drawing = empty (the sample's photo-only pages).
-11. **Badges**: an image layer can carry "Show only when spec <key> is Yes" (e.g. Rimless,
-    `is_rimless`, `BE/services/product_spec_registry.py:284`). Accessible has no spec key today (Q5).
-12. **Area and Comment**: typed per page on the tab, free text, saved on the document and keyed by item
+11. **Badges**: an image layer can carry "Show only when spec <key> is Yes" (Rimless `is_rimless`,
+    `BE/services/product_spec_registry.py:284`; new Accessible `is_accessible`, Q5).
+12. **Area, Comment and Marker**: typed per page on the tab, free text, saved on the document and keyed by item
     (rule 5), so they survive a new revision and the proposal -> quotation copy. Upper-cased at print.
     The Area input suggests the areas already typed on this spec sheet.
 13. **Hide**: a page can be hidden from the spec sheet (e.g. a consumable) without touching the quotation.
@@ -98,14 +108,16 @@ No prices, no page numbers. Two layouts: "with accessories" (19 pages) and "sing
 ## Storage (one migration)
 
 `projects.quotation_documents.spec_sheet` JSONB NULL:
-`{cover_template_id, page_template_id, single_page_template_id, issue_id, rows: [{key, area, comment, hidden}]}`
+`{cover_template_id, page_template_id, single_page_template_id, issue_id, rows: [{key, area, comment, marker, hidden, accessories: [key]}]}`
 in page order. A key not in `rows` (a new line in a later revision) is appended in quotation order. No new
 table: one document has one spec sheet, and its settings are read and written together.
 
 ## Real examples (dev data)
 
-Asked on the PR (`crew-data-request`): 3-5 recent issued revisions with their line mix (sets, zero-priced
-followers, photo / drawing coverage) and whether `BBT%` codes exist. Filled in here when crew answers.
+Thin: crew reports the dev DBs hold only 13 / 7 quotation lines, so there is no real 35-item catalogue to
+test against. No product code starts with `BBT`. The browser pass uses the best real project crew can
+point at, with a set line (WC set: pan + angle valve + hose) to exercise the accessory rows, and says it is
+thin.
 
 ## Edge cases
 
