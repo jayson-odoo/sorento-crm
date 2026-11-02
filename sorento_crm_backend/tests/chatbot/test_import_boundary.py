@@ -79,6 +79,10 @@ ALLOWED = {
     # SUPPLIER-ASK (#2066): measures the supplier span meaning floor offline over `head.lookup_lists` /
     # `head.list_resolver` on a dev copy. A developer tool, not core, not on any request path.
     "scripts/measure_supplier_span_floor.py",
+    # SUPPLIER-ASK fix round 3 (#2066): the phrasing sweep runs console DRY RUNS in process through
+    # `console_service.run_console_turn`, the console page's own path, pinned to one parser version. A developer
+    # tool run by hand against a copy, not core, not on any request path.
+    "scripts/sweep_supplier_ask.py",
     # EVAL-BENCH (#1745) live replay test: drives `replay.py live` through the real engine and
     # patches `engine`, `head.parser` and `lanes.ideate` directly to block the network and the
     # ideation offload; `/chat/turn` has no seam for those. Bench tooling, not core, not on a

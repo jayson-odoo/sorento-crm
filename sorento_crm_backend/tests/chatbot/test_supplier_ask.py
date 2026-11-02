@@ -447,6 +447,20 @@ def test_the_parser_edit_goes_right_after_the_span_marker():
     assert sask.with_supplier_line("no marker") is None
 
 
+def test_the_parser_edit_rules_after_a_year_on_the_line_that_names_years():
+    """Owner turn 1-3: 'after 2025' was read as from 1 January 2025. No date rule named a bounded year; the published
+    parser carries one sentence for it, on the R-X-02 line that already rules on years, once."""
+    from app.services.chatbot.head.parser_template import TEMPLATE
+
+    sask = _migration("sask_0002_span_supplier")
+    out = sask.with_after_year(TEMPLATE)
+    assert out is not None and out.count(sask.AFTER_YEAR_SENTENCE) == 1
+    line = next(ln for ln in out.split("\n") if sask.AFTER_YEAR_SENTENCE in ln)
+    assert sask.YEAR_ANCHOR in line and "2026-01-01" in sask.AFTER_YEAR_SENTENCE
+    assert sask.with_after_year(out) is None, "applied once"
+    assert sask.with_after_year("no year line") is None
+
+
 def _seed_prompts(db) -> str:
     """Production span v1 and a production parser that runs the span pass; the parser label's version id."""
     from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
