@@ -86,6 +86,7 @@ LABELS: dict[str, dict[str, str]] = {
     # AVAIL-RENDER fix round (owner hand test, 6 Oct 2026): the incoming line says the stock
     # state too; the bare "ETA {eta}." row it replaces is printed by nothing now.
     "No stock, ETA {eta}.": {"ms": "Tiada stok, ETA {eta}.", "zh": "没有库存，ETA {eta}。"},
+    "No stock, No ETA.": {"ms": "Tiada stok, Tiada ETA.", "zh": "没有库存，暂无 ETA。"},
     "No ETA": {"ms": "Tiada ETA", "zh": "暂无 ETA"},
     "Data last updated: {ts}": {
         "ms": "Data dikemas kini: {ts}",

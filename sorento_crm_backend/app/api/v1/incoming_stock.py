@@ -144,7 +144,11 @@ def _for_contact(
         # row only means none in that window.
         windowed = eta_from is not None or eta_to is not None
         told = None
-        if not windowed:
+        eta_denied = any(
+            isinstance(d, dict) and d.get("field") == "estimated_arrival_date"
+            for d in (result.get("field_access") or {}).get("denied", [])
+        ) if isinstance(result, dict) else False
+        if not windowed and not eta_denied:
             # Fix B: the stock check's own read, so both answers print the same dates.
             from app.services import incoming_stock_service as incoming
             from app.services.eta_policy import told_dates, told_text

@@ -1705,6 +1705,19 @@ class StockService:
         # Fix B (owner, 2 Nov 2026): the dates told come from the ONE shared read the ETA ask
         # prints too (`eta_policy.told_dates`); the packing list shipment only picks the file.
         today = incoming.today_myt()
+        # AC-SIF14: a revoked `estimated_arrival_date` still reads incoming, with no date. The
+        # same decision `apply_field_access` makes per field for a contact.
+        from app.services.field_access import decide
+
+        eta_visible = all(
+            d.allowed
+            for d in decide(
+                self.db,
+                resource="incoming_stock",
+                fields=["estimated_arrival_date"],
+                contact_id=resolved_contact_id,
+            )
+        )
         told_by_code = told_dates(
             self.db,
             [getattr(products_by_id.get(pid), "product_code", None) for pid in query_ids],
@@ -1797,7 +1810,9 @@ class StockService:
                 entry["cap_unset"] = cap_unset
                 entry["category_name"] = category.category_name
                 if entry["branch"] == "incoming":
-                    entry["eta"] = ", ".join(told_text(d, today) for d in told)
+                    entry["eta"] = (
+                        ", ".join(told_text(d, today) for d in told) if eta_visible else None
+                    )
                     # PRODUCT-ALTERNATIVES: a nested alternative names its ETA only; the
                     # packing list file goes out for the product asked about, never for
                     # an `Alternative:` line (the engine sends top-level entries' files).
