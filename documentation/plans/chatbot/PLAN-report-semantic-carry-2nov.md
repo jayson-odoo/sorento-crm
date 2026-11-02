@@ -84,7 +84,10 @@ section + tests; delete ~950 (report_ask.py ~900 + engine seams) after promotion
 - A1 Schema: `REPORT_ASK_LINE` marker, `_REPORT_ASK_SCHEMA`, `with_report_ask(schema)`, `ParserConfig.report_ask`.
 - A2 Held report line: rendered from the frame / open ask in words; frame stores id->name; printed in the user block
   only when `ParserConfig.report_ask` (context.py `ContextLayers` :254-310, L2 render :454 / :542; engine call
-  :5416-5455).
+  :5416-5455). Format (fixed, so the gold rows and the renderer agree): `Held report: ` + compact JSON of the SAME
+  shape as `report_ask` (same keys, same order, names never ids, nulls and empty lists kept so the model copies and
+  edits one object, the agent's "last call args" mechanism). While a field question is open:
+  `Held report (open question: <basis|period|count|company|brand or account type|sales agent>): ` + the ask so far.
 - A3 Lane: when the verdict carries `report_ask`, build the ask from it (kind, words -> ids, period, basis, axis,
   count, channel, company), apply V1-V5, run. Old seams skipped for that turn.
 - A4 Candidate prompt: the copy's v71 lineage (production lineage, md5-pinned) + one anchored section with the marker

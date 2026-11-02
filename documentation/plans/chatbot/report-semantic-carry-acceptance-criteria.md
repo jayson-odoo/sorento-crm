@@ -11,9 +11,10 @@ the args that ran, not on reply wording, except where a reply line is named.
 - SC-2 A text without the marker gets today's schema, byte for byte, and today's user block, byte for byte.
 - SC-3 With the flag on and a held report, the user block carries ONE `Held report:` line in words: kind, basis,
   period (from and to), breakdown, count, measure, channel, company NAME, sales agent NAME(S), account type(s), brand
-  NAME(S), category NAME(S), customer NAME(S), product code(s). No UUID appears in it.
+  NAME(S), category NAME(S), customer NAME(S), product code(s). No UUID appears in it. The line is `Held report: `
+  followed by compact JSON with exactly the `report_ask` keys.
 - SC-4 While a field question is open (basis, period, count, company, brand or account type, agent pick), the line
-  shows the ask so far and names the open question.
+  shows the ask so far and names the open question: `Held report (open question: <basis|period|count|company|brand or account type|sales agent>): ` + the JSON.
 - SC-5 The frame that ran keeps an id->name map for every id it holds; an object that carries a held name back sends
   the same id with no new lookup.
 
