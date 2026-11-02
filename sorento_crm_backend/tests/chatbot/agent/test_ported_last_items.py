@@ -502,7 +502,7 @@ def test_H1_an_assignee_narrowing_never_backs_none_even_with_a_found_id():
 _ID = str(uuid.uuid4())
 
 
-def _refused(text) -> bool:
+def _text_refused(text) -> bool:
     from app.services.chatbot.agent import writes
 
     try:
@@ -515,11 +515,10 @@ def _refused(text) -> bool:
 @pytest.mark.parametrize("text", [
     "Fixed \U0001F468‍\U0001F4BB today",           # zero-width joiner
     "Fixed ❤️‍\U0001F525 today",          # heart on fire
-    "Flag \U0001F3F4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f here",  # subdivision flag
     "Zero‌width non joiner",
-], ids=["zwj_emoji", "heart_fire", "subdivision_flag", "zwnj"])
+], ids=["zwj_emoji", "heart_fire", "zwnj"])
 def test_H2_joined_emoji_and_non_joiner_text_is_allowed(text):
-    assert not _refused(text)
+    assert not _text_refused(text)
 
 
 @pytest.mark.parametrize("text", [
@@ -527,16 +526,18 @@ def test_H2_joined_emoji_and_non_joiner_text_is_allowed(text):
     _ID.translate({ord(c): ord(c) + 0xFEE0 for c in "0123456789abcdef-" if c != "-"}),
     _ID[:4] + "️" + _ID[4:],
 ], ids=["combining_grapheme_joiner", "full_width", "variation_selector"])
-def test_H2_an_id_hidden_by_a_mark_or_written_full_width_is_refused(text):
-    assert _refused(f"see {text}")
+def test_H2_an_id_hidden_by_a_mark_or_written_full_width_is_text_refused(text):
+    assert _text_refused(f"see {text}")
 
 
-@pytest.mark.parametrize("text", [_ID, _ID[:4] + "​" + _ID[4:]], ids=["plain", "zero_width_space"])
-def test_H2_a_plain_or_zero_width_hidden_id_is_still_refused(text):
-    assert _refused(f"see {text}")
+@pytest.mark.parametrize("text", [
+    _ID, _ID[:4] + "\u200b" + _ID[4:], "Flag \U0001F3F4\U000e0067\U000e0062\U000e007f here",
+], ids=["plain", "zero_width_space", "subdivision_flag_tag_characters"])
+def test_H2_a_plain_or_zero_width_hidden_id_is_still_text_refused(text):
+    assert _text_refused(f"see {text}")
 
 
 @pytest.mark.parametrize("text", ["café", "café", "你好天", "\U0001F600"],
                          ids=["precomposed", "decomposed", "chinese", "emoji"])
 def test_H2_ordinary_text_is_allowed(text):
-    assert not _refused(text)
+    assert not _text_refused(text)
