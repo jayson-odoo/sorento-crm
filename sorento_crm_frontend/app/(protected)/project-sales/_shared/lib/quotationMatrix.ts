@@ -386,9 +386,21 @@ export function reshapeCells(
     const moved: MatrixCells = qty && compareMoney(qty, '0') === 1 ? { [keys[0]]: qty } : {};
     return { cells: moved, quantity: sumCells(moved) };
   }
+  // A header that was its own quantity column (no columns) and now has some: its quantity moves
+  // into its first column, unless that one already holds a value. The backend's `set_columns`
+  // does exactly this; dropping it here made Save overwrite the server's move-in (B1).
+  const source: MatrixCells = { ...(cells ?? {}) };
+  const wasLeaf = new Set((before ?? []).filter((header) => header.cols.length === 0).map((header) => header.key));
+  (after ?? []).forEach((header) => {
+    if (!wasLeaf.has(header.key) || header.cols.length === 0) return;
+    const moved = source[header.key];
+    delete source[header.key];
+    const first = header.cols[0].key;
+    if (moved !== undefined && !(first in source)) source[first] = moved;
+  });
   const kept: MatrixCells = {};
   keys.forEach((key) => {
-    const value = counted(cells?.[key]);
+    const value = counted(source[key]);
     if (value !== null && compareMoney(value, '0') !== 0) kept[key] = value;
   });
   return { cells: kept, quantity: sumCells(kept) };
