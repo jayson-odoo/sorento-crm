@@ -654,3 +654,32 @@ def test_deferred_remove_unlinks_the_matching_products(env):
     )
     assert result == {"changed": 1}
     assert {r.template_id for r in db.query(ProductTagTemplate).filter_by(product_id=p1)} == {keep}
+
+
+@pytest.mark.parametrize("price_mode", ["list", "selling"])
+def test_preview_never_prices_a_promotion_outside_the_contacts_audience(env, price_mode):
+    """Security review: the resolver prices with the staff viewer, so a promotion
+    the contact may not see must be dropped before it, in BOTH modes."""
+    from app.models.product import Product
+    from tests.test_price_tag_line_pricing import _promotion
+
+    db, c, _ = env
+    ref = _reference(db)
+    product_id = _product(db, ref)
+    _template(db, "Any")
+    product = db.query(Product).filter(Product.id == product_id).one()
+    hidden = _promotion(db, [(product, "40.00")], access_levels=["zzt_nobody"])
+
+    out = c.post(
+        f"{PORTAL}/lookups/tag-preview",
+        json={
+            "price_mode": price_mode,
+            "lines": [
+                {"key": "k", "line_type": "product", "product_id": product_id,
+                 "promotion_id": hidden.id}
+            ],
+        },
+    ).json()
+    assert out["lines"], out
+    assert float(out["lines"][0]["sell_price"] or 100) != 40.0
+    assert "40" not in str(out["lines"][0].get("sell_price"))

@@ -489,7 +489,11 @@ def preview(db: Session, *, price_mode: str, lines: list[dict], viewer) -> dict:
         combo_id = _uuid_or_none(raw.get("combo_id"))
 
         basis = "list"
-        if selling:
+        # Run whenever a promotion is named, in BOTH modes (security review):
+        # the resolver below prices with the staff viewer, so a promotion
+        # outside this contact's audience must be dropped here, exactly as a
+        # real save refuses it, or its price would come back in `sell_price`.
+        if selling or promotion_id:
             pricing_row = line_pricing(
                 db,
                 lines=[
