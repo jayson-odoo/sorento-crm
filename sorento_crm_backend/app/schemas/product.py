@@ -68,6 +68,8 @@ class BrandBase(BaseModel):
     # "Customers can ask for this brand" (#1286, D3). False keeps a placeholder brand
     # (OTHERS, NO LOGO) out of what the chatbot offers and binds on a single word.
     is_searchable: bool = True
+    # CABANA-NO-SELLING-PRICE: this brand's promotions carry no selling price.
+    no_promo_selling_price: bool = False
     # BULK-CONTACT-ACCESS: the company whose dealers get this brand (NULL = a project brand).
     dealer_company_id: Optional[str] = None
 
@@ -87,6 +89,7 @@ class BrandUpdate(BaseModel):
     flows_to_purchasing: Optional[bool] = None
     chatbot_weight: Optional[float] = Field(None, ge=0, le=9999)
     is_searchable: Optional[bool] = None
+    no_promo_selling_price: Optional[bool] = None
     dealer_company_id: Optional[str] = None
 
 

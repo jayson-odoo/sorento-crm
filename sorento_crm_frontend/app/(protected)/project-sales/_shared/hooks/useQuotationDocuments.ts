@@ -22,6 +22,7 @@ import {
   issueQuotationDocument,
   listQuotationDocuments,
   listQuotationIssues,
+  listQuotationViews,
   logQuotationWhatsAppOpened,
   makeQuotation,
   moveQuotationApproval,
@@ -39,6 +40,7 @@ import {
 
 const DOCUMENTS_KEY = 'project-quotation-documents';
 const ISSUES_KEY = 'project-quotation-issues';
+const VIEWS_KEY = 'project-quotation-views';
 const APPROVAL_GRAPH_KEY = ['quotation-approval-graph'];
 /**
  * The customer's suggestions on a document. Invalidated by every write that can open or close a
@@ -90,6 +92,15 @@ export function useQuotationIssues(
   return useQuery({
     queryKey: [ISSUES_KEY, projectId ?? '', documentId ?? ''],
     queryFn: () => listQuotationIssues(projectId as string, documentId as string),
+    enabled: Boolean(projectId && documentId),
+  });
+}
+
+/** The customer's counted opens of every revision's sign link (PS-QUOTE-VIEWS). */
+export function useQuotationViews(projectId: string | undefined, documentId: string | undefined) {
+  return useQuery({
+    queryKey: [VIEWS_KEY, projectId ?? '', documentId ?? ''],
+    queryFn: () => listQuotationViews(projectId as string, documentId as string),
     enabled: Boolean(projectId && documentId),
   });
 }

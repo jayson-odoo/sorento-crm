@@ -192,6 +192,9 @@ export type QuotationDocument = {
    * the list ends up disagreeing with the document about a quotation that is already won.
    */
   customer_decision?: 'accepted' | 'changes_requested' | null;
+  /** PS-QUOTE-VIEWS: counted customer opens of the LATEST issue's sign link. */
+  view_count?: number;
+  last_viewed_at?: string | null;
 };
 
 export type QuotationDocumentKind = 'proposal' | 'quotation';
@@ -525,6 +528,29 @@ export async function listQuotationIssues(
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the revisions'));
   const body: Envelope<QuotationIssue> = await response.json();
+  return body.data ?? [];
+}
+
+/** One counted customer open of a revision's sign link (PS-QUOTE-VIEWS). */
+export type QuotationView = {
+  id: string;
+  viewed_at: string;
+  issue_no: number;
+  /** The revision's Quotation No., e.g. PRJQ-2026-0003-R1. */
+  our_ref: string;
+  device: 'mobile' | 'tablet' | 'desktop';
+};
+
+/** The document's view log, every revision, newest first (the backend keeps the latest 50). */
+export async function listQuotationViews(
+  projectId: string,
+  documentId: string,
+): Promise<QuotationView[]> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/views`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the views'));
+  const body: Envelope<QuotationView> = await response.json();
   return body.data ?? [];
 }
 
