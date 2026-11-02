@@ -30,7 +30,7 @@ from tests._forms_chain_support import (
     notifications,
     open_tracker,
     outbox,
-        sla_chain,
+    sla_chain,
     trackers,
     user,
     world,  # noqa: F401  (fixture)

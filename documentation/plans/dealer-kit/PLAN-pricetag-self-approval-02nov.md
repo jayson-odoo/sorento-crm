@@ -1,6 +1,6 @@
 # PLAN: Price tag self-approval, edit after approval, escalate to configured assignee
 
-Status: Build (owner answers in: Q1 a, Q2 two clicks, Q3 hide the row, Q4 a). Backend green; FE on #2100's builder.
+Status: Review (owner answers in: Q1 a, Q2 two clicks, Q3 hide the row, Q4 a). Review round 1 fixed (B1, B2, S1-S4).
 Track: normal (no migration, but the diff is over 300 lines and changes the portal's write routes).
 Lane: PRICETAG-SELF-APPROVAL (#2101). Sibling lane: PRICETAG-TEMPLATE-PER-PRODUCT (#2100).
 Source: "Feedback on Price Tag" meeting 2 Nov 2026 + owner rulings 2 Nov ~21:10.
@@ -49,58 +49,58 @@ R1. **Submit, normal flow.** Submit validates as today, then lands the request a
    marketing. The salesperson gets the "submitted" confirmation as today.
 
 R2. **The generated tag.** The tag sheet is built on the client from the request's stored tags
-   (one placement per `price_tag_request_tags` row, on the line's template), using the builder and the
-   `POST /lookups/tag-preview` data that #2100 delivers. Until #2100 lands, this lane's screen builds with the
-   existing `defaultTemplateFor` / `starterTemplateFor` + `autoArrange`, the same code marketing's
-   designer opens a fresh request with.
+   (one placement per `price_tag_request_tags` row, on the line's template) with #2100's
+   `buildRequestSheet` and its `POST /lookups/tag-preview {request_id}` data (merged into this branch;
+   #2100 merges first).
 
-R3. **Approve, normal flow.** `POST .../approve` carries `{doc}`. The server checks that it is a tag
-   sheet and that every placement's `request_tag_id` is one of THIS request's tags (else 422), creates the
-   page if it is missing, pins each tag's data (master data as of the approval), writes the doc as the
-   page's next `PageVersion` ("Approved by <name>"), moves the request to `approved`, and queues the PDF.
-   So the PDF is exactly what he approved. The export's requesting user falls back to the contact id
-   when nobody is assigned (as the portal export route already does).
+R3. **Approve, his own proof.** `POST .../approve` carries `{doc}`. Under a row lock (two clicks at
+   once: the second gets 409) the server checks it is a tag sheet of THIS request's tags (at most 50
+   sheets; no tag placed more often than its quantity), then REBUILDS it: positions and sheets come from
+   the client, each placement's template, layers and size come from the line's published template,
+   bound to the line's product or set, and every other key is dropped (review B2: what a tag says is not
+   the client's to write). A line with no template: 422 `NO_TEMPLATE`. The page is created if missing,
+   every tag is pinned to master data as of the approval, the rebuilt sheet becomes the page's next
+   `PageVersion` ("Approved by <name>"), the request moves to `approved` and the PDF is queued. The
+   export's requesting user falls back to the contact id when nobody is assigned.
 
-R4. **Edit after approval.** Allowed from `proof_ready` (normal flow) and `approved` (either flow).
-   Refused from `ready_for_collection` / `collected` / `rejected` / `void`, and refused while
-   marketing holds an escalated request (`new` / `designing` / `changes_requested` / `proof_ready` with
-   `escalated_at` set). This uses the existing revise path: reason required, a `portal_form_revisions` row
-   with the post-edit snapshot, `revision_no + 1`. For price tags it **does not read Settings > Portal
-   revisions** (no cap, always on) and it **does not restart the SLA flow**: the request goes back to
-   `proof_ready` for his own approval, and `escalated_at` is cleared (the request is his again). Any open tracker
-   from an earlier escalation is voided as today.
+R4. **Edit.** Allowed from his own proof (`proof_ready`, no assignee) and `approved` (either flow).
+   Refused from `ready_for_collection` / `collected` / `rejected` / `void`, and while marketing holds the
+   request (`new` / `designing` / `changes_requested`, or a `proof_ready` with an assignee). It uses the
+   existing revise path: reason required, a `portal_form_revisions` row with the post-edit snapshot,
+   `revision_no + 1`. For price tags it **does not read Settings > Portal revisions** (no cap, always
+   on) and **does not restart the SLA flow**: the request goes back to `proof_ready` with the assignee
+   cleared, so it is his again. Any open tracker from an earlier escalation is voided as today.
 
-R5. **PDF after an edit.** The old PDF stops being downloadable the moment the edit lands (download
-   allowed only at `approved` / `ready_for_collection` / `collected`). Re-approve writes a new
-   `PageVersion` and a new export; download serves the newest completed export, which is the
-   re-approved one.
+R5. **PDF after an edit.** The old PDF stops downloading the moment the edit lands (download allowed
+   only at `approved` / `ready_for_collection` / `collected`). Only an export rendered from the page's
+   LATEST version counts, for the download, the button's status and the "already in flight" reuse
+   (review B1), so between re-approval and the new PDF the button reads Preparing, never the old file.
 
-R6. **Escalate.** Allowed from `proof_ready` (normal flow) and `approved` (either flow). Note
-   required. Effect: `escalated_at` + `escalated_by_contact_id` set, the note stored as a general review
-   comment (marketing's designer already lists them), status to `new`, form SLA `submit` event emitted,
-   and `auto_assign_from_tracker` moves it to `designing` under the config's assignee, the same code as
-   today's submit. No active config, or no assignee on it: the request stays `new` and marketing claims it
-   (unchanged Claim path).
+R6. **Escalate.** Allowed from his own proof and `approved`. Note required. Effect: the note is
+   stored as a general review comment (marketing's designer already lists them), the assignee is cleared,
+   status goes to `new`, any open SLA stage from an earlier escalation is voided (review S1), the form SLA
+   `submit` event opens a fresh stage, and `auto_assign_from_tracker` moves it to `designing` under the
+   config's assignee, the same code submit used to run. No active config, or no assignee on it: it stays
+   `new` for a Claim. The staff `/transition` route refuses `new`: Escalate is the only way back there.
 
-R7. **After escalation** it is today's loop exactly: marketing designs, marks proof ready, and the salesperson
-   approves (no `doc`; marketing's saved version is what gets approved and printed) or requests changes.
+R7. **After escalation** it is today's loop exactly: marketing designs, marks proof ready, and the
+   salesperson approves (no `doc`; marketing's saved version is what gets approved and printed) or
+   requests changes.
 
-R8. **Marketing's side.** Claim and the designer are refused for a request that is not escalated
-   (409): in the normal flow there is nothing for marketing to do. The CRM list still shows
-   every request, with an Escalated marker, so the office can see what exists.
+R8. **Marketing's side.** On his own proof the CRM offers no Claim and no Design (only Void), and the
+   design routes refuse it (409). The CRM list still shows every request with its status.
 
-R9. **Audit trail.** Every status, `escalated_at` and line change is captured by the ORM audit listeners
+R9. **Audit trail.** Status, assignee and line changes are captured by the ORM audit listeners
    (`audit_service.register_audit_listeners`); each edit is a `portal_form_revisions` row with reason and
-   snapshot (the Revisions tab); each approval is a `PageVersion` naming who approved it; the escalation
-   note is a review comment row.
+   snapshot (the Revisions tab); each approval is a `PageVersion` naming who approved it; each escalation
+   is a review comment row (who, when, the note) plus the SLA stage it opens.
 
-R10. **Requests in flight at deploy** (migration backfill, no status changes):
-   - Submitted, not terminal, in marketing's hands (`new`, `designing`, `changes_requested`,
-     `proof_ready`): `escalated_at = created_at`, so they finish exactly as today with marketing.
-     A claimed one stays claimed, one in design stays in design, a proof stays ready for his approval
-     (approve with no `doc`, marketing's version).
-   - `approved`: untouched (`escalated_at` NULL). Its PDF stays. He can now edit (then self-approve
-     a generated tag) or escalate.
+R10. **Requests in flight at deploy.** No data change:
+   - Submitted and with marketing (`new`, `designing`, `changes_requested`, or `proof_ready` with an
+     assignee): they finish exactly as today. A claimed one stays claimed, one in design stays in
+     design, a proof stays ready for his approval (approve with no `doc`, marketing's version).
+   - `approved`: untouched. Its PDF stays. He can now edit (then self-approve a generated tag) or
+     escalate.
    - `ready_for_collection` / `collected` / `rejected` / `void` / drafts: untouched.
 
 ## Edge cases

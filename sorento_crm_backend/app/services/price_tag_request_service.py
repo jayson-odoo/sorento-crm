@@ -105,6 +105,11 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     STATUS_VOID: set(),
 }
 
+# The most sheets one self-approved tag sheet may carry (PRICETAG-SELF-APPROVAL B2):
+# far past any real request, small enough that a posted sheet cannot become a
+# flood for the PDF worker.
+_MAX_SHEETS = 50
+
 # How many times a create re-derives its number after losing an insert race
 # before it gives up. Five is far past what a human-paced portal ever needs; the
 # point is that the loop terminates rather than spins.
@@ -1671,14 +1676,26 @@ Marketing's own work is not part of the form's payload, so it is captured
         An escalated proof (an assignee drew it): marketing's saved version is
         what he reviewed, so any ``doc`` is ignored and nothing is written.
         """
-        if request.status == STATUS_PROOF_READY and not request.assigned_to_id:
+        # Review S2: two Approve clicks at once must not both write a version.
+        # The row lock makes the second wait, then read `approved` and refuse.
+        db.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).with_for_update().first()
+        db.refresh(request)
+        if request.status != STATUS_PROOF_READY:
+            raise AppException(
+                status_code=409,
+                message="This tag is not waiting for your approval.",
+                code="INVALID_TRANSITION",
+            )
+        if not request.assigned_to_id:
             if not doc:
                 raise AppException(
                     status_code=422,
                     message="Approve needs the tag sheet you are approving.",
                     code="DOC_REQUIRED",
                 )
-            PriceTagRequestService._check_sheet(request, doc)
+            saved = PriceTagRequestService._server_sheet(db, request, doc)
             from app.api.v1.dealer_kit.price_tag_requests import _snapshot_draft
             from app.services.dealer_kit import tag_data_service
 
@@ -1690,7 +1707,7 @@ Marketing's own work is not part of the form's payload, so it is captured
             _snapshot_draft(
                 db,
                 page,
-                doc,
+                saved,
                 None,
                 f"Approved by {approver_name}" if approver_name else "Approved by the salesperson",
             )
@@ -1701,33 +1718,129 @@ Marketing's own work is not part of the form's payload, so it is captured
 
     @staticmethod
     def _check_sheet(request: PriceTagRequest, doc: dict) -> None:
-        """A tag sheet whose every placement prints one of this request's tags."""
-        sheets = doc.get("sheets") if isinstance(doc, dict) else None
-        if (
-            not isinstance(doc, dict)
-            or doc.get("kind") != "tag_sheet"
-            or not isinstance(doc.get("imposition"), dict)
-            or not isinstance(sheets, list)
-        ):
-            raise AppException(
-                status_code=422,
-                message="That is not a tag sheet.",
-                code="INVALID_DOC",
-            )
-        own = {tag.id for line in request.lines for tag in line.tags or []}
-        placed: list = []
+        """Refuse a document that is not a tag sheet of THIS request's tags."""
+        PriceTagRequestService._placements(request, doc)
+
+    @staticmethod
+    def _placements(request: PriceTagRequest, doc: dict) -> list[tuple[str, list[dict]]]:
+        """``(sheet id, [placement])`` from a client sheet, checked (R3).
+
+        A tag sheet; at most ``_MAX_SHEETS`` sheets; every placement prints one
+        of this request's tags and no tag more often than its quantity (or once,
+        for a tag marked Not printed, which arrange never seats anyway).
+        """
+        def refuse(message: str):
+            return AppException(status_code=422, message=message, code="INVALID_DOC")
+
+        if not isinstance(doc, dict) or doc.get("kind") != "tag_sheet":
+            raise refuse("That is not a tag sheet.")
+        sheets = doc.get("sheets")
+        if not isinstance(sheets, list) or not sheets or len(sheets) > _MAX_SHEETS:
+            raise refuse("That is not a tag sheet.")
+        quantity = {
+            tag.id: max(int(tag.quantity or 0), 1)
+            for line in request.lines
+            for tag in line.tags or []
+        }
+        seen: dict[str, int] = {}
+        out: list[tuple[str, list[dict]]] = []
         for sheet in sheets:
             tags = sheet.get("tags") if isinstance(sheet, dict) else None
             if not isinstance(tags, list):
-                placed.append(None)
-                continue
-            placed.extend(t.get("request_tag_id") if isinstance(t, dict) else None for t in tags)
-        if not placed or any(tag_id not in own for tag_id in placed):
-            raise AppException(
-                status_code=422,
-                message="The tag sheet does not match this request's tags. Reload and try again.",
-                code="INVALID_DOC",
-            )
+                raise refuse("That is not a tag sheet.")
+            for tag in tags:
+                tag_id = tag.get("request_tag_id") if isinstance(tag, dict) else None
+                if tag_id not in quantity:
+                    raise refuse(
+                        "The tag sheet does not match this request's tags. Reload and try again."
+                    )
+                seen[tag_id] = seen.get(tag_id, 0) + 1
+                if seen[tag_id] > quantity[tag_id]:
+                    raise refuse("The tag sheet prints a tag more often than asked for.")
+            out.append((str(sheet.get("id") or f"sheet-{len(out) + 1}")[:64], tags))
+        if not seen:
+            raise refuse("The tag sheet has no tags on it.")
+        return out
+
+    @staticmethod
+    def _server_sheet(db: Session, request: PriceTagRequest, doc: dict) -> dict:
+        """The sheet that is SAVED: positions from the client, content from us.
+
+        Security review (B2): the salesperson's screen arranges the tags, but
+        what each tag says is not his to write. Every placement's template and
+        layers are rebuilt here from the line's own published template - the
+        same pick the preview drew from, bound to the line's product or set
+        exactly as the client builder binds it - and its size is the
+        template's print size. Only the sheet, the position and the placement
+        id are taken from the client; every other key is dropped. A line with
+        no template has nothing to draw, so a placement for it is refused.
+        """
+        import copy as _copy
+        from app.services.dealer_kit import product_tag_template_service
+
+        sheets = PriceTagRequestService._placements(request, doc)
+        templates = product_tag_template_service.preview_for_request(db, request)["templates"]
+        line_by_tag = {
+            tag.id: line for line in request.lines for tag in line.tags or []
+        }
+
+        def number(value, low: float, high: float) -> float:
+            try:
+                n = float(value)
+            except (TypeError, ValueError):
+                n = 0.0
+            return min(max(n, low), high)
+
+        imposition_in = doc.get("imposition") if isinstance(doc.get("imposition"), dict) else {}
+        imposition = {
+            "preset": str(imposition_in.get("preset") or "auto")[:32],
+            "page_width_mm": number(imposition_in.get("page_width_mm", 210), 50, 2000),
+            "page_height_mm": number(imposition_in.get("page_height_mm", 297), 50, 2000),
+            "bleed_mm": number(imposition_in.get("bleed_mm", 5), 0, 50),
+            "gap_mm": number(imposition_in.get("gap_mm", 0), 0, 50),
+        }
+        out_sheets = []
+        for sheet_id, placements in sheets:
+            placed = []
+            for index, tag in enumerate(placements):
+                line = line_by_tag[tag["request_tag_id"]]
+                template = templates.get(line.id)
+                if template is None:
+                    raise AppException(
+                        status_code=422,
+                        message="An item on this request has no tag template. Escalate it to marketing.",
+                        code="NO_TEMPLATE",
+                    )
+                binding = (
+                    {"product_set_id": line.product_set_id}
+                    if line.line_type == "product_set"
+                    else {"product_id": line.product_id}
+                )
+                layers = []
+                for layer in _copy.deepcopy((template.get("doc") or {}).get("layers") or []):
+                    props = layer.get("props") or {}
+                    if props.get("kind") == "group":
+                        layer["props"] = {**props, "binding": binding}
+                    elif props.get("kind") == "barcode" and layer.get("text_override") is not None:
+                        layer["text_override"] = None
+                    layers.append(layer)
+                size = template.get("print_size") or {}
+                placed.append(
+                    {
+                        "id": str(tag.get("id") or f"{sheet_id}-{index}")[:80],
+                        "template_id": template["id"],
+                        "request_tag_id": tag["request_tag_id"],
+                        "x_mm": number(tag.get("x_mm"), 0, 2000),
+                        "y_mm": number(tag.get("y_mm"), 0, 2000),
+                        "width_mm": number(size.get("width_mm"), 1, 2000),
+                        "height_mm": number(size.get("height_mm"), 1, 2000),
+                        # Turned at print time by arrange (S7): 0 or 90, nothing else.
+                        "rotation": 90 if tag.get("rotation") == 90 else 0,
+                        "layers": layers,
+                    }
+                )
+            out_sheets.append({"id": sheet_id, "tags": placed})
+        return {"kind": "tag_sheet", "imposition": imposition, "sheets": out_sheets}
 
     @staticmethod
     def escalate(
@@ -1764,6 +1877,25 @@ Marketing's own work is not part of the form's payload, so it is captured
         request.assigned_to_id = None
         db.flush()
         PriceTagRequestService.transition_status(db, str(request.id), STATUS_NEW)
+        try:
+            # Review S1: an earlier escalation's timer can still be open (an
+            # approved price tag does not close it), and `submit` would reuse it -
+            # its old assignee and its old, already-running clock. Each escalation
+            # is a fresh stage, so the old one is closed first.
+            from app.services.form_sla_service import FormSLAOrchestrator
+
+            FormSLAOrchestrator(db).void_active_for_source(
+                "price_tag_request",
+                str(request.id),
+                reason="Escalated again by the salesperson.",
+                void_reason="escalated_again",
+            )
+        except Exception:
+            logger.warning(
+                "Closing the previous SLA stage failed for price_tag_request %s",
+                request.id,
+                exc_info=True,
+            )
         try:
             from app.services.form_sla_service import emit_form_event
 

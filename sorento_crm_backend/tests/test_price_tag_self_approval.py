@@ -45,7 +45,10 @@ def client():
 
     with blank_session() as db:
         contact_id = _seed_contact_who_can_see_the_form(db)
-        state = {"contact_id": contact_id}
+        # Every line needs a published price tag template to draw (and the
+        # server rebuilds each placement from it, review B2): the family
+        # default covers any product.
+        state = {"contact_id": contact_id, "template_id": _published_template(db)}
 
         def _override_get_db():
             yield db
@@ -67,6 +70,14 @@ def client():
                 yield c, db, state
         finally:
             app.dependency_overrides.clear()
+
+
+def _published_template(db) -> str:
+    from tests.test_product_tag_templates import _template
+
+    template_id = _template(db, "ZZT self tag")
+    db.commit()
+    return template_id
 
 
 def _payload(product_id: str, print_by: str = "self") -> dict:
@@ -587,3 +598,197 @@ class TestCopy:
         assert _copy("new", doc_number="PT-1", link="", ctx={}) == (
             "PT-1 sent to marketing with your note."
         )
+
+
+# --------------------------------------------------------------------------- #
+# Review round 1
+# --------------------------------------------------------------------------- #
+
+
+def _seed_ready_export(db, request_id: str) -> None:
+    """A finished PDF of the request's CURRENT latest version."""
+    from app.models.dealer_kit import ExportRequest
+    from app.models.download import DownloadStatus, UserDownload
+
+    versions = _versions(db, request_id)
+    download = UserDownload(
+        user_id=str(uuid.uuid4()),
+        kind="dealer_kit_tag_sheet_pdf",
+        source_entity_type="price_tag_request",
+        source_entity_id=str(request_id),
+        status=DownloadStatus.READY.value,
+        filename="old.pdf",
+        storage_key=f"zzt/{uuid.uuid4().hex}.pdf",
+    )
+    db.add(download)
+    db.flush()
+    db.add(
+        ExportRequest(
+            download_id=download.id,
+            page_id=_row(db, request_id).page_id,
+            page_version_id=versions[-1].id,
+            audience="staff",
+            show_invoice_price=False,
+        )
+    )
+    db.commit()
+
+
+class TestOnlyTheCurrentVersionsPdf:
+    """B1: a PDF of the version before an edit is never served or reported ready."""
+
+    def test_after_re_approval_the_old_pdf_is_not_served(self, client):
+        from app.services.dealer_kit import tag_sheet_export_service as svc
+
+        c, db, _ = client
+        body = _submitted(c, db)
+        _approve(c, db, body["id"])
+        _seed_ready_export(db, body["id"])
+        assert svc.latest_completed_export(db, body["id"]) is not None
+        _revise(c, db, body["id"])
+        with patch(
+            "app.services.dealer_kit.tag_sheet_export_service.request_tag_sheet_export"
+        ):
+            _approve(c, db, body["id"])
+
+        assert svc.latest_completed_export(db, body["id"]) is None
+        assert svc.latest_export_status(db, body["id"]) is None
+        res = c.get(f"{_BASE}/{body['id']}/download")
+        assert res.status_code == 404, res.text
+
+    def test_a_running_export_of_the_old_version_is_not_reused(self, client):
+        from app.models.download import DownloadStatus, UserDownload
+        from app.services.dealer_kit import tag_sheet_export_service as svc
+
+        c, db, _ = client
+        body = _submitted(c, db)
+        _approve(c, db, body["id"])
+        old = (
+            db.query(UserDownload)
+            .filter(UserDownload.source_entity_id == str(body["id"]))
+            .first()
+        )
+        assert old is not None and old.status == DownloadStatus.PENDING.value
+        _revise(c, db, body["id"])
+        _approve(c, db, body["id"])
+
+        downloads = (
+            db.query(UserDownload)
+            .filter(UserDownload.source_entity_id == str(body["id"]))
+            .all()
+        )
+        assert len(downloads) == 2
+        current = svc._request_downloads(db, body["id"]).all()
+        assert [d.id for d in current] != [old.id]
+
+
+class TestTheServerWritesTheTagContent:
+    """B2: only positions come from the client; content is the line's template."""
+
+    def test_layers_and_template_are_rebuilt_from_the_lines_template(self, client):
+        c, db, state = client
+        body = _submitted(c, db)
+        doc = _sheet(_tag_ids(db, body["id"]))
+        forged = doc["sheets"][0]["tags"][0]
+        forged["template_id"] = "not-a-template"
+        forged["layers"] = [{"id": "x", "type": "text", "props": {"kind": "text", "text": "RM 1.00 NETT"}}]
+        forged["x_mm"] = 12
+        doc["junk"] = "x" * 1000
+
+        res = _approve(c, db, body["id"], doc)
+
+        assert res.status_code == 200, res.text
+        saved = _versions(db, body["id"])[0].doc
+        placed = saved["sheets"][0]["tags"][0]
+        assert placed["template_id"] == state["template_id"]
+        assert "RM 1.00 NETT" not in str(placed["layers"])
+        assert placed["x_mm"] == 12
+        assert "junk" not in saved
+
+    def test_a_tag_placed_more_often_than_its_quantity_is_refused(self, client):
+        c, db, _ = client
+        body = _submitted(c, db)
+        tag_id = _tag_ids(db, body["id"])[0]
+
+        res = _approve(c, db, body["id"], _sheet([tag_id] * 50))
+
+        assert res.status_code == 422, res.text
+        assert _versions(db, body["id"]) == []
+
+    def test_too_many_sheets_is_refused(self, client):
+        c, db, _ = client
+        body = _submitted(c, db)
+        doc = _sheet(_tag_ids(db, body["id"]))
+        doc["sheets"] = doc["sheets"] + [{"id": f"s{i}", "tags": []} for i in range(60)]
+
+        res = _approve(c, db, body["id"], doc)
+
+        assert res.status_code == 422, res.text
+
+    def test_a_line_with_no_template_cannot_be_approved(self, client):
+        from app.models.dealer_kit import TagTemplate
+
+        c, db, state = client
+        body = _submitted(c, db)
+        db.query(TagTemplate).filter(TagTemplate.id == state["template_id"]).update(
+            {"published_version_id": None}
+        )
+        db.commit()
+
+        res = _approve(c, db, body["id"])
+
+        assert res.status_code == 422, res.text
+        assert res.json().get("code") == "NO_TEMPLATE"
+
+
+class TestSlaStages:
+    def test_a_second_escalation_starts_a_fresh_stage(self, client):
+        c, db, _ = client
+        _seed_one_member_tier1_config(db)
+        body = _submitted(c, db)
+        c.post(f"{_BASE}/{body['id']}/escalate", json={"note": "First"})
+        row = _row(db, body["id"])
+        row.status = "approved"
+        db.commit()
+
+        res = c.post(f"{_BASE}/{body['id']}/escalate", json={"note": "Second"})
+
+        assert res.status_code == 200, res.text
+        db.expire_all()
+        trackers = _trackers(db, body["id"])
+        assert len(trackers) == 2
+        assert sum(1 for t in trackers if t.voided_at is None) == 1
+
+    def test_edit_after_an_escalation_voids_the_open_stage(self, client):
+        c, db, _ = client
+        _seed_one_member_tier1_config(db)
+        body = _submitted(c, db)
+        c.post(f"{_BASE}/{body['id']}/escalate", json={"note": "Help"})
+        row = _row(db, body["id"])
+        row.status = "approved"
+        db.commit()
+
+        _revise(c, db, body["id"])
+
+        db.expire_all()
+        trackers = _trackers(db, body["id"])
+        assert trackers and all(t.voided_at is not None for t in trackers)
+
+
+class TestStaffCannotSendBackToNew:
+    def test_the_staff_transition_route_refuses_new(self, client):
+        from app.api.v1.dealer_kit.price_tag_requests import transition_price_tag_request
+        from app.schemas.price_tag import TransitionPayload
+        from app.services.error_handler import AppException
+
+        c, db, _ = client
+        body = _submitted(c, db)
+        _approve(c, db, body["id"])
+
+        with pytest.raises(AppException) as exc:
+            transition_price_tag_request(
+                body["id"], TransitionPayload(status="new"), db=db, user={"id": None}
+            )
+
+        assert exc.value.status_code == 409
+        assert _row(db, body["id"]).status == "approved"
