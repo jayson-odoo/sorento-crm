@@ -9,6 +9,8 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
+import pytest
+
 from .test_sample_requests_core import (  # noqa: F401  (world is a fixture)
     SR,
     _draft,
@@ -102,6 +104,8 @@ def test_linking_a_live_consignment_delivers_on_its_date(world):
         "so_number": cg.so_number,
         "order_date": "2026-11-20",
         "status": "closed",
+        "delivered_on": "2026-11-20",
+        "delivered_source": "consignment",
     }
 
 
@@ -243,3 +247,83 @@ def test_cancelled_request_cannot_be_linked(world):
     assert _move(world, d["id"], "cancelled").status_code == 200
     res = _link(world, d["id"], _cg(world).id)
     assert res.status_code == 409, res.text
+
+
+# ------------------------------------------------------------------ the tracked delivery date (crew b)
+
+
+def _tracking(w, number, delivered, *, company_id=None, cancelled=False, deleted=False):
+    """An Overall Tracking `orders` row, numbered like the CG (how the import lands one)."""
+    from datetime import datetime
+
+    from app.models.order import Order
+
+    row = Order(
+        id=str(uuid.uuid4()),
+        company_id=company_id or w.company_id,
+        order_number=number,
+        order_date=CG_DATE,
+        actual_delivery_date=delivered,
+        is_cancelled=cancelled,
+        deleted_at=datetime(2026, 11, 1) if deleted else None,
+    )
+    w.db.add(row)
+    w.db.flush()
+    return row
+
+
+def test_tracked_delivery_date_wins_over_the_cg_date(world):
+    rid = _processing(world)
+    cg = _cg(world)
+    _tracking(world, cg.so_number.lower(), date(2026, 11, 22))  # case does not matter
+    body = _link(world, rid, cg.id).json()
+    assert body["delivered_at"] == "2026-11-22"
+    assert body["return_due"] == "2027-01-22"
+    assert body["consignment"]["delivered_on"] == "2026-11-22"
+    assert body["consignment"]["delivered_source"] == "tracking"
+
+
+@pytest.mark.parametrize(
+    "variant", ["cancelled", "deleted", "undated", "other_number", "other_company"]
+)
+def test_tracking_rows_that_do_not_count_are_ignored(world, variant):
+    rid = _processing(world)
+    cg = _cg(world)
+    number = cg.so_number + "-X" if variant == "other_number" else cg.so_number
+    _tracking(
+        world,
+        number,
+        None if variant == "undated" else date(2026, 11, 23),
+        cancelled=variant == "cancelled",
+        deleted=variant == "deleted",
+        company_id=second_company(world.db) if variant == "other_company" else None,
+    )
+    body = _link(world, rid, cg.id).json()
+    assert body["delivered_at"] == "2026-11-20"
+    assert body["consignment"]["delivered_source"] == "consignment"
+
+
+def test_a_tracking_date_that_lands_later_updates_the_delivery(world):
+    from app.services import sample_request_service as svc
+
+    rid = _processing(world)
+    cg = _cg(world)
+    assert _link(world, rid, cg.id).json()["delivered_at"] == "2026-11-20"
+
+    tracked = _tracking(world, cg.so_number, date(2026, 11, 24))
+    assert svc.sync_tracked_orders(world.db, [tracked]) == 1
+    after = _get(world, rid)
+    assert after["delivered_at"] == "2026-11-24"
+    assert after["return_due"] == "2027-01-24"
+    assert after["consignment"]["delivered_source"] == "tracking"
+
+
+def test_tracking_sync_leaves_unrelated_orders_alone(world):
+    from app.services import sample_request_service as svc
+
+    rid = _processing(world)
+    cg = _cg(world)
+    assert _link(world, rid, cg.id).status_code == 200
+    other = _tracking(world, "DO-ZZT-NOTACG", date(2026, 11, 24))
+    assert svc.sync_tracked_orders(world.db, [other]) == 0
+    assert _get(world, rid)["delivered_at"] == "2026-11-20"

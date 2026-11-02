@@ -737,13 +737,41 @@ CONSIGNMENT_OPEN = (PROCESSING, CUSTOMER_CONFIRMED, DELIVERED)
 CONSIGNMENT_CANCELLED = "cancelled"
 
 
-def consignment_delivered_on(cg) -> Optional[date]:
-    """THE delivery source (owner, 2 Nov: "The sample delivery document is the consignment").
-    A live AutoCount CG is the delivery, on its document date: its goods are at the customer
-    when it is issued (CONSIGN-DELIVERED-FIX, 14 Oct). None for a voided / vanished one."""
-    if cg is None or cg.status == CONSIGNMENT_CANCELLED or cg.order_date is None:
+DELIVERED_BY_TRACKING = "tracking"
+DELIVERED_BY_CONSIGNMENT = "consignment"
+
+
+def consignment_delivery(db: Session, cg) -> Optional[tuple]:
+    """THE delivery source: (date, where it came from), or None for a voided / vanished CG.
+
+    Owner, 2 Nov: "The sample delivery document is the consignment." Its delivered date is
+    the Overall Tracking `actual_delivery_date` of the `orders` row the tracking import keeps
+    under the CG's number (crew b: 375 CGs since 29 Apr carry one, 0-46 days after the CG,
+    never before), else the CG's own date (its goods leave at issue, CONSIGN-DELIVERED-FIX).
+    The number is matched exactly (case aside) inside the CG's company: it is AutoCount's own
+    DocNo on both sides, never a guess."""
+    if cg is None or cg.status == CONSIGNMENT_CANCELLED:
         return None
-    return cg.order_date
+    from app.models.order import Order
+
+    tracked = (
+        db.query(Order.actual_delivery_date)
+        .filter(
+            Order.company_id == cg.company_id,
+            func.lower(Order.order_number) == (cg.so_number or "").lower(),
+            Order.deleted_at.is_(None),
+            Order.is_cancelled.is_(False),
+            Order.actual_delivery_date.isnot(None),
+        )
+        .order_by(Order.actual_delivery_date.asc())
+        .first()
+    )
+    if tracked is not None:
+        on = tracked[0]
+        return (on.date() if isinstance(on, datetime) else on, DELIVERED_BY_TRACKING)
+    if cg.order_date is None:
+        return None
+    return (cg.order_date, DELIVERED_BY_CONSIGNMENT)
 
 
 def _consignment_query(db: Session, company_id: str):
@@ -855,8 +883,8 @@ def link_consignment(
         if _is_uuid(consignment_order_id)
         else None
     )
-    on = consignment_delivered_on(cg)
-    if on is None:
+    delivery = consignment_delivery(db, cg)
+    if delivery is None:
         raise AppException(
             status_code=422,
             message="Choose a live AutoCount consignment of this company.",
@@ -865,32 +893,61 @@ def link_consignment(
         )
     req.consignment_order_id = cg.id
     req.consignment_no = cg.so_number
-    _deliver_by(db, req, on, actor_id=actor.user_id, no=cg.so_number)
+    _deliver_by(db, req, delivery[0], actor_id=actor.user_id, no=cg.so_number)
+
+
+def _resync(db: Session, req: SampleRequest, cg) -> None:
+    if status_key(db, req) == CANCELLED:
+        return
+    delivery = consignment_delivery(db, cg)
+    if delivery is None:
+        _undeliver(db, req, actor_id=None, why=f"{cg.so_number} voided")
+    else:
+        _deliver_by(db, req, delivery[0], actor_id=None, no=cg.so_number)
 
 
 def sync_consignment(db: Session, company_id: str, so_number: str) -> int:
     """Re-read every request linked to this CG after the consignment ingest wrote it: a voided
-    or vanished CG undoes the delivery, a live (or restored) one delivers on its date. Returns
-    how many requests it looked at. Called by `AutocountCancelIngestService`."""
+    or vanished CG undoes the delivery, a live (or restored) one delivers. Returns how many
+    requests it looked at. Called by `AutocountCancelIngestService._project_consignment`."""
     from app.models.order import SalesOrder
 
     cg = _consignment_query(db, company_id).filter(SalesOrder.so_number == so_number).first()
     if cg is None:
         return 0
-    reqs = (
-        db.query(SampleRequest)
-        .filter(SampleRequest.consignment_order_id == cg.id)
+    reqs = db.query(SampleRequest).filter(SampleRequest.consignment_order_id == cg.id).all()
+    for req in reqs:
+        _resync(db, req, cg)
+    return len(reqs)
+
+
+def sync_tracked_orders(db: Session, orders: Iterable[Any]) -> int:
+    """After the order tracking import wrote `orders`, refresh the delivered date of every
+    request whose linked CG carries one of those numbers (a tracking date that lands after the
+    link replaces the CG date). Returns how many requests it looked at."""
+    from app.models.order import SalesOrder
+
+    keys = {
+        (str(o.company_id), (o.order_number or "").lower())
+        for o in orders
+        if getattr(o, "order_number", None) and getattr(o, "company_id", None)
+    }
+    if not keys:
+        return 0
+    numbers = {number for _, number in keys}
+    linked = (
+        db.query(SampleRequest, SalesOrder)
+        .join(SalesOrder, SalesOrder.id == SampleRequest.consignment_order_id)
+        .filter(func.lower(SalesOrder.so_number).in_(numbers))
         .all()
     )
-    on = consignment_delivered_on(cg)
-    for req in reqs:
-        if status_key(db, req) == CANCELLED:
+    count = 0
+    for req, cg in linked:
+        if (str(cg.company_id), (cg.so_number or "").lower()) not in keys:
             continue
-        if on is None:
-            _undeliver(db, req, actor_id=None, why=f"{cg.so_number} voided")
-        else:
-            _deliver_by(db, req, on, actor_id=None, no=cg.so_number)
-    return len(reqs)
+        _resync(db, req, cg)
+        count += 1
+    return count
 
 
 # ------------------------------------------------------------------ reads
@@ -1365,7 +1422,15 @@ def _consignment_block(db: Session, req: SampleRequest) -> Optional[Dict[str, An
     cg = _linked_consignment(db, req)
     if cg is None:
         return None
-    return {"id": cg.id, "so_number": cg.so_number, "order_date": cg.order_date, "status": cg.status}
+    delivery = consignment_delivery(db, cg)
+    return {
+        "id": cg.id,
+        "so_number": cg.so_number,
+        "order_date": cg.order_date,
+        "status": cg.status,
+        "delivered_on": delivery[0] if delivery else None,
+        "delivered_source": delivery[1] if delivery else None,
+    }
 
 
 def _user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
