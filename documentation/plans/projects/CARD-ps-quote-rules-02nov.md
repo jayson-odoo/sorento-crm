@@ -193,3 +193,36 @@ Q9. Absent approver: (a) no timer, anyone above may act, requester can re-route 
 
 This revision adds a migration (3 nullable columns + 1 settings column), so the lane is size L:
 migration checked on a dev copy and a security review (who may decide changes).
+
+
+---
+
+## Revision 3: crew answers (2 Nov), what is being built
+
+All recommendations accepted except R4.4, with these corrections:
+
+- Q1: `projects.quotations.approve` is only the RIGHT to approve. On the dev copy it is held by
+  Project Customer Service users, an integration account and the Project Sales Managers, so
+  "held by sales-manager roles" above was wrong. Routing decides WHO approves each request; the
+  grant is checked on top (a routed candidate without it is skipped; integration accounts are
+  never routed to).
+- R4.4 replaced: the last resort is a CONFIGURED default quotation approver
+  (`system_settings.default_quotation_approver_user_id`), never "any holder of the grant". With
+  nothing configured, Send for approval is refused with 422 `quotation_approver_not_configured`
+  and the document does not move (the salesperson reads who to ask).
+- Q7: only the routed approver, someone above them on the superior line, or an admin decides.
+  A request raised before this lane (no frozen approver) is still decided by any grant holder;
+  that only covers documents already pending at deploy.
+- Q3: the dev ladder has `final_negotiation` after Sample Submission and before Sponsorship Form,
+  so the sort-order rule (move forward only from a lower, open rung) holds there.
+- Pending owner question (crew files it): a size ceiling (manager up to X%, above that the next
+  level). Not built. The trigger: when the owner rules, it is one more candidate in
+  `route_approver`, ahead of the superior (comment marks the place). Default stays one approver
+  per request.
+- Dev data gap: no dev project owner has a superior set, so the hand-test script sets superiors
+  and the default approver first.
+- No backfill of `is_discounted`: existing lines are judged on their next save (AC-E7). The
+  owner's dev copy has a handful of lines below list price; they gate once edited.
+
+Final routing order: off-series approver (if an off-series line) -> project override -> owner's
+superior chain (requester's when the owner has none) -> default quotation approver -> refuse.

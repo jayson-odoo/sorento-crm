@@ -1,6 +1,6 @@
 # PLAN: PS-QUOTE-RULES (off-series line needs approval; discount request moves project to Final Negotiation)
 
-Status: Plan (behaviour card in progress). Track: standard (size M).
+Status: Build. Track: standard, size L (migration + security review), per crew 2 Nov.
 
 ## Scope
 
@@ -11,4 +11,4 @@ Status: Plan (behaviour card in progress). Track: standard (size M).
 
 Out of scope: proposal vs quotation split, PO checks, approval tiers.
 
-Details follow in the behaviour card.
+Rules, routing and decisions: `CARD-ps-quote-rules-02nov.md` (revisions 1-3).
