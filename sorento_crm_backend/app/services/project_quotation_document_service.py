@@ -1437,6 +1437,12 @@ def _serialize_signature(signature: Optional[QuotationSignature]) -> Optional[Di
     }
 
 
+#: Rendered sign-page pictures by attachment id, across requests. Bounded: ~15 KB each, so the cap
+#: holds a few MB; evicting the lot on overflow costs one re-render per picture.
+_SIGN_PICTURES_MAX = 512
+_SIGN_PICTURES: Dict[str, str] = {}
+
+
 def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any]:
     """The quotation as ISSUED, for the customer's read-only counter-sign page.
 
@@ -1465,8 +1471,24 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
 
     def _picture(attachment_id: Optional[str]) -> Optional[str]:
         """The PDF's own inline, downscaled bytes. A data URI rather than a link: the customer has
-        no login, and a signed URL would carry the storage key into their browser."""
-        return product_images.data_uri(db, attachment_id, picture_cache)
+        no login, and a signed URL would carry the storage key into their browser.
+
+        Kept across requests (`_SIGN_PICTURES`): the page is public and refetched after every
+        answer, and without it each anonymous GET downloads and decodes every picture again. The
+        ids are stamped at issue, so a cached render never goes stale. A miss (storage down) is
+        not kept, so a hiccup does not become a permanent blank."""
+        if not attachment_id:
+            return None
+        key = str(attachment_id)
+        hit = _SIGN_PICTURES.get(key)
+        if hit is not None:
+            return hit
+        uri = product_images.data_uri(db, key, picture_cache)
+        if uri is not None:
+            if len(_SIGN_PICTURES) >= _SIGN_PICTURES_MAX:
+                _SIGN_PICTURES.clear()
+            _SIGN_PICTURES[key] = uri
+        return uri
 
     scopes: List[Dict[str, Any]] = []
     for pair in pairs:

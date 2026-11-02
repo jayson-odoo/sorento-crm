@@ -145,3 +145,23 @@ def test_the_public_page_answers_columns_and_photos_to_an_anonymous_customer(mon
         wire = json.dumps(body)
         for leak in ("cdn.zzt.test", f"products/{MARKER}", "image_attachment_id", "file_path"):
             assert leak not in wire
+
+
+def test_a_second_page_load_does_not_download_the_pictures_again(monkeypatch):
+    """The page is public and refetched after every answer: the pictures are rendered once per
+    attachment, not once per request (security review S1)."""
+    from app.services import product_image_service as images
+    from app.services import project_quotation_document_service as qdocs
+
+    with blank_session() as db:
+        issued = _two_scope_issue(db, monkeypatch)
+        backend = _FakeBackend(_photo_bytes(320, 320))
+        monkeypatch.setattr(images, "get_backend", lambda provider: backend)
+
+        first = qdocs.serialize_sign_page(db, issued)
+        downloads = len(backend.keys)
+        second = qdocs.serialize_sign_page(db, issued)
+
+        assert downloads == 2  # the photo and the drawing
+        assert len(backend.keys) == downloads
+        assert second["scopes"][0]["lines"][0]["image_url"] == first["scopes"][0]["lines"][0]["image_url"]
