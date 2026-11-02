@@ -849,8 +849,8 @@ class _LineFacts:
     #: reconciled AutoCount line). Set, the line is read out with no components and no
     #: donors; it is never carried and cannot be named to a confirmation.
     unplannable_reason: Optional[str] = None
-    #: The order's doc type (CONSIGN-PLAN): a doc type in `PLANNED_AT_OWN_BIN_DOC_TYPES` owes
-    #: nothing back for goods taken from its own bin.
+    #: The order's doc type (CONSIGN-PLAN): a doc type in `PLANNED_AT_OWN_BIN_DOC_TYPES` is
+    #: planned at its own bin (`planned_at_own_bin`).
     doc_type: Optional[str] = None
     #: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E, section 8). The
     #: OWNERSHIP GROUP this line's own location belongs to - the suffix after the hyphen
@@ -1967,7 +1967,8 @@ class ProjectSupplyService:
             if planned_at_own_bin(fact.warehouse, fact.doc_type) and fact.open_qty > _ZERO:
                 # CONSIGN-PLAN (owner Q1): the goods are already at the own bin, so the
                 # proposal is a plain Borrow of the whole plan quantity from it - never a
-                # Buy, nothing to purchasing - and it draws on no shared pile.
+                # Buy - and it draws on no shared pile. Confirmed, it is owed back at that
+                # bin like any own-bin Borrow (owner ruling 2 Nov 2026).
                 own = fact.own_code
                 out[key] = (
                     (
@@ -5931,11 +5932,9 @@ class ProjectSupplyService:
         )
 
         def _marked(snapshot, fact):
-            if snapshot is None:
+            if snapshot is None or origin.get(str(fact.product_id)) != "local":
                 return snapshot
-            if origin.get(str(fact.product_id)) == "local":
-                snapshot = {**snapshot, "buy_origin": "local"}
-            return self._own_bin_borrows_read_as_use(snapshot, fact)
+            return {**snapshot, "buy_origin": "local"}
 
         saved = [
             (
@@ -5950,50 +5949,6 @@ class ProjectSupplyService:
             ProjectOrderInquiryService(self.db).record_saved_lines(
                 pso_id=str(order.id), saved=saved, actor_user_id=actor_user_id
             )
-
-    def _owes_nothing_at_own_bin(self, fact: "_LineFacts", warehouse_id: Any) -> bool:
-        """CONSIGN-PLAN (owner Q1): a Borrow at a consignment's OWN bin. The goods ARE the
-        consignment's own bin; nothing was lent, so nothing is owed back and purchasing hears
-        nothing: no order back row (`_location_order_backs`) and no email line
-        (`_tell_saved_lines`). One rule for both, so the row and the email never disagree."""
-        return (
-            planned_at_own_bin(fact.warehouse, fact.doc_type)
-            and warehouse_id is not None
-            and str(warehouse_id) == str(fact.warehouse.id)
-        )
-
-    def _own_bin_borrows_read_as_use(
-        self, snapshot: Mapping[str, Any], fact: "_LineFacts"
-    ) -> Mapping[str, Any]:
-        """The snapshot the purchasing email reads, with each Borrow that raised no row because
-        it is at the consignment's own bin read as what it is, the line's own stock (`USE
-        <bin>`, not purchasing's), never `ORDER BACK` (CONSIGN-OWN-BIN-EMAIL). Marked on both
-        snapshots alike, as a local Buy is, so it never reads as a change by itself.
-
-        Exactly the row rule: a document Borrow is not an order back at all, and a Borrow that
-        names its order (switch ON) still raises its row at the donor line, so both keep their
-        own words."""
-        if not planned_at_own_bin(fact.warehouse, fact.doc_type):
-            return snapshot
-        components = []
-        for component in snapshot.get("components") or []:
-            if (
-                component.get("kind") == "borrow"
-                and not component.get("supply_key")
-                and self._owes_nothing_at_own_bin(fact, component.get("source_warehouse_id"))
-                and not (
-                    component.get("donor_core_line_id")
-                    and self._names_its_order(SimpleNamespace(**component))
-                )
-            ):
-                component = {
-                    "kind": RESERVE,
-                    "qty": component.get("qty"),
-                    "source_location": component.get("source_location"),
-                    "rung": None,
-                }
-            components.append(component)
-        return {**snapshot, "components": components}
 
     def _record_short(
         self,
@@ -8745,7 +8700,9 @@ class ProjectSupplyService:
         """"Borrow from another order" OFF (D4, B3): every borrow that is not a document is
         owed back on the BORROWING line, at its own date, at the location it left from. The
         line's own location and its own group included (Q3): a project line is demand only
-        through its OI rows, so nothing else would replace what it took. One row per (line,
+        through its OI rows, so nothing else would replace what it took. A consignment's Borrow
+        at its own bin too, like a sales order line's (owner ruling 2 Nov 2026,
+        CONSIGN-OWN-BIN-EMAIL, reversing CONSIGN-PLAN Q1 for it). One row per (line,
         location).
 
         `unnamed_order_borrows_only` is the switch-ON reading: only a later order's stock
@@ -8758,10 +8715,6 @@ class ProjectSupplyService:
                 if qty <= _ZERO or not item.warehouse_id:
                     continue
                 if getattr(item, "supply_key", None):
-                    continue
-                if self._owes_nothing_at_own_bin(fact, item.warehouse_id):
-                    # CONSIGN-PLAN: the goods ARE the consignment's own bin; nothing was
-                    # lent, so nothing is owed back and purchasing hears nothing.
                     continue
                 if unnamed_order_borrows_only and (
                     not getattr(item, "donor_core_line_id", None)
