@@ -140,11 +140,17 @@ def test_a_sample_request_error_never_fails_the_tracking_import(env, monkeypatch
     assert tracked.actual_delivery_date is not None
 
 
-@pytest.mark.parametrize("terminal", ["cancelled"])
+@pytest.mark.parametrize("terminal", ["cancelled", "zzt_returned"])
 def test_a_resync_never_pulls_a_closed_request_back_to_delivered(env, terminal):
-    """Review S2: only a request in the consignment-open set follows its CG."""
+    """Review S2: only a request in the consignment-open set follows its CG, so neither a
+    Cancelled request nor one in a status an admin added after Delivered is pulled back."""
+    from app.models.status import Status
+
     env.post(CG_INGEST, [_cg(details=[_cg_line(981001, transferred=0)])])
     req = _linked_request(env)
+    if terminal == "zzt_returned":
+        env.db.add(Status(entity_type="sample_request", key=terminal, label="Returned"))
+        env.db.flush()
     env.post(CG_INGEST, [_cg(details=[_cg_line(981001, transferred=0)], cancelled="T",
                              modified="2026-10-05T10:00:00.000")])
     back = _fresh(env, req)
@@ -154,3 +160,25 @@ def test_a_resync_never_pulls_a_closed_request_back_to_delivered(env, terminal):
     env.post(CG_INGEST, [_cg(details=[_cg_line(981001, transferred=0)], cancelled="F",
                              modified="2026-10-06T10:00:00.000")])
     assert svc.status_key(env.db, _fresh(env, req)) == terminal
+
+
+
+def test_a_database_fault_inside_the_resync_leaves_the_host_session_usable(env, monkeypatch):
+    """Review: the savepoint, not just the try/except. A real SQL error after a partial write
+    (the status already moved and flushed) must be undone alone: the CG lands, the request keeps
+    its status, and the session still answers."""
+    from sqlalchemy import text
+
+    env.post(CG_INGEST, [_cg(details=[_cg_line(981001, transferred=0)])])
+    req = _linked_request(env)
+
+    def sql_fault(db, *_a, **_k):
+        db.execute(text("SELECT 1/0"))
+
+    monkeypatch.setattr(svc, "_record", sql_fault)
+    res = env.post(CG_INGEST, [_cg(details=[_cg_line(981001, transferred=0)], cancelled="T",
+                                   modified="2026-10-05T10:00:00.000")])
+    assert _records(res)["db1:CSGN:980001"]["outcome"] != "failed"
+    assert _order(env).status == "cancelled"
+    assert svc.status_key(env.db, _fresh(env, req)) == svc.DELIVERED
+    assert env.db.execute(text("SELECT 1")).scalar() == 1

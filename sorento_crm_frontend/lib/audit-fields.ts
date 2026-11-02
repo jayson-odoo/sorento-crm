@@ -40,8 +40,9 @@ const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\
 export function formatAuditValue(v: unknown): string {
   if (v === null || v === undefined || v === '') return '(empty)';
   // A date reads in the app's format, a stamp in Malaysia time, never the raw UTC string.
-  if (typeof v === 'string' && ISO_DATE_RE.test(v)) return formatDateInMalaysia(v);
-  if (typeof v === 'string' && ISO_DATETIME_RE.test(v)) return formatDateTimeInMalaysia(v);
+  // A date-shaped string that is not a real date keeps its own text.
+  if (typeof v === 'string' && ISO_DATE_RE.test(v)) return formatDateInMalaysia(v) || v;
+  if (typeof v === 'string' && ISO_DATETIME_RE.test(v)) return formatDateTimeInMalaysia(v) || v;
   if (typeof v === 'boolean') return v ? 'Yes' : 'No';
   if (Array.isArray(v) && v.every((x) => typeof x !== 'object' || x === null)) {
     return v.length ? v.map((x) => formatAuditValue(x)).join(', ') : '(empty)';

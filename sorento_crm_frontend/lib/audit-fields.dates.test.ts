@@ -11,6 +11,10 @@ describe('audit values: dates read in the app format, stamps in Malaysia time', 
     expect(formatAuditValue('2026-11-02T14:22:23.073162')).toMatch(/^02\/11\/2026, 10:22\s?pm$/i);
   });
 
+  it('keeps the raw text of a date-shaped value that is not a date', () => {
+    expect(formatAuditValue('1234-56-78')).toBe('1234-56-78');
+  });
+
   it('leaves other text alone', () => {
     expect(formatAuditValue('Stock from KL')).toBe('Stock from KL');
     expect(formatAuditValue('CG-202611-010')).toBe('CG-202611-010');
