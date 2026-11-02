@@ -40,9 +40,15 @@ const EMPTY: TemplateAssignFilter = {
 interface Props {
   template: { id: string; name: string } | null;
   onClose: () => void;
+  /**
+   * Remove is an unlink, so it parks with a countdown and a Cancel (D7) - run
+   * by the LIST, which outlives this dialog, so closing it cannot cut the
+   * countdown short. `count` is how many products the filter unlinks now.
+   */
+  onRemove: (filter: TemplateAssignFilter, count: number) => void;
 }
 
-export function AssignTemplateDialog({ template, onClose }: Props) {
+export function AssignTemplateDialog({ template, onClose, onRemove }: Props) {
   const [filter, setFilter] = useState<TemplateAssignFilter>(EMPTY);
   useEffect(() => {
     if (template) setFilter(EMPTY);
@@ -54,6 +60,8 @@ export function AssignTemplateDialog({ template, onClose }: Props) {
   const empty = isEmptyAssignFilter(filter);
   const preview = useTemplateAssignPreview(template?.id ?? null, filter, !!template && !empty);
   const assign = useAssignTemplate(template?.id ?? null);
+  const matchedNow = preview.data?.matched ?? 0;
+  const alreadyNow = preview.data?.already_linked ?? 0;
 
   const brandOptions = useMemo(
     () => (brands.data ?? []).map((b) => ({ value: b.id, label: b.brand_name, description: b.brand_code })),
@@ -81,11 +89,14 @@ export function AssignTemplateDialog({ template, onClose }: Props) {
   const set = (key: keyof TemplateAssignFilter) => (value: string[]) =>
     setFilter((prev) => ({ ...prev, [key]: value }));
 
-  const matched = preview.data?.matched ?? 0;
-  const already = preview.data?.already_linked ?? 0;
+  const matched = matchedNow;
+  const already = alreadyNow;
   const toAdd = matched - already;
-  const run = (action: 'add' | 'remove') =>
-    assign.mutate({ filter, action }, { onSuccess: () => onClose() });
+  const add = () => assign.mutate({ filter, action: 'add' }, { onSuccess: () => onClose() });
+  const remove = () => {
+    onRemove(filter, already);
+    onClose();
+  };
 
   return (
     <Dialog open={!!template} onOpenChange={(next) => !next && onClose()}>
@@ -162,13 +173,13 @@ export function AssignTemplateDialog({ template, onClose }: Props) {
           <Button
             variant="outline"
             disabled={empty || !preview.data || already === 0 || assign.isPending}
-            onClick={() => run('remove')}
+            onClick={remove}
           >
             Remove from {already}
           </Button>
           <Button
             disabled={empty || !preview.data || toAdd <= 0 || assign.isPending}
-            onClick={() => run('add')}
+            onClick={add}
           >
             Add to {toAdd > 0 ? toAdd : 0}
           </Button>
