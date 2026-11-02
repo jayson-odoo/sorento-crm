@@ -6,6 +6,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useQuotationViews } from '../../../../_shared/hooks/useQuotationDocuments';
 import type { QuotationDocument } from '../../../../_shared/services/quotationDocumentService';
@@ -35,7 +36,12 @@ function ViewLog({
 }) {
   const views = useQuotationViews(projectId, documentId);
   if (views.isLoading)
-    return <p className="text-sm text-muted-foreground">Loading...</p>;
+    return (
+      <div className="space-y-1.5" aria-busy="true">
+        <Skeleton className="h-5 w-full" />
+        <Skeleton className="h-5 w-full" />
+      </div>
+    );
   if (views.isError)
     return <p className="text-sm text-destructive">{views.error.message}</p>;
   const rows = views.data ?? [];
