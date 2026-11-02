@@ -143,6 +143,7 @@ def _for_contact(
         # shipment as "No ETA" - unless a date window was asked, where no
         # row only means none in that window.
         windowed = eta_from is not None or eta_to is not None
+        asked_codes = _asked_codes(db, asked)
         told = None
         eta_denied = any(
             isinstance(d, dict) and d.get("field") == "estimated_arrival_date"
@@ -156,9 +157,9 @@ def _for_contact(
             today = incoming.today_myt()
             told = {
                 code: [told_text(d, today) for d in days]
-                for code, days in told_dates(db, _asked_codes(db, asked), contact.rules).items()
+                for code, days in told_dates(db, asked_codes, contact.rules).items()
             }
-        result = dealer_view(result, asked=None if windowed else _asked_codes(db, asked), told=told)
+        result = dealer_view(result, asked=None if windowed else asked_codes, told=told)
         _stamp_discontinued(db, result)
     return result
 

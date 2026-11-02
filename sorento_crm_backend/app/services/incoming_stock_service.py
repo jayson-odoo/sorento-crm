@@ -238,15 +238,13 @@ def earliest_packing_list_shipment(
             # deterministic one.
             InboundShipment.id.asc(),
         )
+        .distinct(InboundShipmentLine.product_id)
         .all()
     )
-    out: dict[str, tuple[str, date, str]] = {}
-    for product_id, shipment_id, eta, attachment_id in rows:
-        pid = str(product_id)
-        if pid in out:
-            continue
-        out[pid] = (str(shipment_id), eta, str(attachment_id))
-    return out
+    return {
+        str(product_id): (str(shipment_id), eta, str(attachment_id))
+        for product_id, shipment_id, eta, attachment_id in rows
+    }
 
 
 class IncomingStockService:
