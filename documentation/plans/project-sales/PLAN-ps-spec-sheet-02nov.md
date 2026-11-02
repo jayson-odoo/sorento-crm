@@ -53,7 +53,7 @@ the project, ref, area, salesperson and date). Today it is built by hand in Powe
 
 Q-A (a), Q-B (b): rows carry the quoted unit price in `list_price` (+ `parent_list_price`), so the price tag
 designer's List Price slot and list-only price badge print it; set parts carry none; a picked accessory
-carries its own line's price; the tab's API never returns it. Q-C (a): fixed layers repeat (already so).
+carries its own line's price; the tab's page list never returns it (the Preview payload carries it, as the PDF does). Q-C (a): fixed layers repeat (already so).
 
 ## Deferred, with their triggers
 

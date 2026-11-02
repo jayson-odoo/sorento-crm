@@ -26,7 +26,7 @@ The pages are designed once by marketing as templates (see "Designing the templa
 * Page 1: the cover template as designed (for example a photo collage and the logo).
 * One page per printed row: the main item's photo and drawing (as frozen on the issued revision), brand, code, name and specs, and up to the number of accessory rows the template has.
 * Title block fields come from the quotation: **Ref** is the quotation's Your ref, or our quotation number when Your ref is empty; **Prepared by** is the quotation's signatory (else the project salesperson) with their phone; **Date** is the revision's issue date.
-* **Price**: only when the template has a price area: the quoted unit price of that item on the revision. The sample catalogue has none.
+* **Price**: only when the template has a price area: the quoted unit price of that item on the revision (the item's own price, not added up with its accessories). An item quoted at zero prints no price. An item quoted twice at two prices shows the first one. The sample catalogue has none.
 * The same product quoted twice (for example in two blocks) prints once.
 
 ## Who can do what
