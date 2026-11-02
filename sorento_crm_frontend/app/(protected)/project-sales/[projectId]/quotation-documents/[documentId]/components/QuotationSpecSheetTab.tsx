@@ -431,7 +431,8 @@ function SpecSheetPages({
                       // Focusable, so the shared Sortable's keyboard sensor can move a page too
                       // (Space, arrows, Space).
                       tabIndex={0}
-                      className="absolute left-1 top-1 rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+                      // touch-none: a finger drag moves the page; without it a phone scrolls the strip.
+                      className="absolute left-1 top-1 touch-none rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
                       style={{ width: THUMB_WIDTH, height: thumbHeight }}
                       onClick={() => setSelected(page.key)}
                     />

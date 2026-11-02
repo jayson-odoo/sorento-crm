@@ -161,4 +161,20 @@ describe('page strip with the real shared Sortable', () => {
       ).toHaveAttribute('tabindex', '0');
     }
   });
+
+  it('a finger drag on a handle drags the page instead of scrolling the strip (touch-action: none)', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <QuotationSpecSheetTab />
+      </QueryClientProvider>,
+    );
+
+    const strip = await screen.findByTestId('spec-sheet-strip');
+    for (const code of ['SRTWC0001', 'SRTWB0002', 'SRTBT0006']) {
+      // On a phone the browser owns a touch gesture unless touch-action says otherwise: without
+      // it the strip scrolls and the pointer drag is cancelled (crew 375 px finger test).
+      expect(within(strip).getByLabelText(`Drag ${code} to reorder`)).toHaveClass('touch-none');
+    }
+  });
 });
