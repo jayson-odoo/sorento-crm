@@ -1,7 +1,8 @@
 # PLAN: the stock check and the ETA ask tell one shipment the same date (STOCK-INCOMING-FLOOR)
 
-Status: built, in review; small fix track (size S: under 300 changed lines, no migration, no auth/RBAC
-change, no new ingest surface). Fix A built; Fix B waits for the owner.
+Status: Fix B building (size M since the owner's 2 Nov ruling: new wording, one shared rule; no
+migration, no auth/RBAC change, no screen change so no mock). Fix A built and reviewed READY at 02f3c71c78;
+Fix B supersedes its today floor.
 UAC: `stock-incoming-floor-2nov-acceptance-criteria.md`.
 
 ## Problem (production WhatsApp, 2 Nov 2026)
@@ -62,16 +63,38 @@ The stock check also requires a packing list and a non-NULL ETA (R5/R10, owner r
 does not. A shipment with no packing list still reads "no incoming" on the stock check while the ETA
 ask tells its date. Not this bug; named so the next lane does not rediscover it.
 
-## Fix B (waits for the owner)
+## Fix B (owner ruling 2 Nov 2026, card answers relayed by crew)
 
-A shipment still coming whose TOLD date has already passed (52 on dev 28 Oct, plus every contact with
-padding off). Options sent: (a) "No stock, ETA 23/10/2026 (delayed)."; (b) "No stock, incoming is on
-the way, arrival date not confirmed yet. Please refer to your salesman."; (c) keep "no incoming"
-(rejected: breaks the 13 Oct ruling). Crew recommends (b), with the ETA path following the same rule.
+Owner: "the idea is to have the same presentation when ask eta and ask stock, meaning in incoming we answer
+ETA xx, in stock ask also answer the same, unified behaviour". Crew decided the card from that rule and the
+13 Oct ruling: Q1 (a), Q2 (a), Q3 (a), Q4 as written, Q5 (a). The owner can flip any of them in his hand test.
 
-Slot: the Python floor in `earliest_packing_list_shipment` is the one place that sees "still-incoming
-candidates exist, none told today or later"; B adds that state there and a branch in
-`stock_ask_branch` + `presenters`. No test in this PR pins the past-told outcome.
+ONE shared read gives a dealer's told dates for a product code. Both paths print exactly those dates:
+
+- Stock check, no stock: `CODE x 2: ❌ No stock, ETA 03/11/2026, 06/11/2026.`
+- ETA ask: `CODE: ✅ ETA 03/11/2026, 06/11/2026`
+
+The rules of the shared read:
+
+1. Q1 (a): the set is the ETA ask's: every still-incoming line (`_still_incoming_filter`) on a non-draft
+   shipment, within the contact's packing list regions and the company scope, with a non-NULL ETA.
+   A packing list is NOT required. The packing list only decides which file goes with a stock check
+   answer (the earliest still-incoming shipment that has one, and only when the contact's toggle is on).
+2. Q2 (a): the promised date is the revised date when one is set (`coalesce(eta_delay_date,
+   estimated_arrival_date)`, 13 Oct ruling), told as the ETA itself and never labelled as a delay.
+3. Told date = promised + the by-code offset when the contact's ETA buffer switch is on
+   (`_offsets_by_product_code`, the larger offset for a code two companies carry).
+4. Q3 (a): every distinct told date, sorted. Q4: a told date before today (MYT) is followed by the ONE
+   constant marker `(delayed)` (ms `(lewat)`, zh `（延迟）`). It is never "no incoming", and a past date is
+   never shown without the marker (R10).
+5. Q5 (a): a code with no dated still-incoming shipment has no dates. The stock check says
+   "No stock and no incoming" and the ETA ask says "No ETA" (unchanged).
+
+Unchanged: a windowed ETA ask ("arriving next week"), `/shipments` (no product), staff and non-dealer
+contacts, the in-stock and too-big branches, and all wording other than the date list.
+
+Fix A's today floor (`earliest_packing_list_shipment(not_before, offsets)`, `told_offsets`) has no job
+left once a past told date stays incoming, so it is removed rather than kept as a dead path.
 
 ## Tests (red first)
 
