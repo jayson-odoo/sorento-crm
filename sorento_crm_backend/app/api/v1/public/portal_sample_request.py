@@ -201,7 +201,7 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                 )
                 db.commit()
                 db.refresh(req)
-                return svc.serialize_detail(db, req)
+                return svc.serialize_portal_detail(db, req)
         except Exception:
             db.rollback()
             raise
@@ -215,7 +215,7 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
     ):
         _assert_visible(db, token.contact_id)
         with company_scope(db, frozenset({_resolve_company(db, token)})):
-            return svc.serialize_detail(db, _own(db, token, request_id))
+            return svc.serialize_portal_detail(db, _own(db, token, request_id))
 
 
     @router.put("/submissions/sample_request/{request_id}")
@@ -246,7 +246,7 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                 svc.update_draft(db, req, actor=_actor(token), data=data)
                 db.commit()
                 db.refresh(req)
-                return svc.serialize_detail(db, req)
+                return svc.serialize_portal_detail(db, req)
         except Exception:
             db.rollback()
             raise
@@ -266,7 +266,7 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                 svc.submit(db, req, actor=_actor(token))
                 db.commit()
                 db.refresh(req)
-                return svc.serialize_detail(db, req)
+                return svc.serialize_portal_detail(db, req)
         except Exception:
             db.rollback()
             raise
@@ -290,7 +290,7 @@ def register_sample_request_routes(router: APIRouter, token_dependency: Callable
                 svc.move(db, req, actor=_actor(token), to=svc.CANCELLED)
                 db.commit()
                 db.refresh(req)
-                return svc.serialize_detail(db, req)
+                return svc.serialize_portal_detail(db, req)
         except Exception:
             db.rollback()
             raise
