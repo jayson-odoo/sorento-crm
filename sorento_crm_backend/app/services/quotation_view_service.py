@@ -28,6 +28,9 @@ from app.models.projects import (
 )
 
 UNIQUE_WINDOW = timedelta(minutes=30)
+# Counted opens per issue per hour, checked in the database so it holds when the Redis limiter
+# fails open. No real customer opens one quotation this often; past it the count stops moving.
+MAX_PER_ISSUE_PER_HOUR = 20
 LOG_LIMIT = 50
 
 # Link previewers, crawlers and scripted clients. Lower-cased substring match. An empty or missing
@@ -39,10 +42,6 @@ _BOT_MARKERS = (
     "whatsapp",
     "facebookexternalhit",
     "facebookcatalog",
-    "slack",
-    "telegram",
-    "skype",
-    "linkedin",
     "embedly",
     "googleimageproxy",
     "google-read-aloud",
@@ -114,6 +113,18 @@ def record_view(
         .first()
     )
     if recent is not None:
+        return False
+    last_hour = (
+        db.query(func.count(QuotationIssueView.id))
+        .filter(
+            QuotationIssueView.issue_id == record.id,
+            QuotationIssueView.viewed_at > now - timedelta(hours=1),
+            QuotationIssueView.viewed_at <= now,
+        )
+        .scalar()
+        or 0
+    )
+    if last_hour >= MAX_PER_ISSUE_PER_HOUR:
         return False
     db.add(
         QuotationIssueView(

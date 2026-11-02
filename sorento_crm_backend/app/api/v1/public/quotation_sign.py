@@ -183,7 +183,7 @@ def submit_quotation_amendment(
 
 
 VIEW_BUCKET = "quotation_view_token"
-VIEW_LIMIT_PER_HOUR = 120
+VIEW_LIMIT_PER_HOUR = 60
 
 
 @router.post("/{token}/view", response_model=QuotationSignViewResponse)

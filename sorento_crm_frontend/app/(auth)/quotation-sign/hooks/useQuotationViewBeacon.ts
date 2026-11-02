@@ -25,15 +25,17 @@ export function visitorId(): string {
 }
 
 /**
- * A browser signed in to the CRM as STAFF. A portal contact also holds a NextAuth session (their
- * home is under /my-requests) and is a customer, so they still count.
+ * A browser signed in to the CRM as STAFF. A customer contact signed in to the portal also holds a
+ * NextAuth session, and its home is `/portal/c/<slug>` (`home_path_for_user`,
+ * phone_signin_service.py), so that one still counts. Every other home (`/`, the salesperson's
+ * `/my-requests`) is staff.
  */
 async function isStaffBrowser(): Promise<boolean> {
   try {
     const session = await getSession();
     if (!session?.user) return false;
     const home = (session.user as { homePath?: unknown }).homePath;
-    return !(typeof home === 'string' && home.startsWith('/my-requests'));
+    return !(typeof home === 'string' && home.startsWith('/portal/'));
   } catch {
     return false;
   }

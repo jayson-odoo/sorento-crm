@@ -97,7 +97,28 @@ def test_link_preview_bots_are_refused(agent):
     assert views.is_bot(agent) is True
 
 
-@pytest.mark.parametrize("agent", [IPHONE, IPAD, LAPTOP, ANDROID_TABLET])
+TELEGRAM_IN_APP = (
+    "Mozilla/5.0 (Linux; Android 14; SM-A546E Build/UP1A.231005.007; wv) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Version/4.0 Chrome/129.0.6668.81 Mobile Safari/537.36 Telegram-Android/11.2.2"
+)
+LINKEDIN_IN_APP = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+    "Mobile/15E148 [LinkedInApp]/9.30.100"
+)
+SLACK_DESKTOP = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Slack/4.38.125 Chrome/124.0 Electron/30.0 Safari/537.36 Sonic Slack_SSB/4.38.125"
+)
+CUBOT = (
+    "Mozilla/5.0 (Linux; Android 10; CUBOT X30) AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0 Mobile Safari/537.36"
+)
+
+
+@pytest.mark.parametrize(
+    "agent",
+    [IPHONE, IPAD, LAPTOP, ANDROID_TABLET, TELEGRAM_IN_APP, LINKEDIN_IN_APP, SLACK_DESKTOP, CUBOT],
+)
 def test_real_browsers_are_not_bots(agent):
     assert views.is_bot(agent) is False
 
@@ -121,11 +142,19 @@ def test_one_browser_counts_once_per_thirty_minutes():
             now=T0 + timedelta(minutes=29, seconds=59),
         )
         assert _count(db, record) == 1
-        # 30 minutes after the last COUNTED view, it counts again.
+        # Exactly 30 minutes after the last COUNTED view, it counts again.
         assert views.record_view(
-            db, record=record, visitor_id="browser-a-123456", user_agent=IPHONE, now=T0 + timedelta(minutes=35)
+            db, record=record, visitor_id="browser-a-123456", user_agent=IPHONE, now=T0 + timedelta(minutes=30)
         )
         assert _count(db, record) == 2
+        # And again 30 minutes after that one, not after the first.
+        assert views.record_view(
+            db, record=record, visitor_id="browser-a-123456", user_agent=IPHONE, now=T0 + timedelta(minutes=35)
+        ) is False
+        assert views.record_view(
+            db, record=record, visitor_id="browser-a-123456", user_agent=IPHONE, now=T0 + timedelta(minutes=60)
+        )
+        assert _count(db, record) == 3
 
 
 def test_a_different_browser_counts_at_once():
@@ -136,6 +165,22 @@ def test_a_different_browser_counts_at_once():
             db, record=record, visitor_id="browser-b-654321", user_agent=LAPTOP, now=T0 + timedelta(minutes=7)
         )
         assert _count(db, record) == 2
+
+
+def test_one_issue_stops_counting_past_the_hourly_cap():
+    """Holds without Redis: a script looping fresh browser ids cannot fill the table."""
+    with blank_session() as db:
+        _p, _d, _o, record = _issued(db)
+        for n in range(views.MAX_PER_ISSUE_PER_HOUR):
+            assert views.record_view(
+                db, record=record, visitor_id=f"browser-{n:04d}-x", user_agent=IPHONE, now=T0 + timedelta(seconds=n)
+            )
+        assert not views.record_view(
+            db, record=record, visitor_id="browser-new-xyz", user_agent=IPHONE, now=T0 + timedelta(minutes=5)
+        )
+        assert views.record_view(
+            db, record=record, visitor_id="browser-new-xyz", user_agent=IPHONE, now=T0 + timedelta(minutes=61)
+        )
 
 
 def test_a_bot_records_nothing():
@@ -279,6 +324,7 @@ def test_an_unknown_or_expired_link_records_nothing():
         db.commit()
         client, app = _client(db)
         try:
+            answers = []
             for t in (token, "zzt-not-a-real-token"):
                 response = client.post(
                     f"/api/v1/public/quotation-sign/{t}/view",
@@ -286,7 +332,9 @@ def test_an_unknown_or_expired_link_records_nothing():
                     headers={"User-Agent": IPHONE},
                 )
                 assert response.status_code == 404
-                assert response.json().get("code") == "quotation_sign_link_invalid" or "no longer valid" in response.text
+                answers.append(response.json())
+            assert answers[0] == answers[1], "expired and unknown must be indistinguishable"
+            assert answers[0]["code"] == "quotation_sign_link_invalid"
             assert _count(db, record) == 0
         finally:
             app.dependency_overrides.clear()

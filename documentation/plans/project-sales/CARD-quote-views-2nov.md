@@ -65,13 +65,18 @@ Plan: `PLAN-quote-views-2nov.md` (same folder). Code read on origin/main 46de2f6
 - Signed-in check fails or times out: the beacon is sent (the customer is never signed in to the CRM; a missed
   exclusion only costs a staff view, never a customer one).
 - Accepted quotation re-opened by the customer: still counted (they looked at it).
+- Two tabs opened at the same instant may both count (no lock); acceptable for a view counter.
+- More than 20 counted opens of one revision within an hour: the count stops moving until the hour
+  passes (a database cap, so it holds when the Redis limiter is down).
+- A customer contact signed in to the portal (home `/portal/c/...`) still counts; any other
+  signed-in CRM user (home `/` or the salesperson's `/my-requests`) does not.
 
 ## Touches shared with parallel lanes
 
 - PS-PROPOSAL-QUOTATION (#2097): same sign page and document page. This lane adds one hook call in
   `QuotationSignClient.tsx` and one read-only block under the document page header; it does not touch
-  labels or kinds. The revision label comes from the issue (`our_ref_text`), so their A/B lettering shows as
-  is.
+  labels or kinds. The revision label is built by `quotation_no(document_no, issue_no)`, the same helper every
+  other surface uses, so if #2097 changes the lettering there the log follows.
 - No other PS lane touches the sign router or `quotation_issues`.
 
 ## Questions (each with a recommendation)

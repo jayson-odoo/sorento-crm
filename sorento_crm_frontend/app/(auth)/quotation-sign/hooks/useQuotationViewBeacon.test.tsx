@@ -43,18 +43,19 @@ describe('useQuotationViewBeacon', () => {
     expect(recordQuotationView).toHaveBeenCalledWith('tok', kept);
   });
 
-  it('sends nothing from a browser signed in as staff', async () => {
-    getSession.mockResolvedValue({
-      user: { id: 'u1', homePath: '/dashboard' },
-    });
-    renderHook(() => useQuotationViewBeacon('tok', true));
-    await new Promise((r) => setTimeout(r, 10));
-    expect(recordQuotationView).not.toHaveBeenCalled();
-  });
+  it.each(['/', '/my-requests'])(
+    'sends nothing from a browser signed in as staff (home %s)',
+    async (homePath) => {
+      getSession.mockResolvedValue({ user: { id: 'u1', homePath } });
+      renderHook(() => useQuotationViewBeacon('tok', true));
+      await new Promise((r) => setTimeout(r, 10));
+      expect(recordQuotationView).not.toHaveBeenCalled();
+    },
+  );
 
   it('still counts a portal contact (a customer with a session)', async () => {
     getSession.mockResolvedValue({
-      user: { id: 'c1', homePath: '/my-requests' },
+      user: { id: 'c1', homePath: '/portal/c/abc' },
     });
     renderHook(() => useQuotationViewBeacon('tok', true));
     await waitFor(() => expect(recordQuotationView).toHaveBeenCalledTimes(1));
