@@ -727,15 +727,15 @@ _NOT_PROBED = " (not probed: the simulation's per-line budget was spent)"
 #: the ORDER's failure (reported as when every line fails the same way), not a line's.
 _SIMULATE_PROBE_SAME_FAILURE_STOP = 5
 #: Keys `confirm_many(raw_errors=True)` adds for the simulation only; never in the reply.
-_SIMULATE_INTERNAL_KEYS = ("error_status", "error_class", "elapsed_ms")
+_SIMULATE_INTERNAL_KEYS = ("error_class", "elapsed_ms")
 
 
 def _is_order_level_failure(result: dict) -> bool:
-    """A refusal no single line explains, so probing line by line only repeats it: a
-    refused commit or queued job (`SimulationWouldCommit`) or a 409 (the order moved)."""
-    return result.get("error_class") == "SimulationWouldCommit" or result.get(
-        "error_status"
-    ) == 409
+    """A refused commit or queued job (`SimulationWouldCommit`): the order's own refusal, so
+    probing line by line only repeats it. A 409 is NOT read as order-level: several name one
+    line without `failing_lines` (an already cancelled line, a superseded planning row), and
+    an order-wide 409 fails every line the same way, which the early stop already cuts."""
+    return result.get("error_class") == "SimulationWouldCommit"
 
 
 @router.post("/fulfilment-planning/simulate-confirm", response_model=ConfirmManyResult)
@@ -961,8 +961,6 @@ def _probe_order(entry, result: dict, budget: int, probe, line_error) -> int:
         return budget
     if result.get("error") == LOCK_BUSY_MESSAGE:
         return budget  # nothing ran for this order; probing line by line would only wait again
-    if _is_order_level_failure(result):
-        return budget  # every line would repeat the order's own refusal
     # Only the lines the run actually posted: `only_line_ids` narrows them.
     keep = {str(x) for x in entry.only_line_ids} if entry.only_line_ids is not None else None
     posted = [
@@ -981,6 +979,8 @@ def _probe_order(entry, result: dict, budget: int, probe, line_error) -> int:
             (result.get("error") or "")[: MAX_ERROR_CHARS - len(_NOT_PROBED)] + _NOT_PROBED
         )
         return budget
+    if _is_order_level_failure(result):
+        return budget  # every line would repeat the order's own refusal
     budget -= len(to_probe)
     failed = []
     for probed, line_id in enumerate(to_probe, start=1):

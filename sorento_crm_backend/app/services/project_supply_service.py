@@ -12176,15 +12176,8 @@ class ProjectSupplyService:
                         "failing_lines": failing_lines,
                         **({"preview": True} if observe else {}),
                         # Simulate only (SIMULATE-CONFIRM-SPEED): tells an order-level
-                        # refusal from a line's; the route pops both before replying.
-                        **(
-                            {
-                                "error_status": getattr(exc, "status_code", None),
-                                "error_class": type(exc).__name__,
-                            }
-                            if raw_errors
-                            else {}
-                        ),
+                        # refusal from a line's; the route pops it before replying.
+                        **({"error_class": type(exc).__name__} if raw_errors else {}),
                     }
                 )
             finally:

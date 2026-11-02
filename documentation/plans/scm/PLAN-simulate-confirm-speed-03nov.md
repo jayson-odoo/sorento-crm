@@ -28,9 +28,15 @@ long time.
 ## Change
 
 1. Probe skip and early stop (`_simulate_on`):
-   - An order-level error is not probed: a `SimulationWouldCommit` (refused job or commit) or an
-     `AppException` with status 409. `confirm_many(raw_errors=True)` carries the exception's
-     status and class on the result for the simulation only; Simulate pops them before replying.
+   - An order-level error is not probed: a `SimulationWouldCommit` (refused job or commit).
+     `confirm_many(raw_errors=True)` carries the exception's class on the result for the
+     simulation only; Simulate pops it before replying. A one-line order is still named and a
+     spent budget still says "not probed", exactly as today.
+   - A 409 is NOT skipped (review finding, against the brief): several 409s on the confirm path
+     name one line with no `failing_lines` (`project_supply_service.py:1426` "Line X is already
+     cancelled.", `:1432`, `planning_change_service.py:3044`, `:3493`), so skipping them would
+     stop Simulate naming that line. An order-wide 409 fails every line with the same text, so
+     the early stop below already cuts it to 5 runs.
    - Stop probing when the first 5 probed lines all failed with the same text (the order's own
      failure, reported exactly as today's "every line failed the same way": no
      `simulated_errors`). A real line-level failure (a line that fails alone with its own text)

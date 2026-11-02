@@ -2,9 +2,10 @@
 
 Plan: `PLAN-simulate-confirm-speed-03nov.md`.
 
-- AC-1: An order that fails with a refused job (`SimulationWouldCommit`) or a 409 and names no
+- AC-1: A multi-line order that fails with a refused job (`SimulationWouldCommit`) and names no
   line is not probed line by line: the confirm runs once for it, `simulated_errors` is null, the
-  error text is unchanged.
+  error text is unchanged. A one-line order is still named. A 409 naming one line (no
+  `failing_lines`) is still probed and named.
 - AC-2: An order whose first 5 probed lines all fail with the same text stops probing after those
   5 runs and reports `simulated_errors` null.
 - AC-3: A real line-level failure (one line fails alone) is still probed and named, as today.

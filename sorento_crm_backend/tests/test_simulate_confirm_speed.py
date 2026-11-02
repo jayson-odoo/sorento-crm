@@ -81,48 +81,53 @@ def test_a_refused_job_is_not_probed_line_by_line(api, monkeypatch):
     assert result["error"].startswith("SimulationWouldCommit: "), result
     assert result["simulated_errors"] is None
     assert len(seen) == 1, "the confirm ran once; no per-line probe for an order-level refusal"
-    assert "error_status" not in result and "error_class" not in result
+    assert "error_class" not in result and "elapsed_ms" not in result
 
 
-def test_a_409_is_not_probed_line_by_line(api, monkeypatch):
+def test_a_single_line_refused_job_still_names_its_line(api, monkeypatch):
+    """The skip only saves probe runs: a one-line order is named without probing, as today."""
+    from app.services.confirm_simulation import SimulationWouldCommit
+
+    client, world = api
+    _as_role(monkeypatch, "admin")
+    order, _core, (a, _b) = _two_line_order(world)
+    seen: list = []
+    _raise_for_every_payload(
+        monkeypatch, lambda: SimulationWouldCommit("Simulation refused a queued job."), seen
+    )
+
+    response = _post(client, order, [_line_payload(a.id, buy_qty="50")])
+
+    result = response.json()["results"][0]
+    assert len(seen) == 1
+    assert [str(e["project_line_id"]) for e in result["simulated_errors"]] == [str(a.id)]
+
+
+def test_a_409_naming_one_line_is_still_probed_and_named(api, monkeypatch):
+    """A 409 is not order-level: "Line X is already cancelled." comes with no failing_lines."""
     from app.services.error_handler import AppException
+    from app.services.project_supply_service import ProjectSupplyService
 
     client, world = api
     _as_role(monkeypatch, "admin")
     order, _core, (a, b) = _two_line_order(world)
-    message = "Somebody else confirmed this sales order a moment ago."
-    seen: list = []
-    _raise_for_every_payload(
-        monkeypatch, lambda: AppException(status_code=409, message=message, code="stale"), seen
-    )
+    original = ProjectSupplyService.confirm
+    message = "Line 20 is already cancelled."
+
+    def wrapper(self, order_, payload, *args, **kwargs):
+        if str(b.id) in _lines_of(payload):
+            raise AppException(status_code=409, message=message, code="line_cancelled")
+        return original(self, order_, payload, *args, **kwargs)
+
+    monkeypatch.setattr(ProjectSupplyService, "confirm", wrapper)
 
     response = _post(
         client, order, [_line_payload(a.id, buy_qty="50"), _line_payload(b.id, buy_qty="50")]
     )
 
-    assert response.status_code == 200, response.text
     result = response.json()["results"][0]
     assert result["ok"] is False and message in result["error"]
-    assert result["simulated_errors"] is None
-    assert len(seen) == 1
-
-
-def test_a_422_without_lines_is_still_probed(api, monkeypatch):
-    """Only 409 is order-level; another AppException keeps the probe (kill test for a skip
-    that reads every AppException as order-level)."""
-    from app.services.error_handler import AppException
-
-    client, world = api
-    _as_role(monkeypatch, "admin")
-    order, _core, (a, b) = _two_line_order(world)
-    seen: list = []
-    _raise_for_every_payload(
-        monkeypatch, lambda: AppException(status_code=422, message="no", code="x"), seen
-    )
-
-    _post(client, order, [_line_payload(a.id, buy_qty="50"), _line_payload(b.id, buy_qty="50")])
-
-    assert len(seen) == 3, "one run plus one probe per line"
+    assert [e["line_no"] for e in result["simulated_errors"]] == [20]
 
 
 # --------------------------------------------------------------------------- AC-2
