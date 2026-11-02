@@ -64,18 +64,28 @@ def _read(db, body):
 # ------------------------------------------------------------------ G1
 
 
-def test_G1_computed_floats_are_rounded_to_two_places_for_the_model(db):
-    data = _read(db, dict(SLA)).data
+def _sent(out) -> dict:
+    """What the model is sent: the ToolResult's JSON, parsed."""
+    import json
+
+    return json.loads(out.to_json("c1"))["data"]
+
+
+def test_G1_computed_floats_are_rounded_to_two_places_in_what_the_model_is_sent(db):
+    out = _read(db, dict(SLA))
+    data = _sent(out)
     assert data["average_response_time"] == 28.04
     assert data["average_resolution_time"] == 439.23
     assert data["escalation_rate"] == 12.52
     assert data["total_trackings"] == 81
+    # the ledger keeps the raw float
+    assert out.data["average_response_time"] == 28.0395454545455
 
 
-def test_G1_nested_floats_in_rows_and_dicts_are_rounded_too(db):
+def test_G1_nested_floats_in_rows_and_dicts_are_rounded_in_what_the_model_is_sent(db):
     body = {"data": [{"ref": "A", "avg": 28.0395454545455}, {"ref": "B", "avg": 439.234541726966}],
             "summary": {"rate": 12.52408477842, "nested": {"x": 0.123456789}}}
-    data = _read(db, body).data
+    data = _sent(_read(db, body))
     assert [r["avg"] for r in data["data"]] == [28.04, 439.23]
     assert data["summary"]["rate"] == 12.52
     assert data["summary"]["nested"]["x"] == 0.12
@@ -83,16 +93,32 @@ def test_G1_nested_floats_in_rows_and_dicts_are_rounded_too(db):
 
 def test_G1_stored_precision_is_untouched(db):
     body = {"data": [{"ref": "A"}], "a": 12.3456, "b": 0.00125, "c": 1234.5, "d": 3, "e": "28.0395454545455"}
-    data = _read(db, body).data
+    data = _sent(_read(db, body))
     assert data["a"] == 12.3456 and data["b"] == 0.00125 and data["c"] == 1234.5
     assert data["d"] == 3 and data["e"] == "28.0395454545455"
 
 
-def test_G1_the_figure_check_sees_the_rounded_number(db):
-    data = _read(db, dict(SLA)).data
-    ledger = {"c1": {"name": NAME, "args": {}, "status": "ok", "data": data}}
-    assert verify_answer({"text": "It took 28.04 hours."}, ledger, "show")[0] == []
-    assert verify_answer({"text": "It took 28.0395 hours."}, ledger, "show")[0] == ["28.0395"]
+@pytest.mark.parametrize("text", ["28.04 hours", "28.0 hours", "28 hours", "12.5%"])
+def test_G1_the_figure_check_backs_roundings_of_the_raw_ledger_float(db, text):
+    out = _read(db, dict(SLA))
+    ledger = {"c1": {"name": NAME, "args": {}, "status": "ok", "data": out.data}}
+    assert verify_answer({"text": f"It took {text}."}, ledger, "show")[0] == []
+
+
+def test_G1_a_turn_answering_with_roundings_of_the_raw_float_keeps_its_reply():
+    """End to end through the loop: the model is sent 28.04, the ledger holds 28.0395..., the reply keeps 28.0 and 12.5%."""
+    from tests.chatbot.agent import test_agent_round7 as r7
+
+    reply = "Average response 28.0 hours, escalation 12.5%."
+    env = {"items": [{"avg": 28.0395454545455, "rate": 12.52408477842}], "has_result": True}
+    with blank_session() as session:
+        contact = r7.seed_agent_contact(session, slugs=("inventory.stock.view", "order_management.orders.view"))
+        provider = r7.Provider(
+            [r7.asks(r7.call(r7.STOCK, {"query": "x"}, "c1")), r7.answer6(reply), r7.answer6(reply, cid="a2")]
+        )
+        result = r7.run(session, contact, provider, r7.Mcp(env))
+    assert "(not verified)" not in result.reply_text, result.reply_text
+    assert result.reply_text == reply
 
 
 # ------------------------------------------------------------------ G4

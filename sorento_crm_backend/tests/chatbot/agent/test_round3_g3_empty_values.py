@@ -92,3 +92,14 @@ def test_G3_non_empty_rows_above_the_new_cap_are_still_cut_with_the_message(db):
     out = _read(db, body)
     assert out.status == "ok" and out.more > 0
     assert "next page" in out.message.lower() and str(out.more) in out.message
+
+
+def test_G3_a_positional_list_keeps_its_nulls_and_a_list_of_dicts_drops_emptied_ones(db):
+    body = {"data": [{"ref": "A"}], "labels": ["Jan", "Feb", "Mar"], "values": [10, None, 5],
+            "rows": [{"a": None}, {"b": 1}], "gone": None, "also": "", "list": [], "dict": {}}
+    data = _read(db, body).data
+    assert data["labels"] == ["Jan", "Feb", "Mar"]
+    assert data["values"] == [10, None, 5]
+    assert data["rows"] == [{"b": 1}]
+    for key in ("gone", "also", "list", "dict"):
+        assert key not in data, key
