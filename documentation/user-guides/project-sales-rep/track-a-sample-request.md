@@ -24,7 +24,8 @@ team. Once processing has started, only the team can cancel the request.
 The team can change its answer while the request is Processing or Customer confirmed. The page
 always shows the latest answer.
 
-In the **Sample Requests** list and on the project's **Samples Request** tab, the **Delivery**
+In the **Sample Requests** list (your own list too, cards and table), on **MY REQUESTS**, and on
+the project's **Samples Request** tab, the **Delivery**
 column shows the team's proposed date with a **New date** badge, or your requested date when the team can meet it.
 Sorting by **Delivery** uses the date shown.
 

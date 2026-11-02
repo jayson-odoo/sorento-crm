@@ -361,3 +361,25 @@ def test_a_linked_consignment_keeps_its_number_on_internal_save(world):
     assert res.status_code == 200, res.text
     assert res.json()["consignment_no"] == cg.so_number
     assert res.json()["po_no"] == "PO-9"
+
+
+def test_audit_rows_carry_values_not_the_two_id_columns(world):
+    """Crew browser pass: the trail shows values; who answered is the row's actor and the CG
+    shows as its number (`consignment_no`), so `date_answered_by` / `consignment_order_id` stay out."""
+    from app.models.audit import AuditLog
+
+    rid = _processing(world)
+    cg = _cg(world)
+    assert _link(world, rid, cg.id).status_code == 200
+    world.db.flush()
+    rows = (
+        world.db.query(AuditLog)
+        .filter(AuditLog.entity_type == "project_sample_requests", AuditLog.entity_id == rid)
+        .all()
+    )
+    assert rows, "the request is audited"
+    keys = set()
+    for row in rows:
+        keys |= set((row.old_values or {}).keys()) | set((row.new_values or {}).keys())
+    assert "date_feasible" in keys and "consignment_no" in keys
+    assert not {"date_answered_by", "consignment_order_id"} & keys

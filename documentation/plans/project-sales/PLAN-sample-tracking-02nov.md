@@ -1,6 +1,6 @@
 # PLAN: Sample request two-stage tracking (PS-SAMPLE-TRACKING)
 
-Status: Built, in review (PR #2098). Track: M lane (one additive migration), cloud.
+Status: Built, review fix round + crew browser-pass fixes landed (PR #2098). Track: M lane (one additive migration), cloud.
 UAC: `sample-tracking-02nov-acceptance-criteria.md`.
 
 ## Scope (owner rulings 2 Nov 2026)
@@ -86,6 +86,11 @@ UAC: `sample-tracking-02nov-acceptance-criteria.md`.
 - List and project tab: the Delivery column shows the proposed date with a New date badge. A Stage filter
   (multi-select) is in Filters.
 - Portal form: the Sample team answer line sits under Request Delivery Date (read-only).
+- The salesperson's own list (portal-style `SubmissionList`, cards + table) has a Delivery column /
+  card row with the New date badge (crew browser pass, AC-ST-04).
+- Audit trail: dates read DD/MM/YYYY and stamps in Malaysia time (`lib/audit-fields.ts`, every
+  trail); `date_answered_by` and `consignment_order_id` are kept out of the sample request's audit
+  (the row's actor and `consignment_no` carry them as values).
 - No Unlink button in the UI: it is a detach action (deferred-action rule); a wrong link is fixed by
   linking the right CG. The API still accepts `null`.
 

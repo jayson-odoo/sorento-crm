@@ -1,4 +1,4 @@
-import { parseDateTimeAsUTC } from './helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia, parseDateTimeAsUTC } from './helpers';
 import { isAwaitingReview } from './submission-status';
 
 /**
@@ -33,8 +33,15 @@ export function auditFieldLabel(key: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
+// Stored dates and naive-UTC stamps, as the backend serialises them.
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
+
 export function formatAuditValue(v: unknown): string {
   if (v === null || v === undefined || v === '') return '(empty)';
+  // A date reads in the app's format, a stamp in Malaysia time, never the raw UTC string.
+  if (typeof v === 'string' && ISO_DATE_RE.test(v)) return formatDateInMalaysia(v);
+  if (typeof v === 'string' && ISO_DATETIME_RE.test(v)) return formatDateTimeInMalaysia(v);
   if (typeof v === 'boolean') return v ? 'Yes' : 'No';
   if (Array.isArray(v) && v.every((x) => typeof x !== 'object' || x === null)) {
     return v.length ? v.map((x) => formatAuditValue(x)).join(', ') : '(empty)';

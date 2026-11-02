@@ -237,3 +237,13 @@ def _stamp_request_no(_mapper, connection, target) -> None:
     if getattr(target, "request_no", None):
         return
     target.request_no = next_request_no(connection, target.company_id)
+
+
+# PS-SAMPLE-TRACKING (crew browser pass): the audit trail shows values, never ids. Who answered
+# the date is the audit row's own actor, and the linked consignment shows as its number through
+# `consignment_no`, so the two id columns stay out of the trail.
+SampleRequest.__audit_columns__ = [
+    c.key
+    for c in SampleRequest.__table__.columns
+    if c.key not in ("date_answered_by", "consignment_order_id")
+]
