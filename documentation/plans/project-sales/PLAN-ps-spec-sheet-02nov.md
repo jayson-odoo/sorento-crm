@@ -1,6 +1,6 @@
 # PLAN: Project spec sheet from templates (PS-SPEC-SHEET)
 
-**Status:** Review (built; security PASS, reviewer re-check of round 2, browser pass done). Track: L (one
+**Status:** Waiting (built provisionally ahead of mock approval; owner reviewing mock v2; security PASS, reviewer re-check of round 2, cloud browser pass done, crew browser pass pending). No merge until the mock is approved. Track: L (one
 migration, new public print payload branch, new tab). PR #2103. UAC:
 `ps-spec-sheet-02nov-acceptance-criteria.md`. Card: `CARD-ps-spec-sheet-02nov.md`.
 
