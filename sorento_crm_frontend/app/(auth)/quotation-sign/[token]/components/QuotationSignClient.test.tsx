@@ -937,4 +937,38 @@ describe('QuotationSignClient cover card', () => {
     expect(screen.queryByText('Reference No.')).not.toBeInTheDocument();
     expect(screen.getAllByText('Quotation from')).toHaveLength(1);
   });
+
+  it('polish: the cover terms row carries every TERMS_HTML_CLASS token and no prose', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      withCover({
+        cover_rows: coverRows.map((r) =>
+          r.key === 'terms'
+            ? { ...r, html: '<p>CLAUSE A</p><p></p><ul><li>OUTER ITEM<ul><li>INNER ITEM</li></ul></li></ul>' }
+            : r,
+        ),
+      }),
+    );
+    renderPage();
+
+    const inner = await screen.findByText('INNER ITEM');
+    await expectTermsClass(inner);
+  });
 });
+
+/** The countersign terms row and the read view share one class constant (QUOTE-COVER-PAGE polish). */
+async function expectTermsClass(inner: HTMLElement) {
+  const loaders = import.meta.glob('/lib/terms-html.ts') as Record<string, () => Promise<{ TERMS_HTML_CLASS: string }>>;
+  const load = loaders['/lib/terms-html.ts'];
+  expect(load, 'lib/terms-html.ts must export TERMS_HTML_CLASS').toBeDefined();
+  const { TERMS_HTML_CLASS } = await load();
+  const tokens = String(TERMS_HTML_CLASS).split(/\s+/).filter(Boolean);
+  expect(tokens.length).toBeGreaterThan(0);
+  const chain: HTMLElement[] = [];
+  for (let el = inner.parentElement; el && el !== document.body && chain.length < 6; el = el.parentElement) {
+    chain.push(el);
+  }
+  expect(
+    chain.some((el) => tokens.every((token) => el.classList.contains(token))),
+  ).toBe(true);
+  expect(chain.some((el) => el.classList.contains('prose'))).toBe(false);
+}
