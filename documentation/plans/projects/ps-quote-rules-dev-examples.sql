@@ -36,7 +36,7 @@ select u.name as owner, s.name as superior, s2.name as superiors_superior,
 from users u
 left join users s on s.id = u.superior_id
 left join users s2 on s2.id = s.superior_id
-where u.status = 'active' and not u.is_trashed and exists (select 1 from projects.projects p where p.owner_user_id = u.id)
+where u.status = 'ACTIVE' and not u.is_trashed and exists (select 1 from projects.projects p where p.owner_user_id = u.id)
 order by projects_owned desc limit 20;
 
 -- 5. Users who hold the approve permission through a role (who can sit in the routing table).
@@ -46,7 +46,7 @@ join user_role_assignments ura on ura.user_id = u.id
 join user_role_permissions rp on rp.role_id = ura.role_id
 join user_permissions p on p.id = rp.permission_id and p.slug = 'projects.quotations.approve'
 join user_roles r on r.id = ura.role_id
-where u.status = 'active' and not u.is_trashed order by u.name;
+where u.status = 'ACTIVE' and not u.is_trashed order by u.name;
 
 -- 6. How often a line is priced below its list price today (Q8 volume).
 select count(*) filter (where l.unit_price < l.list_price_snapshot) as below_list,
