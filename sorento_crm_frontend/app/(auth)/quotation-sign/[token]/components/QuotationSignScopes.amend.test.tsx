@@ -110,4 +110,36 @@ describe('QuotationSignScopes, fix round 2', () => {
     expect(amountOf('3')).toMatch(/Removal accepted/);
     expect(amountOf('4')).toMatch(/6,000\.00/);
   });
+
+  it('keeps the unit in a QTY cell while a suggestion on it is open', () => {
+    // Crew pass on PRJQ-2026-0005-R2: the unit dropped out of QTY once a suggestion was open.
+    const amendment = {
+      id: 'req-2',
+      status: 'open',
+      submitted_at: '2026-10-30T06:05:00',
+      requester_name: 'Buyer A',
+      note: null,
+      rows: [row('l1', 'quantity', '110', 'pending')],
+    } as unknown as QuotationSignAmendment;
+    render(
+      <QuotationSignScopes
+        scopes={[
+          {
+            scope_label: 'Sanitary ware',
+            scope_total: '73450.00',
+            columns: SIGN_COLUMNS,
+            lines: [line('l1', '1', { uom: 'SET' }), ...LINES.slice(1)],
+          },
+        ]}
+        grandTotal="73450.00"
+        amendment={amendment}
+      />,
+    );
+    const qty = tr('1').querySelectorAll('td')[
+      SIGN_COLUMNS.findIndex((c) => c.key === 'qty')
+    ];
+    // The issued value struck through, the suggested one beneath, both with the unit.
+    expect(qty.querySelector('s')?.textContent).toBe('120 SET');
+    expect(qty.textContent).toContain('110 SET');
+  });
 });
