@@ -224,7 +224,11 @@ function LabelEditor({
   const [over, setOver] = React.useState(false);
   React.useEffect(() => setValue(label), [label]);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
-  React.useEffect(() => {
+  /** Set by the focus a click made, so that click's mouseup does not drop the selection. */
+  const justFocused = React.useRef(false);
+  // Layout effect: a label just added takes the caret before the browser paints, not a frame
+  // later, so typing that starts at once lands in it.
+  React.useLayoutEffect(() => {
     if (matrix.focusKey === itemKey && inputRef.current) {
       inputRef.current.focus();
       inputRef.current.select();
@@ -322,7 +326,21 @@ function LabelEditor({
           title={value}
           className="h-7 w-full min-w-0 flex-1 px-1 text-center text-xs font-medium"
           onChange={(event) => setValue(event.target.value)}
-          onBlur={commit}
+          // Renaming replaces the label: select it all in the focus handler itself, so the
+          // first keystroke after a click already types over it (no timer, no frame).
+          onMouseDown={(event) => {
+            justFocused.current = document.activeElement !== event.currentTarget;
+          }}
+          onFocus={(event) => event.currentTarget.select()}
+          onMouseUp={(event) => {
+            if (!justFocused.current) return;
+            justFocused.current = false;
+            event.preventDefault();
+          }}
+          onBlur={() => {
+            justFocused.current = false;
+            commit();
+          }}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault();
@@ -561,18 +579,25 @@ export function MatrixAmountFooterLines({ total }: { total: string | null }) {
 
 const NUMERIC = 'px-1 align-top';
 
-/** A leaf column's narrowest width while its label is an input: room for grip, ~8 characters, x. */
-export const EDIT_LEAF_MIN_WIDTH = 104;
-const EDIT_LEAF_MAX_WIDTH = 200;
+/**
+ * What a label box costs besides its text, measured off the header cell: input padding and
+ * border (10px), the 12px grip and the 12px x with their two 2px gaps, and the cell's own 8px
+ * padding, rounded up for the resize handle.
+ */
+export const EDIT_LABEL_CHROME_PX = 52;
+/** One character at text-xs, font-medium, uppercase (the header's case): "BALCONY" is ~56px. */
+export const EDIT_LABEL_CHAR_PX = 8;
+/** A leaf column's narrowest width while its label is an input: "BALCONY" / "KITCHEN" in full. */
+export const EDIT_LEAF_MIN_WIDTH = 120;
+const EDIT_LEAF_MAX_WIDTH = 220;
 
 /**
  * A leaf column's width. Read: a number fits 72px. Edit: the label is an input between a grip
- * and an x, so the column grows with the label (about 7px a character at text-xs, plus 44px for
- * the grip, the x and padding), never under `EDIT_LEAF_MIN_WIDTH`.
+ * and an x, so the column grows with the label, never under `EDIT_LEAF_MIN_WIDTH`.
  */
 export function leafColumnWidth(label: string, editable: boolean, rowSpanHeader = false): number {
   if (!editable) return rowSpanHeader ? 96 : 72;
-  const fit = 44 + label.trim().length * 7;
+  const fit = EDIT_LABEL_CHROME_PX + label.trim().length * EDIT_LABEL_CHAR_PX;
   return Math.min(EDIT_LEAF_MAX_WIDTH, Math.max(EDIT_LEAF_MIN_WIDTH + (rowSpanHeader ? 8 : 0), fit));
 }
 

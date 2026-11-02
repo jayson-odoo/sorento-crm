@@ -180,9 +180,16 @@ function LineAmount({ line }: { line: QuotationSignLine }) {
   return <span className="tabular-nums">{lineMoney(line.amount)}</span>;
 }
 
-/** The item as the customer reads it: its own label, else its description, else its position. */
+/** The item as the customer reads it: its description, else its code, else its position. */
 function itemName(line: QuotationSignLine, position: number): string {
-  return line.item_label?.trim() || line.description?.trim() || `Item ${position + 1}`;
+  // Not `item_label`: since #2106 that is the printed item NUMBER ("1"), which the ITEM column
+  // shows, and "Feedback on 1" names nothing a customer would recognise (fix round 2, B2).
+  return line.description?.trim() || line.product_code?.trim() || `Item ${position + 1}`;
+}
+
+/** Brand and code under the item's name in the grid, muted (mock v3 frame 4). */
+function itemDetail(line: QuotationSignLine): string {
+  return [line.brand?.trim(), line.product_code?.trim()].filter(Boolean).join(' · ');
 }
 
 /** The amber dot by an item that already has feedback (mock v3 frame 4). */
@@ -427,6 +434,11 @@ function MatrixScopeTable({
                       {name}
                       {sent.items.has(line.id) && <SentDot />}
                     </span>
+                    {itemDetail(line) && itemDetail(line) !== name && (
+                      <span className="block break-words text-xs text-muted-foreground">
+                        {itemDetail(line)}
+                      </span>
+                    )}
                   </td>
                   {photo && (
                     <td className="border-t border-border px-2 py-2">

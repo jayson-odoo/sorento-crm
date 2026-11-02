@@ -52,7 +52,12 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 import { COLUMN_REMOVAL_MS, QuotationLinesGrid, type QuotationLinesMatrix } from './QuotationLinesGrid';
-import { EDIT_LEAF_MIN_WIDTH, leafColumnWidth } from './QuotationMatrixColumns';
+import {
+  EDIT_LABEL_CHAR_PX,
+  EDIT_LABEL_CHROME_PX,
+  EDIT_LEAF_MIN_WIDTH,
+  leafColumnWidth,
+} from './QuotationMatrixColumns';
 
 function col(key: string, label: string) {
   return { key, label };
@@ -527,10 +532,36 @@ describe('readable column labels in edit mode (browser pass finding)', () => {
     expect(widthOf('Column Management office')).toBeGreaterThan(widthOf('Column BA'));
   });
 
+  it('fits BALCONY and KITCHEN in full while editing (fix round 2: they read "BALC")', () => {
+    expect(EDIT_LEAF_MIN_WIDTH).toBeGreaterThanOrEqual(120);
+    for (const label of ['BALCONY', 'KITCHEN', 'Balcony', 'Kitchen']) {
+      const inputRoom = leafColumnWidth(label, true) - EDIT_LABEL_CHROME_PX;
+      // Uppercase at text-xs, font-medium: about 8px a character.
+      expect(inputRoom).toBeGreaterThanOrEqual(label.length * 8);
+    }
+    expect(EDIT_LABEL_CHAR_PX).toBeGreaterThanOrEqual(8);
+  });
+
   it('leaves the read widths as they were', () => {
     expect(leafColumnWidth('Balcony', false)).toBe(72);
     expect(leafColumnWidth('Break tank', false, true)).toBe(96);
     expect(leafColumnWidth('BA', true)).toBe(EDIT_LEAF_MIN_WIDTH);
-    expect(leafColumnWidth('x'.repeat(60), true)).toBe(200);
+    expect(leafColumnWidth('x'.repeat(60), true)).toBe(220);
+  });
+});
+
+describe('renaming selects the label at once (fix round 2: selected ~0.4s late)', () => {
+  it('selects the whole label in the focus handler itself, and a click does not undo it', () => {
+    renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange: vi.fn() } });
+    const input = screen.getAllByRole('textbox', { name: 'Column Balcony' })[0] as HTMLInputElement;
+    fireEvent.mouseDown(input);
+    fireEvent.focus(input);
+    // Synchronously: no timer, no animation frame, nothing to await.
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 'Balcony'.length]);
+    const mouseUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true });
+    input.dispatchEvent(mouseUp);
+    // The click that focused it must not drop the caret into the text and lose the selection.
+    expect(mouseUp.defaultPrevented).toBe(true);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 'Balcony'.length]);
   });
 });

@@ -62,9 +62,13 @@ function signLine(overrides: Partial<QuotationSignLine> = {}): QuotationSignLine
   };
 }
 
+// Since #2106 the server sends the PRINTED item number as item_label.
 const SINK = signLine({
   id: 'line-sink',
-  item_label: 'KS903 kitchen sink',
+  item_label: '1',
+  description: 'KS903 kitchen sink',
+  product_code: 'KS903',
+  brand: 'Cabana',
   quantity: '503',
   unit_price: '310.00',
   amount: '155930.00',
@@ -221,7 +225,7 @@ describe('the sign page grid and feedback (PS-QUOTE-MATRIX)', () => {
   it('sends an item note with a price hint on a scope without columns', async () => {
     renderPage();
     await openScope('GUARD HOUSE');
-    fireEvent.click(screen.getByRole('button', { name: 'Leave feedback on 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave feedback on Water closet' }));
 
     const dialog = await screen.findByRole('dialog');
     fireEvent.click(within(dialog).getByLabelText('Price'));
@@ -240,7 +244,7 @@ describe('the sign page grid and feedback (PS-QUOTE-MATRIX)', () => {
   it('refuses an empty note and says why', async () => {
     renderPage();
     await openScope('GUARD HOUSE');
-    fireEvent.click(screen.getByRole('button', { name: 'Leave feedback on 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Leave feedback on Water closet' }));
     const dialog = await screen.findByRole('dialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Send feedback' }));
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('Write a note.');
@@ -291,5 +295,27 @@ describe('the sign page grid and feedback (PS-QUOTE-MATRIX)', () => {
     await openScope('UNIT');
     expect(screen.queryByRole('button', { name: 'Leave a note' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Leave feedback on/ })).toBeNull();
+  });
+});
+
+describe('lines named by description, not the printed number (fix round 2, B2)', () => {
+  it('names the grid row and the feedback dialog by description; the plain ITEM cell keeps "1"', async () => {
+    renderPage();
+    await openScope('UNIT');
+    const grid = screen.getAllByTestId('quotation-sign-scroller')[0];
+    const row = within(grid).getByText('KS903 kitchen sink').closest('tr') as HTMLElement;
+    // Brand and code as a muted second line, as mock v3 frame 4.
+    expect(within(row).getByText('Cabana · KS903')).toBeInTheDocument();
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Leave feedback on KS903 kitchen sink' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'KS903 kitchen sink' })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    await openScope('GUARD HOUSE');
+    const plain = screen.getAllByTestId('quotation-sign-scroller')[1];
+    const first = within(plain).getAllByRole('row')[1];
+    expect(within(first).getAllByRole('cell')[0]).toHaveTextContent(/^1$/);
+    expect(within(first).getByRole('button', { name: 'Leave feedback on Water closet' })).toBeInTheDocument();
   });
 });

@@ -19,6 +19,7 @@ import {
 import {
   useQuotationDocument,
   useQuotationDocumentMutations,
+  useQuotationFeedback,
   useQuotationLetterTemplates,
 } from '../../../_shared/hooks/useQuotationDocuments';
 import type {
@@ -30,6 +31,7 @@ import type {
 import type {
   Project,
   ProjectQuotation,
+  QuotationFeedbackRow,
   StagedQuotationLine,
 } from '../../../_shared/types/project.types';
 import { OutcomePill } from '../../../_shared/components/OutcomePill';
@@ -244,6 +246,16 @@ export function QuotationFormClient({
   // A grid column removal counting down, or a column write on its way (PS-QUOTE-MATRIX): Save
   // waits, because lines sent across a column write 422 on cells under a removed key.
   const [columnsBusy, setColumnsBusy] = React.useState(false);
+  // Open customer feedback, marked on the lines being edited (PS-QUOTE-MATRIX R20, E6): the
+  // salesperson acts on a note in this form, so it has to show here, not only on the read.
+  const feedbackQuery = useQuotationFeedback(projectId, documentId);
+  const openFeedback = React.useMemo(
+    () =>
+      (feedbackQuery.data?.requests ?? []).flatMap((request) =>
+        request.rows.filter((row) => !row.handled_at),
+      ),
+    [feedbackQuery.data],
+  );
   /** Anything typed since the page opened. Drives the warning on leaving the site. */
   const [dirty, setDirty] = React.useState(false);
 
@@ -584,6 +596,7 @@ export function QuotationFormClient({
                 scopeTotal={scopeTotal}
                 edit={edit}
                 onColumnsBusy={setColumnsBusy}
+                feedback={openFeedback}
                 canRemoveSaved={canRemoveSaved}
                 onAddScope={() => setAddingScope(true)}
                 onEditScope={setEditingScopeKey}
@@ -760,6 +773,7 @@ function FormLines({
   scopeTotal,
   edit,
   onColumnsBusy,
+  feedback,
   canRemoveSaved,
   onAddScope,
   onEditScope,
@@ -774,6 +788,8 @@ function FormLines({
   scopeTotal: (scope: FormScope) => string;
   edit: ReturnType<typeof useQuotationEditSession>;
   onColumnsBusy: (busy: boolean) => void;
+  /** Open customer feedback on this document: marked on the draft being edited (R20). */
+  feedback: QuotationFeedbackRow[];
   canRemoveSaved: boolean;
   onAddScope: () => void;
   onEditScope: (key: string) => void;
@@ -899,6 +915,7 @@ function FormLines({
                 quotation={savedRow}
                 seriesId={active.series_id || null}
                 edit={scopeEditing}
+                feedback={feedback}
                 // Copy columns from: the document's other SAVED scopes (an unsaved one has none).
                 siblingScopes={scopes
                   .filter((scope) => scope.id && scope.id !== active.id)

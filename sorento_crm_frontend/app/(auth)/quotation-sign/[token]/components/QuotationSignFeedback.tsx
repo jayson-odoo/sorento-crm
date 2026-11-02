@@ -75,7 +75,7 @@ export function FeedbackDialog({
     <Dialog open onOpenChange={(next) => !next && !sending && onClose()}>
       <DialogContent className="max-h-[90dvh] w-[calc(100vw-2rem)] max-w-md overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Feedback</DialogTitle>
+          <DialogTitle className="break-words">{target.itemLabel}</DialogTitle>
         </DialogHeader>
         <DialogBody className="space-y-3">
           <p className="break-words text-sm text-muted-foreground" data-testid="feedback-where">

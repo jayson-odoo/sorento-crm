@@ -163,9 +163,10 @@ describe('QuotationSignScopes columns', () => {
     );
     expect(headers()).toHaveLength(SIGN_COLUMNS_WITH_IMAGE.length + 1);
     expect(screen.getByAltText('Product photo, line 1')).toBeInTheDocument();
-    screen.getByRole('button', { name: 'Leave feedback on 1' }).click();
+    // Named by its description, never by the printed number the ITEM column shows.
+    screen.getByRole('button', { name: 'Leave feedback on Item 1' }).click();
     expect(onFeedback).toHaveBeenCalledWith(
-      expect.objectContaining({ itemLabel: '1', scopeLabel: 'Sanitary ware' }),
+      expect.objectContaining({ itemLabel: 'Item 1', scopeLabel: 'Sanitary ware' }),
     );
   });
 });

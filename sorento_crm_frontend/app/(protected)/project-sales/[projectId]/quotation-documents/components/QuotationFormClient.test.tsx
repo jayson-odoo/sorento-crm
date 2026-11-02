@@ -66,6 +66,7 @@ const createQuotationDocument = vi.fn();
 const updateQuotationDocument = vi.fn();
 const getQuotationDocument = vi.fn();
 const getQuotationLetterTemplates = vi.fn();
+const getQuotationFeedback = vi.fn();
 vi.mock(
   '../../../_shared/services/quotationDocumentService',
   async (importOriginal) => {
@@ -83,6 +84,7 @@ vi.mock(
         getQuotationDocument(...args),
       getQuotationLetterTemplates: (...args: unknown[]) =>
         getQuotationLetterTemplates(...args),
+      getQuotationFeedback: (...args: unknown[]) => getQuotationFeedback(...args),
     };
   },
 );
@@ -1371,5 +1373,55 @@ describe('QuotationFormClient cover page fields', () => {
 
     expect(await screen.findByText('Saved Creator')).toBeInTheDocument();
     expect(screen.queryByText('Wrong Project Owner')).not.toBeInTheDocument();
+  });
+});
+
+describe('QuotationFormClient: open feedback on the revision-2 draft (PS-QUOTE-MATRIX fix round 2)', () => {
+  it('marks the draft line the v1 note names, while it is being edited', async () => {
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v1', version_no: 1, is_current: false, is_editable: false, is_issued: true }),
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true }),
+    ]);
+    listQuotationLines.mockImplementation(async (versionId: string) =>
+      versionId === 'v1'
+        ? [{ ...LINE, id: 'l1', version_id: 'v1' }]
+        : [{ ...LINE, id: 'l1-v2', version_id: 'v2' }],
+    );
+    getQuotationFeedback.mockResolvedValue({
+      open_count: 1,
+      requests: [
+        {
+          id: 'r1',
+          issue_label: 'Rev A',
+          submitted_at: null,
+          requester_name: null,
+          note: null,
+          rows: [
+            {
+              id: 'f1',
+              line_id: 'l1',
+              scope_id: 'q1',
+              scope_label: 'Townhouse',
+              line_description: 'Wall-hung WC',
+              cell_key: null,
+              cell_label: null,
+              kind: 'note',
+              value_from: null,
+              value_to: null,
+              model: null,
+              note: 'Check the WC',
+              handled_at: null,
+              handled_by_name: null,
+            },
+          ],
+        },
+      ],
+    });
+    renderForm('d1');
+    const card = await openLines('Townhouse');
+    await within(card).findByRole('textbox', { name: 'Qty on SRT-WC-01' });
+
+    expect(await screen.findByTestId('line-feedback-dot')).toBeInTheDocument();
+    expect(getQuotationFeedback).toHaveBeenCalledWith('p1', 'd1');
   });
 });
