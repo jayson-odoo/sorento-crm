@@ -1,6 +1,6 @@
 # PLAN: own email switch per project-sales email + minimum price wording
 
-Status: in progress (small fix track: under ~300 lines, no migration, no RBAC change, no new ingest)
+Status: in review, PR #2089 (small fix track: under ~300 lines, no migration, no RBAC change, no new ingest)
 
 ## Journey
 
@@ -31,3 +31,14 @@ lazily by `_resolve_event_config`.
 `tests/test_project_email_switches.py`: resolution of the three keys, registry entries exist and
 default on, each switch off cancels only its own email and keeps the in-app Notification, and the
 generic switch off no longer cancels these three.
+
+## Out of scope (crew ruling 2 Nov: possible follow-up)
+
+Admin-only "floor" wording stays for now: the Project Sales Admin > Price Floors screens (menu
+entry, page header, "Floor" column, detail page title, back link and toasts) and the
+"Set a floor for this product" button on the product page's Minimum price panel.
+
+## Evidence
+
+`evidence-project-email-switches-2nov/`: Email Event Configs at 1280 and 375 showing the three
+rows, the below-minimum-price switch turned off, and the minimum price dialog at 1280 and 375.

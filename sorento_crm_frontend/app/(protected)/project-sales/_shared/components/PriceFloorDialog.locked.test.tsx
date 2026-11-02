@@ -149,3 +149,37 @@ describe('PriceFloorDialog with a locked target', () => {
     expect(document.body.textContent ?? '').not.toMatch(/floor/i);
   });
 });
+
+describe('PriceFloorDialog without a locked target', () => {
+  // Owner ruling 1 Nov: "minimum price", never "floor", on anything a user reads.
+  it('says minimum price when adding a new rule', () => {
+    renderDialog(<PriceFloorDialog rule={null} onDone={() => {}} />);
+
+    expect(screen.getByText('Add a minimum price')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add minimum price' })).toBeTruthy();
+    expect(document.body.textContent ?? '').not.toMatch(/floor/i);
+  });
+
+  it('says minimum price when editing, including the move hint', () => {
+    renderDialog(
+      <PriceFloorDialog
+        rule={{
+          id: 'r-cat',
+          product_id: null,
+          product_code: null,
+          mode: 'percent',
+          value: '70',
+          is_active: true,
+          level: 'company',
+        }}
+        onDone={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('Edit minimum price')).toBeTruthy();
+    expect(
+      screen.getByText('To move this minimum price to a different target, delete it and add a new one.'),
+    ).toBeTruthy();
+    expect(document.body.textContent ?? '').not.toMatch(/floor/i);
+  });
+});

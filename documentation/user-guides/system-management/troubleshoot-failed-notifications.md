@@ -45,7 +45,7 @@ Three project sales emails have their own row on **[Email Event Configs](/system
 * **Project sales: quotation approval request** - to quotation approvers when a quotation is sent for approval.
 * **Project sales: secondary lead registered** - to the project owner and managers when a colleague registers as secondary lead.
 
-All three start **Enabled**. Turning one off stops only that email: the bell notification still arrives, a quotation approval request still goes out on WhatsApp, and a quotation below its minimum price still needs a manager's approval before it can be issued. **Generic notification delivery** no longer governs these three; it still covers the other project mails (quotation approved or rejected, customer changes requested, reassigned).
+All three start **Enabled**. Turning one off stops only that email: the bell notification still arrives, a quotation approval request still goes out on WhatsApp, and a quotation below its minimum price still needs a manager's approval before it can be issued. **Generic notification delivery** no longer governs these three; it still covers the other project mails, for example quotation approved, rejected or withdrawn, customer changes requested, amendment requested, PO mismatch and reassigned.
 
 ---
 

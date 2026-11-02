@@ -145,7 +145,8 @@ export function PriceFloorDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>
+          {/* pr-6 keeps the longer "minimum price" title clear of the close button at 375px. */}
+          <DialogTitle className="pr-6">
             {lockedTarget
               ? `${isEdit ? 'Change' : 'Set'} the minimum price for ${lockedTarget.label}`
               : isEdit
