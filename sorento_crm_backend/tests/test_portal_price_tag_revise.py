@@ -1425,3 +1425,50 @@ def test_ac_s6_10_print_excluded_survives_when_the_same_product_is_revised():
         )
         assert len(fresh_line.tags) == 1
         assert fresh_line.tags[0].print_excluded is True
+
+
+# ---------------------------------------------------------------------------
+# PRICETAG-TEMPLATE-PER-PRODUCT AC-9 / R7: a revise keeps the template pick
+# when it does not send one, and a many-template line still needs a pick.
+# ---------------------------------------------------------------------------
+
+
+def test_revise_without_the_field_keeps_the_template_pick():
+    from app.models.price_tag import PriceTagRequestLine
+    from tests.test_product_tag_templates import _link, _template
+
+    with blank_session() as db:
+        contact, product_id, row = _setup(db)
+        a = _template(db, "A")
+        b = _template(db, "B")
+        _link(db, product_id, a, b)
+        line = db.query(PriceTagRequestLine).filter_by(request_id=row.id).one()
+        line.tag_template_id = b
+        db.commit()
+
+        PortalRevisionService(db).revise(
+            _seed_token(contact), "price_tag_request", str(row.id),
+            _revise_payload(product_id), "Quantity only", 0,
+        )
+
+        db.expire_all()
+        line = db.query(PriceTagRequestLine).filter_by(request_id=row.id).one()
+        assert line.tag_template_id == b
+
+
+def test_revise_of_a_many_template_line_with_no_pick_is_refused():
+    from app.services.error_handler import AppException
+    from tests.test_product_tag_templates import _link, _template
+
+    with blank_session() as db:
+        contact, product_id, row = _setup(db)
+        _link(db, product_id, _template(db, "A"), _template(db, "B"))
+        payload = {
+            "debtor_name": "ZZT Revised Dealer",
+            "products": [{"product_id": product_id, "quantity": 2, "tag_template_id": None}],
+        }
+        with pytest.raises(AppException) as refused:
+            PortalRevisionService(db).revise(
+                _seed_token(contact), "price_tag_request", str(row.id), payload, "No pick", 0,
+            )
+        assert refused.value.code == "TAG_TEMPLATE_REQUIRED"

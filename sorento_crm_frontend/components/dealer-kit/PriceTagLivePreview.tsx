@@ -143,7 +143,7 @@ export function PriceTagLivePreview({ lines, priceMode, lookupTagPreview, docNum
       emptyMessage={failed ? 'Preview unavailable' : 'No tag template yet'}
       emptyHint={
         failed
-          ? 'The preview could not be drawn. Your request is not affected.'
+          ? 'The preview could not be drawn.'
           : 'Marketing has not published a tag template these items can use.'
       }
     />

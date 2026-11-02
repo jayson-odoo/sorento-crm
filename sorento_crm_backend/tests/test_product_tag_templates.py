@@ -654,3 +654,65 @@ def test_deferred_remove_unlinks_the_matching_products(env):
     )
     assert result == {"changed": 1}
     assert {r.template_id for r in db.query(ProductTagTemplate).filter_by(product_id=p1)} == {keep}
+
+
+@pytest.mark.parametrize("price_mode", ["list", "selling"])
+def test_preview_never_prices_a_promotion_outside_the_contacts_audience(env, price_mode):
+    """Security review: the resolver prices with the staff viewer, so a promotion
+    the contact may not see must be dropped before it, in BOTH modes."""
+    from app.models.product import Product
+    from tests.test_price_tag_line_pricing import _promotion
+
+    db, c, _ = env
+    ref = _reference(db)
+    product_id = _product(db, ref)
+    _template(db, "Any")
+    product = db.query(Product).filter(Product.id == product_id).one()
+    hidden = _promotion(db, [(product, "40.00")], access_levels=["zzt_nobody"])
+
+    out = c.post(
+        f"{PORTAL}/lookups/tag-preview",
+        json={
+            "price_mode": price_mode,
+            "lines": [
+                {"key": "k", "line_type": "product", "product_id": product_id,
+                 "promotion_id": hidden.id}
+            ],
+        },
+    ).json()
+    assert out["lines"], out
+    assert float(out["lines"][0]["sell_price"] or 100) != 40.0
+    assert "40" not in str(out["lines"][0].get("sell_price"))
+
+
+def test_deferred_product_unlink_removes_only_the_named_links(env):
+    """`product.unlink_tag_templates` (the product card's untick, a parked unlink)."""
+    from app.models.dealer_kit import ProductTagTemplate
+    import app.services.record_actions  # noqa: F401  (registers the actions)
+    from app.services.form_action_registry import get_action
+
+    db, c, _ = env
+    ref = _reference(db)
+    product = _product(db, ref)
+    a = _template(db, "A")
+    b = _template(db, "B")
+    _link(db, product, a, b)
+
+    action = get_action("product.unlink_tag_templates")
+    assert action.permission == "dealer_kit.tag_templates.manage"
+    assert action.execute(db, {"entity_id": product, "template_ids": [a]}) == {"changed": 1}
+    assert {r.template_id for r in db.query(ProductTagTemplate).filter_by(product_id=product)} == {b}
+
+
+def test_product_lookup_is_scoped(env):
+    from app.models.base import set_company_scope
+
+    db, c, _ = env
+    ref = _reference(db)
+    product = _product(db, ref)
+    assert c.get(f"{DK}/products/{product}/tag-templates").status_code == 200
+    from app.services.dealer_kit import product_tag_template_service
+
+    set_company_scope(db, frozenset({"11111111-1111-1111-1111-111111111111"}))
+    assert product_tag_template_service.product_exists(db, product) is False
+    set_company_scope(db, frozenset({SORENTO}))

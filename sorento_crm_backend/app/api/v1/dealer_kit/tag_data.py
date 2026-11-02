@@ -153,11 +153,10 @@ def list_product_tag_templates(
     _user: dict = Depends(_VIEW),
 ):
     """The templates linked to this product (product page, Overview)."""
-    from app.models.product import Product
     from app.services.uuid_path_param import validate_uuid_path
 
     product_id = validate_uuid_path(product_id, resource="Product")
-    if db.query(Product.id).filter(Product.id == product_id).first() is None:
+    if not product_tag_template_service.product_exists(db, product_id):
         raise AppException(status_code=404, message="Product not found.", code="NOT_FOUND")
     return [
         ProductTagTemplateItem(**product_tag_template_service.template_item(t))

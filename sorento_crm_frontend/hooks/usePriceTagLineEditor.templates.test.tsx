@@ -59,4 +59,19 @@ describe('usePriceTagLineEditor templates', () => {
     expect(hook.result.current.lines[0].tag_template_id).toBeNull();
     expect(lookupProductTagTemplates).toHaveBeenCalledWith('p2');
   });
+
+  it('picking a template clears the row\'s missing-template message only', async () => {
+    const { hook } = setup(
+      [
+        { ...emptyDraftLine(), key: 'l1', product_id: 'p1', guard_error: 'Pick a tag template for this line.' },
+        { ...emptyDraftLine(), key: 'l2', product_id: 'p2', guard_error: 'X is already on this request.' },
+      ],
+      { p1: [opt('a'), opt('b')], p2: [opt('a'), opt('b')] },
+    );
+    await waitFor(() => expect(hook.result.current.lines[1].tag_templates_for).toBe('p2'));
+    act(() => hook.result.current.editor.chooseTemplate('l1', 'a'));
+    act(() => hook.result.current.editor.chooseTemplate('l2', 'a'));
+    expect(hook.result.current.lines[0].guard_error).toBeNull();
+    expect(hook.result.current.lines[1].guard_error).toBe('X is already on this request.');
+  });
 });

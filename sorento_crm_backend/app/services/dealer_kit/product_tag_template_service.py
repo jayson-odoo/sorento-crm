@@ -176,6 +176,33 @@ def set_product_templates(
     return linked_templates(db, product.id)
 
 
+def product_exists(db: Session, product_id: str) -> bool:
+    """In this session's scope: a product in another company reads as missing."""
+    pid = _uuid_or_none(product_id)
+    return bool(pid) and _scoped(db, Product).filter(Product.id == pid).first() is not None
+
+
+def unlink_product_templates(db: Session, product_id: str, template_ids: list[str]) -> dict:
+    """The product page's Remove, committed after its countdown (an unlink, so
+    it parks: ``product.unlink_tag_templates``). Only links of a product in
+    scope are touched; ids it does not hold are ignored."""
+    if not product_exists(db, product_id):
+        raise _not_found("Product")
+    ids = [tid for tid in (_uuid_or_none(t) for t in template_ids or []) if tid]
+    if not ids:
+        return {"changed": 0}
+    changed = (
+        db.query(ProductTagTemplate)
+        .filter(
+            ProductTagTemplate.product_id == _uuid_or_none(product_id),
+            ProductTagTemplate.template_id.in_(ids),
+        )
+        .delete(synchronize_session=False)
+    )
+    db.flush()
+    return {"changed": changed}
+
+
 # ---------------------------------------------------------------------------
 # Bulk assignment (Tag Templates list)
 # ---------------------------------------------------------------------------
@@ -489,7 +516,11 @@ def preview(db: Session, *, price_mode: str, lines: list[dict], viewer) -> dict:
         combo_id = _uuid_or_none(raw.get("combo_id"))
 
         basis = "list"
-        if selling:
+        # Run whenever a promotion is named, in BOTH modes (security review):
+        # the resolver below prices with the staff viewer, so a promotion
+        # outside this contact's audience must be dropped here, exactly as a
+        # real save refuses it, or its price would come back in `sell_price`.
+        if selling or promotion_id:
             pricing_row = line_pricing(
                 db,
                 lines=[

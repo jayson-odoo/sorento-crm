@@ -252,6 +252,35 @@ Versions are written when the design is saved, when the design is marked ready, 
 * SLA notifications for a price tag request name the request by its **PT-YYYYMM-NNNN** number and
   link to the request page.
 
+## Tag templates per product
+
+Each product can carry the tag templates it prints with. That decides what the salesperson sees
+on the request form and which template a tag starts from in the designer.
+
+* **One template linked**: every request line for the product uses it on its own.
+* **Two or more**: the salesperson picks one on the line before submitting.
+* **None**: nothing changes; the tag starts from the template whose family matches the product code,
+  as before.
+
+Only a **Live** (published) template counts. A linked template you unpublish stays linked but is
+not offered until you publish it again. Spec sheet templates are never offered here.
+
+**On one product**: open the product, **Overview** tab, card **Price tag templates**. Search and
+tick templates to link them; each one saves at once. Unticking one unlinks it after a short
+countdown with **Cancel**. Without the Tag
+Templates manage permission the card lists the templates read-only.
+
+**On many products at once**: open
+**[Dealer Kit → Room Designer → Tag Templates](/dealer-kit/tag-templates)** and click the
+**Assign to products** icon on the template's row. Pick any mix of **Brands**, **Categories**,
+**Item classes** and **Model families** (a product must match every kind you fill in, and any one
+value within a kind). The dialog counts the products that match and how many already have the
+template. **Add to N** links it to the rest. **Remove from N** unlinks it, with a countdown and
+**Cancel** before it happens.
+
+In the designer, a line whose request named a template opens on that template. **Use template...**
+still lists every template if you want a different one.
+
 ## Admin setup
 
 Three settings sit behind this flow, and all of them are an admin job, not a per-request one:

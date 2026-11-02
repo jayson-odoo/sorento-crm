@@ -116,6 +116,24 @@ Some products are sold as a catalogue package: a cabinet that goes out with a ta
 * **Quantity and Remarks stay per line**, not per part - marketing prints one tag per line. With a package chosen, that tag lists every option when you leave a choice open, and only your pick when you make one.
 * **Save Draft keeps all of it**: the package you chose, the parts, and the rows you left open. Once submitted, the read-only view lists the parts under each line and the warning, exactly as sent.
 
+### Tag template and Preview
+
+* **The tag's layout comes from the product.** A product marketing linked to one tag template uses
+  it on its own: the line shows *"Template: <name>"* under the item and there's nothing to choose.
+* **A product with more than one template** shows a **Tag template** select under the line, each
+  option with its print size (for example *80 x 50 mm*). Pick the one you want before you submit:
+  Submit with it empty shows *"Pick a tag template for this line."* on that row. Save Draft does not
+  ask.
+* **A product with no template linked**, and every set, shows no field; marketing's usual layout for
+  that kind of product is used.
+* **Preview** appears under the lines as soon as the first item is on the form. It draws each line's
+  tag with its template, the product's details and the price you chose (list price, the line's
+  promotion, or the price you typed), one tag per line, and redraws a moment after you change an
+  item, the price mode, a promotion, a typed price or the template. **Open** shows it full screen.
+  Nothing is sent to marketing until you submit.
+* A brand whose promotions carry no selling price shows its list price on the tag, in Selling price
+  mode too.
+
 ### Viewing a submitted price tag request
 
 Once submitted, the request shows the same four sections read-only, all open, with the Sales Order thumbnails still tappable to preview. From the moment marketing marks the design ready, a **Design** card sits above them all - reading it, asking for changes on it, approving and collecting are covered in [Review a price tag design, ask for changes, approve and collect](price-tag-request-review-and-collection.md). **A submitted price tag request can't be edited directly** - the same rule as a stock inquiry. Draft requests are the exception: a draft stays fully editable until you submit it.
