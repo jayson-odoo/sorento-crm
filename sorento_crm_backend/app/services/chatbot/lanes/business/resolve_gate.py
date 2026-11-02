@@ -1865,6 +1865,8 @@ def without_rows_of(resolved: dict[str, Any], kind: str) -> None:
 #: SUPPLIER-ASK: the domains an "outstanding for <supplier>" ask is parsed into ("outstanding"
 #: is an order word) and the entity hints that keep it a customer-side ask.
 SUPPLIER_SWITCH_DOMAINS = frozenset({"order", "sales"})
+#: Fix round on #2066: the domains whose list a named supplier filters (`unbound_supplier_refusal`).
+SUPPLIER_FETCH_DOMAINS = SUPPLIER_SWITCH_DOMAINS | {"purchase_order"}
 ORDER_PARTY_HINTS = frozenset(
     {"customer", "customer_order", "order", "order_number", "delivery_order", "sales_order", "customer_po_ref", "transporter"}
 )
@@ -1876,13 +1878,17 @@ SUPPLIER_NOT_FOUND_LINE = "Sorry, I couldn't find a supplier called \"{raw}\"."
 
 
 def unbound_supplier_refusal(
-    verdict: dict[str, Any], resolved: Any, asker_sees_suppliers: bool
+    verdict: dict[str, Any], resolved: Any, asker_sees_suppliers: bool, domains: Any
 ) -> str | None:
     """Fix round on #2066 (owner hand test, console turn 52faa07d): a supplier the message names is a filter the
     fetch must carry, so when it cannot be bound the turn says so instead of fetching with no supplier at all.
     Returns the refusal line, or None when the message names no supplier or a supplier row was bound (one row,
     or several for the picker). An asker `contracts.supplier_visible` refuses is told it is not under their
-    account; for one who may see suppliers, a word no supplier row matches is named back."""
+    account; for one who may see suppliers, a word no supplier row matches is named back. Only on the purchase_order
+    and order-side domains, where a supplier is the list's filter; elsewhere (stock, promotion) the word is dropped
+    as before and the rest of the turn is answered."""
+    if not set(jsc.array(domains)) & SUPPLIER_FETCH_DOMAINS:
+        return None
     named = [
         jsc.nullish_str(jsc.get(e, "raw")).strip() or jsc.nullish_str(jsc.get(e, "canonical_code")).strip()
         for e in jsc.array(verdict.get("entities"))
@@ -1900,17 +1906,14 @@ def unbound_supplier_refusal(
 
 
 def _holds_supplier_row(resolved: Any) -> bool:
-    """Whether the resolver's answer carries any supplier row: per token (`resolutions`), the AND answer
-    (`intersection`) or the per-kind map; the same places `without_rows_of` clears."""
+    """Whether the resolver's answer carries any supplier row: per token (`resolutions`) or the AND answer
+    (`intersection`, which `by_entity_type` is built from)."""
     if not isinstance(resolved, dict):
         return False
     rows: list[Any] = [*jsc.array(resolved.get("intersection"))]
     for resolution in jsc.array(resolved.get("resolutions")):
         if isinstance(resolution, dict):
             rows += jsc.array(resolution.get("matches"))
-    by_type = resolved.get("by_entity_type")
-    if isinstance(by_type, dict) and any(str(k).lower() == "supplier" and jsc.array(v) for k, v in by_type.items()):
-        return True
     return any(jsc.lower_or_empty(jsc.get(r, "entity_type")) == "supplier" for r in rows if isinstance(r, dict))
 
 

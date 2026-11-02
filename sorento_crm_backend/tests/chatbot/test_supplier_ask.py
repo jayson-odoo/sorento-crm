@@ -928,3 +928,20 @@ def test_a_supplier_word_nothing_binds_stops_the_fetch(session_factory, monkeypa
     assert not [a for n, a in _fetch_calls(captured) if not (n == PO_TOOL and a.get("supplier_ids"))], (
         reply, captured
     )
+    assert 'couldn\'t find a supplier called "zzqqxx"' in reply, reply
+
+
+def test_a_stray_supplier_hint_on_a_stock_ask_never_refuses_the_turn(session_factory, monkeypatch):
+    """The stop is for the lists a supplier filters (purchase_order, order, sales); a dealer's stock ask that the
+    parser also hinted a supplier on drops the word, as before, and is answered."""
+    _seed_suppliers(session_factory)
+    _seed_contact(session_factory, variables={})
+    qf = _parser_output(
+        domain_hint="inventory", intent_hint="check_stock", order_status=None,
+        entities=[
+            {"raw": "taiyang", "hint": "supplier", "canonical_code": None, "current_message": True, "confident": True},
+            {"raw": "basin", "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+        ],
+    )
+    reply, _captured = _turn(session_factory, monkeypatch, qf, "stock basin taiyang", attributes=("sales_orders.outstanding",))
+    assert SUPPLIER_REFUSAL not in reply, reply

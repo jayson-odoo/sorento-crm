@@ -215,7 +215,9 @@ class TestOffersEscalation:
         flag (staff read PO / PR numbers). V1-DOC-SCOPE slice 3 added one more data gate in
         `engine.py`: `customer_docs_hidden` (an unlinked contact that is not staff runs no
         customer DO probe). SUPPLIER-ASK added one data gate in `engine.py`: whether the asker
-        may see suppliers (`contracts.supplier_visible`). Another call in either file turns this red."""
+        may see suppliers (`contracts.supplier_visible`); its fix round on #2066 moved that gate onto the office
+        access type (`engine._asker_is_office_staff`), so it no longer reads the tier. Another call in either file
+        turns this red."""
         import ast
 
         root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
@@ -228,7 +230,7 @@ class TestOffersEscalation:
         assert calls == {
             "answer_bridge.py": 1,
             "turn/state.py": 1,
-            "engine.py": 4,
+            "engine.py": 3,
             "turn_runtime.py": 1,
         }, calls
 

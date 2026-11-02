@@ -6112,7 +6112,7 @@ def _run_stages_body(  # noqa: PLR0915
         # One staff check for the turn: the swap here and the resolver ctx below both read it.
         # Fix round on #2066 (console turn 52faa07d): "staff" here is the office ACCESS TYPE, the rule the
         # Supplier list itself uses (`_may_see_suppliers`), never `chatbot_profile.tier` (NULL on most office contacts).
-        asker_sees_suppliers = supplier_visible(
+        asker_sees_suppliers = SUPPLIER_GRANT in set(access.get("attributes") or []) and supplier_visible(
             access.get("attributes"), _asker_is_office_staff(
                 db, remembered_before.get("_contact_pk"), contact_respond_id, default_space_id(db)
             )
@@ -6959,7 +6959,9 @@ def _run_stages_body(  # noqa: PLR0915
 
             supplier_refusal = (
                 None if scope_refused
-                else unbound_supplier_refusal(verdict, (resolver_payload or {}).get("resolved"), asker_sees_suppliers)
+                else unbound_supplier_refusal(
+                    verdict, (resolver_payload or {}).get("resolved"), asker_sees_suppliers, plan.domains
+                )
             )
             if supplier_refusal:
                 account_question, scope_refused = supplier_refusal, True

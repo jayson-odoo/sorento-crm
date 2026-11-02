@@ -76,6 +76,9 @@ ALLOWED = {
     # `head.parser` and the engine's access check and wraps `trace.TurnTrace.record`, none of
     # which `/chat/turn` exposes. A developer tool, not core, not on any request path.
     "scripts/chat_latency_probe.py",
+    # SUPPLIER-ASK (#2066): measures the supplier span meaning floor offline over `head.lookup_lists` /
+    # `head.list_resolver` on a dev copy. A developer tool, not core, not on any request path.
+    "scripts/measure_supplier_span_floor.py",
     # EVAL-BENCH (#1745) live replay test: drives `replay.py live` through the real engine and
     # patches `engine`, `head.parser` and `lanes.ideate` directly to block the network and the
     # ideation offload; `/chat/turn` has no seam for those. Bench tooling, not core, not on a
