@@ -326,3 +326,17 @@ def test_s2_confirming_a_scan_over_the_quotation_asks_then_confirms_with_the_rea
     assert confirmed.status_code == 200, confirmed.text
     db.expire_all()
     assert pos.get_po(db, po.id).qty_over_reason == "Extra block"
+
+
+def test_racing_make_quotation_answers_409_not_500(env, monkeypatch):
+    """The second of two racing presses passes the service check and hits the unique index."""
+    from app.services import project_quotation_document_service as qdocs
+
+    client, db, _, _, project, document, scope, record = env
+    _win(db, scope)
+    db.commit()
+    assert _make(client, project, document, record).status_code == 201
+    monkeypatch.setattr(qdocs, "project_quotation", lambda *a, **k: None)
+    raced = _make(client, project, document, record)
+    assert raced.status_code == 409, raced.text
+    assert raced.json()["code"] == "project_has_quotation"

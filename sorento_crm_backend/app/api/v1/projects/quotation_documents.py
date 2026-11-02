@@ -420,10 +420,10 @@ def make_quotation_from_proposal(
         validate_uuid_path(payload.issue_id, resource="Revision")
         _editable_project(db, project_id, current_user)
         proposal = svc.get_document_or_404(db, project_id, document_id)
-        quotation = svc.make_quotation(
-            db, proposal=proposal, issue_id=payload.issue_id, actor_user_id=current_user["id"]
-        )
         try:
+            quotation = svc.make_quotation(
+                db, proposal=proposal, issue_id=payload.issue_id, actor_user_id=current_user["id"]
+            )
             db.commit()
         except IntegrityError:
             # Two presses racing past the service check: the one-quotation-per-project index

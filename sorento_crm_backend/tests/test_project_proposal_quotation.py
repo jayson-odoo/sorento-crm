@@ -679,3 +679,20 @@ def test_8c_superseded_po_lines_are_not_counted_towards_the_quoted_quantity():
         # No reason needed and nothing raised: only the live 6 of 10 remain.
         pos.enforce_qty_over(db, second, reason=None, actor_user_id=owner)
         assert second.qty_over_reason is None
+
+
+def test_2b_a_proposal_whose_earlier_revision_is_the_letter_r_keeps_lettering():
+    """Revision 18 is the LETTER "R"; only "R<number>" is the legacy chain."""
+    from app.services import project_quotation_document_service as qdocs
+
+    assert qdocs.revision_letter(18) == "R"
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        _price(db, scope, product, owner, "100.00")
+        first = _issue(db, document, owner)
+        first.revision_label = "R"
+        db.flush()
+
+        _reprice(db, scope, product, owner, unit_price="100.00", quantity=3)
+        second = _issue(db, document, owner)
+        assert second.revision_label == "B"
