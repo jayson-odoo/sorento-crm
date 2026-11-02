@@ -107,18 +107,30 @@ export function QuotationCoverLetterPanel({
       {onChange && onClosingChange && (
         <Card>
           <CardContent className="min-w-0 space-y-4 py-5">
-            <RichTextEditor
-              value={html ?? ''}
-              onChange={onChange}
-              placeholder="Intro text"
-              minHeight={140}
-            />
-            <RichTextEditor
-              value={closingHtml ?? ''}
-              onChange={onClosingChange}
-              placeholder="Closing text"
-              minHeight={140}
-            />
+            <div className="min-w-0 space-y-1.5">
+              <Label id="cover-intro-label" htmlFor="cover-intro">
+                Intro text
+              </Label>
+              <RichTextEditor
+                id="cover-intro"
+                aria-labelledby="cover-intro-label"
+                value={html ?? ''}
+                onChange={onChange}
+                minHeight={140}
+              />
+            </div>
+            <div className="min-w-0 space-y-1.5">
+              <Label id="cover-closing-label" htmlFor="cover-closing">
+                Closing text
+              </Label>
+              <RichTextEditor
+                id="cover-closing"
+                aria-labelledby="cover-closing-label"
+                value={closingHtml ?? ''}
+                onChange={onClosingChange}
+                minHeight={140}
+              />
+            </div>
           </CardContent>
         </Card>
       )}

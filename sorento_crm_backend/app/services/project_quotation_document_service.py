@@ -565,6 +565,16 @@ def current_issue(
     )
 
 
+def next_issue_no(db: Session, document_id: str) -> int:
+    """The revision number the next send of this document takes (R1 for a first send)."""
+    highest = (
+        db.query(func.max(ProjectQuotationIssue.issue_no))
+        .filter(ProjectQuotationIssue.document_id == document_id)
+        .scalar()
+    )
+    return 1 if highest is None else int(highest) + 1
+
+
 def issue(
     db: Session,
     *,
@@ -600,12 +610,7 @@ def issue(
     # nothing below its floor - the overwhelming majority - is not touched by this at all.
     approvals.assert_issuable(db, document)
 
-    highest = (
-        db.query(func.max(ProjectQuotationIssue.issue_no))
-        .filter(ProjectQuotationIssue.document_id == document.id)
-        .scalar()
-    )
-    issue_no = 1 if highest is None else int(highest) + 1
+    issue_no = next_issue_no(db, document.id)
 
     from app.services import project_quotation_template_service as templates
 
@@ -1588,16 +1593,7 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         else None
     )
 
-    company_name = None
-    company_logo_url = None
-    if document is not None and document.company_id:
-        from app.models.company import Company
-
-        company = (
-            db.query(Company).filter(Company.id == document.company_id).first()
-        )
-        company_name = company.name if company else None
-        company_logo_url = company.logo_url if company else None
+    sender = sender_of(db, document.company_id if document is not None else None)
 
     from app.services import quotation_amendment_service as amendments
 
@@ -1646,8 +1642,8 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         "issue_no": record.issue_no,
         "doc_date": document.doc_date if document else None,
         "subject_title": document.subject_title if document else None,
-        "sender_name": company_name,
-        "sender_logo_url": company_logo_url,
+        "sender_name": sender["sender_name"],
+        "sender_logo_url": sender["sender_logo_url"],
         "recipient_name": document.recipient_name_snapshot if document else None,
         "recipient_address": document.recipient_address_snapshot if document else None,
         "attn_name": document.attn_name if document else None,
@@ -1720,12 +1716,7 @@ def preview_cover(
             created_by=saved.created_by,
             company_id=saved.company_id,
         )
-        highest = (
-            db.query(func.max(ProjectQuotationIssue.issue_no))
-            .filter(ProjectQuotationIssue.document_id == saved.id)
-            .scalar()
-        )
-        issue_no = 1 if highest is None else int(highest) + 1
+        issue_no = next_issue_no(db, saved.id)
         total = document_total(db, saved)
     else:
         base = {field: None for field in _PREVIEW_FIELDS}

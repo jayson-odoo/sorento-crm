@@ -65,6 +65,15 @@ def list_merge_fields(
     return _envelope(templates.serialize_merge_fields())
 
 
+@router.get("/quotation-templates/cover-default")
+def get_cover_default(
+    _user: dict = Depends(require_permission(VIEW)),
+):
+    """The default cover design (the #2088 cover), the one source the designer's Add form starts
+    from. Declared before ``/{template_id}`` so the literal segment is not read as an id."""
+    return cover.default_design()
+
+
 @router.post("/quotation-templates/cover-preview", response_model=QuotationCoverPreviewResponse)
 def preview_cover_design(
     payload: QuotationDesignPreviewRequest,

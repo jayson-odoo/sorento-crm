@@ -8,6 +8,7 @@ import {
   activateQuotationTemplate,
   createQuotationTemplate,
   deactivateQuotationTemplate,
+  getCoverDefaultDesign,
   listMergeFields,
   listQuotationTemplates,
   previewCoverDesign,
@@ -36,6 +37,15 @@ export function useQuotationMergeFields() {
   });
 }
 
+/** The default cover design, from the server: the one source of the twelve rows. */
+export function useCoverDefaultDesign() {
+  return useQuery({
+    queryKey: [TEMPLATES_KEY, 'cover-default'],
+    queryFn: getCoverDefaultDesign,
+    staleTime: 5 * 60_000,
+  });
+}
+
 /** The designer's live preview. Settled for 400 ms so typing does not request per keystroke. */
 export function useCoverDesignPreview(design: CoverDesign, bodyHtml: string) {
   const settled = useDebouncedValue({ design, body_html: bodyHtml }, 400);
@@ -43,6 +53,7 @@ export function useCoverDesignPreview(design: CoverDesign, bodyHtml: string) {
     queryKey: [TEMPLATES_KEY, 'cover-preview', settled],
     queryFn: () => previewCoverDesign(settled),
     placeholderData: keepPreviousData,
+    retry: false,
   });
 }
 

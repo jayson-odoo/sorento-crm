@@ -37,32 +37,3 @@ export interface CoverDesign {
 }
 
 export const COVER_MAX_LABEL = 60;
-
-/** The twelve rows with the labels the #2088 cover prints, in its order. */
-export const COVER_ROW_LABELS: Record<string, string> = {
-  reference: 'Reference No.',
-  date: 'Date',
-  attn: 'Attn',
-  company: 'Company',
-  contact: 'Contact',
-  address: 'Add',
-  email: 'Email',
-  purpose: 'Quotation Purpose',
-  terms: 'Terms & Conditions',
-  payment_terms: 'Payment Terms',
-  validity: 'Validity',
-  prepared_by: 'Prepared By',
-};
-
-export function defaultCoverDesign(): CoverDesign {
-  return {
-    show_letterhead: true,
-    title: 'QUOTATION',
-    rows: Object.entries(COVER_ROW_LABELS).map(([key, label]) => ({
-      key,
-      shown: true,
-      label,
-    })),
-    closing_html: '',
-  };
-}

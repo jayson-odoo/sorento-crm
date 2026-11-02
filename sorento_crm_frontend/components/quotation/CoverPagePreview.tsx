@@ -40,21 +40,13 @@ export function CoverPagePreview({
   return (
     <div ref={box} className="w-full min-w-0">
       {cover ? (
+        // The page grows with its content (a long closing must stay visible); `zoom` scales the
+        // layout box too, so there is no fixed-height wrapper to clip it.
         <div
-          className="relative overflow-hidden bg-white shadow-sm ring-1 ring-border"
-          style={{ width: PAGE_WIDTH * scale, height: PAGE_HEIGHT * scale }}
+          className="bg-white p-[57px] text-black shadow-sm ring-1 ring-border"
+          style={{ width: PAGE_WIDTH, minHeight: PAGE_HEIGHT, zoom: scale }}
         >
-          <div
-            style={{
-              width: PAGE_WIDTH,
-              height: PAGE_HEIGHT,
-              transform: `scale(${scale})`,
-              transformOrigin: 'top left',
-            }}
-            className="p-[57px] text-black"
-          >
-            <CoverPageCard cover={cover} testId="cover-page-preview" wide />
-          </div>
+          <CoverPageCard cover={cover} testId="cover-page-preview" wide />
         </div>
       ) : (
         isLoading && <Skeleton className="h-64 w-full" />

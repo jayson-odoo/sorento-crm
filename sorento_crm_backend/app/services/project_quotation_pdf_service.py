@@ -599,8 +599,8 @@ def _scope_html(
 """
 
 
-def _cover_html(rows: List[Dict[str, Any]], letterhead: str) -> str:
-    """Page 1 (layout 2): letterhead, the title and the label/value rows of ``cover_rows``."""
+def _cover_row_html(rows: List[Dict[str, Any]]) -> List[str]:
+    """The label/value table rows of ``cover_rows``, shared by the layout 2 and layout 3 covers."""
     body: List[str] = []
     for row in rows:
         if row["key"] == "terms":
@@ -609,6 +609,12 @@ def _cover_html(rows: List[Dict[str, Any]], letterhead: str) -> str:
             value = "<br/>".join(_cell(row["text"]).splitlines())
         label = escape(f'{row["label"].upper()}:')
         body.append(f"<tr><th>{label}</th><td>{value}</td></tr>")
+    return body
+
+
+def _cover_html(rows: List[Dict[str, Any]], letterhead: str) -> str:
+    """Page 1 (layout 2): letterhead, the title and the label/value rows of ``cover_rows``."""
+    body = _cover_row_html(rows)
     return f"""
   <section class="cover">
     <div class="cover-top">{letterhead}</div>
@@ -623,14 +629,7 @@ def _designed_cover_html(
 ) -> str:
     """Page 1 (layout 3): the design copied at send. Letterhead per the switch, the title, the
     intro above the rows and the closing below, both through the terms cleaning."""
-    body: List[str] = []
-    for row in rows:
-        if row["key"] == "terms":
-            value = row["html"]
-        else:
-            value = "<br/>".join(_cell(row["text"]).splitlines())
-        label = escape(f'{row["label"].upper()}:')
-        body.append(f"<tr><th>{label}</th><td>{value}</td></tr>")
+    body = _cover_row_html(rows)
     top = f'<div class="cover-top">{letterhead}</div>' if design.get("show_letterhead", True) else ""
     title = design.get("title") or ""
     title_html = f'<div class="cover-title">{escape(title)}</div>' if title else ""
@@ -840,6 +839,10 @@ _COVER_STYLE = """
   table.cover-rows td ul { margin: 0; padding-left: 18px; list-style: disc; }
   table.cover-rows td ul ul { list-style: circle; }
   table.cover-rows td ol { margin: 0; padding-left: 18px; list-style: decimal; }
+"""
+
+# Added only for layout 3 (the designed cover), so layout 2 renders from exactly #2088's stylesheet.
+_DESIGNED_COVER_STYLE = """
   .cover-text { margin: 0 0 18px; line-height: 1.45; }
   .cover-text p { margin: 0 0 6px; }
   .cover-text ul { margin: 0; padding-left: 18px; list-style: disc; }
@@ -894,7 +897,7 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
         else:
             cover = _cover_html(cover_rows(db, document, issue, project), letterhead)
             terms = ""
-        style = _STYLE + _COVER_STYLE
+        style = _STYLE + _COVER_STYLE + (_DESIGNED_COVER_STYLE if designed else "")
     else:
         terms = _terms_html(issue)
 

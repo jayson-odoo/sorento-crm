@@ -26,16 +26,16 @@ import {
   SortableItem,
   SortableItemHandle,
 } from '@/components/ui/sortable';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { CoverPagePreview } from '@/components/quotation/CoverPagePreview';
 import {
   COVER_MAX_LABEL,
-  COVER_ROW_LABELS,
-  defaultCoverDesign,
   type CoverDesign,
   type CoverDesignRow,
 } from '@/lib/quotation-cover';
 import {
+  useCoverDefaultDesign,
   useCoverDesignPreview,
   useQuotationMergeFields,
   useQuotationTemplateMutations,
@@ -55,6 +55,8 @@ function TextWithFields({
   const fields = useQuotationMergeFields();
   const [editor, setEditor] = React.useState<Editor | null>(null);
   const [open, setOpen] = React.useState(false);
+  const fieldId = React.useId();
+  const labelId = `${fieldId}-label`;
 
   function insert(placeholder: string) {
     setOpen(false);
@@ -68,7 +70,9 @@ function TextWithFields({
   return (
     <div className="min-w-0 space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <Label>{label}</Label>
+        <Label id={labelId} htmlFor={fieldId}>
+          {label}
+        </Label>
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
             <Button
@@ -100,9 +104,10 @@ function TextWithFields({
         </Popover>
       </div>
       <RichTextEditor
+        id={fieldId}
+        aria-labelledby={labelId}
         value={value}
         onChange={onChange}
-        placeholder={label}
         minHeight={120}
         onEditorReady={setEditor}
       />
@@ -121,8 +126,54 @@ export function QuotationCoverDesigner({
   template: QuotationTemplate | null;
   onDone: () => void;
 }) {
+  // The default design is the server's: the Add form starts from it and the row captions come
+  // from it, so the twelve rows exist in one place only.
+  const defaults = useCoverDefaultDesign();
+  if (!defaults.data) {
+    return (
+      <Dialog open onOpenChange={(next) => !next && onDone()}>
+        <DialogContent className="w-full max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>
+              {template ? `Edit ${template.name}` : 'Add a cover page design'}
+            </DialogTitle>
+          </DialogHeader>
+          <DialogBody>
+            {defaults.isError ? (
+              <p className="text-sm text-muted-foreground">
+                {defaults.error.message}
+              </p>
+            ) : (
+              <Skeleton className="h-64 w-full" />
+            )}
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+  return (
+    <CoverDesignerForm
+      template={template}
+      onDone={onDone}
+      defaults={defaults.data}
+    />
+  );
+}
+
+function CoverDesignerForm({
+  template,
+  onDone,
+  defaults,
+}: {
+  template: QuotationTemplate | null;
+  onDone: () => void;
+  defaults: CoverDesign;
+}) {
   const { create, update } = useQuotationTemplateMutations('cover_page');
-  const initial = template?.design ?? defaultCoverDesign();
+  const initial = template?.design ?? defaults;
+  const captions = Object.fromEntries(
+    defaults.rows.map((row) => [row.key, row.label]),
+  );
   const [name, setName] = React.useState(template?.name ?? '');
   const [title, setTitle] = React.useState(initial.title);
   const [showLetterhead, setShowLetterhead] = React.useState(
@@ -222,7 +273,7 @@ export function QuotationCoverDesigner({
                       direct child whose value is being dragged, and a wrapper div leaves an
                       empty zero-size overlay that no row ever collides with. */}
                   {rows.map((row) => {
-                    const base = COVER_ROW_LABELS[row.key] ?? row.key;
+                    const base = captions[row.key] ?? row.key;
                     return (
                       <SortableItem key={row.key} value={row.key} asChild>
                         <div

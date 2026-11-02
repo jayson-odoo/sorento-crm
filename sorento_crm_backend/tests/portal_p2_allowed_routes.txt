@@ -25,6 +25,7 @@ GET /config/loss-reasons
 GET /config/price-floors
 GET /config/price-floors/effective
 GET /config/quotation-templates
+GET /config/quotation-templates/cover-default
 GET /config/quotation-templates/merge-fields
 GET /config/quotation-templates/{template_id}
 GET /config/series

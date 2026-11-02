@@ -764,7 +764,7 @@ function SignPageBody({
 
   const coverRows = page.cover_rows?.length ? page.cover_rows : null;
   // Layout 3 (a designed cover) names its title; layouts 1 and 2 do not.
-  const designed = coverRows !== null && page.cover_title != null;
+  const designed = page.cover_title != null;
   // The terms print inside the cover while their row is shown; below the prices otherwise.
   const termsOnCover = coverRows?.some((row) => row.key === 'terms') ?? false;
   const preparedBy = firstName(
@@ -775,10 +775,13 @@ function SignPageBody({
 
   return (
     <PageShell testId="quotation-sign-page">
-      {coverRows && (
-        <CoverPageCard cover={{ ...page, cover_rows: coverRows }} testId="quotation-sign-cover" />
+      {(coverRows || designed) && (
+        <CoverPageCard
+          cover={{ ...page, cover_rows: coverRows ?? [] }}
+          testId="quotation-sign-cover"
+        />
       )}
-      <Letterhead page={page} withSender={!coverRows} />
+      <Letterhead page={page} withSender={!coverRows && !designed} />
 
       {/* A designed cover carries the letter as its intro. */}
       {!designed && (
@@ -835,7 +838,7 @@ function SignPageBody({
         }}
       />
 
-      {(!coverRows || (designed && !termsOnCover)) && (
+      {((!coverRows && !designed) || (designed && !termsOnCover)) && (
         <ProsePanel
           title="Terms and conditions"
           html={page.terms}

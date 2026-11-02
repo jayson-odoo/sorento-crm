@@ -12,6 +12,7 @@ import type { CoverDesign, CoverPageData } from '@/lib/quotation-cover';
  *   POST /config/quotation-templates/{id}/activate     -> QuotationTemplate
  *   POST /config/quotation-templates/{id}/deactivate   -> QuotationTemplate (cover_page only)
  *   GET  /config/quotation-templates/merge-fields      -> ListEnvelope<MergeField>
+ *   GET  /config/quotation-templates/cover-default     -> CoverDesign (the default design)
  *   POST /config/quotation-templates/cover-preview     -> CoverPageData (an unsaved design, stores nothing)
  *
  * kind `cover_page` is a cover page design: the intro is `body_html`, the rest is `design`.
@@ -118,5 +119,12 @@ export async function deactivateQuotationTemplate(id: string): Promise<Quotation
   const response = await apiFetch(`${BASE}/${id}/deactivate`, { method: 'POST' });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to deactivate the template'));
+  return response.json();
+}
+
+export async function getCoverDefaultDesign(): Promise<CoverDesign> {
+  const response = await apiFetch(`${BASE}/cover-default`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the default cover page'));
   return response.json();
 }
