@@ -309,3 +309,33 @@ def test_a_malformed_browser_id_is_refused(visitor_id):
             assert _count(db, record) == 0
         finally:
             app.dependency_overrides.clear()
+
+
+def test_the_staff_log_lists_every_revision_newest_first():
+    from .test_project_quotation_approval_routes import _client as staff_client
+    from .test_project_quotation_approval_routes import _restore
+
+    with blank_session() as db:
+        project, document, owner, r1 = _issued(db)
+        views.record_view(db, record=r1, visitor_id="browser-a-123456", user_agent=IPHONE, now=T0)
+        r2 = qdocs.issue(db, document=document, actor_user_id=owner)
+        views.record_view(
+            db, record=r2, visitor_id="browser-b-654321", user_agent=LAPTOP, now=T0 + timedelta(hours=1)
+        )
+        db.commit()
+        client, originals = staff_client(db, owner)
+        try:
+            base = f"/api/v1/project-sales/projects/{project.id}/quotation-documents/{document.id}"
+            response = client.get(f"{base}/views")
+            assert response.status_code == 200, response.text
+            rows = response.json()["data"]
+            assert [(r["issue_no"], r["device"]) for r in rows] == [
+                (r2.issue_no, "desktop"),
+                (r1.issue_no, "mobile"),
+            ]
+            assert set(rows[0]) == {"id", "viewed_at", "issue_no", "our_ref", "device"}
+            header = client.get(base).json()
+            assert header["view_count"] == 1
+            assert header["last_viewed_at"].startswith("2026-11-02T14:05")
+        finally:
+            _restore(originals)
