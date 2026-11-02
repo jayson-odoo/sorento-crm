@@ -188,7 +188,7 @@ vi.mock('../../_shared/services/lineSplitService', () => ({
 }));
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
-import { walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
+import { openConfirmGuide, walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
@@ -2311,7 +2311,8 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
     await walkConfirmGuide();
 
     await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
-    expect(previewConfirmMany).not.toHaveBeenCalled();
+    // CONFIRM-PREVIEW-STALE round 3: the guide's own email dry run may run (rolled back);
+    // nothing is POSTED.
     expect(confirmMany).not.toHaveBeenCalled();
     // Nothing was committed, so the work is still the planner's.
     expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
@@ -4633,7 +4634,8 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(previewConfirmMany).toHaveBeenCalledTimes(1);
+    // The press's own dry run plus the guide's email dry run on open (round 3).
+    expect(previewConfirmMany).toHaveBeenCalled();
     const [body] = confirmMany.mock.calls[0] as [
       { orders: { lines: { project_line_id: string }[]; only_line_ids?: string[] }[]; preview?: boolean },
     ];
@@ -4846,10 +4848,12 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     previewConfirmMany.mockRejectedValue(new Error('Network down'));
 
     renderPanel(['SO403340']);
-    await walkConfirmGuide();
-
-    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    // CONFIRM-PREVIEW-STALE round 3: the guide runs the dry run as it opens (popup = email); a
+    // failed one blocks the guide behind a Retry, so nothing can be posted from it.
+    await openConfirmGuide();
+    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalled());
+    expect(await screen.findByTestId('confirm-guide-refresh-failed')).toBeInTheDocument();
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
