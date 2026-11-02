@@ -1034,3 +1034,51 @@ def test_the_header_keeps_two_suppliers_of_one_trading_name_apart_with_their_cod
     assert _header_subjects(["SRTW2600", a, b, c], whole=[a, b, c]) == ["SRTW2600", a, b, c]
     ledgers = ["ZZT HARDWARE SDN BHD - [A/C I]", "ZZT HARDWARE SDN BHD - [A/C II]"]
     assert len(_header_subjects(ledgers, whole=[a])) == 1
+
+
+def test_the_owner_supplier_ask_with_a_product_and_a_year_stays_on_purchase_orders(session_factory, monkeypatch):
+    """Owner turn 4 (d1bdf144), v194's real emission: the span pass typed 太阳 `customer` and placed it on the three
+    supplier rows; the parser returned the product alone, status outstanding, 2026. The supplier is not lost: the
+    turn asks which supplier (never the order clarifier 'Undelivered orders or pending delivery?')."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    _office_world(session_factory)
+    _seed_twin(session_factory)
+    _seed_named(session_factory, THIRD, "ZZTSUP-TY03")
+    qf = _parser_output(
+        domain_hint="purchase_order", intent_hint="check_po", order_status="outstanding", status="outstanding",
+        date_filter_start="2026-01-01", date_filter_end="2026-12-31",
+        entities=[{"raw": "SRTW2600", "hint": "product", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    span = list_resolver.Span(NATIVE, "customer")
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstaing for 太阳 for SRTW2600 in 2026", span,
+        {NATIVE, SUPPLIER, "ZZT TAIYANG SANITARY CO LTD", THIRD}, qf=qf,
+    )
+    assert report_ask.KIND_QUESTION not in reply, reply
+    assert not _fetch_calls(captured), f"no unfiltered list: {captured}"
+    assert len([ln for ln in reply.splitlines() if ln[:1].isdigit()]) == 3, reply
+
+
+def test_a_span_that_also_scores_a_customer_is_not_made_a_supplier():
+    from app.services.chatbot import engine as engine_mod
+
+    def _res(*lists):
+        import types
+
+        return types.SimpleNamespace(
+            status="ambiguous", span=list_resolver.Span("zz"),
+            candidates=[types.SimpleNamespace(row=types.SimpleNamespace(list_name=n, key=f"k{i}")) for i, n in enumerate(lists)],
+        )
+
+    assert engine_mod._supplier_spans([_res("supplier", "supplier")]) == {"zz": "k0"}
+    assert engine_mod._supplier_spans([_res("supplier", "customer")]) == {}
+
+
+def test_the_po_list_date_line_names_the_expected_date():
+    """Owner turn 3: the PO list filters the expected date, and its line read 订单日期 (Order date)."""
+    from app.services.chatbot import turn_runtime
+
+    window = {"date_filter_start": "2026-01-01", "date_filter_end": None}
+    assert turn_runtime._date_line(window, PO_TOOL) == "Expected date: 01/01/2026"
+    assert turn_runtime._date_line(window, "crm_outstanding_report") == "Order date: 01/01/2026"

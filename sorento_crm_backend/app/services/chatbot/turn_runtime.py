@@ -6316,6 +6316,11 @@ def envelope_of(
     return envelope
 
 
+#: SUPPLIER-ASK fix round 3 (#2066, owner turn 3): the window a tool filters on, named as that tool's date. The PO
+#: list filters the expected date (`purchase_order_service._apply_expected_date_window`), not an order date.
+_DATE_LINE_LABELS = {"crm_procurement_po_placed_list": "Expected date"}
+
+
 def _date_line(ran_with: dict[str, Any] | None, tool: str | None = None) -> str | None:
     """`Order date: 01/09/2026 to 30/09/2026`, or None when the fetch had no window.
 
@@ -6337,4 +6342,4 @@ def _date_line(ran_with: dict[str, Any] | None, tool: str | None = None) -> str 
         return None
     from app.services.chatbot.lanes.business import order_date_text
 
-    return f"Order date: {order_date_text(start, end)}"
+    return f"{_DATE_LINE_LABELS.get(tool or '', 'Order date')}: {order_date_text(start, end)}"

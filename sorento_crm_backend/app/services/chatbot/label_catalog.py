@@ -209,6 +209,7 @@ LABELS: dict[str, dict[str, str]] = {
     "DO date range": {"ms": "Julat tarikh DO", "zh": "DO 日期范围"},
     "Product": {"ms": "Produk", "zh": "产品"},
     "Order date": {"ms": "Tarikh pesanan", "zh": "订单日期"},
+    "Expected date": {"ms": "Tarikh dijangka", "zh": "预计到货日期"},
     "Brand": {"ms": "Jenama", "zh": "品牌"},
     "DO Number": {"ms": "No. DO", "zh": "DO 编号"},
     "DO Qty": {"ms": "Kuantiti DO", "zh": "DO 数量"},

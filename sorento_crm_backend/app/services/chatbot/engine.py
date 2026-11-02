@@ -1389,6 +1389,9 @@ class _SpanPrep:
     # margin of the span that placed it (itself included, best first, as (id, name)). The resolver step binds a
     # parser-picked id to its whole group, so a near tie is asked ("Which one do you mean?") and never guessed.
     supplier_groups: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
+    # SUPPLIER-ASK fix round 3 (#2066, owner turn 4): span text -> the best supplier row id, for a span whose every
+    # candidate is a supplier row. `_with_span_suppliers` gives the verdict that supplier when the parser named none.
+    supplier_spans: dict[str, str] = field(default_factory=dict)
 
 
 def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | None:
@@ -1528,6 +1531,42 @@ def _supplier_groups(resolutions: list[list_resolver.Resolution]) -> dict[str, l
     return out
 
 
+def _supplier_spans(resolutions: list[list_resolver.Resolution]) -> dict[str, str]:
+    """SUPPLIER-ASK fix round 3: per span the lookup placed on supplier rows ALONE (every candidate a supplier, by the
+    scores, whatever the span's type), its best row id. A span that also scored a customer or a product is not here."""
+    out: dict[str, str] = {}
+    for res in resolutions:
+        if res.status not in ("resolved", "ambiguous") or not res.candidates:
+            continue
+        if all(c.row.list_name == "supplier" for c in res.candidates):
+            out.setdefault(res.span.text, str(res.candidates[0].row.key))
+    return out
+
+
+def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> dict[str, Any]:
+    """SUPPLIER-ASK fix round 3 (#2066, owner turn 4, d1bdf144): "outstaing for 太阳 for SRTW2600 in 2026" - the span
+    pass placed 太阳 on the three supplier rows (typed customer) and the parser returned the product alone, so the
+    supplier was lost and the order clarifier fired. A span placed on suppliers alone that no entity of this message
+    names (its raw, as typed) joins the verdict as a supplier entity carrying the row id; the id binds that span's
+    whole group (`resolve_gate.bind_span_suppliers`), so a near tie is still asked. Returns a new verdict."""
+    spans = prep.supplier_spans if prep is not None else {}
+    if not spans:
+        return verdict
+    entities = [e for e in jsc.array(verdict.get("entities")) if isinstance(e, dict)]
+    named = {
+        jsc.nullish_str(e.get("raw")).strip().casefold()
+        for e in entities if e.get("current_message") is not False
+    }
+    added = [
+        {"raw": text, "hint": "supplier", "canonical_code": key, "current_message": True, "confident": True}
+        for text, key in spans.items()
+        if text.strip().casefold() not in named
+    ]
+    if not added:
+        return verdict
+    return {**verdict, "entities": [*jsc.array(verdict.get("entities")), *added]}
+
+
 def _hits_of(resolutions: list[list_resolver.Resolution]) -> dict[str, list[lookup_lists.Hit]]:
     """The resolver's matched rows as lookup hits: per list, best first, one hit per row. Spec-name rows have no
     block (`lookup_lists.render` knows no such list); they are in the resolver so "colour" is not read as a value."""
@@ -1584,6 +1623,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
                 hits = _hits_of([*resolutions, *extra])
                 prep.supplier_groups = _supplier_groups([*resolutions, *extra])
+                prep.supplier_spans = _supplier_spans(resolutions)
                 span_keys = {h.row.key for hs in hits.values() for h in hs}
                 near_rows: list[dict[str, Any]] = []
                 # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
@@ -6119,6 +6159,15 @@ def _run_stages_body(  # noqa: PLR0915
         )
         if asker_sees_suppliers:
             from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
+
+            with_spans = _with_span_suppliers(verdict, span_prep)
+            if with_spans is not verdict:
+                # The parser named no entity for it; the scores did, and the id binds that span's supplier group.
+                turn_trace.add(
+                    "supplier_span",
+                    {"added": [e.get("raw") for e in with_spans["entities"][len(verdict.get("entities") or []):]]},
+                )
+                verdict = with_spans
 
             swapped = supplier_ask_reads_purchase_orders(verdict)
             if swapped is not verdict:
