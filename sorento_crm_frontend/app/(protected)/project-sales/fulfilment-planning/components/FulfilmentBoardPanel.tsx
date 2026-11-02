@@ -916,6 +916,8 @@ export function FulfilmentBoardPanel({
    * reply). A board read carrying a LATER `saved_at` is a save made elsewhere.
    */
   const savedAtByKey = React.useRef<Map<string, string>>(new Map());
+  /** The save on the wire per line key, so the next one on that key waits for it. */
+  const savesInFlight = React.useRef<Map<string, Promise<void>>>(new Map());
 
   /**
    * Keys whose SAVE is on the wire right now (R3, AC-F5): added before `saveLineDraft`
@@ -1032,7 +1034,8 @@ export function FulfilmentBoardPanel({
       try {
         // CONFIRM-PREVIEW-STALE: the server refuses the Undo when the line was saved again
         // after the draft this tab holds; the board re-reads so the newer one shows.
-        await removeLineDraft(key, savedAtByKey.current.get(key) || undefined);
+        // `null`: this tab holds no draft for the line, so one saved elsewhere is refused too.
+        await removeLineDraft(key, savedAtByKey.current.get(key) || null);
         savedAtByKey.current.delete(key);
       } catch (error) {
         if (error instanceof LineDraftNewerError) void rawBoard.refetch();
@@ -1120,6 +1123,16 @@ export function FulfilmentBoardPanel({
           // reason: the Sales Order page's Suggested column reads it back on this line
           // until Confirm freezes a revision.
           pendingSaves.current.add(key);
+          // CONFIRM-PREVIEW-STALE (review round 2, S3): one save per line at a time, so a
+          // second edit reads the saved_at the first one answered with and is never refused
+          // against this tab's own save.
+          const prior = savesInFlight.current.get(key);
+          let done: () => void = () => {};
+          const mine = new Promise<void>((resolve) => {
+            done = resolve;
+          });
+          savesInFlight.current.set(key, mine);
+          if (prior) await prior;
           try {
             // CONFIRM-PREVIEW-STALE: the draft this decision stands on, so the server refuses a
             // write over a newer save made elsewhere (null: this tab holds none).
@@ -1137,7 +1150,11 @@ export function FulfilmentBoardPanel({
               setDraft((current) => ({ ...current, [key]: saved.decision }));
             }
           } finally {
-            pendingSaves.current.delete(key);
+            done();
+            if (savesInFlight.current.get(key) === mine) {
+              savesInFlight.current.delete(key);
+              pendingSaves.current.delete(key);
+            }
           }
         } else {
           await removeDraftKey(key);
@@ -1150,7 +1167,7 @@ export function FulfilmentBoardPanel({
         options?.onFailure?.(error instanceof Error ? error.message : 'could not be saved');
         // CONFIRM-PREVIEW-STALE: refused over a newer save; read it (the seeding effect then
         // shows it and says so).
-        if (error instanceof LineDraftNewerError) void rawBoard.refetch();
+        if (decision && error instanceof LineDraftNewerError) void rawBoard.refetch();
         setDraft((current) => {
           const reverted = { ...current };
           if (hadPrevious && previousForKey) reverted[key] = previousForKey;

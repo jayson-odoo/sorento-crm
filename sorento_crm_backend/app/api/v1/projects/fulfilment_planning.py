@@ -466,11 +466,8 @@ def delete_line_draft(
         project_line_draft_service.remove_draft(
             db,
             contribution_key,
-            based_on_saved_at=(
-                based_on_saved_at
-                if based_on_saved_at
-                else project_line_draft_service.NOT_GIVEN
-            ),
+            # `none`: the caller holds no draft, so any stored one is newer than it.
+            based_on_saved_at=project_line_draft_service.based_on_from_query(based_on_saved_at),
         )
         db.commit()
         return None

@@ -395,6 +395,23 @@ def _as_naive_utc(value: Any) -> Optional[datetime]:
     return value
 
 
+def based_on_from_query(value: Optional[str]) -> Any:
+    """The DELETE's `based_on_saved_at` query value: absent or empty is `NOT_GIVEN`, `none` is
+    "the caller holds no draft" (`None`), anything else an ISO timestamp (422 when it is not)."""
+    if not value:
+        return NOT_GIVEN
+    if value.strip().lower() == "none":
+        return None
+    try:
+        return _as_naive_utc(value.strip())
+    except ValueError:
+        raise AppException(
+            status_code=422,
+            message="based_on_saved_at is not a date and time.",
+            code="board_line_draft_based_on_invalid",
+        )
+
+
 def _refuse_newer(db: Session, row: Any, based_on_saved_at: Any) -> None:
     """CONFIRM-PREVIEW-STALE (crew browser pass, 2 Nov 2026): a tab holding an older decision
     never overwrites or deletes a newer one saved elsewhere. `based_on_saved_at` is the
@@ -405,13 +422,14 @@ def _refuse_newer(db: Session, row: Any, based_on_saved_at: Any) -> None:
     based = _as_naive_utc(based_on_saved_at)
     if based is not None and row.saved_at <= based:
         return
-    when = row.saved_at.strftime("%d/%m/%Y %H:%M")
+    # Said in Malaysia time (UTC+8, no daylight saving), the planners' own clock.
+    from datetime import timedelta
+
+    when = (row.saved_at + timedelta(hours=8)).strftime("%d/%m/%Y %H:%M")
+    who = _saver_name(db, row.saved_by) or "another planner"
     raise AppException(
         status_code=409,
-        message=(
-            f"This line was saved again by {_saver_name(db, row.saved_by)} at {when} UTC. "
-            "Reload the board to see it."
-        ),
+        message=f"This line was saved again by {who} at {when}. Reload the board to see it.",
         code="board_line_draft_newer",
     )
 

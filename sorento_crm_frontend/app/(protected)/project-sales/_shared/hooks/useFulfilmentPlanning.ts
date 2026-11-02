@@ -651,8 +651,8 @@ export function useLineDraftMutation() {
   });
 
   const remove = useMutation({
-    mutationFn: ({ key, basedOnSavedAt }: { key: string; basedOnSavedAt?: string }) =>
-      basedOnSavedAt ? deleteLineDraft(key, basedOnSavedAt) : deleteLineDraft(key),
+    mutationFn: ({ key, basedOnSavedAt }: { key: string; basedOnSavedAt?: string | null }) =>
+      basedOnSavedAt !== undefined ? deleteLineDraft(key, basedOnSavedAt) : deleteLineDraft(key),
     onSuccess: (_result, { key }) => {
       queryClient.setQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] }, (current) =>
         current ? patchContributionDraft(current, key, null) : current,
@@ -683,7 +683,7 @@ export function useLineDraftMutation() {
         silent: options?.silent,
         basedOnSavedAt: options?.basedOnSavedAt,
       }),
-    remove: (key: string, basedOnSavedAt?: string): Promise<void> =>
+    remove: (key: string, basedOnSavedAt?: string | null): Promise<void> =>
       remove.mutateAsync({ key, basedOnSavedAt }),
   };
 }

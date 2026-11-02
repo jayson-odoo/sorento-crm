@@ -85,3 +85,32 @@ def test_an_undo_based_on_the_current_draft_removes_it(api):
     )
     assert gone.status_code == 204, gone.text
     assert _contribution(_board(client, core_so), core_so.so_number)["draft"] is None
+
+
+def test_an_undo_that_holds_no_draft_is_refused_once_one_exists(api):
+    """Review round 2 S1: "Undo all" walks pre-marked keys this tab never saw a draft on. A
+    draft saved elsewhere meanwhile must not be wiped by it."""
+    client, key, core_so = _key(api)
+    assert _save(client, key).status_code == 200
+    blind = client.delete(
+        f"{BASE}/fulfilment-planning/lines/{key}/draft", params={"based_on_saved_at": "none"}
+    )
+    assert blind.status_code == 409, blind.text
+    assert _contribution(_board(client, core_so), core_so.so_number)["draft"] is not None
+
+
+def test_an_undo_that_holds_no_draft_on_a_line_with_none_is_still_404(api):
+    client, key, _core_so = _key(api)
+    gone = client.delete(
+        f"{BASE}/fulfilment-planning/lines/{key}/draft", params={"based_on_saved_at": "none"}
+    )
+    assert gone.status_code == 404, gone.text
+
+
+def test_a_malformed_based_on_is_a_422_not_a_500(api):
+    client, key, _core_so = _key(api)
+    assert _save(client, key).status_code == 200
+    bad = client.delete(
+        f"{BASE}/fulfilment-planning/lines/{key}/draft", params={"based_on_saved_at": "soon"}
+    )
+    assert bad.status_code == 422, bad.text

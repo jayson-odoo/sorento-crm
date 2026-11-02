@@ -146,6 +146,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 import { toast } from '@/lib/toast';
+import { LineDraftNewerError } from '../../_shared/lib/confirmPreviewFresh';
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
@@ -514,6 +515,36 @@ describe('AC-B13: Undo on a pre-marked line returns to "Change proposed", not "S
 
   beforeEach(() => {
     getPlanningChangeBatch.mockResolvedValue(NAMED_BATCH);
+  });
+
+  // CONFIRM-PREVIEW-STALE round 2 (crew browser pass: "Take suggestion from that stale view
+  // DELETED the other tab's newer decision"). Take suggestion is `decide(key, null)`, the same
+  // path as this Undo on a line the batch names.
+  it('Undo (and Take suggestion) says which draft it stands on: the saved_at of this tab\'s own save', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+    renderOnBatch(['SO381895']);
+    await saveThenUndo('SO381895', 1, 'Change proposed');
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
+    // The mocked save reply's own saved_at.
+    expect(deleteLineDraft.mock.calls[0][1]).toBe('2026-09-03T00:00:00Z');
+  });
+
+  it('an Undo the server refuses as stale keeps the line saved and reads the board again', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
+    );
+    deleteLineDraft.mockRejectedValueOnce(
+      new LineDraftNewerError('This line was saved again by another planner. Reload the board to see it.'),
+    );
+    renderOnBatch(['SO381895']);
+    const reads = () => getPlanningBoard.mock.calls.length;
+    const row = await saveThenUndo('SO381895', 1, 'Change proposed');
+    const before = reads();
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
+    await waitFor(() => expect(reads()).toBeGreaterThan(before));
+    await waitFor(() => expect(within(row()).getByText('Saved')).toBeInTheDocument());
   });
 
   it('a line the open batch names is "Change proposed" again after Save then Undo, and the server draft is deleted', async () => {

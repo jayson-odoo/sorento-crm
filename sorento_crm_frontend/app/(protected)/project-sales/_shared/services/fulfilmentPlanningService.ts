@@ -1,5 +1,5 @@
 import { apiFetch } from '@/lib/api';
-import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, codedError, extractApiError } from '@/lib/api-client';
 import type {
   AdoptSalesOrderResult,
   BoardDecision,
@@ -23,7 +23,7 @@ import type {
   SupplyFailingLine,
   SupplyProposal,
 } from '../types/fulfilmentPlanning.types';
-import { LineDraftNewerError } from '../lib/confirmPreviewFresh';
+import { LINE_DRAFT_NEWER, LineDraftNewerError } from '../lib/confirmPreviewFresh';
 
 /**
  * Fulfilment Planning: the worklist of everything that needs planning, the reconciliation
@@ -698,9 +698,10 @@ export async function putLineDraft(
     },
   );
   if (response.status === 409) {
-    const message = await extractApiError(response, 'Failed to save the decision');
-    if (/saved again/i.test(message)) throw new LineDraftNewerError(message);
-    throw new Error(message);
+    // Every 409 here has a code; only `board_line_draft_newer` means "saved again elsewhere".
+    const error = await codedError(response, 'Failed to save the decision');
+    if (error.code === LINE_DRAFT_NEWER) throw new LineDraftNewerError(error.message);
+    throw error;
   }
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to save the decision'));
@@ -714,19 +715,23 @@ export async function putLineDraft(
  */
 export async function deleteLineDraft(
   contributionKey: string,
-  basedOnSavedAt?: string,
+  basedOnSavedAt?: string | null,
 ): Promise<void> {
-  const query = basedOnSavedAt
-    ? `?${new URLSearchParams({ based_on_saved_at: basedOnSavedAt }).toString()}`
-    : '';
+  // CONFIRM-PREVIEW-STALE: `null` says "this tab holds no draft" (`none`), so an Undo never
+  // removes a draft saved elsewhere that this tab has not read.
+  const query =
+    basedOnSavedAt === undefined
+      ? ''
+      : `?${new URLSearchParams({ based_on_saved_at: basedOnSavedAt ?? 'none' }).toString()}`;
   const response = await apiFetch(
     `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft${query}`,
     { method: 'DELETE' },
   );
-  if (response.status === 409)
-    throw new LineDraftNewerError(
-      await extractApiError(response, 'Failed to remove the saved decision'),
-    );
+  if (response.status === 409) {
+    const error = await codedError(response, 'Failed to remove the saved decision');
+    if (error.code === LINE_DRAFT_NEWER) throw new LineDraftNewerError(error.message);
+    throw error;
+  }
   // 404 IS the post-condition Undo asked for: there is no saved decision on that line any
   // more. "Undo all" walks every key in the panel's draft map, and a `?batch=` board
   // pre-marks lines as approved locally that were never PUT, so refusing those would put an

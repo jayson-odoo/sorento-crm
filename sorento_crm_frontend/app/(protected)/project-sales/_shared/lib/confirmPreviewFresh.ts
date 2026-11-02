@@ -19,6 +19,9 @@ import type {
  */
 export class LineDraftNewerError extends Error {}
 
+/** The server's code for that refusal (`project_line_draft_service._refuse_newer`). */
+export const LINE_DRAFT_NEWER = 'board_line_draft_newer';
+
 /**
  * The keys whose server draft was saved AFTER the one this tab's local decision stands on
  * (`savedAt`: key -> the `saved_at` this tab last read or wrote). A key with no local
