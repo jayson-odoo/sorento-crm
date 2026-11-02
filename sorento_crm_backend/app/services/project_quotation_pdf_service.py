@@ -47,11 +47,13 @@ from app.models.projects import (
     ProjectQuotationIssue,
     ProjectQuotationIssueScope,
     ProjectQuotationLine,
+    ProjectQuotationVersion,
     QuotationSignature,
 )
 from app.models.user import SystemSetting
 from app.services import geo_places
 from app.services import product_image_service as product_images
+from app.services import quotation_matrix as matrix
 from app.services.complaint_pdf_service import PDFRenderingUnavailable
 from app.services.error_handler import AppException
 from app.services.project_quotation_document_service import document_noun, quotation_no
@@ -292,10 +294,17 @@ def _load_scopes(db: Session, issue: ProjectQuotationIssue) -> List[Dict[str, An
             )
             .all()
         )
+        version = (
+            db.query(ProjectQuotationVersion)
+            .filter(ProjectQuotationVersion.id == row.version_id)
+            .first()
+        )
         scopes.append(
             {
                 "label": quotation.scope_label if quotation is not None else None,
                 "lines": lines,
+                # Frozen with the version the issue recorded; empty = the plain scope table.
+                "matrix_columns": (version.matrix_columns if version is not None else None) or [],
                 # The frozen number, not a re-sum: the PDF must not be able to disagree with the
                 # record behind it.
                 "total": Decimal(row.scope_total or 0),
@@ -498,6 +507,147 @@ def _header_html(
 """
 
 
+# More leaves than this and the leaf headings turn vertical, so the quantity columns can shrink.
+_VERTICAL_LEAVES = 12
+
+# Only emitted with a grid scope, so a plain scope's page stays byte for byte what it was.
+_GRID_STYLE = (
+    "<style>table.grid th.q, table.grid td.q { width: 24px; padding: 3px 1px; text-align: right; }"
+    " table.grid th.vert { writing-mode: vertical-rl; transform: rotate(180deg);"
+    " text-align: left; height: 70px; }"
+    " table.grid thead { display: table-header-group; }</style>"
+)
+
+
+def _grid_scope_html(
+    scope: Dict[str, Any],
+    lines: Sequence[ProjectQuotationLine],
+    columns: List[str],
+    images: Dict[str, Optional[str]],
+    drawings: Dict[str, Optional[str]],
+    show_image: bool,
+) -> str:
+    """A scope with column headers: the QTY column becomes one column per leaf under a 2-row
+    header, then a QTY / AMOUNT pair per pair header, then TOTAL QTY (PS-QUOTE-MATRIX)."""
+    headers = scope["matrix_columns"]
+    summary = matrix.matrix_summary(headers, lines)
+    leaves = summary["leaf_keys"]
+    pairs = summary["pair_headers"]
+    vertical = " vert" if len(leaves) > _VERTICAL_LEAVES else ""
+    qty_at = columns.index("QTY")
+    before, after = columns[:qty_at], columns[qty_at + 1 :]
+    span = len(before) + len(leaves) + 2 * len(pairs) + 1 + len(after)
+
+    top = [f'<th rowspan="2">{escape(c)}</th>' for c in before]
+    bottom: List[str] = []
+    for header in headers:
+        cols = header.get("cols") or []
+        if cols:
+            top.append(f'<th colspan="{len(cols)}">{escape(header["label"])}</th>')
+            bottom += [f'<th class="q{vertical}">{escape(c["label"])}</th>' for c in cols]
+        else:
+            top.append(f'<th class="q{vertical}" rowspan="2">{escape(header["label"])}</th>')
+    for header in headers:
+        if header["key"] in pairs:
+            top.append(f'<th colspan="2">{escape(header["label"])}</th>')
+            bottom += ["<th>QTY</th>", "<th>AMOUNT (RM)</th>"]
+    top.append('<th rowspan="2">TOTAL QTY</th>')
+    top += [f'<th rowspan="2">{escape(c)}</th>' for c in after]
+    head = f"<tr>{''.join(top)}</tr><tr>{''.join(bottom)}</tr>"
+
+    body: List[str] = []
+    current_band: Optional[str] = None
+    for position, (line, row) in enumerate(zip(lines, summary["rows"]), start=1):
+        band = (line.band_label or "").strip()
+        if band and band != current_band:
+            current_band = band
+            body.append(f'<tr class="band"><td colspan="{span}">{_cell(band)}</td></tr>')
+        cells = line.qty_cells or {}
+        leaf_cells = "".join(
+            f'<td class="num q">{_qty(cells[k]) if k in cells else ""}</td>' for k in leaves
+        )
+        pair_cells = ""
+        for key in pairs:
+            pair = row["pairs"][key]
+            if not pair["qty"]:
+                pair_cells += '<td class="num">-</td><td class="num">-</td>'
+            else:
+                amount = "" if line.is_rate_only else _line_money(pair["amount"])
+                pair_cells += f'<td class="num">{_qty(pair["qty"])}</td><td class="num">{amount}</td>'
+        # No UOM suffix here, unlike the plain QTY cell: the grid's totals are bare counts.
+        total_qty = _qty(row["total_qty"])
+        money = (
+            f'<span class="rate-only">{RATE_ONLY_TEXT}</span>'
+            if line.is_rate_only
+            else _line_money(line.line_total)
+        )
+        drawing = drawings.get(line.id)
+        spec_cell = f'<img src="{escape(drawing)}"/>' if drawing else ""
+        legacy = (
+            f'<div class="legacy-spec">{_multiline(line.technical_spec)}</div>'
+            if _cell(line.technical_spec)
+            else ""
+        )
+        plain = {
+            "ITEM": f'<td class="item">{_cell(item_number(line, position))}</td>',
+            _IMAGE_COLUMN: (
+                '<td class="img">'
+                + (f'<img src="{escape(images[line.id])}"/>' if images.get(line.id) else "")
+                + "</td>"
+            ),
+            "TECHNICAL SPEC": f'<td class="spec">{spec_cell}</td>',
+            "DESCRIPTION": f'<td class="desc">{_multiline(line.description_snapshot)}{legacy}</td>',
+            "BRAND": f"<td>{_cell(line.brand_snapshot)}</td>",
+            "PRODUCT CODE": f"<td>{_cell(line.product_code_snapshot)}</td>",
+            "UNIT RATE (RM)": f'<td class="num">{_line_money(line.unit_price)}</td>',
+            "COMPLETE SET": f"<td>{_cell(line.complete_set)}</td>",
+            "GRAND TOTAL": f'<td class="num">{money}</td>',
+        }
+        body.append(
+            "<tr>"
+            + "".join(plain[c] for c in before)
+            + leaf_cells
+            + pair_cells
+            + f'<td class="num">{total_qty}</td>'
+            + "".join(plain[c] for c in after)
+            + "</tr>"
+        )
+    if not body:
+        body.append(
+            f'<tr><td class="empty" colspan="{span}">No items priced in this scope.</td></tr>'
+        )
+
+    footer = summary["footer"]
+    blanks_after = "<td></td>" * len(after)
+    qty_row = (
+        f'<tr><td class="total-label" colspan="{len(before)}">TOTAL QTY</td>'
+        + "".join(f'<td class="num q">{_qty(footer["leaf_qty"][k])}</td>' for k in leaves)
+        + "".join(f'<td class="num">{_qty(footer["pair_qty"][k])}</td><td></td>' for k in pairs)
+        + f'<td class="num">{_qty(footer["total_qty"])}</td>{blanks_after}</tr>'
+    )
+    rm_row = (
+        f'<tr><td class="total-label" colspan="{len(before)}">TOTAL (RM)</td>'
+        + '<td class="q"></td>' * len(leaves)
+        + "".join(f'<td></td><td class="num">{_money(footer["pair_amount"][k])}</td>' for k in pairs)
+        + f"<td></td>{blanks_after}</tr>"
+    )
+    total_row = (
+        f'<tr><td class="total-label" colspan="{span - 1}">TOTAL</td>'
+        f'<td class="num total">{_money(scope["total"])}</td></tr>'
+    )
+    return f"""
+  <div class="scope">
+    <div class="scope-label">{_cell(scope["label"])}</div>
+    {_GRID_STYLE}
+    <table class="grid">
+      <thead>{head}</thead>
+      <tbody>{"".join(body)}</tbody>
+      <tfoot>{qty_row}{rm_row}{total_row}</tfoot>
+    </table>
+  </div>
+"""
+
+
 def _scope_html(
     db: Session, scope: Dict[str, Any], image_cache: Dict[str, Optional[str]]
 ) -> str:
@@ -522,6 +672,9 @@ def _scope_html(
         for line in lines
         if line.drawing_attachment_id
     }
+
+    if scope.get("matrix_columns"):
+        return _grid_scope_html(scope, lines, columns, images, drawings, show_image)
 
     body: List[str] = []
     current_band: Optional[str] = None

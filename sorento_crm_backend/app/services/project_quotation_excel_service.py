@@ -66,6 +66,7 @@ from app.models.projects import (
 )
 from app.services import product_image_service as product_images
 from app.services import project_quotation_pdf_service as pdf
+from app.services import quotation_matrix as matrix
 from app.services.project_quotation_document_service import document_noun, quotation_no
 
 logger = logging.getLogger(__name__)
@@ -356,6 +357,83 @@ def _write_light_header(
     return row + 2
 
 
+def _write_grid_header(
+    sheet: Worksheet,
+    header_row: int,
+    headers: List[Dict[str, Any]],
+    summary: Dict[str, Any],
+    positions: Dict[str, int],
+    leaf_col: Dict[str, int],
+    pair_col: Dict[str, int],
+) -> None:
+    """The 2-row header: a header label merged over its leaves, the leaf labels below, and a
+    header with no cols (or a plain column) merged over both rows."""
+    sub = header_row + 1
+    for name, column in positions.items():
+        label = "TOTAL QTY" if name == "QTY" else name
+        _put(sheet, header_row, column, label, font=_BOLD, fill=_HEADER_FILL, alignment=_WRAP_LEFT)
+        sheet.merge_cells(start_row=header_row, start_column=column, end_row=sub, end_column=column)
+    for header in headers:
+        cols = header.get("cols") or []
+        if not cols:
+            column = leaf_col[header["key"]]
+            _put(sheet, header_row, column, header["label"], font=_BOLD, fill=_HEADER_FILL, alignment=_WRAP_LEFT)
+            sheet.merge_cells(start_row=header_row, start_column=column, end_row=sub, end_column=column)
+            sheet.column_dimensions[get_column_letter(column)].width = 9
+            continue
+        first = leaf_col[cols[0]["key"]]
+        _put(sheet, header_row, first, header["label"], font=_BOLD, fill=_HEADER_FILL, alignment=_WRAP_LEFT)
+        if len(cols) > 1:
+            sheet.merge_cells(
+                start_row=header_row, start_column=first, end_row=header_row, end_column=first + len(cols) - 1
+            )
+        for col in cols:
+            column = leaf_col[col["key"]]
+            _put(sheet, sub, column, col["label"], font=_BOLD, fill=_HEADER_FILL, alignment=_WRAP_LEFT)
+            sheet.column_dimensions[get_column_letter(column)].width = 9
+        if header["key"] in pair_col:
+            at = pair_col[header["key"]]
+            _put(sheet, header_row, at, header["label"], font=_BOLD, fill=_HEADER_FILL, alignment=_WRAP_LEFT)
+            sheet.merge_cells(start_row=header_row, start_column=at, end_row=header_row, end_column=at + 1)
+            _put(sheet, sub, at, "QTY", font=_BOLD, fill=_HEADER_FILL, alignment=_WRAP_LEFT)
+            _put(sheet, sub, at + 1, "AMOUNT (RM)", font=_BOLD, fill=_HEADER_FILL, alignment=_WRAP_LEFT)
+            sheet.column_dimensions[get_column_letter(at)].width = 10
+            sheet.column_dimensions[get_column_letter(at + 1)].width = 14
+
+
+def _write_grid_footer(
+    sheet: Worksheet,
+    row: int,
+    first_row: int,
+    counted_rows: List[int],
+    positions: Dict[str, int],
+    leaf_col: Dict[str, int],
+    pair_col: Dict[str, int],
+) -> int:
+    """TOTAL QTY and TOTAL (RM) rows as live sums. Rate-only rows are left out of the quantity
+    sums by naming the counted cells, so the footer agrees with the scope total (rule 10)."""
+
+    def total_of(column: int) -> str:
+        letter = get_column_letter(column)
+        refs = ",".join(f"{letter}{r}" for r in counted_rows)
+        return f"=SUM({refs or '0'})"
+
+    label_column = min(leaf_col.values()) - 1
+    _put(sheet, row, label_column, "TOTAL QTY", font=_BOLD, alignment=_RIGHT)
+    for column in [*leaf_col.values(), *pair_col.values(), positions["QTY"]]:
+        _put(sheet, row, column, total_of(column), font=_BOLD, number_format=QTY_FORMAT, alignment=_RIGHT)
+    row += 1
+    _put(sheet, row, label_column, "TOTAL (RM)", font=_BOLD, alignment=_RIGHT)
+    last = max(counted_rows[-1] if counted_rows else first_row, first_row)
+    for column in pair_col.values():
+        letter = get_column_letter(column + 1)
+        _put(
+            sheet, row, column + 1, f"=SUM({letter}{first_row}:{letter}{last})",
+            font=_BOLD, number_format=MONEY_FORMAT, alignment=_RIGHT,
+        )
+    return row + 1
+
+
 def _write_scope(
     db: Session,
     sheet: Worksheet,
@@ -371,9 +449,38 @@ def _write_scope(
     show_image = any(line.image_attachment_id for line in lines)
     columns = [c for c in pdf._COLUMNS if c != pdf._IMAGE_COLUMN or show_image]
     money_column = len(columns)
+    # PS-QUOTE-MATRIX: with column headers the QTY column becomes one column per leaf, a QTY /
+    # AMOUNT pair per pair header and a TOTAL QTY. A plain scope never enters this branch.
+    headers = scope.get("matrix_columns") or []
+    grid = bool(headers)
+    leaf_col: Dict[str, int] = {}
+    pair_col: Dict[str, int] = {}
+    if grid:
+        summary = matrix.matrix_summary(headers, lines)
+        qty_at = columns.index("QTY")
+        positions = {}
+        col = 1
+        for name in columns[:qty_at]:
+            positions[name] = col
+            col += 1
+        for key in summary["leaf_keys"]:
+            leaf_col[key] = col
+            col += 1
+        for key in summary["pair_headers"]:
+            pair_col[key] = col
+            col += 2
+        positions["QTY"] = col
+        col += 1
+        for name in columns[qty_at + 1 :]:
+            positions[name] = col
+            col += 1
+        money_column = col - 1
+        first_leaf = get_column_letter(min(leaf_col.values()))
+        last_leaf = get_column_letter(max(leaf_col.values()))
     # Fetched for the drawings too: TECHNICAL SPEC carries the line's drawing (AC-QLG11).
     pictures = _picture_bytes(db, lines)
-    positions = {name: index for index, name in enumerate(columns, start=1)}
+    if not grid:
+        positions = {name: index for index, name in enumerate(columns, start=1)}
 
     # The label verbatim, not upper-cased: it is the customer's own wording and it is also the tab
     # name, so the two have to read as the same thing.
@@ -394,9 +501,13 @@ def _write_scope(
             alignment=_WRAP_LEFT,
         )
         sheet.column_dimensions[get_column_letter(column)].width = _COLUMN_WIDTHS.get(name, 16)
+    if grid:
+        _write_grid_header(sheet, header_row, headers, summary, positions, leaf_col, pair_col)
     # A scope runs to hundreds of lines; the headings have to stay visible while it is read.
-    sheet.freeze_panes = f"A{header_row + 1}"
-    row = header_row + 1
+    sheet.freeze_panes = f"A{header_row + (2 if grid else 1)}"
+    row = header_row + (2 if grid else 1)
+    counted_rows: List[int] = []
+    first_data_row = row
 
     current_band: Optional[str] = None
     for position, line in enumerate(lines, start=1):
@@ -459,14 +570,40 @@ def _write_scope(
             _text(line.product_code_snapshot),
             alignment=_WRAP_LEFT,
         )
-        _put(
-            sheet,
-            row,
-            positions["QTY"],
-            _amount(line.quantity),
-            number_format=_qty_format(line.uom),
-            alignment=_RIGHT,
-        )
+        if grid:
+            for key, value in (line.qty_cells or {}).items():
+                if key in leaf_col:
+                    _put(sheet, row, leaf_col[key], _amount(value), number_format=QTY_FORMAT, alignment=_RIGHT)
+            qty_letter = get_column_letter(positions["QTY"])
+            rate_letter = get_column_letter(positions["UNIT RATE (RM)"])
+            for key, col in pair_col.items():
+                members = [leaf_col[c["key"]] for c in next(h for h in headers if h["key"] == key)["cols"]]
+                _put(
+                    sheet, row, col,
+                    f"=SUM({get_column_letter(min(members))}{row}:{get_column_letter(max(members))}{row})",
+                    number_format=QTY_FORMAT, alignment=_RIGHT,
+                )
+                if not line.is_rate_only:
+                    _put(
+                        sheet, row, col + 1,
+                        f"={get_column_letter(col)}{row}*{rate_letter}{row}",
+                        number_format=MONEY_FORMAT, alignment=_RIGHT,
+                    )
+            _put(
+                sheet, row, positions["QTY"], f"=SUM({first_leaf}{row}:{last_leaf}{row})",
+                number_format=QTY_FORMAT, alignment=_RIGHT,
+            )
+            if not line.is_rate_only:
+                counted_rows.append(row)
+        else:
+            _put(
+                sheet,
+                row,
+                positions["QTY"],
+                _amount(line.quantity),
+                number_format=_qty_format(line.uom),
+                alignment=_RIGHT,
+            )
         _put(
             sheet,
             row,
@@ -489,6 +626,12 @@ def _write_scope(
                 font=_ITALIC,
                 alignment=_RIGHT,
             )
+        elif grid:
+            _put(
+                sheet, row, money_column,
+                f"={get_column_letter(positions['QTY'])}{row}*{get_column_letter(positions['UNIT RATE (RM)'])}{row}",
+                number_format=MONEY_FORMAT, alignment=_RIGHT,
+            )
         else:
             _put(
                 sheet,
@@ -503,6 +646,11 @@ def _write_scope(
     if not lines:
         _put(sheet, row, 1, "No items priced in this scope.", font=_ITALIC)
         row += 1
+
+    if grid and lines:
+        row = _write_grid_footer(
+            sheet, row, first_data_row, counted_rows, positions, leaf_col, pair_col
+        )
 
     # The FROZEN scope total off the issue row, not a re-sum: the workbook must not be able to
     # disagree with the record behind it, or with the PDF of the same issue.
