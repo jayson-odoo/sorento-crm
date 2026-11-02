@@ -41,13 +41,13 @@ The assistant does not change a record until you confirm it. The one thing that 
 
 1. Ask for the change, such as logging an opportunity, approving a purchase request, closing a complaint, cancelling an order or raising an IT support ticket.
 2. A card shows what will change, with the value before and after where there is one.
-3. Press **Confirm change**, or **Cancel** to leave everything as it is. The card then reads **Done** or **Cancelled**.
+3. Press **Confirm change**, or **Cancel** to leave everything as it is. The card then reads **Done** or **Cancelled**. Answering yes in a message also confirms the card, the same as pressing **Confirm change**.
 4. Some actions, such as approving a purchase request or closing a complaint, can wait for a few seconds before they apply. While the countdown runs, press **Undo** to take it back. After Undo, nothing has changed and nobody has been told.
 
 A confirmed change does what the same action does on its screen, including telling the people that action normally tells. On a purchase request or a complaint, the card says who will be told.
 
 * **Closing a complaint** tells the contact on WhatsApp once it applies, if the complaint has a contact to reach; the card says so. The complaint must be approved first.
-* **Cancelling an order** applies at once, with no countdown. An order that comes from AutoCount cannot be cancelled here.
+* **Cancelling an order** applies at once, with no countdown and no **Undo**. A yes typed in a message cancels it just as the button does, so read the card before you answer. One confirm can cancel several orders; the card lists each one. An order that comes from AutoCount cannot be cancelled here.
 * **Raising an IT support ticket** creates a draft. The reply links to it, and you review and submit it on that page. You need permission to open and edit tickets.
 
 If you reload the page, the panel opens empty. Reopen the conversation from **History**: it looks the same as before, and a card you already answered does not ask again. A countdown keeps running during the reload, and it applies when it ends, so reopen the conversation quickly if you want to press **Undo**.

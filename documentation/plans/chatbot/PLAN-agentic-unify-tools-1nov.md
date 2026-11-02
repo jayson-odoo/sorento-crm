@@ -1,6 +1,6 @@
 # PLAN: AGENTIC-UNIFY tools (PR 4 of 4)
 
-Status: reviewer READY and security PASS at df85ada31c, three small should-fixes since, read by the lead. PR gate next. Run A done, its one-row miss with the owner. Run B held for the owner: no DB with a Jev key yet. Browser pass paused by the owner. 2 Nov 2026. Planned 1 Nov 2026. Full track: permission gates and writes. No migration, no new screen, so no mock. Branch `crew/agentic-unify-tools`, worktree `sorento_crm-agentic-unify-2`, based on #2060. PR opens after #2060 merges, because a stacked PR gets no CI until retargeted.
+Status: ready for review, 2 Nov 2026. Reviewer READY and security PASS at df85ada31c, three small should-fixes since, read by the lead; main merged in again (732d2f3159). Owner ruled (a) on order cancel: a typed yes stays a known limit, stated in the UAC, guide and PR body. Next: PR gate on the ready head, then crew's browser and console pass and the owner's hand test; no merge until the owner says. Run A done, its one-row miss with the owner. Run B held for the owner: no DB with a Jev key yet. Planned 1 Nov 2026. Full track: permission gates and writes. No migration, no new screen, so no mock. Branch `crew/agentic-unify-tools`, worktree `sorento_crm-agentic-unify-2`, based on #2060, now merged.
 
 UAC: `agentic-unify-tools-acceptance-criteria.md`. Behaviour: `CARD-agentic-unify-v2-31oct.md` section 4, owner Q2 (a). `CHAT` = `sorento_crm_backend/app/services/chatbot`.
 
@@ -82,3 +82,4 @@ Baseline A is today's text with today's labels, fixed; B adds the labels. Run ea
 3. **Live budget.** Org key caps stand: USD 2 a day all lanes, USD 0.25 a run, x1. 1 Nov is spent, so AC-16 and AC-17 run under the 2 Nov cap, ledger before and after. Estimate approved for 2 Nov (a29286280): Run A, Jev gate, about 0.009 USD; Run B, 10 live turns, about 0.14 USD with a stop at 0.25; x1. When slices 1 and 2 are green, `crew report --ask` for a copy on this worktree; crew brings it up and checks its Respond creds and egress block before the complaint close step.
 4. **Guides stay in #2060.**
 5. **#2053 has the owner's merge go and lands first.** PR 4 merges main after it and carries `agent_tool_labels` through its per-user filter (`router.py:295`).
+6. **Owner ruling 2 Nov (ask a55846369): (a).** A typed yes confirms `crm_order_cancel` as it does every agent write, and the cancel has no undo. Kept as a known limit, stated in the UAC known limits, the guide and the PR body. Button-only for irreversible panel writes, option (b), is not built.
