@@ -456,8 +456,7 @@ def _returned_ids(ledger: dict[str, dict]) -> set[str]:
 
 def _record_ids(data: Any) -> set[str]:
     """A record's own `id`, never another nested dict's (a `customer: {id}` reference) and never a `*_id`: each
-    row of a list (top level, or a list value of the top-level dict), the top-level dict's own `id`, and the
-    detail envelope's `response` or `record` own `id`."""
+    row of a list (top level, or a list value of the top-level dict) and the top-level dict's own `id`."""
     found: set[str] = set()
 
     def take(record: Any) -> None:
@@ -469,8 +468,6 @@ def _record_ids(data: Any) -> set[str]:
             take(row)
     elif isinstance(data, dict):
         take(data)
-        take(data.get("response"))  # a detail envelope's record
-        take(data.get("record"))
         for value in data.values():
             if isinstance(value, list):
                 for row in value:
@@ -598,8 +595,7 @@ def violation_message(bad_numbers: list[str], bad_not_found: list[str], empty_te
     if bad_not_found:
         parts.append(
             "these not_found items are not backed by a crm_resolve not_found term or by an empty "
-            "result whose ids came from crm_resolve (a project, complaint or request read may also name an id an earlier "
-            "read returned): " + "; ".join(bad_not_found)
+            "result whose ids came from crm_resolve: " + "; ".join(bad_not_found)
         )
     return "Fix and call answer again. " + "; ".join(parts) + "."
 

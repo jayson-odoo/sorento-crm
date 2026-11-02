@@ -709,6 +709,7 @@ def report_ask(
                 db, basis=basis_norm, axes=axes, date_from=date_from, date_to=date_to,
                 sort=sort_norm, top_n=top_n if group_norm else None, measure=measure_norm,
                 filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
+                capped_by_policy=not staff_read,
             ),
         }
         if group_offset is not None:
