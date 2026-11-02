@@ -1088,7 +1088,7 @@ def test_a_span_that_also_scores_a_customer_is_not_made_a_supplier():
         import types
 
         return types.SimpleNamespace(
-            status="ambiguous", span=list_resolver.Span("zz"),
+            status="ambiguous", matched_by="text", span=list_resolver.Span("zz"),
             candidates=[types.SimpleNamespace(row=types.SimpleNamespace(list_name=n, key=f"k{i}")) for i, n in enumerate(lists)],
         )
 
@@ -1235,7 +1235,7 @@ def test_a_name_that_is_also_a_customer_is_not_supplier_only_without_its_type():
 
     def _res(*lists):
         return types.SimpleNamespace(
-            status="ambiguous", span=list_resolver.Span("zz", "supplier"),
+            status="ambiguous", matched_by="text", span=list_resolver.Span("zz", "supplier"),
             candidates=[types.SimpleNamespace(row=types.SimpleNamespace(list_name=n, key=f"k{i}")) for i, n in enumerate(lists)],
         )
 
@@ -1258,3 +1258,99 @@ def test_a_follow_up_after_the_supplier_was_picked_is_not_asked_which_supplier_a
         session_factory, monkeypatch, "and in March 2026?", list_resolver.Span("March 2026"), set(), qf=more
     )
     assert "Which one do you mean?" not in reply, reply
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 5 (crew sweep at e1c37978, 48/50): a supplier code typed as a product code; 太阳 read as "Sun".
+# --------------------------------------------------------------------------- #
+
+
+def _sup_row(key: str, name: str, code: str):
+    return ll.LookupRow("supplier", key, name, (name, code), homes=("label", "code"))
+
+
+def test_a_code_span_that_is_a_suppliers_own_code_resolves_to_that_supplier():
+    """Crew 'code-direct': "outstanding PO for 400-X008" - the span pass typed the code `product_code`, which the span
+    list skips, so the supplier was never placed and the turn went to the order report."""
+    rows = [_sup_row("s1", SUPPLIER, "400-X008"), _sup_row("s2", OTHER, "400-X001")]
+    res = list_resolver.resolve([list_resolver.Span("400-X008", "product_code")], rows)[0]
+    assert res.status == "resolved" and res.candidates[0].row.key == "s1", res
+    assert list_resolver.resolve([list_resolver.Span("SRTW2600", "product_code")], rows)[0].status == "skipped"
+
+
+def test_a_supplier_code_the_parser_hinted_as_a_product_reads_the_po_book(session_factory, monkeypatch):
+    ids = _office_world(session_factory)
+    qf = _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        entities=[{"raw": "ZZTSUP-JB02", "hint": "product", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    span = list_resolver.Span("ZZTSUP-JB02", "product_code")
+    reply, captured, _seen = _span_turn(session_factory, monkeypatch, "outstanding PO for ZZTSUP-JB02", span, set(), qf=qf)
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["other"]], (reply, captured)
+
+
+def test_a_span_read_by_a_wrong_meaning_still_shows_its_own_text_reading():
+    """Crew 'owner-turn1-repeat-1': 太阳 typed brand, meaning "Sun", placed on Sun* rows; its own text scores the
+    TAIYANG suppliers. Both readings reach the blocks; the supplier-only reading is a supplier span."""
+    from app.services.chatbot import engine as engine_mod
+
+    rows = [
+        ll.LookupRow("brand", "b1", "SUN LIGHT", ("SUN LIGHT",), homes=("label",)),
+        _sup_row("s1", SUPPLIER, "400-X006"), _sup_row("s2", THIRD, "400-X001"),
+    ]
+    embed = meaning_embed({NATIVE, SUPPLIER.casefold(), THIRD.casefold()})
+    spans = [list_resolver.Span(NATIVE, "brand", meaning="Sun")]
+    resolutions = list_resolver.resolve(spans, rows, embed=embed)
+    assert resolutions[0].matched_by == "meaning" and resolutions[0].candidates[0].row.list_name == "brand"
+    readings = list_resolver.text_readings(spans, resolutions, rows, embed=embed)
+    assert {c.row.key for r in readings for c in r.candidates} == {"s1", "s2"}, readings
+    spans_found = engine_mod._supplier_spans([*resolutions, *readings])
+    assert set(spans_found) == {NATIVE}
+    kinds = engine_mod._span_kinds([*resolutions, *readings])
+    assert kinds[NATIVE] == frozenset({"supplier"}), "the gloss found as a word inside a brand name backs no hint"
+
+
+@pytest.mark.parametrize("hint,expect", [("customer", "supplier"), ("brand", "brand")])
+def test_a_hint_no_reading_backs_becomes_the_supplier_and_a_backed_hint_stands(hint, expect):
+    import types
+
+    from app.services.chatbot import engine as engine_mod
+
+    prep = types.SimpleNamespace(
+        supplier_spans={NATIVE: "s1"}, supplier_groups={"s1": [("s1", "A (X1)")]},
+        span_kinds={NATIVE: frozenset({"brand", "supplier"})},
+    )
+    verdict = {"entities": [{"raw": NATIVE, "hint": hint, "canonical_code": None, "current_message": True}]}
+    out = engine_mod._with_span_suppliers(verdict, prep)
+    assert out["entities"][0]["hint"] == expect
+
+
+def test_the_crew_sun_trace_asks_which_taiyang_supplier():
+    """Crew trace 393eff8d: 太阳 typed brand, meaning "Sun"; "Sun" matched as a word inside SUN-named customers and one
+    SUN supplier (partial 1.0); the parser hinted 太阳 customer. 太阳's own text scores the TAIYANG suppliers alone, and a
+    gloss found only as a word inside longer names backs no hint, so 太阳 is the supplier with a TAIYANG id."""
+    from app.services.chatbot import engine as engine_mod
+
+    rows = [
+        ll.LookupRow("customer", "c1", "ZZT SUN CREST TRANSPORT SDN BHD", ("ZZT SUN CREST TRANSPORT SDN BHD",), homes=("label",)),
+        ll.LookupRow("customer", "c2", "ZZT CHONG SUN FAT HARDWARE", ("ZZT CHONG SUN FAT HARDWARE",), homes=("label",)),
+        _sup_row("s9", "ZZT SUN CREST TRANSPORT SDN BHD", "400-S009"),
+        _sup_row("s1", SUPPLIER, "400-X006"), _sup_row("s2", THIRD, "400-X001"),
+    ]
+    embed = meaning_embed({NATIVE, SUPPLIER.casefold(), THIRD.casefold()})
+    spans = [list_resolver.Span(NATIVE, "brand", meaning="Sun")]
+    resolutions = list_resolver.resolve(spans, rows, embed=embed)
+    assert resolutions[0].matched_by == "meaning" and {c.signal for c in resolutions[0].candidates} == {"partial"}
+    readings = list_resolver.text_readings(spans, resolutions, rows, embed=embed)
+    import types
+
+    prep = types.SimpleNamespace(
+        supplier_spans=engine_mod._supplier_spans([*resolutions, *readings]),
+        supplier_groups=engine_mod._supplier_groups([*resolutions, *readings]),
+        span_kinds=engine_mod._span_kinds([*resolutions, *readings]),
+    )
+    verdict = {"entities": [{"raw": NATIVE, "hint": "customer", "canonical_code": None, "current_message": True}]}
+    entity = engine_mod._with_span_suppliers(verdict, prep)["entities"][0]
+    assert entity["hint"] == "supplier" and entity["canonical_code"] in {"s1", "s2"}, entity
+    assert {k for k, _n in prep.supplier_groups[entity["canonical_code"]]} == {"s1", "s2"}

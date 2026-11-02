@@ -364,17 +364,48 @@ def resolve(spans: Sequence[Span], rows: Sequence[LookupRow], *, embed: Embedder
     return [by_meaning[i] if i in by_meaning else by_text[i] for i in range(len(spans))]
 
 
+def text_readings(spans: Sequence[Span], resolutions: Sequence[Resolution], rows: Sequence[LookupRow], *,
+                  embed: Embedder | None = None) -> list[Resolution]:
+    """SUPPLIER-ASK fix round 5 (crew sweep: 太阳 typed brand, meaning "Sun", placed on Sun* rows and never on the
+    TAIYANG suppliers its own text scores): a span placed by its `meaning` also has its own text resolved, so both
+    readings reach the candidate blocks and the parser sees both. Only the text readings that place something are
+    returned (their span carries no meaning)."""
+    asked = [Span(s.text, s.type) for s, r in zip(spans, resolutions) if r.matched_by == "meaning"]
+    if not asked:
+        return []
+    return [r for r in _resolve_texts(asked, rows, embed) if r.status in ("resolved", "ambiguous")]
+
+
+def _supplier_codes(rows: Sequence[LookupRow]) -> dict[str, LookupRow]:
+    """Folded supplier code -> its row (the row's own `code` text, `LookupRow.homes`)."""
+    out: dict[str, LookupRow] = {}
+    for row in rows:
+        if row.list_name != "supplier":
+            continue
+        for text, home in zip(row.texts or (), row.homes or ()):
+            if home == "code" and _fold(text):
+                out.setdefault(_fold(text), row)
+    return out
+
+
 def _resolve_texts(spans: Sequence[Span], rows: Sequence[LookupRow], embed: Embedder | None) -> list[Resolution]:
     """One `Resolution` per span by its text. Never raises on an embedder failure (spelling and partial
-    names still resolve); a `product_code` span is `skipped` and a span naming nothing is `unresolved`."""
+    names still resolve); a `product_code` span is `skipped` (unless it is exactly a supplier's own code, fix round
+    5) and a span naming nothing is `unresolved`."""
     indexes = _prepare(rows) if rows else {}
+    supplier_codes = _supplier_codes(rows) if any(s.type == "product_code" for s in spans) else {}
     live = [s.text for s in spans if s.type != "product_code" and _fold(s.text) and s.text]
     meaning = _meaning_scores(list(dict.fromkeys(live)), indexes, embed)
     out: list[Resolution] = []
     for span in spans:
         folded = _fold(span.text)
         if span.type == "product_code":
-            out.append(Resolution(span, "skipped"))
+            # SUPPLIER-ASK fix round 5 (crew sweep 'code-direct', "outstanding PO for 400-X008"): a code is the
+            # resolver's, except one that IS a supplier record's own code, which only the Supplier list holds.
+            code_row = supplier_codes.get(folded) if folded else None
+            out.append(
+                Resolution(span, "resolved", (Candidate(code_row, 1.0, "exact"),)) if code_row else Resolution(span, "skipped")
+            )
             continue
         if not folded or not indexes:
             out.append(Resolution(span, "unresolved"))

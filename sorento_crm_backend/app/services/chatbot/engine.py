@@ -1480,6 +1480,9 @@ class _SpanPrep:
     # SUPPLIER-ASK fix round 3 (#2066, owner turn 4): span text -> the best supplier row id, for a span whose every
     # candidate is a supplier row. `_with_span_suppliers` gives the verdict that supplier when the parser named none.
     supplier_spans: dict[str, str] = field(default_factory=dict)
+    # Fix round 5: span text -> every list any reading of it placed rows on (`_with_span_suppliers` keeps a parser
+    # hint the span list backs).
+    span_kinds: dict[str, frozenset[str]] = field(default_factory=dict)
 
 
 def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | None:
@@ -1619,10 +1622,16 @@ def _supplier_groups(resolutions: list[list_resolver.Resolution]) -> dict[str, l
     return out
 
 
-def _supplier_only(res: list_resolver.Resolution) -> bool:
-    return res.status in ("resolved", "ambiguous") and bool(res.candidates) and all(
-        c.row.list_name == "supplier" for c in res.candidates
+def _names_rows(res: list_resolver.Resolution) -> bool:
+    """Whether a resolution names rows: not when only its meaning's gloss was found as a word inside longer names
+    (`partial` on a meaning reading, fix round 5: "Sun" for 太阳 inside "SUN CREST TRANSPORT")."""
+    return res.status in ("resolved", "ambiguous") and bool(res.candidates) and not (
+        res.matched_by == "meaning" and all(c.signal == "partial" for c in res.candidates)
     )
+
+
+def _supplier_only(res: list_resolver.Resolution) -> bool:
+    return _names_rows(res) and all(c.row.list_name == "supplier" for c in res.candidates)
 
 
 def _supplier_spans(
@@ -1642,6 +1651,20 @@ def _supplier_spans(
                 continue
         out.setdefault(res.span.text, str(res.candidates[0].row.key))
     return out
+
+
+def _span_kinds(resolutions: list[list_resolver.Resolution]) -> dict[str, frozenset[str]]:
+    """Fix round 5: span text -> the lists a reading of it NAMES rows of. A reading of the span's meaning that only
+    finds its gloss as one word inside longer names (`partial`: "Sun" for 太阳 inside "SUN CREST TRANSPORT", crew trace
+    393eff8d) names nothing; the span's own text, and a meaning that names a row (exact, spelling, embedding), do."""
+    out: dict[str, set[str]] = {}
+    for res in resolutions:
+        if res.status not in ("resolved", "ambiguous"):
+            continue
+        out.setdefault(res.span.text, set()).update(
+            c.row.list_name for c in res.candidates if not (res.matched_by == "meaning" and c.signal == "partial")
+        )
+    return {k: frozenset(v) for k, v in out.items()}
 
 
 def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> dict[str, Any]:
@@ -1672,6 +1695,11 @@ def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> d
         # Already a supplier carrying a row id the span pass grouped (`supplier_groups` keys every placed supplier):
         # the parser's own pick binds as it is.
         if jsc.nullish_str(e.get("canonical_code")).strip() in groups and e.get("hint") == "supplier":
+            out.append(e)
+            continue
+        # Fix round 5: a hint some reading of the span backs (the span list placed it on rows of that kind too, e.g.
+        # 太阳 meaning "Sun" on Sun* brand rows, hinted brand) is the parser's call and stands.
+        if e.get("hint") != "supplier" and e.get("hint") in (getattr(prep, "span_kinds", None) or {}).get(text, frozenset()):
             out.append(e)
             continue
         out.append({**e, "hint": "supplier", "canonical_code": key})
@@ -1741,11 +1769,15 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                     if left
                 ]
                 extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
-                hits = _hits_of([*resolutions, *extra])
-                prep.supplier_groups = _supplier_groups([*resolutions, *extra])
+                # Fix round 5: a span placed by its meaning also reaches the blocks by its own text.
+                readings = list_resolver.text_readings(answer.spans, resolutions, all_rows, embed=embed)
+                hits = _hits_of([*resolutions, *extra, *readings])
+                prep.supplier_groups = _supplier_groups([*resolutions, *extra, *readings])
                 prep.supplier_spans = _supplier_spans(
-                    resolutions, untyped=lambda span: next(iter(list_resolver.resolve([span], all_rows, embed=embed)), None)
+                    [*resolutions, *readings],
+                    untyped=lambda span: next(iter(list_resolver.resolve([span], all_rows, embed=embed)), None),
                 )
+                prep.span_kinds = _span_kinds([*resolutions, *readings])
                 span_keys = {h.row.key for hs in hits.values() for h in hs}
                 near_rows: list[dict[str, Any]] = []
                 # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling

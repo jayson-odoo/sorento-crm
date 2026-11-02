@@ -397,7 +397,7 @@ def _section_subjects(env: dict[str, Any], state: State) -> list[Any]:
 def _header_codes(subjects: list[Any], env: dict[str, Any]) -> str:
     """What a section header says the answer is for: every subject by name up to `HEADER_SUBJECT_MAX`, else a count.
     SUPPLIER-ASK fix round 4 (owner, "未找到 7 items 的 PO"): a counted header still names each supplier (whole, with
-    its code) and counts only the rest, so the reply always says whose purchase orders these are."""
+    its code) and counts only the rest, so the reply always names whose purchase orders it lists."""
     if len(subjects) <= HEADER_SUBJECT_MAX:
         return ", ".join(str(s) for s in subjects)
     whole = {str(s).strip() for s in (env.get("supplier_subjects") or [])}
