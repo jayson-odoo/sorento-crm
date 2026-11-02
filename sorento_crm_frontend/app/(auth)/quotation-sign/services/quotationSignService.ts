@@ -111,8 +111,18 @@ export type QuotationSignScope = {
   lines: QuotationSignLine[];
 };
 
+/** One cover page row. The terms row carries `html`, every other row `text`. */
+export type QuotationCoverRow = {
+  key: string;
+  label: string;
+  text?: string | null;
+  html?: string | null;
+};
+
 export type QuotationSignPage = {
   our_ref: string | null;
+  /** The cover page rows of a new-layout issue; null for an issue from before the cover page. */
+  cover_rows?: QuotationCoverRow[] | null;
   issue_no: number;
   doc_date: string | null;
   subject_title: string | null;

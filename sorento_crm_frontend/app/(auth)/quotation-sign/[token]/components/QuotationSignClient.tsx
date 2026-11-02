@@ -30,12 +30,14 @@ import { signatureValueFrom } from '@/components/common/signatureValue';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { sanitizedHtml } from '@/lib/sanitize';
+import { TERMS_HTML_CLASS } from '@/lib/terms-html';
 import {
   useQuotationSignMutations,
   useQuotationSignPage,
 } from '../../hooks/useQuotationSign';
 import {
   QuotationSignError,
+  type QuotationCoverRow,
   type QuotationSignPage,
 } from '../../services/quotationSignService';
 import {
@@ -77,8 +79,76 @@ function firstName(...names: Array<string | null | undefined>): string | null {
   return null;
 }
 
+function SenderRow({ page }: { page: QuotationSignPage }) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      {page.sender_logo_url && (
+        <img
+          src={page.sender_logo_url}
+          alt={`${page.sender_name ?? 'Company'} logo`}
+          referrerPolicy="no-referrer"
+          className="h-12 w-auto max-w-[120px] shrink-0 object-contain"
+        />
+      )}
+      <div className="min-w-0">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Quotation from
+        </p>
+        <p className="min-w-0 break-words text-base font-semibold">
+          {text(page.sender_name)}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** The cover page first: the same rows, in the same order, as the PDF's first page. */
+function CoverCard({
+  page,
+  rows,
+}: {
+  page: QuotationSignPage;
+  rows: QuotationCoverRow[];
+}) {
+  return (
+    <Card data-testid="quotation-sign-cover">
+      <CardContent className="space-y-4 py-5">
+        <SenderRow page={page} />
+        <div className="space-y-3 border-t border-border pt-4">
+          {rows.map((row) => (
+            <div
+              key={row.key}
+              className="flex min-w-0 flex-col gap-1 text-sm sm:flex-row sm:gap-2"
+            >
+              <span className="shrink-0 text-muted-foreground sm:w-40">
+                {row.label}
+              </span>
+              {row.html ? (
+                <div
+                  className={cn(TERMS_HTML_CLASS, 'font-medium')}
+                  dangerouslySetInnerHTML={sanitizedHtml(row.html)}
+                />
+              ) : (
+                <span className="min-w-0 whitespace-pre-line break-words font-medium">
+                  {row.text}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 /** The refs and the parties, in the order they sit on the printed quotation. */
-function Letterhead({ page }: { page: QuotationSignPage }) {
+function Letterhead({
+  page,
+  withSender = true,
+}: {
+  page: QuotationSignPage;
+  withSender?: boolean;
+}) {
   const lines = addressLines(page.recipient_address);
   const docDate = page.doc_date ? formatDateInMalaysia(page.doc_date) : '';
   const salesContact = [page.signatory_name, page.signatory_phone]
@@ -89,26 +159,14 @@ function Letterhead({ page }: { page: QuotationSignPage }) {
   return (
     <Card>
       <CardContent className="space-y-5 py-5">
-        <div className="flex min-w-0 items-center gap-3">
-          {page.sender_logo_url && (
-            <img
-              src={page.sender_logo_url}
-              alt={`${page.sender_name ?? 'Company'} logo`}
-              referrerPolicy="no-referrer"
-              className="h-12 w-auto max-w-[120px] shrink-0 object-contain"
-            />
-          )}
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Quotation from
-            </p>
-            <p className="min-w-0 break-words text-base font-semibold">
-              {text(page.sender_name)}
-            </p>
-          </div>
-        </div>
+        {withSender && <SenderRow page={page} />}
 
-        <div className="grid gap-5 border-t border-border pt-4 md:grid-cols-2">
+        <div
+          className={cn(
+            'grid gap-5 md:grid-cols-2',
+            withSender && 'border-t border-border pt-4',
+          )}
+        >
           <div className="min-w-0 space-y-1">
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               To
@@ -767,6 +825,7 @@ function SignPageBody({
     page.sign_blocked_reason === null &&
     !(page.is_changes_requested && !page.amendment_request);
 
+  const coverRows = page.cover_rows?.length ? page.cover_rows : null;
   const preparedBy = firstName(
     page.sorento_signature?.signer_name,
     page.signatory_name,
@@ -775,7 +834,8 @@ function SignPageBody({
 
   return (
     <PageShell testId="quotation-sign-page">
-      <Letterhead page={page} />
+      {coverRows && <CoverCard page={page} rows={coverRows} />}
+      <Letterhead page={page} withSender={!coverRows} />
 
       <ProsePanel
         title="Cover letter"
@@ -829,11 +889,13 @@ function SignPageBody({
         }}
       />
 
-      <ProsePanel
-        title="Terms and conditions"
-        html={page.terms}
-        empty="No terms were included with this quotation."
-      />
+      {!coverRows && (
+        <ProsePanel
+          title="Terms and conditions"
+          html={page.terms}
+          empty="No terms were included with this quotation."
+        />
+      )}
 
       {/* Side by side from 768px, Sorento first; stacked below it so a phone reads top down. */}
       <div className="grid items-start gap-4 md:grid-cols-2">

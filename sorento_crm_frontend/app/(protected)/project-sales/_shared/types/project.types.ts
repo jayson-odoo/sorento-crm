@@ -196,6 +196,7 @@ export interface Project {
   customer_phone?: string | null;
   /** The customer's main contact, which the quotation header's Attn defaults to. */
   customer_attn?: string | null;
+  customer_email?: string | null;
 
   last_meaningful_activity_at?: string | null;
   days_since_last_activity?: number | null;

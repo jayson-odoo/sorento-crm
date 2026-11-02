@@ -19,6 +19,8 @@ export interface QuotationTemplate {
   kind: QuotationTemplateKind;
   name: string;
   body_html: string;
+  payment_terms?: string | null;
+  validity?: string | null;
   is_active: boolean;
   created_at?: string | null;
   updated_at?: string | null;
@@ -27,6 +29,8 @@ export interface QuotationTemplate {
 export interface QuotationTemplateBody {
   name: string;
   body_html: string;
+  payment_terms?: string | null;
+  validity?: string | null;
 }
 
 export async function listQuotationTemplates(

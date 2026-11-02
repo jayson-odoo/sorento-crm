@@ -568,6 +568,8 @@ def test_a_header_only_edit_leaves_every_scope_as_it_was(api):
 class _FakeTemplate:
     def __init__(self, body_html: str):
         self.body_html = body_html
+        self.payment_terms = None
+        self.validity = None
 
 
 def _fake_templates(monkeypatch):

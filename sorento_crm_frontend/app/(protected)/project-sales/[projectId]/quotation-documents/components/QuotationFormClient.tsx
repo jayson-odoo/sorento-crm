@@ -96,6 +96,10 @@ const HEADER_FIELDS = [
   'recipient_name_snapshot',
   'recipient_address_snapshot',
   'recipient_phone_snapshot',
+  'recipient_email_snapshot',
+  'quotation_purpose',
+  'payment_terms',
+  'validity',
 ] as const;
 
 let scopeCounter = 0;
@@ -249,6 +253,10 @@ export function QuotationFormClient({
           project.data.customer_name ?? project.data.developer_name ?? '',
         recipient_address_snapshot: '',
         recipient_phone_snapshot: project.data.customer_phone ?? '',
+        recipient_email_snapshot: project.data.customer_email ?? '',
+        quotation_purpose: '',
+        payment_terms: '',
+        validity: '',
       });
       setScopes([newScope()]);
     }
@@ -285,6 +293,19 @@ export function QuotationFormClient({
     });
     setLetterSeeded(true);
   }, [isEdit, letterSeeded, letterTemplates.isFetched, letterTemplates.data]);
+
+  // Create: Payment Terms and Validity start from the active terms template, once, as soon as both
+  // the header and the templates are ready (either can arrive first).
+  const [termsDefaulted, setTermsDefaulted] = React.useState(false);
+  React.useEffect(() => {
+    if (isEdit || termsDefaulted || !letterSeeded || header === null) return;
+    setHeader((previous) => ({
+      ...(previous ?? {}),
+      payment_terms: letterTemplates.data?.payment_terms ?? '',
+      validity: letterTemplates.data?.validity ?? '',
+    }));
+    setTermsDefaulted(true);
+  }, [isEdit, termsDefaulted, letterSeeded, header, letterTemplates.data]);
 
   const updateScope = React.useCallback(
     (key: string, patch: Partial<FormScope>) => {
@@ -518,6 +539,7 @@ export function QuotationFormClient({
               document={shownDocument}
               liveGrandTotal={liveTotal}
               details={details}
+              preparedBy={project.data?.owner_name ?? null}
               onChange={(patch) => {
                 setDirty(true);
                 setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
@@ -624,6 +646,12 @@ export function QuotationFormClient({
             {letterReady ? (
               <QuotationTermsPanel
                 html={letter.terms_html ?? saved.data?.terms_html ?? ''}
+                paymentTerms={header?.payment_terms ?? ''}
+                validity={header?.validity ?? ''}
+                onFieldChange={(patch) => {
+                  setDirty(true);
+                  setHeader((previous) => ({ ...(previous ?? {}), ...patch }));
+                }}
                 onChange={(html) => {
                   setDirty(true);
                   setLetter((previous) => ({ ...previous, terms_html: html }));
