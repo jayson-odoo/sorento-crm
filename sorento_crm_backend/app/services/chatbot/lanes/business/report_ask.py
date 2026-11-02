@@ -1541,7 +1541,19 @@ def _account_plan(
         return plan
     from app.services.reports.ask_params import account_book, account_type_options, resolve_account_types
 
+    own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) >= 3]
+    ids = [str(c[0]) for c in own]
+    held_only = False
+    said_company = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
+    if said_company:  # a named company narrows the book to that company
+        ids = [str(c[0]) for c in own if said_company in (str(c[1]).casefold(), str(c[2]).casefold())] or ids
+    elif held_company and str(held_company) in ids:
+        ids = [str(held_company)]
+        held_only = True  # a refine reads the company the held ask ran for
     stored = {name.strip().casefold(): name for name, _label in account_type_options(db)}
+    if held_only:  # the word question reads the held company's book too, not the other company's types
+        in_book = {t.strip().casefold() for t in account_book(db, ids).types.get(ids[0], set())}
+        stored = {k: v for k, v in stored.items() if k in in_book}
     entries = {
         (e.get("hint"), e.get("word")): e for e in jsc.array(parse_output.get("report_ask_kind")) if isinstance(e, dict)
     }
@@ -1562,13 +1574,6 @@ def _account_plan(
         else:
             how = "account"
         decided.append((how, hint, word, kind))
-    own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) >= 3]
-    ids = [str(c[0]) for c in own]
-    said_company = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
-    if said_company:  # a named company narrows the book to that company
-        ids = [str(c[0]) for c in own if said_company in (str(c[1]).casefold(), str(c[2]).casefold())] or ids
-    elif held_company and str(held_company) in ids:
-        ids = [str(held_company)]  # a refine reads the company the held ask ran for
     per_company: dict[str, set] = {}
     if numbers and ids and decided:
         per_company, _unknown = resolve_account_types(account_book(db, ids), numbers)
@@ -2233,7 +2238,8 @@ def _settle(
     not_applied = args.pop("_unbound", [])
     kind_ask = args.pop("_kind_ask", None)
     covered = args.pop("_covered", False)
-    if holding and source.get("company") and not set(args) - _NON_FILTER_ARGS - {"channel", "account_types"}:
+    own_book = {"channel", "account_types", "brand_ids"}  # read in the held company's book, so no other-company subject
+    if holding and source.get("company") and not set(args) - _NON_FILTER_ARGS - own_book:
         # The company it ran in stays, unless this message has a subject of its own: that may be in the other company.
         args["company"] = source["company"]
     named = {
