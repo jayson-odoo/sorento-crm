@@ -229,6 +229,21 @@ def _template_or_404(db: Session, template_id: str) -> TagTemplate:
     return template
 
 
+def family_codes(db: Session, query: Optional[str], limit: int = 50) -> list[str]:
+    """Model families (``Product.family_code``) for the bulk dialog's filter."""
+    q = _scoped(db, Product).filter(Product.family_code.isnot(None))
+    if query and query.strip():
+        q = q.filter(Product.family_code.ilike(f"%{query.strip()}%"))
+    rows = (
+        q.with_entities(Product.family_code)
+        .distinct()
+        .order_by(Product.family_code)
+        .limit(limit)
+        .all()
+    )
+    return [row[0] for row in rows if row[0]]
+
+
 def bulk_preview(db: Session, template_id: str, filters: dict) -> dict:
     template = _template_or_404(db, template_id)
     product_ids = [row.id for row in _bulk_products_query(db, filters).with_entities(Product.id)]

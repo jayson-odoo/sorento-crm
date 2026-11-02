@@ -619,3 +619,38 @@ def test_family_for_matches_frontend_table():
     ).read_text()
     pairs = tuple(re.findall(r"\['(\w+)', '(\w+)'\]", ts))
     assert pairs == _FAMILY_PREFIXES
+
+
+def test_family_codes_lists_distinct_families(env):
+    db, c, as_ = env
+    ref = _reference(db)
+    family = unique_code("FAMLIST")
+    _product(db, ref, family_code=family)
+    _product(db, ref, family_code=family)
+    res = c.get(f"{DK}/tag-templates/family-codes", params={"q": family})
+    assert res.status_code == 200, res.text
+    assert res.json() == [family]
+    as_(VIEWER_ID)
+    assert c.get(f"{DK}/tag-templates/family-codes").status_code == 403
+
+
+def test_deferred_remove_unlinks_the_matching_products(env):
+    """`tag_template.unassign_products` (the dialog's Remove, a parked unlink)."""
+    from app.models.dealer_kit import ProductTagTemplate
+    import app.services.record_actions  # noqa: F401  (registers the actions)
+    from app.services.form_action_registry import get_action
+
+    db, _c, _ = env
+    ref = _reference(db)
+    p1 = _product(db, ref)
+    t = _template(db, "Bulk")
+    keep = _template(db, "Keep")
+    _link(db, p1, t, keep)
+
+    action = get_action("tag_template.unassign_products")
+    assert action.permission == "dealer_kit.tag_templates.manage"
+    result = action.execute(
+        db, {"entity_id": t, "brand_ids": [ref[1].id], "requested_by_id": MANAGER_ID}
+    )
+    assert result == {"changed": 1}
+    assert {r.template_id for r in db.query(ProductTagTemplate).filter_by(product_id=p1)} == {keep}

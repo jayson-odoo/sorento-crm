@@ -93,6 +93,21 @@ def list_tag_templates(
     return [_response_for(t, published=published) for t in templates]
 
 
+# PRICETAG-TEMPLATE-PER-PRODUCT: declared before ``/{template_id}`` for the
+# same reason as ``/resolve-preview`` below.
+@router.get("/family-codes", response_model=list[str])
+def list_family_codes(
+    q: str | None = Query(None, max_length=100),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Model families the bulk "Assign to products" filter can name."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.family_codes(db, q, limit=limit)
+
+
 # DECLARED BEFORE ``/{template_id}``, and that order is load-bearing: FastAPI
 # matches in declaration order, so a uuid path param registered first would
 # swallow ``/resolve-preview`` whole and answer 404 for a template nobody named.
