@@ -170,7 +170,72 @@ describe('StockPositionGrid: the user picks which warehouses show (owner ruling 
 
     fireEvent.click(screen.getByText('Export to Excel'));
     await waitFor(() => expect(exporter.exportStockPosition).toHaveBeenCalled());
-    expect(exporter.exportStockPosition.mock.calls[0][2]).toEqual(['BRW']);
+    expect(exporter.exportStockPosition.mock.calls[0][1].hiddenColumns).toEqual(['wh:DC1']);
+  });
+});
+
+/** The table the grid hands the column-preferences hook (the saved layout writes through it). */
+function gridTable() {
+  return (prefs.useListingColumnPreferences.mock.calls.at(-1)![0] as {
+    table: {
+      getColumn: (id: string) => { toggleVisibility: (v: boolean) => void };
+      setColumnVisibility: (v: Record<string, boolean>) => void;
+      getState: () => { pagination: { pageIndex: number } };
+      setPageIndex: (i: number) => void;
+    };
+  }).table;
+}
+const lastFilters = () => hook.useStockPosition.mock.calls.at(-1)![1] as { hiddenColumns?: string[] };
+const lastParams = () => hook.useStockPosition.mock.calls.at(-1)![0] as { pageIndex: number };
+const tipOf = (name: RegExp) => screen.getByRole('columnheader', { name }).querySelector('[title^="Sum of"], [title^="Adds up"]')?.getAttribute('title');
+
+describe('StockPositionGrid: totals follow the visible columns (owner 2 Nov)', () => {
+  it('asks the server for nothing hidden while every column shows', () => {
+    withRows([row()], ['BRW', 'DC1']);
+    renderGrid();
+    expect(lastFilters().hiddenColumns ?? []).toEqual([]);
+  });
+
+  it('sends a hidden warehouse or incoming column to the server, so the totals, the sort and the paging read the visible set', async () => {
+    withRows([row()], ['BRW', 'DC1']);
+    renderGrid();
+    await act(async () => gridTable().setPageIndex(1));
+    await act(async () => gridTable().getColumn('wh:DC1').toggleVisibility(false));
+    expect(lastFilters().hiddenColumns).toEqual(['wh:DC1']);
+    expect(lastParams().pageIndex).toBe(0);
+    await act(async () => gridTable().getColumn('incoming_project').toggleVisibility(false));
+    expect(lastFilters().hiddenColumns).toEqual(['incoming_project', 'wh:DC1']);
+    await act(async () => gridTable().getColumn('wh:DC1').toggleVisibility(true));
+    expect(lastFilters().hiddenColumns).toEqual(['incoming_project']);
+  });
+
+  it('a column that is no part of a total is not sent', async () => {
+    withRows([row()], ['BRW', 'DC1']);
+    renderGrid();
+    await act(async () => gridTable().getColumn('outstanding_po').toggleVisibility(false));
+    await act(async () => gridTable().getColumn('supplier_name').toggleVisibility(false));
+    expect(lastFilters().hiddenColumns ?? []).toEqual([]);
+  });
+
+  it('a saved layout or saved view applying column visibility is sent the same way', async () => {
+    withRows([row()], ['BRW', 'DC1']);
+    renderGrid();
+    await act(async () => gridTable().setColumnVisibility({ 'wh:BRW': false, incoming_pool: false }));
+    expect(lastFilters().hiddenColumns).toEqual(['incoming_pool', 'wh:BRW']);
+  });
+
+  it('the total headers say what they add up, and follow a hide', async () => {
+    withRows([row()], ['BRW', 'DC1']);
+    renderGrid();
+    expect(tipOf(/^Total stock/)).toBe('Sum of BRW, DC1, Incoming BRW');
+    expect(tipOf(/^Total incoming/)).toBe('Sum of Incoming BRW, Incoming (Project)');
+    await act(async () => gridTable().getColumn('wh:DC1').toggleVisibility(false));
+    expect(tipOf(/^Total stock/)).toBe('Sum of BRW, Incoming BRW');
+    await act(async () =>
+      gridTable().setColumnVisibility({ 'wh:BRW': false, 'wh:DC1': false, incoming_pool: false, incoming_project: false }),
+    );
+    expect(tipOf(/^Total stock/)).toBe('Adds up no shown column');
+    expect(tipOf(/^Total incoming/)).toBe('Adds up no shown column');
   });
 });
 

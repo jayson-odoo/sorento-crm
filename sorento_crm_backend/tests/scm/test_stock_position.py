@@ -514,24 +514,24 @@ def test_export_writes_every_row_with_the_screen_headers(scm_app):
     assert c_row[header.index("Total stock")] == 777
 
 
-def test_export_writes_only_the_warehouse_columns_the_user_shows_totals_unchanged(scm_app):
-    """Owner ruling 27 Oct (Q5): the user picks which warehouse columns show (the grid's Columns
-    chooser); the export writes those, and Total stock still counts every warehouse."""
+def test_export_writes_only_the_shown_columns_and_the_visible_columns_total(scm_app):
+    """Owner 2 Nov (STOCK-POS-DYNAMIC-TOTAL, reversing Q5's last sentence): the export writes the
+    warehouse columns the user shows, and Total stock adds up only those (plus Incoming BRW)."""
     from openpyxl import load_workbook
 
     app, db, w = _setup(scm_app)
     _sheet_world(db, w)
     c = w.product("C")
-    r = TestClient(app).get(f"{URL}/export", params={"sort": "item_code", "wh": ["DC1", "BRW"]})
+    r = TestClient(app).get(f"{URL}/export", params={"sort": "item_code", "hide": ["wh:MWH", "wh:WH3"]})
     assert r.status_code == 200, r.text
     rows = list(load_workbook(io.BytesIO(r.content)).active.iter_rows(values_only=True))
     header = rows[0]
-    assert header[3:5] == ("BRW", "DC1")  # in the report's own order, not the request's
+    assert header[3:5] == ("BRW", "DC1")
     assert "MWH" not in header and "WH3" not in header
     c_row = next(row for row in rows[1:] if row[0] == c.product_code)
-    assert c_row[header.index("Total stock")] == 777  # MWH's 85 still counts
-    # A code the report does not have is ignored rather than refused.
-    assert TestClient(app).get(f"{URL}/export", params={"wh": ["NOPE"]}).status_code == 200
+    assert c_row[header.index("Total stock")] == 98 + 594  # MWH's 85 is hidden, so it is out
+    # A column id the report does not have is ignored rather than refused.
+    assert TestClient(app).get(f"{URL}/export", params={"hide": ["wh:NOPE", "nope"]}).status_code == 200
 
 
 def test_export_with_every_warehouse_hidden_writes_no_warehouse_column(scm_app):
@@ -539,10 +539,76 @@ def test_export_with_every_warehouse_hidden_writes_no_warehouse_column(scm_app):
 
     app, db, w = _setup(scm_app)
     _sheet_world(db, w)
-    r = TestClient(app).get(f"{URL}/export", params={"wh": [""]})
+    a = w.product("A")
+    hide = ["wh:BRW", "wh:DC1", "wh:MWH", "wh:WH3"]
+    r = TestClient(app).get(f"{URL}/export", params={"hide": hide})
     assert r.status_code == 200, r.text
-    header = next(load_workbook(io.BytesIO(r.content)).active.iter_rows(values_only=True))
+    rows = list(load_workbook(io.BytesIO(r.content)).active.iter_rows(values_only=True))
+    header = rows[0]
     assert header[:4] == ("Item code", "Supplier", "Brand", "Incoming BRW")
+    a_row = next(row for row in rows[1:] if row[0] == a.product_code)
+    assert a_row[header.index("Total stock")] == 352
+
+
+# ------------------------------------------------------------------ totals follow visibility
+def test_a_hidden_warehouse_column_drops_out_of_total_stock(scm_app):
+    app, db, w = _setup(scm_app)
+    _, _, (a, b, c) = _sheet_world(db, w)
+    body = _get(app, hide=["wh:DC1"])
+    ra, rb, rc = _row(body, a), _row(body, b), _row(body, c)
+    assert ra["total_stock"] == 40 + 352
+    assert rb["total_stock"] == 1053  # B holds nothing in DC1
+    assert rc["total_stock"] == 98 + 85
+    assert ra["total_incoming"] == 1232  # no part of Total incoming is hidden
+    # The figures themselves are untouched; only the totals follow the visible set.
+    assert ra["stock"] == {"BRW": 40, "DC1": 244}
+    assert [x["code"] for x in body["warehouses"]] == ["BRW", "DC1", "MWH", "WH3"]
+
+
+def test_hidden_incoming_columns_drop_out_of_both_totals(scm_app):
+    app, db, w = _setup(scm_app)
+    _, _, (a, _b, _c) = _sheet_world(db, w)
+    ra = _row(_get(app, hide=["incoming_pool"]), a)
+    assert (ra["total_stock"], ra["total_incoming"]) == (40 + 244, 880)
+    assert ra["incoming_pool"] == 352
+    ra = _row(_get(app, hide=["incoming_project"]), a)
+    assert (ra["total_stock"], ra["total_incoming"]) == (636, 352)
+    ra = _row(_get(app, hide=["incoming_pool", "incoming_project"]), a)
+    assert ra["total_incoming"] == 0
+
+
+def test_every_warehouse_hidden_total_stock_is_incoming_brw_then_zero(scm_app):
+    app, db, w = _setup(scm_app)
+    _, _, (a, _b, c) = _sheet_world(db, w)
+    every = ["wh:BRW", "wh:DC1", "wh:MWH", "wh:WH3"]
+    body = _get(app, hide=every)
+    assert _row(body, a)["total_stock"] == 352
+    assert _row(body, c)["total_stock"] == 0
+    assert _row(_get(app, hide=[*every, "incoming_pool"]), a)["total_stock"] == 0
+
+
+def test_unknown_hidden_ids_are_ignored(scm_app):
+    app, db, w = _setup(scm_app)
+    _, _, (a, _b, _c) = _sheet_world(db, w)
+    ra = _row(_get(app, hide=["wh:NOPE", "outstanding_po", "total_stock", ""]), a)
+    assert (ra["total_stock"], ra["total_incoming"]) == (636, 1232)
+
+
+def test_sort_by_a_total_orders_by_the_visible_columns_total(scm_app):
+    app, db, w = _setup(scm_app)
+    _, _, (a, b, c) = _sheet_world(db, w)
+
+    def order(**params):
+        return [r["product_id"] for r in _get(app, **params)["data"]
+                if r["product_id"] in {str(a.id), str(b.id), str(c.id)}]
+
+    # Every column shown: A 636, C 777, B 1053.
+    assert order(sort="total_stock", dir="asc") == [str(a.id), str(c.id), str(b.id)]
+    # DC1 hidden: C 183, A 392, B 1053.
+    assert order(sort="total_stock", dir="asc", hide=["wh:DC1"]) == [str(c.id), str(a.id), str(b.id)]
+    # Incoming BRW hidden: A 880, B 51, C 0 on Total incoming.
+    assert order(sort="total_incoming", dir="desc", hide=["incoming_pool"]) == [
+        str(a.id), str(b.id), str(c.id)]
 
 
 def test_monthly_sales_of_an_unresolved_scope_read_nothing(scm_app, monkeypatch):
