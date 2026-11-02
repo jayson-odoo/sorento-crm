@@ -195,7 +195,7 @@ beforeEach(() => {
 });
 
 describe('the quotation document tab strip', () => {
-  it('AC-QF050/053: reads Header, Lines, Cover letter, Terms, Signatures, each its own route', async () => {
+  it('AC-QF050/053: reads Header, Lines, Cover letter, Terms, Signatures, Spec sheet, each its own route', async () => {
     renderTab(BASE, <QuotationHeaderTab />);
 
     const tabs = await screen.findAllByRole('tab');
@@ -205,6 +205,8 @@ describe('the quotation document tab strip', () => {
       'Cover letter',
       'Terms',
       'Signatures',
+      // PS-SPEC-SHEET: the project catalogue, last.
+      'Spec sheet',
     ]);
     expect(screen.getByRole('tab', { name: 'Header' })).toHaveAttribute('href', BASE);
     expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('href', `${BASE}/lines`);
@@ -216,6 +218,10 @@ describe('the quotation document tab strip', () => {
     expect(screen.getByRole('tab', { name: 'Signatures' })).toHaveAttribute(
       'href',
       `${BASE}/signatures`,
+    );
+    expect(screen.getByRole('tab', { name: 'Spec sheet' })).toHaveAttribute(
+      'href',
+      `${BASE}/spec-sheet`,
     );
     // The owner struck "Scopes" out and wrote "Lines" over it.
     expect(screen.queryByRole('tab', { name: 'Scopes' })).toBeNull();

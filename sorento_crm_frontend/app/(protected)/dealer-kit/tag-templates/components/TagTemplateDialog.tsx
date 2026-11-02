@@ -26,7 +26,7 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   DEFAULT_TAG_SIZE,
-  TAG_TEMPLATE_FAMILIES,
+  ALL_TEMPLATE_FAMILIES,
   type TagTemplateFamily,
 } from '@/lib/dealer-kit/tag-template-types';
 import { createTemplate } from '../../services/tagTemplateService';
@@ -121,7 +121,7 @@ export function TagTemplateDialog({
             <SearchableSelect
               value={family}
               onChange={(v: string) => setFamily(v as TagTemplateFamily)}
-              options={TAG_TEMPLATE_FAMILIES}
+              options={ALL_TEMPLATE_FAMILIES}
             />
           </div>
 

@@ -1822,3 +1822,71 @@ describe('TagSheetRenderer - placed tag rotation (AC-S7-8)', () => {
     expect((node as HTMLElement).style.transform).toBe('');
   });
 });
+
+// PS-SPEC-SHEET: `show_when` is applied by the print page itself, not only by the helper.
+describe('show_when on the print page', () => {
+  function textLayer(id: string, text: string, show_when?: TagLayer['show_when']): TagLayer {
+    return layer({
+      id,
+      type: 'text',
+      props: {
+        kind: 'text',
+        text,
+        fontFamily: 'Arial',
+        fontSize: 10,
+        fontWeight: 400,
+        color: '#000000',
+        align: 'left',
+        lineHeight: 1.2,
+        letterSpacing: 0,
+      },
+      ...(show_when ? { show_when } : {}),
+    });
+  }
+
+  const onePart = resolved({
+    list_price: null,
+    sell_price: null,
+    show_promo_price: false,
+    parts: [{ code: 'SRTAV0010', name: 'Angle valve', dimensions: '' }],
+    specs: [{ key: 'is_rimless', label: 'Rimless', value: 'Yes', unit: null }],
+  });
+
+  it('drops an accessory row the page does not have, keeps the one it has', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          textLayer('a1', 'ROW ONE', { part: 0 }),
+          textLayer('a2', 'ROW TWO', { part: 1 }),
+        ])}
+        resolvedData={{ [TAG_ID]: onePart }}
+      />,
+    );
+    expect(screen.getByText('ROW ONE')).toBeInTheDocument();
+    expect(screen.queryByText('ROW TWO')).toBeNull();
+  });
+
+  it('prints a badge only when its spec reads Yes', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          textLayer('b1', 'RIMLESS BADGE', { spec: 'is_rimless' }),
+          textLayer('b2', 'OKU BADGE', { spec: 'is_accessible' }),
+        ])}
+        resolvedData={{ [TAG_ID]: onePart }}
+      />,
+    );
+    expect(screen.getByText('RIMLESS BADGE')).toBeInTheDocument();
+    expect(screen.queryByText('OKU BADGE')).toBeNull();
+  });
+
+  it('a layer with no condition prints as it always did (every price tag)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([textLayer('p1', 'PLAIN LAYER')])}
+        resolvedData={{ [TAG_ID]: resolved() }}
+      />,
+    );
+    expect(screen.getByText('PLAIN LAYER')).toBeInTheDocument();
+  });
+});
