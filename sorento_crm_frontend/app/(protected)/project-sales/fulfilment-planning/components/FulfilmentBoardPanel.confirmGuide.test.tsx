@@ -356,6 +356,15 @@ function dryRunAnswers(
   );
 }
 
+/** The press's own dry runs: every preview call but the guide's quiet email ones (round 3). */
+function pressDryRuns() {
+  return previewConfirmMany.mock.calls.filter(([body]) => !(body as { quiet?: boolean }).quiet);
+}
+/** The guide's quiet email dry runs (round 3). */
+function emailDryRuns() {
+  return previewConfirmMany.mock.calls.filter(([body]) => Boolean((body as { quiet?: boolean }).quiet));
+}
+
 function confirmAnswers() {
   confirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) =>
     Promise.resolve({
@@ -416,9 +425,10 @@ describe('T-FE1 (A1 A2 A3 F1): Confirm (N) opens the guide and posts nothing', (
     await openConfirmGuide();
     expect(screen.getByTestId('confirm-guide')).toBeInTheDocument();
     expect(confirmMany).not.toHaveBeenCalled();
-    // CONFIRM-PREVIEW-STALE round 3: the guide's own dry run (popup = email) may have run;
-    // nothing is POSTED until the guide's Confirm button.
+    // CONFIRM-PREVIEW-STALE round 3: only the guide's own quiet email dry run may have run;
+    // walking runs no press (no press dry run, no post) until the guide's Confirm button.
     expect(confirmMany).not.toHaveBeenCalled();
+    expect(pressDryRuns()).toHaveLength(0);
   });
 
   it('names the orders of this Confirm in the title', async () => {
@@ -448,9 +458,10 @@ describe('T-FE1 (A1 A2 A3 F1): Confirm (N) opens the guide and posts nothing', (
     click('confirm-guide-cancel');
     await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
     expect(confirmMany).not.toHaveBeenCalled();
-    // CONFIRM-PREVIEW-STALE round 3: the guide's own dry run (popup = email) may have run;
-    // nothing is POSTED until the guide's Confirm button.
+    // CONFIRM-PREVIEW-STALE round 3: only the guide's own quiet email dry run may have run;
+    // walking runs no press (no press dry run, no post) until the guide's Confirm button.
     expect(confirmMany).not.toHaveBeenCalled();
+    expect(pressDryRuns()).toHaveLength(0);
     expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)');
   });
 
@@ -654,9 +665,10 @@ describe('T-FE3 (F5 B4 F7): walking, editing and failing a page', () => {
     expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
     click('confirm-guide-next');
     expect(await screen.findByTestId('confirm-guide-confirm')).toBeInTheDocument();
-    // CONFIRM-PREVIEW-STALE round 3: the guide's own dry run (popup = email) may have run;
-    // nothing is POSTED until the guide's Confirm button.
+    // CONFIRM-PREVIEW-STALE round 3: only the guide's own quiet email dry run may have run;
+    // walking runs no press (no press dry run, no post) until the guide's Confirm button.
     expect(confirmMany).not.toHaveBeenCalled();
+    expect(pressDryRuns()).toHaveLength(0);
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
@@ -721,9 +733,10 @@ describe('T-FE4 (F6 C7): the Confirm step', () => {
       '2 orders: SO000001 (2 lines), SO000002 (1 line). Nothing has been sent yet.',
     );
     expect(confirm).toHaveTextContent('Confirm 2 orders');
-    // CONFIRM-PREVIEW-STALE round 3: the guide's own dry run (popup = email) may have run;
-    // nothing is POSTED until the guide's Confirm button.
+    // CONFIRM-PREVIEW-STALE round 3: only the guide's own quiet email dry run may have run;
+    // walking runs no press (no press dry run, no post) until the guide's Confirm button.
     expect(confirmMany).not.toHaveBeenCalled();
+    expect(pressDryRuns()).toHaveLength(0);
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
@@ -779,8 +792,9 @@ describe('T-FE5 (D2 D3 F6): the Confirm button posts what today\'s press posts',
     await mountWith(oneEditedBoard());
     await walkConfirmGuide();
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
-    // The button's dry run is the last one (the guide's own email preview runs on open).
-    const [dryBody] = previewConfirmMany.mock.calls.at(-1)!;
+    // One press dry run per press (the guide's quiet email dry runs are not the press's).
+    expect(pressDryRuns()).toHaveLength(1);
+    const [dryBody] = pressDryRuns()[0];
     const [body] = confirmMany.mock.calls[0];
     expect(body).not.toHaveProperty('preview');
     expect(body.orders.map((o: { pso_id: string }) => o.pso_id)).toEqual(['pso-so-1']);
@@ -989,9 +1003,10 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     await waitFor(() => expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument());
     expect(saveLineSplits).not.toHaveBeenCalled();
     expect(confirmMany).not.toHaveBeenCalled();
-    // CONFIRM-PREVIEW-STALE round 3: the guide's own dry run (popup = email) may have run;
-    // nothing is POSTED until the guide's Confirm button.
+    // CONFIRM-PREVIEW-STALE round 3: only the guide's own quiet email dry run may have run;
+    // walking runs no press (no press dry run, no post) until the guide's Confirm button.
     expect(confirmMany).not.toHaveBeenCalled();
+    expect(pressDryRuns()).toHaveLength(0);
   });
 
   it('F23 (OI-SPLIT-CONFIRM-POLISH): the page has no drag, so Space on a row picks nothing up', async () => {
@@ -1258,8 +1273,8 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     click('confirm-guide-next');
     await screen.findByTestId('confirm-guide-confirm');
     click('confirm-guide-confirm');
-    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalled());
-    const [body] = previewConfirmMany.mock.calls.at(-1)!;
+    await waitFor(() => expect(pressDryRuns()).toHaveLength(1));
+    const [body] = pressDryRuns()[0];
     const line = body.orders[0].lines.find((l: { project_line_id: string }) => l.project_line_id === 'pl-1-3');
     expect(line, JSON.stringify(body)).toBeDefined();
     expect(line.remark).toBe('URGENT ORDER');
@@ -2055,8 +2070,8 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     await waitFor(() =>
       expect(previewConfirmMany.mock.calls.length + confirmMany.mock.calls.length).toBeGreaterThan(0),
     );
-    // The press's body is its own (last) dry run; the post is that body narrowed.
-    const posted = JSON.stringify(previewConfirmMany.mock.calls.at(-1));
+    // The press's body is its own dry run; the post is that body narrowed.
+    const posted = JSON.stringify(pressDryRuns().at(-1));
     expect(posted).toContain('"buy_qty":"7"');
     expect(posted).not.toContain('"qty":"10"');
   });
@@ -2152,5 +2167,67 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     await waitFor(() =>
       expect((within(block).getByLabelText('Remark, line 3') as HTMLInputElement).value).toBe(''),
     );
+  });
+
+  // Review round 3 (S1): one quiet email dry run per board read, never a storm.
+  it('opening the guide runs ONE quiet email dry run, and none more while nothing changes', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(boardWithRemark('ORDER', { verdict: 'approved' }, '2026-11-02T01:00:00Z'), ['SO000001']);
+    await openConfirmGuide();
+    await screen.findByTestId('split-line-3');
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(emailDryRuns()).toHaveLength(1);
+    expect(pressDryRuns()).toHaveLength(0);
+  });
+
+  it('after a save the sheet stays up with the last words; only Next waits for the new ones', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    dryRunAnswers({ 'pso-so-1': { email: [{ so_line_id: 'pl-1-3', remark: 'DELAY' }] } });
+    await mountWith(boardWithRemark('ORDER', { verdict: 'approved' }, '2026-11-02T01:00:00Z'), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    // The next email dry run is held open.
+    let answer: (value: unknown) => void = () => {};
+    previewConfirmMany.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    putLineDraft.mockResolvedValue({
+      decision: { verdict: 'approved', remark: 'URGENT' },
+      saved_by: 'Test Planner',
+      saved_at: '2026-11-02T03:00:00Z',
+    });
+    fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: 'URGENT' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(emailDryRuns().length).toBeGreaterThan(1));
+    // Still the sheet, never the loading skeleton, and Next waits.
+    expect(screen.getByTestId('split-line-3')).toBeInTheDocument();
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    answer({ results: [{ pso_id: 'pso-so-1', ok: true, preview: true, email_lines: [{ so_line_id: 'pl-1-3', remark: 'URGENT' }] }] });
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+  });
+
+  it('the email dry run is quiet and leaves out an order with no planning record', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    // SO000002 has no planning record yet (its adopt is held open), and a saved decision.
+    adoptSalesOrder.mockImplementation(() => new Promise(() => {}));
+    const board = mapContributions(
+      boardOf([SO1_L3, { ...SO2_L1, project_sales_order_id: null } as BoardDemandLine]),
+      (entry) => ({
+        ...entry,
+        saved_remark: 'ORDER',
+        draft: { decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-11-02T01:00:00Z' },
+      }),
+    );
+    await mountWith(board, ['SO000001', 'SO000002']);
+    await openConfirmGuide();
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    const [body] = emailDryRuns()[0] as [{ quiet: boolean; orders: { pso_id: string }[] }];
+    expect(body.quiet).toBe(true);
+    expect(body.orders.every((order) => Boolean(order.pso_id))).toBe(true);
   });
 });

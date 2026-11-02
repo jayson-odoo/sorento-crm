@@ -593,7 +593,8 @@ def _run_confirm_many(
         describe_writes=describe_writes,
     )
     stash = db.info.pop(_REFUSAL_STASH, {})
-    if not describe_writes:  # the admin Simulate records nothing (AC-W7)
+    # The admin Simulate records nothing (AC-W7), nor does the guide's quiet email dry run.
+    if not describe_writes and not (preview and getattr(payload, "quiet", False)):
         batch_of = {
             str(entry.pso_id): entry.batch_id or (None if any_per_order else payload.batch_id)
             for entry in payload.orders

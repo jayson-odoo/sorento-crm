@@ -11,6 +11,7 @@ import type {
   BoardDecision,
   BoardDraft,
   ConfirmEmailLine,
+  ConfirmManyBody,
 } from '../types/fulfilmentPlanning.types';
 
 /**
@@ -172,4 +173,15 @@ export function emailWordsFor(
   const words = psoId ? byOrder.get(psoId) : undefined;
   if (!words) return undefined;
   return (line.project_line_id && words.get(line.project_line_id)) || null;
+}
+
+/**
+ * The guided Confirm's email dry run body (review round 3, S3): the press's own body, `quiet`
+ * (the server records no refusal for it), with every order that has no planning record yet
+ * (an empty `pso_id`, adoption deferred) left out. `null` when nothing is left to preview.
+ */
+export function emailPreviewBody(body: ConfirmManyBody | null | undefined): ConfirmManyBody | null {
+  const orders = (body?.orders ?? []).filter((order) => Boolean(order.pso_id));
+  if (!body || orders.length === 0) return null;
+  return { ...body, orders, quiet: true };
 }

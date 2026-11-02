@@ -193,3 +193,55 @@ def test_the_dry_run_answers_the_email_remark_for_a_changed_decision_with_a_date
     popup, sent = _same_as_email(api, monkeypatch, payload)
     assert sent, "premise: the real press tells purchasing about the line"
     assert popup == sent, (popup, sent)
+
+
+def test_the_dry_run_names_each_told_line_by_its_own_email_row(api, monkeypatch):
+    """Review round 3 (S4): two told lines on one order, one moved later (DELAY), one earlier
+    (ADVANCE). Each line's `email_lines` entry carries ITS row of the email, in the email's own
+    order, and the whole list equals what the real press sends (the same builder, the zip)."""
+    from tests.test_order_inquiry_handover_automation import _captured_dispatches, _register
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    early, late = date(2026, 10, 1), date(2026, 12, 1)
+    ca, la = _mirror(db, order, core_so, world.product, world.own_wh, line_no=10, qty=3, when=early)
+    cb, lb = _mirror(db, order, core_so, world.product, world.own_wh, line_no=20, qty=4, when=late)
+    db.commit()
+    resp = _confirm(client, order.id, [
+        _line_payload(la.id, buy_qty="3"), _line_payload(lb.id, buy_qty="4"),
+    ])
+    assert resp.status_code == 200, resp.text
+    ca.required_date, la.delivery_date = late, late
+    cb.required_date, lb.delivery_date = early, early
+    db.commit()
+    batch = _build(world, [
+        _change(DATE_MOVED, ca, so_number=core_so.so_number,
+                old_date=early, new_date=late, old_qty="3", new_qty="3"),
+        _change(DATE_MOVED, cb, so_number=core_so.so_number,
+                old_date=late, new_date=early, old_qty="4", new_qty="4"),
+    ], core_so, [str(ca.id), str(cb.id)])
+    assert batch is not None
+    s = _S()
+    s.client, s.world, s.db, s.order, s.batch = client, world, db, order, batch
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+
+    def press(preview):
+        _fresh_request(s)
+        return client.post(CONFIRM_ALL, json={"preview": preview, "orders": [{
+            "pso_id": str(order.id), "batch_id": str(batch.id),
+            "lines": [_line_payload(la.id, buy_qty="3"), _line_payload(lb.id, buy_qty="4")],
+        }]})
+
+    preview = press(True)
+    assert preview.status_code == 200, preview.text
+    lines = preview.json()["results"][0]["email_lines"]
+    by_line = {entry["so_line_id"]: entry["remark"] for entry in lines}
+    assert "DELAY" in by_line.get(str(la.id), ""), lines
+    assert "ADVANCE" in by_line.get(str(lb.id), ""), lines
+    calls.clear()
+    assert press(False).status_code == 200
+    item_code = world.product.product_code
+    assert [entry["remark"] for entry in lines] == _sent_remarks(calls, item_code)
