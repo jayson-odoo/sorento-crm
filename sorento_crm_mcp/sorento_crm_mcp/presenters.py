@@ -1078,6 +1078,17 @@ def _promotions(rows: list[dict], b: _Builder) -> None:
             b.attach(a.get("attachment") or a)
 
 
+# CABANA-NO-SELLING-PRICE: a brand whose promotions carry no selling price. A blank field
+# let the model invent one ("defined inside the flyer"), so the fact is stated outright.
+NO_SELLING_PRICE_TEXT = "None. This brand's promotions carry no selling price; the price is the List Price."
+
+
+def _selling_price(pp: dict) -> str | None:
+    if pp.get("no_selling_price") is True:
+        return NO_SELLING_PRICE_TEXT
+    return _money(pp.get("selling_price"))
+
+
 def _promotion_products(rows: list[dict], b: _Builder) -> None:
     for pp in rows:
         prod = pp.get("product") or {}
@@ -1089,7 +1100,7 @@ def _promotion_products(rows: list[dict], b: _Builder) -> None:
                 ("Product Code", prod.get("product_code")),
                 ("Product Name", _distinct_name(prod.get("product_code"), prod.get("product_name"))),
                 ("Promotion", promo.get("description")),
-                ("Selling Price", _money(pp.get("selling_price"))),
+                ("Selling Price", _selling_price(pp)),
                 ("List Price", _money(prod.get("list_price"))),
                 ("Dimensions", _dims(prod)),
             ],

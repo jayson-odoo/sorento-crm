@@ -26,6 +26,7 @@ import {
   useQuotationSignMutations,
   useQuotationSignPage,
 } from '../../hooks/useQuotationSign';
+import { useQuotationViewBeacon } from '../../hooks/useQuotationViewBeacon';
 import {
   QuotationSignError,
   type QuotationCoverRow,
@@ -565,6 +566,8 @@ function PageShell({
  */
 export function QuotationSignClient({ token }: { token: string }) {
   const query = useQuotationSignPage(token);
+  // Counted only once the quotation is on screen: a dead link is not a view.
+  useQuotationViewBeacon(token, Boolean(query.data));
 
   if (query.isLoading) {
     return (

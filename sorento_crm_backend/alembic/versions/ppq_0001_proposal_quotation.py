@@ -14,12 +14,12 @@ Plan: documentation/plans/project-sales/PLAN-proposal-quotation-2nov.md. Additiv
 so a re-run, or a dev DB built by create_all, is harmless.
 
 Revision ID: ppq_0001_proposal_quotation
-Revises: qcp_0001_cover_page_fields
+Revises: il_0001_integration_log_indexes
 """
 from alembic import op
 
 revision = "ppq_0001_proposal_quotation"
-down_revision = "qcp_0001_cover_page_fields"
+down_revision = "il_0001_integration_log_indexes"
 branch_labels = None
 depends_on = None
 

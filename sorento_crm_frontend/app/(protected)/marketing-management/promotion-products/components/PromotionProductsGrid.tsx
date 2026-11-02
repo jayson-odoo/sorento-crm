@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { displayPromoPrice } from '@/app/(protected)/marketing-management/promotions/lib/promoPrice';
 import {
   ColumnDef,
   useReactTable,
@@ -49,7 +50,8 @@ export default function PromotionProductsGrid({ promotionId }: PromotionProducts
         accessorKey: 'promotion_price',
         header: 'Promo Price',
         cell: ({ row }) => {
-          const price = row.original.promotion_price || row.original.product?.list_price || 0;
+          const price = displayPromoPrice(row.original);
+          if (price === null) return '-';
           return new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(price);
         },
       },
