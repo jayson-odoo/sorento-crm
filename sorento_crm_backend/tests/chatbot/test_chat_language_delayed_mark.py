@@ -44,3 +44,13 @@ def test_the_dealer_eta_line_translates_the_marker(lang):
 def test_english_keeps_the_marker():
     english = f"SRTZZ1: ✅ ETA 15/10/2026 {_mark()}"
     assert label_catalog.IDENTITY.tail(english) == english
+
+
+@pytest.mark.parametrize(
+    "lang,expected",
+    [("ms", "Tiada stok, Tiada ETA."), ("zh", "没有库存，暂无 ETA。")],
+)
+def test_the_stock_line_with_no_date_reads_no_eta(lang, expected):
+    """AC-SIF14: the revoked dealer's incoming answer has no date."""
+    assert _loc(lang).tail("SRTZZ1 x 2: \u274c No stock, No ETA.") == f"SRTZZ1 x 2: \u274c {expected}"
+    assert _loc(lang).reply("No stock, No ETA.") == expected

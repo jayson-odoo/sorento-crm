@@ -9,6 +9,7 @@ Postgres only, blank schema, every row seeded here (CI's database has none).
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, timedelta
 
@@ -736,6 +737,57 @@ def test_a_revoked_eta_also_takes_the_nearest_eta_on_by_product(client, db):
     keys = set(_walk_keys(_by_product(client, p, dealer)["data"]))
     assert "estimated_arrival_date" not in keys
     assert "nearest_estimated_arrival_date" not in keys
+
+
+def test_a_dealer_with_the_eta_revoked_is_told_no_eta_on_both_routes(client, db, floor_today):
+    """Security review of Fix B: a per-contact deny on the gated `estimated_arrival_date` hides
+    the dealer's dates on `/list` and `/by-product` (`etas == []`), as it did before the shared
+    read. The stock check's handling of the revoke is not pinned here."""
+    p = _padded_product(db, offset=14, promised=(date(2026, 11, 20),))
+    dealer = _contact(db)
+    _policy_row(db, mode="availability", contact=dealer)
+    _deny_on_agent(db, "estimated_arrival_date", contact=dealer)
+    listed = _list(client, p, dealer)
+    assert listed.get("dealer_view") is True, listed
+    assert listed["data"][0]["etas"] == []
+    by_product = _by_product(client, p, dealer)
+    assert by_product.get("dealer_view") is True, by_product
+    assert by_product["data"][0]["etas"] == []
+
+
+def _revoked_stock_entry(db, *, promised, contact_deny=True):
+    p = _padded_product(db, offset=14, promised=promised)
+    dealer = _contact(db)
+    _deny_on_agent(db, "estimated_arrival_date", contact=dealer if contact_deny else None)
+    brw = _wh(db, unique_code("ZZTW")[:20])
+    stock(db, company_id=DEFAULT_COMPANY_ID, product_id=p.id, warehouse_id=brw.id, on_hand=0)
+    _policy_row(db, mode="availability", warehouse_ids=[brw.id], contact=dealer)
+    db.flush()
+    result = StockService(db).list_stock(
+        product_ids=[p.id], contact_id=dealer.id, requested_quantities={p.id: 2}
+    )
+    return _entry(result, p.id)
+
+
+def test_a_dealer_with_the_eta_revoked_gets_no_date_on_the_stock_check(db, floor_today):
+    """AC-SIF14: incoming, no date anywhere in the entry."""
+    entry = _revoked_stock_entry(db, promised=(date(2026, 11, 20),))
+    assert entry["branch"] == "incoming"
+    assert entry["eta"] is None
+    assert not re.search(r"\d{2}/\d{2}/\d{4}", str(entry)), entry
+
+
+def test_an_agent_level_eta_revoke_gives_the_stock_check_no_date(db, floor_today):
+    """AC-SIF14, agent-level revoke (no contact)."""
+    entry = _revoked_stock_entry(db, promised=(date(2026, 11, 20),), contact_deny=False)
+    assert entry["branch"] == "incoming"
+    assert entry["eta"] is None
+
+
+def test_a_revoked_dealer_with_nothing_coming_is_no_incoming(db, floor_today):
+    """AC-SIF14 guard: nothing coming still reads no_incoming."""
+    entry = _revoked_stock_entry(db, promised=())
+    assert entry["branch"] == "no_incoming"
 
 
 def _list_window(client, p, contact, **window):
