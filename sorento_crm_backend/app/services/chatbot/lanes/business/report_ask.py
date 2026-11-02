@@ -727,6 +727,10 @@ def hold_words(verdict: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, 
     return {**verdict, "entities": [e for e in entities if not any(e is h for h in held)]}, held
 
 
+def _squash(value: Any) -> str:
+    return " ".join(jsc.js_string(value).split()).casefold()
+
+
 def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
     """Engine seam, a FRESH `sales_ranking` ask: this message's brand, sales agent and
     category words move off the entity list onto `report_ask_words` (raw words per hint).
@@ -761,6 +765,8 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
         if hint not in WORD_HINTS:
             kept.append(e)
             continue
+        if hint in ("brand", "account_type") and _squash(e.get("kind_said")) == _squash(typed) != "":
+            continue  # the word is the kind word itself ("account type"): it names no value
         if raw and e.get("current_message") is not False and raw not in words.setdefault(hint, []):
             words[hint].append(raw)
             if hint in ("brand", "account_type") and "kind_said" in e:
