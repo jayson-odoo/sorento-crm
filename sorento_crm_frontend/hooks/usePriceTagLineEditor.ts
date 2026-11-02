@@ -22,7 +22,13 @@ import type {
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { LinePricingLineInput, LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import { distinctName } from '@/lib/product-display';
-import { emptyDraftLine, newPartKey, partsFromCombo, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
+import {
+  emptyDraftLine,
+  MISSING_TAG_TEMPLATE,
+  newPartKey,
+  partsFromCombo,
+  type DraftLine,
+} from '@/lib/dealer-kit/price-tag-draft-lines';
 
 /** The three catalogue calls the editor makes. */
 export interface PriceTagLineLookups {
@@ -263,7 +269,16 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
     (key: string, templateId: string) => {
       setLines((prev) =>
         prev.map((l) =>
-          l.key === key ? { ...l, tag_template_id: templateId || null } : l,
+          l.key === key
+            ? {
+                ...l,
+                tag_template_id: templateId || null,
+                // The row's own "pick a template" message goes once one is picked;
+                // any other message (a duplicate product) stays.
+                guard_error:
+                  templateId && l.guard_error === MISSING_TAG_TEMPLATE ? null : l.guard_error,
+              }
+            : l,
         ),
       );
     },
