@@ -46,7 +46,12 @@ R4. Price tag request line (portal form and the CRM's My Requests copy of it, sa
     pick, so Submit asks again), never stored and never given its own error: no way to probe
     whether some other template id exists.
 R5. Live preview on the request form: a "Preview" section that draws each line's tag with its
-    template (picked, single, or the family default) and the line's real data and price
+    template (picked or single link; a set line: an exact furniture_set template) and the line's
+    real data and price. A PRODUCT with no linked template draws NOTHING and is named under the
+    preview ("No tag template yet for <code>."): no silent family fallback, since the salesperson
+    approves his own tag (#2101 browser pass: CKS821 drew a bathroom furniture layout; crew-ask
+    on #2100, crew answered (b) on 2 Nov: a fallback layout from another product must never be
+    approvable). Go-live dependency: marketing bulk-assigns templates BEFORE release (PR body, guide)
     (promotion or typed selling price, list/selling mode), through the same `DesignViewer` /
     `TagSheetRenderer` the proof uses. It redraws as lines, prices or the template change
     (debounced).

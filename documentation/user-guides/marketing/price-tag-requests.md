@@ -259,8 +259,9 @@ on the request form and which template a tag starts from in the designer.
 
 * **One template linked**: every request line for the product uses it on its own.
 * **Two or more**: the salesperson picks one on the line before submitting.
-* **None**: nothing changes; the tag starts from the template whose family matches the product code,
-  as before.
+* **None**: the salesperson's Preview draws nothing for that product and names it, so it reaches
+  you as an escalation; in the designer the tag still starts from the template whose family matches
+  the product code. Link templates before salespeople start approving their own tags.
 
 Only a **Live** (published) template counts. A linked template you unpublish stays linked but is
 not offered until you publish it again. Spec sheet templates are never offered here.
@@ -277,6 +278,13 @@ Templates manage permission the card lists the templates read-only.
 value within a kind). The dialog counts the products that match and how many already have the
 template. **Add to N** links it to the rest. **Remove from N** unlinks it, with a countdown and
 **Cancel** before it happens.
+
+**Before salespeople approve their own tags, link templates to products.** A product with no
+template cannot be approved by the salesperson: the request has to be escalated to you. So
+before release, publish the templates you use and run **Assign to products** once per template
+(pick the brands, categories, item classes or model families it serves, check the count, **Add**).
+A product two templates cover gets a picker on the request; a product none cover shows *"No tag
+template yet for <code>."* on the salesperson's Preview and reaches you as an escalation.
 
 In the designer, a line whose request named a template opens on that template. **Use template...**
 still lists every template if you want a different one.

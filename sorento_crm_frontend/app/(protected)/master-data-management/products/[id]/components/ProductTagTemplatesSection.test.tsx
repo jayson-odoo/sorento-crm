@@ -82,7 +82,12 @@ describe('ProductTagTemplatesSection', () => {
     granted.add('dealer_kit.tag_templates.view');
     linked.mockReturnValue({ data: [], isLoading: false, isError: false });
     render(<ProductTagTemplatesSection productId="p1" />);
-    expect(screen.getByText('No price tag templates')).toBeInTheDocument();
+    expect(screen.getByText('No tag template yet')).toBeInTheDocument();
+    // No fallback since dcb334871c: the hint must not promise a code-matched template.
+    expect(
+      screen.getByText('Price tag requests for this product go to marketing to pick one.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/matches its code/)).toBeNull();
     expect(screen.queryByRole('button')).toBeNull();
   });
 

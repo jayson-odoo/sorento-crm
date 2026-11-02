@@ -568,7 +568,18 @@ SLOT_BINDINGS = (
     "combo_description",
     "combo_choices",
     "combo_topups",
+    # PS-SPEC-SHEET: the technical drawing of the subject.
+    "drawing",
 )
+
+
+class LayerShowWhenDoc(BaseModel):
+    """PS-SPEC-SHEET: print the layer only when the page has part N and/or a spec reads Yes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    spec: Optional[str] = Field(default=None, max_length=64)
+    part: Optional[int] = Field(default=None, ge=0, le=20)
 
 
 class _StrictProps(BaseModel):
@@ -734,6 +745,7 @@ class TagLayerDoc(BaseModel):
     slot_binding: Optional[Literal[SLOT_BINDINGS]] = None  # type: ignore[valid-type]
     text_override: Optional[str] = None
     props: TagLayerPropsDoc
+    show_when: Optional[LayerShowWhenDoc] = None
 
     @model_validator(mode="after")
     def _type_agrees_with_props(self) -> "TagLayerDoc":

@@ -58,4 +58,14 @@ describe('PriceTagLinesTable Template field', () => {
     expect(screen.queryByText(/^Template:/)).toBeNull();
     expect(screen.queryByLabelText('Tag template')).toBeNull();
   });
+
+  it('a row refusal carries the anchor Submit scrolls to', () => {
+    renderTable({
+      tag_templates_for: 'p1',
+      tag_templates: [opt('a'), opt('b')],
+      guard_error: 'Pick a tag template for this line.',
+    });
+    const message = screen.getByText('Pick a tag template for this line.');
+    expect(message).toHaveAttribute('data-error-anchor', 'line:0');
+  });
 });

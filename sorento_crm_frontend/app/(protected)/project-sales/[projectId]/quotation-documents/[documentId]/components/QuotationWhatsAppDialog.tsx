@@ -13,11 +13,18 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { waMeUrl } from '@/lib/wa-me';
 import { QuotationSignLinkDialog } from './QuotationSignLinkDialog';
 import { useQuotationDocumentMutations } from '../../../../_shared/hooks/useQuotationDocuments';
+import {
+  useFillPartyPhone,
+  usePartiesOnProject,
+} from '../../../../_shared/hooks/useProjects';
+import { TYPE_LABEL } from '../../../../parties/components/partyTypes';
+import type { PartyOnProject } from '../../../../_shared/types/project.types';
 import {
   pickMobile,
   quotationNumberLabel,
@@ -35,6 +42,11 @@ import type {
  * Nothing is sent from here: "Open WhatsApp" is a wa.me link with the chat and the text already
  * filled in, and the salesperson presses Send in WhatsApp. The number and the message are local
  * to this prompt and never reach the server; only the fact that the link was opened is logged.
+ *
+ * "Send to" lists the project's parties and the people registered at each (owner 2 Nov ~21:20,
+ * PS-REGISTRATION-V3 rules 10-13): picking one fills To. A pick with no number on file takes a
+ * typed one, and Open WhatsApp saves it to that party or person. One chat per open, so several
+ * parties are several picks.
  *
  * Open while it holds an issue. The body is mounted per open, so reopening starts from the
  * template again.
@@ -61,7 +73,7 @@ export function QuotationWhatsAppDialog({
       <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
         {shown && (
           <DialogHeader>
-            <DialogTitle>{`Send R${shown.issue_no} via WhatsApp`}</DialogTitle>
+            <DialogTitle>{`Send ${revisionLabel(shown)} via WhatsApp`}</DialogTitle>
           </DialogHeader>
         )}
         {shown && (
@@ -76,6 +88,44 @@ export function QuotationWhatsAppDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** A proposal's revisions are lettered A, B, C (PS-PROPOSAL-QUOTATION, #2097 adds
+ * `revision_label` to the issue); a quotation or a legacy row without one reads R<n>. */
+function revisionLabel(issue: QuotationIssue): string {
+  const label = (issue as QuotationIssue & { revision_label?: string | null }).revision_label;
+  return label?.trim() || `R${issue.issue_no}`;
+}
+
+type Recipient = {
+  key: string;
+  label: string;
+  phone: string | null;
+  partyId: string;
+  stakeholderId: string | null;
+};
+
+/** One row per party (its own line) and per person registered at it. */
+export function recipientsOf(parties: PartyOnProject[]): Recipient[] {
+  return parties.flatMap((party) => {
+    const role = TYPE_LABEL[party.role] ?? party.role;
+    return [
+      {
+        key: `party:${party.role}:${party.party_id}`,
+        label: `${party.name} (${role})`,
+        phone: party.phone,
+        partyId: party.party_id,
+        stakeholderId: null,
+      },
+      ...party.contacts.map((person) => ({
+        key: `person:${person.stakeholder_id}`,
+        label: `${person.name}, ${party.name}`,
+        phone: person.phone,
+        partyId: party.party_id,
+        stakeholderId: person.stakeholder_id,
+      })),
+    ];
+  });
 }
 
 function WhatsAppBody({
@@ -98,6 +148,12 @@ function WhatsAppBody({
     return digits ? `+${digits}` : '';
   });
   const [edited, setEdited] = React.useState<string | null>(null);
+  const parties = usePartiesOnProject(projectId);
+  const fillPhone = useFillPartyPhone(projectId);
+  const recipients = React.useMemo(() => recipientsOf(parties.data ?? []), [parties.data]);
+  const [recipientKey, setRecipientKey] = React.useState('');
+  const recipient = recipients.find((r) => r.key === recipientKey) ?? null;
+  const noNumberOnFile = Boolean(recipient && !recipient.phone?.trim());
   const [linkToShow, setLinkToShow] = React.useState<string | null>(null);
   const messageRef = React.useRef<HTMLTextAreaElement>(null);
   const mintedFor = React.useRef<string | null>(null);
@@ -131,6 +187,31 @@ function WhatsAppBody({
     <>
       <div className="space-y-4">
         <div className="space-y-1.5">
+          <Label htmlFor="quotation-whatsapp-recipient">Send to</Label>
+          <SearchableSelect
+            id="quotation-whatsapp-recipient"
+            value={recipientKey}
+            onChange={(key) => {
+              setRecipientKey(key);
+              const next = recipients.find((r) => r.key === key);
+              if (next) {
+                const digits = pickMobile(next.phone);
+                setTo(digits ? `+${digits}` : '');
+              }
+            }}
+            clearable
+            loadError={parties.error}
+            onRetry={() => void parties.refetch()}
+            options={recipients.map((r) => ({
+              value: r.key,
+              label: r.label,
+              description: r.phone ?? 'No number on file',
+            }))}
+            placeholder="Pick a party of this project"
+            emptyMessage="No parties on this project yet"
+          />
+        </div>
+        <div className="space-y-1.5">
           <Label htmlFor="quotation-whatsapp-to">To</Label>
           <Input
             id="quotation-whatsapp-to"
@@ -139,6 +220,11 @@ function WhatsAppBody({
             value={to}
             onChange={(event) => setTo(event.target.value)}
           />
+          {noNumberOnFile && (
+            <p className="text-xs text-muted-foreground">
+              No number on file. The number you type is saved to {recipient!.label}.
+            </p>
+          )}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="quotation-whatsapp-message">Message</Label>
@@ -201,6 +287,15 @@ function WhatsAppBody({
               }
               // Fired and forgotten: opening WhatsApp must never wait on, or fail with, the note.
               mutations.whatsAppOpened.mutate({ id: document.id, issueId: issue.id });
+              // A number typed for a pick that had none is saved to it (rule 11); a number
+              // already on file is never overwritten from here.
+              if (recipient && noNumberOnFile && toWaDigits(to)) {
+                fillPhone.mutate({
+                  partyId: recipient.partyId,
+                  phone: `+${toWaDigits(to)}`,
+                  stakeholderId: recipient.stakeholderId,
+                });
+              }
             }}
           >
             Open WhatsApp

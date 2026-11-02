@@ -546,7 +546,11 @@ class TestPreview:
         assert out["templates"]["k2"]["id"] == b
         # The PUBLISHED version's doc, never the draft.
         assert out["templates"]["k2"]["doc"]["layers"][0]["props"]["text"] == "published-B"
-        assert out["templates"]["k3"]["id"] == mirror
+        # #2101: an unlinked product gets NO template, even with its family's
+        # template published - the salesperson must not approve a layout
+        # nobody chose for this product. Its data still resolves.
+        assert "k3" not in out["templates"]
+        assert mirror
         assert "k4" not in out["templates"]
         assert {row["line_id"] for row in out["lines"]} == {"k1", "k2", "k3"}
         assert all(row["code"] for row in out["lines"])
@@ -636,6 +640,7 @@ def test_family_codes_lists_distinct_families(env):
 
 def test_deferred_remove_unlinks_the_matching_products(env):
     """`tag_template.unassign_products` (the dialog's Remove, a parked unlink)."""
+    from app.models.base import set_company_scope
     from app.models.dealer_kit import ProductTagTemplate
     import app.services.record_actions  # noqa: F401  (registers the actions)
     from app.services.form_action_registry import get_action
@@ -648,11 +653,13 @@ def test_deferred_remove_unlinks_the_matching_products(env):
     _link(db, p1, t, keep)
 
     action = get_action("tag_template.unassign_products")
+    assert action is not None, "record_actions did not register the key"
     assert action.permission == "dealer_kit.tag_templates.manage"
+    set_company_scope(db, frozenset({SORENTO}))
     result = action.execute(
         db, {"entity_id": t, "brand_ids": [ref[1].id], "requested_by_id": MANAGER_ID}
     )
-    assert result == {"changed": 1}
+    assert result == {"changed": 1}, result
     assert {r.template_id for r in db.query(ProductTagTemplate).filter_by(product_id=p1)} == {keep}
 
 
@@ -687,6 +694,7 @@ def test_preview_never_prices_a_promotion_outside_the_contacts_audience(env, pri
 
 def test_deferred_product_unlink_removes_only_the_named_links(env):
     """`product.unlink_tag_templates` (the product card's untick, a parked unlink)."""
+    from app.models.base import set_company_scope
     from app.models.dealer_kit import ProductTagTemplate
     import app.services.record_actions  # noqa: F401  (registers the actions)
     from app.services.form_action_registry import get_action
@@ -699,8 +707,13 @@ def test_deferred_product_unlink_removes_only_the_named_links(env):
     _link(db, product, a, b)
 
     action = get_action("product.unlink_tag_templates")
+    assert action is not None, "record_actions did not register the key"
     assert action.permission == "dealer_kit.tag_templates.manage"
-    assert action.execute(db, {"entity_id": product, "template_ids": [a]}) == {"changed": 1}
+    # A real commit runs under the requester's stored scope; set it here rather
+    # than inherit whatever the shared fixture or an earlier request left.
+    set_company_scope(db, frozenset({SORENTO}))
+    result = action.execute(db, {"entity_id": product, "template_ids": [a]})
+    assert result == {"changed": 1}, result
     assert {r.template_id for r in db.query(ProductTagTemplate).filter_by(product_id=product)} == {b}
 
 
@@ -716,3 +729,28 @@ def test_product_lookup_is_scoped(env):
     set_company_scope(db, frozenset({"11111111-1111-1111-1111-111111111111"}))
     assert product_tag_template_service.product_exists(db, product) is False
     set_company_scope(db, frozenset({SORENTO}))
+
+
+def test_preview_set_line_takes_only_an_exact_furniture_set_template(env):
+    """Card Q4: a set keeps the family rule, but never the ala carte / first
+    template chain (#2101)."""
+    from app.models.product_set import ProductSet
+
+    db, c, _ = env
+    ref = _reference(db)
+    member = _product(db, ref)
+    _template(db, "Plain", family="ala_carte")
+    product_set = ProductSet(
+        id=str(uuid.uuid4()), set_code=unique_code("SET"), name=unique_code("Set"), company_id=SORENTO
+    )
+    db.add(product_set)
+    db.flush()
+    body = {"lines": [{"key": "s", "line_type": "product_set", "product_set_id": product_set.id}]}
+
+    out = c.post(f"{PORTAL}/lookups/tag-preview", json=body).json()
+    assert "s" not in out["templates"]
+
+    furniture = _template(db, "Furniture", family="furniture_set")
+    out = c.post(f"{PORTAL}/lookups/tag-preview", json=body).json()
+    assert out["templates"]["s"]["id"] == furniture
+    assert member

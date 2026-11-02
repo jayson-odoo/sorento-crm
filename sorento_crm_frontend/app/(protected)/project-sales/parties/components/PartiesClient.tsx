@@ -7,8 +7,6 @@ import {
   PaginationState,
   SortingState,
   getCoreRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
@@ -47,9 +45,8 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
  * is one record rather than four spellings, which is why the project count is a column
  * and why same-name duplicates are refused rather than merged.
  *
- * Search and type are served by the SERVER (the same params the cards used). Paging is
- * client-side over the loaded set, because the endpoint is asked for the whole master
- * in one page and always was.
+ * Search, type, sort and paging are all served by the SERVER (owner rule, PS-REGISTRATION-V3):
+ * every sortable column sorts the whole master, not the page on screen.
  */
 export function PartiesClient() {
   const router = useRouter();
@@ -75,16 +72,21 @@ export function PartiesClient() {
   // nothing in the new one.
   React.useEffect(() => {
     setPagination((previous) => ({ ...previous, pageIndex: 0 }));
-  }, [debounced, typeFilter]);
+  }, [debounced, typeFilter, sorting]);
 
+  const sortBy = sorting[0];
   const parties = useProjectParties({
     query: debounced || undefined,
     party_type: typeFilter || undefined,
     include_inactive: true,
-    limit: 200,
+    page: pagination.pageIndex + 1,
+    limit: pagination.pageSize,
+    sort: sortBy?.id,
+    dir: sortBy?.desc ? 'desc' : 'asc',
   });
 
   const rows = React.useMemo(() => parties.data?.data ?? [], [parties.data]);
+  const total = parties.data?.pagination?.total ?? rows.length;
   const filtered = Boolean(debounced || typeFilter);
 
   const columns = React.useMemo<ColumnDef<ProjectParty>[]>(
@@ -140,6 +142,23 @@ export function PartiesClient() {
             </span>
           ) : (
             <Muted>None yet</Muted>
+          );
+        },
+      },
+      {
+        id: 'contact_count',
+        accessorFn: (row) => row.contact_count ?? 0,
+        header: ({ column }) => <DataGridColumnHeader title="Contacts" column={column} />,
+        size: 120,
+        meta: { headerTitle: 'Contacts', skeleton: <Skeleton className="h-4 w-14" /> },
+        cell: ({ row }) => {
+          const count = row.original.contact_count ?? 0;
+          return count > 0 ? (
+            <span className="tabular-nums">
+              {count} contact{count === 1 ? '' : 's'}
+            </span>
+          ) : (
+            <Muted>No contacts</Muted>
           );
         },
       },
@@ -241,8 +260,9 @@ export function PartiesClient() {
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
+    manualSorting: true,
+    manualPagination: true,
+    pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
     defaultColumn: { minSize: 60, maxSize: 800, size: 150 },
@@ -264,7 +284,7 @@ export function PartiesClient() {
         table={table}
         // A row IS the record, so clicking it opens the record.
         onRowClick={(row) => router.push(`/project-sales/parties/${row.id}`)}
-        recordCount={rows.length}
+        recordCount={total}
         isLoading={parties.isLoading}
         error={parties.error}
         onRetry={() => void parties.refetch()}

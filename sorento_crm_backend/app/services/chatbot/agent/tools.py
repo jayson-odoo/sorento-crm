@@ -10,8 +10,10 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any, Callable
 
 from app.services.ai_assistant_service import mcp_schema_to_openai_tool
@@ -23,7 +25,7 @@ logger = logging.getLogger(__name__)
 #: Server-injected, never model-chosen.
 GUARD_PARAMS = ("contact_id", "space_id")
 #: Characters of JSON one tool result may carry back to the model.
-RESULT_CHAR_CAP = 12_000
+RESULT_CHAR_CAP = 16_000
 
 
 @dataclass(frozen=True)
@@ -40,18 +42,29 @@ class ToolDef:
     #: Both were checked in the MCP catalogue: neither declares `restricted_fields`, so there
     #: is no field-level drop to lose by skipping the render view for them.
     render: bool = True
+    #: The slug of the screen's "only mine" rows. Only on panel-only tools (`PANEL_ONLY_TOOLS`), where the read
+    #: runs as the user and the route narrows to their own rows.
+    own_permission: str | None = None
 
 
-def _defs(*rows: tuple[str, str, str | None]) -> dict[str, ToolDef]:
+def _defs(*rows: tuple) -> dict[str, ToolDef]:
+    """Rows of (name, slug, contact grant) or (name, slug, contact grant, own slug)."""
     return {
-        name: ToolDef(name, slug, grant, render=name not in NON_RENDER_TOOLS)
-        for name, slug, grant in rows
+        row[0]: ToolDef(row[0], row[1], row[2], render=row[0] not in NON_RENDER_TOOLS, own_permission=row[3] if len(row) > 3 else None)
+        for row in rows
     }
 
 
 #: `crm_resolve` is local (the bot's resolver, in process); the GRN summary is a plain route.
 NON_RENDER_TOOLS = frozenset(
-    {"crm_resolve", "crm_products_find", "crm_procurement_grn_summary", "crm_knowledge_search", "user_guides_read", "crm_knowledge_handoff"}
+    {
+        "crm_resolve", "crm_products_find", "crm_procurement_grn_summary", "crm_knowledge_search", "user_guides_read",
+        "crm_knowledge_handoff",
+        # AGENTIC-UNIFY PR 4: plain routes, no presenter. `crm_find` alone answers a render envelope.
+        "crm_complaints_list", "crm_complaint_analytics", "crm_sla_conversation_tracking_dashboard",
+        "crm_sla_conversation_tracking_list", "crm_sla_conversation_event_logs_list", "crm_projects_list",
+        "crm_project_detail", "crm_project_quotations_list", "crm_project_forecast", "crm_order_analytics",
+    }
 )
 RESOLVE = "crm_resolve"
 FIND = "crm_products_find"
@@ -59,11 +72,36 @@ FIND = "crm_products_find"
 KNOWLEDGE = "crm_knowledge_search"
 #: The Outline guide reader. Open to every linked user; its call carries only `query`.
 GUIDES = "user_guides_read"
+#: AGENTIC-UNIFY PR 4: the panel's reads that no chat lane answers. Jev is told of them (`router.agent_tool_labels`).
+#: `crm_find` is left out on purpose: it overlaps `crm_products_find` and the bot's own lookups.
+PORTED_READS = frozenset(
+    {
+        "crm_complaints_list", "crm_complaint_analytics", "crm_sla_conversation_tracking_dashboard",
+        "crm_sla_conversation_tracking_list", "crm_sla_conversation_event_logs_list", "crm_projects_list",
+        "crm_project_detail", "crm_project_quotations_list", "crm_project_forecast", "crm_order_analytics",
+    }
+)
 #: AGENTIC-KNOWLEDGE W1 S4: local, contact principal only. Not in REGISTRY or CONTACT_TOOLS (those
 #: are the plan's table): the loop adds its schema for a contact and `_dispatch_inner` answers it.
 HANDOFF = "crm_knowledge_handoff"
 PLAN = "plan"
 ANSWER = "answer"
+
+#: AGENTIC-UNIFY PR 4, AC-0: every tool this PR adds is offered on a staff-principal (panel) turn only, where the
+#: route runs as the user and its own rules hold. On any other turn the route runs as the shared key, so the
+#: agent's one slug would be the only guard. Reads (`REGISTRY`), the two finds (`writes.USER_READS`) and the
+#: three writes (`writes.WRITES`) share this one set, and every gate and the label filter read it.
+PANEL_ONLY_TOOLS = frozenset(
+    {
+        *PORTED_READS, "crm_find", "crm_complaints_find", "crm_projects_find",
+        "crm_complaint_close", "crm_order_cancel", "crm_it_support_ticket_create",
+    }
+)
+
+
+def panel_closed(name: Any) -> bool:
+    """True when `name` is a panel-only tool and this turn is not a panel turn."""
+    return name in PANEL_ONLY_TOOLS and staff_principal.current() is None
 
 
 # crm_report_ask: the sales / outstanding reveal is decided by the route itself from the
@@ -87,6 +125,21 @@ REGISTRY: dict[str, ToolDef] = _defs(
     ("crm_knowledge_search", "resource.attachments.view", None),
     # No slug: guides are for any signed-in staff user (every agent caller is an active CRM user).
     ("user_guides_read", "", None),
+    # AGENTIC-UNIFY PR 4: the panel's reads. `.view_own` counts on a panel turn only (`ToolDef.own_permission`).
+    ("crm_complaints_list", "complaint_management.complaints.view", None, "complaint_management.complaints.view_own"),
+    ("crm_complaint_analytics", "complaint_management.complaints.view", None),
+    ("crm_sla_conversation_tracking_dashboard", "sla_management.conversation_sla_tracking.view", None),
+    ("crm_sla_conversation_tracking_list", "sla_management.conversation_sla_tracking.view", None),
+    # The route's own rule for an unfiltered read (`sla_tracking.py` `_require_event_log_reader`).
+    ("crm_sla_conversation_event_logs_list", "sla_management.escalation_logs.view", None),
+    ("crm_projects_list", "projects.projects.view", None, "projects.projects.view_own"),
+    ("crm_project_detail", "projects.projects.view", None, "projects.projects.view_own"),
+    ("crm_project_quotations_list", "projects.projects.view", None, "projects.projects.view_own"),
+    ("crm_project_forecast", "projects.projects.view", None),
+    # The sales reveal as well, as `crm_report_ask` asks: the totals are the same figures.
+    ("crm_order_analytics", "order_management.orders.view", "sales_orders.sales_report"),
+    # Every answer carries stock, so the stock slug; the route itself asks the products one.
+    ("crm_find", "inventory.stock.view", None),
 )
 
 #: The contact principal's gate (AGENTIC-KNOWLEDGE W1 S1): tool -> the reveal key the contact must
@@ -130,6 +183,7 @@ ENVELOPE_KEYS = ("has_result", "result_type", "items", "answers", "response")
 #: Keys whose content makes an envelope non-empty.
 ROW_KEYS = ("items", "answers", "response", "groups", "summary_items", "drill_rows", "attachments", "action_links")
 FIXED_ERROR = "The tool failed."
+FIXED_NO_ACCESS = "You do not have access to this information."
 FIXED_TIMEOUT = "The tool did not answer in time."
 #: What `crm_resolve` may search, the slug the user needs for each kind, and the contact reveal
 #: a kind also needs.
@@ -170,6 +224,22 @@ TOOL_LABELS: dict[str, str] = {
     "crm_knowledge_search": "searching company documents",
     "crm_knowledge_handoff": "passing a question to the marketing product team",
     "user_guides_read": "reading the CRM user guides",
+    "crm_complaints_list": "the complaints list",
+    "crm_complaint_analytics": "complaint counts and trends",
+    "crm_sla_conversation_tracking_dashboard": "conversation response-time summary",
+    "crm_sla_conversation_tracking_list": "tracked conversations and their deadlines",
+    "crm_sla_conversation_event_logs_list": "conversation response-time events",
+    "crm_projects_list": "the projects list",
+    "crm_project_detail": "one project's details",
+    "crm_project_quotations_list": "a project's quotations",
+    "crm_project_forecast": "the project pipeline forecast",
+    "crm_order_analytics": "order totals and trends",
+    "crm_find": "finding the products that fit another product",
+    "crm_complaint_close": "close a complaint",
+    "crm_order_cancel": "cancel an order",
+    "crm_it_support_ticket_create": "raise an IT support ticket",
+    "crm_complaints_find": "finding a complaint by its number",
+    "crm_projects_find": "finding a project by its code",
     "crm_customer_asks_list": "your customer asks",
     "crm_customer_ask_update": "change a customer ask",
     "crm_opportunities_list": "your sales opportunities",
@@ -204,7 +274,7 @@ class ToolResult:
     message: str = ""
 
     def to_json(self, call_id: str | None = None) -> str:
-        body: dict[str, Any] = {"status": self.status, "data": self.data, "more": self.more, "message": self.message}
+        body: dict[str, Any] = {"status": self.status, "data": _round_computed_floats(self.data), "more": self.more, "message": self.message}
         if call_id:
             body["call_id"] = call_id  # the model cites this in the answer tool
         return json.dumps(body, default=str)
@@ -386,6 +456,8 @@ def contact_tool_open(ctx: Any, tool: ToolDef) -> bool:
 def user_may_use(db: Any, ctx: Any, tool: ToolDef) -> bool:
     """Does the linked user hold what the tool needs (for `crm_resolve`: any searchable kind).
     A contact principal is gated by `CONTACT_TOOLS` instead of a user slug."""
+    if panel_closed(tool.name):
+        return False
     if is_contact_principal(ctx):
         if not contact_tool_open(ctx, tool):
             return False
@@ -398,11 +470,18 @@ def user_may_use(db: Any, ctx: Any, tool: ToolDef) -> bool:
         return bool(searchable_kinds(db, ctx, list(KIND_SLUGS))[0])
     if tool.name == GUIDES:
         return True
-    if not _permitted(db, ctx.user_id, tool.user_permission):
+    if not _slug_held(db, ctx, tool):
         return False
     if tool.name == KNOWLEDGE:
         return _operator_may_read(db, ctx, tool.user_permission)
     return True
+
+
+def _slug_held(db: Any, ctx: Any, tool: ToolDef) -> bool:
+    """The linked user holds the tool's slug, or its `.view_own` slug (a panel-only tool, where the route narrows)."""
+    return _permitted(db, ctx.user_id, tool.user_permission) or bool(
+        tool.own_permission and _permitted(db, ctx.user_id, tool.own_permission)
+    )
 
 
 def _operator_may_read(db: Any, ctx: Any, slug: str) -> bool:
@@ -602,8 +681,13 @@ def clean_detail(text: Any) -> str:
     return re.sub(r"\s+", " ", out).strip()[:MAX_DETAIL_CHARS]
 
 
-def _http_failure(status: int, detail: Any) -> ToolResult:
+def _http_failure(status: int, detail: Any, who: str = "") -> ToolResult:
     if status == 403:
+        if staff_principal.current() is not None:
+            # A panel user can be refused although they hold the slug (the shared key's role lacks it): the
+            # model gets a plain line, never the route's slug, path or status. The detail goes to the log.
+            logger.warning("agent: a route refused a panel read (403) %s: %s", who, clean_detail(detail))
+            return ToolResult("denied", message=FIXED_NO_ACCESS)
         # The route refused this contact or user: a denial, not a bad request.
         return ToolResult("denied", message=clean_detail(detail) or "The route refused this request.")
     if 400 <= status < 500:
@@ -611,7 +695,7 @@ def _http_failure(status: int, detail: Any) -> ToolResult:
     return ToolResult("error", message=FIXED_ERROR)
 
 
-def _body_failure(data: Any) -> ToolResult | None:
+def _body_failure(data: Any, who: str = "") -> ToolResult | None:
     """A route's non-2xx answer carried back as data (`status_code` on the body)."""
     if not (isinstance(data, dict) and isinstance(data.get("status_code"), int) and data["status_code"] >= 400):
         return None
@@ -621,7 +705,7 @@ def _body_failure(data: Any) -> ToolResult | None:
     if not isinstance(detail, str) or not detail.strip():
         match = _HTTP_ERR.search(str(data.get("http_error") or data.get("error") or ""))
         detail = match.group(2) if match else ""
-    return _http_failure(int(data["status_code"]), detail)
+    return _http_failure(int(data["status_code"]), detail, who)
 
 
 def _has_rows(data: dict) -> bool:
@@ -1023,7 +1107,8 @@ def data_domain(name: Any, args: Any) -> str | None:
         if _arg_value(args, "basis") in OUTSTANDING_BASES:
             return "outstanding"
         return "sales"
-    if name == "crm_order_management_orders_by_product_list":
+    # The order totals are the same figures as the by-product totals, so a refused sales read stays refused.
+    if name in ("crm_order_management_orders_by_product_list", "crm_order_analytics"):
         return "sales"
     return None
 
@@ -1056,6 +1141,35 @@ def dispatch(
     return out
 
 
+def _round_computed_floats(node: Any) -> Any:
+    """What the model is sent: a float with more than 5 decimal places is computed noise (an average, a rate) and
+    goes to 2 places. Stored values have 5 places or fewer and are untouched. The ledger keeps the raw float."""
+    if isinstance(node, dict):
+        return {k: _round_computed_floats(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_round_computed_floats(v) for v in node]
+    if isinstance(node, float) and math.isfinite(node):
+        return round(node, 2) if -Decimal(repr(node)).as_tuple().exponent > 5 else node
+    return node
+
+
+def _tidy_read_data(node: Any) -> Any:
+    """What the model is given of a read: a dict key holding None, "", [] or {} (or emptied by this pass) is
+    dropped at any depth; 0 / 0.0 / False / "0" stay. A list is positional, so it keeps its plain values (None
+    included) and drops only a dict or list this pass left empty."""
+    if isinstance(node, dict):
+        out = {k: _tidy_read_data(v) for k, v in node.items()}
+        return {k: v for k, v in out.items() if not _is_blank(v)}
+    if isinstance(node, list):
+        out = [_tidy_read_data(v) for v in node]
+        return [v for v in out if not (isinstance(v, (dict, list)) and len(v) == 0)]
+    return node
+
+
+def _is_blank(value: Any) -> bool:
+    return value is None or (isinstance(value, (str, list, dict)) and len(value) == 0)
+
+
 def _dispatch_inner(
     db: Any,
     ctx: Any,
@@ -1080,10 +1194,12 @@ def _dispatch_inner(
     tool = REGISTRY.get(name) if isinstance(name, str) else None
     if tool is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
+    if panel_closed(name):
+        return ToolResult("denied", message=f"{name} is outside this user's access.")
     if is_contact_principal(ctx):
         if not contact_tool_open(ctx, tool):
             return ToolResult("denied", message=f"{name} is outside this contact's access.")
-    elif tool.name not in (RESOLVE, GUIDES) and not _permitted(db, ctx.user_id, tool.user_permission):
+    elif tool.name not in (RESOLVE, GUIDES) and not _slug_held(db, ctx, tool):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not contact_allows(ctx, tool):
         return ToolResult("denied", message=f"{name} is outside this contact's access.")
@@ -1161,11 +1277,11 @@ def _dispatch_inner(
         logger.warning("agent: tool %s failed", name, exc_info=True)
         match = _HTTP_ERR.search(str(exc))
         if match and match.group(1).startswith("4"):
-            return _http_failure(int(match.group(1)), match.group(2))
+            return _http_failure(int(match.group(1)), match.group(2), f"tool {name} user {ctx.user_id}")
         return ToolResult("error", message=FIXED_ERROR)
 
     data = _strip_echo(_as_data(raw), (str(ctx.contact_respond_id), str(ctx.contact_pk)), ctx.space_id)
-    failure = _body_failure(data)
+    failure = _body_failure(data, f"tool {name} user {ctx.user_id}")
     if failure is not None:
         return failure
     if tool.render:
@@ -1178,6 +1294,11 @@ def _dispatch_inner(
         drop_restricted_fields(data, set(ctx.grants), axis if isinstance(axis, str) else None)
     if _is_empty(data, tool.render):
         return ToolResult("empty", data={"applied_filters": filters}, message=NO_ROWS_MESSAGE)
-    data, more = cap_result(data)
+    data, more = cap_result(_tidy_read_data(data))
     _collect_uuids(data, seen)
-    return ToolResult("ok", data=data, more=more)
+    message = (
+        f"{more} more rows did not fit in this result. They are not on the next page: "
+        "narrow the read with a filter to see them."
+        if more > 0 else ""
+    )
+    return ToolResult("ok", data=data, more=more, message=message)

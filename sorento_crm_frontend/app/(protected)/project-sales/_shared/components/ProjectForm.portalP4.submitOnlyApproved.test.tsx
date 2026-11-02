@@ -51,8 +51,9 @@ vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-
   useBrandSelectQuery: () => ({ data: [{ id: 'b1', brand_name: 'CONTOH Brand' }], isLoading: false }),
 }));
 vi.mock('@/hooks/useLookupSetOptions', () => ({
-  useLookupSetOptions: () => ({
-    data: [
+  // PS-REGISTRATION-V3: the lead source list is its own lookup set.
+  useLookupSetOptions: (key: string) => ({
+    data: key === 'project_lead_source' ? [{ value: 'site_visit', label: 'Site visit' }] : [
       { value: 'Johor', label: 'Johor' },
       { value: 'Selangor', label: 'Selangor' },
     ],
@@ -340,7 +341,7 @@ describe.each([
       mode: 'edit',
       project: editProject({ approval_state: state, owner_user_id: 'u-me' } as never),
     });
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
     expect(container.querySelector('label[for="project-lead"]')).toBeNull();
     expect(screen.getByLabelText(/^Customer/)).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
