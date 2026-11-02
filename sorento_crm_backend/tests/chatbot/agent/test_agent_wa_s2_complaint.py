@@ -256,10 +256,15 @@ def _claim(do: str, **over) -> dict:
     return {k: v for k, v in args.items() if v is not None}
 
 
-def _propose(db, ctx, name, args, seen=(), *, is_test=False):
+#: What the dealer said in the chat, as the loop passes it to the claim tool (`_dealer_words`).
+WORDS = "ELP3754 leaking after 3 months, yes still under warranty"
+
+
+def _propose(db, ctx, name, args, seen=(), *, is_test=False, words: str = WORDS):
     from app.services.chatbot.agent import writes
 
-    return writes.propose_step(db, ctx, name, args, seen_ids=set(seen), loop_args={"_is_test": is_test})
+    loop_args = {"_is_test": is_test, "_dealer_words": words}
+    return writes.propose_step(db, ctx, name, args, seen_ids=set(seen), loop_args=loop_args)
 
 
 def _store_and_confirm(db, ctx, step, *, operator: str | None = None):
@@ -470,7 +475,8 @@ def test_c7_a_wrong_lookup_value_is_refused_with_its_options(db, store):
     contact = _dealer(db)
     do = _order(db, contact["pk"])
 
-    out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do, complaint_type="angry customer"))
+    out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do, complaint_type="angry customer"),
+                         words=WORDS + " angry customer")
 
     assert step is None
     assert "Product defect" in out.message and "Delivery" in out.message
@@ -1124,3 +1130,131 @@ def test_r1_a_storage_failure_keeps_the_ledgers_failed_mark(db, store, monkeypat
     assert db.get(MediaExtractionJob, job.id).status == "failed"
     assert db.get(ContactMediaUsage, usage.id).outcome == "failed"
     assert _files_on(db, "chatbot_turn", usage.turn_id) == []
+
+
+
+# ================================================================ crew console pass at e6c95c8722
+
+
+def _no_defaults(db) -> None:
+    from app.models.lookup import LookupBinding
+    from app.services import lookup_validator
+
+    db.query(LookupBinding).filter(LookupBinding.table_name == "complaints").update({"default_value": None})
+    db.flush()
+    lookup_validator._cache_clear()
+
+
+def test_cp1_a_dropdown_with_no_default_is_asked_with_its_real_options(db, store):
+    _no_defaults(db)
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+
+    out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do))
+
+    assert step is None
+    for real in ("Product defect", "Delivery", "After installation", "Before installation", "Dealer", "End user"):
+        assert real in out.message, (real, out.message)
+
+
+def test_cp1_a_dropdown_value_the_dealer_never_said_is_refused(db, store):
+    """The model guessed "End user": refused, with the options to ask for, and no proposal."""
+    _no_defaults(db)
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+    args = _claim(do, complaint_type="Product defect", defects_discovered="After installation", customer_type="End user")
+
+    out, step = _propose(db, _ctx(db, contact), CP_CREATE, args, words=WORDS + ", product defect after installation")
+
+    assert step is None
+    assert "customer type" in out.message and "Dealer" in out.message and "End user" in out.message
+
+
+def test_cp1_dropdown_values_the_dealer_said_are_accepted(db, store):
+    _no_defaults(db)
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+    args = _claim(do, complaint_type="Product defect", defects_discovered="after installation", customer_type="end user")
+
+    out, step = _propose(db, _ctx(db, contact), CP_CREATE, args,
+                         words=WORDS + ". Product defect, found after installation, the customer is an end user")
+
+    assert step is not None, out.message
+    assert "customer type: End user" in step["summary"]
+
+
+def test_cp1_within_warranty_the_dealer_never_said_is_refused(db, store):
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+
+    out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do), words="ELP3754 leaking after 3 months")
+
+    assert step is None and "within warranty" in out.message and "Not sure" in out.message
+
+
+def test_cp1_an_admin_keyword_counts_as_the_dealers_words(db, store):
+    from app.models.lookup import LookupOption, LookupOptionKeyword
+
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+    yes = db.query(LookupOption).filter(LookupOption.value == "yes", LookupOption.label == "Yes").first()
+    db.add(LookupOptionKeyword(id=str(uuid.uuid4()), option_id=yes.id, keyword="保修期内"))
+    db.flush()
+
+    out, step = _propose(db, _ctx(db, contact), CP_CREATE, _claim(do), words="ELP3754 漏水, 还在保修期内")
+
+    assert step is not None, out.message
+
+
+def test_cp1_the_loop_never_shows_a_confirm_block_for_a_guessed_dropdown(db, store):
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    _no_defaults(db)
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+    guessed = _claim(do, complaint_type="Product defect", defects_discovered="After installation",
+                     customer_type="End user")
+    provider = _scripted(_asks({"id": "p1", "name": CP_CREATE, "arguments": guessed}),
+                         _says("Which complaint type, defects discovered and customer type is it?"))
+
+    turn = run_agent_turn(db, contact_respond_id=contact["respond_id"],
+                          text=f"ELP3754 from {do} leaking after 3 months, yes still under warranty",
+                          provider=provider, mcp_call=_forbidden, catalog={}, is_test=False)
+
+    assert turn.pending_action is None
+    assert "I will make these changes" not in turn.reply_text
+    refusal = [m for m in provider.calls[1]["messages"] if m.get("role") == "tool"][-1]["content"]
+    assert "End user" in refusal and "Dealer" in refusal
+
+
+def test_cp2_a_do_number_in_the_proposal_is_not_marked_unverified(db, store):
+    from app.services.chatbot.agent.loop import NOT_VERIFIED, run_agent_turn
+
+    contact = _dealer(db)
+    do = _order(db, contact["pk"], number="88123-4471")
+    provider = _scripted(_asks({"id": "p1", "name": CP_CREATE, "arguments": _claim(do)}),
+                         _says(f"I will file the claim for DO {do} when you confirm."))
+
+    turn = run_agent_turn(db, contact_respond_id=contact["respond_id"], text="claim it please, yes under warranty",
+                          provider=provider, mcp_call=_forbidden, catalog={}, is_test=False)
+
+    assert turn.pending_action is not None, turn.reply_text
+    assert NOT_VERIFIED not in turn.reply_text and do in turn.reply_text
+
+
+def test_cp3_a_console_photo_add_confirm_says_nothing_was_sent(db, store):
+    from tests.chatbot.agent._seed import seed_user
+
+    contact = _dealer(db)
+    ctx = _ctx(db, contact)
+    cid = _submitted_complaint(db, contact, do=_order(db, contact["pk"]), minutes_ago=30)
+    pid = _chat_photo(db, store, contact)
+    seen = {cid}
+    _read_photos(db, ctx, seen)
+    out, step = _propose(db, ctx, CP_PHOTOS_ADD, {"submission_id": cid, "photo_ids": [pid]}, seen, is_test=True)
+    assert step is not None, out.message
+
+    outcome = _store_and_confirm(db, ctx, step, operator=seed_user(db, contact_pk=None))
+
+    assert "Test turn: nothing was sent." in outcome.notes
+    assert _files_on(db, "complaint", cid) == []
