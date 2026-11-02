@@ -80,6 +80,11 @@ class MediaExtractionError(RuntimeError):
     `failed` callback's reason - never an HTTP status, because this runs in the
     worker where there is no request to fail."""
 
+    #: The fetched image when the read failed after the fetch (AGENTIC-WA-S2), so the worker can still
+    #: keep the photo; None when nothing usable was fetched.
+    media_bytes: Optional[bytes] = None
+    media_content_type: Optional[str] = None
+
 
 class MediaClipLengthError(MediaExtractionError):
     """A voice note refused on the clip length cap, before anything was spent.
@@ -465,6 +470,23 @@ class MediaExtractService:
         if kind in ("image", "visual"):
             # The bytes, not the label, say which format the model is handed.
             mime = sniffed
+        try:
+            return self._read_image(job, settings, data, content_type, mime)
+        except MediaExtractionError as exc:
+            # AGENTIC-WA-S2: the photo was fetched and IS an image, so a failed read (provider down,
+            # unparseable answer) still carries the bytes back, and the worker keeps the photo for a
+            # dealer's claim. Never a second fetch: these are the bytes that were checked above.
+            exc.media_bytes, exc.media_content_type = data, content_type
+            raise
+
+    def _read_image(
+        self, job: MediaJobInput, settings: Any, data: bytes, content_type: Optional[str], mime: str
+    ) -> MediaExtractionOutcome:
+        from app.services.ai_extract.extract_service import (
+            AIExtractService,
+            ExtractFile,
+        )
+        from app.services.llm_provider import ChatResult
 
         helper = AIExtractService(self.db)
         parts = helper._render_files(

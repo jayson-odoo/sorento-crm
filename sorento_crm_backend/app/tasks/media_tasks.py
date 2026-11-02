@@ -279,6 +279,12 @@ def process_media_extraction(job_id: str) -> None:
             terminal_result = None
             terminal_error = str(exc) or exc.__class__.__name__
             _mark_usage_failed(db, job, exc)
+            if getattr(exc, "media_bytes", None):
+                # AGENTIC-WA-S2: the read failed but the photo was fetched; keep it (same store, same
+                # rules as a read that worked) so a dealer's claim can still carry it. The job stays failed.
+                _store_media_bytes(
+                    db, job, {"_media_bytes": exc.media_bytes, "_media_content_type": exc.media_content_type}
+                )
         # The terminal write is a compare-and-set just like the claim: a job the
         # replay path already reclaimed as failed (its ledger row is stamped)
         # must not flip back to completed and report success for an item metered

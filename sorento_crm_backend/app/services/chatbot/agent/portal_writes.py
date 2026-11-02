@@ -441,38 +441,31 @@ def _si_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict
 # ------------------------------------------------------------------ withdraw a fresh stock inquiry
 
 
-def _withdraw_target(db, token, args: dict, *, lock: bool = False) -> tuple[Any, list, list]:
-    """The contact's own inquiry and its history, when it may still be withdrawn; refusals otherwise."""
+def _untouched_or_refuse(db, token, kind: str, row, *, own_files_ok: bool = False) -> tuple[list, list]:
+    """The W2-Q2 withdraw rule, for any portal kind: the row's history and SLA stages when it is the first
+    submission, at most `WITHDRAW_MINUTES` old, and nobody but the contact has touched it (no comment by
+    anyone else, no touched stage, no form action, no file; `own_files_ok` lets the contact's OWN uploads
+    through, which a claim carries from the start). Refuses with `WITHDRAW_REFUSED` otherwise. The row's
+    own fields (status, responses) are the caller's check."""
     from app.models.entity_attachment import EntityAttachmentLink
     from app.models.entity_conversation import EntityConversationMessage as Msg
     from app.models.portal import PortalFormRevision
-    from app.models.procurement import StockInquiry
+    from app.models.resources import Attachment
     from app.models.sla import ConversationSLATracking, SlaFormAction, SlaTakeoverRequest
     from app.models.ticket_comment import ConversationTicketComment
-    from app.services import submission_status
-    from app.services.error_handler import handle_conflict, handle_not_found
+    from app.services.error_handler import handle_conflict
     from app.services.form_comment_service import FORM_COMMENT_SCOPE
-    from app.services.portal_form_visibility_service import require_form_visible
-    from app.services.uuid_path_param import validate_uuid_path
 
-    require_form_visible(db, token.contact_id, STOCK_INQUIRY)
-    sid = validate_uuid_path(str(args.get("submission_id")), resource="Stock inquiry")
-    query = db.query(StockInquiry).filter(
-        StockInquiry.id == sid, StockInquiry.contact_id == token.contact_id, StockInquiry.space_id == token.space_id
-    )
-    # The delete holds the row while it re-checks "untouched", so a staff reply cannot land in between.
-    row = (query.with_for_update(of=StockInquiry) if lock else query).first()
-    if row is None or row.portal_draft_at is not None:
-        raise handle_not_found("Stock inquiry", sid)
+    sid = str(row.id)
     history = (
         db.query(PortalFormRevision)
-        .filter(PortalFormRevision.source_entity_type == STOCK_INQUIRY, PortalFormRevision.source_entity_id == sid)
+        .filter(PortalFormRevision.source_entity_type == kind, PortalFormRevision.source_entity_id == sid)
         .all()
     )
     others = (
         db.query(Msg.id)
         .filter(
-            Msg.scope == FORM_COMMENT_SCOPE, Msg.entity_type == STOCK_INQUIRY, Msg.entity_id == sid,
+            Msg.scope == FORM_COMMENT_SCOPE, Msg.entity_type == kind, Msg.entity_id == sid,
             (Msg.author_contact_id.is_(None)) | (Msg.author_contact_id != token.contact_id),
         )
         .first()
@@ -481,7 +474,7 @@ def _withdraw_target(db, token, args: dict, *, lock: bool = False) -> tuple[Any,
     # such a stage is untouched until someone responds, takes it, escalates, resolves or voids it.
     trackers = (
         db.query(ConversationSLATracking)
-        .filter(ConversationSLATracking.source_entity_type == STOCK_INQUIRY, ConversationSLATracking.source_entity_id == sid)
+        .filter(ConversationSLATracking.source_entity_type == kind, ConversationSLATracking.source_entity_id == sid)
         .all()
     )
     ticket = next(
@@ -503,28 +496,90 @@ def _withdraw_target(db, token, args: dict, *, lock: bool = False) -> tuple[Any,
             ticket = busy
     action = (
         db.query(SlaFormAction.id)
-        .filter(SlaFormAction.source_entity_type == STOCK_INQUIRY, SlaFormAction.source_entity_id == sid)
+        .filter(SlaFormAction.source_entity_type == kind, SlaFormAction.source_entity_id == sid)
         .first()
     )
-    files = (
-        db.query(EntityAttachmentLink.id)
-        .filter(EntityAttachmentLink.entity_type == STOCK_INQUIRY, EntityAttachmentLink.entity_id == sid)
-        .first()
+    files = db.query(EntityAttachmentLink.id).filter(
+        EntityAttachmentLink.entity_type == kind, EntityAttachmentLink.entity_id == sid
     )
+    if own_files_ok:
+        # Only a file the contact itself uploaded may stay; anyone else's file (staff) is a touch.
+        own = db.query(Attachment.id).filter(
+            Attachment.uploader_kind == "contact", Attachment.uploaded_by_contact_id == token.contact_id
+        )
+        files = files.filter(~EntityAttachmentLink.attachment_id.in_(own))
     fresh = (
         len(history) == 1
         and history[0].kind == "original"
         and history[0].submitted_at is not None
         and datetime.utcnow() - history[0].submitted_at <= timedelta(minutes=WITHDRAW_MINUTES)
     )
+    if not (fresh and others is None and ticket is None and action is None and files.first() is None):
+        raise handle_conflict(WITHDRAW_REFUSED)
+    return history, trackers
+
+
+def _hard_delete(db, token, kind: str, row, trackers: list) -> None:
+    """Hard delete (D7): the row and what points at it, so no bell, open stage or history entry names a
+    missing request. A stage's own children (events, comments) go with it (ON DELETE CASCADE)."""
+    from sqlalchemy import and_, false, or_
+
+    from app.models.entity_conversation import EntityConversationMessage as Msg
+    from app.models.notification import Notification
+    from app.models.portal import PortalFormRevision
+    from app.models.procurement import ViewToken
+    from app.services.form_comment_service import FORM_COMMENT_SCOPE
+
+    sid = str(row.id)
+    stage_ids = [str(t.id) for t in trackers]
+    db.query(Notification).filter(
+        or_(
+            and_(Notification.source_entity_type == kind, Notification.source_entity_id == sid),
+            Notification.source_entity_id.in_(stage_ids) if stage_ids else false(),
+        )
+    ).delete(synchronize_session=False)
+    for tracker in trackers:
+        db.delete(tracker)
+    db.query(PortalFormRevision).filter(
+        PortalFormRevision.source_entity_type == kind, PortalFormRevision.source_entity_id == sid
+    ).delete(synchronize_session=False)
+    # Only the contact's own notes: a staff comment racing the delete is never removed with them.
+    db.query(Msg).filter(
+        Msg.scope == FORM_COMMENT_SCOPE, Msg.entity_type == kind, Msg.entity_id == sid,
+        Msg.author_contact_id == token.contact_id,
+    ).delete(synchronize_session=False)
+    # The public view link the submit minted for this row.
+    db.query(ViewToken).filter(ViewToken.entity_type == kind, ViewToken.entity_id == sid).delete(
+        synchronize_session=False
+    )
+    db.delete(row)
+
+
+def _withdraw_target(db, token, args: dict, *, lock: bool = False) -> tuple[Any, list, list]:
+    """The contact's own inquiry and its history, when it may still be withdrawn; refusals otherwise."""
+    from app.models.procurement import StockInquiry
+    from app.services import submission_status
+    from app.services.error_handler import handle_conflict, handle_not_found
+    from app.services.portal_form_visibility_service import require_form_visible
+    from app.services.uuid_path_param import validate_uuid_path
+
+    require_form_visible(db, token.contact_id, STOCK_INQUIRY)
+    sid = validate_uuid_path(str(args.get("submission_id")), resource="Stock inquiry")
+    query = db.query(StockInquiry).filter(
+        StockInquiry.id == sid, StockInquiry.contact_id == token.contact_id, StockInquiry.space_id == token.space_id
+    )
+    # The delete holds the row while it re-checks "untouched", so a staff reply cannot land in between.
+    row = (query.with_for_update(of=StockInquiry) if lock else query).first()
+    if row is None or row.portal_draft_at is not None:
+        raise handle_not_found("Stock inquiry", sid)
+    history, trackers = _untouched_or_refuse(db, token, STOCK_INQUIRY, row)
     untouched = (
         (row.status or "").strip().lower() == submission_status.SI_REVIEW_STAGE
         and not _line(row.purchasing_response)
         and not row.last_responded_by
         and row.last_responded_at is None
-        and others is None and ticket is None and action is None and files is None
     )
-    if not (fresh and untouched):
+    if not untouched:
         raise handle_conflict(WITHDRAW_REFUSED)
     return row, history, trackers
 
@@ -544,42 +599,11 @@ def _withdraw_summary(args: dict, before: dict) -> str:
 
 
 def _withdraw_execute(db, token, args: dict, confirmed: dict) -> dict:
-    from sqlalchemy import and_, false, or_
-
-    from app.models.entity_conversation import EntityConversationMessage as Msg
-    from app.models.notification import Notification
-    from app.models.portal import PortalFormRevision
-    from app.models.procurement import ViewToken
-    from app.services.form_comment_service import FORM_COMMENT_SCOPE
-
     if args.get("_is_test"):
         return _test_result()
     row, _history, trackers = _withdraw_target(db, token, args, lock=True)
     sid = str(row.id)
-    # Hard delete (D7): the row and what points at it, so no bell, open stage or history entry names a missing
-    # request. A stage's own children (events, comments) go with it (ON DELETE CASCADE).
-    stage_ids = [str(t.id) for t in trackers]
-    db.query(Notification).filter(
-        or_(
-            and_(Notification.source_entity_type == STOCK_INQUIRY, Notification.source_entity_id == sid),
-            Notification.source_entity_id.in_(stage_ids) if stage_ids else false(),
-        )
-    ).delete(synchronize_session=False)
-    for tracker in trackers:
-        db.delete(tracker)
-    db.query(PortalFormRevision).filter(
-        PortalFormRevision.source_entity_type == STOCK_INQUIRY, PortalFormRevision.source_entity_id == sid
-    ).delete(synchronize_session=False)
-    # Only the contact's own notes: a staff comment racing the delete is never removed with them.
-    db.query(Msg).filter(
-        Msg.scope == FORM_COMMENT_SCOPE, Msg.entity_type == STOCK_INQUIRY, Msg.entity_id == sid,
-        Msg.author_contact_id == token.contact_id,
-    ).delete(synchronize_session=False)
-    # The public view link the submit minted for this row.
-    db.query(ViewToken).filter(ViewToken.entity_type == STOCK_INQUIRY, ViewToken.entity_id == sid).delete(
-        synchronize_session=False
-    )
-    db.delete(row)
+    _hard_delete(db, token, STOCK_INQUIRY, row, trackers)
     db.commit()
     return {"id": sid, "after": {"state": "withdrawn"}}
 

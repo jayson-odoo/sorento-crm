@@ -1306,6 +1306,101 @@ def delete_submission_draft(db: Session, token: PortalToken, kind: str, submissi
     PortalService(db).delete_draft(token, _check_kind(kind, db, token), submission_id)
 
 
+def store_portal_upload(
+    db: Session,
+    token: PortalToken,
+    k: str,
+    submission_id: str,
+    contents: bytes,
+    filename: Optional[str],
+    content_type: Optional[str],
+) -> dict:
+    """The body of ``POST /attachments`` after its ownership check: the portal attachment type's
+    quota, the stored object, its thumbnail, the link and the contact as uploader. ONE body for the
+    route and the agent's WhatsApp claim photos (AGENTIC-WA-S2), so a chat photo passes exactly the
+    checks a portal upload does. The caller has already checked the row is the contact's own."""
+    portal = PortalService(db)
+    attachment_type = portal.get_portal_attachment_type()
+
+    incoming_size = len(contents)
+    extension = _ext(filename, content_type)
+    _check_quota(
+        db,
+        attachment_type,
+        _entity_type_for(k),
+        submission_id,
+        incoming_size,
+        extension,
+    )
+
+    safe_ext = f".{extension}" if extension else ""
+    s3_key = f"portal/{token.contact_id}/{uuid.uuid4()}{safe_ext}"
+    from app.services.storage_router import default_provider, get_backend
+
+    portal_provider = default_provider()
+    portal_backend = get_backend(portal_provider)
+    try:
+        portal_backend.upload_file(
+            contents, s3_key, content_type=content_type
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Portal attachment upload failed (provider=%s): %s", portal_provider, e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="File upload failed. Please try again.",
+        ) from e
+
+    # Grid thumbnail (images only) - portal uploads are device bytes in our own
+    # bucket, so the same small-variant path applies. Best-effort; never blocks.
+    from app.services.image_thumbnailer import store_thumbnail
+
+    portal_thumbnail = store_thumbnail(
+        portal_backend, portal_provider, s3_key, contents, content_type
+    )
+
+    service = EntityAttachmentService(db)
+    link = service.create_attachment_and_link(
+        entity_type=_entity_type_for(k),
+        entity_id=submission_id,
+        file_url=s3_key,
+        file_name=filename or os.path.basename(s3_key),
+        file_size_bytes=incoming_size,
+        attachment_type_code=PORTAL_ATTACHMENT_TYPE_CODE,
+        created_by=None,
+        thumbnail_path=portal_thumbnail,
+        storage_provider=portal_provider,
+        # Pre-existing gap, not price-tag-specific: this call never passed the
+        # browser's content type through, so every portal upload's attachment
+        # row (every kind, not just price_tag_request) carried mime_type=None
+        # and every reader of it - the PO cross-check PDF/image branch
+        # included - always fell to the generic file row. AC-S1-5 needs a real
+        # content_type, so it is fixed here rather than worked around per kind.
+        # Normalized (type/subtype, capped) - the raw header is caller-
+        # controlled and the column is VARCHAR(100).
+        mime_type=_normalize_mime_type(content_type),
+    )
+    # Uploader attribution (UAC B1): create_attachment_and_link has no fields
+    # for this, so stamp the freshly created row directly, in the same
+    # transaction as the link, before commit.
+    attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
+    if attachment is not None:
+        attachment.uploader_kind = "contact"
+        attachment.uploaded_by_contact_id = token.contact_id
+    db.commit()
+    db.refresh(link)
+    if attachment is not None:
+        db.refresh(attachment)
+    file_path = attachment.file_path if attachment else s3_key
+    return {
+        "link_id": str(link.id),
+        "attachment_id": str(link.attachment_id),
+        "filename": attachment.original_filename if attachment else filename,
+        "size": incoming_size,
+        "url": _safe_presigned_url(file_path) or file_path,
+        "content_type": (attachment.mime_type if attachment else content_type) or None,
+    }
+
+
 def removable_attachment_link(db: Session, token: PortalToken, link_id: str) -> EntityAttachmentLink:
     """The contact's own upload ``DELETE /attachments/{link_id}`` removes, or that route's
     refusal: 404 not theirs, 403 the form is hidden, 403 ``STAFF_UPLOAD_LOCKED``."""
@@ -1694,86 +1789,9 @@ def register_submission_routes(router: APIRouter, token_dependency: Callable[...
             _require_own_npa(db, token, submission_id, require_editable=True)
         else:
             portal.get_submission(token, k, submission_id)  # ownership check
-        attachment_type = portal.get_portal_attachment_type()
-
-        contents = file.file.read()
-        incoming_size = len(contents)
-        extension = _ext(file.filename, file.content_type)
-        _check_quota(
-            db,
-            attachment_type,
-            _entity_type_for(k),
-            submission_id,
-            incoming_size,
-            extension,
+        return store_portal_upload(
+            db, token, k, submission_id, file.file.read(), file.filename, file.content_type
         )
-
-        safe_ext = f".{extension}" if extension else ""
-        s3_key = f"portal/{token.contact_id}/{uuid.uuid4()}{safe_ext}"
-        from app.services.storage_router import default_provider, get_backend
-
-        portal_provider = default_provider()
-        portal_backend = get_backend(portal_provider)
-        try:
-            portal_backend.upload_file(
-                contents, s3_key, content_type=file.content_type
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Portal attachment upload failed (provider=%s): %s", portal_provider, e)
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="File upload failed. Please try again.",
-            ) from e
-
-        # Grid thumbnail (images only) - portal uploads are device bytes in our own
-        # bucket, so the same small-variant path applies. Best-effort; never blocks.
-        from app.services.image_thumbnailer import store_thumbnail
-
-        portal_thumbnail = store_thumbnail(
-            portal_backend, portal_provider, s3_key, contents, file.content_type
-        )
-
-        service = EntityAttachmentService(db)
-        link = service.create_attachment_and_link(
-            entity_type=_entity_type_for(k),
-            entity_id=submission_id,
-            file_url=s3_key,
-            file_name=file.filename or os.path.basename(s3_key),
-            file_size_bytes=incoming_size,
-            attachment_type_code=PORTAL_ATTACHMENT_TYPE_CODE,
-            created_by=None,
-            thumbnail_path=portal_thumbnail,
-            storage_provider=portal_provider,
-            # Pre-existing gap, not price-tag-specific: this call never passed the
-            # browser's content type through, so every portal upload's attachment
-            # row (every kind, not just price_tag_request) carried mime_type=None
-            # and every reader of it - the PO cross-check PDF/image branch
-            # included - always fell to the generic file row. AC-S1-5 needs a real
-            # content_type, so it is fixed here rather than worked around per kind.
-            # Normalized (type/subtype, capped) - the raw header is caller-
-            # controlled and the column is VARCHAR(100).
-            mime_type=_normalize_mime_type(file.content_type),
-        )
-        # Uploader attribution (UAC B1): create_attachment_and_link has no fields
-        # for this, so stamp the freshly created row directly, in the same
-        # transaction as the link, before commit.
-        attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
-        if attachment is not None:
-            attachment.uploader_kind = "contact"
-            attachment.uploaded_by_contact_id = token.contact_id
-        db.commit()
-        db.refresh(link)
-        if attachment is not None:
-            db.refresh(attachment)
-        file_path = attachment.file_path if attachment else s3_key
-        return {
-            "link_id": str(link.id),
-            "attachment_id": str(link.attachment_id),
-            "filename": attachment.original_filename if attachment else file.filename,
-            "size": incoming_size,
-            "url": _safe_presigned_url(file_path) or file_path,
-            "content_type": (attachment.mime_type if attachment else file.content_type) or None,
-        }
 
 
     @router.get("/submissions/{kind}/{submission_id}/comments")
