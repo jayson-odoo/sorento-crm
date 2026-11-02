@@ -15,8 +15,11 @@ the args that ran, not on reply wording, except where a reply line is named.
   followed by compact JSON with exactly the `report_ask` keys.
 - SC-4 While a field question is open (basis, period, count, company, brand or account type, agent pick), the line
   shows the ask so far and names the open question: `Held report (open question: <basis|period|count|company|brand or account type|sales agent>): ` + the JSON.
-- SC-5 The frame that ran keeps an id->name map for every id it holds; an object that carries a held name back sends
-  the same id with no new lookup.
+- SC-5 (revised in review round 2) A held agent, brand or category is shown by a word that resolves back to exactly
+  the held rows (agent code; brand or category name, else its code) and is resolved again inside the ask's company,
+  through the permission-gated resolvers, so it sends the same ids. A held customer sends its held id when that id is
+  in the ask's company (or no company is named), else the one customer of that name in the named company; none or
+  several go on the "Not applied:" line.
 
 ## B. The owner's 14 turns (one conversation, staff contact with two companies, flag on)
 
