@@ -22,7 +22,11 @@ NOTE_ADD = "crm_my_request_note_add"
 NOTE_REMOVE = "crm_my_request_note_remove"
 SI_CREATE = "crm_stock_inquiry_create"
 SI_WITHDRAW = "crm_stock_inquiry_withdraw"
-ALL_TOOLS = {LIST, NOTE_ADD, NOTE_REMOVE, SI_CREATE, SI_WITHDRAW}
+W2_TOOLS = {LIST, NOTE_ADD, NOTE_REMOVE, SI_CREATE, SI_WITHDRAW}
+# AGENTIC-WA-S2 adds the complaint claim tools for a contact whose Complaint form is visible.
+S2_TOOLS = {"crm_my_chat_photos", "crm_complaint_create", "crm_complaint_withdraw", "crm_complaint_photos_add",
+            "crm_complaint_photo_remove"}
+ALL_TOOLS = W2_TOOLS | S2_TOOLS
 SRT = "00000000-0000-0000-0000-000000000001"
 SPACE = "zzt-space"
 
@@ -156,7 +160,7 @@ def test_ac2_a_hidden_stock_inquiry_form_drops_the_two_stock_inquiry_tools(db):
     contact = _dealer(db)
     _hide_form(db, contact["pk"])
 
-    assert set(portal_writes.offered(db, _ctx(db, contact))) == {LIST, NOTE_ADD, NOTE_REMOVE}
+    assert set(portal_writes.offered(db, _ctx(db, contact))) == {LIST, NOTE_ADD, NOTE_REMOVE} | S2_TOOLS
 
 
 def test_ac2_the_gate_asks_no_user_permission(db, monkeypatch):

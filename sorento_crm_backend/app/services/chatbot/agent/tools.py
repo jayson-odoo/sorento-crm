@@ -190,6 +190,11 @@ TOOL_LABELS: dict[str, str] = {
     "crm_my_request_note_remove": "remove one of the customer's own notes",
     "crm_stock_inquiry_create": "send a stock or lead-time inquiry for a product to the project sales team",
     "crm_stock_inquiry_withdraw": "withdraw a stock inquiry the customer just sent",
+    "crm_my_chat_photos": "the photos the customer sent in this chat",
+    "crm_complaint_create": "file a warranty claim or product complaint, with the photos the customer sent",
+    "crm_complaint_withdraw": "withdraw a warranty claim or complaint the customer just sent",
+    "crm_complaint_photos_add": "add more photos to the customer's own warranty claim or complaint",
+    "crm_complaint_photo_remove": "remove a photo the customer added to their complaint",
     "confirm_action": "confirm the waiting change",
     "cancel_action": "cancel the waiting change",
 }

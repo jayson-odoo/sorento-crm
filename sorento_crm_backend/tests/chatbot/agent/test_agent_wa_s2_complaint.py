@@ -575,7 +575,7 @@ def test_c12_a_confirm_files_the_claim_with_its_photos_through_the_portal(db, st
 
     outcome = _store_and_confirm(db, ctx, step)
 
-    assert outcome.status == "executed", outcome.reply
+    assert outcome.status == "executed", outcome.reply_text
     [row] = _complaints(db, contact["pk"])
     assert row.status == "submitted" and row.portal_draft_at is None and row.complaint_number
     assert row.delivery_order_number == do and row.product_code == "ELP3754"
@@ -628,7 +628,7 @@ def test_c14_a_console_confirm_writes_nothing(db, store):
 
     assert outcome.status == "executed"
     assert _complaints(db, contact["pk"]) == []
-    assert "Test turn: nothing was sent." in outcome.reply
+    assert "Test turn: nothing was sent." in outcome.reply_text
 
 
 # ================================================================ C-15 withdraw
@@ -646,7 +646,7 @@ def test_c15_a_fresh_untouched_claim_is_withdrawn_with_its_files(db, store):
     assert wstep is not None, out.message
     outcome = _store_and_confirm(db, ctx, wstep)
 
-    assert outcome.status == "executed", outcome.reply
+    assert outcome.status == "executed", outcome.reply_text
     db.expire_all()
     assert _complaints(db, contact["pk"]) == []
     assert _files_on(db, "complaint", cid) == []
@@ -723,7 +723,7 @@ def test_c16_newer_photos_are_added_to_an_own_open_claim(db, store):
     assert "ELP3754" in step["summary"]
     outcome = _store_and_confirm(db, ctx, step)
 
-    assert outcome.status == "executed", outcome.reply
+    assert outcome.status == "executed", outcome.reply_text
     assert len(_files_on(db, "complaint", cid)) == 1
 
     out, again = _propose(db, ctx, CP_PHOTOS_ADD, {"submission_id": cid, "photo_ids": [pid]}, seen)

@@ -17,8 +17,10 @@ from __future__ import annotations
 import html
 import re
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.services.chatbot.agent.tools import ToolResult, _collect_uuids, cap_result
 from app.services.chatbot.agent.writes import MAX_NOTE_CHARS, UserRead, WriteDef, _diff, _line, _route_failure
@@ -28,6 +30,23 @@ NOTE_ADD = "crm_my_request_note_add"
 NOTE_REMOVE = "crm_my_request_note_remove"
 SI_CREATE = "crm_stock_inquiry_create"
 SI_WITHDRAW = "crm_stock_inquiry_withdraw"
+# AGENTIC-WA-S2: a warranty / complaint claim with the dealer's chat photos.
+CHAT_PHOTOS = "crm_my_chat_photos"
+CP_CREATE = "crm_complaint_create"
+CP_WITHDRAW = "crm_complaint_withdraw"
+CP_PHOTOS_ADD = "crm_complaint_photos_add"
+CP_PHOTO_REMOVE = "crm_complaint_photo_remove"
+COMPLAINT = "complaint"
+#: S2-Q5 (owner pending). "allow": a second open claim on the same DO and product goes through and its confirm
+#: line names the earlier one. "refuse": refused at proposal with the note offer. One word either way.
+DUPLICATE_CLAIMS = "allow"
+#: The chat photos a claim may carry: the newest of the last day (S2-Q1 (a): only what the bot stored).
+PHOTO_WINDOW_HOURS = 24
+MAX_CHAT_PHOTOS = 10
+#: `app.tasks.media_tasks.CHATBOT_MEDIA_ATTACHMENT_TYPE_CODE`, the type the media lane stores photos under.
+CHAT_MEDIA_TYPE = "chatbot_media"
+COULD_NOT_READ = "could not be read"
+_BUSINESS_TZ = ZoneInfo("Asia/Kuala_Lumpur")
 
 STOCK_INQUIRY = "stock_inquiry"
 #: The portal's comment kinds (`portal_service.SUPPORTED_TYPES`), in the order the list shows them.
@@ -104,6 +123,8 @@ def _open_names(kinds: set[str]) -> list[str]:
     names = [LIST, NOTE_ADD, NOTE_REMOVE] if kinds else []
     if STOCK_INQUIRY in kinds:
         names += [SI_CREATE, SI_WITHDRAW]
+    if COMPLAINT in kinds:
+        names += [CHAT_PHOTOS, CP_CREATE, CP_WITHDRAW, CP_PHOTOS_ADD, CP_PHOTO_REMOVE]
     return names
 
 
@@ -208,6 +229,7 @@ def _my_requests(db, ctx, args: dict) -> ToolResult:
                     "title": item.get("title"),
                     "submitted": item.get("created_at"),
                     "my_notes": _own_notes(db, kind, item.get("id"), token.contact_id),
+                    **({"my_photos": _own_files(db, item.get("id"), token.contact_id)} if kind == COMPLAINT else {}),
                 })
         rows.sort(key=lambda r: r.get("submitted") or "", reverse=True)
         return rows[:MAX_LIST_ROWS]
@@ -614,9 +636,633 @@ def _withdraw_changes(args: dict, before: dict, after: dict, shown: dict) -> lis
     return _diff(f"stock inquiry {shown.get('number')}", [("Status", "With the project sales team", "Withdrawn")])
 
 
+# ------------------------------------------------------------------ warranty / complaint claim (AGENTIC-WA-S2)
+
+
+def _sent_at(stamp: datetime | None) -> str:
+    """A stored (naive UTC) time as the dealer reads it: "2 Nov 10:02", business time."""
+    if stamp is None:
+        return ""
+    local = stamp.replace(tzinfo=timezone.utc).astimezone(_BUSINESS_TZ)
+    return f"{local.day} {local.strftime('%b %H:%M')}"
+
+
+def _chat_photo_query(db, contact_id: str):
+    """The contact's own photos the media lane stored from its chat (`media_tasks._store_media_bytes`), last day."""
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment, AttachmentType
+
+    since = datetime.utcnow() - timedelta(hours=PHOTO_WINDOW_HOURS)
+    return (
+        db.query(Attachment)
+        .join(EntityAttachmentLink, EntityAttachmentLink.attachment_id == Attachment.id)
+        .join(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
+        .filter(
+            EntityAttachmentLink.entity_type == "chatbot_turn", AttachmentType.code == CHAT_MEDIA_TYPE,
+            Attachment.uploader_kind == "contact", Attachment.uploaded_by_contact_id == str(contact_id),
+            Attachment.mime_type.ilike("image/%"), Attachment.is_deleted.is_(False), Attachment.created_at >= since,
+        )
+    )
+
+
+def _photo_read(db, att) -> str:
+    """What the bot read on the photo (its stored media read), or COULD_NOT_READ. The stored file name starts with
+    the media ledger row's id (`media_tasks._store_media_bytes`), which leads to the read."""
+    from app.models.media import MediaExtractionJob
+
+    usage_id = (att.original_filename or "")[:36]
+    try:
+        uuid.UUID(usage_id)
+    except ValueError:
+        return COULD_NOT_READ
+    job = db.query(MediaExtractionJob).filter(MediaExtractionJob.usage_id == usage_id).first()
+    result = job.result if job is not None and job.status == "completed" else None
+    if not isinstance(result, dict):
+        return COULD_NOT_READ
+    raws = [_line(e.get("raw")) for e in result.get("entities") or [] if isinstance(e, dict) and _line(e.get("raw"))]
+    parts = [", ".join(raws)] if raws else []
+    for key in ("notes", "caption"):
+        if _line(result.get(key)):
+            parts.append(_line(result[key]))
+    return "; ".join(parts)[:160] or "nothing readable"
+
+
+def _chat_photos(db, ctx, args: dict) -> ToolResult:
+    if args:
+        return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, sorted(args)))}.")
+    from app.models.resources import Attachment
+
+    def read(token) -> list[dict]:
+        rows = (
+            _chat_photo_query(db, token.contact_id)
+            .order_by(Attachment.created_at.desc(), Attachment.id.desc())
+            .limit(MAX_CHAT_PHOTOS)
+            .all()
+        )
+        return [{"id": str(a.id), "sent": _sent_at(a.created_at), "shows": _photo_read(db, a)} for a in rows]
+
+    try:
+        rows = run_as_contact(db, ctx, read, tool_name=CHAT_PHOTOS)
+    except Exception as exc:  # noqa: BLE001
+        return _route_failure(exc)
+    return ToolResult("ok", data={"photos": rows})
+
+
+def _own_files(db, entity_id: Any, contact_id: str) -> list[dict]:
+    """The contact's own files on one of its complaints (ids for the photo remove)."""
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+
+    rows = (
+        db.query(EntityAttachmentLink.id, Attachment.created_at)
+        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
+        .filter(
+            EntityAttachmentLink.entity_type == COMPLAINT, EntityAttachmentLink.entity_id == str(entity_id),
+            Attachment.uploader_kind == "contact", Attachment.uploaded_by_contact_id == str(contact_id),
+        )
+        .order_by(Attachment.created_at.asc())
+        .limit(MAX_CHAT_PHOTOS)
+        .all()
+    )
+    return [{"id": str(link_id), "added": _sent_at(at)} for link_id, at in rows]
+
+
+def _photos(db, token, ids: Any, *, entity_id: str | None) -> list:
+    """The chosen chat photos (attachment rows), each the contact's own and passing the portal attachment type
+    (extension, size, count on the complaint) exactly as a portal upload would."""
+    from app.api.v1.public.portal import _check_quota, _ext
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+    from app.services.error_handler import handle_not_found, handle_validation_error
+    from app.services.portal_service import PortalService
+    from app.services.uuid_path_param import validate_uuid_path
+
+    if ids in (None, []):
+        return []
+    wanted: list[str] = []
+    for value in ids:
+        pid = validate_uuid_path(str(value), resource="Photo")
+        if pid not in wanted:
+            wanted.append(pid)
+    found = {str(a.id): a for a in _chat_photo_query(db, token.contact_id).filter(Attachment.id.in_(wanted)).all()}
+    photos = []
+    for pid in wanted:
+        if pid not in found:
+            raise handle_not_found("Photo", pid)
+        photos.append(found[pid])
+    kind_type = PortalService(db).get_portal_attachment_type()
+    for att in photos:
+        _check_quota(db, kind_type, COMPLAINT, entity_id or str(uuid.uuid4()), int(att.file_size_bytes or 0),
+                     _ext(att.original_filename, att.mime_type))
+    cap = kind_type.max_count_per_entity
+    if cap is not None:
+        existing = 0
+        if entity_id:
+            existing = db.query(EntityAttachmentLink.id).filter(
+                EntityAttachmentLink.entity_type == COMPLAINT, EntityAttachmentLink.entity_id == entity_id
+            ).count()
+        if existing + len(photos) > cap:
+            raise handle_validation_error(f"Attachment limit reached ({cap}).")
+    return photos
+
+
+def _photo_show(db, photos: list) -> list[dict]:
+    return [{"sent": _sent_at(a.created_at), "shows": _photo_read(db, a)} for a in photos]
+
+
+def _photo_words(shown: list[dict]) -> str:
+    if not shown:
+        return "no photos"
+    return "; ".join(f"photo {n} ({p['sent']}): {p['shows']}" for n, p in enumerate(shown, 1))
+
+
+def _store_photos(db, token, sid: str, photos: list) -> list[dict]:
+    """Each chat photo through the portal's own upload body (bytes copied from OUR storage, never respond.io's
+    short-lived link). On a failure the files stored so far are removed and the error is raised."""
+    from app.api.v1.public.portal import store_portal_upload
+    from app.services.storage_router import extract_key, get_backend
+
+    stored: list[dict] = []
+    try:
+        for att in photos:
+            data = get_backend(att.storage_provider).download_file(extract_key(att.file_path) or att.file_path)
+            stored.append(store_portal_upload(db, token, COMPLAINT, sid, data, att.original_filename, att.mime_type))
+    except Exception:
+        db.rollback()
+        _discard_files(db, [s["attachment_id"] for s in stored])
+        raise
+    return stored
+
+
+def _discard_files(db, attachment_ids: list[str]) -> None:
+    """Hard delete files this tool stored: links, rows and objects. Best effort on the objects."""
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+    from app.services.storage_router import delete_object_best_effort, extract_key
+
+    if not attachment_ids:
+        return
+    rows = db.query(Attachment).filter(Attachment.id.in_(attachment_ids)).all()
+    objects = [(r.storage_provider, extract_key(r.file_path) or r.file_path) for r in rows]
+    objects += [(r.storage_provider, extract_key(r.thumbnail_path)) for r in rows if r.thumbnail_path]
+    db.query(EntityAttachmentLink).filter(EntityAttachmentLink.attachment_id.in_(attachment_ids)).delete(
+        synchronize_session=False
+    )
+    for r in rows:
+        db.delete(r)
+    db.commit()
+    for provider, key in objects:
+        delete_object_best_effort(provider, key)
+
+
+def _own_orders(db, token, numbers: Any) -> list:
+    """Each DO as the EXACT number of an order of one of the contact's own linked customer accounts. Anything
+    else is the plain not-found, naming nobody (helper fix 1: never the portal picker's partial search)."""
+    from sqlalchemy import func, select
+
+    from app.models.access import RespondContactCustomer
+    from app.models.order import Order
+    from app.services.error_handler import AppException, handle_validation_error
+
+    if not isinstance(numbers, list) or not [n for n in numbers if _line(n)]:
+        raise handle_validation_error("delivery_order_numbers needs at least one DO number.")
+    own = select(RespondContactCustomer.customer_id).where(RespondContactCustomer.contact_id == str(token.contact_id))
+    orders: list = []
+    for raw in numbers:
+        typed = _line(raw)
+        if not typed:
+            continue
+        row = (
+            db.query(Order)
+            .filter(Order.customer_id.in_(own), func.upper(func.trim(Order.order_number)) == typed.upper())
+            .first()
+        )
+        if row is None:
+            raise AppException(status_code=404, message=f"Delivery order {typed[:60]} not found.", code="NOT_FOUND")
+        if row not in orders:
+            orders.append(row)
+    return orders
+
+
+def _claim_lines(db, orders: list, args: dict) -> list[dict]:
+    """The claimed products, each on one of the DOs, with the product type the portal form derives."""
+    from app.models.order import OrderLine
+    from app.models.product import Product, ProductCategory
+    from app.services.error_handler import handle_validation_error
+
+    codes = [c for c in (args.get("product_codes") or []) if _line(c)]
+    if not codes:
+        raise handle_validation_error("product_codes needs at least one product code from the DO.")
+    quantities = args.get("quantities") or []
+    on_do = {
+        code.upper(): (code, ctype)
+        for code, ctype in db.query(Product.product_code, ProductCategory.category_code)
+        .join(OrderLine, OrderLine.product_id == Product.id)
+        .outerjoin(ProductCategory, ProductCategory.id == Product.category_id)
+        .filter(OrderLine.order_id.in_([o.id for o in orders]))
+        .all()
+    }
+    lines: list[dict] = []
+    seen: set[str] = set()
+    for n, raw in enumerate(codes):
+        hit = on_do.get(_line(raw).upper())
+        if hit is None:
+            numbers = ", ".join(o.order_number for o in orders)
+            raise handle_validation_error(f"{_line(raw)[:60]} is not on delivery order {numbers}.")
+        if hit[0] in seen:
+            continue
+        seen.add(hit[0])
+        qty = _quantity(quantities[n]) if n < len(quantities) and _line(quantities[n]) else None
+        lines.append({"product_code": hit[0], "quantity": qty, "product_type": hit[1]})
+    return lines
+
+
+_LOOKUPS = (
+    ("within_warranty", "within warranty"),
+    ("complaint_type", "complaint type"),
+    ("defects_discovered", "defects discovered"),
+    ("customer_type", "customer type"),
+)
+
+
+def _lookup(db, column: str, value: Any) -> tuple[str | None, str | None]:
+    """(value, label) of a complaint lookup: an active option matched on value or label; an omitted one takes the
+    binding default the portal form pre-selects, except within warranty, which only the dealer says (S2-Q3)."""
+    from app.models.lookup import LookupBinding, LookupOption
+    from app.services.error_handler import handle_validation_error
+
+    binding = (
+        db.query(LookupBinding)
+        .filter(LookupBinding.tenant_id.is_(None), LookupBinding.table_name == "complaints",
+                LookupBinding.column_name == column)
+        .first()
+    )
+    typed = _line(value)
+    if binding is None:
+        return (typed or None), (typed or None)
+    options = (
+        db.query(LookupOption)
+        .filter(LookupOption.set_id == binding.set_id, LookupOption.is_active.is_(True))
+        .order_by(LookupOption.sort_order)
+        .all()
+    )
+    if not typed:
+        if column == "within_warranty":
+            return None, None
+        hit = next((o for o in options if o.value == binding.default_value), None)
+        return (hit.value, hit.label) if hit else (None, None)
+    hit = next((o for o in options if typed.casefold() in (o.value.casefold(), o.label.casefold())), None)
+    if hit is None:
+        label = dict(_LOOKUPS)[column]
+        raise handle_validation_error(f"{label} must be one of: {', '.join(o.label for o in options)}.")
+    return hit.value, hit.label
+
+
+def _claim(db, token, args: dict) -> dict:
+    """The claim as the portal form would submit it, with the form's own pre-fills (S2-Q3 (a)); refused when a
+    required field is still empty (`portal_required_fields`, the submit's own list)."""
+    from app.services.error_handler import handle_validation_error
+    from app.services.portal_form_visibility_service import require_form_visible
+    from app.services.portal_required_fields import missing_on_submit
+    from app.services.portal_service import PortalService
+
+    require_form_visible(db, token.contact_id, COMPLAINT)
+    orders = _own_orders(db, token, args.get("delivery_order_numbers"))
+    lines = _claim_lines(db, orders, args)
+    contact = PortalService(db).get_contact(token)
+    name = _line(contact.name) or _line(f"{contact.first_name or ''} {contact.last_name or ''}")
+    debtors: list[str] = []
+    for o in orders:
+        debtor = _line(o.debtor_name) or _line(getattr(o.customer, "customer_name", None) if o.customer_id else None)
+        if debtor and debtor not in debtors:
+            debtors.append(debtor)
+    payload: dict[str, Any] = {
+        "delivery_order_number": ",".join(o.order_number for o in orders),
+        "customer_name": ", ".join(debtors),
+        "contact_person": _line(args.get("contact_person")) or name,
+        "contact_number": _line(args.get("contact_number")) or _line(contact.phone_number),
+        "complaint_date": date.today().isoformat(),
+        "salesperson": name,
+        "defect_description": str(args.get("defect_description") or "").strip(),
+        "product_lines": lines,
+    }
+    for key in ("customer_address", "project_title"):
+        if _line(args.get(key)):
+            payload[key] = str(args[key]).strip()
+    labels: dict[str, str] = {}
+    for column, _label in _LOOKUPS:
+        payload[column], labels[column] = _lookup(db, column, args.get(column))
+    missing = missing_on_submit(
+        COMPLAINT, SimpleNamespace(**{**payload, "product_code": ", ".join(l["product_code"] for l in lines)})
+    )
+    if missing:
+        raise handle_validation_error(f"Still missing: {', '.join(missing)}. Ask the customer for it.")
+    return {"payload": payload, "labels": labels, "orders": orders, "lines": lines}
+
+
+_CLOSED_COMPLAINT = ("draft", "rejected", "processed_by_cs", "closed", "resolved", "void", "voided", "cancelled")
+
+
+def _open_complaints(db, token):
+    from sqlalchemy import func
+
+    from app.models.complaints import Complaint
+
+    return db.query(Complaint).filter(
+        Complaint.contact_id == str(token.contact_id), Complaint.space_id == token.space_id,
+        Complaint.portal_draft_at.is_(None), Complaint.resolved_at.is_(None), Complaint.voided_at.is_(None),
+        func.lower(func.coalesce(Complaint.status, "")).notin_(_CLOSED_COMPLAINT),
+    )
+
+
+def _earlier_claim(db, token, claim: dict) -> str:
+    """S2-Q5: the sentence about an open claim of the contact on the same DO and product ("" when none). Under
+    `DUPLICATE_CLAIMS == "refuse"` it refuses instead."""
+    from app.services.error_handler import handle_conflict
+
+    def parts(text: Any) -> set[str]:
+        return {p.strip().upper() for p in str(text or "").split(",") if p.strip()}
+
+    dos = {o.order_number.strip().upper() for o in claim["orders"]}
+    codes = {l["product_code"].upper() for l in claim["lines"]}
+    for row in _open_complaints(db, token).order_by(*_newest(db)).limit(50).all():
+        if dos & parts(row.delivery_order_number) and codes & parts(row.product_code):
+            number = _number(db, COMPLAINT, row)
+            day = _sent_at(row.created_at).rsplit(" ", 1)[0] if row.created_at else "earlier"
+            if DUPLICATE_CLAIMS == "refuse":
+                raise handle_conflict(
+                    f"You already sent complaint {number} for this on {day}. I can add a note to it instead."
+                )
+            return f"Note: you already sent complaint {number} for this on {day}; this sends a second claim."
+    return ""
+
+
+def _newest(db):
+    from app.models.complaints import Complaint
+
+    return (Complaint.created_at.desc(), Complaint.id.desc())
+
+
+def _cp_read_before(db, token, args: dict) -> dict:
+    claim = _claim(db, token, args)
+    photos = _photos(db, token, args.get("photo_ids"), entity_id=None)
+    payload, labels = claim["payload"], claim["labels"]
+    return {"_show": {
+        "dos": ", ".join(o.order_number for o in claim["orders"]),
+        "lines": ", ".join(f"{l['product_code']} x{l['quantity']}" if l["quantity"] else l["product_code"]
+                           for l in claim["lines"]),
+        "description": payload["defect_description"][:300],
+        **{column: labels[column] or "" for column, _label in _LOOKUPS},
+        "customer": payload["customer_name"],
+        "contact": f"{payload['contact_person']} {payload['contact_number']}",
+        "photos": _photo_show(db, photos),
+        "earlier": _earlier_claim(db, token, claim),
+    }}
+
+
+def _cp_summary(args: dict, before: dict) -> str:
+    parts = [f"DO {before['dos']}", before["lines"], f'"{_line(before["description"])}"',
+             f"within warranty: {before['within_warranty']}"]
+    for column, label in _LOOKUPS[1:]:
+        if before.get(column):
+            parts.append(f"{label}: {before[column]}")
+    parts += [f"customer {before['customer']}", f"contact {before['contact']}", _photo_words(before["photos"])]
+    text = "File a warranty / complaint claim: " + "; ".join(_line(p) for p in parts) + "."
+    return f"{text} {before['earlier']}" if before.get("earlier") else text
+
+
+def _cp_execute(db, token, args: dict) -> dict:
+    from app.models.complaints import Complaint
+    from app.services.portal_service import PortalService
+
+    if args.get("_is_test"):
+        return _test_result()
+    claim = _claim(db, token, args)
+    photos = _photos(db, token, args.get("photo_ids"), entity_id=None)
+    service = PortalService(db)
+    sid = str(service.create_or_update_draft(token, COMPLAINT, claim["payload"])["id"])
+    stored: list[dict] = []
+    try:
+        stored = _store_photos(db, token, sid, photos)
+        service.submit_draft(token, COMPLAINT, sid)
+    except Exception:
+        # No stray draft or file is left behind by a refused submit.
+        db.rollback()
+        try:
+            _discard_files(db, [s["attachment_id"] for s in stored])
+            service.delete_draft(token, COMPLAINT, sid)
+        except Exception:  # noqa: BLE001 - the submit's own refusal is the one to report
+            db.rollback()
+        raise
+    row = db.get(Complaint, sid)
+    number = _number(db, COMPLAINT, row)
+    return {
+        "id": sid,
+        "after": {"number": number, "status": row.status, "photos": len(stored)},
+        "note": f"Complaint {number} is with the team. Reply undo within {WITHDRAW_MINUTES} minutes to withdraw it.",
+    }
+
+
+def _cp_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    if after.get("state") == "test":
+        return []
+    return _diff(f"complaint {after.get('number')}", [("Status", "Not sent", "With the team")])
+
+
+# ------------------------------------------------------------------ withdraw a fresh claim
+
+
+def _cp_withdraw_target(db, token, args: dict, *, lock: bool = False):
+    from app.models.complaints import Complaint
+    from app.services import submission_status
+    from app.services.error_handler import handle_conflict, handle_not_found
+    from app.services.portal_form_visibility_service import require_form_visible
+    from app.services.uuid_path_param import validate_uuid_path
+
+    require_form_visible(db, token.contact_id, COMPLAINT)
+    sid = validate_uuid_path(str(args.get("submission_id")), resource="Complaint")
+    query = db.query(Complaint).filter(
+        Complaint.id == sid, Complaint.contact_id == token.contact_id, Complaint.space_id == token.space_id
+    )
+    row = (query.with_for_update(of=Complaint) if lock else query).first()
+    if row is None or row.portal_draft_at is not None:
+        raise handle_not_found("Complaint", sid)
+    history, trackers = _untouched_or_refuse(db, token, COMPLAINT, row, own_files_ok=True)
+    untouched = (
+        (row.status or "").strip().lower() == submission_status.SUBMITTED
+        and not _line(row.technical_team_response)
+        and not row.last_responded_by and row.last_responded_at is None
+        and row.resolved_at is None and row.voided_at is None and row.rejected_at is None
+        and row.root_cause_id is None and row.resolution_id is None
+    )
+    if not untouched:
+        raise handle_conflict(WITHDRAW_REFUSED)
+    return row, history, trackers
+
+
+def _cp_withdraw_read_before(db, token, args: dict) -> dict:
+    row, history, _trackers = _cp_withdraw_target(db, token, args)
+    minutes = max(1, int((datetime.utcnow() - history[0].submitted_at).total_seconds() // 60))
+    return {"status": row.status, "_show": {"number": _number(db, COMPLAINT, row), "minutes": minutes}}
+
+
+def _cp_withdraw_summary(args: dict, before: dict) -> str:
+    unit = "minute" if before["minutes"] == 1 else "minutes"
+    return (
+        f"Withdraw complaint {before['number']} (sent {before['minutes']} {unit} ago). It is deleted, with its "
+        "photos, and the team no longer sees it."
+    )
+
+
+def _cp_withdraw_execute(db, token, args: dict, confirmed: dict) -> dict:
+    from app.models.entity_attachment import EntityAttachmentLink
+
+    if args.get("_is_test"):
+        return _test_result()
+    row, _history, trackers = _cp_withdraw_target(db, token, args, lock=True)
+    sid = str(row.id)
+    files = [
+        str(a) for (a,) in db.query(EntityAttachmentLink.attachment_id)
+        .filter(EntityAttachmentLink.entity_type == COMPLAINT, EntityAttachmentLink.entity_id == sid).all()
+    ]
+    _hard_delete(db, token, COMPLAINT, row, trackers)
+    db.flush()
+    # Only the contact's own files can be here (`_untouched_or_refuse`); they go with the claim.
+    _discard_files(db, files)
+    return {"id": sid, "after": {"state": "withdrawn"}}
+
+
+def _cp_withdraw_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    if after.get("state") == "test":
+        return []
+    return _diff(f"complaint {shown.get('number')}", [("Status", "With the team", "Withdrawn")])
+
+
+# ------------------------------------------------------------------ later photos (S2-Q4 (a)) and their undo
+
+
+def _open_claim(db, token, args: dict):
+    from app.models.complaints import Complaint
+    from app.services.error_handler import handle_conflict, handle_not_found
+    from app.services.portal_form_visibility_service import require_form_visible
+    from app.services.uuid_path_param import validate_uuid_path
+
+    require_form_visible(db, token.contact_id, COMPLAINT)
+    sid = validate_uuid_path(str(args.get("submission_id")), resource="Complaint")
+    row = (
+        db.query(Complaint)
+        .filter(Complaint.id == sid, Complaint.contact_id == token.contact_id, Complaint.space_id == token.space_id)
+        .first()
+    )
+    if row is None or row.portal_draft_at is not None:
+        raise handle_not_found("Complaint", sid)
+    if _open_complaints(db, token).filter(Complaint.id == sid).first() is None:
+        raise handle_conflict(f"Complaint {_number(db, COMPLAINT, row)} is closed, so it takes no more photos.")
+    return row
+
+
+def _add_targets(db, token, args: dict):
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+    from app.services.error_handler import handle_validation_error
+
+    row = _open_claim(db, token, args)
+    sid = str(row.id)
+    if not args.get("photo_ids"):
+        raise handle_validation_error("photo_ids needs at least one photo from crm_my_chat_photos.")
+    photos = _photos(db, token, args.get("photo_ids"), entity_id=sid)
+    # A chat photo keeps its stored name on the portal copy, so one already on the claim is recognised.
+    on_claim = {
+        n for (n,) in db.query(Attachment.original_filename)
+        .join(EntityAttachmentLink, EntityAttachmentLink.attachment_id == Attachment.id)
+        .filter(EntityAttachmentLink.entity_type == COMPLAINT, EntityAttachmentLink.entity_id == sid).all()
+    }
+    for n, att in enumerate(photos, 1):
+        if att.original_filename in on_claim:
+            raise handle_validation_error(f"The photo sent {_sent_at(att.created_at)} is already on this complaint.")
+    return row, photos
+
+
+def _photos_add_read_before(db, token, args: dict) -> dict:
+    row, photos = _add_targets(db, token, args)
+    return {"_show": {"number": _number(db, COMPLAINT, row), "photos": _photo_show(db, photos)}}
+
+
+def _photos_add_summary(args: dict, before: dict) -> str:
+    n = len(before["photos"])
+    return f"Add {n} photo{'' if n == 1 else 's'} to your complaint {before['number']}: {_photo_words(before['photos'])}."
+
+
+def _photos_add_execute(db, token, args: dict) -> dict:
+    if args.get("_is_test"):
+        return _test_result()
+    row, photos = _add_targets(db, token, args)
+    stored = _store_photos(db, token, str(row.id), photos)
+    return {"id": str(row.id), "after": {"photos": len(stored)}}
+
+
+def _photos_add_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    if after.get("state") == "test":
+        return []
+    return _diff(f"complaint {shown.get('number')}", [("Photos", None, f"Added {after.get('photos')}")])
+
+
+def _photo_remove_target(db, token, args: dict):
+    from app.api.v1.public.portal import removable_attachment_link
+    from app.models.complaints import Complaint
+    from app.models.resources import Attachment
+    from app.services.error_handler import handle_not_found
+    from app.services.portal_form_visibility_service import require_form_visible
+    from app.services.uuid_path_param import validate_uuid_path
+
+    require_form_visible(db, token.contact_id, COMPLAINT)
+    sid = validate_uuid_path(str(args.get("submission_id")), resource="Complaint")
+    fid = validate_uuid_path(str(args.get("file_id")), resource="Photo")
+    row = (
+        db.query(Complaint)
+        .filter(Complaint.id == sid, Complaint.contact_id == token.contact_id, Complaint.space_id == token.space_id)
+        .first()
+    )
+    if row is None:
+        raise handle_not_found("Complaint", sid)
+    # The portal's own remove rule: the contact's own row, the form visible, never a staff upload.
+    link = removable_attachment_link(db, token, fid)
+    if link.entity_type != COMPLAINT or str(link.entity_id) != sid:
+        raise handle_not_found("Photo", fid)
+    att = db.get(Attachment, link.attachment_id)
+    return row, link, att
+
+
+def _photo_remove_read_before(db, token, args: dict) -> dict:
+    row, _link, att = _photo_remove_target(db, token, args)
+    when = _sent_at(att.created_at) if att is not None else ""
+    return {"_show": {"number": _number(db, COMPLAINT, row), "when": when}}
+
+
+def _photo_remove_summary(args: dict, before: dict) -> str:
+    return f"Remove your photo added {before['when']} from your complaint {before['number']}."
+
+
+def _photo_remove_execute(db, token, args: dict) -> dict:
+    from app.api.v1.public.portal import remove_attachment_link
+
+    if args.get("_is_test"):
+        return _test_result()
+    _row, link, _att = _photo_remove_target(db, token, args)
+    remove_attachment_link(db, token, str(link.id))
+    return {"id": str(link.id), "after": {"photo": "removed"}}
+
+
+def _photo_remove_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    if after.get("state") == "test":
+        return []
+    return _diff(f"complaint {shown.get('number')}", [("Photos", f"added {shown.get('when')}", "Removed")])
+
+
 # ------------------------------------------------------------------ registry
 
 _KIND_PROP = {"type": "string", "enum": list(NOTE_KINDS)}
+_STR_LIST = {"type": "array", "items": {"type": "string", "maxLength": 100}, "maxItems": 20}
 
 PORTAL_READS: dict[str, UserRead] = {
     LIST: UserRead(
@@ -636,6 +1282,24 @@ PORTAL_READS: dict[str, UserRead] = {
             },
         },
         run=_my_requests,
+    ),
+    CHAT_PHOTOS: UserRead(
+        name=CHAT_PHOTOS,
+        user_permission="",
+        schema={
+            "type": "function",
+            "function": {
+                "name": CHAT_PHOTOS,
+                "description": (
+                    f"The photos the customer sent in this chat in the last {PHOTO_WINDOW_HOURS} hours, newest "
+                    f"first (at most {MAX_CHAT_PHOTOS}), each with its id, the time it was sent and what it shows "
+                    "(or that it could not be read). Use it to pick the photo_ids of a complaint claim: only the "
+                    "photos the customer means for that claim."
+                ),
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        run=_chat_photos,
     ),
 }
 
@@ -763,6 +1427,132 @@ PORTAL_WRITES: dict[str, WriteDef] = {
         changes=_withdraw_changes,
         execute_takes_before=True,
         note_in_reply=True,
+        runs_as="contact",
+    ),
+    CP_CREATE: WriteDef(
+        name=CP_CREATE,
+        user_permission="",
+        schema={
+            "type": "function",
+            "function": {
+                "name": CP_CREATE,
+                "description": (
+                    "Propose filing a warranty claim / product complaint from the customer to the team, with the "
+                    "photos they sent in this chat. Nothing is sent until the customer confirms. Use only what the "
+                    "customer said: delivery_order_numbers (the DO), product_codes on that DO (quantities in the "
+                    "same order when given), defect_description in the customer's own words, and within_warranty "
+                    "as the customer said it (never guess it; ask). complaint_type, defects_discovered, "
+                    "customer_type, contact_person / contact_number (only a site contact the customer names), "
+                    "customer_address and project_title only when given. photo_ids come from crm_my_chat_photos."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "delivery_order_numbers": _STR_LIST,
+                        "product_codes": _STR_LIST,
+                        "quantities": _STR_LIST,
+                        "defect_description": {"type": "string", "maxLength": MAX_NOTE_CHARS},
+                        "within_warranty": {"type": "string", "maxLength": 100},
+                        "complaint_type": {"type": "string", "maxLength": 100},
+                        "defects_discovered": {"type": "string", "maxLength": 100},
+                        "customer_type": {"type": "string", "maxLength": 100},
+                        "contact_person": {"type": "string", "maxLength": 200},
+                        "contact_number": {"type": "string", "maxLength": 50},
+                        "customer_address": {"type": "string", "maxLength": 1000},
+                        "project_title": {"type": "string", "maxLength": 200},
+                        "photo_ids": _STR_LIST,
+                    },
+                    "required": ["delivery_order_numbers", "product_codes", "defect_description", "within_warranty"],
+                },
+            },
+        },
+        read_before=_cp_read_before,
+        summary=_cp_summary,
+        execute=_cp_execute,
+        record_key="",
+        changes=_cp_changes,
+        note_in_reply=True,
+        runs_as="contact",
+    ),
+    CP_WITHDRAW: WriteDef(
+        name=CP_WITHDRAW,
+        user_permission="",
+        schema={
+            "type": "function",
+            "function": {
+                "name": CP_WITHDRAW,
+                "description": (
+                    f"Propose withdrawing (deleting) one of the customer's complaints: the undo of filing one, "
+                    f"possible only within {WITHDRAW_MINUTES} minutes of sending and before the team has touched "
+                    "it. Nothing changes until the customer confirms. submission_id must come from "
+                    "crm_my_requests_list."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"submission_id": {"type": "string"}},
+                    "required": ["submission_id"],
+                },
+            },
+        },
+        read_before=_cp_withdraw_read_before,
+        summary=_cp_withdraw_summary,
+        execute=_cp_withdraw_execute,
+        record_key="submission_id",
+        changes=_cp_withdraw_changes,
+        execute_takes_before=True,
+        note_in_reply=True,
+        runs_as="contact",
+    ),
+    CP_PHOTOS_ADD: WriteDef(
+        name=CP_PHOTOS_ADD,
+        user_permission="",
+        schema={
+            "type": "function",
+            "function": {
+                "name": CP_PHOTOS_ADD,
+                "description": (
+                    "Propose adding photos the customer sent in this chat to one of their own open complaints. "
+                    "Nothing changes until the customer confirms. submission_id comes from crm_my_requests_list, "
+                    "photo_ids from crm_my_chat_photos."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"submission_id": {"type": "string"}, "photo_ids": _STR_LIST},
+                    "required": ["submission_id", "photo_ids"],
+                },
+            },
+        },
+        read_before=_photos_add_read_before,
+        summary=_photos_add_summary,
+        execute=_photos_add_execute,
+        record_key="submission_id",
+        changes=_photos_add_changes,
+        runs_as="contact",
+    ),
+    CP_PHOTO_REMOVE: WriteDef(
+        name=CP_PHOTO_REMOVE,
+        user_permission="",
+        schema={
+            "type": "function",
+            "function": {
+                "name": CP_PHOTO_REMOVE,
+                "description": (
+                    "Propose removing one photo the customer added to one of their complaints (the undo of "
+                    "adding it). Nothing changes until the customer confirms. submission_id and file_id come from "
+                    "crm_my_requests_list (my_photos)."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {"submission_id": {"type": "string"}, "file_id": {"type": "string"}},
+                    "required": ["submission_id", "file_id"],
+                },
+            },
+        },
+        read_before=_photo_remove_read_before,
+        summary=_photo_remove_summary,
+        execute=_photo_remove_execute,
+        record_key="file_id",
+        changes=_photo_remove_changes,
         runs_as="contact",
     ),
 }
