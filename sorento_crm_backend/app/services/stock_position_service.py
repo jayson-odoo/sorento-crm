@@ -323,24 +323,25 @@ def page(result: dict, page_no: int, limit: int) -> dict:
 def workbook(result: dict) -> bytes:
     """Every row of a `stock_position` result as one sheet, headed as the screen is.
 
-    The warehouse columns are the ones the user shows (the result's `hide`, the grid's Columns
-    chooser), in the report's own order; the totals are the result's own, already over the shown
-    parts, so the workbook's Total stock is the screen's."""
+    The warehouse and incoming columns are the ones the user shows (the result's `hide`, the
+    grid's Columns chooser), in the report's own order; the totals are the result's own, already
+    over the shown parts, so each written row adds up to its total as the screen's does."""
     from openpyxl import Workbook
 
     hidden = set(result.get("hide") or ())
     codes = [c["code"] for c in result["warehouses"] if f"{WAREHOUSE_SORT_PREFIX}{c['code']}" not in hidden]
+    figures = [(key, label) for key, label in FIGURE_COLUMNS if key not in hidden or key not in INCOMING_PARTS]
     wb = Workbook()
     ws = wb.active
     ws.title = "Stock position"
-    ws.append(["Item code", "Supplier", "Brand", *codes, *[label for _, label in FIGURE_COLUMNS]])
+    ws.append(["Item code", "Supplier", "Brand", *codes, *[label for _, label in figures]])
     for r in result["rows"]:
         ws.append([
             r["item_code"],
             r["supplier_name"],
             r["brand_name"],
             *[r["stock"].get(code, 0) for code in codes],
-            *[round(r[key], 2) for key, _ in FIGURE_COLUMNS],
+            *[round(r[key], 2) for key, _ in figures],
         ])
     ws.freeze_panes = "B2"
     buffer = BytesIO()

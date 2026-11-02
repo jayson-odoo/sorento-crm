@@ -550,6 +550,23 @@ def test_export_with_every_warehouse_hidden_writes_no_warehouse_column(scm_app):
     assert a_row[header.index("Total stock")] == 352
 
 
+def test_export_leaves_out_a_hidden_incoming_column_so_each_row_adds_up(scm_app):
+    from openpyxl import load_workbook
+
+    app, db, w = _setup(scm_app)
+    _sheet_world(db, w)
+    a = w.product("A")
+    r = TestClient(app).get(f"{URL}/export", params={"hide": ["incoming_pool"]})
+    assert r.status_code == 200, r.text
+    rows = list(load_workbook(io.BytesIO(r.content)).active.iter_rows(values_only=True))
+    header = rows[0]
+    assert "Incoming BRW" not in header
+    assert "Incoming (Project)" in header and "Outstanding PO" in header
+    a_row = next(row for row in rows[1:] if row[0] == a.product_code)
+    assert a_row[header.index("Total stock")] == 40 + 244
+    assert a_row[header.index("Total incoming")] == 880
+
+
 # ------------------------------------------------------------------ totals follow visibility
 def test_a_hidden_warehouse_column_drops_out_of_total_stock(scm_app):
     app, db, w = _setup(scm_app)

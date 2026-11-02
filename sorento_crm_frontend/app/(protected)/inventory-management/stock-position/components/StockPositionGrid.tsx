@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -66,7 +66,7 @@ export const hiddenParts = (visibility: VisibilityState) =>
 
 /** What a total header's tooltip says it adds up: the shown parts, by their headers. */
 export function totalTooltip(shownParts: string[]): string {
-  return shownParts.length ? `Sum of ${shownParts.join(', ')}` : 'Adds up no shown column';
+  return `Sum of ${shownParts.length ? shownParts.join(', ') : 'none'}`;
 }
 
 /** A row opens Stock status for its item, with its documents behind every figure. */
@@ -92,7 +92,10 @@ export default function StockPositionGrid() {
   // Controlled so the hidden columns reach the query: the saved layout and saved views apply
   // through `table.setColumnVisibility`, which writes here.
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-  const hiddenColumns = useMemo(() => hiddenParts(columnVisibility), [columnVisibility]);
+  // Kept the same array while the hidden SET is unchanged (hiding a non-total column changes
+  // `columnVisibility` but no total), so the query key and the page reset below ignore it.
+  const hiddenKey = JSON.stringify(hiddenParts(columnVisibility));
+  const hiddenColumns = useMemo<string[]>(() => JSON.parse(hiddenKey), [hiddenKey]);
 
   const { data: brands } = useBrandSelectQuery();
 
@@ -107,9 +110,8 @@ export default function StockPositionGrid() {
   const rows = data?.data ?? [];
   const total = data?.pagination.total ?? 0;
   const warehouseCodes = useMemo(() => (data?.warehouses ?? []).map((w) => w.code), [data?.warehouses]);
-  const hiddenKey = hiddenColumns.join('|');
   const tooltips = useMemo(() => {
-    const hidden = new Set(hiddenKey ? hiddenKey.split('|') : []);
+    const hidden = new Set(hiddenColumns);
     const shown = (id: string) => !hidden.has(id);
     const shownCodes = warehouseCodes.filter((code) => shown(`${WAREHOUSE_COLUMN_PREFIX}${code}`));
     const pool = shown('incoming_pool') ? ['Incoming BRW'] : [];
@@ -118,7 +120,7 @@ export default function StockPositionGrid() {
       total_stock: totalTooltip([...shownCodes, ...pool]),
       total_incoming: totalTooltip([...pool, ...project]),
     } as Partial<Record<keyof StockPositionRow, string>>;
-  }, [warehouseCodes, hiddenKey]);
+  }, [warehouseCodes, hiddenColumns]);
 
   const columns = useMemo<ColumnDef<StockPositionRow>[]>(
     () => [
@@ -202,12 +204,7 @@ export default function StockPositionGrid() {
     initialState: { columnPinning: { left: ['item_code'] } },
     state: { pagination, sorting, columnVisibility },
     onPaginationChange: setPagination,
-    onColumnVisibilityChange: (updater) => {
-      const next = typeof updater === 'function' ? updater(columnVisibility) : updater;
-      setColumnVisibility(next);
-      // A total changes on every row with its parts, so the server re-sorts: back to page 1.
-      if (hiddenParts(next).join('|') !== hiddenKey) resetPage();
-    },
+    onColumnVisibilityChange: setColumnVisibility,
     onSortingChange: (updater) => {
       setSorting(updater);
       setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -221,6 +218,10 @@ export default function StockPositionGrid() {
   });
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
+  // A total changes on every row with its parts, so the server re-sorts: back to page 1.
+  useEffect(() => {
+    setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
+  }, [hiddenColumns]);
   const activeCount = (supplier ? 1 : 0) + (brandId ? 1 : 0) + (warehouseId ? 1 : 0);
 
   const onExport = async () => {

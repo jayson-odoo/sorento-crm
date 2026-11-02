@@ -9,7 +9,7 @@ Plan: `PLAN-stock-pos-dynamic-total-02nov.md`.
   out of Total incoming.
 - AC-4: Every warehouse column hidden: Total stock = Incoming BRW (0 if that is hidden too).
 - AC-5: Sorting by Total stock / Total incoming orders the whole result (server) by the visible-columns total.
-- AC-6: A saved layout or saved view that hides columns gives the same totals when it is applied.
-- AC-7: Export to Excel writes the shown warehouse columns and the visible-columns totals.
+- AC-6: A saved column layout that hides columns gives the same totals when it is applied (the page has no saved-views menu).
+- AC-7: Export to Excel writes the shown warehouse and incoming columns and the visible-columns totals.
 - AC-8: The Total stock / Total incoming header carries a tooltip naming the columns it adds up.
 - AC-9: Usable at 375px and 1280px.

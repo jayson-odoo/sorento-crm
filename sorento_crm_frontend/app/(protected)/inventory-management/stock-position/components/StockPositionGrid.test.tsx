@@ -59,12 +59,12 @@ function row(over: Partial<StockPositionRow> = {}): StockPositionRow {
   };
 }
 
-function withRows(rows: StockPositionRow[], codes = ['BRW', 'DC1']) {
+function withRows(rows: StockPositionRow[], codes = ['BRW', 'DC1'], total = rows.length) {
   hook.useStockPosition.mockReturnValue({
     data: {
       data: rows,
       warehouses: codes.map((code) => ({ id: `w-${code}`, code })),
-      pagination: { page: 1, limit: 50, total: rows.length, total_pages: 1 },
+      pagination: { page: 1, limit: 50, total, total_pages: Math.max(1, Math.ceil(total / 50)) },
     },
     isLoading: false,
     isFetching: false,
@@ -187,7 +187,7 @@ function gridTable() {
 }
 const lastFilters = () => hook.useStockPosition.mock.calls.at(-1)![1] as { hiddenColumns?: string[] };
 const lastParams = () => hook.useStockPosition.mock.calls.at(-1)![0] as { pageIndex: number };
-const tipOf = (name: RegExp) => screen.getByRole('columnheader', { name }).querySelector('[title^="Sum of"], [title^="Adds up"]')?.getAttribute('title');
+const tipOf = (name: RegExp) => screen.getByRole('columnheader', { name }).querySelector('[title^="Sum of"]')?.getAttribute('title');
 
 describe('StockPositionGrid: totals follow the visible columns (owner 2 Nov)', () => {
   it('asks the server for nothing hidden while every column shows', () => {
@@ -197,9 +197,12 @@ describe('StockPositionGrid: totals follow the visible columns (owner 2 Nov)', (
   });
 
   it('sends a hidden warehouse or incoming column to the server, so the totals, the sort and the paging read the visible set', async () => {
-    withRows([row()], ['BRW', 'DC1']);
+    withRows([row()], ['BRW', 'DC1'], 200);
     renderGrid();
     await act(async () => gridTable().setPageIndex(1));
+    expect(lastParams().pageIndex).toBe(1);
+    await act(async () => gridTable().getColumn('outstanding_po').toggleVisibility(false));
+    expect(lastParams().pageIndex).toBe(1); // no total changed: the page stays
     await act(async () => gridTable().getColumn('wh:DC1').toggleVisibility(false));
     expect(lastFilters().hiddenColumns).toEqual(['wh:DC1']);
     expect(lastParams().pageIndex).toBe(0);
@@ -217,7 +220,7 @@ describe('StockPositionGrid: totals follow the visible columns (owner 2 Nov)', (
     expect(lastFilters().hiddenColumns ?? []).toEqual([]);
   });
 
-  it('a saved layout or saved view applying column visibility is sent the same way', async () => {
+  it('a saved column layout applying visibility is sent the same way', async () => {
     withRows([row()], ['BRW', 'DC1']);
     renderGrid();
     await act(async () => gridTable().setColumnVisibility({ 'wh:BRW': false, incoming_pool: false }));
@@ -234,8 +237,8 @@ describe('StockPositionGrid: totals follow the visible columns (owner 2 Nov)', (
     await act(async () =>
       gridTable().setColumnVisibility({ 'wh:BRW': false, 'wh:DC1': false, incoming_pool: false, incoming_project: false }),
     );
-    expect(tipOf(/^Total stock/)).toBe('Adds up no shown column');
-    expect(tipOf(/^Total incoming/)).toBe('Adds up no shown column');
+    expect(tipOf(/^Total stock/)).toBe('Sum of none');
+    expect(tipOf(/^Total incoming/)).toBe('Sum of none');
   });
 });
 
