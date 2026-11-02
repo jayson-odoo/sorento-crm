@@ -14,7 +14,7 @@ from the models (CI's bootstrap, the shared dev DB) already holds both, and
 an upgrade there is a no-op. Downgrade drops both.
 
 Revision ID: ptpt_0001_product_tag_tmpl
-Revises: qcp_0001_cover_page_fields
+Revises: join_0003_qiv_bnsp
 Create Date: 2026-11-02
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "ptpt_0001_product_tag_tmpl"
-down_revision = "qcp_0001_cover_page_fields"
+down_revision = "join_0003_qiv_bnsp"
 branch_labels = None
 depends_on = None
 
