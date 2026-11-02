@@ -850,3 +850,68 @@ def test_c18_the_worker_stores_the_photo_of_a_failed_read(db, monkeypatch):
     db.expire_all()
     assert db.get(MediaExtractionJob, job.id).status == "failed"
     assert len(_files_on(db, "chatbot_turn", usage.turn_id)) == 1
+
+
+# ================================================================ a whole WhatsApp exchange through the agent loop
+
+
+def _scripted(*results):
+    class Provider:
+        def __init__(self):
+            self.calls = []
+
+        def chat(self, messages, *, tools=None, **kw):
+            self.calls.append({"messages": [dict(m) for m in messages], "tools": [t["function"]["name"] for t in tools or []]})
+            return results[min(len(self.calls), len(results)) - 1]
+
+    return Provider()
+
+
+def _asks(*calls):
+    from app.services.llm_provider import ChatResult
+
+    return ChatResult(content="", prompt_tokens=10, completion_tokens=1, total_tokens=11, tool_calls=list(calls))
+
+
+def _says(text_):
+    return _asks({"id": "ans", "name": "answer", "arguments": {"text": text_, "figures": [], "not_found": [], "not_checked": []}})
+
+
+def _forbidden(name, args):
+    raise AssertionError(f"the MCP must not be reached for {name}")
+
+
+def test_a_whole_whatsapp_claim_reads_photos_proposes_then_files_on_yes(db, store, capsys):
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+    p1 = _chat_photo(db, store, contact, minutes_ago=4)
+    p2 = _chat_photo(db, store, contact, minutes_ago=3, failed=True)
+    first = _scripted(
+        _asks({"id": "r1", "name": PHOTOS, "arguments": {}}),
+        _asks({"id": "p1", "name": CP_CREATE, "arguments": _claim(do, photo_ids=[p1, p2])}),
+        _says("I will file this claim when you confirm."),
+    )
+    turn1 = run_agent_turn(db, contact_respond_id=contact["respond_id"],
+                           text=f"ELP3754 from {do} leaking after 3 months, still under warranty, photos above",
+                           provider=first, mcp_call=_forbidden, catalog={}, is_test=False)
+
+    assert {PHOTOS, CP_CREATE} <= set(first.calls[0]["tools"])
+    assert "WARRANTY CLAIMS" in first.calls[0]["messages"][0]["content"]
+    assert turn1.pending_action is not None, turn1.reply_text
+    assert "File a warranty / complaint claim" in turn1.reply_text and "could not be read" in turn1.reply_text
+    assert _complaints(db, contact["pk"]) == []
+
+    second = _scripted(
+        _asks({"id": "c1", "name": "confirm_action", "arguments": {"action_id": turn1.pending_action["id"]}}),
+        _says("Filed."),
+    )
+    turn2 = run_agent_turn(db, contact_respond_id=contact["respond_id"], text="yes", provider=second,
+                           mcp_call=_forbidden, catalog={}, is_test=False)
+
+    [row] = _complaints(db, contact["pk"])
+    assert row.complaint_number in turn2.reply_text
+    assert len(_files_on(db, "complaint", row.id)) == 2
+    with capsys.disabled():
+        print("\n--- turn 1 reply ---\n" + turn1.reply_text + "\n--- turn 2 reply ---\n" + turn2.reply_text)
