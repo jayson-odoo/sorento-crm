@@ -1,6 +1,6 @@
 # PLAN: Project spec sheet from templates (PS-SPEC-SHEET)
 
-**Status:** Review (mock v5 approved 3 Nov 00:14; canvas-flow tab built; reviewer round on the tab running; crew browser pass pending). Track: L (one
+**Status:** Merge-ready pending crew (mock v5 approved 3 Nov 00:14; reviewer READY at d2392b2595; security PASS; crew browser pass, re-parent onto main and CI to go). Track: L (one
 migration, new public print payload branch, new tab). PR #2103. UAC:
 `ps-spec-sheet-02nov-acceptance-criteria.md`. Card: `CARD-ps-spec-sheet-02nov.md`.
 
