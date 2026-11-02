@@ -2158,12 +2158,15 @@ class QuotationReviseRequest(BaseModel):
 class QuotationTemplateBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     # Empty only for a cover_page design (the service refuses it for the other kinds).
-    body_html: str = Field(default="", max_length=50000)
+    # The length cap lives on the input schemas only: a template stored before the cap existed
+    # must still list and load.
+    body_html: str = ""
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
 
 
 class QuotationTemplateCreate(QuotationTemplateBase):
+    body_html: str = Field(default="", max_length=50000)
     kind: str = Field(description="cover_letter | terms | cover_page")
     # kind cover_page only; validated by the service.
     design: Optional[Dict[str, Any]] = None
@@ -2390,10 +2393,10 @@ class QuotationCoverPreviewRequest(BaseModel):
 
     document_id: Optional[str] = None
     doc_date: Optional[date] = None
-    attn_name: Optional[str] = None
-    recipient_name_snapshot: Optional[str] = None
-    recipient_address_snapshot: Optional[str] = None
-    recipient_phone_snapshot: Optional[str] = None
+    attn_name: Optional[str] = Field(default=None, max_length=2000)
+    recipient_name_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    recipient_address_snapshot: Optional[str] = Field(default=None, max_length=2000)
+    recipient_phone_snapshot: Optional[str] = Field(default=None, max_length=2000)
     recipient_email_snapshot: Optional[str] = Field(default=None, max_length=2000)
     quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
