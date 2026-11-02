@@ -77,6 +77,44 @@ def _user(db, name: str) -> str:
     return user_id
 
 
+def _manager(db) -> str:
+    """The configured default quotation approver (PS-QUOTE-RULES R4.4), created on first use.
+
+    Routing decides WHO approves; with no superior or override on these fixtures, the default
+    approver is who every request here is routed to, so they are the "manager" who decides.
+    Active and holding the approve grant through a role, or routing would skip them.
+    """
+    from app.models.user import (
+        SystemSetting,
+        UserPermission,
+        UserRole,
+        UserRoleAssignment,
+        UserRolePermission,
+    )
+
+    row = db.query(SystemSetting).first()
+    if row is None:
+        row = SystemSetting(id=_uid())
+        db.add(row)
+        db.flush()
+    if row.default_quotation_approver_user_id:
+        return row.default_quotation_approver_user_id
+    user_id = _uid()
+    db.add(User(id=user_id, email=f"{user_id}@zzt.test", name=f"{MARKER} Manager", status="ACTIVE"))
+    perm = db.query(UserPermission).filter(UserPermission.slug == APPROVE).first()
+    if perm is None:
+        perm = UserPermission(id=_uid(), slug=APPROVE, name="Approve")
+        db.add(perm)
+    role = UserRole(id=_uid(), slug=f"zzt-{_uid()[:8]}", name=f"{MARKER} {_uid()[:8]}")
+    db.add(role)
+    db.flush()
+    db.add(UserRolePermission(id=_uid(), role_id=role.id, permission_id=perm.id))
+    db.add(UserRoleAssignment(id=_uid(), user_id=user_id, role_id=role.id))
+    row.default_quotation_approver_user_id = user_id
+    db.flush()
+    return user_id
+
+
 def _numbering_rule(db, company_id: str) -> None:
     rule = (
         db.query(DocumentNumberingRule)
@@ -143,6 +181,7 @@ def _setup(db, *, with_floor: bool = True):
     project_seed_service.run(db, company_id=company_id)
     _numbering_rule(db, company_id)
     owner = _user(db, f"{MARKER} Baser")
+    _manager(db)
     product = _product(db)
     if with_floor:
         _floor(db, company_id)
@@ -218,11 +257,14 @@ def test_a_quotation_with_no_below_floor_line_never_touches_the_approval_graph()
 
     with blank_session() as db:
         _, owner, product, _, document, scope = _setup(db)
-        line = _price(db, scope, product, owner, ABOVE_FLOOR)
+        # At its default price (PS-QUOTE-RULES: ANY discount needs approval, so the ordinary
+        # quotation is one priced where the line opens).
+        line = _price(db, scope, product, owner, LIST_PRICE)
 
         # The floor was resolved and applied; the line simply clears it.
         assert line.floor_value_applied == Decimal("150.00")
         assert line.is_below_floor is False
+        assert line.is_discounted is False
 
         assert approval.below_floor_line_count(db, document) == 0
         assert approval.requires_approval(db, document) is False
@@ -239,11 +281,12 @@ def test_a_quotation_with_no_below_floor_line_never_touches_the_approval_graph()
         assert approval.current_key(db, document) is None
 
 
-def test_a_company_with_no_floor_rules_at_all_is_never_gated():
+def test_a_company_with_no_floor_rules_at_all_is_never_below_floor_but_a_discount_still_gates():
     """The commonest install on day one. `resolve_floor` answers None when no rule reaches the
     line, which is a real answer and not a failure - inventing a floor of zero would flag
     nothing while looking like it had checked, and inventing one of infinity would gate
-    everything."""
+    everything. PS-QUOTE-RULES (owner 2 Nov): any discount needs approval regardless, so a line
+    at RM 1 is a discount that gates, while a line at its default price issues freely."""
     from app.services import project_quotation_approval_service as approval
     from app.services import project_quotation_document_service as qdocs
 
@@ -253,8 +296,15 @@ def test_a_company_with_no_floor_rules_at_all_is_never_gated():
 
         assert line.floor_value_applied is None
         assert line.is_below_floor is False
-        assert approval.requires_approval(db, document) is False
+        assert line.is_discounted is True
+        assert approval.below_floor_line_count(db, document) == 0
+        assert approval.requires_approval(db, document) is True
 
+        _price(db, scope, product, owner, LIST_PRICE)
+        from app.services import project_quotation_service as quotes
+
+        quotes.delete_line(db, version=quotes.current_version(db, scope.id), line=line)
+        assert approval.requires_approval(db, document) is False
         _sign(db, document, owner)
         assert qdocs.issue(db, document=document, actor_user_id=owner).issue_no == 1
 
@@ -307,7 +357,7 @@ def test_the_salesperson_asks_for_approval_a_manager_approves_and_the_issue_then
         _price(db, scope, product, owner, BELOW_FLOOR)
         _sign(db, document, owner)
 
-        manager = _user(db, f"{MARKER} Manager")
+        manager = _manager(db)
 
         approval.move(
             db,
@@ -343,7 +393,7 @@ def test_issuing_spends_the_approval_so_the_next_below_floor_revision_needs_a_ne
         _, owner, product, _, document, scope = _setup(db)
         _price(db, scope, product, owner, BELOW_FLOOR)
         _sign(db, document, owner)
-        manager = _user(db, f"{MARKER} Manager")
+        manager = _manager(db)
 
         approval.move(
             db,
@@ -398,7 +448,7 @@ def test_rejecting_demands_a_reason_and_keeps_it_where_the_salesperson_will_read
     with blank_session() as db:
         _, owner, product, _, document, scope = _setup(db)
         _price(db, scope, product, owner, BELOW_FLOOR)
-        manager = _user(db, f"{MARKER} Manager")
+        manager = _manager(db)
         approval.move(
             db,
             document=document,
@@ -441,7 +491,7 @@ def _rejected(db, *, reason: str = "Too low."):
 
     _, owner, product, project, document, scope = _setup(db)
     _price(db, scope, product, owner, BELOW_FLOOR)
-    manager = _user(db, f"{MARKER} Manager")
+    manager = _manager(db)
     approval.move(
         db,
         document=document,
@@ -746,7 +796,7 @@ def test_the_approval_position_reaches_the_frontend_through_the_document_seriali
         assert payload["approval_status_label"] is None
         assert payload["approval_rejected_reason"] is None
 
-        manager = _user(db, f"{MARKER} Manager")
+        manager = _manager(db)
         approval.move(
             db,
             document=document,
@@ -778,7 +828,7 @@ def test_every_approval_decision_is_written_to_the_project_activity_feed():
     with blank_session() as db:
         _, owner, product, project, document, scope = _setup(db)
         _price(db, scope, product, owner, BELOW_FLOOR)
-        manager = _user(db, f"{MARKER} Manager")
+        manager = _manager(db)
 
         approval.move(
             db,

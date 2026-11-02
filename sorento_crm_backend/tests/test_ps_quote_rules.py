@@ -169,8 +169,8 @@ def test_an_off_series_line_at_default_price_blocks_issue_until_approved():
         assert "outside the project's series" in refused.value.message
         assert qdocs.current_issue(db, document) is None
 
-        manager = document.approver_user_id
         _ask(db, document, owner)
+        manager = document.approver_user_id
         approval.approve(db, document=document, actor_user_id=manager, permissions=EVERYTHING)
         assert qdocs.issue(db, document=document, actor_user_id=owner).issue_no == 1
         # Issuing spends the approval, exactly as for the minimum price.
