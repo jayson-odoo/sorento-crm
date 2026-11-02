@@ -10,6 +10,7 @@ import type {
   BoardContribution,
   BoardDecision,
   BoardDraft,
+  ConfirmEmailLine,
 } from '../types/fulfilmentPlanning.types';
 
 /**
@@ -141,4 +142,34 @@ export async function queuedPerKey<T>(
       onIdle?.();
     }
   }
+}
+
+/**
+ * CONFIRM-PREVIEW-STALE round 3: planning line id -> the purchasing email's REMARK for it, off
+ * a dry run's `email_lines` (one line per row the email prints; a line told twice reads both,
+ * in the email's own order, joined by " / ").
+ */
+export function emailWordsByLine(lines: readonly ConfirmEmailLine[]): ReadonlyMap<string, string> {
+  const out = new Map<string, string[]>();
+  for (const line of lines) {
+    if (!line.so_line_id) continue;
+    const words = (line.remark ?? '').trim();
+    if (!words) continue;
+    out.set(line.so_line_id, [...(out.get(line.so_line_id) ?? []), words]);
+  }
+  return new Map([...out].map(([id, words]) => [id, words.join(' / ')]));
+}
+
+/**
+ * The email's words for one covered line: `undefined` when its order was not previewed (fall
+ * back to the board's own words), `null` when the email sends no line for it.
+ */
+export function emailWordsFor(
+  byOrder: ReadonlyMap<string, ReadonlyMap<string, string>>,
+  psoId: string | null | undefined,
+  line: { project_line_id?: string | null },
+): string | null | undefined {
+  const words = psoId ? byOrder.get(psoId) : undefined;
+  if (!words) return undefined;
+  return (line.project_line_id && words.get(line.project_line_id)) || null;
 }

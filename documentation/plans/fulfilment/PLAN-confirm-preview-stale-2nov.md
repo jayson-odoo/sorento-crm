@@ -69,3 +69,21 @@ Tests: `tests/scm/test_confirm_preview_delivered_change.py` (red first); vitest
 - Hand test: the board is under Supply Chain > Project Demand > Fulfilment Planning in the staff
   sidebar (`config/menu.config.tsx:390-396`); the Project Sales entry exists only in the compact
   menu (`:2260`). Not a bug.
+
+## Round 3 (crew final pass at 95e55739, 2 Nov): REMARK from the email itself
+
+Captured final Confirm, run through the real confirm and rendered with the live template: every
+column matched except REMARK. Saved Buy 25 read "ORDER" in the popup, "DELAY" in the email; Reserve
+5 + Buy 20 read "CHANGED: ORDER 25 -> USE BRW-BB 5 & ORDER 20" against "DELAY, CHANGED: ...". The
+popup printed the board's `saved_remark` (`saved_draft_remark`), a second copy of the rule that
+does not see the date move or the rows' take-backs; the email builds REMARK in `_queue_saved_line`
+during the write.
+
+Fix, one source: the confirm dry run (`confirm-all` with `preview: true`) returns per order
+`email_lines`, read off the handover queue this write filled, through `_build_handover_context`
+(the builder the real send uses), before the rollback (`ProjectSupplyService._preview_email_lines`).
+The guide runs that dry run once the board read is fresh (and again when the board or a decision
+changes while it is open) and prints each line's email REMARK; a line the email does not tell reads
+no remark; an order the dry run did not preview (not adopted, refused) keeps the board's words. The
+review waits for it; a failed dry run shows the same Retry. Tests: BE red-first, both crew cases
+equal the email the real press dispatches; vitest the page prints the dry run's words.
