@@ -1286,6 +1286,9 @@ export interface AIExtractResult {
   usage: AIExtractTokenUsage;
   model?: string | null;
   provider?: string | null;
+  /** AI-EXTRACT-502: set when some pages of a big file could not be read, in plain words
+   * ("Pages 7-9 could not be read, try them again."); the rows come from the other pages. */
+  note?: string | null;
 }
 
 export const AI_EXTRACT_FORM_KEYS: Record<PortalLandingKind, string> = {

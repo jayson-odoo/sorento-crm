@@ -590,6 +590,11 @@ export function AIExtractDialog({
               className="space-y-3 flex-1 min-h-0 overflow-y-auto -mx-1 px-1"
               data-testid="ai-extract-review"
             >
+              {result.note && (
+                <p className="text-sm text-muted-foreground" data-testid="ai-extract-note">
+                  {result.note}
+                </p>
+              )}
               {remainingFieldEntries.length === 0 && !hasApplicableProductLines ? (
                 <p className="text-sm text-muted-foreground">
                   Nothing extractable was found. Go back and try with clearer
