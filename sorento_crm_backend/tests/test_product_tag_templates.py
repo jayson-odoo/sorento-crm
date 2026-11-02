@@ -636,6 +636,7 @@ def test_family_codes_lists_distinct_families(env):
 
 def test_deferred_remove_unlinks_the_matching_products(env):
     """`tag_template.unassign_products` (the dialog's Remove, a parked unlink)."""
+    from app.models.base import set_company_scope
     from app.models.dealer_kit import ProductTagTemplate
     import app.services.record_actions  # noqa: F401  (registers the actions)
     from app.services.form_action_registry import get_action
@@ -648,11 +649,13 @@ def test_deferred_remove_unlinks_the_matching_products(env):
     _link(db, p1, t, keep)
 
     action = get_action("tag_template.unassign_products")
+    assert action is not None, "record_actions did not register the key"
     assert action.permission == "dealer_kit.tag_templates.manage"
+    set_company_scope(db, frozenset({SORENTO}))
     result = action.execute(
         db, {"entity_id": t, "brand_ids": [ref[1].id], "requested_by_id": MANAGER_ID}
     )
-    assert result == {"changed": 1}
+    assert result == {"changed": 1}, result
     assert {r.template_id for r in db.query(ProductTagTemplate).filter_by(product_id=p1)} == {keep}
 
 
@@ -687,6 +690,7 @@ def test_preview_never_prices_a_promotion_outside_the_contacts_audience(env, pri
 
 def test_deferred_product_unlink_removes_only_the_named_links(env):
     """`product.unlink_tag_templates` (the product card's untick, a parked unlink)."""
+    from app.models.base import set_company_scope
     from app.models.dealer_kit import ProductTagTemplate
     import app.services.record_actions  # noqa: F401  (registers the actions)
     from app.services.form_action_registry import get_action
@@ -699,8 +703,13 @@ def test_deferred_product_unlink_removes_only_the_named_links(env):
     _link(db, product, a, b)
 
     action = get_action("product.unlink_tag_templates")
+    assert action is not None, "record_actions did not register the key"
     assert action.permission == "dealer_kit.tag_templates.manage"
-    assert action.execute(db, {"entity_id": product, "template_ids": [a]}) == {"changed": 1}
+    # A real commit runs under the requester's stored scope; set it here rather
+    # than inherit whatever the shared fixture or an earlier request left.
+    set_company_scope(db, frozenset({SORENTO}))
+    result = action.execute(db, {"entity_id": product, "template_ids": [a]})
+    assert result == {"changed": 1}, result
     assert {r.template_id for r in db.query(ProductTagTemplate).filter_by(product_id=product)} == {b}
 
 
