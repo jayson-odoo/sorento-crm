@@ -1,6 +1,7 @@
 # PLAN: AGENTIC-WA-S2 - agent on WhatsApp slice 2: warranty / complaint claim with photos
 
-Status: CARD v1 posted as crew-ask on #2095, awaiting answers. Track: M (cloud lane).
+Status: BUILDING (Phase 2 red-first) on #2095. Card v1 answered 2 Nov by crew (Q1-Q4); Q5 with the owner, built
+as a one-line switch defaulting to "allow". Track: M (cloud lane).
 UAC: `agentic-wa-s2-acceptance-criteria.md` (written after the answers).
 
 Parent: `PLAN-agentic-wa-w2-01nov.md` (slice 1 merged in #2072, 46de2f6d77). Out of scope: slice 3 (purchase
@@ -131,3 +132,26 @@ Proposed confirm block (English, built by code as in W2; the dealer's text is ke
   at proposal: "You already sent complaint CMP-.. for this on 1 Nov. I can add a note to it instead.";
   (b) allowed, the confirm block names the earlier one. Recommendation (a): a second claim doubles team SLA
   work, the note tool covers "any update?", and a genuinely new claim can still go through the portal.
+
+### Decisions (2 Nov, crew from prior owner rulings)
+
+- S2-Q1 (a): only photos the bot already stored, under its own access switches (W-Q3a).
+- S2-Q2 (a): no extra AI read; the stored read plus the dealer's words.
+- S2-Q3 (a): portal-form pre-fills; contact person / number = the dealer unless they name a site contact; ask
+  only what is missing. Condition: "within warranty" must come from the dealer, never a default.
+- S2-Q4 (a): a fourth tool adds newer chat photos to the dealer's own open complaint, with confirm + undo.
+- S2-Q5: with the owner. Built as a switch (`portal_writes.DUPLICATE_CLAIMS`), default `"allow"` (no new
+  guard): the confirm block names the earlier open claim on the same DO + product. `"refuse"` refuses at
+  proposal with the note offer.
+
+### Fixes from the crew helper review of e2f351fd (before review)
+
+1. DO check: NOT the portal picker's partial, legal-entity-scoped search. On WhatsApp the DO must be the EXACT
+   number of an order of one of the dealer's own linked customer accounts (`respond_contact_customers`).
+   Anything else answers the plain not-found ("Delivery order <no> not found.") and never names another
+   customer. Security-review item.
+2. A photo the bot could not read is still kept when the photo switch allows it: the media worker stores the
+   fetched bytes on a failed read too (job stays `failed`, ledger unchanged), so a provider outage does not
+   lose claim photos.
+3. The confirm block lists EACH photo it attaches: its time and what it shows (the stored read), or "could not
+   be read".
