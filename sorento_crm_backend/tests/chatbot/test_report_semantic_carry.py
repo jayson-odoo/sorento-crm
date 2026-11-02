@@ -1189,53 +1189,125 @@ def test_r3_3_an_outstanding_parse_with_an_object_of_kind_null_still_runs_the_ou
     assert ran and ran[0].get("basis") == "outstanding", f"R3-3: the outstanding report did not run: {ran or text!r}"
 
 
-def test_r3_5a_without_the_customers_permission_a_held_customer_is_not_resolved_in_another_company(rbot, world, monkeypatch) -> None:
+def _seed_customers(rbot_: Routing, rows: list[tuple[str, str]]) -> list[str]:
     from tests._mc_lookup_seed import customer
 
+    db = rbot_.console.session_factory()
+    try:
+        out = [str(customer(db, company_id=company, name=name).id) for company, name in rows]
+        db.commit()
+    finally:
+        db.close()
+    return out
+
+
+def _hold_customer(rbot_: Routing, sorento: str, cid: str, name: str) -> None:
+    """A Sorento report ran, then the frame is set to hold ONE customer (state injected, as a list pick would leave it)."""
+    t1 = _v("sales_report", _ra(basis="invoiced", company=sorento, **Y), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot_.say(t1, "sorento sales 2026 invoiced")
+    assert _ran(calls), f"setup: {text!r}"
+    frame = rbot_.console.session_vars["focus"]["sales_ranking_frame"]
+    frame["customer_ids"] = [cid]
+    frame.setdefault("names", {})["customer_ids"] = {cid: name}
+
+
+def _lacks(monkeypatch, slug_attr: str) -> None:
     from app.services.chatbot.lanes.business import report_ask
+
+    perm = getattr(report_ask.staff_principal, slug_attr)
+    monkeypatch.setattr(report_ask.staff_principal, "lacks", lambda db_, *slugs: perm in slugs)
+
+
+def test_r3_5a_without_the_customers_permission_a_held_customer_switch_equals_typing_it_fresh(rbot, world, monkeypatch) -> None:
+    import copy
 
     sorento, mocha = world
     name = "ZZ GATED TRADING"
-    db = rbot.console.session_factory()
-    try:
-        s_id = customer(db, company_id=DEFAULT_COMPANY_ID, name=name).id
-        m_id = customer(db, company_id=MOCHA_ID, name=name).id
-        db.commit()
-    finally:
-        db.close()
-    t1 = _v("sales_report", _ra(basis="invoiced", company=sorento, **Y), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
-    text, calls = rbot.say(t1, "sorento sales 2026 invoiced")
+    s_id, m_id = _seed_customers(rbot, [(DEFAULT_COMPANY_ID, name), (MOCHA_ID, name)])
+    _hold_customer(rbot, sorento, s_id, name)
+    _lacks(monkeypatch, "CUSTOMERS_VIEW")
+    state = copy.deepcopy(rbot.console.session_vars)
+    carried = _v("sales_report", _ra(basis="invoiced", company=mocha, customers=[name], **Y), sales_company=mocha, continuation=True, entity_op="reuse", **YR)
+    text, calls = rbot.say(carried, "mocha")
+    ran = _ran(calls)
+    assert not (ran and m_id in (ran[0].get("customer_ids") or [])), f"R3-5a: Mocha's customer was resolved without the permission: {ran[0].get('customer_ids')}"
+    rbot.console.session_vars = copy.deepcopy(state)
+    typed = _v("sales_report", _ra(basis="invoiced", company=mocha, customers=[name], **Y), _ent(name, "customer"), basis="invoiced", sales_company=mocha, domain_in_message=True, **YR)
+    fresh_text, fresh_calls = rbot.say(typed, f"mocha sales for {name} 2026 invoiced")
+    assert text == fresh_text, f"R3-5a: carried reply {text!r} differs from the same customer typed fresh {fresh_text!r}"
+
+
+def test_r3_5b_a_dealers_switch_reply_is_the_same_with_or_without_an_unlinked_same_name_customer(rdealer) -> None:
+    sorento, mocha = _two_companies(rdealer)
+    own = "ZZT OWN DEALER SDN BHD"
+
+    def run() -> str:
+        rdealer.console.session_vars = {}
+        t1 = _v("sales_report", _ra(basis="invoiced", company=sorento, customers=[own], **Y), _e(own, "customer"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+        text, calls = rdealer.say(t1, "my sales 2026 invoiced")
+        assert _ran(calls), f"setup: {text!r}"
+        t2 = _v("sales_report", _ra(basis="invoiced", company=mocha, customers=[own], **Y), sales_company=mocha, continuation=True, entity_op="reuse", **YR)
+        text, calls = rdealer.say(t2, "mocha")
+        assert "customer_not_permitted" not in text and "403" not in text, f"R3-5b: a permission error was shown: {text!r}"
+        return text
+
+    without = run()
+    _seed_customers(rdealer, [(MOCHA_ID, own)])
+    with_twin = run()
+    assert with_twin == without, f"R3-5b: an unlinked same-name customer changes the reply (an existence oracle): {without!r} vs {with_twin!r}"
+
+
+def test_r4_1_a_held_customer_is_kept_in_its_own_company_without_the_customers_permission(bot, monkeypatch, world) -> None:
+    sorento, _mocha = world
+    name = "ZZ SAMECO GATED TRADING"
+    (s_id,) = _seed_customers(bot, [(DEFAULT_COMPANY_ID, name)])
+    _lacks(monkeypatch, "CUSTOMERS_VIEW")
+
+    def again() -> tuple[str, list[dict[str, Any]]]:
+        _hold_customer(bot, sorento, s_id, name)
+        t2 = _v("sales_report", _ra(basis="invoiced", company=sorento, customers=[name], date_from="2025-01-01", date_to="2025-12-31"), sales_company=sorento, continuation=True, entity_op="reuse", date_filter_start="2025-01-01", date_filter_end="2025-12-31")
+        text, calls = bot.say(t2, "and 2025")
+        return text, _ran(calls)
+
+    off_text, off = again()  # flag off, the same verdicts
+    bot.console.session_vars = {}
+    _flag_on(bot.console, monkeypatch)
+    text, on = again()
+    assert off and off[0].get("customer_ids") == [s_id], f"baseline: flag off should keep the customer: {off or off_text!r}"
+    assert "Not applied" not in text, f"R4-1: the held customer was dropped in its own company: {text!r}"
+    assert on and on[0].get("customer_ids") == off[0].get("customer_ids"), f"R4-1: flag on {on[0].get('customer_ids') if on else text!r}, flag off {off[0].get('customer_ids')}"
+
+
+def test_r4_2_a_carried_customer_and_a_carried_agent_that_are_missing_after_a_switch_get_one_reply_rule(rbot, world) -> None:
+    sorento, mocha = world
+    pattern = re.compile(r"I don't know '.+' as an? (customer|sales agent) in .+\.")
+    # the agent: AGENT A is Sorento only
+    t1 = _v("sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], **Y), _ent(AGENT_1, "sales_agent"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(t1, "sorento sales for agent a 2026 invoiced")
     assert _ran(calls), f"setup: {text!r}"
-    frame = rbot.console.session_vars["focus"]["sales_ranking_frame"]
-    frame["customer_ids"] = [s_id]
-    frame.setdefault("names", {})["customer_ids"] = {s_id: name}
-    perm = report_ask.staff_principal.CUSTOMERS_VIEW
-    monkeypatch.setattr(report_ask.staff_principal, "lacks", lambda db_, *slugs: perm in slugs)
+    t2 = _v("sales_report", _ra(), continuation=True, entity_op="reuse", sales_company=mocha)
+    _copy_held(rbot, t2, company=mocha)
+    agent_text, agent_calls = rbot.say(t2, "mocha")
+    rbot.on_block = None  # type: ignore[attr-defined]
+    # the customer: Sorento only
+    rbot.console.session_vars = {}
+    name = "ZZ SORENTOONLY TRADING"
+    (s_id,) = _seed_customers(rbot, [(DEFAULT_COMPANY_ID, name)])
+    _hold_customer(rbot, sorento, s_id, name)
+    t3 = _v("sales_report", _ra(basis="invoiced", company=mocha, customers=[name], **Y), sales_company=mocha, continuation=True, entity_op="reuse", **YR)
+    cust_text, cust_calls = rbot.say(t3, "mocha")
+    assert pattern.fullmatch(agent_text.strip()) and not _ran(agent_calls), f"R4-2 baseline: the agent case is {agent_text!r}"
+    assert not _ran(cust_calls), f"R4-2: a Mocha-wide report ran for a missing customer: {_ran(cust_calls)[0].get('customer_ids')}"
+    assert pattern.fullmatch(cust_text.strip()), f"R4-2: the customer case reads {cust_text!r}, the agent case {agent_text!r}"
+
+
+def test_r4_3_the_held_customer_resolves_to_the_exact_name_row_among_many_partial_matches(rbot, world) -> None:
+    sorento, mocha = world
+    name = "ZZQ LIMTEST"
+    ids = _seed_customers(rbot, [(DEFAULT_COMPANY_ID, name), (MOCHA_ID, name), *[(MOCHA_ID, f"AA {name} {i:03d}") for i in range(55)]])
+    s_id, m_id = ids[0], ids[1]
+    _hold_customer(rbot, sorento, s_id, name)
     t2 = _v("sales_report", _ra(basis="invoiced", company=mocha, customers=[name], **Y), sales_company=mocha, continuation=True, entity_op="reuse", **YR)
     text, calls = rbot.say(t2, "mocha")
     ran = _ran(calls)
-    assert not (ran and m_id in (ran[0].get("customer_ids") or [])), f"R3-5a: a principal without {perm} got Mocha's customer resolved: {ran[0].get('customer_ids')}"
-    lines = [ln for ln in text.splitlines() if ln.startswith("Not applied:")]
-    assert lines and name.casefold() in lines[0].casefold(), f"R3-5a: the held name is not on a Not applied line: {text!r}"
-
-
-def test_r3_5b_a_dealers_held_customer_never_resolves_to_an_unlinked_same_name_customer(rdealer) -> None:
-    from tests._mc_lookup_seed import customer
-
-    sorento, mocha = _two_companies(rdealer)
-    own = "ZZT OWN DEALER SDN BHD"
-    db = rdealer.console.session_factory()
-    try:
-        other_id = customer(db, company_id=MOCHA_ID, name=own).id
-        db.commit()
-    finally:
-        db.close()
-    t1 = _v("sales_report", _ra(basis="invoiced", company=sorento, customers=[own], **Y), _e(own, "customer"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
-    text, calls = rdealer.say(t1, "my sales 2026 invoiced")
-    assert _ran(calls), f"setup: {text!r}"
-    t2 = _v("sales_report", _ra(basis="invoiced", company=mocha, customers=[own], **Y), sales_company=mocha, continuation=True, entity_op="reuse", **YR)
-    text, calls = rdealer.say(t2, "mocha")
-    assert "customer_not_permitted" not in text and "403" not in text, f"R3-5b: a permission error was shown: {text!r}"
-    ran = _ran(calls)
-    assert not (ran and other_id in (ran[0].get("customer_ids") or [])), f"R3-5b: an unlinked customer of the same name was resolved: {ran[0].get('customer_ids')}"
-    assert any(ln.startswith("Not applied:") for ln in text.splitlines()), f"R3-5b: no Not applied line: {text!r}"
+    assert ran and ran[0].get("customer_ids") == [m_id], f"R4-3: want Mocha's exact-name row, got {ran[0].get('customer_ids') if ran else text!r}"
