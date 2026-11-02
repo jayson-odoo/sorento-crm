@@ -1,6 +1,6 @@
 # PLAN: Quotation cover page + terms print (QUOTE-COVER-PAGE)
 
-**Status:** Plan. Sample mock filed for owner approval; no product code until approved. Track: L
+**Status:** Plan. Sample v2 filed for owner approval (decisions 1a, 2a, 3a answered 2 Nov; OPEN A terms page 1 only, OPEN B Your Ref); no product code until approved. Track: L
 (new columns via migration, new printed page, cross-cutting PDF change).
 
 ## Journey

@@ -1,8 +1,8 @@
 # UAC: Quotation cover page + terms print (QUOTE-COVER-PAGE)
 
-**Status:** Draft. Waits on the owner's approval of sample v1
-(`documentation/mockups/QUOTE-COVER-PAGE/index.html`) and the three open decisions marked
-PENDING below. Plan: `PLAN-quote-cover-page-02nov.md`.
+**Status:** Draft. Waits on the owner's approval of sample v2
+(`documentation/mockups/QUOTE-COVER-PAGE/index.html`) and the two points marked OPEN below.
+Decisions 1a, 2a, 3a answered by the owner 2 Nov. Plan: `PLAN-quote-cover-page-02nov.md`.
 
 ## A. Cover page (PDF page 1)
 
@@ -17,9 +17,11 @@ PENDING below. Plan: `PLAN-quote-cover-page-02nov.md`.
   snapshot; Email = the quotation's email snapshot.
 - **A5** A row whose value is empty is left out (no blank label, no dash).
 - **A6** Every printed value is escaped: a `<` typed in Purpose prints as text.
-- **A7** Terms & Conditions print on page 1 and are not repeated after the price table.
-- **A8** Prepared By = PENDING decision 1 (recommended: the project's salesperson).
-- **A9** Company letterhead on page 1: PENDING decision 3 (recommended: yes).
+- **A7** Terms & Conditions print on page 1. OPEN A: whether they also repeat after the price
+  table (sample shows page 1 only).
+- **A8** Prepared By = the project's salesperson (owner, 2 Nov, 1a), frozen on the issue.
+- **A9** Company letterhead prints on page 1 (owner, 2 Nov, 3a).
+- **A10** Your Ref: OPEN B, stays on the Header tab and price-page refs (sample) or goes.
 
 ## B. Quotation fields
 
@@ -27,12 +29,22 @@ PENDING below. Plan: `PLAN-quote-cover-page-02nov.md`.
   All optional free text; all saved per quotation and shown on the view page in the same place
   as on the edit form.
 - **B2** On a NEW quotation, Email prefills from the customer's main contact (the same contact
-  that fills Attn), and Payment Terms and Validity prefill from the company defaults
-  (PENDING decision 2). Editing them changes only this quotation.
+  that fills Attn), and Payment Terms and Validity prefill from the active company terms
+  template, which carries them as two fields beside its terms text (owner, 2 Nov, 2a). Editing
+  them changes only this quotation.
 - **B3** Issuing copies all four values onto the issue. Editing the quotation afterwards does not
   change what a re-download of the earlier issue prints.
 - **B4** Validity is printed and shown, never enforced: the sign link keeps working after it.
 - **B5** Usable and not clipped at 375px and 1280px.
+
+## E. Countersign link (owner, 2 Nov: "it should reflect in the customer countersign link also")
+
+- **E1** `/quotation-sign/[token]` opens with a cover card showing the same rows, in the same
+  order, with the same values as PDF page 1 of that issue, including the reference and the terms.
+- **E2** The reference string on the countersign link equals the one on the PDF.
+- **E3** At 375px each label sits above its value; nothing clipped.
+- **E4** The bottom terms panel follows OPEN A; the terms tick box and signing work as today.
+- **E5** An issue created before release shows its countersign page as before release.
 
 ## C. Terms print
 
@@ -49,5 +61,7 @@ PENDING below. Plan: `PLAN-quote-cover-page-02nov.md`.
 
 - **D1** One active company terms template, copied into each new quotation and then editable per
   quotation (unchanged rule, `QuotationTemplatesClient.tsx:31-45`).
+- **D3** The template add/edit dialog has Payment Terms and Validity fields; the active
+  template's values prefill a new quotation.
 - **D2** No template active: a new quotation starts with empty terms and the PDF prints no terms
   row; nothing errors.
