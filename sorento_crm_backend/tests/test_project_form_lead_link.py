@@ -181,7 +181,7 @@ def _create_lead(client, **overrides):
 
 def _register(client, **overrides):
     """Register a project (no lead: registration never links one, AC-L2/L4)."""
-    payload = {"title": _title("Project"), "customer_id": _REGISTER_CUSTOMER["id"]}
+    payload = {"title": _title("Project"), "customer_id": _REGISTER_CUSTOMER["id"], "lead_source": "site_visit"}
     payload.update(overrides)
     payload = {k: v for k, v in payload.items() if v is not None}  # None = leave the key out
     return client.post(f"{PROJECTS_BASE}/", json=payload)

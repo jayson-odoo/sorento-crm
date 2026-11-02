@@ -8,7 +8,7 @@
  * `submitAmendmentRequest(token, body)`. Every value here is invented.
  *
  * What these pin, from the approved mock v3 (documentation/mockups/QUOTE-CUSTOMER-AMEND):
- * the page's own nine columns plus ONE narrow icon column; Qty and Unit rate become inputs in
+ * the quotation's own columns (sent by the server) plus ONE narrow icon column; Qty and Unit rate become inputs in
  * suggest mode; a staged removal is struck through; only changed lines are sent; Sign says why it
  * is off, once; an answered request shows its answers in the cells the customer changed.
  */
@@ -44,6 +44,7 @@ vi.mock('../../services/quotationSignService', async (importOriginal) => {
 });
 
 import { QuotationSignClient } from './QuotationSignClient';
+import { SIGN_COLUMNS } from './signColumns.fixture';
 
 // ------------------------------------------------------------------ fixtures
 
@@ -123,7 +124,7 @@ function page(overrides: Record<string, unknown> = {}): QuotationSignPage {
     cover_letter: null,
     terms: null,
     signatory_name: 'Ahmad Faizal',
-    scopes: [{ scope_label: 'Sanitary ware', scope_total: '67450.00', lines: LINES }],
+    scopes: [{ scope_label: 'Sanitary ware', scope_total: '67450.00', columns: SIGN_COLUMNS, lines: LINES }],
     grand_total: '67450.00',
     sorento_signature: {
       id: 's1',
@@ -252,17 +253,8 @@ describe('the entry point and the edit mode', () => {
     const headers = Array.from(document.querySelectorAll('thead th')).map(
       (th) => th.textContent?.trim() ?? '',
     );
-    expect(headers.slice(0, 9)).toEqual([
-      'Item',
-      'Technical spec',
-      'Description',
-      'Brand',
-      'Product code',
-      'Qty',
-      'Unit rate',
-      'Complete set',
-      'Amount',
-    ]);
+    // The server's column set, verbatim (QUOTE-SIGN-COLUMNS): the page adds only the icon column.
+    expect(headers.slice(0, 9)).toEqual(SIGN_COLUMNS.map((column) => column.label));
     expect(headers).toHaveLength(10);
   });
 
@@ -406,6 +398,7 @@ describe('every money figure shows the change, with "quoted X" beneath', () => {
         {
           scope_label: 'Sanitary ware',
           scope_total: '1280.00',
+          columns: SIGN_COLUMNS,
           lines: [
             line('m-1', '1', {
               description: 'Fake WC',
@@ -455,8 +448,8 @@ describe('every money figure shows the change, with "quoted X" beneath', () => {
     type('Quantity on line 1', '6');
 
     // 6 x 360.00 = 2,160.00 (was 1,080.00)
-    expect(amountCell('1').textContent).toMatch(/RM\s*2,160\.00/);
-    expect(amountCell('1').textContent).toMatch(/quoted\s*RM\s*1,080\.00/);
+    expect(amountCell('1').textContent).toMatch(/2,160\.00/);
+    expect(amountCell('1').textContent).toMatch(/quoted\s*1,080\.00/);
     // 2,160.00 + 200.00 = 2,360.00 (was 1,280.00)
     expect(sectionHeader().textContent).toMatch(/RM\s*2,360\.00/);
     expect(sectionHeader().textContent).toMatch(/quoted\s*RM\s*1,280\.00/);
@@ -465,7 +458,7 @@ describe('every money figure shows the change, with "quoted X" beneath', () => {
 
     // The line nobody touched shows no "quoted".
     expect(amountCell('2').textContent).not.toMatch(QUOTED);
-    expect(amountCell('2').textContent).toMatch(/RM\s*200\.00/);
+    expect(amountCell('2').textContent).toMatch(/200\.00/);
   });
 
   it('a price change works the same way', async () => {
@@ -473,8 +466,8 @@ describe('every money figure shows the change, with "quoted X" beneath', () => {
     type('Unit rate on line 2', '150.00');
 
     // 2 x 150.00 = 300.00 (was 200.00); section and total 1,380.00 (was 1,280.00)
-    expect(amountCell('2').textContent).toMatch(/RM\s*300\.00/);
-    expect(amountCell('2').textContent).toMatch(/quoted\s*RM\s*200\.00/);
+    expect(amountCell('2').textContent).toMatch(/300\.00/);
+    expect(amountCell('2').textContent).toMatch(/quoted\s*200\.00/);
     expect(sectionHeader().textContent).toMatch(/RM\s*1,380\.00/);
     expect(sectionHeader().textContent).toMatch(/quoted\s*RM\s*1,280\.00/);
     expect(grandTotalRow().textContent).toMatch(/RM\s*1,380\.00/);
@@ -497,7 +490,7 @@ describe('every money figure shows the change, with "quoted X" beneath', () => {
     expect(
       row.className.includes('line-through') || row.querySelector('.line-through, s, del') !== null,
     ).toBe(true);
-    expect(amountCell('2').textContent).toMatch(/RM\s*200\.00/);
+    expect(amountCell('2').textContent).toMatch(/200\.00/);
     expect(amountCell('2').textContent).not.toMatch(QUOTED);
 
     // Restoring puts every figure back, and the "quoted" text goes with it.
@@ -685,12 +678,12 @@ describe('an answered request shows its answers in the cells', () => {
     const wc = tr('1');
     expect(within(wc).getAllByText('Accepted')).toHaveLength(2);
     expect(wc.textContent).toMatch(/110/);
-    expect(wc.textContent).toMatch(/RM\s*380\.00/);
+    expect(wc.textContent).toMatch(/380\.00/);
 
     const basin = tr('14');
     expect(within(basin).getByText('Not accepted')).toBeInTheDocument();
     expect(within(basin).getByText(/Already at the project price\./)).toBeInTheDocument();
-    expect(basin.textContent).toMatch(/RM\s*160\.00/);
+    expect(basin.textContent).toMatch(/160\.00/);
 
     expect(tr('40').textContent).toMatch(/Removal accepted/);
 

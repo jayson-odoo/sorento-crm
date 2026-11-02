@@ -64,6 +64,7 @@ import type {
   TagTemplate,
   TagTemplateVersionDetail,
 } from '@/lib/dealer-kit/tag-template-types';
+import { isSpecSheetFamily } from '@/lib/dealer-kit/tag-template-types';
 import {
   getTemplate,
   getTemplateVersion,
@@ -527,6 +528,7 @@ export default function TagTemplateEditorPage() {
             onLayersChange={setDraftLayers}
             hideSaveBar
             docId={template.id}
+            specSheet={isSpecSheetFamily(template.family)}
             leftRail={
               <TagSizeControl
                 width_mm={template.doc.width_mm}

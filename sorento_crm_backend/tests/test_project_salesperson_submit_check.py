@@ -44,6 +44,7 @@ def _payload(w, ttl: str, dev):
     lead = seed_lead(w, w.sub_b)
     return {
         "title": ttl,
+        "lead_source": "site_visit",
         "developer_party_id": dev.id,
         "customer_id": w.customer.id,
         "lead_id": lead.id,
@@ -91,7 +92,7 @@ def test_ac_s1_over_http_a_submit_only_user_gets_409_and_no_project(v2):
     dev, incumbent = _world(v2)
     res = as_user(v2, v2.sub_b).post(
         LIST,
-        json={**register_body(v2, user=v2.sub_b, title=BLOCKING, developer_party_id=dev.id), "submit": True},
+        json={"lead_source": "site_visit", **register_body(v2, user=v2.sub_b, title=BLOCKING, developer_party_id=dev.id), "submit": True},
     )
     assert res.status_code == 409, res.text
     assert res.json()["code"] == "project_already_registered"
@@ -132,7 +133,7 @@ def test_ac_s3_over_http_a_blocking_draft_saves(v2):
     dev, _incumbent = _world(v2)
     res = as_user(v2, v2.sub_b).post(
         LIST,
-        json={**register_body(v2, user=v2.sub_b, title=BLOCKING, developer_party_id=dev.id), "submit": False},
+        json={"lead_source": "site_visit", **register_body(v2, user=v2.sub_b, title=BLOCKING, developer_party_id=dev.id), "submit": False},
     )
     assert res.status_code == 201, res.text
 
@@ -180,6 +181,7 @@ def _owner_name(w) -> str:
 def _bare_payload(w, user, ttl, dev):
     return {
         "title": ttl,
+        "lead_source": "site_visit",
         "developer_party_id": dev.id,
         "customer_id": w.customer.id,
         "lead_id": seed_lead(w, user).id,
@@ -227,7 +229,7 @@ def test_ac_s5_crm_submit_409_hides_the_holder_name_from_a_user_without_view(v2)
 def test_ac_s5_http_409_hides_the_holder_name_from_a_user_without_view(v2):
     dev, incumbent = _world(v2)
     user = _bare_submitter(v2)
-    res = as_user(v2, user).post(LIST, json={**_bare_payload(v2, user, BLOCKING, dev), "submit": True})
+    res = as_user(v2, user).post(LIST, json={"lead_source": "site_visit", **_bare_payload(v2, user, BLOCKING, dev), "submit": True})
     assert res.status_code == 409, res.text
     body = res.json()
     assert body["code"] == "project_already_registered"
