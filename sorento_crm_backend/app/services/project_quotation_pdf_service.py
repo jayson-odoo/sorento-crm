@@ -54,7 +54,7 @@ from app.services import geo_places
 from app.services import product_image_service as product_images
 from app.services.complaint_pdf_service import PDFRenderingUnavailable
 from app.services.error_handler import AppException
-from app.services.project_quotation_document_service import quotation_no
+from app.services.project_quotation_document_service import document_noun, quotation_no
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
     cover_reference,
@@ -453,8 +453,8 @@ def _header_html(
 ) -> str:
     refs = [
         (
-            "Quotation No.",
-            _cell(reference or quotation_no(document.document_no, issue.issue_no)),
+            f"{document_noun(document)} No.",
+            _cell(reference or quotation_no(document.document_no, issue.issue_no, issue.revision_label)),
         ),
         ("Your Ref", _cell(document.your_ref)),
     ]
@@ -596,7 +596,7 @@ def _scope_html(
 """
 
 
-def _cover_html(rows: List[Dict[str, Any]], letterhead: str) -> str:
+def _cover_html(rows: List[Dict[str, Any]], letterhead: str, noun: str = "Quotation") -> str:
     """Page 1 (layout 2): letterhead, the title and the label/value rows of ``cover_rows``."""
     body: List[str] = []
     for row in rows:
@@ -609,7 +609,7 @@ def _cover_html(rows: List[Dict[str, Any]], letterhead: str) -> str:
     return f"""
   <section class="cover">
     <div class="cover-top">{letterhead}</div>
-    <div class="cover-title">QUOTATION</div>
+    <div class="cover-title">{escape(noun.upper())}</div>
     <table class="cover-rows">{"".join(body)}</table>
   </section>
 """
@@ -824,7 +824,9 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
             else None
         )
         reference = cover_reference(document, issue, project)
-        cover = _cover_html(cover_rows(db, document, issue, project), letterhead)
+        cover = _cover_html(
+            cover_rows(db, document, issue, project), letterhead, document_noun(document)
+        )
         style = _STYLE + _COVER_STYLE
         terms = ""
     else:
@@ -843,17 +845,19 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
 
 def build_filename(issue: ProjectQuotationIssue) -> str:
     """Named after the reference the customer quotes back, so a saved file is identifiable."""
-    document_no = None
+    document = None
     session = object_session(issue)
     if session is not None:
-        document_no = (
-            session.query(ProjectQuotationDocument.document_no)
+        document = (
+            session.query(ProjectQuotationDocument)
             .filter(ProjectQuotationDocument.id == issue.document_id)
-            .scalar()
+            .first()
         )
-    ref = quotation_no(document_no, issue.issue_no) if document_no else f"R{issue.issue_no}"
-    safe = re.sub(r"[^A-Za-z0-9]+", "-", ref).strip("-") or "quotation"
-    return f"quotation-{safe}.pdf"
+    document_no = document.document_no if document is not None else None
+    ref = quotation_no(document_no, issue.issue_no, issue.revision_label) if document_no else f"R{issue.issue_no}"
+    stem = document_noun(document).lower()
+    safe = re.sub(r"[^A-Za-z0-9]+", "-", ref).strip("-") or stem
+    return f"{stem}-{safe}.pdf"
 
 
 def render_issue_pdf(db: Session, issue: ProjectQuotationIssue) -> Tuple[bytes, str]:

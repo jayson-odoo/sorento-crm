@@ -27,6 +27,7 @@ from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import require_any_permission, require_permission
 from app.schemas.project_po_intake import (
+    POConfirmRequest,
     AnnotationAcceptRequest,
     AnnotationActionResponse,
     AnnotationEditRequest,
@@ -335,6 +336,7 @@ def retry_purchase_order_extraction(
 )
 def confirm_purchase_order_version(
     po_version_id: str,
+    payload: Optional[POConfirmRequest] = None,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -349,6 +351,17 @@ def confirm_purchase_order_version(
         result = service.confirm_version(
             version=version, actor_user_id=current_user["id"]
         )
+        # PS-PROPOSAL-QUOTATION soft stop: more than the quotation quotes needs a reason. A 409
+        # here rolls the confirm back; the screen asks for the reason and confirms again.
+        from app.services import project_po_service as po_svc
+
+        po = po_svc.get_po(db, result["purchase_order_id"])
+        over = po_svc.enforce_qty_over(
+            db,
+            po,
+            reason=payload.qty_over_reason if payload is not None else None,
+            actor_user_id=current_user["id"],
+        )
         body = service.serialize_version(version)
         body["confirm_result"] = {
             "line_count": result["line_count"],
@@ -357,6 +370,8 @@ def confirm_purchase_order_version(
             "price_mismatch_count": result["price_mismatch_count"],
         }
         db.commit()
+        # After the commit: the notification service commits per recipient.
+        po_svc.alert_qty_over(db, po, over, current_user["id"])
         return body
     except Exception as exc:
         db.rollback()

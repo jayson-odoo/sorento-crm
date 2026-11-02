@@ -32,6 +32,7 @@ Four rules are worth stating here rather than leaving to a reader of the code:
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Any, Dict, Iterable, Optional
 
 from sqlalchemy import func
@@ -136,8 +137,49 @@ def below_floor_line_count(db: Session, document: ProjectQuotationDocument) -> i
     )
 
 
+def below_proposal_line_count(db: Session, document: ProjectQuotationDocument) -> int:
+    """PS-PROPOSAL-QUOTATION rule 5: how many lines of a QUOTATION are priced below the same
+    product's price on the proposal revision it was made from (a further discount).
+
+    Always 0 for a proposal. The baseline is the source ISSUE's frozen lines, which nobody can
+    edit, so a price lowered on the quotation's own first version still counts. A product that
+    was not on the proposal has no baseline and is left to the minimum-price rule.
+    """
+    if getattr(document, "kind", None) != "quotation" or not document.source_issue_id:
+        return 0
+    from app.models.projects import ProjectQuotationIssue
+    from app.services import project_quotation_document_service as documents
+
+    source = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.id == document.source_issue_id)
+        .first()
+    )
+    if source is None:
+        return 0
+    baseline = documents.issue_price_map(db, source)
+    version_ids = current_version_ids(db, document)
+    if not baseline or not version_ids:
+        return 0
+    count = 0
+    for line in (
+        db.query(ProjectQuotationLine)
+        .filter(ProjectQuotationLine.version_id.in_(version_ids))
+        .all()
+    ):
+        key = documents.line_key(line)
+        if line.is_rate_only or key not in baseline:
+            continue
+        if Decimal(line.unit_price or 0) < baseline[key]:
+            count += 1
+    return count
+
+
 def requires_approval(db: Session, document: ProjectQuotationDocument) -> bool:
-    return below_floor_line_count(db, document) > 0
+    return (
+        below_floor_line_count(db, document) > 0
+        or below_proposal_line_count(db, document) > 0
+    )
 
 
 # ------------------------------------------------------------------ the graph
@@ -200,18 +242,29 @@ def assert_issuable(db: Session, document: ProjectQuotationDocument) -> None:
     look at after they have fixed the obvious one.
     """
     below = below_floor_line_count(db, document)
-    if not below:
+    below_proposal = below_proposal_line_count(db, document)
+    if not below and not below_proposal:
         return
     if current_key(db, document) == STATUS_APPROVED:
         return
+    if below:
+        raise AppException(
+            status_code=422,
+            message=(
+                f"{'One line is' if below == 1 else f'{below} lines are'} priced below the "
+                "minimum price, so this quotation needs a manager's approval before it can be "
+                "sent to the customer."
+            ),
+            code="quotation_below_floor_pending_approval",
+        )
     raise AppException(
         status_code=422,
         message=(
-            f"{'One line is' if below == 1 else f'{below} lines are'} priced below the "
-            "minimum price, so this quotation needs a manager's approval before it can be sent "
-            "to the customer."
+            f"{'One line is' if below_proposal == 1 else f'{below_proposal} lines are'} priced "
+            "below the proposal, so this quotation needs a manager's approval before it can be "
+            "sent to the customer."
         ),
-        code="quotation_below_floor_pending_approval",
+        code="quotation_below_proposal_pending_approval",
     )
 
 
@@ -418,16 +471,19 @@ def move(
 
     if target.key in AWAITING_KEYS:
         below = below_floor_line_count(db, document)
+        below_proposal = below_proposal_line_count(db, document)
+        from app.services.project_notify_service import approval_reason_text
+
         _record(
             db,
             document,
             template="quotation_approval_requested",
             body_text=(
                 f"{_actor_name(db, actor_user_id)} asked for approval on quotation "
-                f"{document.document_no} ({below} line{'' if below == 1 else 's'} below minimum price)."
+                f"{document.document_no} ({approval_reason_text(below, below_proposal)})."
             ),
             actor_user_id=actor_user_id,
-            payload={"below_floor_line_count": below},
+            payload={"below_floor_line_count": below, "below_proposal_count": below_proposal},
         )
     return document
 
@@ -594,6 +650,7 @@ def notify_requested(
             resubmitted=current_key(db, document) == STATUS_RESUBMITTED,
             press=str(_press_count(db, document)),
             below=below_floor_line_count(db, document),
+            below_proposal=below_proposal_line_count(db, document),
             requester_id=actor_user_id,
             requester_name=_actor_name(db, actor_user_id),
         )
@@ -665,11 +722,13 @@ def serialize_approval(db: Session, document: ProjectQuotationDocument) -> Dict[
     """
     status = status_of(db, document)
     below = below_floor_line_count(db, document)
+    below_proposal = below_proposal_line_count(db, document)
     return {
         "approval_status_id": str(status.id) if status is not None else None,
         "approval_status_key": status.key if status is not None else None,
         "approval_status_label": status.label if status is not None else None,
         "approval_rejected_reason": document.approval_rejected_reason,
-        "requires_approval": below > 0,
+        "requires_approval": below > 0 or below_proposal > 0,
         "below_floor_line_count": below,
+        "below_proposal_count": below_proposal,
     }

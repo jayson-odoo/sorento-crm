@@ -22,7 +22,7 @@ describe('project detail tabs', () => {
     expect(tabs().map((t) => t.label)).toEqual([
       'Overview',
       'Documents',
-      'Quotation',
+      'Proposals',
       'Samples Request',
       'Sponsorship Form',
       'PO',

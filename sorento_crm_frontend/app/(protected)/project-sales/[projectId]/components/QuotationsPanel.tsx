@@ -21,7 +21,10 @@ import {
   useQuotationDocuments,
 } from '../../_shared/hooks/useQuotationDocuments';
 import { useQuotationDocumentActions } from '../quotation-documents/actions';
-import type { QuotationDocument } from '../../_shared/services/quotationDocumentService';
+import {
+  documentNoun,
+  type QuotationDocument,
+} from '../../_shared/services/quotationDocumentService';
 import type { Project } from '../../_shared/types/project.types';
 import { formatMyrExact, sumMoney } from '../../_shared/lib/money';
 import { canWorkOnProject } from '../../_shared/lib/projectApproval';
@@ -37,12 +40,22 @@ function QuotationRowActions({
   projectId,
   document,
   canEdit,
+  projectOutcome,
+  projectHasQuotation,
 }: {
   projectId: string;
   document: QuotationDocument;
   canEdit: boolean;
+  projectOutcome?: string | null;
+  projectHasQuotation?: boolean;
 }) {
-  const { actions, dialogs } = useQuotationDocumentActions({ projectId, document, canEdit });
+  const { actions, dialogs } = useQuotationDocumentActions({
+    projectId,
+    document,
+    canEdit,
+    projectOutcome,
+    projectHasQuotation,
+  });
   return (
     <div onClick={(event) => event.stopPropagation()}>
       <RowActionsMenu actions={actions} ariaLabel="quotation" />
@@ -69,7 +82,10 @@ export function QuotationsPanel({ project }: { project: Project }) {
   // Client-side on purpose: a project's quotations are all in memory and unpaged.
   const rows = React.useMemo(() => {
     const needle = search.trim().toLowerCase();
-    const all = documents.data ?? [];
+    // The project's quotation leads the list: it is the one the POs are checked against.
+    const all = [...(documents.data ?? [])].sort(
+      (a, b) => Number(b.kind === 'quotation') - Number(a.kind === 'quotation'),
+    );
     if (!needle) return all;
     return all.filter((row) =>
       [row.our_ref, row.document_no, row.subject_title, row.recipient_name_snapshot]
@@ -80,6 +96,7 @@ export function QuotationsPanel({ project }: { project: Project }) {
     );
   }, [documents.data, search]);
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const hasQuotation = (documents.data ?? []).some((row) => row.kind === 'quotation');
 
   // One countdown over the ticked drafts. An issued quotation is refused by the server, so it is
   // left out and counted in a closing sentence rather than swallowed.
@@ -120,6 +137,23 @@ export function QuotationsPanel({ project }: { project: Project }) {
         },
         size: 190,
         meta: { headerTitle: 'Reference' },
+      },
+      {
+        id: 'kind',
+        accessorFn: (row) => documentNoun(row),
+        header: ({ column }) => <DataGridColumnHeader title="Kind" column={column} />,
+        cell: ({ row }) => {
+          const noun = documentNoun(row.original);
+          return (
+            <span className={`${STATUS_PILL_BASE} ${statusPillClass(noun)} max-w-full truncate`} title={
+              row.original.source_label ? `From ${row.original.source_label}` : noun
+            }>
+              {noun}
+            </span>
+          );
+        },
+        size: 130,
+        meta: { headerTitle: 'Kind' },
       },
       {
         id: 'subject_title',
@@ -232,11 +266,13 @@ export function QuotationsPanel({ project }: { project: Project }) {
             projectId={project.id}
             document={row.original}
             canEdit={canWorkOnProject(project)}
+            projectOutcome={project.outcome}
+            projectHasQuotation={hasQuotation}
           />
         ),
       },
     ],
-    [project.id, project.can_edit, project.approval_state],
+    [project.id, project.can_edit, project.approval_state, project.outcome, hasQuotation],
   );
 
   const ticked = rows.filter((row) => rowSelection[row.id]);
@@ -244,7 +280,7 @@ export function QuotationsPanel({ project }: { project: Project }) {
 
   return (
     <PanelDataGrid
-      title="Quotations"
+      title="Proposals"
       toolbar={({ table }) => (
         <DataGridListToolbar
           table={table}
@@ -255,8 +291,8 @@ export function QuotationsPanel({ project }: { project: Project }) {
               inputClassName="[&::-webkit-search-cancel-button]:appearance-none"
               value={search}
               onChange={setSearch}
-              placeholder="Search quotations"
-              aria-label="Search quotations"
+              placeholder="Search proposals"
+              aria-label="Search proposals"
               className="w-full sm:w-64"
             />
           }
@@ -291,7 +327,7 @@ export function QuotationsPanel({ project }: { project: Project }) {
                 }
               >
                 <Plus className="size-4" aria-hidden />
-                Add a quotation
+                Add a proposal
               </Button>
             ) : undefined
           }

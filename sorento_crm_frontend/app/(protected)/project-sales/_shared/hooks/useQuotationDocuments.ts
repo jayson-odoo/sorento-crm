@@ -23,6 +23,7 @@ import {
   listQuotationDocuments,
   listQuotationIssues,
   logQuotationWhatsAppOpened,
+  makeQuotation,
   moveQuotationApproval,
   queueQuotationIssuePdf,
   queueQuotationIssueXlsx,
@@ -135,7 +136,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     mutationFn: (body: QuotationDocumentBody = {}) => createQuotationDocument(projectId, body),
     onSuccess: (document: QuotationDocument) => {
       invalidate();
-      toast.success(`Quotation ${document.document_no} created`);
+      toast.success(`Proposal ${document.document_no} created`);
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -300,6 +301,17 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     onError: (error: Error) => toast.error(error.message),
   });
 
+  /** PS-PROPOSAL-QUOTATION: a won project's proposal revision becomes its quotation. */
+  const makeQuotationFrom = useMutation({
+    mutationFn: ({ id, issueId }: { id: string; issueId: string }) =>
+      makeQuotation(projectId, id, issueId),
+    onSuccess: (document: QuotationDocument) => {
+      invalidate();
+      toast.success(`Quotation ${document.document_no} made`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   /** The issued workbook, queued the same way and reported the same way. */
   const issueXlsx = useMutation({
     mutationFn: ({ id, issueId }: { id: string; issueId: string }) =>
@@ -327,6 +339,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     signLink,
     issuePdf,
     issueXlsx,
+    makeQuotationFrom,
     documentId,
   };
 }

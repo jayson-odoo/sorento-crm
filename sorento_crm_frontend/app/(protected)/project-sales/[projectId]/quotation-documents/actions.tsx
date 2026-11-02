@@ -11,7 +11,15 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Download, Link2, MessageCircle, PenLine, SquarePen, Trash2 } from 'lucide-react';
+import {
+  Download,
+  FileCheck2,
+  Link2,
+  MessageCircle,
+  PenLine,
+  SquarePen,
+  Trash2,
+} from 'lucide-react';
 import type { RecordAction } from '@/components/common/recordActions';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import {
@@ -20,10 +28,12 @@ import {
 } from '../../_shared/hooks/useQuotationDocuments';
 import { isLockedForApproval } from '../../_shared/lib/quotationDecision';
 import {
+  documentNoun,
   listQuotationIssues,
   type QuotationDocument,
   type QuotationIssue,
 } from '../../_shared/services/quotationDocumentService';
+import { MakeQuotationDialog } from './[documentId]/components/MakeQuotationDialog';
 import { QuotationSignDialog } from './[documentId]/components/QuotationSignDialog';
 import { QuotationSignLinkDialog } from './[documentId]/components/QuotationSignLinkDialog';
 import { QuotationWhatsAppDialog } from './[documentId]/components/QuotationWhatsAppDialog';
@@ -48,6 +58,8 @@ export function useQuotationDocumentActions({
   onEdit,
   onDeleted,
   surface = 'toast',
+  projectOutcome,
+  projectHasQuotation = false,
 }: {
   projectId: string;
   /** Undefined while the record is still loading: no actions yet. */
@@ -60,6 +72,10 @@ export function useQuotationDocumentActions({
   onDeleted?: () => void;
   /** `inline` on the record page (countdown in the header, watched from mount); `toast` in a row. */
   surface?: 'inline' | 'toast';
+  /** The project's outcome: "Make quotation" is offered only on a won project. */
+  projectOutcome?: string | null;
+  /** The project already holds a quotation (made from any proposal): no second one. */
+  projectHasQuotation?: boolean;
 }): QuotationDocumentActionSet {
   const router = useRouter();
   const documentId = document?.id ?? '';
@@ -67,6 +83,8 @@ export function useQuotationDocumentActions({
   const [signing, setSigning] = React.useState(false);
   const [linkToShow, setLinkToShow] = React.useState<string | null>(null);
   const [whatsAppIssue, setWhatsAppIssue] = React.useState<QuotationIssue | null>(null);
+  const [making, setMaking] = React.useState(false);
+  const noun = documentNoun(document);
 
   const documentPath = `/project-sales/${projectId}/quotation-documents/${documentId}`;
   const isSigned = Boolean(document?.signatory_signature);
@@ -80,7 +98,7 @@ export function useQuotationDocumentActions({
     subject: document?.our_ref ?? document?.document_no ?? '',
     surface,
     watchFromMount: surface === 'inline',
-    successMessage: 'Quotation deleted',
+    successMessage: `${noun} deleted`,
     invalidateKeys: [quotationDocumentsKey(projectId)],
     onCommitted: onDeleted,
   });
@@ -109,7 +127,7 @@ export function useQuotationDocumentActions({
   if (canEdit) {
     actions.push({
       key: 'quotation_document.edit',
-      label: 'Edit quotation',
+      label: `Edit ${noun.toLowerCase()}`,
       icon: SquarePen,
       run: () => {
         if (onEdit) return onEdit();
@@ -122,9 +140,28 @@ export function useQuotationDocumentActions({
     });
     actions.push({
       key: 'quotation_document.sign',
-      label: isSigned ? 'Sign again' : 'Sign quotation',
+      label: isSigned ? 'Sign again' : `Sign ${noun.toLowerCase()}`,
       icon: PenLine,
       run: () => setSigning(true),
+    });
+  }
+
+  // PS-PROPOSAL-QUOTATION: an issued proposal of a won project becomes its quotation. Hidden on
+  // a proposal a quotation was already made from, and on a project that is not won.
+  if (
+    canEdit &&
+    document.kind !== 'quotation' &&
+    issued &&
+    !document.quotation_document_id &&
+    !projectHasQuotation &&
+    projectOutcome === 'won'
+  ) {
+    actions.push({
+      key: 'quotation_document.make_quotation',
+      label: 'Make quotation',
+      icon: FileCheck2,
+      disabled: mutations.makeQuotationFrom.isPending,
+      run: () => setMaking(true),
     });
   }
 
@@ -209,7 +246,7 @@ export function useQuotationDocumentActions({
     });
     actions.push({
       key: 'quotation_document.delete',
-      label: 'Delete quotation',
+      label: `Delete ${noun.toLowerCase()}`,
       icon: Trash2,
       kind: 'destructive',
       disabled: issued || remove.isPending,
@@ -235,6 +272,27 @@ export function useQuotationDocumentActions({
         }}
       />
       <QuotationSignLinkDialog url={linkToShow} onOpenChange={() => setLinkToShow(null)} />
+      {making ? (
+        <MakeQuotationDialog
+          open={making}
+          onOpenChange={setMaking}
+          projectId={projectId}
+          proposal={document}
+          isMaking={mutations.makeQuotationFrom.isPending}
+          onConfirm={async (issueId) => {
+            try {
+              const made = await mutations.makeQuotationFrom.mutateAsync({
+                id: document.id,
+                issueId,
+              });
+              setMaking(false);
+              router.push(`/project-sales/${projectId}/quotation-documents/${made.id}`);
+            } catch {
+              // The mutation toasted the reason; the dialog stays open.
+            }
+          }}
+        />
+      ) : null}
       <QuotationWhatsAppDialog
         projectId={projectId}
         document={document}

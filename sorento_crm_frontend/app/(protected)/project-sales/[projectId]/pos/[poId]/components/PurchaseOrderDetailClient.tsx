@@ -42,6 +42,8 @@ import {
   useScheduleVersions,
 } from '../../../../_shared/hooks/useProjectSalesOrders';
 import { usePurchaseOrderProgress } from '../../../../_shared/hooks/usePoProgress';
+import { QtyOverQuoteDialog } from '../../../../_shared/components/QtyOverQuoteDialog';
+import { isQtyOver, type QtyOverProduct } from '../../../../_shared/lib/qtyOverQuote';
 import { withReviewOrigin } from '../../../../_shared/lib/reviewOrigin';
 import { DeliveryScheduleUploadDialog } from '../../../components/DeliveryScheduleUploadDialog';
 import { PODeliveriesPanel } from '../../../components/PODeliveriesPanel';
@@ -94,6 +96,7 @@ export function PurchaseOrderDetailClient({
   const project = useProject(projectId);
   const purchaseOrders = usePurchaseOrders(projectId);
   const { update, remove } = usePurchaseOrderMutations(projectId);
+  const [qtyOver, setQtyOver] = React.useState<QtyOverProduct[] | null>(null);
   const edit = usePurchaseOrderEditSession();
   // The pager's set is the project's own POs, in the order the tab lists them.
   // The project's POs are already in memory (the record itself is read out of
@@ -261,18 +264,22 @@ export function PurchaseOrderDetailClient({
     headerHints.push('You can read this purchase order but not change it.');
   }
 
-  async function runSave() {
+  async function runSave(qtyOverReason?: string) {
     setIsSaving(true);
     try {
       const body: ProjectPurchaseOrderSaveBody = { ...edit.headerDraft };
       // The lines are sent ONLY when they moved. The write replaces the whole set, so sending
       // it back untouched would be a real rewrite of rows nobody edited.
       if (edit.linesChanged) body.lines = stagedPoLinesToBody(edit.staged ?? []);
+      if (qtyOverReason) body.qty_over_reason = qtyOverReason;
       await update.mutateAsync({ id: poId, body });
+      setQtyOver(null);
       edit.cancel();
-    } catch {
-      // The mutation already toasted the reason, and the session is deliberately left open:
-      // what was typed is still on screen and still saveable.
+    } catch (error) {
+      // PS-PROPOSAL-QUOTATION soft stop: more than the quotation quotes asks for a reason, and
+      // the same save goes again with it. Anything else was already toasted, and the session is
+      // deliberately left open: what was typed is still on screen and still saveable.
+      if (isQtyOver(error)) setQtyOver(error.products);
     } finally {
       setIsSaving(false);
     }
@@ -311,6 +318,12 @@ export function PurchaseOrderDetailClient({
 
   return (
     <div className="space-y-5">
+      <QtyOverQuoteDialog
+        products={qtyOver}
+        isSaving={isSaving}
+        onCancel={() => setQtyOver(null)}
+        onSubmit={(reason) => runSave(reason)}
+      />
       <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
@@ -318,6 +331,15 @@ export function PurchaseOrderDetailClient({
             <Badge variant="secondary" appearance="light">
               {SOURCE_LABELS[shown.po_source] ?? shown.po_source}
             </Badge>
+            {po.qty_over_reason ? (
+              <Badge
+                variant="warning"
+                appearance="light"
+                title={`${po.qty_over_reason}${po.qty_over_reason_by_name ? ` (${po.qty_over_reason_by_name})` : ''}`}
+              >
+                Qty over quote
+              </Badge>
+            ) : null}
           </div>
           <h2 className="mt-1 text-xl font-semibold break-words">{shown.po_number}</h2>
           <p className="text-sm text-muted-foreground break-words">

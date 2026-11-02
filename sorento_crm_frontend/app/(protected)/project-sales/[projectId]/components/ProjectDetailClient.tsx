@@ -97,7 +97,7 @@ import { TasksPanel } from './TasksPanel';
 export const TABS = [
   { id: 'overview', label: 'Overview', icon: Info },
   { id: 'documents', label: 'Documents', icon: Paperclip },
-  { id: 'quotations', label: 'Quotation', icon: FileText },
+  { id: 'quotations', label: 'Proposals', icon: FileText },
   { id: 'sample-requests', label: 'Samples Request', icon: ClipboardList },
   { id: 'sponsorships', label: 'Sponsorship Form', icon: HandCoins },
   // PO is the old Orders tab (id kept so links hold); SO lists every sales order.

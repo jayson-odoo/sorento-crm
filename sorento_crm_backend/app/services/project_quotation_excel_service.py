@@ -66,7 +66,7 @@ from app.models.projects import (
 )
 from app.services import product_image_service as product_images
 from app.services import project_quotation_pdf_service as pdf
-from app.services.project_quotation_document_service import quotation_no
+from app.services.project_quotation_document_service import document_noun, quotation_no
 
 logger = logging.getLogger(__name__)
 
@@ -310,7 +310,7 @@ def _write_letterhead(
     row += 1
     # Built from document_no + issue_no, the number the sign page and the PDF print.
     for label, value in (
-        ("Quotation No.", quotation_no(document.document_no, issue.issue_no)),
+        (f"{document_noun(document)} No.", quotation_no(document.document_no, issue.issue_no, issue.revision_label)),
         ("Your Ref", _text(document.your_ref)),
         ("Date", _date_text(document.doc_date or issue.issued_at)),
     ):
@@ -352,7 +352,7 @@ def _write_light_header(
     Its scope label follows immediately below, written by the scope block itself, so a page found
     on a desk answers both "which quotation" and "which scope".
     """
-    _put(sheet, row, 1, f"Quotation No.: {quotation_no(document.document_no, issue.issue_no)}")
+    _put(sheet, row, 1, f"{document_noun(document)} No.: {quotation_no(document.document_no, issue.issue_no, issue.revision_label)}")
     return row + 2
 
 
