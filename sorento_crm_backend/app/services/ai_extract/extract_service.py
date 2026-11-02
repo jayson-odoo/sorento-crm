@@ -108,6 +108,11 @@ TOO_LONG_MESSAGE = "This file is too long to read in one go; try fewer pages."
 # with its own cap. Group size is ceil(pages / 4), so every group runs in ONE wave and the whole
 # read still ends inside one call's cap (plus render), under the host proxy's 60 s.
 MAX_PARALLEL_CALLS = 4
+# Only a line-item upload of MORE pages than this is split: crew read 6 pages / 168 rows in 34 s in
+# one call, and anything smaller reads better whole (review: a 2-photo complaint split in two
+# lost its second DO number). A form without line items is never split: its answer is one set of
+# fields, not rows per page.
+SPLIT_ABOVE_PAGES = 6
 
 # Forms that ship a separate items-list section. Complaints now capture one
 # line per affected product (code + quantity), so they receive a `products`
@@ -131,8 +136,9 @@ def _is_video(f: "ExtractFile") -> bool:
 
 
 def _page_groups(parts: list[ImagePart], *, split: bool) -> list[list[ImagePart]]:
-    """Consecutive pages in at most MAX_PARALLEL_CALLS groups (one wave). A video is never split:
-    its frames show the same products, and read apart they come back as near-copies."""
+    """Consecutive pages in at most MAX_PARALLEL_CALLS groups (one wave). The caller decides
+    `split` (line items, past SPLIT_ABOVE_PAGES, no video: a clip's frames show the same products
+    and read apart come back as near-copies)."""
     if not split or len(parts) <= 1:
         return [parts]
     size = -(-len(parts) // MAX_PARALLEL_CALLS)
@@ -182,8 +188,9 @@ def _is_blank(value: Any) -> bool:
 
 
 def _merge_answers(answers: list[dict[str, Any]]) -> dict[str, Any]:
-    """Page groups' JSON answers as one, in page order. A field takes the first non-empty value;
-    product rows are concatenated, and a row exactly equal to one from an EARLIER group (a line
+    """Page groups' JSON answers as one, in page order. A single-value field takes the first
+    non-empty value; a list field (DO numbers, codes) gathers every group's entries, each once.
+    Product rows are concatenated, and a row exactly equal to one from an EARLIER group (a line
     printed on two pages, a repeated header) is dropped. Repeats inside one group stay: that
     read saw them on the same pages, as a single call always did."""
     if len(answers) == 1:
@@ -201,6 +208,8 @@ def _merge_answers(answers: list[dict[str, Any]]) -> dict[str, Any]:
                         continue
                     rows.append(row)
                     mine.add(marker)
+            elif isinstance(value, list) and isinstance(merged.get(key), list):
+                merged[key] = merged[key] + [v for v in value if v not in merged[key]]
             elif _is_blank(merged.get(key)):
                 merged[key] = value
         earlier |= mine
@@ -489,7 +498,12 @@ class AIExtractService:
         self._form_key = form_key
         provider, provider_name, model_name = self._resolve_provider()
         has_line_items = _form_has_line_items(form_key)
-        groups = _page_groups(image_parts, split=not any(_is_video(f) for f in files))
+        groups = _page_groups(
+            image_parts,
+            split=has_line_items
+            and len(image_parts) > SPLIT_ABOVE_PAGES
+            and not any(_is_video(f) for f in files),
+        )
         # Pasted text is read once, with the first group. Messages are built here, on the
         # request thread, because they read the prompt from the database.
         first_messages = self._build_messages(

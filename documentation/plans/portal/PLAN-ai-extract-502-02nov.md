@@ -65,12 +65,16 @@ about what the 45 s cap holds at production's measured speed. A truncation that 
 ## Round 3: big files read in parallel page groups (crew browser pass, 2 Nov)
 
 On 9c9fb65f18 a 6-page / 168-row stand-in read in 34 s, but a 12-page / 336-row one (the owner's real
-promo size) hit the 45 s cap. A multi-page upload is now read as at most `MAX_PARALLEL_CALLS` (4) page
-groups at once, group size ceil(pages / 4), so every group runs in ONE wave: the whole read ends inside
+promo size) hit the 45 s cap. A line-item upload of MORE than `SPLIT_ABOVE_PAGES` (6, the size crew read
+in one call in 34 s) pages is now read as at most `MAX_PARALLEL_CALLS` (4) page groups at once, group size ceil(pages / 4), so every group runs in ONE wave: the whole read ends inside
 one call's 45 s cap plus render, under the proxy's 60 s, with no separate deadline to manage. Each call
 keeps its own cap and answer budget. Rows merge in page order (`pool.map`, not finish order); a row
 exactly equal to one from an earlier group is dropped (repeats inside one group stay, as a single call
-always kept them); a field takes the first page's non-empty value. Groups that fail are named in a plain
+always kept them); a single-value field takes the first page's non-empty value and a list field
+gathers every group's entries, each once. Smaller uploads and forms without line items stay one call
+(review, round 3: a 2-photo complaint split in two lost its second DO number; a field-only form's
+answer is one set of fields, not rows per page, so the project register and master-data extracts,
+which never show the note, are never split). Groups that fail are named in a plain
 `note` ("Pages 7-9 could not be read, try them again.") beside the rows that did read; every group
 failing is the 503 path, first group's error. A video is not split (its frames show the same products).
 Pasted text rides with the first group. Usage is logged once with the summed tokens.
