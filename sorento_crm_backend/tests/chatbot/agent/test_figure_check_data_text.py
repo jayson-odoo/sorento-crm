@@ -128,12 +128,13 @@ def test_rounding_is_half_up():
 
 
 def test_column_total_is_rounded_too():
-    """F2: rows 1.004 + 2.003 total 3.007: backs 3.01 and 3, not 3.00 or 3.1."""
+    """F2: rows 1.004 + 2.003 total 3.007: backs 3.01, 3.0 and 3, not 3.00 or 3.1."""
     data = {"data": [{"amount": 1.004}, {"amount": 2.003}]}
     assert _check("Total 3.01.", data)[0] == []
     assert _check("Total 3.", data)[0] == []
     assert _check("Total 3.00.", data)[0] == ["3.00"]
-    assert _check("Total 3.0.", data)[0] == ["3.0"]
+    assert _check("Total 3.0.", data)[0] == []
+    assert _check("Total 3.1.", data)[0] == ["3.1"]
 
 
 def test_users_own_figure_stays_exact():
