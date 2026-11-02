@@ -27,6 +27,8 @@ export const BrandSchema = z.object({
   // "Customers can ask for this brand" (S0, D3): default true; false for the
   // placeholder brands OTHERS and NO LOGO, which record the absence of a brand.
   is_searchable: z.boolean(),
+  // CABANA-NO-SELLING-PRICE: promotions on this brand carry no selling price.
+  no_promo_selling_price: z.boolean(),
   // The company whose dealers get this brand from the access-sheet upload; null = a project brand.
   dealer_company_id: z.string().nullable(),
 });

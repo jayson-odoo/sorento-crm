@@ -17,6 +17,9 @@ beforeAll(() => {
 });
 
 const getQuotationSignPage = vi.fn();
+// The view beacon calls NextAuth, which jsdom cannot reach; its own tests live beside the hook.
+vi.mock('../../hooks/useQuotationViewBeacon', () => ({ useQuotationViewBeacon: () => {} }));
+
 vi.mock('../../services/quotationSignService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/quotationSignService')>();
   return { ...actual, getQuotationSignPage: (...args: unknown[]) => getQuotationSignPage(...args) };
