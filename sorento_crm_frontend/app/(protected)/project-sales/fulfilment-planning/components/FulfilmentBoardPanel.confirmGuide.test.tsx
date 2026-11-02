@@ -1980,7 +1980,7 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     );
   });
 
-  it('an older server decision never replaces the one this tab saved later', async () => {
+  it('a board read carrying the same saved draft this tab holds is not "saved again"', async () => {
     serveSplits({ 'pso-so-1': LINE3_READ() });
     await mountWith(
       boardWithRemark('ORDER 3', { verdict: 'amended', buy_qty: '3' }, '2026-11-02T02:00:00Z'),
@@ -2020,5 +2020,90 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     expect(within(block).getByTestId('new-date-3')).toHaveTextContent('02/11/2026');
     expect(block).not.toHaveTextContent('nothing goes to purchasing');
     expect(block.querySelectorAll('input')).toHaveLength(0);
+  });
+
+  it('the newer server decision is the one Confirm posts, not the one this tab held', async () => {
+    const amended = (buy: string, reserve: string) => ({
+      verdict: 'amended',
+      timely_spo_qty: '0',
+      reserve_qty: reserve,
+      reserve: Number(reserve) > 0 ? [{ warehouse_id: 'wh-brw', location: 'BRW-IB', qty: reserve }] : [],
+      borrow: [],
+      buy_qty: buy,
+      reason: 'Planner choice.',
+    });
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(
+      boardWithRemark('USE OWN 10', amended('0', '10'), '2026-11-02T01:00:00Z'),
+      ['SO000001'],
+    );
+    getPlanningBoard.mockResolvedValue(
+      boardWithRemark('ORDER 7', amended('7', '3'), '2026-11-02T02:00:00Z'),
+    );
+    await walkConfirmGuide();
+    await waitFor(() =>
+      expect(previewConfirmMany.mock.calls.length + confirmMany.mock.calls.length).toBeGreaterThan(0),
+    );
+    const posted = JSON.stringify([...previewConfirmMany.mock.calls, ...confirmMany.mock.calls]);
+    expect(posted).toContain('"buy_qty":"7"');
+    expect(posted).not.toContain('"qty":"10"');
+  });
+
+  it("this tab's own save is recorded: the next board read carrying it is not \"saved again\"", async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(
+      boardWithRemark('ORDER BACK', { verdict: 'approved' }, '2026-11-02T01:00:00Z'),
+      ['SO000001'],
+    );
+    putLineDraft.mockResolvedValue({
+      decision: { verdict: 'approved', remark: 'URGENT' },
+      saved_by: 'Test Planner',
+      saved_at: '2026-11-02T03:00:00Z',
+    });
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    // What the server holds once this tab's save landed: the save reply's own saved_at.
+    getPlanningBoard.mockResolvedValue(
+      boardWithRemark('ORDER BACK', { verdict: 'approved', remark: 'URGENT' }, '2026-11-02T03:00:00Z'),
+    );
+    fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: 'URGENT' } });
+    const reads = getPlanningBoard.mock.calls.length;
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalled());
+    // The save says which draft it stands on, so the server can refuse it over a newer one.
+    expect(putLineDraft.mock.calls[0][3]).toBe('2026-11-02T01:00:00Z');
+    // The remark save re-reads the board (`saveLineRemarks`), which now carries that draft.
+    await waitFor(() => expect(getPlanningBoard.mock.calls.length).toBeGreaterThan(reads));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('saved again'));
+  });
+
+  it('a failed re-read on open writes nothing from the stale view: no Next, no warning buttons, a Retry', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(
+      boardWithRemark('ORDER BACK', { verdict: 'approved' }, '2026-11-02T01:00:00Z'),
+      ['SO000001'],
+    );
+    // The board query retries once: both tries time out.
+    getPlanningBoard
+      .mockRejectedValueOnce(new Error('The server took too long to answer.'))
+      .mockRejectedValueOnce(new Error('The server took too long to answer.'));
+    await openConfirmGuide();
+    const failed = await screen.findByTestId('confirm-guide-refresh-failed');
+    expect(failed).toHaveTextContent('could not be read again');
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    expect(screen.queryByTestId('split-line-3')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Take suggestion' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Keep' })).not.toBeInTheDocument();
+    // Retry reads again; once it answers the page is usable.
+    getPlanningBoard.mockResolvedValue(
+      boardWithRemark('ORDER 3', { verdict: 'approved' }, '2026-11-02T01:00:00Z'),
+    );
+    fireEvent.click(within(failed).getByRole('button', { name: 'Retry' }));
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    expect(screen.queryByTestId('confirm-guide-refresh-failed')).not.toBeInTheDocument();
   });
 });

@@ -139,6 +139,7 @@ import { LineSplitDialog } from './LineSplitDialog';
 import { BoardOrderSplitsDialog } from './BoardOrderSplitsDialog';
 import { ConfirmGuideDialog, type ConfirmGuidePage } from './ConfirmGuideDialog';
 import {
+  LineDraftNewerError,
   newerServerDraftKeys,
   suggestionMovedOf,
 } from '../../_shared/lib/confirmPreviewFresh';
@@ -965,10 +966,20 @@ export function FulfilmentBoardPanel({
       serverDrafts,
       (key) => pendingDeletes.current.has(key) || pendingSaves.current.has(key),
     );
+    // The record follows whatever server draft the local entry now stands on: a key seen for
+    // the first time, one replaced above, and one the effect takes over an empty or pre-marked
+    // entry (review round 1, should-fix 5). A covered line with no draft has none any more.
     for (const contribution of serverDrafts) {
-      if (!savedAtByKey.current.has(contribution.key) || replaced.has(contribution.key)) {
-        savedAtByKey.current.set(contribution.key, contribution.draft?.saved_at ?? '');
+      const key = contribution.key;
+      if (pendingDeletes.current.has(key) || pendingSaves.current.has(key)) continue;
+      const local = draftRef.current[key];
+      if (!savedAtByKey.current.has(key) || replaced.has(key) || !local || local.preMarked) {
+        savedAtByKey.current.set(key, contribution.draft?.saved_at ?? '');
       }
+    }
+    for (const contribution of coveredWithNoDraft) {
+      if (pendingSaves.current.has(contribution.key)) continue;
+      savedAtByKey.current.delete(contribution.key);
     }
     if (replaced.size > 0) {
       const lines = serverDrafts
@@ -1019,12 +1030,18 @@ export function FulfilmentBoardPanel({
     async (key: string): Promise<void> => {
       pendingDeletes.current.add(key);
       try {
-        await removeLineDraft(key);
+        // CONFIRM-PREVIEW-STALE: the server refuses the Undo when the line was saved again
+        // after the draft this tab holds; the board re-reads so the newer one shows.
+        await removeLineDraft(key, savedAtByKey.current.get(key) || undefined);
+        savedAtByKey.current.delete(key);
+      } catch (error) {
+        if (error instanceof LineDraftNewerError) void rawBoard.refetch();
+        throw error;
       } finally {
         pendingDeletes.current.delete(key);
       }
     },
-    [removeLineDraft],
+    [removeLineDraft, rawBoard],
   );
 
   /**
@@ -1104,8 +1121,14 @@ export function FulfilmentBoardPanel({
           // until Confirm freezes a revision.
           pendingSaves.current.add(key);
           try {
+            // CONFIRM-PREVIEW-STALE: the draft this decision stands on, so the server refuses a
+            // write over a newer save made elsewhere (null: this tab holds none).
+            const basedOnSavedAt = savedAtByKey.current.has(key)
+              ? savedAtByKey.current.get(key) || null
+              : (contribution?.draft?.saved_at ?? null);
             const saved = await saveLineDraft(key, decision, contribution?.sources, {
               silent: options?.silent,
+              basedOnSavedAt,
             });
             // CONFIRM-PREVIEW-STALE: the save this tab holds, so a later board read can tell
             // a newer save made elsewhere from this one.
@@ -1125,6 +1148,9 @@ export function FulfilmentBoardPanel({
         // asked it not to (Should fix 1) - either way, `onFailure` is the caller's own way
         // to read it, and this key still goes back the way the click found it.
         options?.onFailure?.(error instanceof Error ? error.message : 'could not be saved');
+        // CONFIRM-PREVIEW-STALE: refused over a newer save; read it (the seeding effect then
+        // shows it and says so).
+        if (error instanceof LineDraftNewerError) void rawBoard.refetch();
         setDraft((current) => {
           const reverted = { ...current };
           if (hadPrevious && previousForKey) reverted[key] = previousForKey;
@@ -1157,6 +1183,7 @@ export function FulfilmentBoardPanel({
       pendingBatchSalesOrderIds,
       unadoptedSalesOrderIds,
       batchNamedKeys,
+      rawBoard,
     ],
   );
 
@@ -2359,13 +2386,24 @@ export function FulfilmentBoardPanel({
    * themselves inside the guide (`ConfirmGuideDialog`).
    */
   const [guideRefreshing, setGuideRefreshing] = React.useState(false);
+  /**
+   * CONFIRM-PREVIEW-STALE round 2 (crew browser pass, 2 Nov 2026): a re-read that FAILED (a
+   * timeout on a slow board) leaves the guide on the tab's older decisions, so the guide
+   * writes nothing from it: Next, Keep and Take suggestion wait behind a Retry.
+   */
+  const [guideRefreshFailed, setGuideRefreshFailed] = React.useState(false);
+  const refreshGuide = React.useCallback(() => {
+    setGuideRefreshing(true);
+    setGuideRefreshFailed(false);
+    void rawBoard
+      .refetch()
+      .then((result) => setGuideRefreshFailed(Boolean(result?.isError)))
+      .catch(() => setGuideRefreshFailed(true))
+      .finally(() => setGuideRefreshing(false));
+  }, [rawBoard]);
   const openGuide = () => {
     setGuideOpen(true);
-    setGuideRefreshing(true);
-    void board
-      .refetch()
-      .catch(() => undefined)
-      .finally(() => setGuideRefreshing(false));
+    refreshGuide();
     prepareGuide(unplannedGuideOrders);
   };
 
@@ -3814,7 +3852,9 @@ export function FulfilmentBoardPanel({
           saveRemarks={saveLineRemarks}
           preparing={guidePrep.running}
           refreshing={guideRefreshing}
-          onTakeSuggestion={(key) => void decide(key, null)}
+          refreshFailed={guideRefreshFailed}
+          onRetryRefresh={refreshGuide}
+          onTakeSuggestion={(key) => decide(key, null)}
           prepareErrors={guidePrep.errors}
           onRetryPrepare={() => prepareGuide(unplannedGuideOrders)}
           onClose={closeGuide}

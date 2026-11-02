@@ -5,12 +5,19 @@
  * Pure: no fetch, no React. `FulfilmentBoardPanel` hands it the board's lines.
  */
 import { decisionWords, type BoardChangeAnnotation } from './boardChangeAnnotations';
-import { decisionParts } from './supplyVocabulary';
+import { contributionDecision, partsBreakdown, type SupplyPart } from './supplyVocabulary';
 import type {
   BoardContribution,
   BoardDecision,
   BoardDraft,
 } from '../types/fulfilmentPlanning.types';
+
+/**
+ * The server refused a draft write because the line was saved again after the decision this
+ * tab holds (409 `board_line_draft_newer`). Lives here, not in the service module, because
+ * tests mock that module whole.
+ */
+export class LineDraftNewerError extends Error {}
 
 /**
  * The keys whose server draft was saved AFTER the one this tab's local decision stands on
@@ -50,6 +57,33 @@ export interface SuggestionMoved {
 }
 
 /**
+ * Do two compositions say the same thing? By board row kind and qty, the way the cards group
+ * them (`partsBreakdown`); the places are compared only where BOTH sides name them, because a
+ * change row's composition often carries no location while a saved decision does (review
+ * round 1: "Use incoming 3" against "Use incoming 3 from BRW" is the same answer).
+ */
+function sameComposition(
+  a: SupplyPart[],
+  b: SupplyPart[],
+  ownLocation: string | null,
+): boolean {
+  const rows = (parts: SupplyPart[]) =>
+    new Map(partsBreakdown([{ parts, ownLocation }]).map((row) => [row.key, row]));
+  const left = rows(a);
+  const right = rows(b);
+  if (left.size !== right.size) return false;
+  for (const [key, row] of left) {
+    const other = right.get(key);
+    if (!other || Number(other.qty) !== Number(row.qty)) return false;
+    const places = (r: typeof row) =>
+      r.places.map((place) => `${place.location}:${Number(place.qty)}`).sort().join('|');
+    if (row.places.length > 0 && other.places.length > 0 && places(row) !== places(other))
+      return false;
+  }
+  return true;
+}
+
+/**
  * A warning, never a refusal (owner ruling "one bad line never refuses an order"): the line
  * a pending AutoCount change names carries a SAVED decision (not the board's own pre-mark)
  * whose words differ from what that change suggests (`annotation.now.decision`, what Apply
@@ -66,11 +100,13 @@ export function suggestionMovedOf(
     (annotation) => !annotation.closed && annotation.now.decision,
   );
   const suggestion = latest?.now.decision ?? null;
-  if (!suggestion) return null;
-  const kept = decisionWords(
-    decisionParts(contribution, decision),
-    contribution.fulfilment_location ?? null,
-  );
-  if (!kept || kept === suggestion) return null;
+  if (!latest || !suggestion) return null;
+  const ownLocation = contribution.fulfilment_location ?? null;
+  // A bare approval composes nothing of its own: it takes the proposal (`contributionDecision`).
+  const keptParts = contributionDecision(contribution, decision) ?? [];
+  const kept = decisionWords(keptParts, ownLocation);
+  if (!kept) return null;
+  if (latest.nowParts ? sameComposition(keptParts, latest.nowParts, ownLocation) : kept === suggestion)
+    return null;
   return { suggestion, kept };
 }

@@ -112,6 +112,8 @@ export function ConfirmGuideDialog({
   saveRemarks,
   preparing = false,
   refreshing = false,
+  refreshFailed = false,
+  onRetryRefresh,
   onTakeSuggestion,
   prepareErrors,
   onRetryPrepare,
@@ -142,8 +144,14 @@ export function ConfirmGuideDialog({
    * opens; the review waits for it, so it never prints the decision as it was before a Save.
    */
   refreshing?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE round 2 (crew browser pass): that re-read failed, so what the guide
+   * holds may be older than the server. Nothing is written from it until a Retry succeeds.
+   */
+  refreshFailed?: boolean;
+  onRetryRefresh?: () => void;
   /** CONFIRM-PREVIEW-STALE: drop the saved decision so the line takes AutoCount's suggestion. */
-  onTakeSuggestion?: (key: string) => void;
+  onTakeSuggestion?: (key: string) => Promise<unknown> | void;
   /** Per core sales order id: why it could not be made ready (the server's sentence). */
   prepareErrors?: ReadonlyMap<string, string>;
   onRetryPrepare?: () => void;
@@ -182,6 +190,15 @@ export function ConfirmGuideDialog({
     );
   /** CONFIRM-PREVIEW-STALE: the "AutoCount moved this line" warnings the planner chose to keep. */
   const [keptMoved, setKeptMoved] = React.useState<ReadonlySet<string>>(new Set());
+  /** The line whose Take suggestion is on the wire (one press, one write). */
+  const [taking, setTaking] = React.useState<string | null>(null);
+  const takeSuggestion = (key: string) => {
+    if (!onTakeSuggestion || taking) return;
+    setTaking(key);
+    void Promise.resolve(onTakeSuggestion(key)).finally(() => setTaking(null));
+  };
+  // CONFIRM-PREVIEW-STALE round 2: the re-read as the guide opened failed.
+  const stale = refreshFailed && !refreshing;
   // A page with no planning record waits for the board's adopt, never shown read-only while it
   // runs. Only a FAILED adopt leaves its lines read-only, under the error and its Retry, and
   // the guide can still move on: the press names that order in its results, and one order
@@ -283,7 +300,7 @@ export function ConfirmGuideDialog({
     }
   };
   const pressConfirm = async () => {
-    if (posting) return;
+    if (posting || refreshing || stale) return;
     setPosting(true);
     if (await runConfirm(new Map(pages.map((entry) => [entry.salesOrderId, remarkOf(entry)])))) {
       onClose();
@@ -302,7 +319,13 @@ export function ConfirmGuideDialog({
       : null;
   // UAC F14: a page is never "seen" before its split read has loaded.
   const nextEnabled =
-    step.kind === 'review' && Boolean(page) && !reading && !readFailed && !unready && !dirty;
+    step.kind === 'review' &&
+    Boolean(page) &&
+    !reading &&
+    !readFailed &&
+    !unready &&
+    !stale &&
+    !dirty;
 
   return (
     <Dialog
@@ -334,6 +357,7 @@ export function ConfirmGuideDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4">
+          {!page && stale ? <RefreshFailed onRetry={onRetryRefresh} /> : null}
           {page ? (
             <MockupLinesContext.Provider value={pageFacts?.labelled ?? NO_MOCKUP_LINES}>
             <section
@@ -407,7 +431,7 @@ export function ConfirmGuideDialog({
                   </Button>
                 </div>
               ) : null}
-              {!unready
+              {!unready && !stale
                 ? page.covered
                     .filter((line) => line.moved && !keptMoved.has(line.key))
                     .map((line) => (
@@ -419,7 +443,7 @@ export function ConfirmGuideDialog({
                         className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
                       >
                         <span className="min-w-0 flex-1 break-words">
-                          {`Line ${line.lineNo ?? ''} ${line.itemCode}: AutoCount moved this line: suggestion ${line.moved?.suggestion}, you keep ${line.moved?.kept}`}
+                          {`${line.lineNo != null ? `Line ${line.lineNo} ` : ''}${line.itemCode}: AutoCount moved this line: suggestion ${line.moved?.suggestion}, you keep ${line.moved?.kept}`}
                         </span>
                         <Button
                           type="button"
@@ -435,8 +459,8 @@ export function ConfirmGuideDialog({
                           <Button
                             type="button"
                             size="sm"
-                            disabled={dirty}
-                            onClick={() => onTakeSuggestion(line.key)}
+                            disabled={dirty || taking !== null}
+                            onClick={() => takeSuggestion(line.key)}
                           >
                             Take suggestion
                           </Button>
@@ -444,7 +468,9 @@ export function ConfirmGuideDialog({
                       </div>
                     ))
                 : null}
-              {unready ? (
+              {stale ? (
+                <RefreshFailed onRetry={onRetryRefresh} />
+              ) : unready ? (
                 <SectionSkeleton rows={4} />
               ) : readFailed ? (
                 <div
@@ -606,7 +632,7 @@ export function ConfirmGuideDialog({
             <Button
               type="button"
               data-testid="confirm-guide-confirm"
-              disabled={posting}
+              disabled={posting || refreshing || stale}
               onClick={() => void pressConfirm()}
             >
               {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
@@ -615,5 +641,22 @@ export function ConfirmGuideDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** CONFIRM-PREVIEW-STALE round 2: the board could not be read again as the guide opened. */
+function RefreshFailed({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <div data-testid="confirm-guide-refresh-failed" className="flex flex-col items-start gap-2 py-4 text-sm">
+      <span role="alert" className="break-words">
+        The board could not be read again, so this may not show the latest saved decisions.
+        Retry before you confirm.
+      </span>
+      {onRetry ? (
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      ) : null}
+    </div>
   );
 }
