@@ -3008,6 +3008,9 @@ def _validate_composition_shape(
         "order_back": bool(composition.get("order_back", False)),
         "cited_document": composition.get("cited_document"),
         "suspected_system_issue": bool(composition.get("suspected_system_issue", False)),
+        # The planner's own REMARK for the line (`ConfirmLine.remark`, OI-SPLIT-GUIDE F26).
+        # Dropped here, the email printed the generated words over it (CONFIRM-REMARK-FIX F2).
+        "remark": composition.get("remark"),
     })
 
 
@@ -3158,6 +3161,7 @@ def _to_confirm_line(payload: dict):
         order_back=bool(payload.get("order_back", False)),
         cited_document=payload.get("cited_document"),
         suspected_system_issue=bool(payload.get("suspected_system_issue", False)),
+        remark=payload.get("remark"),
     )
 
 

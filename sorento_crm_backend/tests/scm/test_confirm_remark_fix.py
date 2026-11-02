@@ -88,3 +88,61 @@ def test_f1_one_email_per_press_when_purchasing_is_notified(api, monkeypatch, se
     real = _press_with_remark(s, preview=False)
     assert real.status_code == 200, real.text
     assert len(_handover_calls(calls)) == 1, _handover_calls(calls)
+
+
+# F2: the planner's own line REMARK (`ConfirmLine.remark`, typed in the guide) printed in the
+# popup, but a Confirm answering a planning-change batch dropped it on the way through the
+# batch row's composition, so the email and its Excel printed the generated words ("DELAY").
+
+OWN = "Planner words"
+
+
+def _press_line_remark(s, *, preview):
+    from tests.scm.test_confirm_preview_delivered_change import _fresh_request
+
+    _fresh_request(s)
+    line = _line_payload(s.l10.id, buy_qty="3")
+    line["remark"] = OWN
+    return s.client.post(
+        "/api/v1/project-sales/fulfilment-planning/confirm-all",
+        json={
+            "preview": preview,
+            "orders": [
+                {"pso_id": str(s.order.id), "lines": [line], "batch_id": str(s.batch.id)}
+            ],
+        },
+    )
+
+
+def test_f2_the_planners_line_remark_is_the_email_remark_on_a_planning_change_confirm(
+    api, monkeypatch
+):
+    from tests.scm.test_confirm_preview_delivered_change import _email_remarks, _sent_remarks
+
+    s = _seed(api, pending=True)
+    _register(s.world)
+    calls = _captured_dispatches(monkeypatch)
+
+    preview = _press_line_remark(s, preview=True)
+    assert preview.status_code == 200, preview.text
+    popup = _email_remarks(preview.json(), s.l10.id)
+    calls.clear()
+    real = _press_line_remark(s, preview=False)
+    assert real.status_code == 200, real.text
+    assert real.json()["results"][0]["ok"], real.text
+    sent = _sent_remarks(calls, s.world.product.product_code)
+
+    assert sent == [OWN], sent
+    assert popup == sent, (popup, sent)
+
+
+def test_f2_the_planners_line_remark_is_frozen_with_the_batch_confirm(api):
+    from app.services.project_supply_service import ProjectSupplyService
+
+    s = _seed(api, pending=True)
+    real = _press_line_remark(s, preview=False)
+    assert real.status_code == 200, real.text
+    s.db.expire_all()
+    supply = ProjectSupplyService(s.db)
+    frozen = supply.frozen_lines_of(supply.active_decision(str(s.order.id)))
+    assert frozen[str(s.l10.id)].get("remark") == OWN, frozen[str(s.l10.id)]
