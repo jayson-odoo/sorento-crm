@@ -1,6 +1,6 @@
 # PLAN: the parser writes the whole report ask each turn (semantic carry, 2 Nov 2026)
 
-**Status:** Plan. Track: full (L-ish: parser prompt + schema + the lane's report path; no migration, no route change,
+**Status:** Build (PR A; split ruled by crew 2 Nov). Track: full (L-ish: parser prompt + schema + the lane's report path; no migration, no route change,
 no auth change). Branch `crew/sales-account-type-semantic` from origin/main 46de2f6d77. Lane SALES-ACCOUNT-TYPE,
 follow-up of #2067 / #2074. Supersedes `PLAN-report-multiturn-carry-2nov.md` (PR #2092, coded carry rules, closed
 unmerged). UAC: `report-semantic-carry-acceptance-criteria.md`.
@@ -82,6 +82,8 @@ section + tests; delete ~950 (report_ask.py ~900 + engine seams) after promotion
 
 **PR A (this branch).**
 - A1 Schema: `REPORT_ASK_LINE` marker, `_REPORT_ASK_SCHEMA`, `with_report_ask(schema)`, `ParserConfig.report_ask`.
+  The marker is the section heading line of the candidate text, exactly:
+  `== REPORT_ASK: the whole sales or outstanding report after this message, one object ==`.
 - A2 Held report line: rendered from the frame / open ask in words; frame stores id->name; printed in the user block
   only when `ParserConfig.report_ask` (context.py `ContextLayers` :254-310, L2 render :454 / :542; engine call
   :5416-5455). Format (fixed, so the gold rows and the renderer agree): `Held report: ` + compact JSON of the SAME
@@ -102,7 +104,8 @@ section + tests; delete ~950 (report_ask.py ~900 + engine seams) after promotion
 the flag stays only if another lane still serves a text without the marker.
 
 Split reason: production serves an unmarked text until the owner moves the label; deleting the old carry with PR A
-would leave production with no carry at all between the release and the label move. Crew asked to confirm.
+would leave production with no carry at all between the release and the label move. Crew ruled the split (a), 2 Nov
+(ask a26467083): PR A first, PR B only after the owner moves the parser label in production.
 
 ## Deletion (PR B; origin/main line numbers)
 
