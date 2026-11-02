@@ -1,6 +1,6 @@
 # PLAN: the parser writes the whole report ask each turn (semantic carry, 2 Nov 2026)
 
-**Status:** Review (PR A: red 194174a4f4 + 2a6e449d22 + 847771fcd2 + 6da25eadf6, green 819f45105e + ac6116db6d + 523bda322c; re-review next; split ruled by crew 2 Nov). Track: full (L-ish: parser prompt + schema + the lane's report path; no migration, no route change,
+**Status:** Review (PR A: red 194174a4f4 + 2a6e449d22 + 847771fcd2 + 6da25eadf6 + b021ccc367 + 3677a20646, green 819f45105e + ac6116db6d + 523bda322c + 9b6fee096f + 0538e65004; re-review next; split ruled by crew 2 Nov). Track: full (L-ish: parser prompt + schema + the lane's report path; no migration, no route change,
 no auth change). Branch `crew/sales-account-type-semantic` from origin/main 46de2f6d77. Lane SALES-ACCOUNT-TYPE,
 follow-up of #2067 / #2074. Supersedes `PLAN-report-multiturn-carry-2nov.md` (PR #2092, coded carry rules, closed
 unmerged). UAC: `report-semantic-carry-acceptance-criteria.md`.
@@ -138,8 +138,15 @@ beyond run-to-run noise.
 - Review round 2, 3 Nov: agents, brands and categories carry as words and resolve fresh in the ask's company (no held
   id map; codes are unique per company); only customers keep a held id map, inside the ask's company. One open
   question rule: the declared pick of an offered option fills the slot the object left null (basis, outstanding kind,
-  company, measure, brand or account type). A month or year axis takes only this message's own count. The object
-  counts only on a report parse or an answer to the open report question.
+  company, brand or account type). A month or year axis takes only this message's own count. The object counts on a
+  report parse, or on any reply while a report question is open (the engine reads such a reply as its answer, flag
+  off too).
+- Review rounds 3 and 4, 3 Nov: the measure question stays a free question (no offered options; the model fills
+  measure; the ask-all numbered reply is unchanged). A held customer is looked up again in a switched company by
+  its exact name, behind the customers permission, and for a dealer only among its linked customers. A carried name
+  missing in the named company gets the same reply as the same name typed there.
+- A held brand whose code equals another brand's name is asked "matches several brands" on the next turn (fails
+  safe, never a wrong figure).
 
 ## Deletion (PR B; origin/main line numbers)
 

@@ -18,8 +18,9 @@ the args that ran, not on reply wording, except where a reply line is named.
 - SC-5 (revised in review round 2) A held agent, brand or category is shown by a word that resolves back to exactly
   the held rows (agent code; brand or category name, else its code) and is resolved again inside the ask's company,
   through the permission-gated resolvers, so it sends the same ids. A held customer sends its held id when that id is
-  in the ask's company (or no company is named), else the one customer of that name in the named company; none or
-  several go on the "Not applied:" line.
+  in the ask's company (or no company is named), else the one customer of that exact name in the named company
+  (behind the customers permission; a dealer's linked customers only); none or several give the same reply as that
+  name typed in the named company.
 
 ## B. The owner's 14 turns (one conversation, staff contact with two companies, flag on)
 
