@@ -945,3 +945,92 @@ def test_a_stray_supplier_hint_on_a_stock_ask_never_refuses_the_turn(session_fac
     )
     reply, _captured = _turn(session_factory, monkeypatch, qf, "stock basin taiyang", attributes=("sales_orders.outstanding",))
     assert SUPPLIER_REFUSAL not in reply, reply
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 3 on PR #2066 (owner hand test on e93e1bb6, contact with no tier and an office access type).
+# --------------------------------------------------------------------------- #
+
+
+def _three_taiyang(session_factory, monkeypatch, text_body: str = "outstanding PO for taiyang", qf=None):
+    ids = _office_world(session_factory)
+    twin = _seed_twin(session_factory)
+    third = _seed_named(session_factory, THIRD, "ZZTSUP-TY03")
+    span = list_resolver.Span("taiyang", "supplier")
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, text_body, span,
+        {"taiyang", SUPPLIER, "ZZT TAIYANG SANITARY CO LTD", THIRD}, qf=qf,
+    )
+    assert not _po_calls(captured), f"no PO list before the pick: {captured}"
+    return reply, {ids["ours"], twin, third}
+
+
+@pytest.mark.parametrize("answer,positions", [("all", [1, 2, 3]), ("1 and 3", [1, 3]), ("everything", [1, 2, 3])])
+def test_a_pick_of_several_suppliers_lists_every_picked_one(session_factory, monkeypatch, answer, positions):
+    """Owner turn 3: 'all' over the three-supplier question listed ONE supplier. Every picked line is a supplier
+    of the PO list."""
+    reply, three = _three_taiyang(session_factory, monkeypatch)
+    listed = {int(ln.split(". ", 1)[0]): ln.split(". ", 1)[1] for ln in reply.splitlines() if ln[:1].isdigit()}
+    pick = _parser_output(
+        message_type="answer", intent_hint=None, domain_hint=None, entities=[], reference_positions=positions,
+    )
+    _r, captured, _s = _span_turn(session_factory, monkeypatch, answer, list_resolver.Span(answer), set(), qf=pick)
+    calls = _po_calls(captured)
+    assert calls, (_r, captured)
+    got = set(calls[0].get("supplier_ids") or [])
+    assert len(got) == len(positions) and got <= three, (listed, calls[0].get("supplier_ids"), _r)
+
+
+def test_the_owner_all_over_the_supplier_question_lists_all_three_and_names_each_in_the_header(
+    session_factory, monkeypatch
+):
+    """Owner turn 3 (87fc44fc), v194's real emission for 'all': positions 1-3, `broaden_axis` supplier. The PO list
+    carries all three suppliers, and the reply names each one with its code: two suppliers sharing one trading name
+    are not merged into one name (`turn/compose` grouped them by the customer-account rule)."""
+    _office_world(session_factory)
+    twin_same = _seed_named(session_factory, SUPPLIER, "ZZTSUP-TY09")
+    third = _seed_named(session_factory, THIRD, "ZZTSUP-TY03")
+    from tests.chatbot.test_supplier_ask import _seed_suppliers as _unused  # noqa: F401
+    span = list_resolver.Span("taiyang", "supplier")
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstanding PO for taiyang", span, {"taiyang", SUPPLIER, THIRD},
+    )
+    assert not _po_calls(captured), captured
+    pick = _parser_output(
+        message_type="answer", intent_hint="check_po", domain_hint="purchase_order", order_status="outstanding",
+        entities=[], reference_positions=[1, 2, 3], broaden_axis="supplier", broaden_to="all",
+        scope_intent="broaden", entity_op="reuse",
+    )
+    reply, captured, _s = _span_turn(session_factory, monkeypatch, "all", list_resolver.Span("all"), set(), qf=pick)
+    calls = _po_calls(captured)
+    assert calls and len(set(calls[0].get("supplier_ids") or [])) == 3, (reply, captured)
+
+
+def _supplier_entity(name: str, code: str) -> dict[str, Any]:
+    return {"entity_type": "supplier", "uuid": str(uuid.uuid4()), "canonical_code": f"{name} ({code})"}
+
+
+def test_the_envelope_names_its_supplier_subjects_with_their_codes():
+    from app.services.chatbot.turn.plan import FetchSpec
+    from app.services.chatbot.turn_runtime import envelope_of
+
+    entities = [
+        {"entity_type": "product", "uuid": str(uuid.uuid4()), "canonical_code": "SRTW2600"},
+        _supplier_entity(SUPPLIER, "400-X006"), _supplier_entity(SUPPLIER, "400-X008"),
+    ]
+    env = envelope_of(
+        {"fetch": {"has_result": False}}, FetchSpec(domain="purchase_order", entities=[], filters={}, date_window=None),
+        entities,
+    )
+    assert env["supplier_subjects"] == [f"{SUPPLIER} (400-X006)", f"{SUPPLIER} (400-X008)"], env
+
+
+def test_the_header_keeps_two_suppliers_of_one_trading_name_apart_with_their_codes():
+    """Owner turn 3 (87fc44fc): the header read 'SRTW2600, XIAMEN TAIYANG TECHNOLOGY CO.,LTD' for three suppliers: the
+    customer-account rule folded two records of one name and dropped every code. A customer still folds."""
+    from app.services.chatbot.turn.compose import _header_subjects
+
+    a, b, c = f"{SUPPLIER} (400-X006)", f"{SUPPLIER} (400-X008)", "ZZT TAIYANG TECHNOLOGY CO., LTD. (400-X001)"
+    assert _header_subjects(["SRTW2600", a, b, c], whole=[a, b, c]) == ["SRTW2600", a, b, c]
+    ledgers = ["ZZT HARDWARE SDN BHD - [A/C I]", "ZZT HARDWARE SDN BHD - [A/C II]"]
+    assert len(_header_subjects(ledgers, whole=[a])) == 1

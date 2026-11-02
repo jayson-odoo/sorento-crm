@@ -6134,6 +6134,14 @@ def envelope_of(
         # composer's generic line), only read by `engine._run_answer` to open no fit line.
         "refused": bool(fragment.get("refused")),
         "entities": codes,
+        # SUPPLIER-ASK fix round 3 (#2066, owner turn 3): a supplier subject is a record named with its code
+        # ("NAME (400-X006)"); the header keeps it whole instead of folding it by the customer-account rule.
+        "supplier_subjects": [
+            name for name in (
+                _answer_subject(e) for e in entities
+                if isinstance(e, dict) and jsc.lower_or_empty(e.get("entity_type")) == "supplier"
+            ) if name
+        ],
         # The PRODUCT subjects alone, for the composer's "No stock found for X" line: a
         # customer pinned from an earlier turn is a subject too, and is not a stock code.
         "product_codes": [

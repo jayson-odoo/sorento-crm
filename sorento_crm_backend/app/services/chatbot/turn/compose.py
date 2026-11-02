@@ -359,7 +359,7 @@ def _with_quantities(codes: list[Any], state: State) -> list[Any]:
     return out
 
 
-def _header_subjects(entities: list[Any]) -> list[str]:
+def _header_subjects(entities: list[Any], whole: Any = ()) -> list[str]:
     """Every subject the answer is FOR, each named once.
 
     Owner ruling, hand pass 3 row 2 (turn 463413b0): "All" over a customer roster fetched
@@ -370,19 +370,21 @@ def _header_subjects(entities: list[Any]) -> list[str]:
     name rather than any one ledger's.
 
     A code with no family (every product code) keys on itself, so the only thing this
-    collapses there is a genuine repeat.
+    collapses there is a genuine repeat. A subject in `whole` (the envelope's `supplier_subjects`, SUPPLIER-ASK fix
+    round 3) is not a customer: it keys on itself and prints as it is, code included.
     """
+    kept = {str(w).strip() for w in (whole or ()) if str(w).strip()}
     out: list[str] = []
     seen: set[str] = set()
     for value in entities:
         text = str(value).strip()
         if not text:
             continue
-        key = ledger_family_key(text) or text.casefold()
+        key = ("\x00" + text.casefold()) if text in kept else (ledger_family_key(text) or text.casefold())
         if key in seen:
             continue
         seen.add(key)
-        out.append(ledger_family_label(text))
+        out.append(text if text in kept else ledger_family_label(text))
     return out
 
 
@@ -666,7 +668,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # The domain label is policy wording, not a value: it reads in the reply's language
         # wherever a composer sentence below prints it.
         shown_label = localizer.sentence(label) if isinstance(label, str) else label
-        subjects = _with_quantities(_header_subjects(entities), state)
+        subjects = _with_quantities(_header_subjects(entities, env.get("supplier_subjects")), state)
         # W6 (owner hand test round 2, turn 1): a long subject list is counted, never
         # dumped as one line of codes ("*stock* for BRBC22102W, BRBC22108W-1A, ...").
         codes = (
