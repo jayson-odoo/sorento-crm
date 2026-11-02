@@ -25,6 +25,22 @@ and validity.
 * **Validity** is printed for the customer only. The customer's sign link keeps working after it.
 * Quotations sent before the cover page existed keep their old layout, with numbered clauses after the total.
 
+## Design the cover page
+
+Use this to set how page 1 of every quotation looks (the cover page), for the PDF and the customer's sign link.
+
+1. Open **Project Sales**, then **Configuration**, then **Quotation Templates**, and click the **Cover page** tab.
+2. Select **Add**, type a **Name**, and set the **Title** (for example *QUOTATION*).
+3. Turn **Show company letterhead** off if the cover page should start without the logo and company name.
+4. In the row list, tick the rows to show, drag a row by its handle to move it, and type a new printed name beside it if needed (for example *ATTENTION* instead of *ATTN*). If you untick **Terms & Conditions**, the terms print after the price table instead.
+5. Write the **Intro text** (above the rows) and **Closing text** (below the rows). Use **Insert field** to add a field such as the project name; it is filled in on each quotation.
+6. Watch the preview on the right: it shows page 1 with a sample quotation. Save.
+7. The first design you add becomes active. To switch, select **Activate** on another design. One design is active at a time; the terms template is not affected.
+
+* New quotations copy the active design's intro and closing text; sales can change them per quotation on the **Cover letter** tab.
+* Each sent quotation keeps the design it was sent with. Editing or switching the design never changes a quotation already sent.
+* With no design, the standard cover page is used.
+
 ## See also
 
 * [project-sales-rep/work-a-project-quotation.md](../project-sales-rep/work-a-project-quotation.md) for filling the cover page and sending a quotation.

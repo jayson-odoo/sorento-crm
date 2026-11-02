@@ -19,9 +19,21 @@ To start a new one, use **New quotation** from the project's **Quotation** tab.
 ## Fill the cover page
 
 Every quotation sent from now on starts with a cover page: page 1 of the PDF (portrait) and the
-first card on the customer's sign link. It replaces the separate Excel cover sheet. It shows, in
-this order: **Reference No.**, **Date**, **Attn**, **Company**, **Contact**, **Add**, **Email**,
+first card on the customer's sign link. It replaces the separate Excel cover sheet. The company's
+cover page design (set by an admin in **Quotation Templates > Cover page**) decides the title, the
+letterhead, which rows show and in what order, and their printed names. Without a design it shows,
+in this order: **Reference No.**, **Date**, **Attn**, **Company**, **Contact**, **Add**, **Email**,
 **Quotation Purpose**, **Terms & Conditions**, **Payment Terms**, **Validity**, **Prepared By**.
+
+### See it before you send: the Cover letter tab
+
+* The **Cover letter** tab shows page 1 as it will print, with this quotation's values. Before the
+  first save the reference reads `NEW-R1`; after that it shows the next revision number.
+* In edit mode, type the **Intro text** (above the rows) and **Closing text** (below the rows) for
+  this customer. A new quotation starts with the design's wording, with fields such as the
+  project name already filled in. Changes here affect this quotation only.
+* The preview follows your unsaved changes on every tab.
+* A quotation's old free-text cover letter is now its intro text.
 
 * **Reference No.** is the quotation number with its revision and the project name (for example
   `PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES`). The same reference shows on the price pages and
@@ -37,9 +49,10 @@ this order: **Reference No.**, **Date**, **Attn**, **Company**, **Contact**, **A
   pages as before.
 
 The terms print the way you wrote them: a heading stays a heading, a blank line keeps its gap,
-bullets and indented bullets print as bullets, and nothing is numbered for you. They print once,
-on the cover page. Quotations sent before this change keep their old layout when downloaded
-again.
+bullets and indented bullets print as bullets, and nothing is numbered for you. They print once:
+on the cover page, or after the price table when the design hides the Terms row. Each revision
+keeps the design it was sent with, so changing the design later never changes a sent quotation,
+and quotations sent before the cover page existed keep their old layout.
 
 ## Every line must be a catalogue product or set
 
