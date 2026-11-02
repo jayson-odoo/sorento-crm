@@ -24,10 +24,14 @@ BASE = "/api/v1/project-sales"
 
 
 @pytest.fixture()
-def env():
+def env(monkeypatch):
     from app.models.base import company_scope
+    from app.services import after_response
 
     with blank_session() as db:
+        # Alerts run after the response on their own session; in a test that is this one.
+        monkeypatch.setattr(after_response, "open_session", lambda: db)
+        monkeypatch.setattr(after_response, "close_session", lambda session: None)
         company_id, owner, product, project, document, scope = _setup(db)
         _price(db, scope, product, owner, "100.00", 10)
         record = _issue(db, document, owner)
@@ -340,3 +344,91 @@ def test_racing_make_quotation_answers_409_not_500(env, monkeypatch):
     raced = _make(client, project, document, record)
     assert raced.status_code == 409, raced.text
     assert raced.json()["code"] == "project_has_quotation"
+
+
+# --------------------------------------------- fix round 3 (crew, browser pass): no 16 s save
+
+
+@pytest.fixture()
+def deferred(monkeypatch, env):
+    """Capture after-response tasks instead of running them, and point their own session at the
+    test session, so a test can prove the route answered BEFORE the alert went out."""
+    from starlette.background import BackgroundTasks
+
+    from app.services import after_response
+
+    _, db, *_ = env
+    queued = []
+    monkeypatch.setattr(
+        BackgroundTasks, "add_task", lambda self, fn, *a, **k: queued.append((fn, a, k))
+    )
+    monkeypatch.setattr(after_response, "open_session", lambda: db)
+    monkeypatch.setattr(after_response, "close_session", lambda session: None)
+    return queued
+
+
+def _run(queued) -> None:
+    for fn, args, kwargs in queued:
+        fn(*args, **kwargs)
+
+
+def test_fix3_save_with_reason_answers_before_the_qty_alert_is_sent(env, deferred, monkeypatch):
+    from app.services import project_notify_service
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_service as quotes
+
+    sent = []
+    monkeypatch.setattr(
+        project_notify_service, "notify_po_qty_over", lambda *a, **k: sent.append(k)
+    )
+    client, db, _, product, project, document, scope, record = env
+    _win(db, scope)
+    db.commit()
+    quotation = _make(client, project, document, record).json()
+    q_scope = qdocs.list_scopes(db, qdocs.get_document(db, quotation["id"]))[0]
+    po_id = client.post(
+        f"{BASE}/projects/{project.id}/purchase-orders",
+        json={
+            "po_number": f"{MARKER}-FAST",
+            "po_source": "contractor_direct",
+            "quotation_version_id": quotes.current_version(db, q_scope.id).id,
+        },
+    ).json()["id"]
+
+    saved = client.put(
+        f"{BASE}/purchase-orders/{po_id}",
+        json={
+            "lines": [{"product_id": product.id, "unit_price": "100.00", "quantity": "12"}],
+            "qty_over_reason": "VO-9",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["qty_over_reason"] == "VO-9"
+    assert sent == []  # the save did not wait for the alert
+    assert len(deferred) == 1
+    _run(deferred)
+    assert len(sent) == 1
+    assert sent[0]["reason"] == "VO-9"
+
+
+def test_fix3_issuing_a_repriced_proposal_answers_before_the_price_alert(env, deferred, monkeypatch):
+    from app.services import project_notify_service
+
+    from .test_project_proposal_quotation import _reprice, _sign
+
+    sent = []
+    monkeypatch.setattr(
+        project_notify_service, "notify_proposal_price_changed", lambda *a, **k: sent.append(k)
+    )
+    client, db, owner, product, project, document, scope, _ = env
+    _reprice(db, scope, product, owner, unit_price="90.00")
+    _sign(db, document, owner)
+    db.commit()
+
+    response = client.post(f"{BASE}/projects/{project.id}/quotation-documents/{document.id}/issue")
+    assert response.status_code == 201, response.text
+    assert sent == []
+    assert len(deferred) == 1
+    _run(deferred)
+    assert len(sent) == 1
+    assert len(sent[0]["changes"]) == 1

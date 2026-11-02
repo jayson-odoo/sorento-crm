@@ -321,6 +321,17 @@ def enforce_qty_over(
     return products
 
 
+def alert_qty_over_job(
+    db: Session, po_id: str, products: List[Dict[str, Any]], actor_user_id: Optional[str]
+) -> None:
+    """``alert_qty_over`` for an after-response job: re-reads the PO on its own session."""
+    if not products:
+        return
+    po = db.query(ProjectPurchaseOrder).filter(ProjectPurchaseOrder.id == po_id).first()
+    if po is not None:
+        alert_qty_over(db, po, products, actor_user_id)
+
+
 def alert_qty_over(
     db: Session,
     po: ProjectPurchaseOrder,
