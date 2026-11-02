@@ -481,3 +481,47 @@ def test_parties_project_count_includes_party_links(v2):
     _register(v2, party_links=[{"role": "subcontractor", "party_id": sub.id}])
     res = as_user(v2, v2.owner).get(f"{PARTIES}/{sub.id}")
     assert res.json()["project_count"] == 1
+
+
+# ------------------------------------------------------------------ rule 4: deferred delete (D7)
+
+PENDING = "/api/v1/pending-actions"
+
+
+def _park_contact_delete(w, user, contact):
+    return as_user(w, user).post(
+        PENDING,
+        json={
+            "action_key": "project_party_contact.delete",
+            "entity_type": "project_party_contact",
+            "entity_id": contact.id,
+            "payload": {},
+        },
+    )
+
+
+def test_r4_contact_delete_parks_with_the_parties_edit_grant(v2):
+    contact = _contact(v2, _party(v2, "architect"))
+    res = _park_contact_delete(v2, v2.owner, contact)
+    assert res.status_code == 202, res.text
+
+
+def test_r4_contact_delete_without_parties_edit_is_refused(v2):
+    contact = _contact(v2, _party(v2, "architect"))
+    res = _park_contact_delete(v2, v2.sales_b, contact)
+    assert res.status_code == 403, res.text
+
+
+def test_r4_the_parked_delete_removes_the_contact_and_keeps_the_stakeholder_copy(v2):
+    from app.models.projects import ProjectPartyContact
+    from app.services.form_action_registry import get_action
+
+    arch = _party(v2, "architect")
+    contact = _contact(v2, arch, name="Ar. Leaving")
+    pid = _register(v2, architect_party_id=arch.id, contact_ids=[contact.id]).json()["id"]
+    get_action("project_party_contact.delete").execute(v2.db, {"entity_id": contact.id})
+    v2.db.flush()
+    assert v2.db.get(ProjectPartyContact, contact.id) is None
+    (stake,) = _stakeholders(v2, pid)
+    v2.db.refresh(stake)
+    assert stake.person_name == "Ar. Leaving" and stake.party_contact_id is None
