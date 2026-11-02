@@ -1740,6 +1740,9 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "List the QUOTATION SCOPES on one project (e.g. House Units, Common Area) with each scope's "
             "current version number, current total, outcome (open / won / lost) and loss reason. "
+            "Each row names its document (`document_no`) and `document_kind`: 'proposal' (a priced offer, "
+            "a project may hold several, one per party) or 'quotation' (the one the won project's POs "
+            "are checked against; quote ITS figure when it exists). "
             "USE for 'what did we quote on <project>', 'how much is <project> worth', 'did we win the "
             "common area', 'why did we lose <project>'. "
             "A project has MANY quotations, one per scope, and each quotation has versions -- the total "

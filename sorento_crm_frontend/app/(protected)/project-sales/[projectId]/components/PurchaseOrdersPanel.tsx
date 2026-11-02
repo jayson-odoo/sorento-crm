@@ -302,7 +302,17 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         header: ({ column }) => <DataGridColumnHeader title="Against" column={column} />,
         cell: ({ row }) =>
           row.original.scope_label ? (
-            <span className="truncate text-sm">
+            <span
+              className="truncate text-sm"
+              title={
+                row.original.checked_against_label
+                  ? `${row.original.checked_against_kind === 'quotation' ? 'Quotation' : 'Proposal'} ${row.original.checked_against_label}`
+                  : undefined
+              }
+            >
+              {row.original.checked_against_kind === 'quotation' && row.original.checked_against_label
+                ? `${row.original.checked_against_label} `
+                : ''}
               {row.original.scope_label}
               {row.original.version_no ? ` v${row.original.version_no}` : ''}
             </span>
@@ -314,7 +324,8 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
       },
       {
         id: 'checks',
-        accessorFn: (row) => row.model_mismatch_count + row.price_mismatch_count,
+        accessorFn: (row) =>
+          row.model_mismatch_count + row.price_mismatch_count + (row.qty_over_reason ? 1 : 0),
         header: ({ column }) => <DataGridColumnHeader title="To check" column={column} />,
         cell: ({ row }) => {
           const parts: string[] = [];
@@ -324,11 +335,35 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
           if (row.original.price_mismatch_count > 0) {
             parts.push(`${row.original.price_mismatch_count} price differs`);
           }
-          if (parts.length === 0) return <span className="text-muted-foreground">-</span>;
+          const over = row.original.qty_over_reason;
+          if (parts.length === 0 && !over) return <span className="text-muted-foreground">-</span>;
           return (
-            <Badge variant="destructive" appearance="light" className="truncate text-[11px]">
-              {parts.join(', ')}
-            </Badge>
+            <span className="flex min-w-0 flex-col items-start gap-0.5">
+              <span className="flex min-w-0 items-center gap-1">
+                {parts.length > 0 ? (
+                  <Badge variant="destructive" appearance="light" className="truncate text-[11px]">
+                    {parts.join(', ')}
+                  </Badge>
+                ) : null}
+                {over ? (
+                  // PS-PROPOSAL-QUOTATION: the salesperson's reason for ordering above the quote.
+                  <Badge
+                    variant="warning"
+                    appearance="light"
+                    className="truncate text-[11px]"
+                    title={over}
+                  >
+                    Qty over quote
+                  </Badge>
+                ) : null}
+              </span>
+              {over ? (
+                // Written out, not only on hover: a phone has no hover.
+                <span className="max-w-full truncate text-xs text-muted-foreground" title={over}>
+                  {over}
+                </span>
+              ) : null}
+            </span>
           );
         },
         size: 190,

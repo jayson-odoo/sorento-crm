@@ -570,7 +570,7 @@ describe('QuotationFormClient create', () => {
 
     await addScope('Guard House');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     await waitFor(() =>
       expect(createQuotationDocument).toHaveBeenCalledTimes(1),
@@ -607,7 +607,7 @@ describe('QuotationFormClient create', () => {
     const card = await openLines();
     await addLine(card, 1);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(
       await screen.findByText(/Every scope needs a name/i),
@@ -615,7 +615,7 @@ describe('QuotationFormClient create', () => {
     expect(createQuotationDocument).not.toHaveBeenCalled();
 
     await nameScope(card, 'Townhouse');
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(
       await screen.findByText(
@@ -632,7 +632,7 @@ describe('QuotationFormClient create', () => {
     const named = scopeCard('Townhouse');
     fireEvent.change(await addLine(named, 1), { target: { value: 'Bespoke vanity top' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(
       await screen.findByText('One line still needs a catalogue product or set.'),
@@ -670,10 +670,10 @@ describe('QuotationFormClient create', () => {
     await openLines();
 
     expect(
-      screen.getByRole('heading', { level: 1, name: 'New quotation' }),
+      screen.getByRole('heading', { level: 1, name: 'New proposal' }),
     ).toBeInTheDocument();
     // Cancel is an outline button; Save is the only filled one.
-    const save = screen.getByRole('button', { name: 'Save quotation' });
+    const save = screen.getByRole('button', { name: 'Save proposal' });
     const cancel = screen.getByRole('button', { name: 'Cancel' });
     expect(save.className).toMatch(/bg-primary/);
     expect(cancel.className).not.toMatch(/bg-primary/);
@@ -727,7 +727,7 @@ describe('QuotationFormClient edit', () => {
 
     await addScope('Reception');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     await waitFor(() =>
       expect(updateQuotationDocument).toHaveBeenCalledTimes(1),
@@ -761,7 +761,7 @@ describe('QuotationFormClient edit', () => {
     expect(toggleRemovedSpy).toHaveBeenCalledWith('q1', 'l1');
     expect(await within(card).findByText('Removed on save')).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     expect(updateQuotationDocument.mock.calls[0][2].scopes[0]).toMatchObject({
       id: 'q1',
@@ -796,7 +796,7 @@ describe('QuotationFormClient edit', () => {
     expect(within(card).queryByRole('button', { name: 'Add a line' })).toBeNull();
     expect(within(card).queryByRole('textbox', { name: 'Qty on SRT-WC-01' })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() =>
       expect(updateQuotationDocument).toHaveBeenCalledTimes(1),
     );
@@ -808,7 +808,7 @@ describe('QuotationFormClient edit', () => {
     renderForm('d1');
     await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     const body = updateQuotationDocument.mock.calls[0][2];
     // The write replaces the WHOLE set, so a scope nobody touched is never re-sent.
@@ -826,7 +826,7 @@ describe('QuotationFormClient edit', () => {
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Townhouse' })).toBeNull());
     expect(updateQuotationDocument).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     const body = updateQuotationDocument.mock.calls[0][2];
     expect(body.remove_scope_ids).toEqual(['q1']);
@@ -849,7 +849,7 @@ describe('QuotationFormClient edit', () => {
     await waitFor(() => expect(screen.getByLabelText('Your Ref')).toHaveValue('NC/18'));
     fireEvent.change(screen.getByLabelText('Attn'), { target: { value: 'Mr Tan' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     expect(updateQuotationDocument.mock.calls[0][2]).toMatchObject({ attn_name: 'Mr Tan' });
     expect(updateQuotationDocument.mock.calls[0][2]).not.toHaveProperty('remove_scope_ids');
@@ -868,7 +868,7 @@ describe('QuotationFormClient guards', () => {
       target: { value: 'two' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(
       await screen.findByText(
@@ -958,7 +958,7 @@ describe('QuotationFormClient letter on create (AC-QF056)', () => {
       await screen.findByRole('textbox', { name: 'The clauses the customer holds us to' }),
     ).toHaveValue('<p>Valid 30 days</p>');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({
       cover_letter_html: '<p>Dear {{attn_name}}, edited</p>',
@@ -976,7 +976,7 @@ describe('QuotationFormClient letter on create (AC-QF056)', () => {
         name: 'The letter the customer reads before the prices',
       }),
     ).toHaveValue('');
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1]).not.toHaveProperty('cover_letter_html');
   });
@@ -987,7 +987,7 @@ describe('QuotationFormClient header-only save (AC-QF060)', () => {
     renderForm();
     fireEvent.change(await screen.findByLabelText('Your Ref'), { target: { value: 'NC/30' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     const body = createQuotationDocument.mock.calls[0][1];
@@ -1003,7 +1003,7 @@ describe('QuotationFormClient header-only save (AC-QF060)', () => {
     fireEvent.change(await addLine(card, 1), { target: { value: 'Grab bar' } });
     await openTab('Header');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
 
     expect(await screen.findByText(/Every scope needs a name/i)).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
@@ -1016,7 +1016,7 @@ describe('QuotationFormClient from the Overview (AC-QF061)', () => {
     listQuotations.mockResolvedValue([]);
     renderForm();
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'New quotation' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'New proposal' })).toBeInTheDocument();
     expect(await screen.findByLabelText('Your Ref')).toHaveValue('');
     expect(getQuotationDocument).not.toHaveBeenCalled();
     expect(screen.queryByText(/could not be loaded/i)).toBeNull();
@@ -1063,10 +1063,10 @@ describe('QuotationFormClient review round (fix round 2)', () => {
     renderForm();
     await screen.findByLabelText('Your Ref');
 
-    expect(screen.getByRole('button', { name: 'Save quotation' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save proposal' })).toBeDisabled();
     answer({ cover_letter_html: '<p>Hi</p>', terms_html: null });
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Save quotation' })).toBeEnabled(),
+      expect(screen.getByRole('button', { name: 'Save proposal' })).toBeEnabled(),
     );
   });
 });
@@ -1104,7 +1104,7 @@ describe('QuotationFormClient scope tab context menu (owner hand test)', () => {
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Townhouse' })).toBeNull());
     expect(updateQuotationDocument).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(updateQuotationDocument).toHaveBeenCalledTimes(1));
     const body = updateQuotationDocument.mock.calls[0][2];
     expect(body.remove_scope_ids).toEqual(['q1']);
@@ -1154,7 +1154,7 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
     await addScope('Guard House');
     await waitFor(() => expect(editorSeries()).toBe('s1'));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1].scopes).toEqual([
       expect.objectContaining({ scope_label: 'Townhouse', series_id: 's1' }),
@@ -1172,7 +1172,7 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
     await nameScope(card, 'Townhouse');
     await addScope('Guard House');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1].scopes).toEqual([
       expect.objectContaining({ scope_label: 'Townhouse', series_id: null }),
@@ -1187,7 +1187,7 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
     await openTab('Header');
     fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/31' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({ your_ref: 'NC/31', scopes: [] });
   });
@@ -1215,7 +1215,7 @@ describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1].scopes).toEqual([
       expect.objectContaining({ scope_label: 'Guard House', series_id: null }),
@@ -1313,7 +1313,7 @@ describe('QuotationFormClient cover page fields', () => {
     await openTab('Terms');
     fireEvent.change(await screen.findByLabelText('Validity'), { target: { value: '90 days' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({
       recipient_email_snapshot: 'lim.weiming@example.test',
@@ -1331,7 +1331,7 @@ describe('QuotationFormClient cover page fields', () => {
     await openTab('Terms');
     expect(await screen.findByLabelText('Payment Terms')).toHaveValue('');
     expect(screen.getByLabelText('Validity')).toHaveValue('');
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
   });
 
