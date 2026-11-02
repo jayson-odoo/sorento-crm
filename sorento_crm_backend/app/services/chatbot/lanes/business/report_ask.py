@@ -2225,14 +2225,15 @@ def _settle(
         parse_output = {**parse_output, "ranking_refine": False}
 
     args, line = _fresh_args(
-        db, parse_output, entities, dealer=dealer, agent_filter=agent_filter, companies=companies, ask_kind=True
+        db, parse_output, entities, dealer=dealer, agent_filter=agent_filter, companies=companies, ask_kind=True,
+        held_company=source.get("company") if holding else None,
     )
     if args is None:
         return None, line
     not_applied = args.pop("_unbound", [])
     kind_ask = args.pop("_kind_ask", None)
     covered = args.pop("_covered", False)
-    if holding and source.get("company") and not set(args) - _NON_FILTER_ARGS - {"channel"}:
+    if holding and source.get("company") and not set(args) - _NON_FILTER_ARGS - {"channel", "account_types"}:
         # The company it ran in stays, unless this message has a subject of its own: that may be in the other company.
         args["company"] = source["company"]
     named = {
