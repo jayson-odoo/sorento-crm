@@ -829,3 +829,104 @@ def test_the_measured_gemini_supplier_floor_places_the_owner_word_and_keeps_the_
         )
     negative = list_resolver.resolve([list_resolver.Span("water closet")], rows, embed=embed)[0]
     assert not any(c.row.key == unrelated for c in negative.candidates), negative
+
+
+# --------------------------------------------------------------------------- #
+# Fix round on PR #2066 (owner hand test, console turn 52faa07d, 2 Nov 2026): an office-access
+# staff contact whose chatbot_profile.tier is NULL. Staff for suppliers is the office ACCESS
+# TYPE + the reveal, the Supplier list's own rule (`engine._may_see_suppliers`); and a supplier
+# the turn names but cannot bind stops the fetch, never an unfiltered list.
+# --------------------------------------------------------------------------- #
+
+SUPPLIER_REFUSAL = "isn't under your account"
+ORDER_TOOLS = ("crm_report_ask", "crm_outstanding_report", "crm_orders_list")
+
+
+def _office_world(session_factory) -> dict[str, Any]:
+    """The owner's contact: office access type, tier NULL (no `_make_staff`)."""
+    from tests.chatbot._turn_helpers import make_office_access_type
+
+    ids = _seed_suppliers(session_factory)
+    _seed_contact(session_factory, variables={})
+    make_office_access_type(session_factory, CONTACT_ID)
+    return ids
+
+
+def _fetch_calls(captured) -> list[tuple[str, dict[str, Any]]]:
+    return [(n, a) for n, a in captured if n == PO_TOOL or n in ORDER_TOOLS or n.startswith("crm_order")]
+
+
+def test_a_tier_null_office_contact_sees_the_supplier_and_its_open_pos(session_factory, monkeypatch):
+    ids = _office_world(session_factory)
+    span = list_resolver.Span("jinbai", "supplier")
+    reply, captured, seen = _span_turn(
+        session_factory, monkeypatch, "outstanding PO for jinbai", span, {"jinbai", OTHER}
+    )
+    assert seen and ll.header("supplier") in seen[-1], "the Supplier list is shown (office access type + reveal)"
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["other"]], (reply, captured)
+
+
+def test_a_tier_null_office_contact_gets_the_picker_for_three_equal_suppliers(session_factory, monkeypatch):
+    """Console turn 52faa07d: 'taiyang' placed three suppliers; the turn must ask, never list every PO."""
+    _office_world(session_factory)
+    _seed_twin(session_factory)
+    _seed_named(session_factory, THIRD, "ZZTSUP-TY03")
+    span = list_resolver.Span("taiyang", "supplier")
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstanding PO for taiyang", span,
+        {"taiyang", SUPPLIER, "ZZT TAIYANG SANITARY CO LTD", THIRD},
+        qf=_ask("taiyang", None, domain="purchase_order"),
+    )
+    assert not _fetch_calls(captured), f"no list before the pick: {captured}"
+    assert len([ln for ln in reply.splitlines() if ln[:1].isdigit()]) == 3, reply
+
+
+def test_a_tier_null_office_contact_order_outstanding_for_a_supplier_reads_its_pos(session_factory, monkeypatch):
+    """The order path: 'outstanding' flips the domain to order (`turn_runtime` order_status rule); the supplier
+    ask still becomes that supplier's open POs, never every customer's orders."""
+    ids = _office_world(session_factory)
+    qf = {**_ask("jinbai", None), "order_status": "outstanding"}
+    span = list_resolver.Span("jinbai", "supplier")
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstanding for jinbai", span, {"jinbai", OTHER}, qf=qf
+    )
+    assert not [n for n, _ in _fetch_calls(captured) if n != PO_TOOL], f"never a customer order list: {captured}"
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["other"]], (reply, captured)
+
+
+@pytest.mark.parametrize("domain", ["purchase_order", "order"])
+def test_a_supplier_the_asker_may_not_see_stops_the_fetch(session_factory, monkeypatch, domain):
+    """Office access type, no supplier reveal: the supplier word is dropped, so the turn refuses; it never runs the
+    PO or order fetch with no supplier filter."""
+    _office_world(session_factory)
+    qf = {**_ask("taiyang", None, domain=domain), **({"order_status": "outstanding"} if domain == "order" else {})}
+    reply, captured = _turn(session_factory, monkeypatch, qf, "outstanding for taiyang", attributes=(PLACED,))
+    assert not _fetch_calls(captured), f"no unfiltered list: {captured}"
+    assert SUPPLIER_REFUSAL in reply, reply
+    assert SUPPLIER not in reply, reply
+
+
+@pytest.mark.parametrize("domain", ["purchase_order", "order"])
+def test_a_dealer_naming_a_supplier_is_refused_not_listed(session_factory, monkeypatch, domain):
+    _seed_suppliers(session_factory)
+    _seed_contact(session_factory, variables={})
+    qf = {**_ask("taiyang", None, domain=domain), **({"order_status": "outstanding"} if domain == "order" else {})}
+    reply, captured = _turn(
+        session_factory, monkeypatch, qf, "outstanding for taiyang", attributes=("sales_orders.outstanding", PLACED)
+    )
+    assert not _fetch_calls(captured), f"no unfiltered list: {captured}"
+    assert SUPPLIER_REFUSAL in reply, reply
+    assert SUPPLIER not in reply, reply
+
+
+@pytest.mark.parametrize("domain", ["purchase_order", "order"])
+def test_a_supplier_word_nothing_binds_stops_the_fetch(session_factory, monkeypatch, domain):
+    """Office staff with the reveal name a supplier no row matches: no unfiltered PO or order list."""
+    _office_world(session_factory)
+    qf = {**_ask("zzqqxx", None, domain=domain), **({"order_status": "outstanding"} if domain == "order" else {})}
+    reply, captured = _turn(session_factory, monkeypatch, qf, "outstanding for zzqqxx")
+    assert not [a for n, a in _fetch_calls(captured) if not (n == PO_TOOL and a.get("supplier_ids"))], (
+        reply, captured
+    )
