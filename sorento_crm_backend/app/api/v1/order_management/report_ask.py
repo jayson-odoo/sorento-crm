@@ -683,6 +683,7 @@ def report_ask(
     run = dict(
         basis=basis_norm, measure=measure_norm, group_by=group_norm, filters=filters, warehouse_codes=codes,
         policy=policy, company_grants=grants, sort=sort_norm,
+        capped_by_policy=not staff_read,  # a staff read has no contact, so no location policy to be capped by
     )
     data = ask.run_ask(db, date_from=date_from, date_to=date_to, top_n=top_n, **run)
     product_subject = bool(code or named_products)
@@ -717,7 +718,7 @@ def report_ask(
         # (eval hard guard: no reply carries an unpaged list); `group_offset` is the page a "more" asked for.
         docs = ask.document_rows(
             db, basis=basis_norm, filters=filters, warehouse_codes=codes, policy=policy, company_grants=grants,
-            date_from=date_from, date_to=date_to,
+            date_from=date_from, date_to=date_to, capped_by_policy=not staff_read,
         )
         start = group_offset or 0
         data = {
