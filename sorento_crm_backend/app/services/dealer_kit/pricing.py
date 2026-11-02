@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from app.models.marketing import Promotion, PromotionProduct
 from app.models.product import Product
+from app.models.product_combo import ProductCombo
 from app.services import promotion_serving, promotion_window
 from app.services.dealer_kit.product_images import PUBLIC_ACCESS_CODE
 from app.services.dealer_kit.viewer import ViewerContext
@@ -428,6 +429,8 @@ def _line_total_under(
     part_ids: Sequence[str],
     viewer: ViewerContext,
     promotion_id: str,
+    *,
+    combo: bool = False,
 ) -> tuple[Decimal, list[str]]:
     """The line's total under ONE promotion, and which PARTS printed at list.
 
@@ -449,6 +452,10 @@ def _line_total_under(
         worth = _offer_worth_showing(offers.get(product_id), list_price)
         if worth is not None:
             total += worth
+        elif combo and product_id in part_ids and offers.get(product_id) == 0:
+            # PRICETAG-COMBO AC-2.7: a part the combo's promotion lists at RM 0 is
+            # free in that package. The host is never free (not in `part_ids`).
+            continue
         else:
             total += list_price or Decimal("0")
             if product_id in part_ids:
@@ -515,6 +522,9 @@ def line_pricing(
             list_price += price
         list_price = list_price.quantize(_LINE_MONEY)
 
+        # PRICETAG-COMBO: the combo only counts when it hangs off this line's own scoped host.
+        combo_row = combo_for_host(db, line.get("combo_id"), product_id, products_by_id)
+
         covering = _covering_promotions(
             db, lookup_ids, viewer, keep_id=given_promotion_id
         )
@@ -523,7 +533,8 @@ def line_pricing(
         totals_by_promotion: dict[str, tuple[Decimal, list[str]]] = {}
         for promo in covering:
             total, parts_at_list_for_promo = _line_total_under(
-                db, products_by_id, resolved_ids, part_ids, viewer, promo.id
+                db, products_by_id, resolved_ids, part_ids, viewer, promo.id,
+                combo=combo_row is not None,
             )
             totals_by_promotion[promo.id] = (total, parts_at_list_for_promo)
             promotion_options.append(
@@ -573,6 +584,19 @@ def line_pricing(
             sell_price_basis = "list"
             parts_at_list = []
 
+        # PRICETAG-COMBO AC-2.4/2.6: the combo's own price, by the one rule the tag
+        # data also reads. A manual figure still wins the sell side.
+        if combo_row is not None:
+            combo_list, combo_sell, sell_decided = combo_prices(combo_row, set(part_ids))
+            if combo_list is not None:
+                list_price = combo_list
+            if sell_decided and manual is None:
+                sell_price = combo_sell
+                # A combo's sell price always prints, even at or above its list price
+                # (a sink with an included tap can list at 1,090 and sell at 1,099).
+                if combo_sell is not None and sell_price_basis == "list":
+                    sell_price_basis = "promotion"
+
         # One lookup for every candidate on the line, not one per candidate
         # (reviewer finding, this round) - a five-candidate open group used
         # to cost five round trips for what `_offer_prices` already answers
@@ -607,6 +631,87 @@ def line_pricing(
             }
         )
     return results
+
+
+def free_part_ids(
+    db: Session, product_ids: Sequence[str], viewer: ViewerContext, promotion_id: Optional[str]
+) -> set[str]:
+    """Products a promotion lists at exactly RM 0 (PRICETAG-COMBO AC-2.7).
+
+    `resolve_prices` drops a 0 offer as "not an offer", so a free part in a combo
+    promotion would add its list price. A combo line asks this instead.
+    """
+    if not promotion_id or not product_ids:
+        return set()
+    return {
+        pid
+        for pid, price in _offer_prices(db, list(product_ids), viewer, promotion_id).items()
+        if price == 0
+    }
+
+
+def combo_for_host(
+    db: Session, combo_id: Optional[str], host_product_id: Optional[str], products_by_id: dict
+) -> Optional[ProductCombo]:
+    """The combo a line names, only when it hangs off that line's own (scoped) host.
+
+    `ProductCombo` has no company column; the host check is what keeps another
+    company's combo price out of a lookup that merely knows its id.
+    """
+    if not combo_id or not host_product_id or host_product_id not in products_by_id:
+        return None
+    combo = db.query(ProductCombo).filter(ProductCombo.id == combo_id).first()
+    if combo is None or combo.host_product_id != host_product_id:
+        return None
+    return combo
+
+
+def combo_prices(
+    combo: ProductCombo, picked_ids
+) -> tuple[Optional[Decimal], Optional[Decimal], bool]:
+    """``(list_price, sell_price, sell_decided)`` for a combo and what is picked.
+
+    PRICETAG-COMBO AC-2.4/2.5. ``list_price`` is the combo's own list price or None
+    (today's sum). ``sell_decided`` says the combo takes over the sell side; when
+    False the caller keeps today's sum. A decided None is AC-2.5: nothing picked,
+    some option prints its own price and the combo has none.
+    """
+    list_price = _as_decimal(combo.list_price)
+    parts = list(combo.parts or [])
+    options = [p for p in parts if not p.is_upgrade and p.choice_group]
+    picked_upgrade = next(
+        (p for p in parts if p.is_upgrade and p.part_product_id in picked_ids), None
+    )
+    combo_sell = _as_decimal(combo.sell_price)
+    groups: dict = {}
+    for p in options:
+        groups.setdefault(p.choice_group, []).append(p)
+    # AC-2.5, per group: with no combo sell price, a group still open whose options print
+    # their own prices leaves the tag's sell price blank - one figure would hide those prices.
+    open_priced = any(
+        any(o.sell_price is not None for o in group)
+        and not any(o.part_product_id in picked_ids for o in group)
+        for group in groups.values()
+    )
+    if combo_sell is None and open_priced and picked_upgrade is None:
+        return list_price, None, True
+    # The first picked option that has a price of its own (a one-option group auto-resolves,
+    # so several groups can each have a pick), else the combo's.
+    base = next(
+        (
+            _as_decimal(p.sell_price)
+            for p in options
+            if p.part_product_id in picked_ids and p.sell_price is not None
+        ),
+        None,
+    )
+    if base is None:
+        base = combo_sell
+    if base is None:
+        return list_price, None, False
+    if picked_upgrade is not None:
+        base += _as_decimal(picked_upgrade.topup_amount) or Decimal("0")
+    return list_price, base.quantize(_LINE_MONEY), True
 
 
 def _offer_worth_showing(

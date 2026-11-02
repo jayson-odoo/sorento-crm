@@ -32,8 +32,8 @@ from app.services.sales_report_service import _money_edge, _qty
 #: The words a caller may group by and filter by. Every word is named the same as the column or
 #: param key behind it, so one list each serves every basis (a word that differs from its key
 #: earns a mapping then).
-DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "month", "year")
-FILTERS = ("customer", "product", "brand", "category", "sales_agent", "customer_agent", "location", "channel")
+DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "account_type", "month", "year")
+FILTERS = ("customer", "product", "brand", "category", "sales_agent", "customer_agent", "location", "channel", "account_type")
 
 #: The datasets a caller may ask over; the first is the default (a call naming none is sales).
 DATASETS = ("sales", "chat")
@@ -82,8 +82,8 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
         "unpaid": {
             "definition": unpaid_documents.DEFINITION,
             "label": "unpaid invoices",
-            "dimensions": ("customer", "sales_agent", "month", "year"),
-            "filters": ("customer", "sales_agent", "customer_agent"),
+            "dimensions": ("customer", "sales_agent", "account_type", "month", "year"),
+            "filters": ("customer", "sales_agent", "customer_agent", "account_type"),
         },
     },
     "chat": {
@@ -118,6 +118,7 @@ GROUP_LABELS = {
     "sales_agent": "Sales agent",
     "location": "Location",
     "channel": "Channel",
+    "account_type": "Account type",
     "month": "Month",
     "year": "Year",
     "sales_order": "Sales order",

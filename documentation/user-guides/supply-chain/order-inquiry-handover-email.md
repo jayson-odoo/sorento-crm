@@ -105,14 +105,54 @@ Never sends anything:
 Open **[System Management → Automation](/system-management/automation)** and edit the row
 named **Order inquiry to purchasing**.
 
-* **Recipients** - pick **Specific users**, **By role**, or type an address under **External
-  emails** and click **Add** (for example `purchasing@` and the CS manager's own address).
-* **Cc the person who raised it** - keeps the CS admin who made the change on the thread.
-* **One email, everyone on the thread** - sends a single mail with the first purchasing address
-  in **To** and everyone else, including the person who raised it, in **Cc**, so a reply-all
-  reaches the whole thread instead of landing back with only one recipient.
+* **To** and **Cc** - each has **Specific users**, **By role**, and **External emails** (type an
+  address and click **Add**). Everyone under **To** is on the mail's To line; everyone under
+  **Cc** is on its Cc line. A row saved before Cc existed shows all its recipients under
+  **To** but keeps sending as it always did (the first address on To, everyone else on Cc) until
+  you save it here. From that save on, To and Cc mean exactly what the boxes say, so check both
+  boxes before you save.
+* **Cc the person who raised it** (in the **Cc** block) - keeps the CS admin who made the change
+  on the thread.
+* **One email, everyone on the thread** - sends a single mail to everyone, so a reply-all
+  reaches the whole thread. The person who raised it goes on Cc, even if they are also picked
+  under **To**; only when nobody else is on the mail are they on To. With this off, each person
+  gets a separate copy and To / Cc does not apply.
 * **Enabled** - untick this to stop the mail once the manual email is retired. Nothing else
   needs to change.
+
+## Retail and project orders go to different people
+
+The mail routes by the sales order's class. A **Retail** (dealer) order's lines can go to
+dealer purchasing while a **Project** order's lines keep going to project purchasing. A sales
+order whose class is **Other** counts as Retail; one with no class counts as Project.
+
+When one Confirm touches both a retail and a project order, two mails go out: one with only the
+retail lines and one with only the project lines.
+
+Which row sends which class is set by the row's **Conditions** (the **Sales order class**
+field). A row with no condition sends for every class.
+
+**To set up dealer purchasing (once):**
+
+1. In **System Management → Automation**, open the existing **Order inquiry to purchasing**
+   row, click **Add condition**, pick **Sales order class**, **is**, **Project**, and save. From
+   now on it only sends project lines.
+2. Click **Add automation**, choose the trigger **Order inquiry handover to purchasing**, the same email
+   template, and give it a name such as **Order inquiry to dealer purchasing**.
+3. Under **To**, pick dealer purchasing. Under **Cc**, pick project purchasing and tick **Cc the
+   person who raised it**. Tick **One email, everyone on the thread**.
+4. Add the condition **Sales order class**, **is**, **Retail**, and save.
+
+Do step 1 before or together with step 4. Until the old row has its **Project** condition, a
+retail mail goes to both rows' recipients.
+
+**Undo mails follow the same rule.** The **Order inquiry undone** row works the same way: give
+the existing row a **Project** condition and add a **Retail** row with the dealer recipients.
+
+**Send to purchasing (resend)** uses the enabled row whose condition matches the order
+inquiry's sales order class (the oldest one, if several match). When every row is switched off,
+it uses the switched-off row for that class. If no row is for that class, the order inquiry is
+not sent and the preview lists it as skipped: it never goes to the other class's people.
 
 ## Parallel run
 

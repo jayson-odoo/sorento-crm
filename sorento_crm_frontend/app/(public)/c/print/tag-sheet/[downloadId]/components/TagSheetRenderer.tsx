@@ -28,13 +28,12 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import {
-  imagesOf,
   layerText,
   priceBadgeInput,
   resolveBarcodeValue,
   resolveSlotText,
   slotImageAttachmentId,
-  subjectOf,
+  slotImagesOf,
 } from '@/lib/dealer-kit/product-block';
 import { priceBadgeInsets, priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import {
@@ -316,7 +315,7 @@ function imageUrlFor(
   } else if (props.kind !== 'product_slot') {
     return null;
   }
-  const images = imagesOf(subjectOf(bindingOf(resolved), layer));
+  const images = slotImagesOf(layer, bindingOf(resolved));
   const attachmentId = slotImageAttachmentId(layer, images);
   return attachmentId ? media.images?.[attachmentId] ?? null : null;
 }

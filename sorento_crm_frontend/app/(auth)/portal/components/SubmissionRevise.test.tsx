@@ -22,6 +22,7 @@ const replace = vi.fn();
 // the load effect depends on and refetch the submission forever.
 const router = { push, replace };
 vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => router,
 }));
 

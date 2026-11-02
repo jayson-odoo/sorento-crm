@@ -1,5 +1,6 @@
 'use client';
 
+import { RecordCardSlot } from '@/app/(protected)/sla-management/_shared/RecordCardSlot';
 import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -426,6 +427,8 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
 
   return (
     <div className="space-y-6">
+      {/* Above the tab strip, on every tab, so prev/next works from any tab (NAV-KEEP-TAB). */}
+      <RecordCardSlot>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 space-y-1">
           <h2 className="break-words text-2xl font-bold">Sample Request - {r.request_no}</h2>
@@ -514,6 +517,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
           }
         />
       </div>
+      </RecordCardSlot>
 
       <Card className="border-2 shadow-sm">
         <CardContent className="px-5 pb-8 pt-6 sm:px-10">

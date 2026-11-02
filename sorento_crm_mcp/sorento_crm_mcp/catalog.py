@@ -931,7 +931,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "REQUIRED: `contact_id` + `space_id`; and for the sales bases `date_from` and `date_to` (ISO dates; 422 `period_required` otherwise - "
             "ask the person which period, never guess one). Outstanding, pending_delivery and unpaid may leave both off = every date. "
             "`group_by` = customer | product | brand | category | sales_agent | location | "
-            "channel | month | year | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only) | "
+            "channel | account_type (the customer's AutoCount account type) | month | year | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only) | "
             "delivery_order (pending_delivery only: the delivery order list); absent = ONE total (an outstanding or "
             "pending_delivery total naming a product or customer also carries `summary`: counts, date range, by location, "
             "by customer or product). With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
@@ -963,7 +963,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`spec` (repeatable `key:value`, e.g. `trap_type:p_trap`; the same key = any of, different keys = all of; "
             "a spec that cannot narrow comes back under `not_applied`, no match is `status: no_products`), "
             "`warehouse_codes` (exact codes; a location outside the contact's visibility "
-            "answers `status: refused`), `channel` dealer | project. OMIT a filter you do not "
+            "answers `status: refused`), `channel` dealer | project, `account_types` (the customer account: a number such as 4, a numeral IV, a tag A/C IV or a type name; repeated or csv; never an id). OMIT a filter you do not "
             "use: an empty value is 422 `empty_filter` (it never reads as 'no filter'), and an "
             "id naming nothing is 404.\n\n"
             "`company` (a company name, code or id) narrows a contact in several companies to that one (403 "
@@ -1000,7 +1000,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
             "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine", "spec", "company",
-            "group_offset",
+            "group_offset", "account_types",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),

@@ -55,6 +55,14 @@ def planning_class(value: Optional[str]) -> Optional[str]:
     value (and None) is itself. One mapping, read by every SCM reader of a class."""
     return _PLANNING.get(value, value) if value else value
 
+
+def email_class(value: Optional[str]) -> str:
+    """The class an order inquiry email routes by (DEALER-OI-ROUTE, owner ruling 1 Nov 2026):
+    `retail` and `other` are retail (dealer purchasing); `project` and an order with no
+    class are project, today's route (card Q3 (a))."""
+    return DEFAULT_DEMAND_CLASS if planning_class(value) == DEFAULT_DEMAND_CLASS else PROJECT
+
+
 #: Words in a stated order type or a market-segment code that mean project work. Matched as
 #: substrings because the real values are typed by people: `PROJECT`, `Projects`, `contract`.
 PROJECT_SEGMENTS = frozenset({"project", "projects", "contract"})

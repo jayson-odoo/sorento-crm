@@ -131,7 +131,7 @@ def test_one_open_group_makes_n_tags(db):
                 {
                     "line_type": "product",
                     "product_id": cabinet.id,
-                    "combo_id": combo.id,
+                    "combo_id": None,  # PRICETAG-COMBO AC-3.3: only a line with no combo_id keeps one tag per combination
                     "parts": [{"role": "Basin", "candidates": [white.id, black.id]}],
                 }
             ],
@@ -184,7 +184,7 @@ def test_two_open_groups_cartesian(db):
                 {
                     "line_type": "product",
                     "product_id": cabinet.id,
-                    "combo_id": combo.id,
+                    "combo_id": None,  # PRICETAG-COMBO AC-3.3: only a line with no combo_id keeps one tag per combination
                     "parts": [
                         {"role": "Tap", "candidates": [tap_a.id, tap_b.id]},
                         {
@@ -215,7 +215,7 @@ def test_resave_keeps_split_tags(db):
     line_data = {
         "line_type": "product",
         "product_id": cabinet.id,
-        "combo_id": combo.id,
+        "combo_id": None,  # PRICETAG-COMBO AC-3.3: only a line with no combo_id keeps one tag per combination
         "parts": [{"role": "Basin", "candidates": [white.id, black.id]}],
     }
 
@@ -386,7 +386,7 @@ def test_create_request_mints_two_tags_under_the_apps_own_autoflush_policy():
                     {
                         "line_type": "product",
                         "product_id": cabinet.id,
-                        "combo_id": combo.id,
+                        "combo_id": None,  # PRICETAG-COMBO AC-3.3: only a line with no combo_id keeps one tag per combination
                         "parts": [
                             {"role": "Basin", "candidates": [white.id, black.id]}
                         ],

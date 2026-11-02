@@ -44,13 +44,8 @@ def _email_key(person: Dict[str, Any]) -> str:
 def order_recipients(
     recipients: Sequence[Dict[str, Any]], actor_email: Optional[str]
 ) -> List[Dict[str, Any]]:
-    """Non-actor addresses first, the actor's own last (one_email's own order)."""
-    actor = (actor_email or "").strip().lower()
-    if not actor:
-        return list(recipients)
-    return [r for r in recipients if _email_key(r) != actor] + [
-        r for r in recipients if _email_key(r) == actor
-    ]
+    """To, then Cc, the actor's own last (one_email's own order, `order_for_email`)."""
+    return automation_recipients.order_for_email(list(recipients), actor_email)[0]
 
 
 def merge_people(contexts: Sequence[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -122,6 +117,8 @@ def render_preview(
         else None
     )
     primary = recipients[0]
+    # DEALER-OI-ROUTE: every To address, named as the send will address them.
+    n_to = automation_recipients.to_count(list(recipients))
     subject, body_html = "", ""
     if template is not None:
         rendered = EmailTemplateService(db).render(
@@ -136,8 +133,8 @@ def render_preview(
         )
         subject, body_html = rendered["subject"], rendered["body_html"]
     return {
-        "to": {"name": primary.get("name") or primary["email"]},
-        "cc": [{"name": r.get("name") or r["email"]} for r in recipients[1:]],
+        "to": {"name": ", ".join(r.get("name") or r["email"] for r in recipients[:n_to])},
+        "cc": [{"name": r.get("name") or r["email"]} for r in recipients[n_to:]],
         "subject": subject,
         "body_html": body_html,
     }

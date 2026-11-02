@@ -97,7 +97,8 @@ contact's escalation switch. No switch, no change to the bot's barred checks or 
 - Escalation barred (ESCALATION-CONTROL, most dealers): "I couldn't find that in our product documents." plus
   "Please refer to your salesman." (`turn/refer.py`), nothing armed. Staff-tier profiles are never offered.
 - Contract (names the tests use): `knowledge_service.KNOWLEDGE_MISS_SOURCE = "knowledge_miss"`,
-  `KNOWLEDGE_MISS_LINE`, `arm_knowledge_miss_offer(db, contact_pk) -> bool` (False and nothing written when barred);
+  `KNOWLEDGE_MISS_LINE`; `chatbot.agent.knowledge_miss.arm_knowledge_miss_offer(db, contact_pk) -> bool` (False and
+  nothing written when barred; moved out of core for the AC-002 package boundary, #2082);
   local agent tool `crm_knowledge_handoff` (no arguments), contact principal only, chosen by the model (no word
   list); the loop makes sure the final reply carries the tool's `say` text (code-added).
 

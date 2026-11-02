@@ -1276,6 +1276,11 @@ def _combo_line_request(db):
             ],
         },
     )
+    # PRICETAG-COMBO AC-3.4: start from the per-candidate tag set a request in flight
+    # (or a hand split) already holds.
+    from tests._ptag_combo_seed import resplit_per_combination
+
+    resplit_per_combination(db, request)
     db.commit()
     return request, cabinet, mirror, taps
 
@@ -1346,6 +1351,11 @@ def _combo_line_with_trailing_fixed_part(db):
             ],
         },
     )
+    # PRICETAG-COMBO AC-3.4: start from the per-candidate tag set a request in flight
+    # (or a hand split) already holds.
+    from tests._ptag_combo_seed import resplit_per_combination
+
+    resplit_per_combination(db, request)
     db.commit()
     return request, x, y, candidates
 

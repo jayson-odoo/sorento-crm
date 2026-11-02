@@ -26,8 +26,8 @@ from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
 
 
 def _merged_catalog_restricted_fields() -> set[tuple[str, str]]:
-    """The catalogue's own answer, read the same way `mcp_tool_capability_service.
-    _load_catalog_specs` does.
+    """The catalogue's own answer, read from the MCP package in this checkout (the backend's
+    `mcp_catalog_copy.py` has no `module_loader.merged_catalog`).
 
     A shared backend venv can carry a STALE editable install of `sorento_crm_mcp`
     pointing at a different checkout (the "lane backend imports primary MCP catalog"

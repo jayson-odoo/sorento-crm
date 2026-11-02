@@ -1455,16 +1455,19 @@ CUSTOMER_SCOPED_TOOLS: frozenset[str] = frozenset(
 # image does not contain that package: `sorento_crm/docker-compose.yml` builds the backend
 # with `context: ./sorento_crm_backend`, the Dockerfile's `COPY . .` therefore copies only
 # the backend, `mcp` is not in `requirements.txt` and no volume mounts it. A catalogue read
-# on the turn path would raise `ModuleNotFoundError` in every container, the path fallback
-# in `mcp_tool_capability_service._load_catalog_specs` would look for `/sorento_crm_mcp/`
-# and fail too, and `run_fetch`'s broad `except` would turn EVERY live business turn into
-# "MCP tool X failed". A frozen set costs nothing and cannot fail.
+# on the turn path would raise `ModuleNotFoundError` in every container, and `run_fetch`'s
+# broad `except` would turn EVERY live business turn into "MCP tool X failed". (The
+# backend now carries a verbatim copy, `app/services/mcp_catalog_copy.py`, which
+# `mcp_tool_capability_service._load_catalog_specs` reads; the security-boundary reason
+# below is why this set stays a frozen literal anyway.) A frozen set costs nothing and
+# cannot fail.
 #
 # The catalogue is still the source of truth for WHICH names belong here, and the two are
-# pinned together by `tests/chatbot/test_tool_pool_is_read_only.py`, which imports the
-# catalogue (available in CI and in a checkout, never in the container) and asserts this
-# set EQUALS "method GET, or the spec's own `read_only` flag". Drift in either direction
-# fails CI, which is where the catalogue is readable, instead of at 3am in production.
+# pinned together by `tests/chatbot/test_tool_pool_is_read_only.py`, which reads the
+# backend's copy (itself pinned byte for byte to the MCP file by
+# `tests/test_mcp_catalog_in_image.py`) and asserts this set EQUALS "method GET, or the
+# spec's own `read_only` flag". Drift in either direction fails CI instead of at 3am in
+# production.
 #
 # The six the audit found, deliberately absent: `crm_complaint_close`, `crm_order_cancel`,
 # `crm_purchase_request_approve`, `crm_purchase_request_reject`,
