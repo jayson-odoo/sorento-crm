@@ -147,11 +147,19 @@ def _kind_rows(focus: Focus, kind: str) -> list[Any]:
     return list(getattr(focus, attr, None) or []) if attr else list(focus.extra.get(EXTRA_KIND_ALIASES.get(kind, kind)) or [])
 
 
-def _drop_words(focus: Focus, kind: str, words: set[str]) -> None:
+def _drop_words(focus: Focus, kind: str, words: set[str], ids: set[str] | frozenset[str] = frozenset()) -> None:
     """SUPPLIER-ASK review round 5-6 (S-a): drop from the `kind` slot only the rows whose word (`raw`) is one of
-    `words` (casefolded); every other row there stays."""
+    `words` (casefolded) or whose row id (`uuid`, `canonical_code`) is one of `ids`; every other row there stays."""
     held = _kind_rows(focus, kind)
-    kept = [r for r in held if not (isinstance(r, dict) and str(r.get("raw") or "").strip().casefold() in words)]
+
+    def _picked_away(r: Any) -> bool:
+        if not isinstance(r, dict):
+            return False
+        return str(r.get("raw") or "").strip().casefold() in words or bool(
+            {str(r.get("uuid") or ""), str(r.get("canonical_code") or "")} & set(ids)
+        )
+
+    kept = [r for r in held if not _picked_away(r)]
     if len(kept) != len(held):
         _set_kind_field(focus, kind, kept)
 
@@ -999,6 +1007,7 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
         if picked_side is not None:
             focus.domains = [picked_side]
             trace.rules_fired.append(f"party_side_{picked_side}")
+            _documents_of_the_side(focus, picked_side)
         if pending.kind == "kind_pick" and kind_for_focus in _PARTY_KINDS:
             # The word is the kind picked: the same WORD held as the other party kind on the asking turn is dropped
             # (only it: an earlier pick or another carried party stays), so a customer pick never probes the held
@@ -1006,8 +1015,14 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             picked_words = {
                 str(o.get("raw") or o.get("code") or "").strip().casefold() for o in matched if isinstance(o, dict)
             } - {""}
+            # Fix round 7 (crew turn c73ee10c): the row held on the asking turn carries the resolver's name, not the
+            # typed word, so it is matched by the rows the unpicked option names too.
+            unpicked_ids = {
+                str(u) for o in (pending.options or []) if isinstance(o, dict) and o not in matched
+                for u in (o.get("uuids") or [])
+            }
             for other in _PARTY_KINDS - {kind_for_focus}:
-                _drop_words(focus, other, picked_words)
+                _drop_words(focus, other, picked_words, unpicked_ids)
         # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND ambiguous token
         # queued on THIS pick's own payload is asked NEXT, once this one is
         # answered - never the same options re-printed (`with_answered_positions`,
@@ -1624,6 +1639,13 @@ _PURCHASE_SIDE = "purchase_order"
 _PARTY_KINDS = frozenset({"customer", "supplier"})
 #: The outstanding statuses (`lanes/business/report_ask.OUTSTANDING_STATUSES`, restated: this package imports no lane).
 _OUTSTANDING_STATUSES = frozenset({"outstanding", "outstanding_both", "so_outstanding", "do_outstanding"})
+
+
+def _documents_of_the_side(focus: Focus, side: str) -> None:
+    """Fix round 7 (crew turn c73ee10c): a pick that moves the ask to the sales side drops the purchase thread's PO
+    document, which is not the sales side's (it held `document [PO]` into the customer's outstanding report)."""
+    if side != _PURCHASE_SIDE and "PO" in (focus.document or []):
+        focus.document = [d for d in focus.document if d != "PO"]
 
 
 def _side_of_the_parties(entities: list[dict[str, Any]], verdict: dict[str, Any]) -> str | None:

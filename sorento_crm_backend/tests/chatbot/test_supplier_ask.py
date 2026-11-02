@@ -1603,3 +1603,119 @@ def test_a_kind_pick_drops_only_the_picked_word_from_the_other_party_kind():
     apply_mod._drop_words(focus, "supplier", {"orionis"})
     assert [r["raw"] for r in apply_mod._kind_rows(focus, "supplier")] == ["jinbai"]
     assert SimpleNamespace
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 7 (crew sweep at 55545eb7): meaning hits came and went (金百川, 太阳); the supplier side was still held
+# after the customer pick in the owner's flow.
+# --------------------------------------------------------------------------- #
+
+
+def test_one_uncached_row_no_longer_switches_meaning_off_for_the_whole_turn(monkeypatch):
+    """Crew turns 2d4e8d65 (fail) / 7e4a5d65 (pass): the same span, meaning hits only on some sends. One row text not
+    yet in the vector cache made `usable_embedder` spelling-only for every span of the turn. Cached rows keep their
+    meaning; the uncached row scores none and no row is embedded on the turn."""
+    import numpy as np
+
+    asked: list[list[str]] = []
+
+    def request(chunk):
+        asked.append(list(chunk))
+        return [[1.0, 0.0, 0.0] if "jinbaichuan" in t.casefold() or t == "Jin Bai Chuan" else [0.0, 1.0, 0.0] for t in chunk]
+
+    ll._cache.clear()
+    embed = ll._vector_embedder("gemini-embedding-001", request, 10)
+    cached = _sup_row("s1", "ZZT CHAOZHOU JINBAICHUAN SANITARY", "400-J001")
+    fresh = ll.LookupRow("customer", "c1", "ZZT NEW CUSTOMER TODAY", ("ZZT NEW CUSTOMER TODAY",), homes=("label",))
+    embed(list(cached.texts))
+    asked.clear()
+    monkeypatch.setattr(ll, "TURN_EMBED_GAP", 0)  # a gap too large for the turn: the cached rows only
+    usable = ll.usable_embedder([cached, fresh], embed)
+    assert usable is not None and usable is not embed
+    m = usable.matrix(ll.row_texts([cached, fresh]))
+    assert m.shape[0] == len(ll.row_texts([cached, fresh])) and float(np.abs(m).sum()) > 0
+    res = list_resolver.resolve([list_resolver.Span("金百川", "customer", meaning="Jin Bai Chuan")], [cached, fresh], embed=usable)[0]
+    assert res.status == "resolved" and res.candidates[0].row.key == "s1", res
+    assert all("ZZT NEW CUSTOMER TODAY" not in c for c in asked), "no row is embedded on the turn"
+
+
+
+def test_a_small_gap_of_uncached_rows_is_embedded_on_the_turn_and_meaning_stays_full(monkeypatch):
+    """Fix round 7: a few uncached row texts (a new customer) are embedded on the turn, within the embedder's own
+    budget, so every row keeps its meaning."""
+    ll._cache.clear()
+    embed = ll._vector_embedder("gemini-embedding-001", lambda chunk: [[1.0, 0.0] for _ in chunk], 10)
+    rows = [_sup_row("s1", "ZZT CHAOZHOU JINBAICHUAN SANITARY", "400-J001")]
+    assert ll.usable_embedder(rows, embed) is embed
+    assert embed.is_cached(ll.row_texts(rows))
+    assert ll.cached_share(rows, embed) == f"{len(ll.row_texts(rows))}/{len(ll.row_texts(rows))}"
+
+
+@pytest.mark.parametrize("echo,current", [(None, False), ("supplier", False), ("customer", False), ("supplier", True), ("customer", True)])
+def test_after_a_supplier_po_thread_the_customer_pick_reaches_that_customers_do_report(
+    session_factory, monkeypatch, echo, current
+):
+    """Crew sweep at 55545eb7 (turns c73ee10c, 55775513, 34b1a786): after a PO thread, the customer pick over
+    "orionis" left orionis held as a supplier (and the thread's PO document), so "Pending delivery" ran the report
+    for every customer or answered "Couldn't find orionis (supplier)". The pick drops the supplier side for the rest
+    of the thread: the report is that customer's."""
+    _office_world(session_factory)
+    customer = _seed_customer(session_factory, f"{ORIONIS} (PROJECT)")
+    _seed_named(session_factory, ORIONIS, "ZZTSUP-OR01")
+    _span_turn(session_factory, monkeypatch, "outstanding PO for jinbai", list_resolver.Span("jinbai", "supplier"), {"jinbai", OTHER})
+    owner = _parser_output(
+        domain_hint="purchase_order", intent_hint="check_po", order_status="outstanding", status="outstanding",
+        document=["PO"], entity_op="replace_combine",
+        entities=[{"raw": "orionis", "hint": "supplier", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, _c, _s = _span_turn(
+        session_factory, monkeypatch, "Outstandinf for orionis", list_resolver.Span("orionis", "product_code"), set(), qf=owner,
+    )
+    position = next(int(ln.split(". ", 1)[0]) for ln in reply.splitlines() if "(customer)" in ln)
+    # The parser may echo the asked word beside the pick, with either hint (v195 does on some sends).
+    echoed = [{"raw": "orionis", "hint": echo, "canonical_code": None, "current_message": current, "confident": True}] if echo else []
+    pick = _parser_output(
+        message_type="answer", intent_hint="check_po", domain_hint="purchase_order", document=["PO"], entities=echoed,
+        reference_positions=[position], status="outstanding", order_status="outstanding", entity_op="reuse",
+    )
+    reply, _c, _s = _span_turn(session_factory, monkeypatch, str(position), list_resolver.Span(str(position)), set(), qf=pick)
+    basis = _parser_output(
+        message_type="answer", intent_hint="check_order", domain_hint="order", order_status="outstanding",
+        status="outstanding", basis="pending_delivery", entities=echoed, reference_positions=[2], entity_op="reuse",
+    )
+    reply, captured, _s = _span_turn(
+        session_factory, monkeypatch, "Pending delivery", list_resolver.Span("Pending delivery"), set(), qf=basis,
+    )
+    asks = [a for n, a in captured if n in ORDER_TOOLS]
+    assert asks and asks[0].get("customer_ids") == [customer], (reply, captured)
+    assert "(supplier)" not in reply, reply
+
+
+
+def test_the_customer_pick_drops_the_held_supplier_row_by_its_id_whatever_its_name():
+    """Crew turn c73ee10c: the supplier row held on the asking turn carried the resolver's name (not 'orionis') and id
+    42b950b5; matched by the word alone it stayed, and the next turn read orionis as a supplier again."""
+    from app.services.chatbot.turn import apply as apply_mod
+    from app.services.chatbot.turn.state import Focus
+
+    focus = Focus()
+    held = {"raw": ORIONIS, "uuid": "42b950b5-0000-0000-0000-000000000000", "canonical_code": ORIONIS}
+    other = {"raw": "jinbai", "uuid": "11111111-0000-0000-0000-000000000000"}
+    apply_mod._set_kind_field(focus, "supplier", [held, other])
+    apply_mod._drop_words(focus, "supplier", {"orionis"}, {"42b950b5-0000-0000-0000-000000000000"})
+    assert [r["raw"] for r in apply_mod._kind_rows(focus, "supplier")] == ["jinbai"]
+
+
+
+def test_a_customer_kind_pick_on_the_purchase_side_moves_to_sales_and_drops_the_po_document():
+    from app.services.chatbot.turn import apply as apply_mod
+    from app.services.chatbot.turn.state import Focus
+
+    assert apply_mod._side_of_the_parties([{"hint": "customer", "current_message": True}], {"domain_hint": "purchase_order"}) == "order"
+    focus = Focus()
+    focus.document = ["PO", "SO"]
+    apply_mod._documents_of_the_side(focus, "order")
+    assert focus.document == ["SO"]
+    focus.document = ["PO"]
+    apply_mod._documents_of_the_side(focus, "purchase_order")
+    assert focus.document == ["PO"]

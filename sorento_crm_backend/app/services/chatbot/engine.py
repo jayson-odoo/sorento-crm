@@ -1914,6 +1914,11 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 all_rows = [*prep.rows, *prep.spec_key_rows]
                 embed = lookup_lists.usable_embedder(all_rows, prep.embed)
                 event["embedding_model"] = getattr(embed, "model", None) if embed is not None else None
+                # Fix round 7: how many row texts the vector cache held for this turn (a share under 100% reads the
+                # rest by spelling), and why there was no embedder at all.
+                event["embedding_rows_cached"] = lookup_lists.cached_share(all_rows, prep.embed)
+                if embed is None:
+                    event["embedding_off"] = "no_embedder" if prep.embed is None else "nothing_cached"
                 resolutions = list_resolver.resolve(answer.spans, all_rows, embed=embed)
                 # A merged mention ("zzsean zzsorento") resolves to one row; the words that row did not match are
                 # resolved as their own untyped span, one level only.
