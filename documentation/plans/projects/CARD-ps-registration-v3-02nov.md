@@ -1,4 +1,10 @@
-# CARD: PS-REGISTRATION-V3 v1 (2 Nov 2026)
+# CARD: PS-REGISTRATION-V3 v1.1 (2 Nov 2026)
+
+**Owner ruling 2 Nov ~21:20 (Q1, Q2 answered):** phone is NOT mandatory. When a proposal or quotation is sent by
+WhatsApp, the user chooses which of the project's parties to send to; a chosen party with no number gets it typed on
+the spot and it is saved to that party (master data). Added to this lane's scope (rules 10-13). Today the To field is
+free text (`FE/[projectId]/quotation-documents/[documentId]/components/QuotationWhatsAppDialog.tsx:134-140`), seeded
+from the developer's phone snapshot (`:99-102`); the dialog is shared with PS-PROPOSAL-QUOTATION (#2097).
 
 Status: Plan - card posted to the owner (crew-ask), no code yet. Track: normal (carries a migration: one new
 table, five new columns). Size M.
@@ -82,7 +88,23 @@ Customer optional
 
 Not in scope
 - No lead picker (owner 30 Oct). No change to the Check, approve / reject or notifications.
-- Quotation recipients are NOT changed until Q2 is answered.
+- Quotation recipient snapshot (`recipient_*_snapshot`) is not changed; only the WhatsApp dialog's To is (rules 10-13).
+
+WhatsApp send: choose the parties (owner 2 Nov ~21:20)
+10. The send dialog's free-text **To** becomes a list of the project's parties: developer, architect, main contractor,
+    subcontractor, trading house, consultant, interior designer, plus each party's registered contacts (the project's
+    stakeholders that carry a `party_contact_id`). One row per recipient: party, person, number, and its own "Open
+    WhatsApp" button (wa.me opens ONE chat per click, so several parties = several clicks). Message and counter-sign
+    link unchanged.
+11. A row with no number shows an empty phone input. Typing a number and pressing Open WhatsApp saves it: to the
+    party contact when the row is a contact, else to the party's own phone. It fills an EMPTY number only; a number
+    already on file is used as is and can be edited for this send without being saved (no silent overwrite of master
+    data).
+12. The save needs the send right the user already has (`projects.projects.edit` on this project), not
+    `projects.parties.edit`: one narrow endpoint `POST /projects/{id}/parties/{party_id}/phone` that refuses unless the
+    party is on that project and its number is blank. Audited. (Security review: it is a master-data write by a
+    lesser grant.)
+13. A party with no number and nothing typed: its button stays off. No other change to sending.
 
 ## Examples (dev data)
 
@@ -96,27 +118,24 @@ through a `crew-data-request:` comment; crew masks names. Wanted: (1) a project 
 - A party picked twice in different roles (main con also subcon): allowed; contacts are picked once per role row, a
   person picked under both becomes ONE stakeholder (dedup on party_contact_id).
 - A deactivated contact still shows on old projects (stakeholder is a copy) but is not offered.
-- Contact create row with no phone: allowed or refused per Q1.
+- Contact create row with no phone: allowed (Q1 answered: phone optional); the number can be added at send time.
 - AI extract fills names it read; party contacts are never invented from it (no match = hint only, as today).
 - Edit mode: the new party selects show and save; contact picks are register-only (after that the Stakeholders panel
   is the place), so edit never deletes a stakeholder.
 
 ## Overlap with parallel lanes
 
-- PS-PROPOSAL-QUOTATION: "proposals can go to tender party, trading house, main con, subcon" will want these party
+- PS-PROPOSAL-QUOTATION (#2097): this lane changes `QuotationWhatsAppDialog.tsx` (shared by proposals and quotations)
+  into the party list; they should reuse it, not fork it. "proposals can go to tender party, trading house, main con, subcon" will want these party
   contacts as recipients. This lane only creates the master + stakeholder copies; it does not touch quotation code.
 - PS-QUOTE-RULES / PS-SAMPLE-TRACKING / PS-SPEC-SHEET: no shared files expected. Shared: `BE/models/projects.py` (all
   lanes add to it), alembic head (migration order: merge one at a time).
 
 ## Questions (max 5, each with a recommendation)
 
-- **Q1 Phone mandatory for a registered contact?** (a) name + phone required, email optional; (b) name only.
-  Recommend (a): the point of the contact is to reach them, and the WhatsApp send needs a phone.
-- **Q2 (meeting B4, not built) Do quotations go ONLY to the project's registered contacts?** (a) hard: the quotation
-  recipient is a pick from registered contacts only; (b) soft: recipient defaults to / suggests the registered contacts
-  of the chosen party, any other person still allowed; (c) unchanged. Recommend (b), built in PS-PROPOSAL-QUOTATION not
-  here, because proposals go to several parties and a hard rule blocks a send whenever a new person at the main con
-  asks for the price.
+- **Q1** answered 2 Nov ~21:20: phone not mandatory.
+- **Q2** answered 2 Nov ~21:20: the WhatsApp send picks the project's parties, a missing number is filled and saved to
+  the party (rules 10-13).
 - **Q3 Area (mukim): selection from where?** (a) a new lookup set of districts per state, seeded once from the distinct
   values already typed (crew data request) and editable in Settings; (b) stays free text. Recommend (a) only if the dev
   data shows few distinct values per state; otherwise (b).
