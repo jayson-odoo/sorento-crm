@@ -572,7 +572,13 @@ function LineRow({
       {line.guard_error && (
         <tr>
           <td colSpan={subRowSpan} className="px-2 pb-2">
-            <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1.5">
+            {/* The anchor the form's Submit scrolls to (`scrollToFirstProblem`): a
+                row's own refusal, the missing-template one included, sits below
+                the fold on a long request (crew browser pass). */}
+            <p
+              data-error-anchor={`line:${index}`}
+              className="sticky left-0 max-w-[calc(100vw-6rem)] rounded bg-destructive/10 px-2 py-1.5 text-xs text-destructive sm:max-w-none"
+            >
               {line.guard_error}
             </p>
           </td>

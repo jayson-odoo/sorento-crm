@@ -7,6 +7,7 @@
  * "New Template" button opens TagTemplateDialog.
  */
 
+import { clickToken } from '@/lib/click-token';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from '@/lib/toast';
 import { useRouter } from 'next/navigation';
@@ -301,7 +302,7 @@ export function TagTemplatesList() {
     // cleared on the next line, and the toast's own copy is read again when the
     // window lapses - live state would have it saying "0 templates" by then.
     setBulkDelete({
-      batchId: crypto.randomUUID(),
+      batchId: clickToken(),
       ids,
       noun: `${ids.length} template${ids.length === 1 ? '' : 's'}`,
     });
@@ -367,7 +368,7 @@ export function TagTemplatesList() {
         onRemove={(filter, count) => {
           if (!assignTarget) return;
           setUnassign({
-            batchId: crypto.randomUUID(),
+            batchId: clickToken(),
             templateId: assignTarget.id,
             subject: `${assignTarget.name} from ${count} ${count === 1 ? 'product' : 'products'}`,
             filter,

@@ -9,6 +9,7 @@
  * who can see templates reads it. Not drawn at all without that read.
  */
 
+import { clickToken } from '@/lib/click-token';
 import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -103,7 +104,7 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
               if (removed.length > 0) {
                 const names = rows.filter((row) => removed.includes(row.id)).map((row) => row.name);
                 setUnlink({
-                  batchId: crypto.randomUUID(),
+                  batchId: clickToken(),
                   ids: removed,
                   subject: names.length === 1 ? names[0] : `${names.length} templates`,
                 });
