@@ -52,6 +52,7 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 import { COLUMN_REMOVAL_MS, QuotationLinesGrid, type QuotationLinesMatrix } from './QuotationLinesGrid';
+import { EDIT_LEAF_MIN_WIDTH, leafColumnWidth } from './QuotationMatrixColumns';
 
 function col(key: string, label: string) {
   return { key, label };
@@ -496,5 +497,38 @@ describe('the page\'s Save waits for a parked removal (review nit)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove Type A - 1 BH' }));
     view.unmount();
     expect(onRemovalPending).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('readable column labels in edit mode (browser pass finding)', () => {
+  function widthOf(name: RegExp | string): number {
+    const input = screen.getByRole('textbox', { name });
+    return parseInt((input.closest('th') as HTMLElement).style.width, 10);
+  }
+
+  it('gives every leaf column at least the edit minimum, wider for a long label', () => {
+    renderGrid({
+      lines: [staged(TRAP, true)],
+      editing: true,
+      matrix: {
+        columns: [
+          ...UNIT,
+          { key: 'l9', label: 'Level 9', cols: [col('m', 'Management office'), col('x', 'BA')] },
+          { key: 'bt', label: 'Break tank', cols: [] },
+        ],
+        onChange: vi.fn(),
+      },
+    });
+    for (const name of ['Column 1 BH', 'Column Balcony', 'Column BA', 'Column header Break tank']) {
+      expect(widthOf(name)).toBeGreaterThanOrEqual(EDIT_LEAF_MIN_WIDTH);
+    }
+    expect(widthOf('Column Management office')).toBeGreaterThan(widthOf('Column BA'));
+  });
+
+  it('leaves the read widths as they were', () => {
+    expect(leafColumnWidth('Balcony', false)).toBe(72);
+    expect(leafColumnWidth('Break tank', false, true)).toBe(96);
+    expect(leafColumnWidth('BA', true)).toBe(EDIT_LEAF_MIN_WIDTH);
+    expect(leafColumnWidth('x'.repeat(60), true)).toBe(200);
   });
 });

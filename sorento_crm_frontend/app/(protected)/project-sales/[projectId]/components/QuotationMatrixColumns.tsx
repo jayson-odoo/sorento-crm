@@ -269,11 +269,11 @@ function LabelEditor({
   const dragValue = `${kind}:${headerKey}:${itemKey}`;
 
   return (
-    <div className="flex min-w-0 flex-col items-stretch gap-0.5 normal-case">
+    <div className="flex w-full min-w-0 flex-col items-stretch gap-0.5 normal-case">
       <div
         role="group"
         aria-label={label}
-        className={cn('flex min-w-0 items-center gap-0.5 rounded-sm', over && 'ring-2 ring-primary')}
+        className={cn('flex w-full min-w-0 items-center gap-0.5 rounded-sm', over && 'ring-2 ring-primary')}
         onDragOver={(event) => {
           if (!event.dataTransfer.types.includes(DRAG_TYPE)) return;
           event.preventDefault();
@@ -320,7 +320,7 @@ function LabelEditor({
           disabled={matrix.saving}
           aria-label={kind === 'header' ? `Column header ${label}` : `Column ${label}`}
           title={value}
-          className="h-7 min-w-0 flex-1 px-1 text-center text-xs font-medium"
+          className="h-7 w-full min-w-0 flex-1 px-1 text-center text-xs font-medium"
           onChange={(event) => setValue(event.target.value)}
           onBlur={commit}
           onKeyDown={(event) => {
