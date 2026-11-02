@@ -23,6 +23,8 @@ The promotion workflow:
 3. Links it to **Promotion Products** as needed (visible at **[Marketing Management → Promotion Products](/marketing-management/promotion-products)**).
 4. Calls back into the CRM to attach the original file to the Promotion record.
 
+A brand marked **Promotions carry no selling price** (see [Product categories & brands](../product/product-categories-and-brands.md)) gets its products linked with no selling price or discount, whatever the file shows.
+
 You don't need to create the promotion record by hand - the integration handles it. If anything is missing or wrong (e.g. a product code didn't match), open the promotion and edit it.
 
 ## How you'll be notified

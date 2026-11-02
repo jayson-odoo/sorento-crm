@@ -16,6 +16,31 @@ Quotations** screen is a different module.
 
 To start a new one, use **New quotation** from the project's **Quotation** tab.
 
+## Fill the cover page
+
+Every quotation sent from now on starts with a cover page: page 1 of the PDF (portrait) and the
+first card on the customer's sign link. It replaces the separate Excel cover sheet. It shows, in
+this order: **Reference No.**, **Date**, **Attn**, **Company**, **Contact**, **Add**, **Email**,
+**Quotation Purpose**, **Terms & Conditions**, **Payment Terms**, **Validity**, **Prepared By**.
+
+* **Reference No.** is the quotation number with its revision and the project name (for example
+  `PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES`). The same reference shows on the price pages and
+  on the sign link. You do not type your own code any more.
+* On the **Header** tab: **Email** sits under **Phone** and fills from the customer's main contact
+  on a new quotation. **Quotation Purpose** sits under **Subject** and is optional.
+  **Prepared By** is the project's salesperson and cannot be edited here.
+* On the **Terms** tab: **Payment Terms** and **Validity** sit above the terms. A new quotation
+  fills them from the company's active terms template; change them for this quotation if needed.
+* **Validity** is printed for the customer only. The sign link keeps working after it.
+* An empty field is left off the cover page rather than printed blank.
+* **Your Ref** (the customer's own reference) stays on the **Header** tab and prints on the price
+  pages as before.
+
+The terms print the way you wrote them: a heading stays a heading, a blank line keeps its gap,
+bullets and indented bullets print as bullets, and nothing is numbered for you. They print once,
+on the cover page. Quotations sent before this change keep their old layout when downloaded
+again.
+
 ## Every line must be a catalogue product or set
 
 A quotation line must name a product or a product set from the catalogue. You cannot type a
@@ -83,17 +108,51 @@ The project's activity log records *Quotation ... link opened in WhatsApp by ...
 
 The link opens a sign page that matches the PDF:
 
-* Your company logo, **Quotation No.**, **Revision**, **Date** and **Sales contact** (your name and
-  phone).
+* First, the cover page card: your company logo and name, then the same rows as PDF page 1,
+  including the terms written the same way.
+* Then **Quotation No.** (the same reference as the PDF), **Revision**, **Date** and **Sales
+  contact** (your name and phone).
 * One **Quotation** card. Each section is a row with its item count and total; with more than one
   section they start closed. The last row is **Total amount**.
+* Each section's table has the same columns as that section in the PDF, in the same order and
+  with the same headings: **ITEM**, **PRODUCT IMAGE** (only when a line in that section has a
+  photo, as in the PDF), **TECHNICAL SPEC** (the line's drawing), **DESCRIPTION**, **BRAND**,
+  **PRODUCT CODE**, **QTY**, **UNIT RATE (RM)**, **COMPLETE SET** and **GRAND TOTAL**. The
+  customer sees the photos and drawings without signing in. On a phone they scroll the table
+  sideways; no column is left out.
 * To accept, the customer types **Your name**, ticks *I have read and agree to the Terms and
   conditions.*, signs in **Sign here** and clicks **Sign and accept**. If they skip a step, the
-  page tells them which one.
+  page tells them which one. The terms they agree to are the ones on the cover page card.
+* A link for a quotation sent before the cover page existed looks as it did then, with the terms
+  at the bottom.
 * After signing, both signatures show side by side: **Prepared by** (you) and **Accepted by**
   (the customer).
 * An old or replaced link shows *This link is no longer valid*, or *This quotation has been
   replaced by Quotation No. ...* when you sent a newer revision. Send them the new link.
+
+## See whether the customer opened it
+
+Under the customer's name at the top of the quotation page you see **Viewed 3 times, last
+02/11/2026, 9:41 pm** for the revision the customer holds now, or **Not viewed yet**. Nothing shows
+before the first time you send it. Managers see the same line.
+
+Click the line to open the **View log**: every open, newest first, with the time, the Quotation
+No. of the revision opened (R1, R2 ...) and the device (Phone, Tablet or Computer). After you send
+a new revision the line starts again at **Not viewed yet**; opens of the old link stay in the log
+under the old number.
+
+What counts as a view:
+
+* One open per browser every 30 minutes. Refreshing the page, or opening it again a few minutes
+  later on the same phone, counts once. A colleague of the customer opening it on another device
+  counts at once.
+* The preview WhatsApp or email shows under the link is not a view.
+* Opening the link in a browser where you are signed in to the CRM is not a view. **Opening it
+  anywhere else counts**, for example tapping the link in WhatsApp on your own phone, where you
+  are not signed in to the CRM. Check your own link from the CRM, not from your phone.
+
+Nothing that identifies the reader is kept: no IP address and no name, only the time, the
+revision and the kind of device.
 
 ## The customer suggests changes (quantity, price, remove a line)
 

@@ -48,6 +48,12 @@ _NOTIFICATION_TYPE_TO_EVENT_KEY: dict[str, str] = {
     "user_invitation": "user_invitation",
     "daily_sla_summary": "daily_sla_summary",
     "workflow_form_transition": "workflow_form_state_transition",
+    # Project sales (PROJECT-EMAIL-SWITCHES): each has its own switch on Email Event Configs
+    # instead of sharing the generic `notification_delivery` one. Email only: the bell, web
+    # push, WhatsApp and the approval gate do not read these keys.
+    "project_price_floor_breach": "project_below_minimum_price",
+    "project_quotation_approval_requested": "project_quotation_approval_requested",
+    "project_interest_registered": "project_interest_registered",
 }
 
 

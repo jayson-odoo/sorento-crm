@@ -106,6 +106,12 @@ export type QuotationDocument = {
   recipient_name_snapshot: string | null;
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;
+  recipient_email_snapshot?: string | null;
+  quotation_purpose?: string | null;
+  payment_terms?: string | null;
+  validity?: string | null;
+  /** The project's salesperson, as the cover page prints it. */
+  prepared_by?: string | null;
   attn_name: string | null;
   subject_title: string | null;
   cover_letter_html: string | null;
@@ -171,6 +177,9 @@ export type QuotationDocument = {
    * the list ends up disagreeing with the document about a quotation that is already won.
    */
   customer_decision?: 'accepted' | 'changes_requested' | null;
+  /** PS-QUOTE-VIEWS: counted customer opens of the LATEST issue's sign link. */
+  view_count?: number;
+  last_viewed_at?: string | null;
 };
 
 export type QuotationIssue = {
@@ -222,6 +231,10 @@ export type QuotationDocumentBody = Partial<{
   recipient_name_snapshot: string | null;
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;
+  recipient_email_snapshot: string | null;
+  quotation_purpose: string | null;
+  payment_terms: string | null;
+  validity: string | null;
   /**
    * The quotation form page's scopes (#1341), on the POST and the PATCH alike. The create writes
    * the document, these scopes and their lines in ONE transaction; the edit applies them in one
@@ -240,6 +253,9 @@ export type QuotationDocumentBody = Partial<{
 export type QuotationLetterTemplates = {
   cover_letter_html: string | null;
   terms_html: string | null;
+  /** Defaults of the active terms template. */
+  payment_terms?: string | null;
+  validity?: string | null;
 };
 
 /**
@@ -470,6 +486,29 @@ export async function listQuotationIssues(
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the revisions'));
   const body: Envelope<QuotationIssue> = await response.json();
+  return body.data ?? [];
+}
+
+/** One counted customer open of a revision's sign link (PS-QUOTE-VIEWS). */
+export type QuotationView = {
+  id: string;
+  viewed_at: string;
+  issue_no: number;
+  /** The revision's Quotation No., e.g. PRJQ-2026-0003-R1. */
+  our_ref: string;
+  device: 'mobile' | 'tablet' | 'desktop';
+};
+
+/** The document's view log, every revision, newest first (the backend keeps the latest 50). */
+export async function listQuotationViews(
+  projectId: string,
+  documentId: string,
+): Promise<QuotationView[]> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/views`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the views'));
+  const body: Envelope<QuotationView> = await response.json();
   return body.data ?? [];
 }
 

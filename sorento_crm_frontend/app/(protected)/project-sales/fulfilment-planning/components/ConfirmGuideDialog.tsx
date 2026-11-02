@@ -24,6 +24,7 @@ import { LineSplitEditor, type LineSplitEditorHandle } from './LineSplitEditor';
 import { formatSplitDate } from '../lib/lineSplitModel';
 import { defaultSoRemark, shouldLabelMockupLines } from '../../_shared/lib/soRemark';
 import { MockupLinesContext } from './LineSplitSheet';
+import type { SuggestionMoved } from '../../_shared/lib/confirmPreviewFresh';
 
 /** One line this Confirm covers, as the board states it, with its editable remark (UAC F25). */
 export type ConfirmGuideLine = CoveredSheetLine & {
@@ -35,6 +36,11 @@ export type ConfirmGuideLine = CoveredSheetLine & {
   isMockup?: boolean;
   /** The line's order is a consignment (`so_doc_type`). */
   consignment?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE: the saved decision differs from what AutoCount's pending change
+   * suggests. A warning with Keep / Take suggestion, never a refusal.
+   */
+  moved?: SuggestionMoved | null;
 };
 
 /** One page of the guide (UAC F2): an order this Confirm covers, and the lines it covers. */
@@ -107,6 +113,11 @@ export function ConfirmGuideDialog({
   runConfirm,
   saveRemarks,
   preparing = false,
+  refreshing = false,
+  refreshFailed = false,
+  wordsLoading = false,
+  onRetryRefresh,
+  onTakeSuggestion,
   prepareErrors,
   onRetryPrepare,
   onClose,
@@ -131,6 +142,24 @@ export function ConfirmGuideDialog({
    * record one (so their page is the editable sheet, never the read-only one), or that failed.
    */
   preparing?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): the board is re-reading the server as the guide
+   * opens; the review waits for it, so it never prints the decision as it was before a Save.
+   */
+  refreshing?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE round 2 (crew browser pass): that re-read failed, so what the guide
+   * holds may be older than the server. Nothing is written from it until a Retry succeeds.
+   */
+  refreshFailed?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE review round 3 (S1): the email's words are being read again after a
+   * save. The sheet stays up with the last words; only Next and Confirm wait.
+   */
+  wordsLoading?: boolean;
+  onRetryRefresh?: () => void;
+  /** CONFIRM-PREVIEW-STALE: drop the saved decision so the line takes AutoCount's suggestion. */
+  onTakeSuggestion?: (key: string) => Promise<unknown> | void;
   /** Per core sales order id: why it could not be made ready (the server's sentence). */
   prepareErrors?: ReadonlyMap<string, string>;
   onRetryPrepare?: () => void;
@@ -152,14 +181,37 @@ export function ConfirmGuideDialog({
 
   const page = step.kind === 'review' ? pages[step.index] : undefined;
   // Every page's split read, kept while the guide is open; the current page reads its own.
-  const reads = useLineSplitsReads(pages.map((entry) => entry.psoId));
+  // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): each read is taken again as the guide opens,
+  // and a page reads as loading until the read answered after that moment: a cached sheet
+  // from before a Save is never what the review prints.
+  const [openedAt] = React.useState(() => Date.now());
+  const reads = useLineSplitsReads(
+    pages.map((entry) => entry.psoId),
+    { fresh: true },
+  );
   const splitRead = step.kind === 'review' && page ? reads[step.index] : undefined;
-  const reading = Boolean(page?.psoId) && Boolean(splitRead?.isPending);
+  const reading =
+    Boolean(page?.psoId) &&
+    Boolean(
+      splitRead?.isPending ||
+        (splitRead && !splitRead.isError && splitRead.dataUpdatedAt < openedAt),
+    );
+  /** CONFIRM-PREVIEW-STALE: the "AutoCount moved this line" warnings the planner chose to keep. */
+  const [keptMoved, setKeptMoved] = React.useState<ReadonlySet<string>>(new Set());
+  /** The line whose Take suggestion is on the wire (one press, one write). */
+  const [taking, setTaking] = React.useState<string | null>(null);
+  const takeSuggestion = (key: string) => {
+    if (!onTakeSuggestion || taking) return;
+    setTaking(key);
+    void Promise.resolve(onTakeSuggestion(key)).finally(() => setTaking(null));
+  };
+  // CONFIRM-PREVIEW-STALE round 2: the re-read as the guide opened failed.
+  const stale = refreshFailed && !refreshing;
   // A page with no planning record waits for the board's adopt, never shown read-only while it
   // runs. Only a FAILED adopt leaves its lines read-only, under the error and its Retry, and
   // the guide can still move on: the press names that order in its results, and one order
   // that cannot be planned never holds up the others.
-  const unready = Boolean(page && !page.psoId && preparing);
+  const unready = Boolean(page && ((!page.psoId && preparing) || refreshing));
   const prepareError =
     page && !page.psoId && !preparing ? prepareErrors?.get(page.salesOrderId) ?? null : null;
   const prepareFailed = Boolean(prepareError);
@@ -261,7 +313,7 @@ export function ConfirmGuideDialog({
     }
   };
   const pressConfirm = async () => {
-    if (posting) return;
+    if (posting || refreshing || stale || wordsLoading) return;
     setPosting(true);
     if (await runConfirm(new Map(pages.map((entry) => [entry.salesOrderId, remarkOf(entry)])))) {
       onClose();
@@ -280,7 +332,14 @@ export function ConfirmGuideDialog({
       : null;
   // UAC F14: a page is never "seen" before its split read has loaded.
   const nextEnabled =
-    step.kind === 'review' && Boolean(page) && !reading && !readFailed && !unready && !dirty;
+    step.kind === 'review' &&
+    Boolean(page) &&
+    !reading &&
+    !readFailed &&
+    !unready &&
+    !stale &&
+    !wordsLoading &&
+    !dirty;
 
   return (
     <Dialog
@@ -312,6 +371,7 @@ export function ConfirmGuideDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4">
+          {!page && stale ? <RefreshFailed onRetry={onRetryRefresh} /> : null}
           {page ? (
             <MockupLinesContext.Provider value={pageFacts?.labelled ?? NO_MOCKUP_LINES}>
             <section
@@ -385,7 +445,46 @@ export function ConfirmGuideDialog({
                   </Button>
                 </div>
               ) : null}
-              {unready ? (
+              {!unready && !stale
+                ? page.covered
+                    .filter((line) => line.moved && !keptMoved.has(line.key))
+                    .map((line) => (
+                      <div
+                        key={line.key}
+                        role="status"
+                        data-testid="confirm-guide-moved"
+                        data-line={line.lineNo ?? ''}
+                        className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
+                      >
+                        <span className="min-w-0 flex-1 break-words">
+                          {`${line.lineNo != null ? `Line ${line.lineNo} ` : ''}${line.itemCode}: AutoCount moved this line: suggestion ${line.moved?.suggestion}, you keep ${line.moved?.kept}`}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setKeptMoved((current) => new Set([...current, line.key]))
+                          }
+                        >
+                          Keep
+                        </Button>
+                        {onTakeSuggestion ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={dirty || taking !== null}
+                            onClick={() => takeSuggestion(line.key)}
+                          >
+                            Take suggestion
+                          </Button>
+                        ) : null}
+                      </div>
+                    ))
+                : null}
+              {stale ? (
+                <RefreshFailed onRetry={onRetryRefresh} />
+              ) : unready ? (
                 <SectionSkeleton rows={4} />
               ) : readFailed ? (
                 <div
@@ -547,7 +646,7 @@ export function ConfirmGuideDialog({
             <Button
               type="button"
               data-testid="confirm-guide-confirm"
-              disabled={posting}
+              disabled={posting || refreshing || stale || wordsLoading}
               onClick={() => void pressConfirm()}
             >
               {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
@@ -556,5 +655,22 @@ export function ConfirmGuideDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** CONFIRM-PREVIEW-STALE round 2: the board could not be read again as the guide opened. */
+function RefreshFailed({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <div data-testid="confirm-guide-refresh-failed" className="flex flex-col items-start gap-2 py-4 text-sm">
+      <span role="alert" className="break-words">
+        The board could not be read again, so this may not show the latest saved decisions.
+        Retry before you confirm.
+      </span>
+      {onRetry ? (
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      ) : null}
+    </div>
   );
 }

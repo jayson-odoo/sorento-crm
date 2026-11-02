@@ -653,16 +653,6 @@ class StockService:
         # `warehouse_id`), None when it named none. Read beside `resolved_policy`.
         self.requested_warehouse_ids: Optional[set[str]] = None
     
-    @staticmethod
-    def _shipments_from_today(db: Session, product_ids: list[str], regions) -> dict:
-        """The dealer's incoming read: shipments with a packing list whose ETA is today or
-        later (CHAT-FIND round 3: a past ETA was printed as the day stock comes)."""
-        from app.services import incoming_stock_service as incoming
-
-        return incoming.earliest_packing_list_shipment(
-            db, product_ids, regions=regions, not_before=incoming.today_myt()
-        )
-
     def list_stock(
         self,
         page: int = 1,
@@ -1675,7 +1665,8 @@ class StockService:
         from app.models.product import ProductCategory
         from app.models.resources import Attachment
         from app.services.incoming_stock_service import _attachment_payload
-        from app.services.eta_policy import rules_for_contact, visible_eta
+        from app.services import incoming_stock_service as incoming
+        from app.services.eta_policy import rules_for_contact, told_dates, told_text
         from app.services.stock_ask_branch import branch as compute_branch
         from app.services.stock_ask_branch import short_of
         from app.services.stock_ask_limits import effective as effective_limits
@@ -1710,10 +1701,31 @@ class StockService:
             else {}
         )
 
-        # R5: the earliest still-incoming shipment with a packing list, any
-        # location, per product on this page.
         contact_rules = rules_for_contact(self.db, resolved_contact_id)
-        eta_by_product = self._shipments_from_today(self.db, query_ids, contact_rules.regions)
+        # Fix B (owner, 2 Nov 2026): the dates told come from the ONE shared read the ETA ask
+        # prints too (`eta_policy.told_dates`); the packing list shipment only picks the file.
+        today = incoming.today_myt()
+        # AC-SIF14: a revoked `estimated_arrival_date` still reads incoming, with no date. The
+        # same decision `apply_field_access` makes per field for a contact.
+        from app.services.field_access import decide
+
+        eta_visible = all(
+            d.allowed
+            for d in decide(
+                self.db,
+                resource="incoming_stock",
+                fields=["estimated_arrival_date"],
+                contact_id=resolved_contact_id,
+            )
+        )
+        told_by_code = told_dates(
+            self.db,
+            [getattr(products_by_id.get(pid), "product_code", None) for pid in query_ids],
+            contact_rules,
+        )
+        file_by_product = incoming.earliest_packing_list_shipment(
+            self.db, query_ids, regions=contact_rules.regions
+        )
 
         # R7: the asking contact's own "Packing list allowed" toggle, resolved once
         # off `resolved_contact_id` - the SAME internal id this whole call's policy
@@ -1776,7 +1788,7 @@ class StockService:
                 ),
             }
             if ask is not None and product is not None and category is not None:
-                x, y = effective_limits(product, category)
+                x, _y = effective_limits(product, category)
                 # R2: X unset (product AND its own category both NULL) is a fact the
                 # B1 agent-notification reason needs ("no cap set for <category>"),
                 # distinct from a category that explicitly opted in with X = 0.
@@ -1790,33 +1802,25 @@ class StockService:
                 on_hand_total = sum(
                     int(r.on_hand or 0) for gid in group_ids for r in per_product[gid]
                 )
-                shipment_candidates = [
-                    eta_by_product[gid] for gid in group_ids if gid in eta_by_product
-                ]
-                # D10-style, across the merge: the earliest of the merged ids' own
-                # shipments is the one that answers - the same "earliest wins" rule
-                # `earliest_packing_list_shipment` already applies per product id.
-                shipment = (
-                    min(shipment_candidates, key=lambda s: s[1])
-                    if shipment_candidates
-                    else None
-                )
-                shipment_date = shipment[1] if shipment else None
+                code_key = (getattr(product, "product_code", None) or "").strip().lower()
+                told = told_by_code.get(code_key, [])
+                shipment_date = told[0] if told else None
                 entry["branch"] = compute_branch(ask, x, on_hand_total, shipment_date)
                 entry["available_qty"] = short_of(ask, x, on_hand_total)
                 entry["cap_unset"] = cap_unset
                 entry["category_name"] = category.category_name
-                if entry["branch"] == "incoming" and shipment is not None:
-                    _shipment_id, eta_date, attachment_id = shipment
-                    # Issue #1328: `+ y` only when this contact's ETA offset switch is on.
-                    entry["eta"] = visible_eta(eta_date, y, contact_rules).strftime("%d/%m/%Y")
+                if entry["branch"] == "incoming":
+                    entry["eta"] = (
+                        ", ".join(told_text(d, today) for d in told) if eta_visible else None
+                    )
                     # PRODUCT-ALTERNATIVES: a nested alternative names its ETA only; the
                     # packing list file goes out for the product asked about, never for
                     # an `Alternative:` line (the engine sends top-level entries' files).
-                    if contact_rules.packing_list_allowed and not nested:
+                    files = [file_by_product[g] for g in group_ids if g in file_by_product]
+                    if files and contact_rules.packing_list_allowed and not nested:
                         attachment = (
                             self.db.query(Attachment)
-                            .filter(Attachment.id == attachment_id)
+                            .filter(Attachment.id == min(files, key=lambda f: f[1])[2])
                             .first()
                         )
                         entry["packing_list"] = _attachment_payload(attachment)

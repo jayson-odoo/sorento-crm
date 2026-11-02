@@ -673,8 +673,12 @@ const LineBlock = React.memo(function LineBlock({
   // decision (only the guide sets them), and the planner's own remark over them.
   const savedRemark = line.savedRemark || null;
   const ownRemark = line.ownRemark || '';
+  // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026, "popup = email = Excel"): a delivered line a
+  // pending AutoCount change names is not dropped by Confirm (the change settles it), and the
+  // email prints its Was -> Now: it reads its NEW cells and words like any changed line.
+  const deliveredQuiet = delivered && !line.pendingChange;
   let body: React.ReactNode;
-  if (delivered && line.remarkInDraft) {
+  if (deliveredQuiet && line.remarkInDraft) {
     // UAC F28: Confirm drops a line delivered in full, so nothing of it reaches purchasing:
     // its remark stays read-only and the row says why. A consignment is the exception: its
     // open qty is ordered less returned, so Confirm keeps it and its words go to purchasing.
@@ -696,7 +700,7 @@ const LineBlock = React.memo(function LineBlock({
         {emptyRemove}
       </TableRow>
     );
-  } else if (delivered && !savedRemark) {
+  } else if (deliveredQuiet && !savedRemark) {
     body = (
       <TableRow className="border-0 hover:bg-transparent">
         {emptyGrip}
@@ -731,6 +735,8 @@ const LineBlock = React.memo(function LineBlock({
             />
           ) : savedRemark || ownRemark ? (
             <RemarkText value={ownRemark || savedRemark || ''} generated="" />
+          ) : delivered && line.remarkGenerated ? (
+            <RemarkText value={line.remarkGenerated} generated="" />
           ) : null}
         </TableCell>
         {balance}

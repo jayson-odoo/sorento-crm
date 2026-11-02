@@ -44,6 +44,16 @@ Complaints support an **AI Extract** shortcut to pre-fill the form from a photo,
 
 If the upload doesn't return useful values, dismiss the dialog and fill the form manually.
 
+On a price tag, purchase or sponsorship request, a long list (more than six pages) is read in up to four parts at once, so it still comes back in well under a minute. A complaint is always read in one go. If some parts could not be read, the rows from the other pages still show, with a line above them such as *"Pages 7-9 could not be read, try them again."* Extract those pages again (for example from a file with just those pages) to add their rows.
+
+If the AI reader fails for the whole file, the dialog shows one of these messages instead of values:
+
+* *"This file is too long to read in one go; try fewer pages."* - the file lists more than one read can hold. Split it (for example send the pages with the lines you need) and extract each part.
+* *"The AI reader did not answer within 45 seconds and was stopped. Try again, or send fewer pages."*
+* *"Could not read the file just now, please try again."* - the AI service was busy or refused the request.
+
+The same messages appear on the **Extract with AI** action on a price tag request's sales order file, where **Retry** runs the read again.
+
 ## Save as draft
 
 Click **Save as draft** at the bottom of the form. Toast: *"Draft saved."* The submission keeps the **Draft** status - visible to you on the dashboard, not yet visible to project sales admin / manager / purchasing.
@@ -105,6 +115,25 @@ Some products are sold as a catalogue package: a cabinet that goes out with a ta
 * **Nothing here blocks Submit.** On a bathroom furniture or kitchen sink line, if the product has no package recorded, or you left the **Package** select empty, or parts are missing, the row shows a **Package warning** pill with a short note (*"No package defined"*, *"No package chosen"*, *"Missing: SRTMR502-BL"*). Submit works anyway and marketing sees the same note on their copy, so they can fill the gap.
 * **Quantity and Remarks stay per line**, not per part - marketing prints one tag per line. With a package chosen, that tag lists every option when you leave a choice open, and only your pick when you make one.
 * **Save Draft keeps all of it**: the package you chose, the parts, and the rows you left open. Once submitted, the read-only view lists the parts under each line and the warning, exactly as sent.
+
+### Tag template and Preview
+
+* **The tag's layout comes from the product.** A product marketing linked to one tag template uses
+  it on its own: the line shows *"Template: <name>"* under the item and there's nothing to choose.
+* **A product with more than one template** shows a **Tag template** select under the line, each
+  option with its print size (for example *80 x 50 mm*). Pick the one you want before you submit:
+  Submit with it empty shows *"Pick a tag template for this line."* on that row. Save Draft does not
+  ask.
+* **A product with no template linked** shows no field and is not drawn in the Preview: under it
+  the Preview reads *"No tag template yet for <code>."* Ask marketing to link one, or escalate the
+  request to them. A set shows no field and uses marketing's furniture set template.
+* **Preview** appears under the lines as soon as the first item is on the form. It draws each line's
+  tag with its template, the product's details and the price you chose (list price, the line's
+  promotion, or the price you typed), one tag per line, and redraws a moment after you change an
+  item, the price mode, a promotion, a typed price or the template. **Open** shows it full screen.
+  Nothing is sent to marketing until you submit.
+* A brand whose promotions carry no selling price shows its list price on the tag, in Selling price
+  mode too.
 
 ### Viewing a submitted price tag request
 

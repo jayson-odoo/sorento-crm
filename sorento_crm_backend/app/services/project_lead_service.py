@@ -170,8 +170,17 @@ def _assert_informant(db: Session, payload: Dict[str, Any]) -> None:
             )
 
 
-def _assert_source(source: Optional[str]) -> None:
-    if source and source not in LEAD_SOURCES:
+def _assert_source(source: Optional[str], db: Optional[Session] = None) -> None:
+    """One list with projects (PS-REGISTRATION-V3 Q4): the editable lookup set, once it exists."""
+    if not source:
+        return
+    if db is not None:
+        from app.services.project_party_contact_service import is_lead_source
+
+        valid = is_lead_source(db, source)
+    else:
+        valid = source in LEAD_SOURCES
+    if not valid:
         raise AppException(
             status_code=422,
             message=f"Unknown lead source '{source}'.",
@@ -275,7 +284,7 @@ def create_lead(
     """Record a sighting. No clash check, by design (AC-O3)."""
     title = _clean_title(payload.get("title"))
     _assert_buyer(db, payload.get("customer_id"))
-    _assert_source(payload.get("source"))
+    _assert_source(payload.get("source"), db)
     _assert_developer(db, payload.get("developer_party_id"))
     _assert_informant(db, payload)
 
@@ -447,7 +456,7 @@ def update_lead(db: Session, lead: ProjectLead, payload: Dict[str, Any]) -> Proj
         _assert_buyer(db, payload.get("customer_id"))
         lead.customer_id = payload["customer_id"]
     if "source" in payload:
-        _assert_source(payload.get("source"))
+        _assert_source(payload.get("source"), db)
     if "developer_party_id" in payload:
         _assert_developer(db, payload.get("developer_party_id"))
     _assert_informant(db, payload)
@@ -997,6 +1006,9 @@ def qualify_lead(
         details["estimated_sales_value"] = lead.estimated_value
     if lead.customer_id and not details.get("customer_id"):
         details["customer_id"] = lead.customer_id
+    # The project records where it came from (PS-REGISTRATION-V3 rule 8): the lead's source.
+    if lead.source and not details.get("lead_source"):
+        details["lead_source"] = lead.source
 
     project = register_project(
         db,

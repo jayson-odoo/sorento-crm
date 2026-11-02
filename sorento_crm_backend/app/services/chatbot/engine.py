@@ -1214,6 +1214,43 @@ def _candidate_lines(
     return (indexed or lines), codes, picks
 
 
+def _known_account_types(db: Session, parser_config: Any, contact_respond_id: Any) -> list[str] | None:
+    """SALES-ACCOUNT-TYPE PR 2: the stored debtor types of the contact's company for the `Known account types:` line,
+    in the session the brands are read in (scoped to the contact's companies). None for a prompt that does not define
+    the line, and for a customer-scoped contact (the route refuses it the filter, so it is never offered the words)."""
+    if not parser_config.account_types:
+        return None
+
+    def read() -> list[str]:
+        scope, _staff = business_services.customer_scope_and_staff(
+            db, contact_respond_id, business_services.fetch_space_id(db)
+        )
+        if (scope or {}).get("enforced"):
+            return []
+        # Only a contact the sales report accepts (the grant or a live salesperson, `_may_see_salespeople`), widened for
+        # the Outstanding reveal and an open pending-delivery ask. Anyone else gets no line; a lookup error fails closed.
+        from app.services import contact_asker, contact_field_reveal_service
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        resolved = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=str(contact_respond_id).strip(), space_id=business_services.fetch_space_id(db)
+        )
+        if not resolved:
+            return []
+        granted = contact_field_reveal_service.granted_keys(db, str(resolved))
+        if not (
+            _may_see_salespeople(db, str(resolved))
+            or "sales_orders.outstanding" in granted
+            or contact_asker.pending_delivery_open(db, str(resolved))
+        ):
+            return []
+        from app.services.reports.ask_params import account_type_options
+
+        return [name for name, _label in account_type_options(db)]
+
+    return _guarded(db, read, [])
+
+
 def _may_see_salespeople(db: Session, resolved: str) -> bool:
     """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
     `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
@@ -4390,20 +4427,47 @@ def _states_a_domain(verdict: dict[str, Any], held_domains: tuple[str, ...]) -> 
     return names_its_own_domain(verdict) and not held_widening
 
 
+def _held_value(value: Any) -> bool:
+    """A focus value that holds something: not None, empty or False, at any depth (a mode-only
+    date window and an id-only customer row hold; an `extra` kind left with no rows does not)."""
+    if isinstance(value, dict):
+        return any(_held_value(v) for v in value.values())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_held_value(v) for v in value)
+    return value not in (None, "", False)
+
+
+def _holds_beyond_reset_keeps(focus: Any) -> bool:
+    """CHAT-RESET-CAPABILITY: does the focus hold anything a reset would clear, i.e. any field
+    outside RESET_KEEPS? Read off every field, not `chat_state._subject` alone, which shows the
+    parser only named values and leaves out id-only rows and `outstanding_brand_ids`."""
+    return any(
+        _held_value(getattr(focus, f.name)) for f in dataclasses_fields(focus) if f.name not in RESET_KEEPS
+    )
+
+
 def _all_broaden_over_nothing_open(verdict: dict[str, Any], state: Any) -> bool:
     """Release gate #1829, round 12 (EVAL-BENCH contacts 01, 02, 30; captain ruling option A): an
     all-broaden (`entity_op` clear or `broaden_axis` all) with `scope_intent` null and no domain or
     asks of its own (any `domain_hint`, so an idea's ideate stays out), over a session with no open
     question, no task of any status and no stored list, has nothing to widen: it is "clear all". A
-    held subject is allowed (the trace's turns held products and the inventory domain). Whether the
+    held subject is required (CHAT-RESET-CAPABILITY, below) and may be anything beyond RESET_KEEPS
+    (the trace's turns held products and the inventory domain). Whether the
     message states anything else is the seam's own `_stated_beside_a_reset`. Round 12b (reviewer
     B1 / S1): a question the focus holds (`chat_state._focus_questions`: a set clarify, the count
     question, the other-brands offer) or a set being listed is open too,
     and a family widening (`broaden_to` other than all, `family` true) is stated; round 12c:
-    `family` false is the exact code alone, no widening."""
+    `family` false is the exact code alone, no widening.
+
+    CHAT-RESET-CAPABILITY: over a new chat or a session a Reset already emptied
+    (`_holds_beyond_reset_keeps`) there is nothing to clear, so the parser's all-broaden (it flips
+    to it on a capability question, read as clarification) is no reset and the message takes
+    today's path."""
     if state is None:
         return False
     focus = state.focus
+    if not _holds_beyond_reset_keeps(focus):
+        return False
     return (
         (verdict.get("entity_op") == "clear" or verdict.get("broaden_axis") == "all")
         and not verdict.get("scope_intent")
@@ -5295,6 +5359,7 @@ def _run_stages_body(  # noqa: PLR0915
         # contact's companies, `_scoped_factory` at the top of this function) -
         # no cache, so an operator's table edit reaches the very next turn.
         brands = turn_runtime.active_brands(db)
+        account_types = _known_account_types(db, parser_config, contact_respond_id)
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
         # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
         # candidate lines name the product types and spec values the words say; the index
@@ -5398,6 +5463,7 @@ def _run_stages_body(  # noqa: PLR0915
         task_lines=parser.open_task_lines(state_in.focus, open_question),
         open_question_line=parser.open_question_line(open_question),
         brands=None if parser_config.lookup_lists else brands,
+        account_types=account_types,
         promotion_kinds=None if parser_config.lookup_lists else promotion_kinds,
         # REPORT-SMART-L R9: printed only when the prompt names the line (`ParserConfig.sales_channels`; owner ruling
         # 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule that names it).
@@ -6074,7 +6140,11 @@ def _run_stages_body(  # noqa: PLR0915
                 verdict, _company_pick = {**_candidate, "group_by": None}, _candidate is not verdict
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "basis":
             verdict = report_ask.as_basis_answer(verdict, open_ask)  # reference_positions pick an offered option
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and report_ask.names_its_own_ask(
+        _kind_pick = False
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "kind":
+            # SALES-ACCOUNT-TYPE PR 2: the word repeated with the parser's `kind_said` is the kind question's pick.
+            verdict, _kind_pick = report_ask.as_kind_answer(verdict, open_ask)
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and not _kind_pick and report_ask.names_its_own_ask(
             verdict, open_ask, parser_ops=parser_ops
         ):
             replaced_ask, open_ask = open_ask, None  # a new sales ranking ask, not the answer to the open question

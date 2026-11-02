@@ -503,7 +503,8 @@ describe('Combo merge tokens (AC-4.2)', () => {
 
   it('leave the existing fields and their order alone', () => {
     const existing = mergeFieldCatalog([])
-      .filter((field) => (field.group as string) !== 'Combo')
+      // PS-SPEC-SHEET's group is new, after Combo; the price tag fields before it are unchanged.
+      .filter((field) => !['Combo', 'Spec sheet'].includes(field.group as string))
       .map((field) => field.path);
     expect(existing).toEqual([
       'product.code',

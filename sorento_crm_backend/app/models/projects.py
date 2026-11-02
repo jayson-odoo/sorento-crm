@@ -52,6 +52,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -99,6 +100,9 @@ PARTY_ARCHITECT = "architect"
 PARTY_MAIN_CONTRACTOR = "main_contractor"
 PARTY_TRADING_HOUSE = "trading_house"
 PARTY_CONSULTANT = "consultant"
+PARTY_SUBCONTRACTOR = "subcontractor"
+PARTY_INTERIOR_DESIGNER = "interior_designer"
+PARTY_TENDER_PARTY = "tender_party"
 
 
 class ProjectParty(Base, CompanyScopedMixin):
@@ -141,6 +145,68 @@ class ProjectParty(Base, CompanyScopedMixin):
         Index("ix_project_parties_name", "name"),
         {"schema": "projects"},
     )
+
+
+class ProjectPartyContact(Base, CompanyScopedMixin):
+    """A person at a party (PS-REGISTRATION-V3 rule 4): the master a registration picks from.
+
+    Registration copies a picked contact into the project's stakeholders, so a person who
+    later changes firm does not rewrite who was on an old project. Phone is optional (owner
+    2 Nov): it can be filled at WhatsApp send time.
+    """
+
+    __tablename__ = "party_contacts"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    party_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="CASCADE"), nullable=False
+    )
+    name = Column(String(255), nullable=False)
+    job_title = Column(String(120), nullable=True)
+    phone = Column(String(50), nullable=True)
+    email = Column(String(150), nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default="true", default=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_project_party_contacts_party", "party_id"),
+        {"schema": "projects"},
+    )
+
+
+#: The roles a project links to through `party_links`; the role IS the party's type. Developer,
+#: architect and main contractor stay single columns where they always were. Owner 2 Nov ~21:40
+#: (Q5 b): several trading houses, subcontractors and tender parties; one of each other role.
+PARTY_LINK_SINGLE_ROLES = ("consultant", "interior_designer")
+PARTY_LINK_ROLES = (
+    PARTY_SUBCONTRACTOR,
+    PARTY_TRADING_HOUSE,
+    PARTY_CONSULTANT,
+    PARTY_INTERIOR_DESIGNER,
+    PARTY_TENDER_PARTY,
+)
+
+
+class ProjectPartyLink(Base):
+    """A party playing a role on one project, beyond the three single-party columns."""
+
+    __tablename__ = "party_links"
+    __table_args__ = (
+        Index("ix_project_party_links_party", "party_id"),
+        {"schema": "projects"},
+    )
+
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    role = Column(String(32), primary_key=True)
+    party_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="RESTRICT"), primary_key=True
+    )
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
 
 class ProjectType(Base, CompanyScopedMixin):
@@ -399,6 +465,9 @@ class ProjectSalesProfile(Base):
     main_contractor_party_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.parties.id", ondelete="SET NULL"), nullable=True
     )
+    # Where the project came from (PS-REGISTRATION-V3 rule 8): a value of the editable lookup
+    # set `project_lead_source`, the same list leads use. Required to register or submit.
+    lead_source = Column(String(32), nullable=True)
     estimated_sales_value = Column(Numeric(15, 2), nullable=True)
     launch_date = Column(Date, nullable=True)
     # An explicit window overrides the launch_date + lag derivation wherever set.
@@ -459,6 +528,12 @@ class ProjectStakeholder(Base, CompanyScopedMixin):
     role_id = Column(
         UUID(as_uuid=False),
         ForeignKey("projects.template_roles.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    # The party contact this row was copied from at registration (PS-REGISTRATION-V3 rule 6).
+    party_contact_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.party_contacts.id", ondelete="SET NULL"),
         nullable=True,
     )
     person_name = Column(String(255), nullable=False)
@@ -690,14 +765,23 @@ LEAD_SOURCE_CONTRACTOR = "contractor"
 LEAD_SOURCE_DEALER = "dealer"
 LEAD_SOURCE_INBOUND = "inbound"
 LEAD_SOURCE_OTHER = "other"
+#: The seed of the editable lookup set `project_lead_source` (PS-REGISTRATION-V3 Q4), shared by
+#: leads and projects. The set, once it exists, is the list; this tuple answers only where it
+#: was never seeded (a database built by create_all).
 LEAD_SOURCES = (
     LEAD_SOURCE_SITE_VISIT,
     LEAD_SOURCE_ARCHITECT,
     LEAD_SOURCE_CONTRACTOR,
     LEAD_SOURCE_DEALER,
     LEAD_SOURCE_INBOUND,
+    "bci",
+    "referral",
+    "tender_notice",
+    "existing_customer",
+    "interior_designer",
     LEAD_SOURCE_OTHER,
 )
+LEAD_SOURCE_SET_KEY = "project_lead_source"
 
 # The lookup set the disqualification reason must come from (AC-O6). A free-text
 # reason cannot be reported on, and "not interested" typed nine different ways is
@@ -1112,13 +1196,24 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     recipient_name_snapshot = Column(String(200), nullable=True)
     recipient_address_snapshot = Column(Text, nullable=True)
     recipient_phone_snapshot = Column(String(200), nullable=True)
+    recipient_email_snapshot = Column(Text, nullable=True)
     attn_name = Column(String(120), nullable=True)
+    # Cover page (QUOTE-COVER-PAGE): free text, per quotation.
+    quotation_purpose = Column(Text, nullable=True)
+    payment_terms = Column(Text, nullable=True)
+    validity = Column(Text, nullable=True)
     subject_title = Column(Text, nullable=True)
 
     # The document's OWN editable copy, rendered from the company template at create. Editing it
     # never touches the template, and editing the template never rewrites a document (AC-E2).
     cover_letter_html = Column(Text, nullable=True)
     terms_html = Column(Text, nullable=True)
+
+    # PS-SPEC-SHEET: the spec sheet's settings (templates, revision printed, and per item the page
+    # order, Area, Comment, Marker, Hide and hand-picked accessories). Keyed by product id or
+    # ``set:<id>`` rather than by line id, so they survive a new revision. Shape and validation in
+    # ``project_spec_sheet_service``. NULL = never set up.
+    spec_sheet = Column(JSONB(none_as_null=True), nullable=True)
 
     signatory_name = Column(String(120), nullable=True)
     signatory_phone = Column(String(60), nullable=True)
@@ -1192,6 +1287,9 @@ class QuotationTemplate(Base, CompanyScopedMixin):
     kind = Column(String(32), nullable=False)
     name = Column(String(150), nullable=False)
     body_html = Column(Text, nullable=False)
+    # Defaults beside the terms template, copied onto a new quotation (kind terms only).
+    payment_terms = Column(Text, nullable=True)
+    validity = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="false", default=False)
 
     created_by = Column(String(100), nullable=True)
@@ -1250,6 +1348,12 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     cover_letter_rendered = Column(Text, nullable=True)
     terms_rendered = Column(Text, nullable=True)
+    # 1 = the layout before the cover page, 2 = cover page first. No python default on purpose:
+    # only issue() opts in, so every other path keeps layout 1.
+    layout_version = Column(SmallInteger, nullable=False, server_default="1")
+    # Frozen with the terms at issue.
+    payment_terms = Column(Text, nullable=True)
+    validity = Column(Text, nullable=True)
     grand_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
 
     pdf_attachment_id = Column(
@@ -1301,6 +1405,35 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     __table_args__ = (
         UniqueConstraint("document_id", "issue_no", name="uq_project_quotation_issues_no"),
+        {"schema": "projects"},
+    )
+
+
+class QuotationIssueView(Base, CompanyScopedMixin):
+    """One counted open of an issue's sign link by the customer (PS-QUOTE-VIEWS).
+
+    Counted means: a real browser, not signed in to the CRM, and not the same browser on the same
+    issue within 30 minutes of its last counted open (`quotation_view_service`). Deliberately
+    thin: no IP address, no user agent, no location. `device` is a coarse class read off the
+    user agent, which is then discarded; `visitor_hash` is a digest of a random id the sign page
+    keeps in the browser, used only for the 30-minute rule. It identifies a browser, not a person.
+    """
+
+    __tablename__ = "quotation_issue_views"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    issue_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_issues.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    viewed_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    # mobile | tablet | desktop
+    device = Column(String(16), nullable=False)
+    visitor_hash = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        Index("ix_quotation_issue_views_issue_visitor", "issue_id", "visitor_hash", "viewed_at"),
         {"schema": "projects"},
     )
 

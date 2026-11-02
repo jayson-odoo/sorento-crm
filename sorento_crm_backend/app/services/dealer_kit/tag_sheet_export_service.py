@@ -408,6 +408,16 @@ def resolve_tag_sheet_print_payload(db: Session, download_id: str) -> dict:
     # asset and font of every other company in reach of a token issued for this
     # one. So the widening stops at the lookup, and everything after it is pinned
     # to the page's own company.
+    # PS-SPEC-SHEET: a project spec sheet prints through this same page and renderer, so its
+    # download is answered here by kind. It has no dealer-kit page or export request of its own.
+    from app.models.download import UserDownload
+    from app.services import project_spec_sheet_service as spec
+
+    with company_scope(db, None):
+        download = db.query(UserDownload).filter(UserDownload.id == str(download_id)).first()
+    if download is not None and download.kind == spec.KIND:
+        return spec.print_payload_for_download(db, download)
+
     with company_scope(db, None):
         inputs = render_inputs(db, download_id)
     page = inputs["page"]

@@ -725,6 +725,9 @@ def serialize_projects(
         [pr.architect_party_id for pr in profiles.values()]
         + [pr.main_contractor_party_id for pr in profiles.values()],
     )
+    from app.services.project_party_contact_service import party_links_for
+
+    party_links = party_links_for(db, [p.id for p in projects])
 
     status_ids = [p.status_id for p in projects if p.status_id]
     statuses = (
@@ -845,8 +848,10 @@ def serialize_projects(
                     if project.lead_id in leads
                     else None
                 ),
+                # The project's own (PS-REGISTRATION-V3 rule 8), else the lead's.
                 "lead_source": (
-                    leads[project.lead_id].source if project.lead_id in leads else None
+                    (profile.lead_source if profile else None)
+                    or (leads[project.lead_id].source if project.lead_id in leads else None)
                 ),
                 "lead_created_at": (
                     leads[project.lead_id].created_at
@@ -884,6 +889,7 @@ def serialize_projects(
                     if profile
                     else None
                 ),
+                "party_links": party_links.get(project.id, []),
                 "main_contractor_party_id": (
                     profile.main_contractor_party_id if profile else None
                 ),
@@ -1194,6 +1200,7 @@ _PROFILE_FIELDS = (
     "mukim",
     "architect_party_id",
     "main_contractor_party_id",
+    "lead_source",
     "estimated_sales_value",
     "launch_date",
     "expected_delivery_from",
@@ -1307,6 +1314,13 @@ def update_project(
     if "is_critical" in payload and payload["is_critical"] is not None:
         set_critical(project, bool(payload["is_critical"]))
 
+    from app.services import project_party_contact_service as party_contacts
+
+    if payload.get("lead_source"):
+        party_contacts.assert_lead_source(db, payload["lead_source"], required=False)
+    if "party_links" in payload and payload["party_links"] is not None:
+        party_contacts.set_party_links(db, project, payload["party_links"])
+
     apply_sales_details(db, project, payload)
     return project
 
@@ -1340,6 +1354,7 @@ def _customers_for(db: Session, customer_ids: List[str]) -> Dict[str, Dict[str, 
             or row.mobile_number
             or (contact.phone or contact.mobile if contact else None),
             "customer_attn": contact.full_name if contact else None,
+            "customer_email": contact.email if contact else None,
         }
     return out
 
@@ -1350,13 +1365,19 @@ def _customer_fields(
     if customer:
         if with_contact:
             return customer
-        return {**customer, "customer_phone": None, "customer_attn": None}
+        return {
+            **customer,
+            "customer_phone": None,
+            "customer_attn": None,
+            "customer_email": None,
+        }
     return {
         "customer_id": None,
         "customer_name": None,
         "customer_code": None,
         "customer_phone": None,
         "customer_attn": None,
+        "customer_email": None,
     }
 
 

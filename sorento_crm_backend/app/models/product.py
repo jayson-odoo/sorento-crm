@@ -145,6 +145,10 @@ class Brand(Base, CompanyScopedMixin):
     # Same name and meaning as `product_categories.is_searchable`. It replaced the
     # `excluded_values` of the removed Brand specification.
     is_searchable = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    # CABANA-NO-SELLING-PRICE (owner, 2 Nov 2026): this brand's promotions carry no selling
+    # price (Cabana; the flyer reader invented one). Writers drop or refuse the price and the
+    # discount derived from it; readers never show one (`app.services.promo_selling_price`).
+    no_promo_selling_price = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)

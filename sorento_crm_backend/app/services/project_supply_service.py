@@ -12070,8 +12070,18 @@ class ProjectSupplyService:
                     active = self.active_decision(str(order.id))
                     before_decision_id = str(active.id) if active is not None else None
                     before_rows, before_moves = self._preview_baseline(order)
+                from app.services.project_order_inquiry_service import _HANDOVER_PENDING_KEY
+
+                queued_before = len(self.db.info.get(_HANDOVER_PENDING_KEY) or [])
                 body, entry, held_back = self._write_holding_back(
                     order, entry, write, can_hold_back(entry)
+                )
+                # CONFIRM-PREVIEW-STALE (crew final pass, 2 Nov 2026; owner rule "popup =
+                # email = Excel"): a dry run answers the purchasing email's OWN lines for this
+                # order, read off the handover queue this very write filled and the context
+                # builder the real email renders through, before the rollback discards them.
+                email_lines = (
+                    self._preview_email_lines(pso_id, queued_before) if preview else None
                 )
                 previewed = None
                 if observe:
@@ -12091,6 +12101,7 @@ class ProjectSupplyService:
                         "pso_id": pso_id,
                         "ok": True,
                         **({"preview": True, **previewed} if observe else {}),
+                        **({"email_lines": email_lines} if email_lines is not None else {}),
                         "decision_revision": body.get("revision_no"),
                         "inquiry_rows_created": body.get("inquiry_rows_created"),
                         "lines_decided": body.get("lines_decided"),
@@ -12145,6 +12156,42 @@ class ProjectSupplyService:
                 if preview:
                     self.db.info.pop("confirm_preview", None)
         return results
+
+    def _preview_email_lines(self, pso_id: str, queued_before: int) -> List[Dict[str, Any]]:
+        """The purchasing email's lines this order's write queued (CONFIRM-PREVIEW-STALE),
+        each `{so_line_id, item_code, qty, delivery_date, remark, was}` exactly as the email
+        prints it: `_build_handover_context` over the queued items, the same call the real
+        send makes, so the guided Confirm's REMARK and the email's are one rendering."""
+        from app.services.project_order_inquiry_service import (
+            _HANDOVER_PENDING_KEY,
+            _build_handover_context,
+            _handover_sort_key,
+        )
+
+        queued = [
+            item
+            for item in (self.db.info.get(_HANDOVER_PENDING_KEY) or [])[queued_before:]
+            if str(item.get("pso_id") or "") == pso_id
+        ]
+        if not queued:
+            return []
+        built = _build_handover_context(queued)
+        if not built:
+            return []
+        context, _source = built
+        lines = (context.get("handover") or context).get("lines") or []
+        ordered = sorted(queued, key=_handover_sort_key)
+        return [
+            {
+                "so_line_id": str(item.get("so_line_id") or ""),
+                "item_code": line.get("item_code"),
+                "qty": line.get("qty"),
+                "delivery_date": line.get("delivery_date"),
+                "remark": line.get("remark") or "",
+                "was": line.get("was"),
+            }
+            for item, line in zip(ordered, lines)
+        ]
 
     def _preview_baseline(
         self, order: ProjectSalesOrder

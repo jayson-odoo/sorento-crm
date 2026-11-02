@@ -68,6 +68,7 @@ GET /order-inquiry-headers/{inquiry_id}
 GET /order-inquiry-headers/{inquiry_id}/related-documents
 GET /order-inquiry-rows/{row_id}/po-candidates
 GET /parties/
+GET /parties/{party_id}/contacts
 GET /planning-changes
 GET /planning-changes/{batch_id}
 GET /plans
@@ -78,6 +79,7 @@ GET /projects/{project_id}/delivery-schedules
 GET /projects/{project_id}/order-inquiry-export
 GET /projects/{project_id}/order-inquiry-rows
 GET /projects/{project_id}/order-inquiry-summary
+GET /projects/{project_id}/parties
 GET /projects/{project_id}/purchase-orders
 GET /projects/{project_id}/quotation-documents
 GET /projects/{project_id}/quotation-documents/letter-templates
@@ -86,6 +88,9 @@ GET /projects/{project_id}/quotation-documents/{document_id}/amendment-request
 GET /projects/{project_id}/quotation-documents/{document_id}/issues
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx
+GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheet
+GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheet/preview
+GET /projects/{project_id}/quotation-documents/{document_id}/views
 GET /projects/{project_id}/quotations
 GET /projects/{project_id}/sales-orders
 GET /projects/{project_id}/sample-requests
@@ -189,6 +194,7 @@ POST /projects/
 POST /projects/ai-extract
 POST /projects/clash-preview
 POST /projects/{project_id}/approve
+POST /projects/{project_id}/parties/{party_id}/phone
 POST /projects/{project_id}/purchase-orders
 POST /projects/{project_id}/purchase-orders/upload
 POST /projects/{project_id}/quotation-documents
@@ -204,6 +210,7 @@ POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/
 POST /projects/{project_id}/quotation-documents/{document_id}/reject
 POST /projects/{project_id}/quotation-documents/{document_id}/scopes
 POST /projects/{project_id}/quotation-documents/{document_id}/sign
+POST /projects/{project_id}/quotation-documents/{document_id}/spec-sheet/export
 POST /projects/{project_id}/quotations
 POST /projects/{project_id}/reject
 POST /projects/{project_id}/samples
@@ -255,6 +262,7 @@ PUT /leads/{lead_id}
 PUT /planning-changes/{batch_id}/rows/{row_id}
 PUT /projects/{project_id}
 PUT /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/rows/{row_id}
+PUT /projects/{project_id}/quotation-documents/{document_id}/spec-sheet
 PUT /projects/{project_id}/stakeholders/{stakeholder_id}
 PUT /projects/{project_id}/tasks/{task_id}
 PUT /purchase-order-versions/{po_version_id}

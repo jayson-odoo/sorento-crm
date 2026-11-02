@@ -1078,6 +1078,17 @@ def _promotions(rows: list[dict], b: _Builder) -> None:
             b.attach(a.get("attachment") or a)
 
 
+# CABANA-NO-SELLING-PRICE: a brand whose promotions carry no selling price. A blank field
+# let the model invent one ("defined inside the flyer"), so the fact is stated outright.
+NO_SELLING_PRICE_TEXT = "None. This brand's promotions carry no selling price; the price is the List Price."
+
+
+def _selling_price(pp: dict) -> str | None:
+    if pp.get("no_selling_price") is True:
+        return NO_SELLING_PRICE_TEXT
+    return _money(pp.get("selling_price"))
+
+
 def _promotion_products(rows: list[dict], b: _Builder) -> None:
     for pp in rows:
         prod = pp.get("product") or {}
@@ -1089,7 +1100,7 @@ def _promotion_products(rows: list[dict], b: _Builder) -> None:
                 ("Product Code", prod.get("product_code")),
                 ("Product Name", _distinct_name(prod.get("product_code"), prod.get("product_name"))),
                 ("Promotion", promo.get("description")),
-                ("Selling Price", _money(pp.get("selling_price"))),
+                ("Selling Price", _selling_price(pp)),
                 ("List Price", _money(prod.get("list_price"))),
                 ("Dimensions", _dims(prod)),
             ],
@@ -1599,6 +1610,9 @@ def _verdict_tail(entry: dict) -> str:
     if branch == "incoming":
         # AVAIL-RENDER fix round (owner hand test, 6 Oct 2026): the cross says the stock
         # state too, not the date alone. Still no refer: the ETA is the answer.
+        if not entry.get("eta"):
+            # The dealer's ETA field is revoked: incoming, no date, no refer.
+            return f"{STOCK_NO} No stock, No ETA."
         return f"{STOCK_NO} No stock, ETA {entry.get('eta')}."
     available = entry.get("available_qty")
     if (
@@ -3710,7 +3724,9 @@ def _report_ask(body: dict) -> str:
     count = int(body.get("total_count") or (raw_rows + more)) - (raw_rows - len(rows))
     of = f" of {count:,}" if count > len(rows) else ""
     by = f"{measure}, {basis}" if measure in _ASK_COUNT_UNITS else basis
-    lines = [f"{lead} {len(rows)}{of} {plural} by {by}", *facts]
+    # A month or year split is a trend, not a ranking: it opens "By month, invoiced", never "Top N".
+    opening = f"By {group_by}, {basis}" if group_by in ("month", "year") else f"{lead} {len(rows)}{of} {plural} by {by}"
+    lines = [opening, *facts]
     items = group_by in ("product", "category")
     if items and body.get("sort") == "asc":
         # REPORT-SMART-L R3a: what the top selling reply said of a least sold ranking (an item that sold nothing is never ranked).

@@ -14,6 +14,7 @@ from typing import Any
 # The one spelling of the refer line (CUSTOMER-ASKS-REFER-ONLY guards): the verdict keys below
 # are built from it, never spelled out.
 from app.services.chatbot.turn.task import REFER_TO_SALESMAN
+from app.services.eta_policy import DELAYED_MARK
 
 # The placeholder helpers live in a dependency-free core module (a staff edit is checked there
 # too); the chatbot package may import core, never the reverse (AC-002).
@@ -85,6 +86,7 @@ LABELS: dict[str, dict[str, str]] = {
     # AVAIL-RENDER fix round (owner hand test, 6 Oct 2026): the incoming line says the stock
     # state too; the bare "ETA {eta}." row it replaces is printed by nothing now.
     "No stock, ETA {eta}.": {"ms": "Tiada stok, ETA {eta}.", "zh": "没有库存，ETA {eta}。"},
+    "No stock, No ETA.": {"ms": "Tiada stok, Tiada ETA.", "zh": "没有库存，暂无 ETA。"},
     "No ETA": {"ms": "Tiada ETA", "zh": "暂无 ETA"},
     "Data last updated: {ts}": {
         "ms": "Data dikemas kini: {ts}",
@@ -290,6 +292,12 @@ LABELS: dict[str, dict[str, str]] = {
     "Bottom {top_n} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} {rank_noun} terbawah mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名后 {top_n} 位的{rank_noun}"},
     "Bottom {top_n} of {of_total} {rank_noun} by {measure}, {basis}": {"ms": "{top_n} daripada {of_total} {rank_noun} terbawah mengikut {measure}, {basis}", "zh": "按{measure}、{basis}排名后 {top_n} 位（共 {of_total} 个{rank_noun}）"},
     "Sales by {basis}": {"ms": "Jualan mengikut {basis}", "zh": "按{basis}统计的销售"},
+    # SALES-ACCOUNT-TYPE PR 2: a month or year split opens "By month, ..." / "By year, ..." (never "Top N"); the account
+    # filter line, and the word question (`report_ask._kind_question`).
+    "By month, {basis}": {"ms": "Mengikut bulan, {basis}", "zh": "按月份，{basis}"},
+    "By year, {basis}": {"ms": "Mengikut tahun, {basis}", "zh": "按年统计，{basis}"},
+    "Account type": {"ms": "Jenis akaun", "zh": "账户类型"},
+    "{word}: brand or account type?": {"ms": "{word}: jenama atau jenis akaun?", "zh": "{word}：品牌还是账户类型？"},
     "No {basis} found": {"ms": "Tiada {basis} ditemui", "zh": "未找到{basis}"},
     "delivered sales": {"ms": "jualan dihantar", "zh": "已送货销售"},
     "ordered sales": {"ms": "jualan dipesan", "zh": "已订购销售"},
@@ -311,6 +319,11 @@ LABELS: dict[str, dict[str, str]] = {
     "channel": {"ms": "saluran", "zh": "渠道"},
     "months": {"ms": "bulan", "zh": "月份"},
     "month": {"ms": "bulan", "zh": "月份"},
+    "account types": {"ms": "jenis akaun", "zh": "账户类型"},
+    "account type": {"ms": "jenis akaun", "zh": "账户类型"},
+    # The route's refusals for the account filter (`order_management/report_ask.py`, `reports/ask_params.py`).
+    "Account types are not loaded from AutoCount yet": {"ms": "Jenis akaun belum dimuatkan daripada AutoCount", "zh": "账户类型尚未从 AutoCount 载入"},
+    "No account type {unknown}. Account types: {names}.": {"ms": "Tiada jenis akaun {unknown}. Jenis akaun: {names}.", "zh": "没有账户类型 {unknown}。账户类型：{names}。"},
     "You can only see sales for your own account.": {"ms": "Anda hanya boleh melihat jualan untuk akaun anda sendiri.", "zh": "您只能查看自己账户的销售数据。"},
     "That breakdown is not available for your account.": {"ms": "Pecahan itu tidak tersedia untuk akaun anda.", "zh": "您的账户无法查看该细分数据。"},
     "You can only see orders for your own account.": {"ms": "Anda hanya boleh melihat pesanan untuk akaun anda sendiri.", "zh": "您只能查看自己账户的订单。"},
@@ -893,7 +906,8 @@ _SUB_ASK_KEYS = frozenset(
 #: DIRECT_ONLY so a bare line ("products", "month") is never rewritten on its own.
 _RANK_NOUNS = frozenset(
     {"products", "product", "categories", "category", "customers", "customer", "brands", "brand",
-     "sales agents", "sales agent", "locations", "location", "channels", "channel", "months", "month"}
+     "sales agents", "sales agent", "locations", "location", "channels", "channel", "months", "month",
+     "account types", "account type"}
 )
 _RANK_BASES = frozenset({"invoiced sales", "delivered sales", "ordered sales", "outstanding orders"})
 _RANK_MEASURES = frozenset({"customers", "orders", "products"})
@@ -989,6 +1003,11 @@ def _find_none_patterns() -> list[re.Pattern[str]]:
     return [re.compile(re.escape(x).replace(re.escape("{code}"), ".+?")) for x in lines]
 
 
+# STOCK-INCOMING-FLOOR Fix B: the marker `eta_policy.told_text` prints after a past told date.
+# It sits inside a date list the catalog's sentences pass through, so it is rewritten in place.
+DELAYED_MARKS = {"ms": "(lewat)", "zh": "（延迟）"}
+
+
 class Localizer:
     """Rewrites catalogued labels and sentences for `language`; everything else is untouched."""
 
@@ -1080,7 +1099,14 @@ class Localizer:
             return text
         return "\n".join(self._line(line) for line in text.split("\n"))
 
+    def _delayed(self, text: str) -> str:
+        mark = DELAYED_MARKS.get(self.language)
+        return text.replace(DELAYED_MARK, mark) if mark and text else text
+
     def reply(self, text: str) -> str:
+        return self._delayed(self._reply(text))
+
+    def _reply(self, text: str) -> str:
         """The final reply pass: `lines()`, then each INLINE sentence replaced where it starts a
         line or follows ". ", "? " or "! " and runs through its final punctuation. Tokens come back
         verbatim and never span a line; a line over `_INLINE_LINE_MAX` is left to `lines()`."""
@@ -1208,6 +1234,9 @@ class Localizer:
         return self.text(s)
 
     def tail(self, title: str) -> str:
+        return self._delayed(self._tail(title))
+
+    def _tail(self, title: str) -> str:
         """`"<code> x <qty>: <sentence>"`: only the sentence is translated, after any leading
         status mark (the #1430 verdicts open with one), which stays as printed."""
         prefix, sep, sentence = title.partition(": ")

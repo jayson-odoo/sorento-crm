@@ -21,7 +21,9 @@ from fastapi import HTTPException
 from sqlalchemy import or_
 
 from app.services.chatbot import principal as staff_principal
-from app.services.chatbot.agent.tools import ToolResult, _check_ids, _collect_uuids, _permitted, cap_result, clean_detail
+from app.services.chatbot.agent.tools import (
+    ToolResult, _check_ids, _collect_uuids, _permitted, cap_result, clean_detail, panel_closed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,11 @@ class WriteDef:
     execute_takes_before: bool = False
     #: True = the step's `note` is repeated in a chat reply by code, and kept from the model (a link it must not invent).
     note_in_reply: bool = False
+    #: "user": read_before / execute get the user dict (`run_as_user`). "contact": they get the contact's transient
+    #: portal token (`portal_writes.run_as_contact`); the portal's own gates decide (AGENTIC-WA-W2).
+    runs_as: str = "user"
+    #: One plain note the model is given with the proposal (data `note`); the shared `message` stays as is.
+    proposal_note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +174,27 @@ def run_as_user(
         set_company_scope(db, previous)
 
 
+def write_def(name: Any) -> "WriteDef | None":
+    """The write of that name: a staff write (`WRITES`) or a dealer write (`portal_writes.PORTAL_WRITES`)."""
+    from app.services.chatbot.agent import portal_writes
+
+    if not isinstance(name, str):
+        return None
+    return WRITES.get(name) or portal_writes.PORTAL_WRITES.get(name)
+
+
+def may_propose(db, ctx, definition: "WriteDef") -> bool:
+    """A staff write: the slug, for the linked user and the console operator. A dealer write: the contact's
+    portal gates (`portal_writes.may_use`); no user slug is read."""
+    from app.services.chatbot.agent import portal_writes
+
+    if definition.runs_as == "contact":
+        return portal_writes.may_use(db, ctx, definition.name)
+    if getattr(ctx, "principal", "user") == "contact":
+        return False
+    return holds_ctx(db, ctx, definition.user_permission)
+
+
 def _principal_real_user() -> str | None:
     principal = staff_principal.current()
     return principal.real_user_id if principal is not None else None
@@ -176,6 +204,12 @@ def read_before_all(db, ctx, definition: "WriteDef", args: dict) -> dict:
     """`read_before` as the linked user and again as the console operator: either refusing refuses the
     step. The linked user's reading is the one kept. The operator is checked FIRST, so a step it may not
     propose makes no outside call as the linked user (the ideas lookup)."""
+    if definition.runs_as == "contact":
+        from app.services.chatbot.agent import portal_writes
+
+        return portal_writes.run_as_contact(
+            db, ctx, lambda token: definition.read_before(db, token, args), tool_name=definition.name
+        )
     first = people(ctx)
     before = None
     for pid in [*first[1:], *first[:1]]:
@@ -238,13 +272,19 @@ def _ask_read_before(db, user: dict, args: dict) -> dict:
     return _ask_row(stock_ask_service.serialize(db, [ask])[0])
 
 
+def _escape_quotes(text: str) -> str:
+    """`text` for the inside of a quote the memory reader parses (`memory._QUOTED`): a quote or backslash in a value
+    cannot end the quote early, so a name or a note cannot pose as the words around it."""
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _quoted(value: Any) -> str:
     """Free text as a person reads it in a summary: quoted, in full up to 200 characters, else the
     first 200 and the length."""
     text = _line(value)
     if len(text) <= SUMMARY_NOTE_CHARS:
-        return f'"{text}"'
-    return f'"{text[:SUMMARY_NOTE_CHARS]}" ({len(text)} characters)'
+        return f'"{_escape_quotes(text)}"'
+    return f'"{_escape_quotes(text[:SUMMARY_NOTE_CHARS])}" ({len(text)} characters)'
 
 
 def _ask_summary(args: dict, before: dict) -> str:
@@ -425,7 +465,7 @@ def permitted_writes(db, ctx) -> list[WriteDef]:
     """WRITES the linked user holds the slug for, in registry order. None for a contact principal."""
     if getattr(ctx, "principal", "user") == "contact":
         return []
-    return [w for w in WRITES.values() if holds_ctx(db, ctx, w.user_permission)]
+    return [w for w in WRITES.values() if not panel_closed(w.name) and holds_ctx(db, ctx, w.user_permission)]
 
 
 def permitted_user_reads(db, ctx) -> list[UserRead]:
@@ -433,7 +473,8 @@ def permitted_user_reads(db, ctx) -> list[UserRead]:
         return []
     return [
         r for r in USER_READS.values()
-        if holds_ctx(db, ctx, r.user_permission) and not (r.linked_only and len(people(ctx)) > 1)
+        if not panel_closed(r.name) and holds_ctx(db, ctx, r.user_permission)
+        and not (r.linked_only and len(people(ctx)) > 1)
     ]
 
 
@@ -442,7 +483,10 @@ def run_user_read(db, ctx, name: str, args: Any, seen_ids: set[str]) -> ToolResu
     read = USER_READS.get(name)
     if read is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
-    if not holds_ctx(db, ctx, read.user_permission) or (read.linked_only and len(people(ctx)) > 1):
+    if (
+        panel_closed(name) or not holds_ctx(db, ctx, read.user_permission)
+        or (read.linked_only and len(people(ctx)) > 1)
+    ):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not isinstance(args, dict):
         return ToolResult("invalid", message="Arguments must be an object of named values.")
@@ -492,10 +536,12 @@ def propose_step(
 ) -> tuple[ToolResult, dict | None]:
     """Check a write call and read the record as it is now. Never writes. Success returns the
     "proposed" result and the step to store; any failure returns a typed result and no step."""
-    definition = WRITES.get(name) if isinstance(name, str) else None
+    definition = write_def(name)
     if definition is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use."), None
-    if not holds_ctx(db, ctx, definition.user_permission):
+    if panel_closed(name) or not may_propose(db, ctx, definition):
+        if definition.runs_as == "contact":
+            return ToolResult("denied", message=f"{name} is not a tool you may use."), None
         return ToolResult("denied", message=f"{name} is outside this user's access."), None
     if name == CREATE_IDEA and staff_principal.current() is not None:
         # A panel turn runs as a test turn, so an idea would be a test idea: keep the Ideas board link instead.
@@ -1476,10 +1522,28 @@ def _pr_read_before(db, user: dict, args: dict) -> dict:
     }
 
 
+def _refuse_ids_in(**texts: Any) -> None:
+    """A text that is sent or stored as the user's must not hold a record id the model copied in: refused, so the
+    card shows exactly what is sent."""
+    from app.services.chatbot.agent.actions import _UUID_TEXT
+    from app.services.error_handler import handle_validation_error
+
+    for label, text in texts.items():
+        # Two parts, both so the card shows exactly what is sent. (1) An invisible format character (Cf) is refused
+        # outright, except the joiners U+200D and U+200C that emoji and some scripts need; accents, Chinese and emoji
+        # stay allowed. (2) An id hidden by marks is still an id: the pattern runs on the text as it reads (NFKC)
+        # with every Cf and combining mark (Mn) removed, and on the raw text too (stripping can itself join an id).
+        value = str(text or "")
+        invisible = any(unicodedata.category(c) == "Cf" and c not in ("\u200d", "\u200c") for c in value)
+        seen = "".join(c for c in unicodedata.normalize("NFKC", value) if unicodedata.category(c) not in ("Cf", "Mn"))
+        if invisible or _UUID_TEXT.search(value) or _UUID_TEXT.search(seen):
+            raise handle_validation_error(f"The {label} holds a record id. Say it in words and propose again.")
+
+
 def _in_full(value: Any) -> str:
     """Text that leaves the system (a reason sent to the dealer): quoted whole, never cut, so the person
     confirming reads exactly what will be sent."""
-    return f'"{_line(value)}"'
+    return f'"{_escape_quotes(_line(value))}"'
 
 
 def _pr_summary(args: dict, before: dict) -> str:
@@ -1607,6 +1671,132 @@ USER_READS[LIST_PRS] = UserRead(
     },
     run=_pr_list,
     combine=_combine_prs,
+)
+
+
+# ------------------------------------------------------------------ PR 4 finds by number or code
+
+FIND_COMPLAINTS = "crm_complaints_find"
+FIND_PROJECTS = "crm_projects_find"
+COMPLAINT_READ = ("complaint_management.complaints.view", "complaint_management.complaints.view_own")
+PROJECT_READ = ("projects.projects.view", "projects.projects.view_own")
+COMPLAINTS_PATH = "/api/v1/complaints-management/complaints"
+
+
+def _find_query(args: dict) -> tuple[str | None, ToolResult | None]:
+    """The search text, or the refusal."""
+    unknown = sorted(k for k in args if k != "query")
+    query = args.get("query")
+    if unknown or not isinstance(query, str) or not query.strip():
+        return None, ToolResult("invalid", message="Give the number or code to find, as text, and nothing else.")
+    return query.strip(), None
+
+
+def _found(key: str, rows: list[dict]) -> ToolResult:
+    from app.services.chatbot.agent.tools import NO_ROWS_MESSAGE
+
+    if not rows:
+        return ToolResult("empty", message=NO_ROWS_MESSAGE)
+    data, more = cap_result({key: rows})
+    return ToolResult("ok", data=data, more=more)
+
+
+def _complaints_find(db, ctx, args: dict) -> ToolResult:
+    from app.api.v1._request_own_scope import check
+    from app.api.v1.complaints.complaints import get_complaints
+
+    query, refused = _find_query(args)
+    if refused is not None:
+        return refused
+
+    def run(user: dict) -> list[dict]:
+        _module_open(user, db, "complaints")
+        payload = get_complaints(
+            page=1, limit=MAX_LIST, query=query, assigned_to=None, status=None, root_cause_ids=None,
+            resolution_ids=None, sort="complaint_date", dir="desc", contact_id=None, space_id=None,
+            current_user=user, db=db, own=check(db, str(user["id"]), "complaint", "GET", COMPLAINTS_PATH, {}),
+        )
+        return [
+            {
+                "id": str(r.get("id") or r.get("system_id") or ""),
+                "complaint_number": r.get("complaint_number"),
+                "status": r.get("status"),
+                "customer": _line(r.get("customer_name")),
+            }
+            for r in payload["data"]
+        ]
+
+    try:
+        rows = run_as_user(db, ctx, run, tool_name=FIND_COMPLAINTS)
+    except Exception as exc:  # noqa: BLE001
+        return _route_failure(exc)
+    return _found("complaints", rows)
+
+
+def _projects_find(db, ctx, args: dict) -> ToolResult:
+    from app.api.v1.projects.projects import list_projects
+
+    query, refused = _find_query(args)
+    if refused is not None:
+        return refused
+
+    def run(user: dict) -> list[dict]:
+        _module_open(user, db, "projects")
+        payload = list_projects(
+            query=query, status_id=None, outcome=None, owner_user_id=None, developer_party_id=None, type_id=None,
+            only_critical=False, project_ids=None, owner_user_ids=None, developer_party_ids=None, status_key=None,
+            # Approved projects only, as the catalog's list returns on a machine read: a portal registration
+            # waiting for approval is not a project yet.
+            approval_state=None, approved_only=True, page=1, limit=MAX_LIST, sort="created_at", dir="desc",
+            current_user=user, db=db,
+        )
+        return [
+            {
+                "id": str(r.get("id") or ""),
+                "project_code": r.get("project_code"),
+                "title": _line(r.get("title")),
+                "status": r.get("status_label"),
+                "customer": _line(r.get("customer_name")),
+            }
+            for r in payload["data"]
+        ]
+
+    try:
+        rows = run_as_user(db, ctx, run, tool_name=FIND_PROJECTS)
+    except Exception as exc:  # noqa: BLE001
+        return _route_failure(exc)
+    return _found("projects", rows)
+
+
+def _find_schema(name: str, what: str, example: str) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": (
+                f"Find {what} by its number or code, as typed by the user (for example {example}). Returns the "
+                "matching rows with their number, status, name and id, so the id can be used in a later call."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            },
+        },
+    }
+
+
+USER_READS[FIND_COMPLAINTS] = UserRead(
+    name=FIND_COMPLAINTS,
+    user_permission=COMPLAINT_READ,
+    schema=_find_schema(FIND_COMPLAINTS, "a complaint", "CMP-0123"),
+    run=_complaints_find,
+)
+USER_READS[FIND_PROJECTS] = UserRead(
+    name=FIND_PROJECTS,
+    user_permission=PROJECT_READ,
+    schema=_find_schema(FIND_PROJECTS, "a project", "PRJ-0042"),
+    run=_projects_find,
 )
 
 
@@ -2158,4 +2348,319 @@ USER_READS[LIST_IDEAS] = UserRead(
         },
     },
     run=_ideas_list,
+)
+
+
+# ------------------------------------------------------------------ PR 4 complaint close
+
+CLOSE_COMPLAINT = "crm_complaint_close"
+COMPLAINT_CLOSE = "complaint_management.complaints.close"
+COMPLAINTS_PREFIX = "/api/v1/complaints-management/complaints"
+_COMPLAINT_WORDS = {
+    "approved": "Approved", "closed": "Closed", "processed_by_cs": "Processed by CS", "new": "New",
+    "rejected": "Rejected", "voided": "Voided",
+}
+
+
+def _complaint_scope(db, user: dict, cid: str) -> None:
+    """The complaints router's "only theirs" guard (`_request_own_scope.check`), which a direct call skips: a user
+    limited to their own complaints is refused the close (403)."""
+    from app.api.v1._request_own_scope import check
+
+    check(db, str(user["id"]), "complaint", "POST", COMPLAINTS_PATH + "/{complaint_id}/close", {"complaint_id": cid})
+
+
+def _complaint_read_before(db, user: dict, args: dict) -> dict:
+    """The complaint as it is now, after every check the route and the service make before closing, and the
+    one the service skips: a closed complaint is a no-op there, so a card for it would offer nothing."""
+    from app.services import handling_lock_service
+    from app.services.complaints_service import ComplaintService
+    from app.services.error_handler import handle_conflict, handle_validation_error
+    from app.services.form_action_service import FormActionService
+    from app.services.uuid_path_param import validate_uuid_path
+
+    cid = str(args["complaint_id"])
+    validate_uuid_path(cid, resource="Complaint")
+    _refuse_ids_in(note=args.get("note"))
+    _module_open(user, db, "complaints")
+    _complaint_scope(db, user, cid)
+    handling_lock_service.assert_can_act_on_form(db, cid, user, source_entity_type="complaint")
+    service = ComplaintService(db)
+    complaint = service.get_complaint(cid)
+    status = (getattr(complaint, "status", None) or "").strip().lower()
+    if status == "closed":
+        raise handle_conflict("This complaint is already closed.")
+    if status not in service._RESOLVE_ALLOWED_FROM_STATUSES:
+        raise handle_validation_error(
+            f"Complaint must be approved before it can be marked closed (current status: {status or 'unknown'})."
+        )
+    if FormActionService(db).pending_for("complaint", cid) is not None:
+        raise handle_conflict("Another action on this form is still pending. Wait for it to apply, or undo it first.")
+    return {
+        "status": status,
+        # The message goes out only when the complaint has an inbox to reach (`_finalize_complaint`).
+        "tells_contact": bool(service._identifier_from_respond_inbox_url(getattr(complaint, "respond_inbox_url", None))),
+        "revision_no": int(getattr(complaint, "revision_no", None) or 0),
+        "_show": {"number": complaint.complaint_number or "(no number)", "customer": complaint.customer_name or ""},
+    }
+
+
+def _complaint_summary(args: dict, before: dict) -> str:
+    text = f"Close complaint {_word(before['number'])}"
+    if before["customer"]:
+        text += f" for {_quoted(before['customer'])}"
+    if _line(args.get("note")):
+        text += f", with the note {_in_full(args['note'])}"
+    return text + (". The contact will be told." if before.get("tells_contact") else ".")
+
+
+def _complaint_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
+    from starlette.requests import Request
+    from fastapi.responses import JSONResponse
+
+    from app.api.v1.complaints.complaints import close_complaint
+    from app.schemas.complaints import ComplaintFinalizeRequest
+    from app.services.revision_fence import assert_revision_current
+
+    cid = str(args["complaint_id"])
+    _module_open(user, db, "complaints")
+    _complaint_scope(db, user, cid)
+    # The route's revision fence, with the revision the user confirmed.
+    assert_revision_current(db, "complaint", cid, confirmed.get("revision_no"))
+    body = ComplaintFinalizeRequest(note=_line(args.get("note")) or None)
+    # A person clicked Confirm, so the browser channel: the screen's grace window applies.
+    request = Request({"type": "http", "method": "POST", "headers": [], "path": COMPLAINTS_PREFIX})
+    out = close_complaint(complaint_id=cid, payload=body, request=request, current_user=user, db=db)
+    if isinstance(out, JSONResponse):
+        parked = json.loads(out.body)
+        return {
+            "id": cid,
+            "after": {
+                "status": "closed", "deferred": True, "commit_at": parked.get("commit_at"),
+                "window_seconds": parked.get("window_seconds"), "pending_action_id": parked.get("pending_action_id"),
+            },
+            "note": (
+                f"It applies in {parked.get('window_seconds')} seconds; until then it can be withdrawn"
+                + (" and nobody is told." if confirmed.get("tells_contact") else ".")
+            ),
+        }
+    return {"id": cid, "after": {"status": "closed", "deferred": False}}
+
+
+def _complaint_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    now = _COMPLAINT_WORDS["closed"]
+    if after.get("deferred"):
+        now = f"{now} (applies in {after.get('window_seconds')} seconds)"
+    was = _COMPLAINT_WORDS.get(before.get("status"), before.get("status"))
+    return _diff(f"Complaint {shown.get('number', '')}".strip(), [("Status", was, now)])
+
+
+WRITES[CLOSE_COMPLAINT] = WriteDef(
+    name=CLOSE_COMPLAINT,
+    user_permission=COMPLAINT_CLOSE,
+    schema={
+        "type": "function",
+        "function": {
+            "name": CLOSE_COMPLAINT,
+            "description": (
+                "Propose closing one approved complaint that cannot be resolved, as the screen's Close does. "
+                "Nothing changes until the user confirms; on confirm the contact is told, with the note if one "
+                "is given, and the user can withdraw it for a short while. complaint_id must come from "
+                "crm_complaints_find or crm_complaints_list. Call once per complaint."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"complaint_id": {"type": "string"}, "note": {"type": "string", "maxLength": MAX_NOTE_CHARS}},
+                "required": ["complaint_id"],
+            },
+        },
+    },
+    read_before=_complaint_read_before,
+    summary=_complaint_summary,
+    execute=_complaint_execute,
+    record_key="complaint_id",
+    changes=_complaint_changes,
+    execute_takes_before=True,
+)
+
+
+# ------------------------------------------------------------------ PR 4 order cancel
+
+CANCEL_ORDER = "crm_order_cancel"
+#: The route's own slug (`orders.py` cancel): the same gate as the screen.
+ORDER_CANCEL = "order_management.orders.view"
+
+
+def _order_read_before(db, user: dict, args: dict) -> dict:
+    """The order as it is now, found by its number in the user's company scope, after the refusals the route
+    and its service would make. The order's id is kept in `before` for the execute, never in the card."""
+    from app.services.error_handler import AppException, handle_conflict, handle_not_found
+    from app.services.order_field_ownership import reject_autocount_owned_edit
+    from app.services.order_service import OrderService
+
+    _refuse_ids_in(reason=args.get("reason"))
+    _module_open(user, db, "order")
+    number = _line(args["order_number"])
+    order = OrderService(db).get_order_by_order_number(number)
+    if order is None:
+        raise handle_not_found("Order", number)
+    if order.is_cancelled:
+        raise handle_conflict(f"Order {number} is already cancelled.")
+    reject_autocount_owned_edit(order, {"is_cancelled": True})
+    return {
+        "order_id": str(order.id),
+        "is_cancelled": False,
+        "remarks": order.remarks,
+        "_show": {"number": order.order_number, "customer": order.debtor_name or ""},
+    }
+
+
+def _order_summary(args: dict, before: dict) -> str:
+    text = f"Cancel order {_word(before['number'])}"
+    if before["customer"]:
+        text += f" for {_quoted(before['customer'])}"
+    if _line(args.get("reason")):
+        text += f", with the reason {_in_full(args['reason'])}, which replaces the order's remarks"
+    return text + ". Complaints on this order are re-evaluated."
+
+
+def _order_execute(db, user: dict, args: dict, confirmed: dict) -> dict:
+    from app.api.v1.order_management.orders import OrderCancelRequest, cancel_order
+
+    _module_open(user, db, "order")
+    order = cancel_order(
+        order_id=str(confirmed["order_id"]), body=OrderCancelRequest(reason=_line(args.get("reason")) or None),
+        current_user=user, db=db,
+    )
+    return {"id": str(confirmed["order_id"]), "after": {"is_cancelled": True, "remarks": order.remarks}}
+
+
+def _order_changes(args: dict, before: dict, after: dict, shown: dict) -> list[dict]:
+    return _diff(
+        f"Order {shown.get('number', '')}".strip(),
+        [("Cancelled", "No", "Yes"), ("Remarks", before.get("remarks"), after.get("remarks"))],
+    )
+
+
+WRITES[CANCEL_ORDER] = WriteDef(
+    name=CANCEL_ORDER,
+    user_permission=ORDER_CANCEL,
+    schema={
+        "type": "function",
+        "function": {
+            "name": CANCEL_ORDER,
+            "description": (
+                "Propose cancelling one order by its order number, as the screen's Cancel does. Nothing changes "
+                "until the user confirms. Complaints on the order are re-evaluated. An order that is already "
+                "cancelled or owned by AutoCount is refused. Call once per order."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_number": {"type": "string"},
+                    "reason": {"type": "string", "maxLength": MAX_NOTE_CHARS},
+                },
+                "required": ["order_number"],
+            },
+        },
+    },
+    read_before=_order_read_before,
+    summary=_order_summary,
+    execute=_order_execute,
+    record_key="order_number",
+    changes=_order_changes,
+    execute_takes_before=True,
+)
+
+
+# ------------------------------------------------------------------ PR 4 IT support ticket
+
+CREATE_TICKET = "crm_it_support_ticket_create"
+
+
+def _ticket_read_before(db, user: dict, args: dict) -> dict:
+    from app.services.error_handler import handle_validation_error
+
+    if not _line(args["title"]):
+        raise handle_validation_error("`title` is required.")
+    _refuse_ids_in(title=args["title"], description=args.get("description"))
+    return {}
+
+
+def _ticket_summary(args: dict, before: dict) -> str:
+    text = f"Create a draft IT support ticket {_in_full(args['title'])}"
+    extras = [f"priority {args['priority']}" if args.get("priority") else "", f"category {args['category']}" if args.get("category") else ""]
+    extras = [e for e in extras if e]
+    if extras:
+        text += f" ({', '.join(extras)})"
+    if _line(args.get("description")):
+        text += f", described as {_in_full(args['description'])}"
+    return text + "."
+
+
+def _ticket_execute(db, user: dict, args: dict) -> dict:
+    from html import escape
+
+    from app.schemas.tickets import ITSupportTicketCreateRequest
+    from app.services.ticket_intake_service import TicketIntakeService
+
+    title = _line(args["title"])
+    # The draft shows the description, or the title when there is none: escaped either way, because the
+    # server would wrap the raw text in a `<p>` itself.
+    description = _line(args.get("description")) or title
+    principal = staff_principal.current()
+    payload = ITSupportTicketCreateRequest(
+        # A title is always given (the schema requires it), so the server's LLM draft never runs.
+        title=title,
+        priority=args.get("priority"),
+        category=args.get("category"),
+        description_text=description,
+        description_html=f"<p>{escape(description)}</p>",
+        source_channel="ai_assistant",
+        actor_user_id=str(user["id"]),
+        source_conversation_id=principal.conversation_id if principal is not None else None,
+    )
+    out = TicketIntakeService(db).submit(payload, actor_user_id_fallback=str(user["id"]))
+    return {
+        "id": out.ticket_id,
+        "after": {"ticket_number": out.ticket_number},
+        # Put in the reply by code (`note_in_reply`): a link the model must not invent.
+        "note": f"The draft ticket {out.ticket_number} is ready to review and submit: {out.draft_url}",
+    }
+
+
+WRITES[CREATE_TICKET] = WriteDef(
+    name=CREATE_TICKET,
+    # A draft is finished on its page, and submitting it needs this slug.
+    user_permission="tickets.tickets.edit",
+    schema={
+        "type": "function",
+        "function": {
+            "name": CREATE_TICKET,
+            "description": (
+                "Propose raising one IT support ticket for the user, as a draft they review before it is "
+                "submitted. Nothing is created until the user confirms. Give a short title from the user's "
+                "words; description, priority and category only when the user said them. Call once per ticket."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "maxLength": 200},
+                    "description": {"type": "string", "maxLength": MAX_NOTE_CHARS},
+                    "priority": {"type": "string", "enum": ["low", "medium", "high", "urgent"]},
+                    "category": {"type": "string", "enum": ["bug", "feature", "question", "other"]},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    read_before=_ticket_read_before,
+    summary=_ticket_summary,
+    execute=_ticket_execute,
+    record_key="",
+    note_in_reply=True,
+    proposal_note=(
+        "Nothing exists yet. If the user confirms, a draft IT support ticket is created; it is not submitted. "
+        "Say this is a proposal and that confirming creates a draft ticket."
+    ),
 )

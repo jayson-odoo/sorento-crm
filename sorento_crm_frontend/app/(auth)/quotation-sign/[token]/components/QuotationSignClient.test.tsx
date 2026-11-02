@@ -27,6 +27,9 @@ const getQuotationSignPage = vi.fn();
 const requestQuotationChanges = vi.fn();
 const acceptQuotation = vi.fn();
 
+// The view beacon calls NextAuth, which jsdom cannot reach; its own tests live beside the hook.
+vi.mock('../../hooks/useQuotationViewBeacon', () => ({ useQuotationViewBeacon: () => {} }));
+
 vi.mock('../../services/quotationSignService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/quotationSignService')>();
   return {
@@ -39,6 +42,7 @@ vi.mock('../../services/quotationSignService', async (importOriginal) => {
 
 import { QuotationSignClient } from './QuotationSignClient';
 import { QuotationSignError } from '../../services/quotationSignService';
+import { SIGN_COLUMNS } from './signColumns.fixture';
 
 function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
   return {
@@ -63,6 +67,7 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
       {
         scope_label: 'Townhouse',
         scope_total: '235000.00',
+        columns: SIGN_COLUMNS,
         lines: [
           {
             id: 'line-1',
@@ -137,9 +142,9 @@ describe('QuotationSignClient reading the quotation', () => {
 
     expect(await screen.findByText('rate only')).toBeInTheDocument();
     // The priced line still shows its money, so this is not a blanket suppression.
-    expect(screen.getByText('RM 102,000.00')).toBeInTheDocument();
+    expect(screen.getByText('102,000.00')).toBeInTheDocument();
     // A zero would read as "free" to the person about to sign.
-    expect(screen.queryByText('RM 0.00')).not.toBeInTheDocument();
+    expect(screen.queryByText('0.00')).not.toBeInTheDocument();
   });
 
   it('leaves the money blank on a set component priced at nothing', async () => {
@@ -153,6 +158,7 @@ describe('QuotationSignClient reading the quotation', () => {
           {
             scope_label: 'Type A',
             scope_total: '102000.00',
+            columns: SIGN_COLUMNS,
             lines: [
               {
                 id: 'line-3',
@@ -194,11 +200,11 @@ describe('QuotationSignClient reading the quotation', () => {
     // Both rows carry 894 (a set and its part ship together), so count rather than match one.
     expect(screen.getAllByText('894')).toHaveLength(2);
     // No money on it, in either column, and no "rate only" standing in for the blank.
-    expect(screen.queryByText('RM 0.00')).not.toBeInTheDocument();
+    expect(screen.queryByText('0.00')).not.toBeInTheDocument();
     expect(screen.queryByText('rate only')).not.toBeInTheDocument();
     // The priced parent is untouched.
-    expect(screen.getByText('RM 305.55')).toBeInTheDocument();
-    expect(screen.getByText('RM 273,161.70')).toBeInTheDocument();
+    expect(screen.getByText('305.55')).toBeInTheDocument();
+    expect(screen.getByText('273,161.70')).toBeInTheDocument();
   });
 
   it('heads a band once, above the lines it covers', async () => {
@@ -423,6 +429,7 @@ function scopeOf(label: string, total: string, descriptions: string[]) {
   return {
     scope_label: label,
     scope_total: total,
+    columns: SIGN_COLUMNS,
     lines: descriptions.map((description, index) => ({
       id: `line-${index}`,
       item_label: String(index + 1),
@@ -853,3 +860,122 @@ describe('QuotationSignClient AC7 titles and location', () => {
     expect(getCurrentPosition).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * QUOTE-COVER-PAGE (UAC E1-E3, F2): a new issue opens with a cover card built from `cover_rows`;
+ * an old issue (cover_rows null) keeps today's page with the bottom terms panel.
+ */
+describe('QuotationSignClient cover card', () => {
+  const REF = 'PRJQ-2026-0042-R2 SERI MUTIARA RESIDENCES';
+  const coverRows = [
+    { key: 'reference', label: 'Reference No.', text: REF },
+    { key: 'date', label: 'Date', text: '26/02/2026' },
+    { key: 'attn', label: 'Attn', text: 'Kelly' },
+    { key: 'company', label: 'Company', text: 'Nadi Cergas Sdn Bhd' },
+    { key: 'email', label: 'Email', text: 'kelly@example.test' },
+    {
+      key: 'terms',
+      label: 'Terms & Conditions',
+      html: '<p>CLAUSE A</p><ul><li>OUTER ITEM<ul><li>INNER ITEM</li></ul></li></ul>',
+    },
+    { key: 'payment_terms', label: 'Payment Terms', text: '30 days net' },
+    { key: 'prepared_by', label: 'Prepared By', text: 'Ahmad Faizal' },
+  ];
+  const withCover = (overrides: Partial<QuotationSignPage> = {}) =>
+    page({
+      our_ref: REF,
+      terms: '<p>CLAUSE A</p>',
+      cover_rows: coverRows,
+      ...overrides,
+    });
+
+  it('renders the cover rows in the given order', async () => {
+    getQuotationSignPage.mockResolvedValue(withCover());
+    renderPage();
+
+    await screen.findByText('Reference No.');
+    const labels = ['Reference No.', 'Date', 'Attn', 'Company', 'Email', 'Payment Terms', 'Prepared By'];
+    const cover = within(screen.getByTestId('quotation-sign-cover'));
+    const positions = labels.map((label) => {
+      const node = cover.getByText(label);
+      return Array.from(document.body.querySelectorAll('*')).indexOf(node);
+    });
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(screen.getByText('kelly@example.test')).toBeInTheDocument();
+    expect(screen.getByText('Prepared By')).toBeInTheDocument();
+  });
+
+  it('shows the terms row as html with the nested list visible', async () => {
+    getQuotationSignPage.mockResolvedValue(withCover());
+    renderPage();
+
+    const inner = await screen.findByText('INNER ITEM');
+    expect(inner.closest('ul')?.closest('li')).toHaveTextContent('OUTER ITEM');
+    expect(screen.getByText('Terms & Conditions')).toBeInTheDocument();
+  });
+
+  it('drops the bottom Terms and conditions panel but keeps the tick box', async () => {
+    getQuotationSignPage.mockResolvedValue(withCover());
+    renderPage();
+
+    await screen.findByText('INNER ITEM');
+    expect(screen.queryByText('Terms and conditions')).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText('I have read and agree to the Terms and conditions.'),
+    ).toBeInTheDocument();
+  });
+
+  it('says Quotation from once and shows the same reference as the PDF', async () => {
+    getQuotationSignPage.mockResolvedValue(withCover());
+    renderPage();
+
+    await screen.findByText('Reference No.');
+    expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+    expect(screen.getAllByText(REF).length).toBeGreaterThan(0);
+  });
+
+  it('with cover_rows null shows today\'s page, bottom terms panel included', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      page({ terms: '<p>CLAUSE A</p>', cover_rows: null }),
+    );
+    renderPage();
+
+    expect(await screen.findByText('Terms and conditions')).toBeInTheDocument();
+    expect(screen.queryByText('Reference No.')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+  });
+
+  it('polish: the cover terms row carries every TERMS_HTML_CLASS token and no prose', async () => {
+    getQuotationSignPage.mockResolvedValue(
+      withCover({
+        cover_rows: coverRows.map((r) =>
+          r.key === 'terms'
+            ? { ...r, html: '<p>CLAUSE A</p><p></p><ul><li>OUTER ITEM<ul><li>INNER ITEM</li></ul></li></ul>' }
+            : r,
+        ),
+      }),
+    );
+    renderPage();
+
+    const inner = await screen.findByText('INNER ITEM');
+    await expectTermsClass(inner);
+  });
+});
+
+/** The countersign terms row and the read view share one class constant (QUOTE-COVER-PAGE polish). */
+async function expectTermsClass(inner: HTMLElement) {
+  const loaders = import.meta.glob('/lib/terms-html.ts') as Record<string, () => Promise<{ TERMS_HTML_CLASS: string }>>;
+  const load = loaders['/lib/terms-html.ts'];
+  expect(load, 'lib/terms-html.ts must export TERMS_HTML_CLASS').toBeDefined();
+  const { TERMS_HTML_CLASS } = await load();
+  const tokens = String(TERMS_HTML_CLASS).split(/\s+/).filter(Boolean);
+  expect(tokens.length).toBeGreaterThan(0);
+  const chain: HTMLElement[] = [];
+  for (let el = inner.parentElement; el && el !== document.body && chain.length < 6; el = el.parentElement) {
+    chain.push(el);
+  }
+  expect(
+    chain.some((el) => tokens.every((token) => el.classList.contains(token))),
+  ).toBe(true);
+  expect(chain.some((el) => el.classList.contains('prose'))).toBe(false);
+}

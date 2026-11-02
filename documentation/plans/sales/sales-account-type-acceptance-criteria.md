@@ -59,13 +59,13 @@ The route is `GET /api/v1/order-management/report-ask`. The param is `account_ty
 
 ## PR 2: the bot (ACs fixed here before its code; tests come from these)
 
-All on sales and outstanding asks, through the parser, with no regex or word list on the user's words. Prompt gate with v70 as the fixed
+All on sales and outstanding asks, through the parser, with no regex or word list on the user's words. Prompt gate with crew's production text, md5 `57d7d412`, as the fixed
 baseline. "Stored types" are the types the customers of the asker's company carry; "brands" are the Known brands line.
 
-- **AT-20 [T]** "AGENT sales for cabana in Jan", with CABANA both a brand and a stored type: the bot asks "Cabana: brand or account type?" and
-  runs nothing yet.
-- **AT-21 [T]** Answering "account type" runs the held ask with the account filter; answering "brand" runs it with the brand filter. The agent,
-  period and axis are not asked again.
+- **AT-20 [T]** "AGENT sales for cabana in Jan", with CABANA both a brand and a stored type: the bot's whole reply is "Cabana: brand or account type?" (no numbered list, mock v4) and
+  it runs nothing yet. It is the last question of the ask: a basis, count, company or agent pick still owed is asked first, a count the bot gives up on included, and nothing the message settled is lost.
+- **AT-21 [T]** Answering "account type" runs the held ask with the account filter, replacing any account filter held from before; answering "brand" runs it with the brand filter. The agent,
+  period and axis are not asked again. A reply repeating the word ("cabana account") is the answer. Anything else it says changes the held ask and keeps the rest: its own period, count, axis, channel, basis or company ("cabana account in Feb" is AGENT A's February, not the whole company). An echo of what is held changes nothing. Only a reply on another subject ("cabana brand stock", with the parser marking the domain in the message) or naming another filter word is a new ask. A declared pick reads the same way.
 - **AT-22 [T]** The overlap comes from data: a seeded made-up word that is both a brand and a stored type asks; CABANA asks nothing when no
   customer carries it (it reads as the brand, as today).
 - **AT-23 [T]** "cabana brand" and "cabana account" (and "CABANA debtor type") ask nothing and run that filter.
@@ -75,9 +75,15 @@ baseline. "Stored types" are the types the customers of the asker's company carr
   number's type.
 - **AT-26 [T]** A word and a number: "cabana ... account 4", where CABANA is 4's type, asks nothing and runs the account filter alone, no brand
   filter. "cabana on account type 3", where it is not, asks nothing and runs brand CABANA on account 3.
-- **AT-27 [T]** Unchanged readings: "cabana stock" stays the brand with no question; "project sales" stays the channel; "sample" stays the category;
+- **AT-27 [T]** Unchanged readings: "cabana stock" stays the brand with no question; "project sales" stays the channel; a verdict reading "sample" as a category stays the category (the production parser gives it no entity today, so the gate grades it as any stored type);
   "top accounts" stays customers.
-- **AT-28 [T]** "sales for cabana in Jan" means 1 Jan to 31 Jan of this year, one total, on a fresh conversation. A month or year split never prints
-  "Top N".
+- **AT-28 [T]** "sales for cabana in Jan" means 1 Jan to 31 Jan of this year, one total, on a fresh conversation and after a held 2026 month list. A month or year split never prints
+  "Top N": its first line reads "By month, invoiced" ("By year, delivered"), and the lines under it stay as they are. Every other axis keeps "Top N". A stray month axis on one month still prints the right figure, one row under "By month".
 - **AT-29 [T]** The owner's examples on AT-16's invented figures: account RM 100,400.00, brand RM 150,000.00.
 - **AT-30 [T]** The AI panel's agent can pass an account type word or number through `crm_report_ask` and reads the same reply.
+- **AT-32 [T]** A customer-scoped contact (dealer): "cabana" stays the brand with no question, "account 4" is the dealer refusal, and the Known account types line is never in their parser input.
+- **AT-33 [T]** A customer's own ledger stays: "ZZT TRADING a/c 3" (a customer entity with `account: 3`) keeps today's reading and sends no `account_types`.
+- **AT-34 [T]** On a follow-up: a word that is both asks and the answer keeps what is on screen; an account word replaces the held account filter; a new axis keeps the held account filter; `group_by` account type on the bot lists one row per type.
+- **AT-35 [T]** A contact in two companies who names only an account type, or a word that asks, is asked the company first, then the word. A contact naming the company is not asked it. The answer runs the held filter for that company. Word and number agree when every company in play that reads the number reads it as that word's type, a company with no such number not counting; a named or held company narrows it to that company. If they disagree, or none reads it, the brand stays beside the number.
+- **AT-37 [T]** A contact the sales report refuses gets no Known account types line. The question prints the stored type's own name unless the typed word is that name, so a crafted `raw` never reaches a reply. A dealer's account word on a follow-up is the dealer refusal.
+- **AT-36 [T]** Before the label moves: a parse whose entities have no `kind_said` key (a text that does not define it) asks nothing and reads as today, and the user block carries no Known account types line for that text. With a text that defines it, the line lists the stored types of the scoped company only, and is absent when no customer carries a type.

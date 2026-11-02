@@ -39,7 +39,7 @@ import type {
 export type MergeFieldMode = 'print' | 'editor';
 
 /** How the Insert field dialog sorts the catalogue into sections. */
-export type MergeFieldGroup = 'Product' | 'Specs' | 'Set' | 'Line' | 'Combo';
+export type MergeFieldGroup = 'Product' | 'Specs' | 'Set' | 'Line' | 'Combo' | 'Spec sheet';
 
 /** AC-A7: an older pinned/cached payload predating `currency` renders this,
  *  never an empty string or the raw token - same default the backend column
@@ -116,7 +116,42 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'combo.name', label: 'Combo name', group: 'Combo' },
   { path: 'combo.description', label: 'Combo description', group: 'Combo' },
   { path: 'combo.free_items', label: 'Combo free items', group: 'Combo' },
+  // PS-SPEC-SHEET: filled on a project spec sheet page only; blank on a price tag.
+  { path: 'product.brand', label: 'Brand', group: 'Spec sheet' },
+  { path: 'line.area', label: 'Area', group: 'Spec sheet' },
+  { path: 'line.comment', label: 'Comment', group: 'Spec sheet' },
+  { path: 'line.marker', label: 'Marker', group: 'Spec sheet' },
+  { path: 'doc.project_title', label: 'Project title', group: 'Spec sheet' },
+  { path: 'doc.ref', label: 'Ref (your ref, else quotation no)', group: 'Spec sheet' },
+  { path: 'doc.your_ref', label: 'Your ref', group: 'Spec sheet' },
+  { path: 'doc.quotation_no', label: 'Quotation no', group: 'Spec sheet' },
+  { path: 'doc.prepared_by', label: 'Prepared by', group: 'Spec sheet' },
+  { path: 'doc.prepared_by_phone', label: 'Prepared by phone', group: 'Spec sheet' },
+  { path: 'doc.date', label: 'Date', group: 'Spec sheet' },
 ];
+
+/** PS-SPEC-SHEET: the document fields a spec sheet row carries (`LineTagData.doc`). */
+const DOC_FIELDS = new Set([
+  'project_title',
+  'ref',
+  'your_ref',
+  'quotation_no',
+  'prepared_by',
+  'prepared_by_phone',
+  'date',
+]);
+
+/** Paths only a spec sheet page answers. In the editor, previewed against a plain product,
+ *  they show as the token itself so the designer can see what will fill the spot. */
+function isSpecSheetPath(path: string): boolean {
+  return (
+    path.startsWith('doc.') ||
+    path === 'line.area' ||
+    path === 'line.comment' ||
+    path === 'line.marker' ||
+    path === 'product.brand'
+  );
+}
 
 /** The specs the bound thing carries. A set has none of its own (D58).
  *  D7: `layer`'s own subject wins when the layer has one, same as every
@@ -185,6 +220,25 @@ function resolvePath(
     const combo = comboOf(data);
     const field = path.slice('combo.'.length) as 'name' | 'description' | 'free_items';
     return combo?.[field] ?? '';
+  }
+
+  if (path.startsWith('doc.')) {
+    const field = path.slice('doc.'.length);
+    if (!DOC_FIELDS.has(field) || data.kind !== 'line' || !data.line.doc) return null;
+    return data.line.doc[field as keyof typeof data.line.doc] ?? '';
+  }
+
+  if (path === 'line.area' || path === 'line.comment' || path === 'line.marker') {
+    if (data.kind !== 'line' || !data.line.doc) return null;
+    const field = path.slice('line.'.length) as 'area' | 'comment' | 'marker';
+    return data.line[field] ?? '';
+  }
+
+  if (path === 'product.brand') {
+    const subject = subjectOf(data, layer);
+    if (subject?.kind === 'product') return subject.product.brand ?? null;
+    if (subject?.kind === 'line') return subject.line.brand ?? null;
+    return null;
   }
 
   if (path === 'line.quantity') {
@@ -281,6 +335,8 @@ export function renderMergeFields(
     if (value != null) return value;
     // With nothing bound and nothing previewed, the editor shows the token so
     // the designer can see which field will fill this spot. Print never does.
+    // A spec sheet field has nothing to preview against a product, so it shows too.
+    if (mode === 'editor' && isSpecSheetPath(path)) return whole;
     return mode === 'editor' && !data ? whole : '';
   });
 }
@@ -365,6 +421,9 @@ export function mergeFieldCatalog(
     ...fixed.filter((field) => field.group === 'Set'),
     ...fixed.filter((field) => field.group === 'Line'),
     ...fixed.filter((field) => field.group === 'Combo'),
+    // PS-SPEC-SHEET: offered on spec sheet templates; a price tag editor passes `groups`
+    // without it, so it never shows there.
+    ...fixed.filter((field) => field.group === 'Spec sheet'),
   ];
 
   return groups ? all.filter((field) => groups.includes(field.group)) : all;

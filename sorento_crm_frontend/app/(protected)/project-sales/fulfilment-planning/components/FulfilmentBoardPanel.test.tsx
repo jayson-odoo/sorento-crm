@@ -188,7 +188,7 @@ vi.mock('../../_shared/services/lineSplitService', () => ({
 }));
 
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
-import { walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
+import { openConfirmGuide, walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
 import { unpostableNotices } from '../../_shared/lib/unpostableNotices';
 import {
   buildBoard,
@@ -1256,6 +1256,9 @@ describe('FulfilmentBoardPanel: a background refetch dims the board, never blank
     // Confirm's own success invalidates the board (it changes what every OTHER order can be
     // offered) - held open here so the in-flight moment can be asserted.
     let resolveRefetch: (value: PlanningBoard) => void = () => {};
+    // The guided Confirm re-reads the board as it opens (CONFIRM-PREVIEW-STALE); that read
+    // answers at once, so the held one below is Confirm's own refetch.
+    getPlanningBoard.mockResolvedValueOnce(allSaved(boardOf([demand()])));
     getPlanningBoard.mockImplementationOnce(
       () =>
         new Promise<PlanningBoard>((resolve) => {
@@ -2308,7 +2311,11 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
     await walkConfirmGuide();
 
     await waitFor(() => expect(adoptSalesOrder).toHaveBeenCalledWith('so-a'));
-    expect(previewConfirmMany).not.toHaveBeenCalled();
+    // CONFIRM-PREVIEW-STALE round 3: only the guide's quiet email dry run may run; the press
+    // itself runs no dry run after the failed adopt, and posts nothing.
+    expect(
+      previewConfirmMany.mock.calls.filter(([body]) => !(body as { quiet?: boolean }).quiet),
+    ).toHaveLength(0);
     expect(confirmMany).not.toHaveBeenCalled();
     // Nothing was committed, so the work is still the planner's.
     expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
@@ -4291,7 +4298,9 @@ describe('FulfilmentBoardPanel: a local draft is dropped once the server confirm
     // the wire underneath it, and its own confirm attempt was refused, never committed.
     await pressPreviewThenConfirm();
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(getPlanningBoard).toHaveBeenCalledTimes(2));
+    // Three reads: the mount, the guided Confirm's own re-read as it opens
+    // (CONFIRM-PREVIEW-STALE), and Confirm's refetch.
+    await waitFor(() => expect(getPlanningBoard).toHaveBeenCalledTimes(3));
 
     expect(screen.getByTestId(`decision-pill-${KEY_A}`)).toHaveTextContent('Saved');
   });
@@ -4628,7 +4637,10 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
 
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(previewConfirmMany).toHaveBeenCalledTimes(1);
+    // ONE press dry run per press; the guide's quiet email dry runs are not the press's.
+    expect(
+      previewConfirmMany.mock.calls.filter(([body]) => !(body as { quiet?: boolean }).quiet),
+    ).toHaveLength(1);
     const [body] = confirmMany.mock.calls[0] as [
       { orders: { lines: { project_line_id: string }[]; only_line_ids?: string[] }[]; preview?: boolean },
     ];
@@ -4836,15 +4848,41 @@ describe('FulfilmentBoardPanel: Confirm runs the dry run first (FULFIL-CONFIRM-S
     expect(confirmMany).not.toHaveBeenCalled();
   });
 
+  it("posts nothing when the press's own dry run fails, and Confirm is offered again", async () => {
+    // The guide's quiet email dry run answers; only the press's own dry run fails (the case
+    // this test pinned before the guide ran one of its own).
+    getPlanningBoard.mockResolvedValue(twoLines());
+    previewConfirmMany.mockImplementation((body: { quiet?: boolean; orders: { pso_id: string }[] }) =>
+      body.quiet
+        ? Promise.resolve({
+            results: body.orders.map((order) => ({ pso_id: order.pso_id, ok: true, preview: true })),
+          })
+        : Promise.reject(new Error('Network down')),
+    );
+
+    renderPanel(['SO403340']);
+    await walkConfirmGuide();
+
+    await waitFor(() =>
+      expect(
+        previewConfirmMany.mock.calls.filter(([body]) => !(body as { quiet?: boolean }).quiet),
+      ).toHaveLength(1),
+    );
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    expect(confirmMany).not.toHaveBeenCalled();
+  });
+
   it('posts nothing when the dry run itself fails', async () => {
     getPlanningBoard.mockResolvedValue(twoLines());
     previewConfirmMany.mockRejectedValue(new Error('Network down'));
 
     renderPanel(['SO403340']);
-    await walkConfirmGuide();
-
-    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+    // CONFIRM-PREVIEW-STALE round 3: the guide runs the dry run as it opens (popup = email); a
+    // failed one blocks the guide behind a Retry, so nothing can be posted from it.
+    await openConfirmGuide();
+    await waitFor(() => expect(previewConfirmMany).toHaveBeenCalled());
+    expect(await screen.findByTestId('confirm-guide-refresh-failed')).toBeInTheDocument();
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
     expect(confirmMany).not.toHaveBeenCalled();
   });
 

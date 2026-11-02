@@ -56,8 +56,9 @@ vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-
   useBrandSelectQuery: () => ({ data: [{ id: 'b1', brand_name: 'CONTOH Brand' }], isLoading: false }),
 }));
 vi.mock('@/hooks/useLookupSetOptions', () => ({
-  useLookupSetOptions: () => ({
-    data: [
+  // PS-REGISTRATION-V3: the lead source list is its own lookup set.
+  useLookupSetOptions: (key: string) => ({
+    data: key === 'project_lead_source' ? [{ value: 'site_visit', label: 'Site visit' }] : [
       { value: 'Johor', label: 'Johor' },
       { value: 'Selangor', label: 'Selangor' },
     ],
@@ -348,7 +349,12 @@ async function pickAsync(label: string | RegExp, typed: string, optionName: stri
 }
 // LEAD-GOVERNS-REGISTER D2: a new project's Customer comes from the picked Lead, so "pickCustomer"
 // now picks the lead whose customer is Aman Hartanah CONTOH.
-const pickCustomer = (typed = 'Aman') => pickAsync(/^Customer/, typed, /Aman Hartanah CONTOH/);
+// PS-REGISTRATION-V3: Register / Submit need a lead source and the customer is optional, so
+// every register flow picks the lead source here, beside the customer.
+const pickCustomer = async (typed = 'Aman') => {
+  fireEvent.change(screen.getByLabelText(/^Lead source/), { target: { value: 'site_visit' } });
+  await pickAsync(/^Customer/, typed, /Aman Hartanah CONTOH/);
+};
 function openDetails() {
   const header = screen.getByRole('button', { name: /^Details/ });
   if (header.getAttribute('aria-expanded') !== 'true') fireEvent.click(header);
@@ -389,7 +395,7 @@ async function runCheck(text = 'Setia Alam Phase 3B CONTOH') {
 async function toDetails() {
   await runCheck();
   fireEvent.click(await screen.findByRole('button', { name: 'Next' }));
-  await screen.findByRole('button', { name: /^Customer and salesperson/ });
+  await screen.findByRole('button', { name: /^Lead source, customer and salesperson/ });
 }
 
 describe('AC-W1 create mode opens on step 1 only', () => {
@@ -408,9 +414,9 @@ describe('AC-W1 create mode opens on step 1 only', () => {
     expect(screen.getByRole('button', { name: 'AI extract' })).toBeInTheDocument();
     expect(developerBox()).toBeInTheDocument();
     expect(screen.queryByLabelText('Project type')).toBeNull();
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
     expect(screen.queryByLabelText('Salesperson')).toBeNull();
-    expect(screen.queryByRole('button', { name: /^Customer and salesperson/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Lead source, customer and salesperson/ })).toBeNull();
   });
 
   it.each(['Register project', 'Save draft', 'Submit for approval'])('AC-W1 step 1 has no "%s" button', (name) => {
@@ -513,7 +519,7 @@ describe('AC-W7 step 2 Details', () => {
     expect(currentStep()).toHaveTextContent('Details');
     expect(screen.getByRole('button', { name: /^Details/ })).toBeInTheDocument();
     expect(screen.getByLabelText(/^Customer/)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
     expect(screen.getByLabelText('Salesperson')).toBeInTheDocument();
   });
 
@@ -609,7 +615,7 @@ describe('AC-W9 edit mode is not a wizard', () => {
     renderForm({ mode: 'edit', project: editProject() });
     expect(stepStrip()).toBeNull();
     expect(screen.getByRole('button', { name: /^Details/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Customer and salesperson/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Lead source, customer and salesperson/ })).toBeInTheDocument();
     expect(screen.getByLabelText(/project title/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Next' })).toBeNull();

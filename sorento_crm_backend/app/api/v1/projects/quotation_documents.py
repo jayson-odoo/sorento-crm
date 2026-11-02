@@ -36,6 +36,7 @@ from app.schemas.projects import (
     ProjectQuotationDocumentResponse,
     ProjectQuotationDocumentUpdate,
     ProjectQuotationIssueResponse,
+    QuotationIssueViewResponse,
     ProjectQuotationScopeCreate,
     ProjectQuotationScopeSummary,
     ProjectQuotationScopeUpdate,
@@ -359,6 +360,32 @@ def list_quotation_issues(
         document = svc.get_document_or_404(db, project_id, document_id)
         rows = svc.list_issues(db, document)
         return _envelope([svc.serialize_issue(db, row) for row in rows])
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/projects/{project_id}/quotation-documents/{document_id}/views",
+    response_model=ListResponse[QuotationIssueViewResponse],
+)
+def list_quotation_views(
+    project_id: str,
+    document_id: str,
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
+    db: Session = Depends(get_db),
+):
+    """The customer's counted opens of every revision's sign link, newest first (PS-QUOTE-VIEWS).
+
+    Same gate as the issue history: anyone who can open the document reads its log.
+    """
+    from app.services import quotation_view_service as views
+
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(project_id, resource="Project")
+        projects.get_project_or_404(db, project_id)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        return _envelope(views.log_for_document(db, document))
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

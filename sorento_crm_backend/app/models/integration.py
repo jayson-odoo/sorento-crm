@@ -141,7 +141,14 @@ class IntegrationLog(Base):
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
     __table_args__ = (
-        Index("ix_integration_log_business_table_business_id", "business_table", "business_id"),
+        # Built online by il_0001_integration_log_indexes (`app/utils/online_index.py`
+        # INTEGRATION_LOG_INDEXES); created_at DESC serves the upload-activity latest-log read.
+        Index(
+            "ix_integration_log_business_table_business_id",
+            "business_table",
+            "business_id",
+            created_at.desc(),
+        ),
         Index("ix_integration_log_status", "status"),
         Index("ix_integration_log_integration_channel", "integration_channel"),
         Index("ix_integration_log_created_at", "created_at"),
