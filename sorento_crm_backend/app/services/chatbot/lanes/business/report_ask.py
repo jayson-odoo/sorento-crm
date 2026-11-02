@@ -2253,8 +2253,9 @@ def _settle(
     own = _own_companies(companies)
     asks_company = False
     if holding:
-        # Q1 (crew ruling 2 Nov): the company the held report ran in stays for what this message names in it.
-        args, asks_company = _held_company(db, parse_output, args, source, own)
+        # Q1 (crew ruling 2 Nov): the company the held report ran in stays for what this message names in it. A dealer's
+        # links decide its company (the route forces them): only the rule before Q1 applies.
+        args, asks_company = _held_company(db, parse_output, args, source, [] if dealer else own)
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
         for e in jsc.array(parse_output.get("entities"))
@@ -2278,6 +2279,8 @@ def _settle(
         for key in ("measure", "basis"):
             if key == "basis" and asks_kind and source.get("basis") not in OUTSTANDING_KINDS:
                 continue
+            if key == "basis" and parse_output.get("capability_from") in SALES_STATUSES and source.get("basis") in OUTSTANDING_KINDS:
+                continue  # nor a sales figure an outstanding kind (multi-turn carry): its basis is asked
             if not args.get(key) and source.get(key):
                 args[key] = source[key]
     if (
@@ -2530,7 +2533,7 @@ def _refine(
         filters["account_types"] = plan["account_types"]  # an account word replaces the held account filter
     own = _own_companies(companies)
     asks_company = False
-    if filters:
+    if filters and not dealer:
         # Q1, as a fresh follow-up reads it (`_held_company`): what the refine names is read in the held company.
         filters, asks_company = _held_company(db, parse_output, filters, args, own)
         if asks_company:
