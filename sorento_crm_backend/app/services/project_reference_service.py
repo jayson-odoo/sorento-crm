@@ -29,6 +29,10 @@ PARTY_TYPES = (
     "main_contractor",
     "trading_house",
     "consultant",
+    # PS-REGISTRATION-V3 (this lane owns every new type, owner via crew 2 Nov).
+    "subcontractor",
+    "interior_designer",
+    "tender_party",
 )
 
 # The four roles the client named. Seeded, not hardcoded: a template owns its own

@@ -143,6 +143,9 @@ _NESTED: Dict[str, frozenset] = {
             "quotation_id",
             "request_id",
             "row_id",
+            # fill_project_party_phone: project_party_contact_service.fill_party_phone 404s a
+            # party that is not on this project (PS-REGISTRATION-V3).
+            "party_id",
         }
     ),
     "quotation-versions": frozenset({"line_id"}),
@@ -186,6 +189,9 @@ _OWN_PERMISSION_PREFIXES = (
     "/planning-changes",
     "/divergences",
 )
+#: Reference reads that carry an id but no project (PS-REGISTRATION-V3): a party's contacts,
+#: picked at registration like the party list itself. GET only; writes keep their own slug.
+_REFERENCE_ROUTES = frozenset({("GET", "/parties/{party_id}/contacts")})
 _REFERENCE_PATHS = frozenset(
     {"/quotation-approval-graph", "/quotation-line-images", "/quotation-line-stock", "/quotation-line-verdict"}
 )
@@ -207,6 +213,8 @@ def classify(method: str, path_format: str):
     (or ``_MODULE_RULE``) for its first id, or ``None`` when it is refused."""
     path = path_format[len(PREFIX):] if path_format.startswith(PREFIX) else path_format
     if path.startswith(_REFERENCE_PREFIXES) or path in _REFERENCE_PATHS:
+        return "open"
+    if (method, path) in _REFERENCE_ROUTES:
         return "open"
     if path.startswith(_OWN_PERMISSION_PREFIXES):
         return "open"

@@ -29,7 +29,7 @@ def _snapshot(lead):
 
 
 def test_ac_l2_staff_register_without_lead_id_is_201_with_no_lead(v2):
-    res = as_user(v2, v2.owner).post(LIST, json={"title": title("L2"), "customer_id": v2.customer.id})
+    res = as_user(v2, v2.owner).post(LIST, json={"lead_source": "site_visit", "title": title("L2"), "customer_id": v2.customer.id})
     assert res.status_code == 201, res.text
     assert project_of(v2, res.json()["id"]).lead_id is None
     assert profile_of(v2, res.json()["id"]).customer_id == v2.customer.id
@@ -39,7 +39,7 @@ def test_ac_l4_staff_register_with_a_lead_id_links_nothing_and_leaves_the_lead(v
     lead = lead_row(v2, customer_id=v2.customer.id, owner=v2.owner)
     before = _snapshot(lead)
     res = as_user(v2, v2.owner).post(
-        LIST, json={"title": title("L4"), "customer_id": v2.customer.id, "lead_id": lead.id}
+        LIST, json={"lead_source": "site_visit", "title": title("L4"), "customer_id": v2.customer.id, "lead_id": lead.id}
     )
     assert res.status_code == 201, res.text
     assert project_of(v2, res.json()["id"]).lead_id is None
@@ -52,23 +52,24 @@ def test_ac_l2_the_project_customer_is_the_one_sent_not_the_leads(v2):
     other = new_customer(v2)
     lead = lead_row(v2, customer_id=other.id, owner=v2.owner)
     res = as_user(v2, v2.owner).post(
-        LIST, json={"title": title("L2c"), "customer_id": v2.customer.id, "lead_id": lead.id}
+        LIST, json={"lead_source": "site_visit", "title": title("L2c"), "customer_id": v2.customer.id, "lead_id": lead.id}
     )
     assert res.status_code == 201, res.text
     assert profile_of(v2, res.json()["id"]).customer_id == v2.customer.id
 
 
-def test_ac_l2_staff_register_still_needs_a_customer(v2):
-    res = as_user(v2, v2.owner).post(LIST, json={"title": title("L2n")})
-    assert res.status_code == 422, res.text
-    assert res.json()["code"] == "project_customer_required"
+def test_ac_l2_staff_register_needs_no_customer(v2):
+    """Flipped by PS-REGISTRATION-V3 rule 9 (owner 2 Nov): customer optional."""
+    res = as_user(v2, v2.owner).post(LIST, json={"lead_source": "site_visit", "title": title("L2n")})
+    assert res.status_code == 201, res.text
+    assert profile_of(v2, res.json()["id"]).customer_id is None
 
 
 # ------------------------------------------------------------------ L3 / L4 submit-only
 
 
 def _sub(w, **body):
-    return as_user(w, w.sub_a).post(LIST, json={"title": title("L3"), **body})
+    return as_user(w, w.sub_a).post(LIST, json={"lead_source": "site_visit", "title": title("L3"), **body})
 
 
 def test_ac_l3_submit_only_draft_without_a_lead_saves(v2):
@@ -84,31 +85,36 @@ def test_ac_l3_submit_only_submit_without_a_lead_goes_pending(v2):
     assert row.approval_state == "pending" and row.lead_id is None
 
 
-def test_ac_l3_crm_register_service_needs_no_lead_but_a_customer(v2):
+def test_ac_l3_crm_register_service_needs_no_lead_and_no_customer(v2):
     from app.services import project_registration_service as svc
     from app.services.error_handler import AppException
 
     row = svc.crm_register(
         v2.db, company_id=v2.company_id, user_id=v2.sub_a,
-        payload={"title": title("L3s"), "customer_id": v2.customer.id}, submit=True,
+        payload={"lead_source": "site_visit", "title": title("L3s"), "customer_id": v2.customer.id}, submit=True,
     )
     assert row.approval_state == "pending" and row.lead_id is None
+    bare = svc.crm_register(
+        v2.db, company_id=v2.company_id, user_id=v2.sub_a,
+        payload={"lead_source": "site_visit", "title": title("L3x")}, submit=True,
+    )
+    assert bare.approval_state == "pending"  # PS-REGISTRATION-V3 rule 9: customer optional
     with pytest.raises(AppException) as exc:
         svc.crm_register(
             v2.db, company_id=v2.company_id, user_id=v2.sub_a,
-            payload={"title": title("L3x")}, submit=True,
+            payload={"title": title("L3y")}, submit=True,
         )
-    assert exc.value.code == "project_customer_required"
+    assert exc.value.code == "project_lead_source_required"
 
 
-def test_ac_l3_crm_submit_needs_no_lead_but_a_customer(v2):
+def test_ac_l3_crm_submit_needs_no_lead_and_no_customer_but_a_lead_source(v2):
     from app.services import project_registration_service as svc
     from app.services.error_handler import AppException
 
     sub = {"projects.registrations.submit"}
     ok = svc.crm_register(
         v2.db, company_id=v2.company_id, user_id=v2.sub_a,
-        payload={"title": title("L3d"), "customer_id": v2.customer.id}, submit=False,
+        payload={"lead_source": "site_visit", "title": title("L3d"), "customer_id": v2.customer.id}, submit=False,
     )
     v2.db.flush()
     svc.crm_submit(v2.db, ok, user_id=v2.sub_a, payload={}, permissions=sub)
@@ -120,7 +126,7 @@ def test_ac_l3_crm_submit_needs_no_lead_but_a_customer(v2):
     v2.db.flush()
     with pytest.raises(AppException) as exc:
         svc.crm_submit(v2.db, bare, user_id=v2.sub_a, payload={}, permissions=sub)
-    assert exc.value.code == "project_customer_required"
+    assert exc.value.code == "project_lead_source_required"
 
 
 def test_ac_l4_submit_with_a_lead_id_leaves_the_lead_unchanged(v2):

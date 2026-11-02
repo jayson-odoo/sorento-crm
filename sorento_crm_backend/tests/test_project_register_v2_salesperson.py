@@ -113,10 +113,10 @@ def test_j2_save_draft_stores_a_codeless_draft_owned_by_the_user_and_notifies_no
 
 
 def test_j2_only_the_title_is_required_on_a_draft(v2):
-    res = as_user(v2, v2.sub_a).post(LIST, json={"title": title("Bare"), "submit": False})
+    res = as_user(v2, v2.sub_a).post(LIST, json={"lead_source": "site_visit", "title": title("Bare"), "submit": False})
     assert res.status_code == 201, res.text
     assert res.json()["approval_state"] == "draft"
-    empty = as_user(v2, v2.sub_a).post(LIST, json={"title": "", "submit": False})
+    empty = as_user(v2, v2.sub_a).post(LIST, json={"lead_source": "site_visit", "title": "", "submit": False})
     assert empty.status_code == 422
 
 
@@ -176,13 +176,13 @@ def test_j4_submit_from_a_draft_does_the_same(v2):
 
 
 def test_j4_required_fields_are_enforced_on_submit(v2):
-    # Each carries a lead with no customer, so the customer is the one thing missing.
+    # PS-REGISTRATION-V3: customer optional, the lead source is the one thing missing.
     lead = seed_lead(v2, v2.sub_a)
     res = as_user(v2, v2.sub_a).post(
         LIST, json={"title": title(), "submit": True, "lead_id": lead.id}
     )
     assert res.status_code == 422, res.text
-    assert res.json()["code"] == "project_customer_required"
+    assert res.json()["code"] == "project_lead_source_required"
 
     lead = seed_lead(v2, v2.sub_a)
     pid = as_user(v2, v2.sub_a).post(

@@ -68,6 +68,7 @@ GET /order-inquiry-headers/{inquiry_id}
 GET /order-inquiry-headers/{inquiry_id}/related-documents
 GET /order-inquiry-rows/{row_id}/po-candidates
 GET /parties/
+GET /parties/{party_id}/contacts
 GET /planning-changes
 GET /planning-changes/{batch_id}
 GET /plans
@@ -78,6 +79,7 @@ GET /projects/{project_id}/delivery-schedules
 GET /projects/{project_id}/order-inquiry-export
 GET /projects/{project_id}/order-inquiry-rows
 GET /projects/{project_id}/order-inquiry-summary
+GET /projects/{project_id}/parties
 GET /projects/{project_id}/purchase-orders
 GET /projects/{project_id}/quotation-documents
 GET /projects/{project_id}/quotation-documents/letter-templates
@@ -189,6 +191,7 @@ POST /projects/
 POST /projects/ai-extract
 POST /projects/clash-preview
 POST /projects/{project_id}/approve
+POST /projects/{project_id}/parties/{party_id}/phone
 POST /projects/{project_id}/purchase-orders
 POST /projects/{project_id}/purchase-orders/upload
 POST /projects/{project_id}/quotation-documents

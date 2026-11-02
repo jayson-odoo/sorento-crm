@@ -205,6 +205,15 @@ def test_r3_new_roles_are_stored_and_named_several_per_role(v2):
     assert _links(body) == want
 
 
+@pytest.mark.parametrize("role", ["consultant", "interior_designer"])
+def test_r3_one_consultant_and_one_interior_designer_per_project(v2, role):
+    """Owner 2 Nov ~21:40 (Q5 b): several only for trading house, subcontractor, tender party."""
+    a, b = _party(v2, role), _party(v2, role)
+    res = _register(v2, party_links=[{"role": role, "party_id": a.id}, {"role": role, "party_id": b.id}])
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "project_party_role_single"
+
+
 def test_r3_a_party_of_another_company_is_refused(v2):
     foreign = _party(v2, "subcontractor", company_id=v2.other_company)
     res = _register(v2, party_links=[{"role": "subcontractor", "party_id": foreign.id}])
@@ -407,9 +416,11 @@ def test_r12_the_phone_fill_needs_edit_on_the_project_not_parties_edit(v2):
     # sales_b holds view + edit but is not the owner: refused like any other write.
     res = as_user(v2, v2.sales_b).post(f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "+60120000000"})
     assert res.status_code == 403, res.text
-    # viewer_own holds no edit grant at all.
+    # viewer_own holds no edit grant at all (and the project is not theirs: the guard's 404).
     res = as_user(v2, v2.viewer_own).post(f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "+60120000000"})
-    assert res.status_code == 403, res.text
+    assert res.status_code in (403, 404), res.text
+    v2.db.refresh(mc)
+    assert mc.phone is None
 
 
 def test_r13_an_empty_phone_is_422(v2):
