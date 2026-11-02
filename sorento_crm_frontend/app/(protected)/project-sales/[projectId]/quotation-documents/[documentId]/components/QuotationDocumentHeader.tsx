@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -291,6 +292,33 @@ export function QuotationDocumentHeader({
           {/* Our Ref stays a read even in a session: it is the number the customer already has,
               minted by the numbering rule, and the backend refuses to edit it for that reason. */}
           <Field label="Our Ref" value={document.our_ref ?? document.document_no} />
+          {/* PS-PROPOSAL-QUOTATION: the revision a quotation was made from, and back again. */}
+          {document.kind === 'quotation' && document.source_label && document.source_document_id ? (
+            <Field
+              label="From"
+              value={
+                <Link
+                  className="text-primary hover:underline"
+                  href={`/project-sales/${document.project_id}/quotation-documents/${document.source_document_id}`}
+                >
+                  {document.source_label}
+                </Link>
+              }
+            />
+          ) : null}
+          {document.kind !== 'quotation' && document.quotation_document_id ? (
+            <Field
+              label="Quotation"
+              value={
+                <Link
+                  className="text-primary hover:underline"
+                  href={`/project-sales/${document.project_id}/quotation-documents/${document.quotation_document_id}`}
+                >
+                  Open quotation
+                </Link>
+              }
+            />
+          ) : null}
           {onChange ? (
             <div className="space-y-3">
               <EditField id="quotation-your-ref" label="Your Ref">

@@ -54,6 +54,8 @@ _NOTIFICATION_TYPE_TO_EVENT_KEY: dict[str, str] = {
     "project_price_floor_breach": "project_below_minimum_price",
     "project_quotation_approval_requested": "project_quotation_approval_requested",
     "project_interest_registered": "project_interest_registered",
+    "project_proposal_price_changed": "project_proposal_price_changed",
+    "project_po_qty_over_quote": "project_po_qty_over_quote",
 }
 
 
