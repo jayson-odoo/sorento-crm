@@ -274,7 +274,7 @@ class ToolResult:
     message: str = ""
 
     def to_json(self, call_id: str | None = None) -> str:
-        body: dict[str, Any] = {"status": self.status, "data": self.data, "more": self.more, "message": self.message}
+        body: dict[str, Any] = {"status": self.status, "data": _round_computed_floats(self.data), "more": self.more, "message": self.message}
         if call_id:
             body["call_id"] = call_id  # the model cites this in the answer tool
         return json.dumps(body, default=str)
@@ -1141,17 +1141,28 @@ def dispatch(
     return out
 
 
+def _round_computed_floats(node: Any) -> Any:
+    """What the model is sent: a float with more than 5 decimal places is computed noise (an average, a rate) and
+    goes to 2 places. Stored values have 5 places or fewer and are untouched. The ledger keeps the raw float."""
+    if isinstance(node, dict):
+        return {k: _round_computed_floats(v) for k, v in node.items()}
+    if isinstance(node, list):
+        return [_round_computed_floats(v) for v in node]
+    if isinstance(node, float) and math.isfinite(node):
+        return round(node, 2) if -Decimal(repr(node)).as_tuple().exponent > 5 else node
+    return node
+
+
 def _tidy_read_data(node: Any) -> Any:
-    """What the model is given of a read: empty values (None, "", [], {}, and a dict left empty by this pass)
-    dropped at any depth, 0 / 0.0 / False / "0" kept; a float with more than 5 decimal places is computed noise
-    (an average, a rate) and goes to 2 places. Stored values have 5 places or fewer and are untouched."""
+    """What the model is given of a read: a dict key holding None, "", [] or {} (or emptied by this pass) is
+    dropped at any depth; 0 / 0.0 / False / "0" stay. A list is positional, so it keeps its plain values (None
+    included) and drops only a dict or list this pass left empty."""
     if isinstance(node, dict):
         out = {k: _tidy_read_data(v) for k, v in node.items()}
         return {k: v for k, v in out.items() if not _is_blank(v)}
     if isinstance(node, list):
-        return [v for v in (_tidy_read_data(v) for v in node) if not _is_blank(v)]
-    if isinstance(node, float) and math.isfinite(node):
-        return round(node, 2) if -Decimal(repr(node)).as_tuple().exponent > 5 else node
+        out = [_tidy_read_data(v) for v in node]
+        return [v for v in out if not (isinstance(v, (dict, list)) and len(v) == 0)]
     return node
 
 
