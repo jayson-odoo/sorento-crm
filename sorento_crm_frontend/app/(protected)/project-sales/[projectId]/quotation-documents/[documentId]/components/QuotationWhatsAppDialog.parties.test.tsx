@@ -205,4 +205,19 @@ describe('QuotationWhatsAppDialog: send to a party of the project', () => {
     await waitFor(() => expect(logQuotationWhatsAppOpened).toHaveBeenCalled());
     expect(fillPartyPhone).not.toHaveBeenCalled();
   });
+
+  it('titles a lettered proposal revision by its label, else R<n> (#2097)', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <QuotationWhatsAppDialog
+          projectId="p1"
+          document={document_}
+          issue={{ ...issue, revision_label: 'B' } as unknown as QuotationIssue}
+          onOpenChange={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('Send B via WhatsApp')).toBeInTheDocument();
+  });
 });

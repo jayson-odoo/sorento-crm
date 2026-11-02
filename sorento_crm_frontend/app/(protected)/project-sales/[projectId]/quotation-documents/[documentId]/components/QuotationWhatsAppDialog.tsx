@@ -73,7 +73,7 @@ export function QuotationWhatsAppDialog({
       <DialogContent className="sm:max-w-lg" aria-describedby={undefined}>
         {shown && (
           <DialogHeader>
-            <DialogTitle>{`Send R${shown.issue_no} via WhatsApp`}</DialogTitle>
+            <DialogTitle>{`Send ${revisionLabel(shown)} via WhatsApp`}</DialogTitle>
           </DialogHeader>
         )}
         {shown && (
@@ -88,6 +88,13 @@ export function QuotationWhatsAppDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** A proposal's revisions are lettered A, B, C (PS-PROPOSAL-QUOTATION, #2097 adds
+ * `revision_label` to the issue); a quotation or a legacy row without one reads R<n>. */
+function revisionLabel(issue: QuotationIssue): string {
+  const label = (issue as QuotationIssue & { revision_label?: string | null }).revision_label;
+  return label?.trim() || `R${issue.issue_no}`;
 }
 
 type Recipient = {
