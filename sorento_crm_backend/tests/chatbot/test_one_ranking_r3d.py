@@ -57,7 +57,13 @@ def test_r3d_a_every_sales_group_by_head_is_translated(lang, group_by) -> None:
     assert head != english, head
     assert NOUNS[lang][group_by] in head, head
     assert "Top" not in head and "delivered" not in head and " by " not in head, head
-    assert "2" in head, head
+    if group_by == "month":
+        # AT-28: a month split is a trend, not a ranking, so the head prints no count.
+        by_month = label_catalog.LABELS["By month, {basis}"][lang].split("{basis}")[0]
+        assert head.startswith(by_month), head
+        assert "2" not in head, head
+    else:
+        assert "2" in head, head
 
 
 @pytest.mark.parametrize("lang, top, bottom, basis", [

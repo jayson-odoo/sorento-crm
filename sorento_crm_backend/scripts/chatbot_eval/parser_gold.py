@@ -58,10 +58,16 @@ EXPECT_KEYS = frozenset({
     "portal_form", "suggested_team", "size",
     # a product entity whose `raw`, folded like `product`, equals this.
     "product_raw",
+    # SALES-ACCOUNT-TYPE PR 2: the raws of the current-message `account_type` / `brand` entities, folded, compared as a
+    # set ([] means none); the raws whose `kind_said` is true, the same way; and the period the parse read (equality,
+    # "{year}" standing for the current year, as the CURRENT DATE directive gives it).
+    "account_type", "brand", "kind_said", "date_filter_start", "date_filter_end",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("portal_form", "order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
                 "document", "sales_basis")
+#: The dates are read straight off the verdict too, after "{year}" is the current year (`_expected_date`).
+_DATE_KEYS = ("date_filter_start", "date_filter_end")
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),
@@ -84,6 +90,11 @@ _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "suggested_team": (str, type(None)),
     "size": (int, float, type(None)),
     "product_raw": (str,),
+    "account_type": (list,),
+    "brand": (list,),
+    "kind_said": (list,),
+    "date_filter_start": (str, type(None)),
+    "date_filter_end": (str, type(None)),
 }
 #: PARSER-TEMPLATE F1-B: what a gold row may say the conversation held before its message. Each
 #: value is the text as the user block shows it, or null.
@@ -160,6 +171,28 @@ def _state_change_fields(changes: Any) -> list[dict[str, Any]] | None:
     if not isinstance(changes, list):
         return None
     return [{k: c.get(k) for k in ("op", "axis", "position")} for c in changes if isinstance(c, dict)]
+
+
+def _expected_date(value: Any) -> Any:
+    """A gold date with "{year}" read as the current year (Malaysia date, as the CURRENT DATE directive)."""
+    if not isinstance(value, str) or "{year}" not in value:
+        return value
+    from app.services.reports.registry import today_malaysia
+
+    return value.replace("{year}", str(today_malaysia().year))
+
+
+def _kind_said(value: Any) -> bool:
+    """`kind_said` is the message's own word for the kind: a non-blank string (a bare true still counts)."""
+    return value is True or (isinstance(value, str) and bool(value.strip()))
+
+
+def _entity_raws(entities: list[dict[str, Any]], hint: str, *, said: bool = False) -> set[str]:
+    """The folded raws of the current-message entities of one hint (only those with `kind_said` true when `said`)."""
+    return {
+        _fold(e.get("raw")) for e in entities
+        if e.get("hint") == hint and e.get("current_message") is not False and (not said or _kind_said(e.get("kind_said")))
+    }
 
 
 def _warehouse_raws(entities: list[dict[str, Any]]) -> list[Any]:
@@ -289,6 +322,19 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
     for key in _REPORT_KEYS:
         if key in expect and verdict.get(key) != expect[key]:
             reasons.append(f"{key} {verdict.get(key)!r} != {expect[key]!r}")
+    for key in _DATE_KEYS:
+        if key in expect and verdict.get(key) != _expected_date(expect[key]):
+            reasons.append(f"{key} {verdict.get(key)!r} != {_expected_date(expect[key])!r}")
+    for key, hint in (("account_type", "account_type"), ("brand", "brand")):
+        if key in expect:
+            got, want = _entity_raws(entities, hint), {_fold(w) for w in expect[key]}
+            if got != want:
+                reasons.append(f"{hint} raws {sorted(got)} != {sorted(want)}")
+    if "kind_said" in expect:
+        got = _entity_raws(entities, "brand", said=True) | _entity_raws(entities, "account_type", said=True)
+        want = {_fold(w) for w in expect["kind_said"]}
+        if got != want:
+            reasons.append(f"kind_said raws {sorted(got)} != {sorted(want)}")
     if "suggested_team" in expect:
         routing = verdict.get("routing")
         team = routing.get("suggested_team") if isinstance(routing, dict) else None
@@ -386,6 +432,7 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
     from app.services.chatbot.turn import context as context_mod
     from app.services.company_scope import DEFAULT_COMPANY_ID
     from app.services.reports.ask import SALES_CHANNELS
+    from app.services.reports.ask_params import account_type_options
 
     user_turn, latest_user_message = _fresh_turn(message)
     _SPAN.event = None
@@ -401,6 +448,11 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
     try:
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         brands = turn_runtime.active_brands(db)
+        # SALES-ACCOUNT-TYPE PR 2: the stored debtor types of the scoped company, read from the database like the brands,
+        # for a prompt that defines the line (a staff contact: the harness never builds a customer-scoped one).
+        account_types = (
+            [name for name, _label in account_type_options(db)] if getattr(config, "account_types", False) else None
+        )
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
         lists_free = config.closed_lists_index or lookup
         product_types = None if lists_free else turn_runtime.product_type_names(db)
@@ -440,7 +492,8 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
         current_subject=None if state else held.get("subject"),
         pending_kind=None, pending_options=None, settings_profile_line=None,
         current_message=latest_user_message, reply_to=held.get("reply_to"), media_line=None,
-        brands=None if lookup else brands, promotion_kinds=None if lookup else promotion_kinds,
+        brands=None if lookup else brands, account_types=account_types,
+        promotion_kinds=None if lookup else promotion_kinds,
         # REPORT-SMART-L R9: as the engine, only when the prompt names the line (`ParserConfig.sales_channels`).
         sales_channels=list(SALES_CHANNELS) if getattr(config, "sales_channels", True) and not lookup else None,
         product_types=product_types, product_details=product_details, candidate_lines=lines,
@@ -577,7 +630,8 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                             row.update(
                                 passed=passed, reasons=reasons,
                                 **{k: verdict.get(k) for k in ("status", "domain_hint", "intent_hint", "requested_attributes", "entities",
-                                                  "document", "order_status")},
+                                                  "document", "order_status", "group_by", "date_filter_start",
+                                                  "date_filter_end", "by_words")},
                                 warehouse=_warehouse_raws(entities),
                                 **{k: verdict.get(k) for k in ("topic_reset", "entity_op", "broaden_axis", "reference_positions")},
                                 open_question_answer=_answer_fields(verdict.get("open_question_answer")),
