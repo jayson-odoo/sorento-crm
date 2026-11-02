@@ -1220,14 +1220,16 @@ def _settled_by_its_axis(values: dict[str, Any], group_by: Any) -> dict[str, Any
 #: REPORT-SMART-L R8: the engine's stamp (`with_held`), frame-shaped (`date_from`, `date_to`, the route params), plus
 #: `product` when the held products are the gate's carried rows. Listed in `required_fields.ENGINE_KEYS`.
 HELD_KEY = "report_held"
-#: The route params of a held total that stay on the ranking its reply becomes: the period and the filters.
+#: The route params of a held report that stay on its follow-up: the period, the filters, and the basis and any measure on
+#: screen (S6c; crew ruling 2 Nov, R3: only a conversation's first ask asks the basis, the reply's header names a carried
+#: one). The message's own values win (`_settle`).
 _HELD_TOTAL_KEYS = (
     "date_from", "date_to", "product_code", "product_ids", "brand_ids", "category_ids",
     "sales_agent_ids", "customer_agent_ids", "channel", "spec", "warehouse_codes", "company", "account_types",
+    "basis", "measure",
 )
-#: A follow-up over a customer that stays (`_customer_stays`) keeps that customer, and the basis and any measure on screen
-#: (S6c; the message's own win, and the reply's header names them). A company total is still asked (SALES-TOTAL-ASK).
-_HELD_CUSTOMER_KEYS = (*_HELD_TOTAL_KEYS, "customer_ids", "basis", "measure")
+#: A follow-up over a customer that stays (`_customer_stays`) keeps that customer too.
+_HELD_CUSTOMER_KEYS = (*_HELD_TOTAL_KEYS, "customer_ids")
 #: REPORT-SMART-L R9: the open question a sales report reply arms with its drill offer (`fetch._sales_report_output`),
 #: so the engine-held sign that the last answer was a sales report (`contracts.DETAIL_OFFER_KINDS`).
 SALES_REPORT_OFFER = "sales_report_detail"
@@ -1237,20 +1239,17 @@ _SALES_REPORT_BASES = (None, "delivered")
 
 def _follows_up(verdict: dict[str, Any], frame: dict[str, Any], replaced: dict[str, Any] | None) -> bool:
     """Is this message a follow-up on the report held, by the parser's own `entity_op`? `reuse` always. Owner ruling, 1 Nov
-    2026 (CHATBOT-FOLLOWUP-CARRY): a follow-up over a held customer keeps it unless a new customer is named, and the parser
-    reads the same words as `modify` on some runs and `replace_combine` on others (its own table: "a new product keeps the
-    held customer"), so those count too when they name no customer. `replace_combine` needs a customer held: over anything
-    else it stays what R8 ruled, a message naming its own value."""
+    2026 (CHATBOT-FOLLOWUP-CARRY): the parser reads the same follow-up as `modify` on some runs and `replace_combine` on
+    others (its own table: "a new product keeps the held customer"), so those count too when they name no customer (a
+    customer of its own is #2070's new subject). Crew ruling 2 Nov (multi-turn carry, R1, R2): `replace_combine` sets a
+    value of its own on a held sales report or the open ask it replaced, and only that slot changes; with neither held (a
+    carried date window alone) it stays what R8 ruled, a message naming its own value."""
     entity_op = verdict.get("entity_op")
     if entity_op == "reuse":
         return True
     if entity_op not in ("modify", "replace_combine") or "customer" in _current_kinds(verdict):
         return False
-    if entity_op == "modify":
-        return True
-    if replaced is not None:
-        return bool(_dict(_dict(_dict(replaced).get("extras")).get("args")).get("customer_ids"))
-    return _holds_a_customer(frame)
+    return entity_op == "modify" or bool(frame) or replaced is not None
 
 
 def _holds_a_customer(frame: dict[str, Any]) -> bool:
@@ -1273,14 +1272,15 @@ def with_held(
     total becomes a ranking, what that total showed stays, and only what is still missing is asked.
 
     On only when the parser keeps the held subject (`_follows_up`, no topic reset, no `new_subject` op), the
-    verdict is a ranking (R9: an axis-less one too, which runs the total), no ranking frame is held (a held one
-    keeps its own rules: refine, S6b, ruling B, stale; one filtered to a customer is stamped too, and the stamp is the
-    only source of a held customer), the last ask was a sales figure, and no open ask is being
-    answered. `held_domains`: the domains the focus held before this turn's State applier wrote its own (the engine
+    verdict is a ranking (R9: an axis-less one too, which runs the total), the held frame is not stale (unless it holds
+    a customer: the stamp is the only source of a held customer), the last ask was a sales figure, and no open ask is
+    being answered. Crew ruling 2 Nov (multi-turn carry, R1): a held ranking is stamped as a total is, so every
+    follow-up starts from it; a refine and a new axis over its rows keep their own rules (`_settle`), which read the frame.
+    `held_domains`: the domains the focus held before this turn's State applier wrote its own (the engine
     reads them; `Focus.domains` when not given). The source is the open report ask this verdict replaced
     (`names_its_own_ask`), alone, less what a total or month trend settled on its own (`_settled_by_its_axis`: no
-    carried count); with none open, the held sales report total: `Focus.date_window` and the products it ran on.
-    Engine-held state only, never words.
+    carried count); with none open, the held sales report frame; with none, `Focus.date_window` and the products it
+    ran on. Engine-held state only, never words.
 
     R9 (ruling A on v63): right after a sales report (`held_offer`, the pending kind its drill offer armed), a
     ranking parse with no typed axis and no count (an axis-less sales ranking, or the top selling label with no
@@ -1294,7 +1294,8 @@ def with_held(
         or not _follows_up(verdict, frame, replaced)
         or verdict.get("topic_reset") is True
         or _new_subject(verdict, parser_ops)
-        or (frame.get("group_by") and not _holds_a_customer(frame))
+        # Q3: a stale frame (a turn that said a line and ran nothing) carries nothing, but a customer held on it (#2070).
+        or (replaced is None and frame.get("stale") and not _holds_a_customer(frame))
         or contracts.SALES_DOMAIN not in (domains or [])
         or (open_ask is not None and replaced is None)
     ):
@@ -1320,7 +1321,7 @@ def with_held(
         if not customer_stays:
             held.pop("customer_ids", None)
     elif frame:
-        # A held report (a total, or a ranking filtered to a customer): its period and filters stay.
+        # A held report (a total or a ranking): its period, filters and basis stay; R2, the message's own replace them.
         keys = _HELD_CUSTOMER_KEYS if customer_stays and _holds_a_customer(frame) else _HELD_TOTAL_KEYS
         held = {k: v for k, v in frame.items() if k in keys and v not in (None, "", [])}
     else:
@@ -2186,7 +2187,7 @@ def _settle(
         # The same axis typed again is a new ask (a new frame): read whole, nothing held.
         parse_output = {**parse_output, "ranking_refine": False}
     if parse_output.get("ranking_refine") is True and frame and not new_axis:
-        return _refine(db, parse_output, frame, entities, dealer=dealer, companies=companies)
+        return _refine(db, parse_output, frame, entities, dealer=dealer, agent_filter=agent_filter, companies=companies)
     if drill == "scoped":
         # Owner ruling B (23 Oct): only the parser's `scoped` narrows to the rows on screen. A new axis
         # read as global, unsure or not at all runs across all (below), and the header says so.
@@ -2249,14 +2250,11 @@ def _settle(
     not_applied = args.pop("_unbound", [])
     kind_ask = args.pop("_kind_ask", None)
     covered = args.pop("_covered", False)
-    from app.services.reports.ask_params import _asked_number
-
-    own_book = {"channel"}
-    if args.get("account_types") and all(_asked_number(str(v).strip().upper()) is not None for v in args["account_types"]):
-        own_book.add("account_types")  # an account number names no company; a type word may be in the other one
-    if holding and source.get("company") and not set(args) - _NON_FILTER_ARGS - own_book:
-        # The company it ran in stays, unless this message has a subject of its own: that may be in the other company.
-        args["company"] = source["company"]
+    own = _own_companies(companies)
+    asks_company = False
+    if holding:
+        # Q1 (crew ruling 2 Nov): the company the held report ran in stays for what this message names in it.
+        args, asks_company = _held_company(db, parse_output, args, source, own)
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
         for e in jsc.array(parse_output.get("entities"))
@@ -2320,7 +2318,6 @@ def _settle(
     if agent_pick:
         given["sales_agent"] = rf.Resolved("ambiguous", options=tuple((i, str(n)) for i, n in agent_pick))
     company_extras: dict[str, Any] = {}
-    own = _own_companies(companies)
     if own and not dealer and parse_output.get("ranking_refine") is not True and not outstanding_ask:
         # Item 4: never the company question on an outstanding ask (pre-#1922 it ran over the contact's own companies).
         # R1: the company the message (the parser's `sales_company`) names, among the contact's own; else, with two or
@@ -2330,7 +2327,7 @@ def _settle(
             return None, COMPANY_FORBIDDEN_LINE  # the message named a company the contact does not hold
         if named is not None:
             args["company"] = str(named[0])
-        elif not covered and _owes_company(args, own):
+        elif asks_company or (not covered and _owes_company(args, own)):
             given["company"], company_extras = _company_question_fields(own)
     if (
         parse_output.get("capability_from") == "outstanding"
@@ -2400,6 +2397,60 @@ def _owes_company(args: dict[str, Any], own: list[Any]) -> bool:
     )
 
 
+#: Q1 (crew ruling 2 Nov 2026, multi-turn carry): the subjects a follow-up names that are read in one company: an agent,
+#: brand or category row of that company (or a shared one), an account type its ledgers hold.
+_IN_COMPANY = ("sales_agent_ids", "brand_ids", "category_ids", "account_types")
+
+
+def _in_company(db: Any, key: str, values: Any, company: str, ids: list[str]) -> list[str]:
+    """The `values` of one `_IN_COMPANY` param that are in `company`, one of the contact's companies (`ids`)."""
+    values = [str(v) for v in jsc.array(values)]
+    if key == "account_types":
+        from app.services.reports.ask_params import account_book, resolve_account_types
+
+        book = account_book(db, ids)
+        return [v for v in values if company in resolve_account_types(book, [v])[0]]
+    from app.models.product import Brand, ProductCategory
+    from app.models.sales_agent import SalesAgent
+
+    model = {"sales_agent_ids": SalesAgent, "brand_ids": Brand, "category_ids": ProductCategory}[key]
+    rows = db.query(model.id, model.company_id).filter(model.id.in_(values)).all()
+    found = {str(i) for i, cid in rows if cid is None or str(cid) == company}
+    return [v for v in values if v in found]
+
+
+def _ran_in(db: Any, source: dict[str, Any], ids: list[str]) -> str | None:
+    """The one company of the contact's (`ids`) that every subject the held report ran on is in; None when they span
+    companies or it ran on none."""
+    held = [k for k in _IN_COMPANY if jsc.array(source.get(k))]
+    common = [c for c in ids if held and all(_in_company(db, k, source[k], c, ids) for k in held)]
+    return common[0] if len(common) == 1 else None
+
+
+def _held_company(
+    db: Any, parse_output: dict[str, Any], args: dict[str, Any], source: dict[str, Any], own: list[Any]
+) -> tuple[dict[str, Any], bool]:
+    """Q1 (crew ruling 2 Nov 2026; replaces #2070 rule 6 and #2074's type-word rule for these subjects): a follow-up keeps
+    the company the held report ran in (its own `company`, else `_ran_in`) and reads what it names (`_IN_COMPANY`) there,
+    or in the company the message names. A subject only another company has drops the held company, and the company is
+    asked (True). A subject of any other kind (a customer, a product, a location, a spec) may be in the other company:
+    the held company goes and nothing more is asked, as before."""
+    named = set(args) - _NON_FILTER_ARGS - {"channel"}
+    if not named:
+        return ({**args, "company": source["company"]} if source.get("company") else args), False
+    ids = [str(c[0]) for c in own]
+    if db is None or len(ids) < 2 or named - set(_IN_COMPANY):
+        return args, False
+    said, _foreign = _company_said(parse_output, own)
+    company = str(said[0]) if said is not None else source.get("company") or _ran_in(db, source, ids)
+    if not company:
+        return args, False
+    found = {k: _in_company(db, k, args[k], str(company), ids) for k in named}
+    if not all(found.values()):
+        return args, said is None  # only another company has it: the company is asked, unless the message named one
+    return {**args, **found, "company": str(company)}, False
+
+
 def _company_question_fields(own: list[Any]) -> tuple[rf.Resolved, dict[str, Any]]:
     """The company question as a field to ask, and what its slot needs to read the answer."""
     return rf.Resolved("ambiguous", options=tuple((str(c[0]), str(c[1])) for c in own)), {
@@ -2433,7 +2484,8 @@ def _widened(parse_output: dict[str, Any]) -> str | None:
 
 
 def _refine(
-    db: Any, parse_output: dict[str, Any], frame: dict[str, Any], entities: Any = (), *, dealer: bool = False, companies: Any = ()
+    db: Any, parse_output: dict[str, Any], frame: dict[str, Any], entities: Any = (), *, dealer: bool = False,
+    agent_filter: bool = True, companies: Any = (),
 ) -> tuple[rf.Outcome | None, str | None]:
     """The parser said this message only refines the sales ranking that ran (`ranking_refine`):
     the held route args re-run with ONLY the keys the verdict changed (count, period, basis,
@@ -2451,8 +2503,9 @@ def _refine(
             or frame.get("account_types")
         ):
             return None, DEALER_REFUSAL
-        if any(" ".join(jsc.js_string(w).split()) for w in jsc.array(_dict(parse_output.get("report_ask_words")).get("account_type"))):
-            return None, DEALER_REFUSAL  # the route refuses the account filter to a customer-scoped contact
+        words = _dict(parse_output.get("report_ask_words"))
+        if any(" ".join(jsc.js_string(w).split()) for hint in ("account_type", "sales_agent") for w in jsc.array(words.get(hint))):
+            return None, DEALER_REFUSAL  # the route refuses the account and agent filters to a customer-scoped contact
     args = {k: v for k, v in frame.items() if k not in _FRAME_ONLY}
     widened = _widened(parse_output)
     for key in _AXIS_FILTERS.get(widened or "", ()):
@@ -2462,19 +2515,27 @@ def _refine(
         if dealer:
             return None, DEALER_REFUSAL
         args["channel"] = channel
-    # A brand or category word the refine names replaces that dimension; the rest stays held.
+    # A brand, sales agent or category word the refine names replaces that dimension (Q2); the rest stays held.
     plan = (
         _account_plan(db, parse_output, companies, ask=True, held_company=frame.get("company"))
         if not dealer else _account_plan(None, {})
     )
     words = _dict(parse_output.get("report_ask_words"))
     read = {**parse_output, "report_ask_words": {**words, "brand": _brand_words(words, plan)}}
-    filters, line = _word_filters(db, read, (("brand", "brand_ids"), ("category", "category_ids")))
+    filters, line = _word_filters(db, read, agent_filter=agent_filter)
     if filters is None:
         return None, line
-    args.update(filters)
+    agent_pick = filters.pop("sales_agent_pick", None)
     if plan["account_types"]:
-        args["account_types"] = plan["account_types"]  # an account word replaces the held account filter
+        filters["account_types"] = plan["account_types"]  # an account word replaces the held account filter
+    own = _own_companies(companies)
+    asks_company = False
+    if filters:
+        # Q1, as a fresh follow-up reads it (`_held_company`): what the refine names is read in the held company.
+        filters, asks_company = _held_company(db, parse_output, filters, args, own)
+        if asks_company:
+            args.pop("company", None)
+    args.update(filters)
     kind_ask = None
     if plan["ask"]:
         # What the question adds replaces that dimension on the held ask, as a plain brand or account word does.
@@ -2541,20 +2602,22 @@ def _refine(
         given["period"] = period
     extras = {"args": args, "top_n": top_n, **({"kind_ask": True} if asks_kind else {})}
     outstanding = parse_output.get("capability_from") == "outstanding" or args.get("basis") in OUTSTANDING_KINDS
-    if frame.get("customer_ids") and not args.get("customer_ids") and not dealer and not outstanding:
-        # The customer went (all customers, "my ..."): it was the subject, so the company is owed now, as on a fresh ask.
-        # Item 4 (owner 29 Oct): never the company question on an outstanding ask.
-        own = _own_companies(companies)
+    if (asks_company or (frame.get("customer_ids") and not args.get("customer_ids"))) and not dealer and not outstanding:
+        # The customer went (all customers, "my ..."), or Q1 dropped the held company: the company is owed now, as on a
+        # fresh ask. Item 4 (owner 29 Oct): never the company question on an outstanding ask.
         named, foreign = _company_said(parse_output, own)
         if own and foreign:
             return None, COMPANY_FORBIDDEN_LINE
         if named is not None:
             args["company"] = str(named[0])
-        elif not plan["covered"] and _owes_company(args, own):
+        elif asks_company or (not plan["covered"] and _owes_company(args, own)):
             given["company"], company_extras = _company_question_fields(own)
             extras.update(company_extras)
     if kind_ask:
         _ask_kind(given, extras, kind_ask)
+    if agent_pick:
+        given["sales_agent"] = rf.Resolved("ambiguous", options=tuple((i, str(n)) for i, n in agent_pick))
+        extras["agent_options"] = [[str(i), str(n)] for i, n in agent_pick]
     return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
 
 
