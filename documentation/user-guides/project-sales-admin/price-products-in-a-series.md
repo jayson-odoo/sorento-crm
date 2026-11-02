@@ -12,7 +12,7 @@ Use this when a series needs a selling price, a maximum discount, or a product r
 
 ## What's captured
 
-* **Minimum price** is the lowest price a quotation line may carry for this series: the selling price less the max discount. A selling price with no max discount allows no discount, so the minimum price is the selling price itself. With no selling price the series sets none, and the company's price floor rules apply.
+* **Minimum price** is the lowest price a quotation line may carry for this series: the selling price less the max discount. A selling price with no max discount allows no discount, so the minimum price is the selling price itself. With no selling price the series sets none, and the company's minimum price rules apply.
 * A removed product is no longer in the series: a quotation line with it reads **Non-standard**, and the series no longer prices it. Products the series' brand and category would list stay out until you add them back.
 * A saved row's product is fixed. To quote a different product, add it as its own row.
 

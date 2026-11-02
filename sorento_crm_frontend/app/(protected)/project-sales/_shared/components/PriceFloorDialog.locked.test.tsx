@@ -57,7 +57,7 @@ describe('PriceFloorDialog with a locked target', () => {
       />,
     );
 
-    expect(screen.getByText('Set the floor for BASIN-001')).toBeTruthy();
+    expect(screen.getByText('Set the minimum price for BASIN-001')).toBeTruthy();
     expect(screen.getByText('BASIN-001')).toBeTruthy();
     // The three-way level choice belongs to the pricing policy screen only.
     expect(screen.queryByText('Company default')).toBeNull();
@@ -76,7 +76,7 @@ describe('PriceFloorDialog with a locked target', () => {
     fireEvent.change(screen.getByLabelText(/Minimum percent of list/), {
       target: { value: '80' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Add floor' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add minimum price' }));
 
     await waitFor(() => expect(upsertPriceFloor).toHaveBeenCalledTimes(1));
     expect(upsertPriceFloor).toHaveBeenCalledWith(
@@ -96,7 +96,7 @@ describe('PriceFloorDialog with a locked target', () => {
     fireEvent.change(screen.getByLabelText(/Minimum percent of list/), {
       target: { value: '75' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Add floor' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add minimum price' }));
 
     await waitFor(() => expect(upsertPriceFloor).toHaveBeenCalledTimes(1));
     expect(upsertPriceFloor).toHaveBeenCalledWith(
@@ -118,9 +118,9 @@ describe('PriceFloorDialog with a locked target', () => {
     });
 
     expect(
-      screen.getByText('A floor above 100% of list would flag every sale at list price.'),
+      screen.getByText('A minimum price above 100% of list would flag every sale at list price.'),
     ).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Add floor' }).getAttribute('disabled')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Add minimum price' }).getAttribute('disabled')).not.toBeNull();
   });
 
   it('prefills the existing rule when the target already has one', () => {
@@ -140,9 +140,46 @@ describe('PriceFloorDialog with a locked target', () => {
       />,
     );
 
-    expect(screen.getByText('Change the floor for BASIN-001')).toBeTruthy();
+    expect(screen.getByText('Change the minimum price for BASIN-001')).toBeTruthy();
     expect(
       (screen.getByLabelText(/Minimum price/) as HTMLInputElement).value,
     ).toBe('950.00');
+    expect(screen.getByRole('button', { name: 'Save minimum price' })).toBeTruthy();
+    // Owner ruling 1 Nov: "minimum price", never "floor", on anything a user reads.
+    expect(document.body.textContent ?? '').not.toMatch(/floor/i);
+  });
+});
+
+describe('PriceFloorDialog without a locked target', () => {
+  // Owner ruling 1 Nov: "minimum price", never "floor", on anything a user reads.
+  it('says minimum price when adding a new rule', () => {
+    renderDialog(<PriceFloorDialog rule={null} onDone={() => {}} />);
+
+    expect(screen.getByText('Add a minimum price')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Add minimum price' })).toBeTruthy();
+    expect(document.body.textContent ?? '').not.toMatch(/floor/i);
+  });
+
+  it('says minimum price when editing, including the move hint', () => {
+    renderDialog(
+      <PriceFloorDialog
+        rule={{
+          id: 'r-cat',
+          product_id: null,
+          product_code: null,
+          mode: 'percent',
+          value: '70',
+          is_active: true,
+          level: 'company',
+        }}
+        onDone={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('Edit minimum price')).toBeTruthy();
+    expect(
+      screen.getByText('To move this minimum price to a different target, delete it and add a new one.'),
+    ).toBeTruthy();
+    expect(document.body.textContent ?? '').not.toMatch(/floor/i);
   });
 });

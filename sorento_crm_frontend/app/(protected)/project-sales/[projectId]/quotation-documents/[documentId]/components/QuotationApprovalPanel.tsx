@@ -57,7 +57,7 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
           {statusKey === 'rejected' && (
             <>
               <BlockLine>
-                A manager sent this back. Re-price the lines below the floor, then ask again.
+                A manager sent this back. Re-price the lines below the minimum price, then ask again.
               </BlockLine>
               {document.approval_rejected_reason && (
                 <p className="min-w-0 break-words text-sm text-muted-foreground">

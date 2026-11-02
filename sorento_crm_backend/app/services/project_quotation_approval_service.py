@@ -208,7 +208,7 @@ def assert_issuable(db: Session, document: ProjectQuotationDocument) -> None:
         status_code=422,
         message=(
             f"{'One line is' if below == 1 else f'{below} lines are'} priced below the "
-            "floor, so this quotation needs a manager's approval before it can be sent "
+            "minimum price, so this quotation needs a manager's approval before it can be sent "
             "to the customer."
         ),
         code="quotation_below_floor_pending_approval",
