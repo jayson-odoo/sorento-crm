@@ -183,6 +183,27 @@ def activate_quotation_template(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.post(
+    "/quotation-templates/{template_id}/deactivate", response_model=QuotationTemplateResponse
+)
+def deactivate_quotation_template(
+    template_id: str,
+    _user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Switch a cover page design off; the default cover applies until another is activated."""
+    try:
+        validate_uuid_path(template_id, resource="Quotation template")
+        template = templates.get_template_or_404(db, template_id)
+        templates.deactivate_template(db, template=template)
+        db.commit()
+        db.refresh(template)
+        return templates.serialize_template(template)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.delete("/quotation-templates/{template_id}")
 def delete_quotation_template(
     template_id: str,

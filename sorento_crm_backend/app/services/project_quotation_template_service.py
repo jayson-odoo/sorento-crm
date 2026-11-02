@@ -130,11 +130,13 @@ def find_unknown_tokens(body_html: Optional[str]) -> List[str]:
     """Every ``{{token}}`` in the body that the registry does not declare, de-duplicated."""
     if not body_html:
         return []
-    seen: List[str] = []
+    seen: set[str] = set()
+    found: List[str] = []
     for token in _TOKEN_PATTERN.findall(body_html):
         if token not in MERGE_FIELD_TOKENS and token not in seen:
-            seen.append(token)
-    return seen
+            seen.add(token)
+            found.append(token)
+    return found
 
 
 def assert_tokens_known(body_html: Optional[str]) -> None:
@@ -215,7 +217,7 @@ def salesperson_of(db: Session, project: Any, document: Any) -> Optional[str]:
 
 
 def build_document_context(
-    db: Session, *, document: ProjectQuotationDocument
+    db: Session, *, document: Any, grand_total: Optional[Decimal] = None
 ) -> Dict[str, Any]:
     """Everything the letter can say about this document, taken from what is already known.
 
@@ -256,7 +258,9 @@ def build_document_context(
         "our_ref": document.document_no,
         "doc_date": _long_date(document.doc_date),
         "subject_title": document.subject_title,
-        "grand_total": _money(documents.document_total(db, document)),
+        "grand_total": _money(
+            grand_total if grand_total is not None else documents.document_total(db, document)
+        ),
         "salesperson_name": salesperson_name,
         "company_name": company_name,
     }
@@ -470,6 +474,23 @@ def activate_template(db: Session, *, template: QuotationTemplate) -> QuotationT
     return template
 
 
+def deactivate_template(db: Session, *, template: QuotationTemplate) -> QuotationTemplate:
+    """Switch a cover page design off, so quotations sent from now on use the default cover.
+
+    Cover page only: the terms template is the standing text a new quotation copies, so a company
+    with none active would get blank terms. Idempotent.
+    """
+    if template.kind != TEMPLATE_KIND_COVER_PAGE:
+        raise AppException(
+            status_code=422,
+            message="Only a cover page design can be deactivated. Activate another template instead.",
+            code="quotation_template_deactivate_kind",
+        )
+    template.is_active = False
+    db.flush()
+    return template
+
+
 def delete_template(db: Session, *, template: QuotationTemplate) -> None:
     """Hard delete, and refused for the row the company actually depends on.
 
@@ -536,6 +557,7 @@ __all__ = [
     "assert_tokens_known",
     "build_document_context",
     "count_templates",
+    "deactivate_template",
     "create_template",
     "delete_template",
     "find_unknown_tokens",

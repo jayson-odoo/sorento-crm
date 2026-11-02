@@ -140,6 +140,7 @@ POST /config/price-floors
 POST /config/quotation-templates
 POST /config/quotation-templates/cover-preview
 POST /config/quotation-templates/{template_id}/activate
+POST /config/quotation-templates/{template_id}/deactivate
 POST /config/series
 POST /config/series/{series_id}/products
 POST /config/series/{series_id}/products/upload

@@ -216,47 +216,49 @@ export function QuotationCoverDesigner({
                   onValueChange={(next) => setRows(next as CoverDesignRow[])}
                   getItemValue={(row) => row.key}
                   strategy="vertical"
+                  className="flex flex-col gap-2"
                 >
-                  <div className="flex flex-col gap-2">
-                    {rows.map((row) => {
-                      const base = COVER_ROW_LABELS[row.key] ?? row.key;
-                      return (
-                        <SortableItem key={row.key} value={row.key} asChild>
-                          <div
-                            role="group"
-                            aria-label={base}
-                            className="flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5"
-                          >
-                            <SortableItemHandle asChild>
-                              <button
-                                type="button"
-                                aria-label={`Drag ${base} to reorder`}
-                                className="shrink-0 touch-none"
-                              >
-                                <GripVertical className="size-4 text-muted-foreground" />
-                              </button>
-                            </SortableItemHandle>
-                            <Checkbox
-                              checked={row.shown}
-                              aria-label={`Show ${base}`}
-                              onCheckedChange={(checked) =>
-                                patchRow(row.key, { shown: checked === true })
-                              }
-                            />
-                            <Input
-                              value={row.label}
-                              maxLength={COVER_MAX_LABEL}
-                              aria-label={`Printed label for ${base}`}
-                              className="h-8 min-w-0 flex-1"
-                              onChange={(event) =>
-                                patchRow(row.key, { label: event.target.value })
-                              }
-                            />
-                          </div>
-                        </SortableItem>
-                      );
-                    })}
-                  </div>
+                  {/* The rows must be Sortable's DIRECT children: its drag overlay clones the
+                      direct child whose value is being dragged, and a wrapper div leaves an
+                      empty zero-size overlay that no row ever collides with. */}
+                  {rows.map((row) => {
+                    const base = COVER_ROW_LABELS[row.key] ?? row.key;
+                    return (
+                      <SortableItem key={row.key} value={row.key} asChild>
+                        <div
+                          role="group"
+                          aria-label={base}
+                          className="flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5"
+                        >
+                          <SortableItemHandle asChild>
+                            <button
+                              type="button"
+                              aria-label={`Drag ${base} to reorder`}
+                              className="shrink-0 touch-none"
+                            >
+                              <GripVertical className="size-4 text-muted-foreground" />
+                            </button>
+                          </SortableItemHandle>
+                          <Checkbox
+                            checked={row.shown}
+                            aria-label={`Show ${base}`}
+                            onCheckedChange={(checked) =>
+                              patchRow(row.key, { shown: checked === true })
+                            }
+                          />
+                          <Input
+                            value={row.label}
+                            maxLength={COVER_MAX_LABEL}
+                            aria-label={`Printed label for ${base}`}
+                            className="h-8 min-w-0 flex-1"
+                            onChange={(event) =>
+                              patchRow(row.key, { label: event.target.value })
+                            }
+                          />
+                        </div>
+                      </SortableItem>
+                    );
+                  })}
                 </Sortable>
 
                 <TextWithFields

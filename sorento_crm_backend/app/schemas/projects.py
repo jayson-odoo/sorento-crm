@@ -1974,6 +1974,10 @@ class ProjectQuotationDocumentCreate(ProjectQuotationDocumentBase):
     recipient_address_snapshot: Optional[str] = None
     recipient_phone_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeCreate]] = None
+    # Capped on what comes in (not on the response, which echoes whatever is stored).
+    cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
+    terms_html: Optional[str] = Field(default=None, max_length=50000)
 
 
 class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
@@ -1991,6 +1995,10 @@ class ProjectQuotationDocumentUpdate(ProjectQuotationDocumentBase):
 
     recipient_name_snapshot: Optional[str] = None
     recipient_address_snapshot: Optional[str] = None
+    # Capped on what comes in (not on the response, which echoes whatever is stored).
+    cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
+    terms_html: Optional[str] = Field(default=None, max_length=50000)
     recipient_phone_snapshot: Optional[str] = None
     scopes: Optional[List[ProjectQuotationFormScopeUpdate]] = Field(
         default=None,
@@ -2150,7 +2158,7 @@ class QuotationReviseRequest(BaseModel):
 class QuotationTemplateBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     # Empty only for a cover_page design (the service refuses it for the other kinds).
-    body_html: str = ""
+    body_html: str = Field(default="", max_length=50000)
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
 
@@ -2173,7 +2181,7 @@ class QuotationTemplateUpdate(BaseModel):
     """
 
     name: Optional[str] = Field(default=None, max_length=150)
-    body_html: Optional[str] = None
+    body_html: Optional[str] = Field(default=None, max_length=50000)
     design: Optional[Dict[str, Any]] = None
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
@@ -2390,16 +2398,16 @@ class QuotationCoverPreviewRequest(BaseModel):
     quotation_purpose: Optional[str] = Field(default=None, max_length=2000)
     payment_terms: Optional[str] = Field(default=None, max_length=2000)
     validity: Optional[str] = Field(default=None, max_length=2000)
-    terms_html: Optional[str] = None
-    cover_letter_html: Optional[str] = None
-    cover_closing_html: Optional[str] = None
+    terms_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_letter_html: Optional[str] = Field(default=None, max_length=50000)
+    cover_closing_html: Optional[str] = Field(default=None, max_length=50000)
 
 
 class QuotationDesignPreviewRequest(BaseModel):
     """An unsaved cover page design and its intro, previewed against fixed sample values."""
 
     design: Dict[str, Any]
-    body_html: str = ""
+    body_html: str = Field(default="", max_length=50000)
 
 
 class QuotationCoverPreviewResponse(BaseModel):

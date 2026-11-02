@@ -50,6 +50,7 @@ ROW_LABELS = {
     "prepared_by": "Prepared By",
 }
 MAX_LABEL = 60
+MAX_HTML = 50000
 
 #: The #2088 cover: every row, the #2088 labels, no intro or closing text.
 DEFAULT_DESIGN: Dict[str, Any] = {
@@ -107,6 +108,8 @@ def validate_design(raw: Any) -> Dict[str, Any]:
         clean_rows.append({"key": key, "shown": shown, "label": label})
     if sorted(seen) != sorted(ROW_KEYS):
         raise _invalid("The design must list all 12 rows once each.")
+    if len(closing) > MAX_HTML:
+        raise _invalid(f"The closing text can hold at most {MAX_HTML} characters.")
     templates.assert_tokens_known(closing)
     return {
         "show_letterhead": show_letterhead,
@@ -142,6 +145,8 @@ class _TermsCleaner(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.out: List[str] = []
         self.stack: List[str] = []
+        # How many of each tag are open, so "is this tag open" is O(1) rather than a stack scan.
+        self.open: Dict[str, int] = {}
         self.skip = 0
         # Index into ``out`` of the open <p> and whether anything was written since.
         self.p_start: List[int] = []
@@ -167,6 +172,7 @@ class _TermsCleaner(HTMLParser):
         if tag not in _ALLOWED:
             return
         self.stack.append(tag)
+        self.open[tag] = self.open.get(tag, 0) + 1
         self.out.append(f"<{tag}>")
         if tag == "p":
             self.p_start.append(len(self.out))
@@ -190,10 +196,11 @@ class _TermsCleaner(HTMLParser):
             if self.skip:
                 self.skip -= 1
             return
-        if self.skip or tag not in _ALLOWED or tag not in self.stack:
+        if self.skip or tag not in _ALLOWED or not self.open.get(tag):
             return
         while self.stack:
             top = self.stack.pop()
+            self.open[top] -= 1
             self._close(top)
             if top == tag:
                 break

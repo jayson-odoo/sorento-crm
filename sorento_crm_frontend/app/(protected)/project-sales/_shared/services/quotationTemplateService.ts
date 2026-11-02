@@ -10,6 +10,7 @@ import type { CoverDesign, CoverPageData } from '@/lib/quotation-cover';
  *   POST /config/quotation-templates                   -> QuotationTemplate (201)
  *   PUT  /config/quotation-templates/{id}              -> QuotationTemplate (name, body_html)
  *   POST /config/quotation-templates/{id}/activate     -> QuotationTemplate
+ *   POST /config/quotation-templates/{id}/deactivate   -> QuotationTemplate (cover_page only)
  *   GET  /config/quotation-templates/merge-fields      -> ListEnvelope<MergeField>
  *   POST /config/quotation-templates/cover-preview     -> CoverPageData (an unsaved design, stores nothing)
  *
@@ -110,5 +111,12 @@ export async function previewCoverDesign(body: {
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to preview the cover page'));
+  return response.json();
+}
+
+export async function deactivateQuotationTemplate(id: string): Promise<QuotationTemplate> {
+  const response = await apiFetch(`${BASE}/${id}/deactivate`, { method: 'POST' });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to deactivate the template'));
   return response.json();
 }

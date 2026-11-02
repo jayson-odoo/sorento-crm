@@ -7,6 +7,7 @@ import { toast } from '@/lib/toast';
 import {
   activateQuotationTemplate,
   createQuotationTemplate,
+  deactivateQuotationTemplate,
   listMergeFields,
   listQuotationTemplates,
   previewCoverDesign,
@@ -77,5 +78,14 @@ export function useQuotationTemplateMutations(kind: QuotationTemplateKind) {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { create, update, activate };
+  const deactivate = useMutation({
+    mutationFn: (id: string) => deactivateQuotationTemplate(id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Template deactivated');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update, activate, deactivate };
 }

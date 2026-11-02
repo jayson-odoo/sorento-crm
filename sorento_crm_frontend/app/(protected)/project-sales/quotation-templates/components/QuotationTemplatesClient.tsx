@@ -58,9 +58,11 @@ export function QuotationTemplatesClient() {
 function QuotationTemplatesList({ kind }: { kind: TemplatesTab }) {
   const isDesign = kind === 'cover_page';
   const templates = useQuotationTemplates(kind);
-  const { activate } = useQuotationTemplateMutations(kind);
+  const { activate, deactivate } = useQuotationTemplateMutations(kind);
   const activateTemplate = activate.mutate;
   const activating = activate.isPending;
+  const deactivateTemplate = deactivate?.mutate;
+  const deactivating = deactivate?.isPending ?? false;
   const canEdit = useHasPermission('projects.types.edit');
   const [editing, setEditing] = React.useState<QuotationTemplate | null>(null);
   const [creating, setCreating] = React.useState(false);
@@ -104,24 +106,43 @@ function QuotationTemplatesList({ kind }: { kind: TemplatesTab }) {
         enableSorting: false,
         enableResizing: false,
         meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-16" /> },
-        cell: ({ row }) =>
-          canEdit && !row.original.is_active ? (
+        cell: ({ row }) => {
+          if (!canEdit) return null;
+          if (!row.original.is_active) {
+            return (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={activating}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  activateTemplate(row.original.id);
+                }}
+              >
+                Activate
+              </Button>
+            );
+          }
+          // Only a cover page design can be switched off; the default cover then applies.
+          return isDesign && deactivateTemplate ? (
             <Button
               type="button"
               size="sm"
               variant="outline"
-              disabled={activating}
+              disabled={deactivating}
               onClick={(event) => {
                 event.stopPropagation();
-                activateTemplate(row.original.id);
+                deactivateTemplate(row.original.id);
               }}
             >
-              Activate
+              Deactivate
             </Button>
-          ) : null,
+          ) : null;
+        },
       },
     ],
-    [activateTemplate, activating, canEdit],
+    [activateTemplate, activating, deactivateTemplate, deactivating, isDesign, canEdit],
   );
 
   const table = useReactTable({

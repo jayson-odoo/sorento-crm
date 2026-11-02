@@ -184,6 +184,10 @@ def _recipient_from_project(db: Session, project: Project) -> Dict[str, Any]:
     }
 
 
+#: The text fields whose {{merge fields}} are filled on every save.
+TOKEN_FIELDS = ("cover_letter_html", "cover_closing_html", "terms_html")
+
+
 def create_document(
     db: Session,
     *,
@@ -366,6 +370,10 @@ def create_document_with_scopes(
     Returns the lines written so the route can raise below-floor notifications for them, exactly
     as the bulk line route does.
     """
+    from app.services import project_quotation_template_service as _templates
+
+    for field in TOKEN_FIELDS:
+        _templates.assert_tokens_known(payload.get(field))
     body = dict(payload)
     scopes = body.pop("scopes", None) or []
     corrections = {field: body.pop(field, None) for field in _RECIPIENT_FIELDS}
@@ -375,7 +383,7 @@ def create_document_with_scopes(
     # number and total, not the ones a half-made quotation would give.
     letter = {
         field: body.pop(field)
-        for field in ("cover_letter_html", "cover_closing_html", "terms_html")
+        for field in TOKEN_FIELDS
         if (body.get(field) or "").strip()
     }
 
@@ -920,6 +928,11 @@ def update_document(
     answer, and it clears.
     """
     approvals.assert_unlocked(db, document)
+    from app.services import project_quotation_template_service as templates
+
+    # One rule for every save: an unknown merge field is refused before anything is written.
+    for field in TOKEN_FIELDS:
+        templates.assert_tokens_known(payload.get(field))
     for field in (
         "your_ref",
         "doc_date",
@@ -940,6 +953,13 @@ def update_document(
     ):
         if field in payload:
             setattr(document, field, payload[field])
+    db.flush()
+    # ...and the known ones are filled in from this document, on every save.
+    context = None
+    for field in TOKEN_FIELDS:
+        if payload.get(field):
+            context = context or templates.build_document_context(db, document=document)
+            setattr(document, field, templates.render(payload[field], context))
     db.flush()
     return document
 
@@ -1681,18 +1701,22 @@ def preview_cover(
 
     Works on plain namespaces, never an ORM row, so nothing is added to the session: no number is
     drawn from the numbering rule and no row is written. A saved quotation (``document_id``) shows
-    its own number; an unsaved one shows a placeholder.
+    its own number; an unsaved one shows a placeholder. Merge fields are filled from the same
+    context a save uses, and an unknown one is refused with the same 422.
     """
     from types import SimpleNamespace
 
     from app.services import project_quotation_template_service as templates
 
+    for field in TOKEN_FIELDS:
+        templates.assert_tokens_known(payload.get(field))
     document_id = payload.get("document_id")
     if document_id:
         saved = get_document_or_404(db, str(project.id), str(document_id))
         base = {field: getattr(saved, field) for field in _PREVIEW_FIELDS}
         base.update(
             document_no=saved.document_no,
+            subject_title=saved.subject_title,
             created_by=saved.created_by,
             company_id=saved.company_id,
         )
@@ -1702,20 +1726,26 @@ def preview_cover(
             .scalar()
         )
         issue_no = 1 if highest is None else int(highest) + 1
+        total = document_total(db, saved)
     else:
         base = {field: None for field in _PREVIEW_FIELDS}
         base.update(_recipient_from_project(db, project))
         base.update(
             doc_date=date.today(),
             document_no="NEW",
+            subject_title=project.title,
             created_by=None,
             company_id=project.company_id,
         )
         issue_no = 1
+        total = ZERO
     for field in _PREVIEW_FIELDS:
         if field in payload:
             base[field] = payload[field]
     document = SimpleNamespace(project_id=project.id, **base)
+    context = templates.build_document_context(db, document=document, grand_total=total)
+    for field in TOKEN_FIELDS:
+        setattr(document, field, templates.render(getattr(document, field), context))
     draft = SimpleNamespace(
         issue_no=issue_no,
         issued_at=None,
