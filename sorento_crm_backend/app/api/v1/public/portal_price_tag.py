@@ -1005,6 +1005,13 @@ def _detail_body(db: Session, req) -> dict:
     revision_service = PortalRevisionService(db)
     body["revision"] = revision_service.policy_for("price_tag_request", req.id).as_dict()
     body["revision_draft"] = revision_service.get_draft("price_tag_request", req.id)
+    # PRICETAG-SELF-APPROVAL: what the salesperson's screen offers. `self_review`
+    # is his own proof (approve the generated tag, edit, escalate);
+    # `can_escalate` adds an approved request.
+    body["self_review"] = (
+        req.status == STATUS_PROOF_READY and PriceTagRequestService.is_with_salesperson(req)
+    )
+    body["can_escalate"] = PriceTagRequestService.is_with_salesperson(req)
     return body
 
 

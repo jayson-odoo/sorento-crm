@@ -550,3 +550,25 @@ class TestMarketingGate:
         assert row.assigned_to_id == member_id
 
         PriceTagRequestService.validate_designable(row)
+
+
+class TestDetailFlags:
+    def test_own_proof_is_self_review_and_escalatable(self, client):
+        c, db, _ = client
+        body = _submitted(c, db)
+
+        detail = c.get(f"{_BASE}/{body['id']}").json()
+
+        assert detail["self_review"] is True
+        assert detail["can_escalate"] is True
+
+    def test_marketings_proof_is_neither(self, client):
+        c, db, _ = client
+        _seed_one_member_tier1_config(db)
+        body = _submitted(c, db)
+        c.post(f"{_BASE}/{body['id']}/escalate", json={"note": "Help"})
+
+        detail = c.get(f"{_BASE}/{body['id']}").json()
+
+        assert detail["self_review"] is False
+        assert detail["can_escalate"] is False

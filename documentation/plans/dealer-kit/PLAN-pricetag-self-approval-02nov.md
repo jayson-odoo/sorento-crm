@@ -1,7 +1,7 @@
 # PLAN: Price tag self-approval, edit after approval, escalate to configured assignee
 
-Status: Plan (behaviour card posted for owner answers, build started on the parts the questions do not block).
-Track: normal (one additive migration; not small fix track).
+Status: Build (owner answers in: Q1 a, Q2 two clicks, Q3 hide the row, Q4 a). Backend green; FE on #2100's builder.
+Track: normal (no migration, but the diff is over 300 lines and changes the portal's write routes).
 Lane: PRICETAG-SELF-APPROVAL (#2101). Sibling lane: PRICETAG-TEMPLATE-PER-PRODUCT (#2100).
 Source: "Feedback on Price Tag" meeting 2 Nov 2026 + owner rulings 2 Nov ~21:10.
 UAC: `pricetag-self-approval-acceptance-criteria.md` (same folder).
@@ -30,6 +30,17 @@ UAC: `pricetag-self-approval-acceptance-criteria.md` (same folder).
   `approved` (`_PTAG_ADAPTER.terminal_statuses`, `:613`), and it restarts the SLA flow to `new`
   (`:611`), which in the new flow would hand the request back to marketing.
 - The portal shows the design only from `proof_ready` (`PriceTagRequestForm.tsx:132`).
+
+## Design change after the card: no column, no migration
+
+"Marketing holds it" is DERIVED, not stored (`PriceTagRequestService.is_with_marketing`): a submitted
+request at `new` / `designing` / `changes_requested`, or a `proof_ready` with an assignee. The normal
+flow never puts a submitted request at those statuses, and its own proof has nobody assigned. So
+`escalated_at` / `escalated_by_contact_id` and the backfill are dropped: in-flight work keeps its place
+with no data change (R10), and there is no migration to order against #2100's. Where the card says
+"escalated", read "with marketing". The escalation itself is recorded by the review comment (who, when,
+the note), the status change (ORM audit) and the form SLA tracker it opens. Edit and escalate both clear
+the assignee, which is what hands the request back (edit) or lets the config pick (escalate).
 
 ## Rules (the behaviour card)
 
@@ -103,6 +114,13 @@ R10. **Requests in flight at deploy** (migration backfill, no status changes):
   are refused (the paper exists).
 - No form SLA tracking for normal-flow requests (nobody is on the clock). SLA reports count escalations only.
 
+## The office collection step (owner, 2 Nov ~21:40)
+
+"Ready for collection" is not really in use: the salesperson prints. Nothing is removed. The status and
+its columns stay in the graph and in the data; it is still reachable only for a request whose Printing
+answer is "Office prints", and the auto-collect sweep still closes any that exist. Edit and Escalate
+are refused from it (Q4 a), behind `is_with_salesperson`, the one check to change for (b).
+
 ## Questions for the owner (with recommendations)
 
 Q1. In-flight `new` requests nobody has claimed yet: (a) stay with marketing (backfilled as escalated),
@@ -118,8 +136,10 @@ Q4. Edit or escalate after the office marked it ready for collection: (a) refuse
 
 ## Files (both price tag lanes)
 
-This lane: `price_tag_request_service.py` (transitions, submit/approve/escalate), `portal_price_tag.py`
-(`/submit`, `/approve`, new `/escalate`, download status check), `portal_revision_service.py` (price tag
-policy and restart), `price_tag_requests.py` (claim/design gate), new alembic migration (`escalated_at`,
-`escalated_by_contact_id` + backfill), schemas, `PriceTagRequestForm.tsx` post-submit actions.
+This lane: `price_tag_request_service.py` (transitions, is_with_marketing / is_with_salesperson,
+self_approve, escalate, design gate), `portal_price_tag.py` (`/submit`, `/approve`, new `/escalate`,
+download status check, `self_review` / `can_escalate` on the detail body), `portal_revision_service.py`
+(price tag policy and no restart), `revision_configs.py` (price tag row hidden), FE
+`PriceTagSelfApproval.tsx` (new), `PriceTagRequestForm.tsx` post-submit actions, the portal service,
+`priceTagRequestActions.ts` (CRM offers nothing on his own proof).
 #2100: `_add_lines` template field, lookups, form Preview section, `request-tags.ts` builder.

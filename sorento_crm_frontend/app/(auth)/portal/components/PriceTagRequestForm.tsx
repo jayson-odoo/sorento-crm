@@ -24,6 +24,7 @@ import {
   PencilLine,
   Plus,
   Trash2,
+  Send,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
@@ -77,6 +78,11 @@ import {
 } from '../lib/submission-client';
 import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
 import { PriceTagDesignReview } from '@/components/dealer-kit/PriceTagDesignReview';
+import {
+  EscalateNote,
+  PriceTagSelfApproval,
+} from '@/components/dealer-kit/PriceTagSelfApproval';
+import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { PriceTagLinesTable } from '@/components/dealer-kit/PriceTagLinesTable';
 import { PriceTagLinesView } from '@/components/dealer-kit/PriceTagLinesView';
 import {
@@ -357,6 +363,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [reviseReason, setReviseReason] = useState('');
   const showEditForm = isEditable || reviseMode;
   const isProofReady = request?.status === 'proof_ready';
+  // PRICETAG-SELF-APPROVAL: his own proof (nobody in marketing drew it). He sees
+  // the generated tag and approves it himself; marketing's proofs keep the
+  // review below.
+  const isOwnProof = !!request?.self_review;
+  const [escalateOpen, setEscalateOpen] = useState(false);
   // The design preview shows for longer than the approve/request-changes
   // actions do (D11/AC-S4-4): once approved the salesperson can still look
   // at what they approved, but Approve/Request Changes only make sense while
@@ -385,7 +396,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // reason sentence under a bold doc-number + colored pill.
   const revisionStatusText = revisionPolicy
     ? revisionPolicy.allowed
-      ? `${revisionPolicy.remaining} of ${revisionPolicy.max} revisions left`
+      ? // Price tags have no cap (max 0, PRICETAG-SELF-APPROVAL): nothing to count.
+        revisionPolicy.max
+        ? `${revisionPolicy.remaining} of ${revisionPolicy.max} revisions left`
+        : null
       : (revisionPolicy.blocked_reason ?? null)
     : null;
   const { revise, submitting: revising } = useReviseSubmission(
@@ -1203,16 +1217,47 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
 
   // ---- Approve proof ----
-  const handleApprove = useCallback(async () => {
+  // His own proof sends the sheet his screen built (PRICETAG-SELF-APPROVAL R3);
+  // a proof marketing drew sends nothing.
+  const handleApprove = useCallback(async (doc?: TagSheetDoc) => {
     if (!requestId) return;
     try {
-      await clientService(client, 'priceTagRequest', portalPriceTagRequest).approveRequest(requestId);
-      toast.success('Design approved');
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).approveRequest(
+        requestId,
+        doc,
+      );
+      toast.success('Tag approved');
       router.push(homePath);
-    } catch {
-      toast.error('Failed to approve');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to approve');
     }
   }, [requestId, router, homePath, client]);
+
+  // ---- Escalate (PRICETAG-SELF-APPROVAL R6): to marketing, with his note ----
+  const handleEscalate = useCallback(async (note: string) => {
+    if (!requestId) return;
+    try {
+      await clientService(client, 'priceTagRequest', portalPriceTagRequest).escalateRequest(
+        requestId,
+        note,
+      );
+      toast.success('Sent to marketing');
+      router.push(homePath);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to send to marketing');
+    }
+  }, [requestId, router, homePath, client]);
+
+  const loadSelfProof = useCallback(
+    (id: string) =>
+      clientService(client, 'priceTagRequest', portalPriceTagRequest).lookupTagPreviewForRequest(id),
+    [client],
+  );
+
+  const startEdit = useCallback(() => {
+    setReviseMode(true);
+    setReviseReason('');
+  }, []);
 
   // ---- Mark collected (r9 D8): the salesperson has the tags ----
   const handleCollect = useCallback(async () => {
@@ -1441,11 +1486,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             the salesperson opened the request to look at, and their own
             answers below it are the reference, not the headline. It shows for
             longer than the review actions do (D11/AC-S4-4). */}
-        {showDesignPreview && (
+        {escalateOpen && !isOwnProof && (
+          <EscalateNote onEscalate={handleEscalate} onCancel={() => setEscalateOpen(false)} />
+        )}
+
+        {isOwnProof && (
+          <PriceTagSelfApproval
+            request={request}
+            loadPreview={loadSelfProof}
+            onApprove={handleApprove}
+            onEdit={startEdit}
+            onEscalate={handleEscalate}
+          />
+        )}
+
+        {showDesignPreview && !isOwnProof && (
           <PriceTagDesignReview
             request={request}
             reviewable={isProofReady}
-            onApprove={handleApprove}
+            onApprove={() => void handleApprove()}
             onSend={handleSendChanges}
             download={{
               available: exportStatus === 'ready',
@@ -1681,12 +1740,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                   onSelect={(event) => {
                     event.preventDefault();
                     setGearOpen(false);
-                    setReviseMode(true);
-                    setReviseReason('');
+                    startEdit();
                   }}
                 >
                   <PencilLine className="size-4" />
-                  Revise
+                  Edit
+                </DropdownMenuItem>
+              )}
+              {request.can_escalate && !isOwnProof && (
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    setGearOpen(false);
+                    setEscalateOpen(true);
+                  }}
+                >
+                  <Send className="size-4" />
+                  Escalate to marketing
                 </DropdownMenuItem>
               )}
             </DetailActionsMenu>
