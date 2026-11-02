@@ -3015,6 +3015,9 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     if frame is not None:
         frame.pop("shown", None)
         frame.pop("group_offset", None)  # item 6: a page is never held; "more" carries its own offset
+        names = semantic_input.get("report_ask_names") if isinstance(semantic_input, dict) else None
+        if isinstance(names, dict):
+            frame["names"] = names  # semantic carry: each id's name, for the `Held report:` line (never a route param)
         if isinstance(drill, dict) and drill.get("group_by") == frame.get("group_by") and drill.get("rows"):
             frame["shown"] = drill
             if frame.get("group_by") in ("product", "category", "sales_agent", "customer") and not frame.get("compare_to"):

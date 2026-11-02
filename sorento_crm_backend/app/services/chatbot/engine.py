@@ -3016,6 +3016,13 @@ def _positions_read_elsewhere(state: Any) -> bool:
     return bool(ideation.get("pending_media"))
 
 
+def _held_report_line(focus: Any) -> str | None:
+    """SALES-ACCOUNT-TYPE semantic carry (A2): the `Held report` line the parser reads (`report_ask.held_report`)."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    return report_ask.held_report(focus)
+
+
 def run_turn(
     envelope: Envelope,
     *,
@@ -5449,6 +5456,9 @@ def _run_stages_body(  # noqa: PLR0915
         candidate_lines=candidate_lines,
         lookup_lines=lookup_lines,
         state_block=state_block,
+        # SALES-ACCOUNT-TYPE semantic carry (A2): the held report in words, only for a prompt carrying the report ask
+        # marker (`ParserConfig.report_ask`); every other text's user block is unchanged.
+        held_report=_held_report_line(state_in.focus) if getattr(parser_config, "report_ask", False) else None,
     )
     user_block, context_report = context_mod.assemble(context_layers)
     # AC-MEM052/056 (round 3): where the level itself came from, alongside what it
@@ -5698,6 +5708,12 @@ def _run_stages_body(  # noqa: PLR0915
     # A sales ranking's `status` that is a report basis ("by qty, outstanding") is its basis, not a document status.
     from app.services.chatbot.lanes.business import report_ask as _report_ask_basis
 
+    # SALES-ACCOUNT-TYPE semantic carry (A3): with the report ask marker in the prompt, the parser's `report_ask` object
+    # is the whole report ask; its slots become the fresh ask's own fields here, before any report seam reads them.
+    # Without the marker the key is dropped and the turn is today's.
+    verdict = _report_ask_basis.from_object(
+        verdict, on=bool(getattr(parser_config, "report_ask", False)), focus=state_in.focus, pending=state_in.pending
+    )
     verdict = _report_ask_basis.status_as_basis(verdict)
     # REPORT-SMART-L R8 review: the domains the last ask was on, read BEFORE the State applier writes this turn's
     # own (`chat_state.apply_changes`); `report_ask.with_held` gates on them, so an order list's window never reaches a
@@ -6098,6 +6114,12 @@ def _run_stages_body(  # noqa: PLR0915
         if opportunity_lane.own_pending(state_in.pending) is not None:
             state_in = dataclasses_replace(state_in, pending=None)
         parser_ops = (remembered_before.get("_chat_state") or {}).get("changes")
+        # SALES-ACCOUNT-TYPE semantic carry (A3): the parser's object is the whole ask, so an open question of the
+        # report ask is not answered off this turn's flags: none of the carry seams below reads it (`from_object` set
+        # aside the object for an answer that picks off the screen).
+        semantic_ask = isinstance(verdict.get(report_ask.OBJECT_KEY), dict)
+        if semantic_ask and (open_ask or {}).get("ask") == report_ask.ASK_NAME:
+            replaced_ask, open_ask = open_ask, None
         _company_pick = False
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "company":
             # The company question's pick from the parser's own output (`sales_company`, `reference_positions`) is the
@@ -6135,7 +6157,7 @@ def _run_stages_body(  # noqa: PLR0915
             turn_trace.add("required_ask", {"verdict_rule": required_rule, "ask": (open_ask or {}).get("ask")})
         if required_rule == "required_ask_answer":
             state_in = dataclasses_replace(state_in, pending=None)
-        else:
+        elif not semantic_ask:
             # Chat fix PR-B S3: a refine of the report on screen re-runs it, whatever report
             # type the parser named (`report_ask.as_held_refine`).
             verdict = report_ask.as_held_refine(verdict, state_in.focus.sales_ranking_frame)
