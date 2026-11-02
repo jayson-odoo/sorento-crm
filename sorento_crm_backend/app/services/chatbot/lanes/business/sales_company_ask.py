@@ -111,6 +111,30 @@ def as_answer(verdict: dict[str, Any], slot: dict[str, Any] | None) -> dict[str,
     return {**verdict, "open_question_answer": {"mode": "pick", "picked": positions, "items": [], "qty_for_all": None}}
 
 
+def names_only_the_pick(verdict: dict[str, Any], slot: dict[str, Any] | None) -> bool:
+    """Engine seam, the company question open and its pick declared by the parser: is the reply the company alone? Every
+    entity the message names is the picked company's own word (its name or code, or the parser's `sales_company` or
+    escalation company pick); an entity naming anything else (another filter word) makes it no bare answer. Parser
+    fields only."""
+    answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    offered = _offered(slot) if isinstance(slot, dict) else []
+    escalation = verdict.get("escalation") if isinstance(verdict.get("escalation"), dict) else {}
+
+    def squash(value: Any) -> str:
+        return " ".join(str(value or "").split()).casefold()
+
+    words = {squash(verdict.get("sales_company")), squash(escalation.get("company_pick"))}
+    for o in offered:
+        if o["position"] in jsc.array(answer.get("picked")):
+            words |= {squash(o["label"]), *(squash(a) for a in o["payload"]["aliases"])}
+    words.discard("")
+    return all(
+        squash(e.get("raw")) in words or squash(e.get("canonical_code")) in words
+        for e in jsc.array(verdict.get("entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False and jsc.js_string(e.get("hint") or "").strip()
+    )
+
+
 def _companies(db: Any, contact_id: Any, space_id: Any) -> list[tuple[str, str, str]]:
     from app.api.v1.sales.analysis import contact_companies
     from app.services.field_access import resolve_contact_with_null_workspace_fallback

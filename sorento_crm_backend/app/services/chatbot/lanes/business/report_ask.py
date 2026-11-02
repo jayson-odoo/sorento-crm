@@ -1303,6 +1303,9 @@ def with_held(
         or _new_subject(verdict, parser_ops)
         # Q3: a stale frame (a turn that said a line and ran nothing) carries nothing, but a customer held on it (#2070).
         or (replaced is None and frame.get("stale") and not _holds_a_customer(frame))
+        # REPORT-SMART-L R2: the bare top selling label over a ranking refines its rows (`_settle`, off the frame); with no
+        # rows on screen it is a fresh product ranking, holding nothing (R2 review).
+        or (replaced is None and verdict.get("bare_top_selling") is True and frame.get("group_by") and not _holds_a_customer(frame))
         or contracts.SALES_DOMAIN not in (domains or [])
         or (open_ask is not None and replaced is None)
     ):
@@ -1331,6 +1334,9 @@ def with_held(
         # A held report (a total or a ranking): its period, filters and basis stay; R2, the message's own replace them.
         keys = _HELD_CUSTOMER_KEYS if customer_stays and _holds_a_customer(frame) else _HELD_TOTAL_KEYS
         held = {k: v for k, v in frame.items() if k in keys and v not in (None, "", [])}
+        if frame.get("group_by") and GROUP_BY.get(typed_axis, typed_axis) == "product":
+            # Only a total's product stays on a product axis (`_settle`): a ranking's is that axis's own filter.
+            held = {k: v for k, v in held.items() if k not in _AXIS_FILTERS["product"]}
     else:
         window = _dict(getattr(focus, "date_window", None))
         held = {"date_from": window.get("start"), "date_to": window.get("end"), "product": bool(getattr(focus, "products", None))}
@@ -2219,9 +2225,9 @@ def _settle(
             # A total has no rows to rank across, so the product it was for stays on a product axis too.
             source, keep_product = frame, total_frame
     elif _dict(parse_output.get(HELD_KEY)):
-        # R8: the engine stamped what the held sales report total, a ranking held for a customer, or the open ask this
-        # replaced showed (`with_held`): the same hold, one more source. A total has no rows to rank across, so
-        # the product it was for stays on a product axis too (crew target: its variants ranked).
+        # R8: the engine stamped what the held sales report frame or the open ask this replaced showed (`with_held`): the
+        # same hold, one more source. A total has no rows to rank across, so the product it was for stays on a product
+        # axis too (crew target: its variants ranked); a held ranking's product is not stamped on its own axis.
         source, keep_product = _dict(parse_output.get(HELD_KEY)), True
     if source:
         # Not a refine (it names another axis): the fresh ask reads it whole, its dates included.
@@ -2412,21 +2418,31 @@ def _owes_company(args: dict[str, Any], own: list[Any]) -> bool:
 _IN_COMPANY = ("sales_agent_ids", "brand_ids", "category_ids", "account_types")
 
 
-def _in_company(db: Any, key: str, values: Any, company: str, ids: list[str]) -> list[str]:
-    """The `values` of one `_IN_COMPANY` param that are in `company`, one of the contact's companies (`ids`)."""
+def _in_company(db: Any, key: str, values: Any, company: str, ids: list[str]) -> list[str] | None:
+    """The `values` of one `_IN_COMPANY` param read in `company`, one of the contact's companies (`ids`); None when any
+    subject they name is only in another company. A subject is the agent person (accounts sharing a code stem, the union
+    `_word_filters` makes), the brand by name, the category by code, the account type as asked."""
     values = [str(v) for v in jsc.array(values)]
     if key == "account_types":
         from app.services.reports.ask_params import account_book, resolve_account_types
 
         book = account_book(db, ids)
-        return [v for v in values if company in resolve_account_types(book, [v])[0]]
+        found = [v for v in values if company in resolve_account_types(book, [v])[0]]
+        return found if len(found) == len(values) else None
     from app.models.product import Brand, ProductCategory
     from app.models.sales_agent import SalesAgent
 
-    model = {"sales_agent_ids": SalesAgent, "brand_ids": Brand, "category_ids": ProductCategory}[key]
-    rows = db.query(model.id, model.company_id).filter(model.id.in_(values)).all()
-    found = {str(i) for i, cid in rows if cid is None or str(cid) == company}
-    return [v for v in values if v in found]
+    model, name = {
+        "sales_agent_ids": (SalesAgent, SalesAgent.sales_agent), "brand_ids": (Brand, Brand.brand_name),
+        "category_ids": (ProductCategory, ProductCategory.category_code),
+    }[key]
+    same = business_services._code_stem if key == "sales_agent_ids" else (lambda n: " ".join(str(n or "").split()).casefold())
+    rows = db.query(model.id, model.company_id, name).filter(model.id.in_(values)).all()
+    here = {str(i) for i, cid, _n in rows if cid is None or str(cid) == company}
+    subjects_here = {same(n) for i, _cid, n in rows if str(i) in here}
+    if not here or any(same(n) not in subjects_here for _i, _cid, n in rows):
+        return None
+    return [v for v in values if v in here]
 
 
 def _ran_in(db: Any, source: dict[str, Any], ids: list[str]) -> str | None:
@@ -2457,7 +2473,8 @@ def _held_company(
         return args, False
     found = {k: _in_company(db, k, args[k], str(company), ids) for k in named}
     if not all(found.values()):
-        return args, said is None  # only another company has it: the company is asked, unless the message named one
+        # Any named subject only another company has: the company is asked, unless the message named one.
+        return args, said is None
     return {**args, **found, "company": str(company)}, False
 
 

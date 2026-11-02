@@ -6110,9 +6110,11 @@ def _run_stages_body(  # noqa: PLR0915
             _declared = _candidate.get("open_question_answer")
             if not _typed and (_candidate is not verdict or (isinstance(_declared, dict) and _declared.get("mode") == "pick")):
                 # An untyped `group_by` on the answering turn is a guess (R6): the held ask's axis stands. A pick the
-                # parser declared itself is the pick too (multi-turn carry, R4): a stray entity beside it (the company's
-                # name also read as a brand word) never makes the answer a new ask.
-                verdict, _company_pick = {**_candidate, "group_by": None}, True
+                # parser declared itself is the pick too (multi-turn carry, R4) when the only entity beside it is the
+                # company's own word (its name also read as a brand); another filter word keeps it a new ask.
+                verdict, _company_pick = {**_candidate, "group_by": None}, (
+                    _candidate is not verdict or sales_company_ask.names_only_the_pick(verdict, open_ask)
+                )
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "basis":
             verdict = report_ask.as_basis_answer(verdict, open_ask)  # reference_positions pick an offered option
         _kind_pick = False
