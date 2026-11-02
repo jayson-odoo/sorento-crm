@@ -918,6 +918,15 @@ describe('QuotationSignClient cover card', () => {
     ).toBeInTheDocument();
   });
 
+  it('C2: a designed page whose cover rows include the terms row has no bottom terms panel', async () => {
+    getQuotationSignPage.mockResolvedValue(withCover({ cover_title: 'OFFER SHEET', terms: '<p>CLAUSE A</p>' }));
+    renderPage();
+
+    await screen.findByText('INNER ITEM');
+    expect(screen.queryByText('Terms and conditions')).not.toBeInTheDocument();
+    expect(screen.getAllByText('CLAUSE A')).toHaveLength(1);
+  });
+
   it('says Quotation from once and shows the same reference as the PDF', async () => {
     getQuotationSignPage.mockResolvedValue(withCover());
     renderPage();

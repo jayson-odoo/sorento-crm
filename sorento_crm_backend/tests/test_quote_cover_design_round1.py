@@ -134,7 +134,7 @@ def test_clean_terms_html_is_linear_on_unbalanced_input():
     from app.services.quotation_cover_service import clean_terms_html
 
     start = time.monotonic()
-    clean_terms_html("<p>" * 20000 + "</li>" * 20000)
+    clean_terms_html("<p>" * 80000 + "</li>" * 80000)
     assert time.monotonic() - start < 3
 
 

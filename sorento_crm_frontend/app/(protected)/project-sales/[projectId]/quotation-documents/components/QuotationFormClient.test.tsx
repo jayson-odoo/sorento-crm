@@ -1447,6 +1447,28 @@ describe('QuotationFormClient cover page preview and editors', () => {
     });
   });
 
+  it('B2: the preview body follows unsaved closing, Attn and terms edits from other tabs', async () => {
+    renderForm();
+    await openTab('Header');
+    fireEvent.change(await screen.findByLabelText('Attn'), { target: { value: 'Mr Preview' } });
+    await openTab('Terms');
+    fireEvent.change(await screen.findByRole('textbox', { name: 'The clauses the customer holds us to' }), {
+      target: { value: '<p>TERMS EDITED</p>' },
+    });
+    await openTab('Cover letter');
+    fireEvent.change(await screen.findByLabelText('Closing text'), { target: { value: '<p>CLOSING EDITED</p>' } });
+
+    await waitFor(
+      () =>
+        expect(lastPreviewBody()).toMatchObject({
+          cover_closing_html: '<p>CLOSING EDITED</p>',
+          attn_name: 'Mr Preview',
+          terms_html: '<p>TERMS EDITED</p>',
+        }),
+      { timeout: 4000 },
+    );
+  });
+
   it('save sends cover_letter_html and cover_closing_html', async () => {
     renderForm();
     await openTab('Cover letter');
