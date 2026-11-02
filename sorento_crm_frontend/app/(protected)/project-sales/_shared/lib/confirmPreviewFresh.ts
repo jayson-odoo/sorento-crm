@@ -178,10 +178,17 @@ export function emailWordsFor(
 /**
  * The guided Confirm's email dry run body (review round 3, S3): the press's own body, `quiet`
  * (the server records no refusal for it), with every order that has no planning record yet
- * (an empty `pso_id`, adoption deferred) left out. `null` when nothing is left to preview.
+ * (an empty `pso_id`, adoption deferred) left out. `onlyPsoId` (CONFIRM-REMARK-FIX) keeps the
+ * order on screen alone: a dry run costs the order's whole Confirm, so the guide never pays
+ * for the pages nobody is looking at. `null` when nothing is left to preview.
  */
-export function emailPreviewBody(body: ConfirmManyBody | null | undefined): ConfirmManyBody | null {
-  const orders = (body?.orders ?? []).filter((order) => Boolean(order.pso_id));
+export function emailPreviewBody(
+  body: ConfirmManyBody | null | undefined,
+  onlyPsoId?: string | null,
+): ConfirmManyBody | null {
+  const orders = (body?.orders ?? []).filter(
+    (order) => Boolean(order.pso_id) && (onlyPsoId == null || order.pso_id === onlyPsoId),
+  );
   if (!body || orders.length === 0) return null;
   return { ...body, orders, quiet: true };
 }

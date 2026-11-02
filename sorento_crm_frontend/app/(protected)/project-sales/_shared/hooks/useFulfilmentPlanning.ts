@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
@@ -526,8 +526,13 @@ export function useConfirmManyMutation() {
  */
 export function usePreviewConfirmManyMutation() {
   return useMutation({
-    mutationFn: (body: ConfirmManyBody) => previewConfirmMany(body),
+    // CONFIRM-REMARK-FIX: the guide's email dry run passes a `signal` so a superseded one is
+    // cancelled; it is never part of the body.
+    mutationFn: ({ signal, ...body }: ConfirmManyBody & { signal?: AbortSignal }) =>
+      signal ? previewConfirmMany(body, signal) : previewConfirmMany(body),
     onError: (error: Error) => {
+      // A dry run this screen cancelled (a newer one replaced it) is not a failure.
+      if (error.name === 'AbortError') return;
       toast.error(error.message);
     },
   });
@@ -585,6 +590,28 @@ export function patchContributionDraft<
     cells: board.cells.map((cell) => ({ ...cell, contributions: cell.contributions.map(patch) })),
     contributions: board.contributions.map(patch),
   };
+}
+
+/**
+ * CONFIRM-REMARK-FIX (F3): when a planning board READ last answered, as an epoch-ms stamp (0
+ * until one does). A draft save patches the board cache (`setQueriesData` below), which moves
+ * the query's `dataUpdatedAt` as well; only a finished fetch moves this, so a screen keyed on
+ * it reacts once per read, not once per patch and again per read.
+ */
+export function usePlanningBoardReadAt(): number {
+  const queryClient = useQueryClient();
+  const [readAt, setReadAt] = useState(0);
+  useEffect(
+    () =>
+      queryClient.getQueryCache().subscribe((event) => {
+        if (event.type !== 'updated' || event.query.queryKey[0] !== PLANNING_BOARD_KEY) return;
+        // `setQueryData` dispatches a `manual` success; a fetch's own success is not manual.
+        if (event.action.type !== 'success' || event.action.manual) return;
+        setReadAt(event.query.state.dataUpdatedAt);
+      }),
+    [queryClient],
+  );
+  return readAt;
 }
 
 /**

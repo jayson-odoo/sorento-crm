@@ -378,10 +378,14 @@ function confirmAnswers() {
   );
 }
 
+/** The mounted panel's query client: a test can re-read the board as a save elsewhere would. */
+let lastClient: QueryClient | null = null;
+
 function renderPanel(soNumbers: string[] = ['SO000001', 'SO000002']) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
+  lastClient = client;
   return render(
     <QueryClientProvider client={client}>
       <FulfilmentBoardPanel soNumbers={soNumbers} batchId={null} onBack={vi.fn()} />
@@ -663,6 +667,8 @@ describe('T-FE3 (F5 B4 F7): walking, editing and failing a page', () => {
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
     expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
+    // CONFIRM-REMARK-FIX: each page dry-runs its own order; Next waits for this page's words.
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
     click('confirm-guide-next');
     expect(await screen.findByTestId('confirm-guide-confirm')).toBeInTheDocument();
     // CONFIRM-PREVIEW-STALE round 3: only the guide's own quiet email dry run may have run;
@@ -2229,5 +2235,109 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     const [body] = emailDryRuns()[0] as [{ quiet: boolean; orders: { pso_id: string }[] }];
     expect(body.quiet).toBe(true);
     expect(body.orders.every((order) => Boolean(order.pso_id))).toBe(true);
+  });
+});
+
+/*
+ * CONFIRM-REMARK-FIX (crew re-check of #2091, 3 Nov 2026): a save ran TWO email dry runs (one
+ * on the save's cache patch, one on the board re-read), every dry run covered the whole press,
+ * and a superseded one kept running. One dry run per board read, for the order on screen, at
+ * most one in flight.
+ */
+describe('CONFIRM-REMARK-FIX: one email dry run per read, for the order on screen', () => {
+  const emailOrders = () =>
+    emailDryRuns().map(([body]) =>
+      (body as { orders: { pso_id: string }[] }).orders.map((order) => order.pso_id),
+    );
+
+  function savedBoard() {
+    return mapContributions(boardOf([SO1_L3]), (entry) =>
+      entry.project_line_id === 'pl-1-3'
+        ? {
+            ...entry,
+            saved_remark: 'ORDER',
+            draft: { decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-11-02T01:00:00Z' },
+          }
+        : entry,
+    );
+  }
+
+  it('F3: a remark save runs ONE more email dry run, after the board re-read', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(savedBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    expect(emailDryRuns()).toHaveLength(1);
+    putLineDraft.mockResolvedValue({
+      decision: { verdict: 'approved', remark: 'URGENT' },
+      saved_by: 'Test Planner',
+      saved_at: '2026-11-02T03:00:00Z',
+    });
+    const reads = getPlanningBoard.mock.calls.length;
+    // The re-read takes a while, as over the network: the save's cache patch lands first.
+    const board = savedBoard();
+    getPlanningBoard.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve(board), 120)),
+    );
+    fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: 'URGENT' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(getPlanningBoard.mock.calls.length).toBeGreaterThan(reads));
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(2), { timeout: 2000 });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(emailDryRuns()).toHaveLength(2);
+  });
+
+  it('the email dry run carries only the order on screen; the next page runs its own once', async () => {
+    serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-split-page');
+    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1']]));
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    click('confirm-guide-next');
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
+    );
+    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]));
+    // Back to a page already read for this board read: no new dry run.
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    click('confirm-guide-back');
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001'),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]);
+  });
+
+  it('a superseded email dry run is cancelled: at most one in flight', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(savedBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    // The next email dry run is held open; a second save re-reads the board meanwhile.
+    previewConfirmMany.mockImplementationOnce(() => new Promise(() => {}));
+    putLineDraft.mockResolvedValue({
+      decision: { verdict: 'approved', remark: 'URGENT' },
+      saved_by: 'Test Planner',
+      saved_at: '2026-11-02T03:00:00Z',
+    });
+    fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: 'URGENT' } });
+    fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(2));
+    const held = previewConfirmMany.mock.calls.findLast(([body]) => Boolean((body as { quiet?: boolean }).quiet));
+    const heldSignal = held?.[1] as AbortSignal | undefined;
+    expect(heldSignal).toBeDefined();
+    expect(heldSignal?.aborted).toBe(false);
+    // Another board read lands while it is still out (the board re-read after another save).
+    await act(async () => {
+      await lastClient?.refetchQueries({ type: 'active' });
+    });
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(3));
+    expect(heldSignal?.aborted).toBe(true);
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
   });
 });

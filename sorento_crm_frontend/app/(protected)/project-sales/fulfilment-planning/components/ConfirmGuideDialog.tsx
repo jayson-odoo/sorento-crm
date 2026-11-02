@@ -116,6 +116,7 @@ export function ConfirmGuideDialog({
   wordsLoading = false,
   onRetryRefresh,
   onTakeSuggestion,
+  onPageChange,
   prepareErrors,
   onRetryPrepare,
   onClose,
@@ -158,6 +159,11 @@ export function ConfirmGuideDialog({
   onRetryRefresh?: () => void;
   /** CONFIRM-PREVIEW-STALE: drop the saved decision so the line takes AutoCount's suggestion. */
   onTakeSuggestion?: (key: string) => Promise<unknown> | void;
+  /**
+   * CONFIRM-REMARK-FIX: the planning record of the order on screen (null on the Confirm step,
+   * or a page with no planning record), so the email dry run covers that order alone.
+   */
+  onPageChange?: (psoId: string | null) => void;
   /** Per core sales order id: why it could not be made ready (the server's sentence). */
   prepareErrors?: ReadonlyMap<string, string>;
   onRetryPrepare?: () => void;
@@ -178,6 +184,10 @@ export function ConfirmGuideDialog({
   const editorRef = React.useRef<LineSplitEditorHandle | null>(null);
 
   const page = step.kind === 'review' ? pages[step.index] : undefined;
+  const pagePsoId = page?.psoId ?? null;
+  React.useEffect(() => {
+    onPageChange?.(pagePsoId);
+  }, [pagePsoId, onPageChange]);
   // Every page's split read, kept while the guide is open; the current page reads its own.
   // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): each read is taken again as the guide opens,
   // and a page reads as loading until the read answered after that moment: a cached sheet
