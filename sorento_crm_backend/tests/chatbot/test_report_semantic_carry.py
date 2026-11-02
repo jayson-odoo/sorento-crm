@@ -591,3 +591,76 @@ def test_sc13_a_ranking_without_a_count_asks_the_count(rbot, world) -> None:
     )
     text, calls = rbot.say(v, "sorento customers ranking 2026 invoiced")
     assert not _ran(calls) and "How many?" in text, (calls, text)
+
+
+# ------------------------------------------------------------------------------------------ V4 (a both-table word, from data)
+# Cabana is seeded as a brand AND an account type (`world`). The lane decides from the tables and the message's own
+# `kind_said`, not from which bucket the object put the word in (the live parser puts it in `brands`).
+
+
+def _cabana_ask(sorento: str, *, bucket: str, kind_said: Any, hint: str = "brand", **over: Any) -> dict[str, Any]:
+    ra = _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], **{bucket: ["Cabana"]}, **Y)
+    return _v(
+        "sales_report", ra, _ent("cabana", hint, "CABANA" if hint == "brand" else None, kind_said),
+        _ent(AGENT_1, "sales_agent"), basis="invoiced", sales_company=sorento, domain_in_message=True,
+        date_filter_start="2026-01-01", date_filter_end="2026-12-31", **over,
+    )
+
+
+def test_v4a_a_both_table_word_in_brands_with_no_kind_said_asks_brand_or_account_type(rbot, world) -> None:
+    sorento, _mocha = world
+    text, calls = rbot.say(_cabana_ask(sorento, bucket="brands", kind_said=None), "sorento sales for agent a cabana 2026 invoiced")
+    assert not _ran(calls), f"V4a: a report ran for a word both tables hold, kind not said: {_ran(calls)}"
+    assert text.strip() == QUESTION, f"V4a: want {QUESTION!r}, got {text!r}"
+
+
+def test_v4b_a_kind_the_message_said_runs_as_that_kind_with_no_question(rbot, world) -> None:
+    sorento, _mocha = world
+    text, calls = rbot.say(_cabana_ask(sorento, bucket="brands", kind_said="brand"), "sorento sales for agent a cabana brand 2026 invoiced")
+    ran = _ran(calls)
+    assert ran and text.strip() != QUESTION, f"V4b brand: asked or did not run: {text!r}"
+    assert len(ran[0].get("brand_ids") or []) == 1, ran[0]
+    assert not ran[0].get("account_types"), f"V4b brand: also sent account_types: {ran[0]}"
+
+
+def test_v4b_an_account_type_placement_with_kind_said_account_type_runs_as_account_type(rbot, world) -> None:
+    sorento, _mocha = world
+    text, calls = rbot.say(
+        _cabana_ask(sorento, bucket="account_types", kind_said="account type", hint="account_type"),
+        "sorento sales for agent a cabana account type 2026 invoiced",
+    )
+    ran = _ran(calls)
+    assert ran and text.strip() != QUESTION, f"V4b account type: asked or did not run: {text!r}"
+    assert ran[0].get("account_types") == ["CABANA"] and not ran[0].get("brand_ids"), ran[0]
+
+
+def test_v4c_a_carried_settled_word_is_not_asked_again(rbot, world) -> None:
+    sorento, _mocha = world
+    text, calls = rbot.say(_cabana_ask(sorento, bucket="brands", kind_said="brand"), "sorento sales for agent a cabana brand 2026 invoiced")
+    first = _ran(calls)
+    assert first and first[0].get("brand_ids"), f"setup: the brand report did not run: {text!r}"
+    agent_b = _v(
+        "sales_analysis", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_2], brands=["Cabana"], **Y),
+        _ent(AGENT_2, "sales_agent"), sales_basis="invoiced", sales_company=sorento, continuation=True,
+        date_filter_start="2026-01-01", date_filter_end="2026-12-31",
+    )
+    text, calls = rbot.say(agent_b, f"for {AGENT_2}")
+    ran = _ran(calls)
+    assert text.strip() != QUESTION, f"V4c: the settled word was asked again: {text!r}"
+    assert ran and ran[0].get("brand_ids") == first[0].get("brand_ids"), f"V4c: the held brand was not carried: {ran or text!r}"
+
+
+def test_v4d_the_declared_pick_of_account_type_wins_over_the_object_bucket(rbot, world) -> None:
+    sorento, _mocha = world
+    text, calls = rbot.say(_cabana_ask(sorento, bucket="brands", kind_said=None), "sorento sales for agent a cabana 2026 invoiced")
+    assert not _ran(calls) and text.strip() == QUESTION, f"V4d setup: want {QUESTION!r}, got {text!r}"
+    reply = _v(
+        "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], brands=["Cabana"], **Y),
+        entity_op="reuse", continuation=True, open_question_answer=_pick_of(2),
+    )
+    text, calls = rbot.say(reply, "account type")
+    ran = _ran(calls)
+    assert ran, f"V4d: the pick of 'account type' did not run the report: {text!r}"
+    assert ran[0].get("account_types") == ["CABANA"] and not ran[0].get("brand_ids"), f"V4d: {ran[0]}"
+    assert ran[0].get("sales_agent_ids") == [rbot.ids["agent"]] and ran[0].get("basis") == "invoiced", ran[0]
+    assert ran[0].get("date_from") == "2026-01-01" and ran[0].get("company") == DEFAULT_COMPANY_ID, ran[0]
