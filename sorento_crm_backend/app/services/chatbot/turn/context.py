@@ -128,6 +128,13 @@ def known_brands_line(brands: list[dict[str, Any]] | None) -> str | None:
     return f"Known brands: {', '.join(pairs)}"
 
 
+def known_account_types_line(types: list[str] | None) -> str | None:
+    """SALES-ACCOUNT-TYPE PR 2: the `Known account types:` line, the stored debtor types of the contact's company
+    (sorted, deduped), `None` when no customer carries one."""
+    names = sorted({str(t).strip() for t in types or [] if t and str(t).strip()}, key=lambda t: (t.casefold(), t))
+    return f"Known account types: {', '.join(names)}" if names else None
+
+
 def promotion_kinds_line(kinds: list[dict[str, Any]] | None) -> str | None:
     """PROMO-SUBJECT-FILTER R5: the `Promotion kinds:` line, `type_code (name)` pairs read from
     `promotion_types` every turn, so a kind added as a row is heard on the next message."""
@@ -174,6 +181,7 @@ def _brands_and_kinds(layers: "ContextLayers") -> str | None:
         p
         for p in (
             known_brands_line(layers.brands),
+            known_account_types_line(layers.account_types),
             product_types_line(layers.product_types),
             product_details_line(layers.product_details),
             promotion_kinds_line(layers.promotion_kinds),
@@ -277,6 +285,9 @@ class ContextLayers:
     #: brands:` line at every level. Kept whole, like the task lines: it is what a
     #: misspelt brand word is resolved against.
     brands: list[dict[str, Any]] | None = None
+    #: SALES-ACCOUNT-TYPE PR 2: the stored debtor types of the contact's company, one `Known account types:` line
+    #: (set only for a prompt that defines it and a contact that is not customer-scoped).
+    account_types: list[str] | None = None
     #: PROMO-SUBJECT-FILTER R5: the live `promotion_types` rows (`{type_code, type_name}`),
     #: one `Promotion kinds:` line, so the parser fills `promotion_kind` from the table.
     promotion_kinds: list[dict[str, Any]] | None = None

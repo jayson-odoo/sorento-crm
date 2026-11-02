@@ -1216,6 +1216,43 @@ def _candidate_lines(
     return (indexed or lines), codes, picks
 
 
+def _known_account_types(db: Session, parser_config: Any, contact_respond_id: Any) -> list[str] | None:
+    """SALES-ACCOUNT-TYPE PR 2: the stored debtor types of the contact's company for the `Known account types:` line,
+    in the session the brands are read in (scoped to the contact's companies). None for a prompt that does not define
+    the line, and for a customer-scoped contact (the route refuses it the filter, so it is never offered the words)."""
+    if not parser_config.account_types:
+        return None
+
+    def read() -> list[str]:
+        scope, _staff = business_services.customer_scope_and_staff(
+            db, contact_respond_id, business_services.fetch_space_id(db)
+        )
+        if (scope or {}).get("enforced"):
+            return []
+        # Only a contact the sales report accepts (the grant or a live salesperson, `_may_see_salespeople`), widened for
+        # the Outstanding reveal and an open pending-delivery ask. Anyone else gets no line; a lookup error fails closed.
+        from app.services import contact_asker, contact_field_reveal_service
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        resolved = resolve_contact_with_null_workspace_fallback(
+            db, contact_id=str(contact_respond_id).strip(), space_id=business_services.fetch_space_id(db)
+        )
+        if not resolved:
+            return []
+        granted = contact_field_reveal_service.granted_keys(db, str(resolved))
+        if not (
+            _may_see_salespeople(db, str(resolved))
+            or "sales_orders.outstanding" in granted
+            or contact_asker.pending_delivery_open(db, str(resolved))
+        ):
+            return []
+        from app.services.reports.ask_params import account_type_options
+
+        return [name for name, _label in account_type_options(db)]
+
+    return _guarded(db, read, [])
+
+
 def _may_see_salespeople(db: Session, resolved: str) -> bool:
     """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
     `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
@@ -5443,6 +5480,7 @@ def _run_stages_body(  # noqa: PLR0915
         # contact's companies, `_scoped_factory` at the top of this function) -
         # no cache, so an operator's table edit reaches the very next turn.
         brands = turn_runtime.active_brands(db)
+        account_types = _known_account_types(db, parser_config, contact_respond_id)
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
         # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
         # candidate lines name the product types and spec values the words say; the index
@@ -5548,6 +5586,7 @@ def _run_stages_body(  # noqa: PLR0915
         task_lines=parser.open_task_lines(state_in.focus, open_question),
         open_question_line=parser.open_question_line(open_question),
         brands=None if parser_config.lookup_lists else brands,
+        account_types=account_types,
         promotion_kinds=None if parser_config.lookup_lists else promotion_kinds,
         # REPORT-SMART-L R9: printed only when the prompt names the line (`ParserConfig.sales_channels`; owner ruling
         # 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule that names it).
@@ -6256,7 +6295,11 @@ def _run_stages_body(  # noqa: PLR0915
                 verdict, _company_pick = {**_candidate, "group_by": None}, _candidate is not verdict
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "basis":
             verdict = report_ask.as_basis_answer(verdict, open_ask)  # reference_positions pick an offered option
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and report_ask.names_its_own_ask(
+        _kind_pick = False
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "kind":
+            # SALES-ACCOUNT-TYPE PR 2: the word repeated with the parser's `kind_said` is the kind question's pick.
+            verdict, _kind_pick = report_ask.as_kind_answer(verdict, open_ask)
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and not _kind_pick and report_ask.names_its_own_ask(
             verdict, open_ask, parser_ops=parser_ops
         ):
             replaced_ask, open_ask = open_ask, None  # a new sales ranking ask, not the answer to the open question
