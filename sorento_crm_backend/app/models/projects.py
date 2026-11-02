@@ -52,6 +52,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -1112,7 +1113,12 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     recipient_name_snapshot = Column(String(200), nullable=True)
     recipient_address_snapshot = Column(Text, nullable=True)
     recipient_phone_snapshot = Column(String(200), nullable=True)
+    recipient_email_snapshot = Column(Text, nullable=True)
     attn_name = Column(String(120), nullable=True)
+    # Cover page (QUOTE-COVER-PAGE): free text, per quotation.
+    quotation_purpose = Column(Text, nullable=True)
+    payment_terms = Column(Text, nullable=True)
+    validity = Column(Text, nullable=True)
     subject_title = Column(Text, nullable=True)
 
     # The document's OWN editable copy, rendered from the company template at create. Editing it
@@ -1192,6 +1198,9 @@ class QuotationTemplate(Base, CompanyScopedMixin):
     kind = Column(String(32), nullable=False)
     name = Column(String(150), nullable=False)
     body_html = Column(Text, nullable=False)
+    # Defaults beside the terms template, copied onto a new quotation (kind terms only).
+    payment_terms = Column(Text, nullable=True)
+    validity = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="false", default=False)
 
     created_by = Column(String(100), nullable=True)
@@ -1250,6 +1259,9 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     cover_letter_rendered = Column(Text, nullable=True)
     terms_rendered = Column(Text, nullable=True)
+    # 1 = the layout before the cover page, 2 = cover page first. No python default on purpose:
+    # only issue() opts in, so every other path keeps layout 1.
+    layout_version = Column(SmallInteger, nullable=False, server_default="1")
     grand_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
 
     pdf_attachment_id = Column(

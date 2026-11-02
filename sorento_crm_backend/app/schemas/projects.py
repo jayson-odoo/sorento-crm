@@ -347,6 +347,7 @@ class ProjectResponse(BaseModel):
     customer_code: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_attn: Optional[str] = None
+    customer_email: Optional[str] = None
 
     status_id: Optional[str] = None
     status_key: Optional[str] = None
@@ -1914,6 +1915,11 @@ class ProjectQuotationDocumentBase(BaseModel):
     terms_html: Optional[str] = None
     signatory_name: Optional[str] = None
     signatory_phone: Optional[str] = None
+    # Cover page (QUOTE-COVER-PAGE).
+    recipient_email_snapshot: Optional[str] = None
+    quotation_purpose: Optional[str] = None
+    payment_terms: Optional[str] = None
+    validity: Optional[str] = None
 
 
 class ProjectQuotationFormScopeCreate(BaseModel):
@@ -2141,6 +2147,8 @@ class QuotationReviseRequest(BaseModel):
 class QuotationTemplateBase(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     body_html: str = Field(min_length=1)
+    payment_terms: Optional[str] = None
+    validity: Optional[str] = None
 
 
 class QuotationTemplateCreate(QuotationTemplateBase):
@@ -2160,6 +2168,8 @@ class QuotationTemplateUpdate(BaseModel):
 
     name: Optional[str] = Field(default=None, max_length=150)
     body_html: Optional[str] = None
+    payment_terms: Optional[str] = None
+    validity: Optional[str] = None
 
 
 class QuotationTemplateResponse(QuotationTemplateBase):
@@ -2351,6 +2361,13 @@ class QuotationSignScope(BaseModel):
     lines: List[QuotationSignScopeLine] = Field(default_factory=list)
 
 
+class QuotationCoverRow(BaseModel):
+    key: str
+    label: str
+    text: Optional[str] = None
+    html: Optional[str] = None
+
+
 class QuotationSignPageResponse(BaseModel):
     """The quotation a customer sees on the counter-sign link.
 
@@ -2359,6 +2376,8 @@ class QuotationSignPageResponse(BaseModel):
     """
 
     our_ref: Optional[str] = None
+    # The cover page rows (layout 2); null for an issue from before the cover page.
+    cover_rows: Optional[List[QuotationCoverRow]] = None
     issue_no: int
     doc_date: Optional[date] = None
     subject_title: Optional[str] = None

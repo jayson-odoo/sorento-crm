@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session, object_session
 
 from app.models.company import Company
 from app.models.projects import (
+    Project,
     ProjectQuotation,
     ProjectQuotationDocument,
     ProjectQuotationIssue,
@@ -54,6 +55,12 @@ from app.services import product_image_service as product_images
 from app.services.complaint_pdf_service import PDFRenderingUnavailable
 from app.services.error_handler import AppException
 from app.services.project_quotation_document_service import quotation_no
+from app.services.quotation_cover_service import (
+    COVER_LAYOUT,
+    cover_reference,
+    cover_rows,
+    layout_of,
+)
 from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
 
 logger = logging.getLogger(__name__)
@@ -425,11 +432,8 @@ def _document_of(db: Session, issue: ProjectQuotationIssue) -> ProjectQuotationD
 # --------------------------------------------------------------------- rendering
 
 
-def _header_html(
-    document: ProjectQuotationDocument,
-    issue: ProjectQuotationIssue,
-    sender: Dict[str, Any],
-) -> str:
+def _letterhead_html(sender: Dict[str, Any]) -> str:
+    """The sender block (logo, name, address, Tel), shared by the cover and the price page."""
     sender_bits: List[str] = []
     logo = fetch_logo_data_uri(sender.get("logo_url"))
     if sender["name"]:
@@ -437,9 +441,21 @@ def _header_html(
     sender_bits += [f"<div>{_cell(line)}</div>" for line in sender["address_lines"]]
     if sender["phone"]:
         sender_bits.append(f'<div>Tel: {_cell(sender["phone"])}</div>')
+    logo_html = f'<img class="letterhead-logo" src="{escape(logo)}"/>' if logo else ""
+    return f'<div class="sender-wrap">{logo_html}<div class="sender">{"".join(sender_bits)}</div></div>'
 
+
+def _header_html(
+    document: ProjectQuotationDocument,
+    issue: ProjectQuotationIssue,
+    letterhead: str,
+    reference: Optional[str] = None,
+) -> str:
     refs = [
-        ("Quotation No.", _cell(quotation_no(document.document_no, issue.issue_no))),
+        (
+            "Quotation No.",
+            _cell(reference or quotation_no(document.document_no, issue.issue_no)),
+        ),
         ("Your Ref", _cell(document.your_ref)),
     ]
     refs.append(("Date", _date(document.doc_date or issue.issued_at)))
@@ -468,11 +484,9 @@ def _header_html(
         else ""
     )
 
-    logo_html = f'<img class="letterhead-logo" src="{escape(logo)}"/>' if logo else ""
-
     return f"""
   <div class="top">
-    <div class="sender-wrap">{logo_html}<div class="sender">{"".join(sender_bits)}</div></div>
+    {letterhead}
     <table class="refs">{ref_rows}</table>
   </div>
   <div class="to">
@@ -579,6 +593,25 @@ def _scope_html(
       </tr></tfoot>
     </table>
   </div>
+"""
+
+
+def _cover_html(rows: List[Dict[str, Any]], letterhead: str) -> str:
+    """Page 1 (layout 2): letterhead, the title and the label/value rows of ``cover_rows``."""
+    body: List[str] = []
+    for row in rows:
+        if row["key"] == "terms":
+            value = row["html"]
+        else:
+            value = "<br/>".join(_cell(row["text"]).splitlines())
+        label = escape(f'{row["label"].upper()}:')
+        body.append(f"<tr><th>{label}</th><td>{value}</td></tr>")
+    return f"""
+  <section class="cover">
+    <div class="cover-top">{letterhead}</div>
+    <div class="cover-title">QUOTATION</div>
+    <table class="cover-rows">{"".join(body)}</table>
+  </section>
 """
 
 
@@ -747,6 +780,22 @@ _STYLE = """
   .sender-wrap img { height: 40px; max-width: 120px; object-fit: contain; }
 """
 
+# Added only for layout 2, so a layout 1 issue renders from exactly the stylesheet above.
+_COVER_STYLE = """
+  @page cover { size: A4 portrait; margin: 15mm 15mm; }
+  .cover { page: cover; break-after: page; font-size: 11px; }
+  .cover-top { margin-bottom: 24px; }
+  .cover-title { font-size: 20px; font-weight: 700; letter-spacing: 2px; margin-bottom: 18px; }
+  table.cover-rows { width: 100%; border-collapse: collapse; }
+  table.cover-rows th { width: 150px; text-align: left; vertical-align: top;
+                        padding: 5px 12px 5px 0; font-weight: 700; }
+  table.cover-rows td { vertical-align: top; padding: 5px 0; line-height: 1.4; }
+  table.cover-rows td p { margin: 0; }
+  table.cover-rows td ul { margin: 0; padding-left: 18px; list-style: disc; }
+  table.cover-rows td ul ul { list-style: circle; }
+  table.cover-rows td ol { margin: 0; padding-left: 18px; list-style: decimal; }
+"""
+
 
 def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
     """The whole document as HTML, straight off the issue snapshot.
@@ -764,13 +813,29 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
     image_cache: Dict[str, Optional[str]] = {}
     scopes_html = "".join(_scope_html(db, scope, image_cache) for scope in scopes)
 
+    letterhead = _letterhead_html(sender)
+    cover = ""
+    style = _STYLE
+    reference = None
+    terms = _terms_html(issue)
+    if layout_of(issue) >= COVER_LAYOUT:
+        project = (
+            db.query(Project).filter(Project.id == document.project_id).first()
+            if document.project_id
+            else None
+        )
+        reference = cover_reference(document, issue, project)
+        cover = _cover_html(cover_rows(db, document, issue), letterhead)
+        style = _STYLE + _COVER_STYLE
+        terms = ""
+
     return f"""<!doctype html><html><head><meta charset="utf-8"/>
-<style>{_STYLE}</style></head><body>
-{_header_html(document, issue, sender)}
+<style>{style}</style></head><body>
+{cover}{_header_html(document, issue, letterhead, reference)}
   {letter_html}
   {scopes_html}
   <div class="grand">TOTAL AMOUNT&nbsp;&nbsp;RM {_money(issue.grand_total)}</div>
-  {_terms_html(issue)}
+  {terms}
   {_sign_off_html(db, document, issue)}
 </body></html>"""
 
