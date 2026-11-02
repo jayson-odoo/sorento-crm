@@ -303,3 +303,22 @@ describe('Cover page design editor (A3, A4)', () => {
     expect(within(document.body).getAllByRole('checkbox')).toHaveLength(12);
   });
 });
+
+describe('Deactivate a cover design (fix round 1)', () => {
+  it('the active cover design shows Deactivate, inactive rows keep Activate, and Deactivate posts', async () => {
+    renderPage();
+    await openCoverTab();
+    expect(screen.getAllByRole('button', { name: 'Deactivate' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Activate' })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Deactivate' }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === 'POST' && c.url.endsWith('/quotation-templates/c1/deactivate'))).toBe(true),
+    );
+  });
+
+  it('terms rows are unchanged: no Deactivate action', async () => {
+    renderPage();
+    await screen.findByText('Standard 2026');
+    expect(screen.queryByRole('button', { name: 'Deactivate' })).toBeNull();
+  });
+});
