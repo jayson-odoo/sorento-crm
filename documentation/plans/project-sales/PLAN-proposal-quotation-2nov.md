@@ -91,7 +91,7 @@ version (PO binding, samples, SO draft) keeps working.
 - `PARTY_TYPES` gains `tender_party` only (`project_reference_service.py:26`); FE label "Tender party".
   PS-REGISTRATION-V3 (#2099) owns `subcontractor` and `interior_designer` (agreed on #2097, 2 Nov).
 - The proposal "To" picker reuses #2099's read: `GET /api/v1/projects/{project_id}/parties`
-  (`project_party_contact_service.list_project_parties`, FE `useProjectParties(projectId)`). Wired after
+  (`project_party_contact_service.list_project_parties`, FE `usePartiesOnProject(projectId)`, service `projectService.getPartiesOnProject`, type `PartyOnProject`). Wired after
   #2099 merges (merge main, then wire); until then the recipient block stays as today.
 
 ### Bot / reports
