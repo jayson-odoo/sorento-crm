@@ -13,7 +13,9 @@ never refuses an order.
 - U5. The server refuses a draft save or Undo based on an older draft (409
   `board_line_draft_newer`); a request that says nothing keeps last writer wins.
 - U6. A line delivered in full that a pending change names shows DELIVERY DATE = the date before
-  the change and NEW DATE = after it, the change word, and no "nothing goes to purchasing" note.
+  the change and NEW DATE = after it, and no "nothing goes to purchasing" note. Its REMARK, like
+  every line's, is the purchasing email's own (the press's dry run, `email_lines`): Buy 25 held
+  with a date move reads "DELAY"; Reserve 5 + Buy 20 reads "DELAY, CHANGED: ORDER 25 -> ...".
 - U7. A line AutoCount closed because it was delivered reads its change word, never CANCEL ALL.
 - U8. A saved decision whose composition differs from the change's suggestion is flagged "AutoCount
   moved this line: suggestion X, you keep Y" with Keep / Take suggestion; the same composition
