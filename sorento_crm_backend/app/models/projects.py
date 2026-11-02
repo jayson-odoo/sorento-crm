@@ -1214,6 +1214,12 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     cover_letter_html = Column(Text, nullable=True)
     terms_html = Column(Text, nullable=True)
 
+    # PS-SPEC-SHEET: the spec sheet's settings (templates, revision printed, and per item the page
+    # order, Area, Comment, Marker, Hide and hand-picked accessories). Keyed by product id or
+    # ``set:<id>`` rather than by line id, so they survive a new revision. Shape and validation in
+    # ``project_spec_sheet_service``. NULL = never set up.
+    spec_sheet = Column(JSONB(none_as_null=True), nullable=True)
+
     signatory_name = Column(String(120), nullable=True)
     signatory_phone = Column(String(60), nullable=True)
     # The internal signature held on the DRAFT, so signing and issuing are separate acts: a person
@@ -1247,6 +1253,22 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
+    # PS-PROPOSAL-QUOTATION. Every document is a PROPOSAL until a won project converts one issued
+    # proposal revision into the project's QUOTATION: the same row shape, so the editor, issue,
+    # sign page, PDF and approval gate all work on it unchanged. `source_issue_id` is the proposal
+    # revision it was made from (the baseline a further discount is compared with).
+    kind = Column(String(16), nullable=False, server_default="proposal", default="proposal")
+    source_issue_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(
+            "projects.quotation_issues.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_quotation_documents_source_issue",
+        ),
+        nullable=True,
+    )
+
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -1257,6 +1279,13 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
         Index("ix_project_quotation_documents_project", "project_id"),
         Index("ix_project_quotation_documents_approval_status", "approval_status_id"),
         UniqueConstraint("company_id", "document_no", name="uq_project_quotation_documents_no"),
+        CheckConstraint("kind IN ('proposal', 'quotation')", name="ck_quotation_documents_kind"),
+        Index(
+            "uq_quotation_documents_one_quotation",
+            "project_id",
+            unique=True,
+            postgresql_where=text("kind = 'quotation'"),
+        ),
         {"schema": "projects"},
     )
 
@@ -1346,6 +1375,10 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
     # The exact string printed as `Our Ref`, kept rather than recomputed: it is what the customer
     # will quote back, and the format may change.
     our_ref_text = Column(String(120), nullable=True)
+    # The revision as printed after the document number: 'A', 'B' ... for a proposal first issued
+    # after PS-PROPOSAL-QUOTATION, 'R1', 'R2' ... for a quotation and for every issue that existed
+    # before (backfilled), so nothing already sent changes its name.
+    revision_label = Column(String(8), nullable=True)
 
     issued_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     issued_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -1956,6 +1989,13 @@ class ProjectPurchaseOrder(Base, CompanyScopedMixin):
 
     approved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approved_at = Column(DateTime(timezone=False), nullable=True)
+    # PS-PROPOSAL-QUOTATION soft stop: why the project's POs order more of a product than the
+    # quotation quoted. Asked once per PO, shown to management, never a block.
+    qty_over_reason = Column(Text, nullable=True)
+    qty_over_reason_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    qty_over_reason_at = Column(DateTime(timezone=False), nullable=True)
     countersigned_by = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

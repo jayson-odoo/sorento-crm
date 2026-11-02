@@ -317,11 +317,16 @@ class POConfirmationMixin:
         if po.quotation_version_id:
             return None
 
-        quotations = (
-            self.db.query(ProjectQuotation)
-            .filter(ProjectQuotation.project_id == po.project_id)
-            .all()
+        query = self.db.query(ProjectQuotation).filter(
+            ProjectQuotation.project_id == po.project_id
         )
+        # PS-PROPOSAL-QUOTATION: once the project has a quotation, the PO tallies with IT.
+        from app.services.project_quotation_document_service import project_quotation
+
+        held = project_quotation(self.db, po.project_id)
+        if held is not None:
+            query = query.filter(ProjectQuotation.document_id == held.id)
+        quotations = query.all()
         if not quotations:
             return None
 

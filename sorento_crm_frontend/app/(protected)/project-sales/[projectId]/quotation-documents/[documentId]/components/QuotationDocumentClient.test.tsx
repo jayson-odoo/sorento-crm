@@ -371,7 +371,7 @@ function seedOneScope(lines: QuotationLine[] = [line()]) {
 
 /** The gear. Radix opens it on pointerDown, not click. */
 async function openGear() {
-  fireEvent.pointerDown(await screen.findByRole('button', { name: 'Quotation actions' }), {
+  fireEvent.pointerDown(await screen.findByRole('button', { name: 'Proposal actions' }), {
     button: 0,
     ctrlKey: false,
   });
@@ -387,7 +387,7 @@ async function openGear() {
  */
 async function pressEdit() {
   const menu = await openGear();
-  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit quotation' }));
+  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit proposal' }));
   // Selecting an item closes the menu, which - like every Radix modal layer -
   // keeps `aria-hidden` over the rest of the page for as long as it stays
   // mounted for its own close animation (S8-01's shared spring, unlike the old
@@ -404,7 +404,7 @@ async function pressEdit() {
  */
 async function gearOffersEdit() {
   const menu = await openGear();
-  const offered = within(menu).queryByRole('menuitem', { name: 'Edit quotation' }) !== null;
+  const offered = within(menu).queryByRole('menuitem', { name: 'Edit proposal' }) !== null;
   fireEvent.keyDown(menu, { key: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
   return offered;
@@ -532,6 +532,19 @@ describe('QuotationDocumentClient signing gate', () => {
     expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
   });
 
+  it('PS-PROPOSAL-QUOTATION: the Send button names the next revision the server will stamp (C, not R3)', async () => {
+    getQuotationDocument.mockResolvedValue(
+      quotationDocument({
+        signatory_signature: signature(),
+        current_issue_no: 2,
+        next_revision_label: 'C',
+      }),
+    );
+    renderScreen();
+
+    expect(await screen.findByRole('button', { name: 'Send to Customer C' })).toBeEnabled();
+  });
+
   it('E1: below-floor pricing nobody has asked a manager about leads with Send for approval, never Send to Customer', async () => {
     getQuotationDocument.mockResolvedValue(
       quotationDocument({
@@ -631,7 +644,7 @@ describe('QuotationDocumentClient Edit quotation (#1341)', () => {
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
     await pressEdit();
 
-    expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save proposal' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
     expect(screen.queryByLabelText('Your Ref')).toBeNull();
     expect(screen.queryByRole('button', { name: /Add a line/i })).toBeNull();
@@ -880,7 +893,7 @@ describe('QuotationDocumentClient queued exports', () => {
     // no revision, so there is nothing for it to count and it is not rendered.
     getQuotationDocument.mockResolvedValue(quotationDocument());
     const { unmount } = renderScreen();
-    await screen.findByRole('button', { name: 'Quotation actions' });
+    await screen.findByRole('button', { name: 'Proposal actions' });
     expect(fetchDownloadsForEntity).not.toHaveBeenCalled();
     unmount();
 
@@ -1346,7 +1359,7 @@ function primaryButtons() {
 }
 
 async function screenReady() {
-  await screen.findByRole('button', { name: 'Quotation actions' });
+  await screen.findByRole('button', { name: 'Proposal actions' });
 }
 
 describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
@@ -1383,7 +1396,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
       screen.queryAllByRole('button', { name: 'Sign' }).filter((b) => b.classList.contains('bg-primary')),
     ).toHaveLength(0);
     const menu = await openGear();
-    expect(within(menu).getByRole('menuitem', { name: /Sign quotation/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /Sign proposal/ })).toBeInTheDocument();
   });
 
   it('E1: the label comes off the graph edge, and falls back to Send for approval with no graph', async () => {
@@ -1574,11 +1587,11 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     const menu = await openGear();
     for (const name of [
       'Sign again',
-      'Edit quotation',
+      'Edit proposal',
       'Download PDF',
       'Download Excel',
       'Copy counter-sign link',
-      'Delete quotation',
+      'Delete proposal',
     ]) {
       expect(within(menu).getByRole('menuitem', { name: new RegExp(name) })).toBeInTheDocument();
     }
@@ -1589,7 +1602,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     renderScreen();
 
     const menu = await openGear();
-    expect(within(menu).getByRole('menuitem', { name: /Sign quotation/ })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: /Sign proposal/ })).toBeInTheDocument();
   });
 
   it('E8: the approval banner states the situation and holds no buttons', async () => {
@@ -1775,7 +1788,7 @@ describe('QuotationDocumentClient: Delete is the deferred countdown (F7)', () =>
     renderScreen();
 
     const menu = await openGear();
-    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete quotation/ }));
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete proposal/ }));
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     expect(createPendingAction).toHaveBeenCalledWith(
@@ -1846,7 +1859,7 @@ describe('QuotationDocumentClient: fix round 2', () => {
     renderScreen();
 
     const menu = await openGear();
-    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete quotation/ }));
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /Delete proposal/ }));
 
     expect(await screen.findByTestId('deferred-countdown')).toBeInTheDocument();
   });

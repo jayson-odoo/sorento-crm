@@ -1253,6 +1253,11 @@ class ProjectQuotationResponse(ProjectQuotationBase):
     id: str
     project_id: str
     series_name: Optional[str] = None
+    # PS-PROPOSAL-QUOTATION: the document this scope sits on, and whether it is a proposal or the
+    # project's quotation.
+    document_id: Optional[str] = None
+    document_no: Optional[str] = None
+    document_kind: Optional[str] = None
 
     outcome: str = "open"
     loss_reason: Optional[str] = None
@@ -1665,6 +1670,8 @@ class ProjectPurchaseOrderUpdate(BaseModel):
     po_date: Optional[date] = None
     po_amount: Optional[Decimal] = None
     notes: Optional[str] = None
+    # PS-PROPOSAL-QUOTATION soft stop: sent on the second save after a 409 po_qty_over_quoted.
+    qty_over_reason: Optional[str] = Field(None, max_length=2000)
     lines: Optional[List["ProjectPurchaseOrderLineWrite"]] = Field(
         None,
         description=(
@@ -1706,6 +1713,13 @@ class ProjectPurchaseOrderResponse(BaseModel):
     published_sales_order_count: int = 0
     model_mismatch_count: int = 0
     price_mismatch_count: int = 0
+    # PS-PROPOSAL-QUOTATION: the salesperson's reason for ordering above the quotation.
+    qty_over_reason: Optional[str] = None
+    qty_over_reason_at: Optional[datetime] = None
+    qty_over_reason_by_name: Optional[str] = None
+    # The kind of document the bound version belongs to (proposal | quotation).
+    checked_against_kind: Optional[str] = None
+    checked_against_label: Optional[str] = None
 
     # AC-F9a: erosion since v1, as a number rather than a flag. A negotiation is
     # SUPPOSED to move the price; management wants the size of the move.
@@ -2068,6 +2082,7 @@ class ProjectQuotationIssueResponse(BaseModel):
     document_id: str
     issue_no: int
     our_ref_text: Optional[str] = None
+    revision_label: Optional[str] = None
     issued_at: Optional[datetime] = None
     issued_by: Optional[str] = None
     issued_by_name: Optional[str] = None
@@ -2149,9 +2164,27 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     approver_user_id: Optional[str] = None
     approver_name: Optional[str] = None
     viewer_may_decide: Optional[bool] = None
+    # PS-PROPOSAL-QUOTATION: quotation lines priced below the proposal revision it came from.
+    below_proposal_count: int = 0
+
+    # PS-PROPOSAL-QUOTATION: proposal or quotation, and the link between them.
+    kind: str = "proposal"
+    source_issue_id: Optional[str] = None
+    source_document_id: Optional[str] = None
+    source_label: Optional[str] = None
+    quotation_document_id: Optional[str] = None
+    recipient_party_type: Optional[str] = None
+    current_revision_label: Optional[str] = None
+    next_revision_label: Optional[str] = None
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+class MakeQuotationRequest(BaseModel):
+    """PS-PROPOSAL-QUOTATION: the issued proposal revision a won project's quotation is made from."""
+
+    issue_id: str = Field(min_length=1)
 
 
 class QuotationApprovalMoveRequest(BaseModel):
@@ -2409,9 +2442,13 @@ class QuotationSignScopeLine(BaseModel):
     item_label: Optional[str] = None
     description: Optional[str] = None
     technical_spec: Optional[str] = None
+    # Inline data URIs (the PDF's own downscaled bytes), never a storage key or signed link.
+    image_url: Optional[str] = None
+    drawing_url: Optional[str] = None
     brand: Optional[str] = None
     product_code: Optional[str] = None
     quantity: Decimal = Decimal("0")
+    uom: Optional[str] = None
     unit_price: Decimal = Decimal("0")
     complete_set: Optional[str] = None
     band_label: Optional[str] = None
@@ -2419,9 +2456,16 @@ class QuotationSignScopeLine(BaseModel):
     amount: Optional[Decimal] = None
 
 
+class QuotationSignColumn(BaseModel):
+    key: str
+    label: str
+
+
 class QuotationSignScope(BaseModel):
     scope_label: str
     scope_total: Decimal = Decimal("0")
+    # The quotation's own column set for this scope (`app.services.quotation_columns`).
+    columns: List[QuotationSignColumn] = Field(default_factory=list)
     lines: List[QuotationSignScopeLine] = Field(default_factory=list)
 
 
@@ -2440,6 +2484,8 @@ class QuotationSignPageResponse(BaseModel):
     """
 
     our_ref: Optional[str] = None
+    # PS-PROPOSAL-QUOTATION: proposal | quotation, so the page names what the customer holds.
+    document_kind: str = "proposal"
     # The cover page rows (layout 2); null for an issue from before the cover page.
     cover_rows: Optional[List[QuotationCoverRow]] = None
     issue_no: int

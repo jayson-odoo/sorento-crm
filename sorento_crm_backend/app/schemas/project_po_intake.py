@@ -315,3 +315,11 @@ class AnnotationActionResponse(BaseModel):
     annotation: POAnnotationResponse
     applied: AnnotationApplied
     totals: POVersionTotals
+
+
+class POConfirmRequest(BaseModel):
+    """Optional body of a PO confirm (PS-PROPOSAL-QUOTATION): the salesperson's reason when the
+    project's POs order more than the quotation quotes. Sent on the second press after a 409
+    ``po_qty_over_quoted``; absent on an ordinary confirm."""
+
+    qty_over_reason: Optional[str] = Field(None, max_length=2000)

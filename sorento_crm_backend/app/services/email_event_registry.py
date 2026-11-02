@@ -200,6 +200,20 @@ EMAIL_EVENT_REGISTRY: list[EventDef] = [
         "arrives.",
     ),
     EventDef(
+        "project_proposal_price_changed",
+        "Project sales: proposal price changed",
+        "Emails project managers when a proposal revision is issued with a unit price that "
+        "differs from the previous revision. Turning this off stops only the email; the in-app "
+        "notification still arrives.",
+    ),
+    EventDef(
+        "project_po_qty_over_quote",
+        "Project sales: PO quantity over the quotation",
+        "Emails project managers and the owner when a project's POs order more of a product "
+        "than its quotation quoted, with the salesperson's reason. Turning this off stops only "
+        "the email; the in-app notification still arrives.",
+    ),
+    EventDef(
         "notification_delivery",
         "Generic notification delivery",
         "Fallback event_key for legacy NotificationDelivery rows whose event_type does not "

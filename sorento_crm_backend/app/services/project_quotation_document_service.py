@@ -19,6 +19,7 @@ wrong once somewhere in this codebase:
 from __future__ import annotations
 
 import logging
+import re
 import secrets
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -58,6 +59,11 @@ from app.services.numbering_service import NumberingService
 logger = logging.getLogger(__name__)
 
 QUOTATION_DOC_TYPE = "project_quotation"
+# PS-PROPOSAL-QUOTATION: the quotation a won project converts one proposal revision into has its
+# own running number, so a customer can tell the two apart from the reference alone.
+SALES_QUOTATION_DOC_TYPE = "project_sales_quotation"
+KIND_PROPOSAL = "proposal"
+KIND_QUOTATION = "quotation"
 
 ZERO = Decimal("0.00")
 
@@ -120,19 +126,60 @@ def _item_number(line: ProjectQuotationLine, position: int) -> str:
     return item_number(line, position)
 
 
-def quotation_no(document_no: Optional[str], issue_no: int) -> str:
-    """The "Quotation No." every surface prints: `<document_no>-R<issue_no>`.
+def quotation_no(document_no: Optional[str], issue_no: int, label: Optional[str] = None) -> str:
+    """The number every surface prints: `<document_no>-<label>`, e.g. PRJQ-2026-0003-B.
 
     Built, never read back from `our_ref_text`, so an issue stored with the old `(R1)` text still
-    shows the same number on the sign page, the PDF, the workbook and the download name.
+    shows the same number on the sign page, the PDF, the workbook and the download name. With no
+    stored label (a row the backfill has not reached) it is the legacy `R<issue_no>`.
     """
-    return f"{document_no}-R{issue_no}"
+    return f"{document_no}-{label or f'R{issue_no}'}"
+
+
+def issue_no_text(document_no: Optional[str], record: ProjectQuotationIssue) -> str:
+    """`quotation_no` for a stored issue, reading its own label."""
+    return quotation_no(document_no, record.issue_no, record.revision_label)
+
+
+def revision_letter(n: int) -> str:
+    """1 -> A ... 26 -> Z, 27 -> AA: the proposal revision letters (PS-PROPOSAL-QUOTATION)."""
+    letters = ""
+    while n > 0:
+        n, rest = divmod(n - 1, 26)
+        letters = chr(ord("A") + rest) + letters
+    return letters
+
+
+def document_noun(document: Optional[ProjectQuotationDocument]) -> str:
+    """"Proposal" or "Quotation": the word every surface prints for this document."""
+    return "Quotation" if getattr(document, "kind", None) == KIND_QUOTATION else "Proposal"
+
+
+_LEGACY_LABEL = re.compile(r"^R\d+$")
+
+
+def _next_label(db: Session, document: ProjectQuotationDocument, issue_no: int) -> str:
+    """A quotation counts R1, R2. A proposal counts A, B, C - unless it already went out as R1
+    before this lane, in which case it keeps counting R so the customer's paper stays in order."""
+    if document.kind == KIND_QUOTATION:
+        return f"R{issue_no}"
+    earlier = [
+        row[0] or ""
+        for row in db.query(ProjectQuotationIssue.revision_label)
+        .filter(ProjectQuotationIssue.document_id == document.id)
+        .all()
+    ]
+    if any(_LEGACY_LABEL.match(label) for label in earlier):
+        return f"R{issue_no}"
+    return revision_letter(issue_no)
 
 
 # ------------------------------------------------------------------ create
 
 
-def _next_document_no(db: Session, company_id: Optional[str]) -> str:
+def _next_document_no(
+    db: Session, company_id: Optional[str], doc_type: str = QUOTATION_DOC_TYPE
+) -> str:
     """From the running-number feature, so an admin can change the format without a deploy.
 
     Scoped to the company: a customer-facing series that two companies share is not a series.
@@ -140,18 +187,23 @@ def _next_document_no(db: Session, company_id: Optional[str]) -> str:
     quotation because nobody configured a prefix would be a worse failure than an ugly reference.
     """
     number = NumberingService(db).get_next_number(
-        QUOTATION_DOC_TYPE, company_id=company_id, commit_rule=False
+        doc_type, company_id=company_id, commit_rule=False
     )
     if number:
         return number
 
+    kind = KIND_QUOTATION if doc_type == SALES_QUOTATION_DOC_TYPE else KIND_PROPOSAL
     highest = (
         db.query(func.count(ProjectQuotationDocument.id))
-        .filter(ProjectQuotationDocument.company_id == company_id)
+        .filter(
+            ProjectQuotationDocument.company_id == company_id,
+            ProjectQuotationDocument.kind == kind,
+        )
         .scalar()
         or 0
     )
-    return f"Q-{date.today().year}-{highest + 1:04d}"
+    prefix = "QT" if kind == KIND_QUOTATION else "Q"
+    return f"{prefix}-{date.today().year}-{highest + 1:04d}"
 
 
 def _recipient_from_project(db: Session, project: Project) -> Dict[str, Any]:
@@ -569,12 +621,15 @@ def issue(
         .scalar()
     )
     issue_no = 1 if highest is None else int(highest) + 1
+    label = _next_label(db, document, issue_no)
+    previous = current_issue(db, document)
 
     record = ProjectQuotationIssue(
         company_id=document.company_id,
         document_id=document.id,
         issue_no=issue_no,
-        our_ref_text=quotation_no(document.document_no, issue_no),
+        revision_label=label,
+        our_ref_text=quotation_no(document.document_no, issue_no, label),
         issued_at=datetime.utcnow(),
         issued_by=actor_user_id,
         cover_letter_rendered=document.cover_letter_html,
@@ -622,7 +677,267 @@ def issue(
     # `approved` and the next revision that dips below the floor has to be approved on its own
     # merits. A no-op on a quotation that was never on the graph.
     approvals.mark_issued(db, document)
+    # Rule 3. Worked out here, SENT by the route after its commit: the notification service
+    # commits per recipient, so sending inside this transaction would commit the issue early and
+    # leave every recipient after the first unsent (and no email queued at all).
+    record.price_changes = (
+        price_changes(db, previous, record)
+        if document.kind != KIND_QUOTATION and previous is not None
+        else []
+    )
     return record
+
+
+# ------------------------------------------------- PS-PROPOSAL-QUOTATION
+
+
+def line_key(line: ProjectQuotationLine) -> Optional[str]:
+    """What makes two lines "the same product" across revisions and documents: the product, else
+    the set, else the code the line printed."""
+    if line.product_id:
+        return str(line.product_id)
+    if line.product_set_id:
+        return f"set:{line.product_set_id}"
+    code = (line.product_code_snapshot or "").strip().upper()
+    return f"code:{code}" if code else None
+
+
+def issue_lines(db: Session, record: ProjectQuotationIssue) -> List[ProjectQuotationLine]:
+    """Every line of every version this issue froze."""
+    return (
+        db.query(ProjectQuotationLine)
+        .join(
+            ProjectQuotationIssueScope,
+            ProjectQuotationIssueScope.version_id == ProjectQuotationLine.version_id,
+        )
+        .filter(ProjectQuotationIssueScope.issue_id == record.id)
+        .order_by(ProjectQuotationIssueScope.sort_order, ProjectQuotationLine.sort_order)
+        .all()
+    )
+
+
+def issue_price_map(db: Session, record: ProjectQuotationIssue) -> Dict[str, Decimal]:
+    """`line_key -> unit price` of one issue; the lowest when a product appears twice."""
+    prices: Dict[str, Decimal] = {}
+    for line in issue_lines(db, record):
+        key = line_key(line)
+        if key is None or line.is_rate_only:
+            continue
+        price = Decimal(line.unit_price or 0)
+        if key not in prices or price < prices[key]:
+            prices[key] = price
+    return prices
+
+
+def price_changes(
+    db: Session, previous: ProjectQuotationIssue, record: ProjectQuotationIssue
+) -> List[Dict[str, Any]]:
+    """Products in both revisions whose unit price moved. Added or removed lines are not price
+    changes, and a quantity-only change is nothing at all."""
+    before = issue_price_map(db, previous)
+    changes: List[Dict[str, Any]] = []
+    seen: set = set()
+    for line in issue_lines(db, record):
+        key = line_key(line)
+        if key is None or key in seen or key not in before or line.is_rate_only:
+            continue
+        seen.add(key)
+        new_price = Decimal(line.unit_price or 0)
+        if new_price != before[key]:
+            changes.append(
+                {
+                    "product_code": line.product_code_snapshot,
+                    "description": line.description_snapshot,
+                    "old_price": before[key],
+                    "new_price": new_price,
+                }
+            )
+    return changes
+
+
+def alert_price_changes(
+    db: Session, document: ProjectQuotationDocument, record: ProjectQuotationIssue
+) -> None:
+    """Rule 3: a PRICE change between two revisions of one proposal tells management.
+
+    Called by the route AFTER the issue is committed, with the changes `issue()` worked out.
+    Best-effort: the revision has already gone out and an alert that fails must not take it back.
+    """
+    changes = getattr(record, "price_changes", None) or []
+    if not changes:
+        return
+    try:
+        project = db.query(Project).filter(Project.id == document.project_id).first()
+        if project is None:
+            return
+        from app.services import project_notify_service as notify
+
+        notify.notify_proposal_price_changed(
+            db, project=project, document=document, record=record, changes=changes
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("proposal price alert not sent: document=%s (%s)", document.id, exc)
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def alert_price_changes_job(
+    db: Session, document_id: str, issue_id: str, changes: List[Dict[str, Any]]
+) -> None:
+    """``alert_price_changes`` for an after-response job: re-reads the rows on its own session."""
+    if not changes:
+        return
+    document = db.query(ProjectQuotationDocument).filter(
+        ProjectQuotationDocument.id == document_id
+    ).first()
+    record = db.query(ProjectQuotationIssue).filter(ProjectQuotationIssue.id == issue_id).first()
+    if document is None or record is None:
+        return
+    record.price_changes = changes
+    alert_price_changes(db, document, record)
+
+
+def project_quotation(db: Session, project_id: str) -> Optional[ProjectQuotationDocument]:
+    """The project's quotation (one at most, held by a partial unique index)."""
+    return (
+        db.query(ProjectQuotationDocument)
+        .filter(
+            ProjectQuotationDocument.project_id == project_id,
+            ProjectQuotationDocument.kind == KIND_QUOTATION,
+        )
+        .first()
+    )
+
+
+def make_quotation(
+    db: Session,
+    *,
+    proposal: ProjectQuotationDocument,
+    issue_id: str,
+    actor_user_id: str,
+) -> ProjectQuotationDocument:
+    """A won project's salesperson turns ONE issued proposal revision into the QUOTATION.
+
+    A copy, not a re-pointing: the proposal and its issues stay exactly what the customer was
+    sent, and the quotation gets its own number, its own scopes and versions (so a PO, a sample
+    or an SO draft binds to it like to any version) and its own Sorento signature. The letter,
+    terms, payment terms and validity come from the ISSUE's frozen copies, because that is what
+    the customer agreed to, not whatever the proposal's draft says since.
+    """
+    if proposal.kind != KIND_PROPOSAL:
+        raise AppException(
+            status_code=422,
+            message="Pick a proposal revision to make the quotation from.",
+            code="quotation_source_not_proposal",
+        )
+    record = next(
+        (row for row in list_issues(db, proposal) if str(row.id) == str(issue_id)), None
+    )
+    if record is None:
+        raise AppException(
+            status_code=404, message="Revision not found.", code="quotation_issue_not_found"
+        )
+    project = db.query(Project).filter(Project.id == proposal.project_id).first()
+    if project is None or scope_service.derive_project_outcome(db, project) != "won":
+        raise AppException(
+            status_code=409,
+            message="Mark the project Won before making its quotation.",
+            code="project_not_won",
+        )
+    if project_quotation(db, project.id) is not None:
+        raise AppException(
+            status_code=409,
+            message="This project already has a quotation.",
+            code="project_has_quotation",
+        )
+
+    quotation = ProjectQuotationDocument(
+        company_id=proposal.company_id,
+        project_id=proposal.project_id,
+        kind=KIND_QUOTATION,
+        source_issue_id=record.id,
+        document_no=_next_document_no(db, proposal.company_id, SALES_QUOTATION_DOC_TYPE),
+        your_ref=proposal.your_ref,
+        doc_date=date.today(),
+        recipient_party_id=proposal.recipient_party_id,
+        recipient_name_snapshot=proposal.recipient_name_snapshot,
+        recipient_address_snapshot=proposal.recipient_address_snapshot,
+        recipient_phone_snapshot=proposal.recipient_phone_snapshot,
+        recipient_email_snapshot=proposal.recipient_email_snapshot,
+        attn_name=proposal.attn_name,
+        quotation_purpose=proposal.quotation_purpose,
+        subject_title=proposal.subject_title,
+        cover_letter_html=record.cover_letter_rendered,
+        terms_html=record.terms_rendered,
+        payment_terms=record.payment_terms,
+        validity=record.validity,
+        signatory_name=proposal.signatory_name,
+        signatory_phone=proposal.signatory_phone,
+        # PS-SPEC-SHEET (#2103): the spec sheet settings travel with the lines they describe.
+        spec_sheet=proposal.spec_sheet,
+        created_by=actor_user_id,
+    )
+    db.add(quotation)
+    db.flush()
+
+    pairs = (
+        db.query(ProjectQuotationIssueScope, ProjectQuotation)
+        .join(ProjectQuotation, ProjectQuotation.id == ProjectQuotationIssueScope.quotation_id)
+        .filter(ProjectQuotationIssueScope.issue_id == record.id)
+        .order_by(ProjectQuotationIssueScope.sort_order)
+        .all()
+    )
+    now = datetime.utcnow()
+    for pair, scope in pairs:
+        if scope.outcome == QUOTATION_OUTCOME_LOST:
+            continue
+        copy = ProjectQuotation(
+            company_id=quotation.company_id,
+            project_id=quotation.project_id,
+            document_id=quotation.id,
+            sort_order=scope.sort_order,
+            scope_label=scope.scope_label,
+            series_id=scope.series_id,
+            notes=scope.notes,
+            # The project is won, and so is what it won: created won, so the open pipeline
+            # never counts the same money twice (forecast sums OPEN scopes only).
+            outcome=QUOTATION_OUTCOME_WON,
+            decided_at=now,
+            created_by=actor_user_id,
+        )
+        db.add(copy)
+        db.flush()
+        version = ProjectQuotationVersion(
+            company_id=quotation.company_id,
+            quotation_id=copy.id,
+            version_no=1,
+            issued_by=actor_user_id,
+            total_amount=ZERO,
+        )
+        db.add(version)
+        db.flush()
+        for line in scope_service.list_lines(db, pair.version_id):
+            db.add(scope_service.copy_line(line, version_id=version.id, company_id=quotation.company_id))
+        db.flush()
+        scope_service.recalculate_total(db, version)
+
+    from app.services import project_activity_service as activity
+
+    activity.record_project_event(
+        db,
+        project=project,
+        template="quotation_created",
+        payload={
+            "document_id": str(quotation.id),
+            "document_no": quotation.document_no,
+            "from": issue_no_text(proposal.document_no, record),
+        },
+        actor_id=actor_user_id,
+    )
+    db.flush()
+    return quotation
 
 
 # ------------------------------------------------------------------ delete
@@ -707,6 +1022,54 @@ def _prepared_by(db: Session, document: ProjectQuotationDocument) -> Optional[st
     return salesperson_of(db, project, document)
 
 
+def _kind_fields(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
+    """Proposal or quotation, and the link between the two (PS-PROPOSAL-QUOTATION)."""
+    source = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.id == document.source_issue_id)
+        .first()
+        if document.source_issue_id
+        else None
+    )
+    source_document = (
+        db.query(ProjectQuotationDocument)
+        .filter(ProjectQuotationDocument.id == source.document_id)
+        .first()
+        if source is not None
+        else None
+    )
+    made = None
+    if document.kind != KIND_QUOTATION:
+        made = (
+            db.query(ProjectQuotationDocument.id)
+            .join(
+                ProjectQuotationIssue,
+                ProjectQuotationIssue.id == ProjectQuotationDocument.source_issue_id,
+            )
+            .filter(ProjectQuotationIssue.document_id == document.id)
+            .scalar()
+        )
+    party_type = (
+        db.query(ProjectParty.party_type)
+        .filter(ProjectParty.id == document.recipient_party_id)
+        .scalar()
+        if document.recipient_party_id
+        else None
+    )
+    return {
+        "kind": document.kind or KIND_PROPOSAL,
+        "source_issue_id": str(source.id) if source is not None else None,
+        "source_document_id": str(source_document.id) if source_document is not None else None,
+        "source_label": (
+            issue_no_text(source_document.document_no, source)
+            if source is not None and source_document is not None
+            else None
+        ),
+        "quotation_document_id": str(made) if made else None,
+        "recipient_party_type": party_type,
+    }
+
+
 def serialize_document(
     db: Session, document: ProjectQuotationDocument, viewer_id: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -739,10 +1102,16 @@ def serialize_document(
         "project_id": str(document.project_id),
         "document_no": document.document_no,
         "our_ref": (
-            quotation_no(document.document_no, latest.issue_no)
+            issue_no_text(document.document_no, latest)
             if latest is not None
             else document.document_no
         ),
+        "current_revision_label": latest.revision_label if latest is not None else None,
+        # What the next Send will print, by the same rule issue() stamps it with.
+        "next_revision_label": _next_label(
+            db, document, (latest.issue_no if latest is not None else 0) + 1
+        ),
+        **_kind_fields(db, document),
         "your_ref": document.your_ref,
         "doc_date": document.doc_date,
         "recipient_party_id": (
@@ -829,6 +1198,7 @@ def serialize_issue(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any
         "id": str(record.id),
         "document_id": str(record.document_id),
         "issue_no": record.issue_no,
+        "revision_label": record.revision_label,
         "our_ref_text": record.our_ref_text,
         "issued_at": record.issued_at,
         "issued_by": record.issued_by,
@@ -1077,7 +1447,7 @@ def record_whatsapp_opened(
         return
     user = db.query(User).filter(User.id == actor_id).first()
     who = (user.name or user.email) if user is not None else "a colleague"
-    reference = record.our_ref_text or f"{document.document_no} (R{record.issue_no})"
+    reference = record.our_ref_text or issue_no_text(document.document_no, record)
     activity.record_project_event(
         db,
         project=project,
@@ -1151,7 +1521,7 @@ def assert_not_superseded(db: Session, record: ProjectQuotationIssue) -> None:
     if newer is not None:
         raise AppException(
             status_code=409,
-            message=f"This quotation has been replaced by Quotation No. {newer.our_ref_text}.",
+            message=f"This has been replaced by {newer.our_ref_text}.",
             code="quotation_superseded",
         )
 
@@ -1443,6 +1813,12 @@ def _serialize_signature(signature: Optional[QuotationSignature]) -> Optional[Di
     }
 
 
+#: Rendered sign-page pictures by attachment id, across requests. Bounded: ~15 KB each, so the cap
+#: holds a few MB; evicting the lot on overflow costs one re-render per picture.
+_SIGN_PICTURES_MAX = 512
+_SIGN_PICTURES: Dict[str, str] = {}
+
+
 def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any]:
     """The quotation as ISSUED, for the customer's read-only counter-sign page.
 
@@ -1461,6 +1837,34 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         .order_by(ProjectQuotationIssueScope.sort_order)
         .all()
     )
+
+    # Imported here, as the PDF service is elsewhere in this module: keeps module load light.
+    from app.services import product_image_service as product_images
+    from app.services import quotation_columns
+
+    # Per page, as per PDF render: one photo commonly repeats down a scope.
+    picture_cache: Dict[str, Optional[str]] = {}
+
+    def _picture(attachment_id: Optional[str]) -> Optional[str]:
+        """The PDF's own inline, downscaled bytes. A data URI rather than a link: the customer has
+        no login, and a signed URL would carry the storage key into their browser.
+
+        Kept across requests (`_SIGN_PICTURES`): the page is public and refetched after every
+        answer, and without it each anonymous GET downloads and decodes every picture again. The
+        ids are stamped at issue, so a cached render never goes stale. A miss (storage down) is
+        not kept, so a hiccup does not become a permanent blank."""
+        if not attachment_id:
+            return None
+        key = str(attachment_id)
+        hit = _SIGN_PICTURES.get(key)
+        if hit is not None:
+            return hit
+        uri = product_images.data_uri(db, key, picture_cache)
+        if uri is not None:
+            if len(_SIGN_PICTURES) >= _SIGN_PICTURES_MAX:
+                _SIGN_PICTURES.clear()
+            _SIGN_PICTURES[key] = uri
+        return uri
 
     scopes: List[Dict[str, Any]] = []
     for pair in pairs:
@@ -1485,6 +1889,12 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
                 # does not change what was priced, and a stale label helps nobody.
                 "scope_label": scope.scope_label if scope else "",
                 "scope_total": Decimal(pair.scope_total or 0),
+                # The PDF's column set for this scope, from the one shared definition
+                # (QUOTE-SIGN-COLUMNS): the page renders these, it keeps no list of its own.
+                "columns": [
+                    {"key": key, "label": label}
+                    for key, label in quotation_columns.for_lines(lines)
+                ],
                 "lines": [
                     {
                         # The handle a suggested change names. Only lines of this issue are
@@ -1499,9 +1909,13 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
                         "item_label": _item_number(line, position),
                         "description": line.description_snapshot,
                         "technical_spec": line.technical_spec,
+                        "image_url": _picture(line.image_attachment_id),
+                        "drawing_url": _picture(line.drawing_attachment_id),
                         "brand": line.brand_snapshot,
                         "product_code": line.product_code_snapshot,
                         "quantity": Decimal(line.quantity or 0),
+                        # Printed after the quantity, as the PDF's QTY cell does ("2 pcs").
+                        "uom": line.uom,
                         "unit_price": Decimal(line.unit_price or 0),
                         "complete_set": line.complete_set,
                         "band_label": line.band_label,
@@ -1554,7 +1968,7 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
 
     cover = None
     our_ref = (
-        quotation_no(document.document_no, record.issue_no)
+        issue_no_text(document.document_no, record)
         if document is not None
         else record.our_ref_text
     )
@@ -1568,6 +1982,7 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         our_ref = cover_reference(document, record, project)
     return {
         "our_ref": our_ref,
+        "document_kind": (document.kind if document is not None else None) or KIND_PROPOSAL,
         "cover_rows": cover,
         "issue_no": record.issue_no,
         "doc_date": document.doc_date if document else None,

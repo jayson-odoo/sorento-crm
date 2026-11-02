@@ -32,6 +32,7 @@ Four rules are worth stating here rather than leaving to a reader of the code:
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Any, Dict, Iterable, Optional
 
 from sqlalchemy import func
@@ -139,6 +140,44 @@ def below_floor_line_count(db: Session, document: ProjectQuotationDocument) -> i
     )
 
 
+def below_proposal_line_count(db: Session, document: ProjectQuotationDocument) -> int:
+    """PS-PROPOSAL-QUOTATION rule 5: how many lines of a QUOTATION are priced below the same
+    product's price on the proposal revision it was made from (a further discount).
+
+    Always 0 for a proposal. The baseline is the source ISSUE's frozen lines, which nobody can
+    edit, so a price lowered on the quotation's own first version still counts. A product that
+    was not on the proposal has no baseline and is left to the minimum-price rule.
+    """
+    if getattr(document, "kind", None) != "quotation" or not document.source_issue_id:
+        return 0
+    from app.models.projects import ProjectQuotationIssue
+    from app.services import project_quotation_document_service as documents
+
+    source = (
+        db.query(ProjectQuotationIssue)
+        .filter(ProjectQuotationIssue.id == document.source_issue_id)
+        .first()
+    )
+    if source is None:
+        return 0
+    baseline = documents.issue_price_map(db, source)
+    version_ids = current_version_ids(db, document)
+    if not baseline or not version_ids:
+        return 0
+    count = 0
+    for line in (
+        db.query(ProjectQuotationLine)
+        .filter(ProjectQuotationLine.version_id.in_(version_ids))
+        .all()
+    ):
+        key = documents.line_key(line)
+        if line.is_rate_only or key not in baseline:
+            continue
+        if Decimal(line.unit_price or 0) < baseline[key]:
+            count += 1
+    return count
+
+
 def _flagged_line_count(db: Session, document: ProjectQuotationDocument, flag) -> int:
     """How many current lines carry ``flag``, read from the STORED flag (AC-E7)."""
     version_ids = current_version_ids(db, document)
@@ -163,12 +202,13 @@ def off_series_line_count(db: Session, document: ProjectQuotationDocument) -> in
 
 
 def counts(db: Session, document: ProjectQuotationDocument) -> Dict[str, int]:
-    """The three reasons, together, for messages and the payload: one query, not three."""
+    """Every reason, together, for messages and the payload (one query for the three line flags;
+    the below-proposal count compares against the source proposal's frozen lines)."""
     from sqlalchemy import Integer, cast
 
     version_ids = current_version_ids(db, document)
     if not version_ids:
-        return {"discounted": 0, "below_floor": 0, "off_series": 0}
+        return {"discounted": 0, "below_floor": 0, "off_series": 0, "below_proposal": 0}
     row = (
         db.query(
             func.coalesce(func.sum(cast(ProjectQuotationLine.is_discounted, Integer)), 0),
@@ -178,7 +218,13 @@ def counts(db: Session, document: ProjectQuotationDocument) -> Dict[str, int]:
         .filter(ProjectQuotationLine.version_id.in_(version_ids))
         .one()
     )
-    return {"discounted": int(row[0]), "below_floor": int(row[1]), "off_series": int(row[2])}
+    return {
+        "discounted": int(row[0]),
+        "below_floor": int(row[1]),
+        "off_series": int(row[2]),
+        # PS-PROPOSAL-QUOTATION: a quotation priced below the proposal it was made from.
+        "below_proposal": below_proposal_line_count(db, document),
+    }
 
 
 def _reasons_lower(db: Session, document: ProjectQuotationDocument) -> str:
@@ -186,10 +232,14 @@ def _reasons_lower(db: Session, document: ProjectQuotationDocument) -> str:
     return text[:1].lower() + text[1:]
 
 
+def _needs(c: Dict[str, int]) -> bool:
+    return bool(c["discounted"] or c["below_floor"] or c["off_series"] or c["below_proposal"])
+
+
 def requires_approval(db: Session, document: ProjectQuotationDocument) -> bool:
-    """Any discount (a below-floor line is one too) or any off-series line (R2)."""
-    c = counts(db, document)
-    return bool(c["discounted"] or c["below_floor"] or c["off_series"])
+    """Any discount (a below-floor line is one too), any off-series line (R2), or a quotation
+    priced below its proposal (PS-PROPOSAL-QUOTATION)."""
+    return _needs(counts(db, document))
 
 
 def _lines(n: int) -> str:
@@ -210,6 +260,8 @@ def reasons_text(c: Dict[str, int]) -> str:
     other = max(0, (c.get("discounted") or 0) - (c.get("below_floor") or 0))
     if other:
         parts.append(f"{_lines(other)} priced below the default price")
+    if c.get("below_proposal"):
+        parts.append(f"{_lines(c['below_proposal'])} priced below the proposal")
     text = " and ".join(parts)
     # Only the first word keeps its capital.
     return text[:1] + text[1:].replace("One line", "one line")
@@ -447,12 +499,14 @@ def assert_issuable(db: Session, document: ProjectQuotationDocument) -> None:
     only reason is the series, else ``quotation_discount_pending_approval``.
     """
     c = counts(db, document)
-    if not (c["discounted"] or c["below_floor"] or c["off_series"]):
+    if not _needs(c):
         return
     if current_key(db, document) == STATUS_APPROVED:
         return
     if c["below_floor"]:
         code = "quotation_below_floor_pending_approval"
+    elif c["below_proposal"]:
+        code = "quotation_below_proposal_pending_approval"
     elif c["off_series"] and not c["discounted"]:
         code = "quotation_off_series_pending_approval"
     else:
@@ -704,6 +758,7 @@ def move(
                 "below_floor_line_count": c["below_floor"],
                 "discounted_line_count": c["discounted"],
                 "off_series_line_count": c["off_series"],
+                "below_proposal_count": c["below_proposal"],
                 "approver_user_id": document.approver_user_id,
             },
         )
@@ -1035,8 +1090,9 @@ def serialize_approval(
         "approval_status_key": status.key if status is not None else None,
         "approval_status_label": status.label if status is not None else None,
         "approval_rejected_reason": document.approval_rejected_reason,
-        "requires_approval": bool(c["discounted"] or c["below_floor"] or c["off_series"]),
+        "requires_approval": _needs(c),
         "below_floor_line_count": c["below_floor"],
+        "below_proposal_count": c["below_proposal"],
         "discounted_line_count": c["discounted"],
         "off_series_line_count": c["off_series"],
         "approval_reasons": reasons_text(c) if any(c.values()) else None,

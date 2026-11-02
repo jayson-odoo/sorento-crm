@@ -80,7 +80,7 @@ Open a product, then **Edit**. The same tabbed form opens with values loaded. **
 
 The detail page (`/master-data-management/products/{id}`) shows the product name as the title, a **Quick Info** sidebar (including **List Price**), and these tabs:
 
-* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, **Tracking Flags** (including **Discontinued: Yes/No** and **SO line description in OI email: Yes/No**), then **Combos** (the catalogue packages this product is sold as, each with its own optional cover picture) and **Sold with** (the packages it is a part of, read-only). See [Catalogue packages on price tags](../marketing/price-tag-packages.md).
+* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, **Tracking Flags** (including **Discontinued: Yes/No** and **SO line description in OI email: Yes/No**), then **Combos** (the catalogue packages this product is sold as, each with its own optional cover picture), **Price tag templates** (the tag templates a price tag request for this product prints with, see [Tag templates per product](../marketing/price-tag-requests.md#tag-templates-per-product)) and **Sold with** (the packages it is a part of, read-only). See [Catalogue packages on price tags](../marketing/price-tag-packages.md).
 * **Stock** - on-hand / reserved / available by warehouse.
 * **Purchase History** - past purchases of this product.
 * **Attachments** - files linked to this product.

@@ -33,17 +33,39 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
   const belowFloor = document.below_floor_line_count ?? 0;
   const discounted = document.discounted_line_count ?? 0;
   const offSeries = document.off_series_line_count ?? 0;
+  // PS-PROPOSAL-QUOTATION: a quotation line below the proposal it came from (a further discount).
+  const belowProposal = document.below_proposal_count ?? 0;
   const blocked = isBlockedByApproval(document);
 
-  if (!document.requires_approval && belowFloor === 0 && discounted === 0 && offSeries === 0) {
+  if (
+    !document.requires_approval &&
+    belowFloor === 0 &&
+    discounted === 0 &&
+    offSeries === 0 &&
+    belowProposal === 0
+  ) {
     return null;
   }
 
+  // The server's sentence names every reason (discount, minimum price, series, proposal). The
+  // fallback covers an older payload that only carries the counts.
   const priced =
     document.approval_reasons ||
-    (belowFloor === 1
-      ? 'One line is priced below minimum price'
-      : `${belowFloor} lines are priced below minimum price`);
+    [
+      belowFloor === 0
+        ? null
+        : belowFloor === 1
+          ? 'One line is priced below minimum price'
+          : `${belowFloor} lines are priced below minimum price`,
+      belowProposal === 0
+        ? null
+        : belowProposal === 1
+          ? 'one line is priced below the proposal'
+          : `${belowProposal} lines are priced below the proposal`,
+    ]
+      .filter(Boolean)
+      .join(' and ')
+      .replace(/^o/, 'O');
   // Named only while it waits: whoever decides may be someone above the routed approver, so
   // the decided sentences do not credit a name.
   const who = document.approver_name || 'a manager';

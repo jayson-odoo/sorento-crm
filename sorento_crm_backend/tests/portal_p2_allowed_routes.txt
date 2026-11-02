@@ -88,6 +88,8 @@ GET /projects/{project_id}/quotation-documents/{document_id}/amendment-request
 GET /projects/{project_id}/quotation-documents/{document_id}/issues
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx
+GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheet
+GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheet/preview
 GET /projects/{project_id}/quotation-documents/{document_id}/views
 GET /projects/{project_id}/quotations
 GET /projects/{project_id}/sales-orders
@@ -205,9 +207,11 @@ POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/xlsx
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/sign-link
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/whatsapp-opened
+POST /projects/{project_id}/quotation-documents/{document_id}/make-quotation
 POST /projects/{project_id}/quotation-documents/{document_id}/reject
 POST /projects/{project_id}/quotation-documents/{document_id}/scopes
 POST /projects/{project_id}/quotation-documents/{document_id}/sign
+POST /projects/{project_id}/quotation-documents/{document_id}/spec-sheet/export
 POST /projects/{project_id}/quotations
 POST /projects/{project_id}/reject
 POST /projects/{project_id}/samples
@@ -259,6 +263,7 @@ PUT /leads/{lead_id}
 PUT /planning-changes/{batch_id}/rows/{row_id}
 PUT /projects/{project_id}
 PUT /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/rows/{row_id}
+PUT /projects/{project_id}/quotation-documents/{document_id}/spec-sheet
 PUT /projects/{project_id}/stakeholders/{stakeholder_id}
 PUT /projects/{project_id}/tasks/{task_id}
 PUT /purchase-order-versions/{po_version_id}

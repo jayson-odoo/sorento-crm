@@ -685,6 +685,10 @@ export interface ProjectQuotation {
   id: string;
   project_id: string;
   scope_label: string;
+  /** PS-PROPOSAL-QUOTATION: the document this scope sits on, and its kind. */
+  document_id?: string | null;
+  document_no?: string | null;
+  document_kind?: 'proposal' | 'quotation' | null;
   series_id?: string | null;
   series_name?: string | null;
   notes?: string | null;
@@ -1268,6 +1272,13 @@ export interface ProjectPurchaseOrder {
   published_sales_order_count?: number;
   model_mismatch_count: number;
   price_mismatch_count: number;
+  /** PS-PROPOSAL-QUOTATION: why the project's POs order more than the quotation quotes. */
+  qty_over_reason?: string | null;
+  qty_over_reason_at?: string | null;
+  qty_over_reason_by_name?: string | null;
+  /** The kind of document the PO is checked against (proposal | quotation) and its number. */
+  checked_against_kind?: 'proposal' | 'quotation' | null;
+  checked_against_label?: string | null;
 
   /** AC-F9a: erosion since v1 as a NUMBER, not a flag. Null percent = no baseline. */
   v1_total?: string | null;
@@ -1344,6 +1355,8 @@ export interface PurchaseOrderLineBulkItem extends Omit<PurchaseOrderLineBody, '
  * `lines` out entirely is how a header-only save (the record-a-PO modal) leaves them alone.
  */
 export interface ProjectPurchaseOrderSaveBody extends Partial<ProjectPurchaseOrderBody> {
+  /** PS-PROPOSAL-QUOTATION: sent on the second save after a 409 `po_qty_over_quoted`. */
+  qty_over_reason?: string | null;
   lines?: PurchaseOrderLineBulkItem[];
 }
 

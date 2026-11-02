@@ -65,6 +65,27 @@ def _fresh_prompt_cache():
 # ------------------------------------------------------------------ seeding helpers
 
 
+#: What a console or WhatsApp contact holding every slug is sent: the labels of the tools that existed before
+#: PR 4, written out, so a PR 4 label reaching a console turn fails here (AC-0).
+CONSOLE_LABELS = [
+    "change a customer ask",
+    "create an opportunity",
+    "change an opportunity",
+    "change a dealer contact",
+    "approve or reject a purchase request",
+    "take back a purchase request action",
+    "record a suggestion or wish for what the system should have or do, an idea or a feature request",
+    "change one of your ideas",
+    "your customer asks",
+    "recent changes",
+    "your sales opportunities",
+    "opportunity stages",
+    "finding dealer contacts",
+    "purchase requests and sponsorship forms",
+    "your ideas",
+]
+
+
 def jev_answer(choice="agent", confidence=0.9, input_tokens=700, output_tokens=0, model=JEV_MODEL):
     from app.services.chatbot.jev_client import JevAnswer
 
@@ -563,7 +584,7 @@ def test_R10_the_request_carries_message_recent_exchanges_and_the_prompt(db, jev
 
     assert call["criteria"] == {
         "chat": CRITERIA["chat"],
-        "agent": {"what": CRITERIA["agent"], "tools": router.agent_tool_labels()},
+        "agent": {"what": CRITERIA["agent"], "tools": CONSOLE_LABELS},
     }
     state = call["state"]
     assert state["latest_message"] == "compare Johor and Penang"

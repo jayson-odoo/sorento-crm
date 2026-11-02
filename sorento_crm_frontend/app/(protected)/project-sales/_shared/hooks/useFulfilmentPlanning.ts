@@ -622,6 +622,7 @@ export function useLineDraftMutation() {
       key,
       decision,
       proposed,
+      basedOnSavedAt,
     }: {
       key: string;
       decision: BoardDecision;
@@ -631,7 +632,14 @@ export function useLineDraftMutation() {
       // so a Decide save asks this mutation to stay quiet rather than toasting it a second
       // time.
       silent?: boolean;
-    }) => (proposed ? putLineDraft(key, decision, proposed) : putLineDraft(key, decision)),
+      // CONFIRM-PREVIEW-STALE: the draft this decision stands on (`putLineDraft`).
+      basedOnSavedAt?: string | null;
+    }) =>
+      basedOnSavedAt !== undefined
+        ? putLineDraft(key, decision, proposed, basedOnSavedAt)
+        : proposed
+          ? putLineDraft(key, decision, proposed)
+          : putLineDraft(key, decision),
     onSuccess: (saved, { key }) => {
       queryClient.setQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] }, (current) =>
         current ? patchContributionDraft(current, key, saved) : current,
@@ -643,8 +651,9 @@ export function useLineDraftMutation() {
   });
 
   const remove = useMutation({
-    mutationFn: (key: string) => deleteLineDraft(key),
-    onSuccess: (_result, key) => {
+    mutationFn: ({ key, basedOnSavedAt }: { key: string; basedOnSavedAt?: string | null }) =>
+      basedOnSavedAt !== undefined ? deleteLineDraft(key, basedOnSavedAt) : deleteLineDraft(key),
+    onSuccess: (_result, { key }) => {
       queryClient.setQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] }, (current) =>
         current ? patchContributionDraft(current, key, null) : current,
       );
@@ -665,9 +674,16 @@ export function useLineDraftMutation() {
       key: string,
       decision: BoardDecision,
       proposed?: BoardSource[],
-      options?: { silent?: boolean },
+      options?: { silent?: boolean; basedOnSavedAt?: string | null },
     ): Promise<BoardLineDraft> =>
-      save.mutateAsync({ key, decision, proposed, silent: options?.silent }),
-    remove: (key: string): Promise<void> => remove.mutateAsync(key),
+      save.mutateAsync({
+        key,
+        decision,
+        proposed,
+        silent: options?.silent,
+        basedOnSavedAt: options?.basedOnSavedAt,
+      }),
+    remove: (key: string, basedOnSavedAt?: string | null): Promise<void> =>
+      remove.mutateAsync({ key, basedOnSavedAt }),
   };
 }
