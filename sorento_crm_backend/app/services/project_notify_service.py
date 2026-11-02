@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Dict, List, Optional
 
@@ -524,6 +525,12 @@ def notify_quotation_changes_requested(
     )
 
 
+def _half_hour(request) -> int:
+    """The 30 minute window the request was submitted in (the notification collapse key)."""
+    when = getattr(request, "submitted_at", None) or datetime.utcnow()
+    return int(when.timestamp() // 1800)
+
+
 def notify_quotation_amendment_requested(
     db: Session,
     *,
@@ -537,7 +544,7 @@ def notify_quotation_amendment_requested(
 
     Same recipients as a free-text request (the owner, else management), and on WhatsApp as
     well as in-app and email, the channels the approval alerts use. One notice per request, so
-    the dedup key is the request.
+    the dedup key is the issue plus a 30 minute window, so a flood of submits is one notice.
     """
     reference = getattr(record, "our_ref_text", None) or getattr(document, "document_no", "")
     who = (getattr(request, "requester_name", None) or "").strip() or "The customer"
@@ -570,7 +577,7 @@ def notify_quotation_amendment_requested(
             "request_id": str(getattr(request, "id", "") or ""),
         },
         project_id=str(project.id),
-        dedup_key=f"{getattr(record, 'id', '')}:amendment_requested:{getattr(request, 'id', '')}",
+        dedup_key=f"{getattr(record, 'id', '')}:amendment_requested:{_half_hour(request)}",
         send_whatsapp=True,
         data_for=_whatsapp_for(db, project, document, text),
     )

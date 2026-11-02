@@ -14,9 +14,10 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.projects import (
@@ -48,6 +49,10 @@ FIELD_NOTE = "note"
 MAX_QUANTITY = Decimal("9999999.99")
 MAX_PRICE = Decimal("9999999999.99")
 MAX_NOTE = 1000
+# A link is public, so repeat feedback is capped per issue by its TOTAL request count (simpler
+# than counting only unhandled ones, and a customer with 50 submits has said it all).
+MAX_REQUESTS_PER_ISSUE = 50
+FEEDBACK_LIST_LIMIT = 50
 MAX_MODEL = 200
 _CENTS = Decimal("0.01")
 # Digits, then at most two decimals. Written out rather than left to Decimal(), which also takes
@@ -67,9 +72,14 @@ def _amount(value: Any, code: str, message: str) -> Decimal:
     if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
         raise _refuse(422, code, message)
     text_value = str(value).strip()
-    if not _AMOUNT.match(text_value):
+    # Length first: a 30-digit string passes the pattern but overflows Decimal's context in
+    # quantize (a 500). The longest legal amount is 10 digits, a dot and 2 decimals.
+    if len(text_value) > 32 or not _AMOUNT.match(text_value):
         raise _refuse(422, code, message)
-    return Decimal(text_value).quantize(_CENTS)
+    try:
+        return Decimal(text_value).quantize(_CENTS)
+    except InvalidOperation:
+        raise _refuse(422, code, message)
 
 
 def _issued_lines(
@@ -230,6 +240,17 @@ def submit_request(
         .first()
     ) or record
     _assert_can_ask(db, locked)
+    sent = (
+        db.query(func.count(QuotationAmendmentRequest.id))
+        .filter(QuotationAmendmentRequest.issue_id == locked.id)
+        .scalar()
+    )
+    if (sent or 0) >= MAX_REQUESTS_PER_ISSUE:
+        raise _refuse(
+            429,
+            "quotation_feedback_limit",
+            "You have sent a lot of feedback on this quotation. Please contact Sorento directly.",
+        )
 
     rows = _rows_from(db, _issued_lines(db, locked), items or [])
     text_note = (note or "").strip() or None
@@ -333,35 +354,42 @@ def _record_requested(
 # ------------------------------------------------------------------ staff
 
 
-def _document_rows(
-    db: Session, document: ProjectQuotationDocument
-) -> List[Tuple[QuotationAmendmentRequest, ProjectQuotationIssue, QuotationAmendmentRequestRow]]:
-    return (
-        db.query(QuotationAmendmentRequest, ProjectQuotationIssue, QuotationAmendmentRequestRow)
-        .join(ProjectQuotationIssue, ProjectQuotationIssue.id == QuotationAmendmentRequest.issue_id)
-        .join(
-            QuotationAmendmentRequestRow,
-            QuotationAmendmentRequestRow.request_id == QuotationAmendmentRequest.id,
-        )
-        .filter(ProjectQuotationIssue.document_id == document.id)
-        .all()
-    )
-
-
 def feedback_for_document(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
-    """Every request on the document, newest first, rows in line order; open = not handled."""
+    """The latest requests on the document, newest first, rows in line order.
+
+    ``open_count`` counts every unhandled row of the document, not just the ones listed.
+    """
     from app.models.user import User
 
+    open_count = (
+        db.query(func.count(QuotationAmendmentRequestRow.id))
+        .join(
+            QuotationAmendmentRequest,
+            QuotationAmendmentRequest.id == QuotationAmendmentRequestRow.request_id,
+        )
+        .join(ProjectQuotationIssue, ProjectQuotationIssue.id == QuotationAmendmentRequest.issue_id)
+        .filter(
+            ProjectQuotationIssue.document_id == document.id,
+            QuotationAmendmentRequestRow.handled_at.is_(None),
+        )
+        .scalar()
+    ) or 0
     requests = (
         db.query(QuotationAmendmentRequest, ProjectQuotationIssue)
         .join(ProjectQuotationIssue, ProjectQuotationIssue.id == QuotationAmendmentRequest.issue_id)
         .filter(ProjectQuotationIssue.document_id == document.id)
         .order_by(QuotationAmendmentRequest.submitted_at.desc(), QuotationAmendmentRequest.id)
+        .limit(FEEDBACK_LIST_LIMIT)
         .all()
     )
     by_request: Dict[str, List[QuotationAmendmentRequestRow]] = {}
-    for _request, _issue, row in _document_rows(db, document):
-        by_request.setdefault(str(row.request_id), []).append(row)
+    if requests:
+        for row in (
+            db.query(QuotationAmendmentRequestRow)
+            .filter(QuotationAmendmentRequestRow.request_id.in_([r.id for r, _i in requests]))
+            .all()
+        ):
+            by_request.setdefault(str(row.request_id), []).append(row)
 
     line_ids = {str(r.line_id) for rows in by_request.values() for r in rows}
     lines = (
@@ -382,18 +410,26 @@ def feedback_for_document(db: Session, document: ProjectQuotationDocument) -> Di
         if lines
         else {}
     )
-    scopes = {
-        str(s.id): s
-        for s in db.query(ProjectQuotation)
-        .filter(ProjectQuotation.id.in_({str(v.quotation_id) for v in versions.values()}))
-        .all()
-    } if versions else {}
-    scope_order = {
-        str(p.quotation_id): p.sort_order or 0
-        for p in db.query(ProjectQuotationIssueScope)
-        .filter(ProjectQuotationIssueScope.issue_id.in_([str(i.id) for _r, i in requests]))
-        .all()
-    } if requests else {}
+    scopes = (
+        {
+            str(s.id): s
+            for s in db.query(ProjectQuotation)
+            .filter(ProjectQuotation.id.in_({str(v.quotation_id) for v in versions.values()}))
+            .all()
+        }
+        if versions
+        else {}
+    )
+    scope_order = (
+        {
+            str(p.quotation_id): p.sort_order or 0
+            for p in db.query(ProjectQuotationIssueScope)
+            .filter(ProjectQuotationIssueScope.issue_id.in_([str(i.id) for _r, i in requests]))
+            .all()
+        }
+        if requests
+        else {}
+    )
     handler_ids = {r.handled_by for rows in by_request.values() for r in rows if r.handled_by}
     names = (
         {u.id: (u.name or u.email) for u in db.query(User).filter(User.id.in_(handler_ids)).all()}
@@ -414,19 +450,17 @@ def feedback_for_document(db: Session, document: ProjectQuotationDocument) -> Di
         )
 
     out: List[Dict[str, Any]] = []
-    open_count = 0
     for request, issue in requests:
         rows = []
         for row in sorted(by_request.get(str(request.id), []), key=position):
             line = lines.get(str(row.line_id))
             version = versions.get(str(line.version_id)) if line else None
             scope = scopes.get(str(version.quotation_id)) if version else None
-            if row.handled_at is None:
-                open_count += 1
             rows.append(
                 {
                     "id": str(row.id),
                     "line_id": str(row.line_id),
+                    "scope_id": str(scope.id) if scope else None,
                     "scope_label": scope.scope_label if scope else None,
                     "line_description": line.description_snapshot if line else None,
                     "cell_key": row.cell_key,

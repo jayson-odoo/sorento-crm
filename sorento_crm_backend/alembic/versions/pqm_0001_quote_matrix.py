@@ -62,6 +62,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Several open requests per issue are normal now; the old index allows one, so all but the
+    # newest open request of each issue are closed as superseded before it comes back.
+    op.execute(
+        """
+        UPDATE projects.quotation_amendment_requests
+           SET status = 'superseded'
+         WHERE status = 'open'
+           AND id NOT IN (
+                SELECT DISTINCT ON (issue_id) id
+                  FROM projects.quotation_amendment_requests
+                 WHERE status = 'open'
+                 ORDER BY issue_id, submitted_at DESC, id DESC
+           )
+        """
+    )
     op.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_quotation_amendment_requests_open "
         "ON projects.quotation_amendment_requests (issue_id) WHERE status = 'open'"

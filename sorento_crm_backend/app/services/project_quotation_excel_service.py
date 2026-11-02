@@ -261,6 +261,9 @@ def _anchor(sheet: Worksheet, row: int, column: int, data: bytes) -> Optional[in
 # -------------------------------------------------------------------- writing
 
 
+_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
 def _put(
     sheet: Worksheet,
     row: int,
@@ -271,8 +274,19 @@ def _put(
     number_format: Optional[str] = None,
     alignment: Optional[Alignment] = None,
     fill: Optional[PatternFill] = None,
+    formula: bool = False,
 ):
+    """Write a cell. ``formula=True`` is only for the sums this module builds itself; any other
+    string that starts like a formula (a label or description typed by a user) is kept as text, so
+    `=HYPERLINK(...)` typed into a header cannot run in the customer's Excel."""
     cell = sheet.cell(row=row, column=column, value=value)
+    if (
+        not formula
+        and isinstance(value, str)
+        and value.startswith(_FORMULA_LEAD)
+    ):
+        cell.data_type = "s"
+        cell.quotePrefix = True
     if font is not None:
         cell.font = font
     if number_format is not None:
@@ -401,6 +415,19 @@ def _write_grid_header(
             sheet.column_dimensions[get_column_letter(at + 1)].width = 14
 
 
+_FORMULA_LIMIT = 8000  # Excel refuses a formula over 8192 characters
+
+
+def _runs(rows: List[int]) -> List[Tuple[int, int]]:
+    out: List[Tuple[int, int]] = []
+    for r in rows:
+        if out and out[-1][1] == r - 1:
+            out[-1] = (out[-1][0], r)
+        else:
+            out.append((r, r))
+    return out
+
+
 def _write_grid_footer(
     sheet: Worksheet,
     row: int,
@@ -409,19 +436,30 @@ def _write_grid_footer(
     positions: Dict[str, int],
     leaf_col: Dict[str, int],
     pair_col: Dict[str, int],
+    footer: Dict[str, Any],
 ) -> int:
     """TOTAL QTY and TOTAL (RM) rows as live sums. Rate-only rows are left out of the quantity
-    sums by naming the counted cells, so the footer agrees with the scope total (rule 10)."""
+    sums by summing only the runs of counted rows. A scope so interleaved that the formula would
+    pass Excel's length limit gets the computed value instead of a broken file."""
 
-    def total_of(column: int) -> str:
+    def total_of(column: int, value: Any) -> Any:
         letter = get_column_letter(column)
-        refs = ",".join(f"{letter}{r}" for r in counted_rows)
-        return f"=SUM({refs or '0'})"
+        refs = ",".join(
+            f"{letter}{a}" if a == b else f"{letter}{a}:{letter}{b}" for a, b in _runs(counted_rows)
+        )
+        text = f"=SUM({refs or '0'})"
+        return (text, True) if len(text) <= _FORMULA_LIMIT else (_amount(value), False)
 
     label_column = min(leaf_col.values()) - 1
     _put(sheet, row, label_column, "TOTAL QTY", font=_BOLD, alignment=_RIGHT)
-    for column in [*leaf_col.values(), *pair_col.values(), positions["QTY"]]:
-        _put(sheet, row, column, total_of(column), font=_BOLD, number_format=QTY_FORMAT, alignment=_RIGHT)
+    values = {
+        **{col: footer["leaf_qty"][key] for key, col in leaf_col.items()},
+        **{col: footer["pair_qty"][key] for key, col in pair_col.items()},
+        positions["QTY"]: footer["total_qty"],
+    }
+    for column, value in values.items():
+        content, is_formula = total_of(column, value)
+        _put(sheet, row, column, content, font=_BOLD, number_format=QTY_FORMAT, alignment=_RIGHT, formula=is_formula)
     row += 1
     _put(sheet, row, label_column, "TOTAL (RM)", font=_BOLD, alignment=_RIGHT)
     last = max(counted_rows[-1] if counted_rows else first_row, first_row)
@@ -429,7 +467,7 @@ def _write_grid_footer(
         letter = get_column_letter(column + 1)
         _put(
             sheet, row, column + 1, f"=SUM({letter}{first_row}:{letter}{last})",
-            font=_BOLD, number_format=MONEY_FORMAT, alignment=_RIGHT,
+            font=_BOLD, number_format=MONEY_FORMAT, alignment=_RIGHT, formula=True,
         )
     return row + 1
 
@@ -581,17 +619,17 @@ def _write_scope(
                 _put(
                     sheet, row, col,
                     f"=SUM({get_column_letter(min(members))}{row}:{get_column_letter(max(members))}{row})",
-                    number_format=QTY_FORMAT, alignment=_RIGHT,
+                    number_format=QTY_FORMAT, alignment=_RIGHT, formula=True,
                 )
                 if not line.is_rate_only:
                     _put(
                         sheet, row, col + 1,
-                        f"={get_column_letter(col)}{row}*{rate_letter}{row}",
-                        number_format=MONEY_FORMAT, alignment=_RIGHT,
+                        f"=ROUND({get_column_letter(col)}{row}*{rate_letter}{row},2)",
+                        number_format=MONEY_FORMAT, alignment=_RIGHT, formula=True,
                     )
             _put(
                 sheet, row, positions["QTY"], f"=SUM({first_leaf}{row}:{last_leaf}{row})",
-                number_format=QTY_FORMAT, alignment=_RIGHT,
+                number_format=QTY_FORMAT, alignment=_RIGHT, formula=True,
             )
             if not line.is_rate_only:
                 counted_rows.append(row)
@@ -629,8 +667,8 @@ def _write_scope(
         elif grid:
             _put(
                 sheet, row, money_column,
-                f"={get_column_letter(positions['QTY'])}{row}*{get_column_letter(positions['UNIT RATE (RM)'])}{row}",
-                number_format=MONEY_FORMAT, alignment=_RIGHT,
+                f"=ROUND({get_column_letter(positions['QTY'])}{row}*{get_column_letter(positions['UNIT RATE (RM)'])}{row},2)",
+                number_format=MONEY_FORMAT, alignment=_RIGHT, formula=True,
             )
         else:
             _put(
@@ -649,7 +687,7 @@ def _write_scope(
 
     if grid and lines:
         row = _write_grid_footer(
-            sheet, row, first_data_row, counted_rows, positions, leaf_col, pair_col
+            sheet, row, first_data_row, counted_rows, positions, leaf_col, pair_col, summary["footer"]
         )
 
     # The FROZEN scope total off the issue row, not a re-sum: the workbook must not be able to

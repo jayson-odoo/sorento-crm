@@ -163,6 +163,11 @@ def _qty(value: Any) -> str:
     return f"{amount.normalize():,}"
 
 
+def _qty_or_blank(value: Any) -> str:
+    """A quantity, or nothing at all for zero: an empty column's footer stays blank."""
+    return "" if not value else _qty(value)
+
+
 def _cell(value: Any) -> str:
     """Escaped text, or nothing at all.
 
@@ -511,10 +516,16 @@ def _header_html(
 _VERTICAL_LEAVES = 12
 
 # Only emitted with a grid scope, so a plain scope's page stays byte for byte what it was.
+# WeasyPrint ignores writing-mode, so a vertical heading is a fixed-size box rotated -90deg about
+# its top-left corner; the margin pulls the rotated box back down into the cell.
+_VERT_BOX = 90
 _GRID_STYLE = (
-    "<style>table.grid th.q, table.grid td.q { width: 24px; padding: 3px 1px; text-align: right; }"
-    " table.grid th.vert { writing-mode: vertical-rl; transform: rotate(180deg);"
-    " text-align: left; height: 70px; }"
+    "<style>table.grid th.q { padding: 3px 1px; }"
+    f" table.grid th.vert {{ height: {_VERT_BOX + 8}px; padding: 0; vertical-align: bottom;"
+    " overflow: hidden; }"
+    f" table.grid th.vert div {{ width: {_VERT_BOX}px; height: 10px; line-height: 10px;"
+    f" margin-top: {_VERT_BOX}px; margin-left: 1px; white-space: nowrap; overflow: hidden;"
+    " transform: rotate(-90deg); transform-origin: 0 0; }"
     " table.grid thead { display: table-header-group; }</style>"
 )
 
@@ -534,6 +545,12 @@ def _grid_scope_html(
     leaves = summary["leaf_keys"]
     pairs = summary["pair_headers"]
     vertical = " vert" if len(leaves) > _VERTICAL_LEAVES else ""
+
+    def leaf_th(label: str, rowspan: str = "") -> str:
+        text = escape(label)
+        inner = f"<div>{text}</div>" if vertical else text
+        return f'<th class="q{vertical}"{rowspan}>{inner}</th>'
+
     qty_at = columns.index("QTY")
     before, after = columns[:qty_at], columns[qty_at + 1 :]
     span = len(before) + len(leaves) + 2 * len(pairs) + 1 + len(after)
@@ -544,9 +561,9 @@ def _grid_scope_html(
         cols = header.get("cols") or []
         if cols:
             top.append(f'<th colspan="{len(cols)}">{escape(header["label"])}</th>')
-            bottom += [f'<th class="q{vertical}">{escape(c["label"])}</th>' for c in cols]
+            bottom += [leaf_th(c["label"]) for c in cols]
         else:
-            top.append(f'<th class="q{vertical}" rowspan="2">{escape(header["label"])}</th>')
+            top.append(leaf_th(header["label"], ' rowspan="2"'))
     for header in headers:
         if header["key"] in pairs:
             top.append(f'<th colspan="2">{escape(header["label"])}</th>')
@@ -554,6 +571,16 @@ def _grid_scope_html(
     top.append('<th rowspan="2">TOTAL QTY</th>')
     top += [f'<th rowspan="2">{escape(c)}</th>' for c in after]
     head = f"<tr>{''.join(top)}</tr><tr>{''.join(bottom)}</tr>"
+    # Fixed layout takes widths from <col>, not from second-row cells: the leaf columns are
+    # narrow (the counts are short) and the rest share what is left.
+    leaf_width = 16 if vertical else 28
+    colgroup = (
+        "<colgroup>"
+        + "<col/>" * len(before)
+        + f'<col style="width:{leaf_width}px"/>' * len(leaves)
+        + "<col/>" * (2 * len(pairs) + 1 + len(after))
+        + "</colgroup>"
+    )
 
     body: List[str] = []
     current_band: Optional[str] = None
@@ -572,7 +599,7 @@ def _grid_scope_html(
             if not pair["qty"]:
                 pair_cells += '<td class="num">-</td><td class="num">-</td>'
             else:
-                amount = "" if line.is_rate_only else _line_money(pair["amount"])
+                amount = "-" if line.is_rate_only else _line_money(pair["amount"])
                 pair_cells += f'<td class="num">{_qty(pair["qty"])}</td><td class="num">{amount}</td>'
         # No UOM suffix here, unlike the plain QTY cell: the grid's totals are bare counts.
         total_qty = _qty(row["total_qty"])
@@ -621,9 +648,9 @@ def _grid_scope_html(
     blanks_after = "<td></td>" * len(after)
     qty_row = (
         f'<tr><td class="total-label" colspan="{len(before)}">TOTAL QTY</td>'
-        + "".join(f'<td class="num q">{_qty(footer["leaf_qty"][k])}</td>' for k in leaves)
-        + "".join(f'<td class="num">{_qty(footer["pair_qty"][k])}</td><td></td>' for k in pairs)
-        + f'<td class="num">{_qty(footer["total_qty"])}</td>{blanks_after}</tr>'
+        + "".join(f'<td class="num q">{_qty_or_blank(footer["leaf_qty"][k])}</td>' for k in leaves)
+        + "".join(f'<td class="num">{_qty_or_blank(footer["pair_qty"][k])}</td><td></td>' for k in pairs)
+        + f'<td class="num">{_qty_or_blank(footer["total_qty"])}</td>{blanks_after}</tr>'
     )
     rm_row = (
         f'<tr><td class="total-label" colspan="{len(before)}">TOTAL (RM)</td>'
@@ -640,6 +667,7 @@ def _grid_scope_html(
     <div class="scope-label">{_cell(scope["label"])}</div>
     {_GRID_STYLE}
     <table class="grid">
+      {colgroup}
       <thead>{head}</thead>
       <tbody>{"".join(body)}</tbody>
       <tfoot>{qty_row}{rm_row}{total_row}</tfoot>

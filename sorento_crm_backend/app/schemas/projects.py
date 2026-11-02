@@ -2350,6 +2350,7 @@ class QuotationAmendmentResponse(BaseModel):
 class QuotationFeedbackRowResponse(BaseModel):
     id: str
     line_id: str
+    scope_id: Optional[str] = None
     scope_label: Optional[str] = None
     line_description: Optional[str] = None
     cell_key: Optional[str] = None
