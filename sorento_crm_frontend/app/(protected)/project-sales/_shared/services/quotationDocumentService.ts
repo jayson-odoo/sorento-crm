@@ -106,6 +106,10 @@ export type QuotationDocument = {
   recipient_name_snapshot: string | null;
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;
+  recipient_email_snapshot?: string | null;
+  quotation_purpose?: string | null;
+  payment_terms?: string | null;
+  validity?: string | null;
   attn_name: string | null;
   subject_title: string | null;
   cover_letter_html: string | null;
@@ -222,6 +226,10 @@ export type QuotationDocumentBody = Partial<{
   recipient_name_snapshot: string | null;
   recipient_address_snapshot: string | null;
   recipient_phone_snapshot: string | null;
+  recipient_email_snapshot: string | null;
+  quotation_purpose: string | null;
+  payment_terms: string | null;
+  validity: string | null;
   /**
    * The quotation form page's scopes (#1341), on the POST and the PATCH alike. The create writes
    * the document, these scopes and their lines in ONE transaction; the edit applies them in one
@@ -240,6 +248,9 @@ export type QuotationDocumentBody = Partial<{
 export type QuotationLetterTemplates = {
   cover_letter_html: string | null;
   terms_html: string | null;
+  /** Defaults of the active terms template. */
+  payment_terms?: string | null;
+  validity?: string | null;
 };
 
 /**

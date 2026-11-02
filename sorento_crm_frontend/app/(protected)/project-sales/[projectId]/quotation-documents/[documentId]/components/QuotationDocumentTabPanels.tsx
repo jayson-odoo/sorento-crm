@@ -19,9 +19,15 @@ import { useQuotationDocumentScreen } from './QuotationDocumentContext';
  * owner on that strip: "this one should be in header details".
  */
 export function QuotationHeaderTab() {
-  const { projectId, document } = useQuotationDocumentScreen();
+  const { projectId, document, project } = useQuotationDocumentScreen();
   const details = useQuotationHeaderDetails(projectId, document.scopes ?? []);
-  return <QuotationDocumentHeader document={document} details={details} />;
+  return (
+    <QuotationDocumentHeader
+      document={document}
+      details={details}
+      preparedBy={project.owner_name ?? null}
+    />
+  );
 }
 
 export function QuotationCoverLetterTab() {
@@ -32,7 +38,13 @@ export function QuotationCoverLetterTab() {
 
 export function QuotationTermsTab() {
   const { document } = useQuotationDocumentScreen();
-  return <QuotationTermsPanel html={document.terms_html} />;
+  return (
+    <QuotationTermsPanel
+      html={document.terms_html}
+      paymentTerms={document.payment_terms ?? null}
+      validity={document.validity ?? null}
+    />
+  );
 }
 
 export function QuotationSignaturesTab() {

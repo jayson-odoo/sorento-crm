@@ -36,10 +36,18 @@ import type {
  * an invented one on screen would disagree with whatever the PDF template prints. It belongs to
  * the template, so it stays there.
  */
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+function Field({
+  label,
+  value,
+  wide = false,
+}: {
+  label: string;
+  value: React.ReactNode;
+  wide?: boolean;
+}) {
   return (
     <div className="flex gap-2 text-sm">
-      <span className="w-20 shrink-0 text-muted-foreground">{label}</span>
+      <span className={`${wide ? 'w-36' : 'w-20'} shrink-0 text-muted-foreground`}>{label}</span>
       <span className="min-w-0 break-words font-medium">{value}</span>
     </div>
   );
@@ -153,6 +161,7 @@ export function QuotationDocumentHeader({
   document,
   liveGrandTotal = null,
   details = [],
+  preparedBy = null,
   onChange,
 }: {
   /**
@@ -170,6 +179,8 @@ export function QuotationDocumentHeader({
   liveGrandTotal?: string | null;
   /** Issued by and Opened, per scope version, for the details beside the refs. */
   details?: QuotationHeaderDetail[];
+  /** The project's salesperson, a read on the cover page (never typed here). */
+  preparedBy?: string | null;
   /**
    * Set only in an edit session, exactly like the letter panels' own `onChange`. Absent means
    * this is a read. Typing here writes nothing: it stages onto the document draft, and the
@@ -226,6 +237,16 @@ export function QuotationDocumentHeader({
                   placeholder="Their contact number"
                 />
               </EditField>
+              <EditField id="quotation-recipient-email" label="Email">
+                <Input
+                  id="quotation-recipient-email"
+                  value={document.recipient_email_snapshot ?? ''}
+                  onChange={(event) =>
+                    onChange({ recipient_email_snapshot: event.target.value || null })
+                  }
+                  placeholder="Their email address"
+                />
+              </EditField>
               <EditField id="quotation-attn-name" label="Attn">
                 <Input
                   id="quotation-attn-name"
@@ -252,6 +273,11 @@ export function QuotationDocumentHeader({
               <p className="min-w-0 break-words text-sm text-muted-foreground">
                 {document.recipient_phone_snapshot ?? '-'}
               </p>
+              {document.recipient_email_snapshot ? (
+                <div className="mt-1">
+                  <Field label="Email" value={document.recipient_email_snapshot} />
+                </div>
+              ) : null}
               <p className="mt-2 text-sm">
                 <span className="text-muted-foreground">Attn: </span>
                 <span className="font-medium">{document.attn_name ?? '-'}</span>
@@ -319,6 +345,26 @@ export function QuotationDocumentHeader({
                 placeholder="The one line naming the job"
               />
             </EditField>
+          </div>
+        ) : null}
+        {onChange ? (
+          <div className="min-w-0 md:col-span-2">
+            <EditField id="quotation-purpose" label="Quotation Purpose">
+              <Input
+                id="quotation-purpose"
+                value={document.quotation_purpose ?? ''}
+                onChange={(event) => onChange({ quotation_purpose: event.target.value || null })}
+              />
+            </EditField>
+          </div>
+        ) : document.quotation_purpose ? (
+          <div className="min-w-0 md:col-span-2">
+            <Field label="Quotation Purpose" wide value={document.quotation_purpose} />
+          </div>
+        ) : null}
+        {preparedBy ? (
+          <div className="min-w-0 md:col-span-2">
+            <Field label="Prepared By" wide value={preparedBy} />
           </div>
         ) : null}
       </CardContent>
