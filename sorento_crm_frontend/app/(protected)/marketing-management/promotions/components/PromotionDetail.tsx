@@ -293,13 +293,15 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
     if (!editingProduct) return;
 
     if (
-      numberFieldError(promotionPrice, { min: 0 }) ||
+      numberFieldError(promotionPrice, { min: 0, optional: true }) ||
       numberFieldError(listPriceInput, { min: 0 })
     ) {
       setPriceErrorsShown(true);
       return;
     }
-    const price = Number(promotionPrice);
+    // Blank leaves the stored price alone: a brand whose promotions carry no selling
+    // price (Cabana) loads blank and must still save its dealer discount and list price.
+    const price = promotionPrice.trim() ? Number(promotionPrice) : undefined;
     const ddParsed = parseDealerDiscountPercentInput(dealerDiscountInput);
     if (!ddParsed.ok) {
       toast.error('Dealer discount must be a percentage between 0 and 100.');
@@ -1078,7 +1080,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                     placeholder="Enter promotion price"
                     value={promotionPrice}
                     onChange={(e) => setPromotionPrice(e.target.value)}
-                    error={priceErrorsShown ? numberFieldError(promotionPrice, { min: 0 }) : undefined}
+                    error={priceErrorsShown ? numberFieldError(promotionPrice, { min: 0, optional: true }) : undefined}
                   />
                 </div>
                 <div className="space-y-2">

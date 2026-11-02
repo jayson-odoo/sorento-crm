@@ -437,3 +437,38 @@ def test_migration_clears_cabana_lines_and_downgrade_restores_them(db):
         )
     ).scalar()
     assert cols == 0
+
+
+def test_promotion_detail_masks_flagged_lines_on_the_nested_path(db):
+    """Promotion detail, n8n's reply and the list response models go through the wrap
+    validator (from_attributes), not the custom model_validate dict path."""
+    from app.models.marketing import PromotionProduct
+    from app.schemas.marketing import PromotionResponse
+    from app.services.marketing_service import PromotionService
+
+    flagged_brand = _brand(db, flagged=True)
+    promotion, group = _promotion(db)
+    _line(db, promotion, group, _product(db, flagged_brand), Decimal("430"), Decimal("570"), Decimal("57"))
+    _line(db, promotion, group, _product(db, _brand(db, flagged=False)), Decimal("800"), Decimal("200"), Decimal("20"))
+    db.expire_all()
+
+    loaded = PromotionService(db).get_promotion(promotion.id, include_products=True)
+    for pp in loaded.products:  # what the route does before serialising
+        pp.promotion_price = pp.promo_selling_price
+    flagged_ids = {pp.id for pp in loaded.products if pp.product.brand_id == flagged_brand.id}
+
+    response = PromotionResponse.model_validate(loaded)
+
+    grouped = [x for g in response.promotion_groups for x in g.promotion_products]
+    for collection in (response.products, grouped):
+        assert len(collection) == 2
+        for x in collection:
+            if x.id in flagged_ids:
+                assert (x.promotion_price, x.discount_amount, x.discount_percent) == (None, None, None)
+            else:
+                assert x.promotion_price == Decimal("800.00")
+    # Masked on the response only: the stored row is untouched and nothing is dirty.
+    assert not db.dirty
+    db.expire_all()
+    stored = {r.promo_selling_price for r in db.query(PromotionProduct).filter(PromotionProduct.promotion_id == promotion.id)}
+    assert stored == {Decimal("430.00"), Decimal("800.00")}

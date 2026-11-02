@@ -11,7 +11,9 @@ flyer reader invented one on every Cabana promotion line.
 2. DATA CLEAR (destructive, reversible): for every promotion line whose product's brand
    carries the flag, the old `promo_selling_price`, `discount_amount`, `discount_percent`
    are copied into `promotion_products_selling_price_backup`, then cleared. The downgrade
-   writes them back from that table. Runs on prod only after the owner's yes.
+   writes them back from that table, overwriting whatever a line holds by then (a rollback,
+   not a merge). Nothing in code gates the clear: it runs on the deploy that ships this
+   revision, so the owner's yes to deploy is the yes to the clear.
 
 No embedding re-queue: `promotion_product` is outside the embedding keep set
 (`app/services/embedding_settings.py` RECORD_KEEP_SET), so a queued row would be refused
