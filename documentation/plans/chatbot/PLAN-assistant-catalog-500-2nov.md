@@ -73,9 +73,11 @@ Everything else that climbs paths stays inside `sorento_crm_backend/` and is in 
   or regenerated.
 - Drift guard: a backend test asserts the copy is byte-identical to the MCP file (skips only where
   the MCP tree is absent, i.e. inside the image). The failure message prints the one `cp` command.
-  The pre-push hook gets the same `cmp` when either file is in the push, because the catalog changes
-  about 30 times a month and PR CI only selects backend tests for backend code changes, so a
-  catalog-only PR would otherwise first meet the guard at release.
+  The guard is in `tests/release_core.txt`, so every release runs it: a catalog-only change
+  selects no backend test (neither on the PR nor in the release's import selection, checked with
+  `scripts/ci_select_tests.py`). The pre-push hook compares the two committed blobs when either
+  file is in the push, because the catalog changes about 30 times a month and the release would
+  otherwise be the first place drift shows.
 - Degrade: `_rag_select_tools` catches any exception from ranking, logs it with the stack, and
   returns no tools, so the turn answers without tools instead of a 500.
 - Classes fixed: every runtime caller of `_load_catalog_specs` (panel ranking, capability summary,

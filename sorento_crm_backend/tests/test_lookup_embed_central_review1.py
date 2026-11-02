@@ -258,13 +258,19 @@ def test_f2_the_assistant_agent_route_skips_tool_rag(db, monkeypatch):
     instance = cls.__new__(cls)
     instance.db = db
 
+    calls: list[str] = []
+
     def boom(*a, **k):
+        # Recorded, not only raised: `_rag_select_tools` degrades a raising ranking to no tools
+        # (ASSISTANT-CATALOG-500), which would swallow a bare raise from inside it.
+        calls.append("tool RAG ran")
         raise AssertionError("tool RAG ran")
 
     monkeypatch.setattr(cls, "_embed_query", boom, raising=False)
     monkeypatch.setattr(svc.EmbeddingReadService, "search_tool_candidates", boom)
     selected, sources = instance._rag_select_tools(standalone_query="stock of a tap", enabled_tools=["a_tool"], top_k=1)
     assert isinstance(selected, list) and isinstance(sources, list)
+    assert calls == []
 
 
 # ================================================================== F-4: which failures count; what the guard demands

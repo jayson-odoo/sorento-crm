@@ -179,13 +179,14 @@ rm -f /tmp/pii-guard.$$
 
 # --- e3. backend copy of the MCP catalog -----------------------------------
 # The backend image has no sorento_crm_mcp/, so the backend carries a verbatim
-# copy (tests/test_mcp_catalog_in_image.py is the CI guard). PR CI selects
-# backend tests only for backend code, so a catalog-only change would first
-# meet that guard at release; catch it here instead.
+# copy (tests/test_mcp_catalog_in_image.py, in the release core tier). A
+# catalog-only PR runs no backend test, so drift would first show in the
+# release; catch it here instead.
 MCP_CATALOG=sorento_crm_mcp/sorento_crm_mcp/catalog.py
 BACKEND_CATALOG_COPY=sorento_crm_backend/app/services/mcp_catalog_copy.py
-if git diff --name-only origin/main...HEAD -- "$MCP_CATALOG" "$BACKEND_CATALOG_COPY" | grep -q .; then
-  if cmp -s "$MCP_CATALOG" "$BACKEND_CATALOG_COPY"; then
+if [ -n "$(git diff --name-only origin/main...HEAD -- "$MCP_CATALOG" "$BACKEND_CATALOG_COPY")" ]; then
+  # Equal content = equal blob id; compares what is committed at HEAD, not the working tree.
+  if [ "$(git rev-parse "HEAD:$MCP_CATALOG")" = "$(git rev-parse "HEAD:$BACKEND_CATALOG_COPY" 2>/dev/null)" ]; then
     ok "mcp-catalog-copy"
   else
     fail "mcp-catalog-copy"

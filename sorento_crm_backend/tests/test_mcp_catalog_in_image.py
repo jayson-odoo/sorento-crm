@@ -47,6 +47,14 @@ def image_layout(monkeypatch):
     tool_keyword_rank._tool_texts.cache_clear()
 
 
+def test_the_catalog_is_the_backend_copy():
+    """Pins the mechanism: the image-layout tests relocate `__file__` at call time, so a path
+    climb evaluated at import time (a module-level constant) would slip past them."""
+    from app.services import mcp_catalog_copy
+
+    assert capability_service._load_catalog_specs() is mcp_catalog_copy.CATALOG
+
+
 def test_capability_documents_build_in_the_image_layout(image_layout):
     """The panel's tool pick, the capability summary and the embedding backfill all start here."""
     docs = capability_service.build_capability_documents(include_planned=False)
