@@ -1599,6 +1599,9 @@ def _verdict_tail(entry: dict) -> str:
     if branch == "incoming":
         # AVAIL-RENDER fix round (owner hand test, 6 Oct 2026): the cross says the stock
         # state too, not the date alone. Still no refer: the ETA is the answer.
+        if not entry.get("eta"):
+            # The dealer's ETA field is revoked: incoming, no date, no refer.
+            return f"{STOCK_NO} No stock, No ETA."
         return f"{STOCK_NO} No stock, ETA {entry.get('eta')}."
     available = entry.get("available_qty")
     if (

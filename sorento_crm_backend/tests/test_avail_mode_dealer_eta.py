@@ -11,6 +11,10 @@ Plan: documentation/plans/chatbot/PLAN-avail-mode-replies-02oct.md.
 """
 from __future__ import annotations
 
+from datetime import date
+
+import pytest
+
 from app.main import app  # noqa: F401  (first app import)
 from app.api.v1.incoming_stock import _stamp_discontinued
 from app.models.base import set_company_scope
@@ -25,6 +29,14 @@ from tests.test_incoming_contact_rules import (  # noqa: F401  (fixtures)
     db,
 )
 from tests.test_stock_availability_block import _policy_row, _wh
+
+
+@pytest.fixture(autouse=True)
+def _fixed_today(monkeypatch):
+    """Today is pinned before the fixed 2026 dates, so the "(delayed)" marker is deterministic."""
+    import app.services.incoming_stock_service as incoming
+
+    monkeypatch.setattr(incoming, "today_myt", lambda: date(2026, 1, 1))
 
 
 def _dealer(db):

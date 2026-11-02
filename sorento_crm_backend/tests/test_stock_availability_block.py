@@ -58,8 +58,8 @@ WRITE_PERM = "inventory.stock.edit"
 
 @pytest.fixture(autouse=True)
 def _fixed_today(monkeypatch):
-    """The dealer read only takes shipments due today or later (CHAT-FIND round 3); these tests
-    date their shipments in 2026, so today is pinned before every one of them."""
+    """These tests date their shipments in 2026, so today is pinned before every one of them
+    and the "(delayed)" marker a past told date carries is deterministic."""
     import app.services.incoming_stock_service as incoming
 
     monkeypatch.setattr(incoming, "today_myt", lambda: date(2026, 1, 1))
@@ -850,9 +850,8 @@ def test_a_named_id_answers_for_every_company_row_of_that_code(db):
 
 def test_merged_entry_takes_the_earliest_qualifying_shipment_across_the_group(db):
     """The merge structure extended to R5: both merged ids carry their own qualifying
-    shipment (Sorento March, Mocha February); the merged entry's `eta` is built off the
-    EARLIER of the two, the same "earliest wins" rule `earliest_packing_list_shipment`
-    already applies per product id."""
+    shipment (Sorento March, Mocha February); the merged entry's `eta` lists both dates,
+    ascending (Fix B). The packing list file is still the earliest shipment's."""
     seed_mocha(db)
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
     sorento_wh = _wh(db, unique_code("ZZTR9S")[:50])
@@ -888,7 +887,7 @@ def test_merged_entry_takes_the_earliest_qualifying_shipment_across_the_group(db
     _incoming_line(
         db, shipment_id=mocha_shipment.id, product_id=mocha_p.id, company_id=MOCHA_ID
     )
-    contact = _contact(db)
+    contact = _contact(db, packing_list_allowed=True)
     _policy_row(
         db,
         mode="availability",
@@ -907,7 +906,10 @@ def test_merged_entry_takes_the_earliest_qualifying_shipment_across_the_group(db
     entry = result["stock_availability"][0]
     assert entry["product_code"] in {stem.upper(), stem.lower()}
     assert entry["branch"] == "incoming"
-    assert entry["eta"] == "01/02/2026"
+    # Fix B (owner, 2 Nov 2026): the entry tells every date of the code, not only the earliest.
+    assert entry["eta"] == "01/02/2026, 01/03/2026"
+    # AC-SIF7: the file is the EARLIEST shipment's (Mocha, 01/02), not the Sorento one.
+    assert entry["packing_list"]["file_path"] == mocha_att.file_path
 
 
 # ================================ review round 6, the asked order (unchanged)
@@ -1201,9 +1203,9 @@ def test_a_dealer_is_told_the_revised_date_of_a_delayed_shipment(db, monkeypatch
     assert entry["eta"] == "05/11/2026"
 
 
-def test_a_dealer_is_never_told_a_past_eta(db, monkeypatch):
-    """Reviewer round 3 (K7 hardening), end to end: a shipment whose only date is past is no
-    incoming for the dealer; the next dated one answers."""
+def test_a_dealer_is_told_a_past_eta_marked_delayed(db, monkeypatch):
+    """AC-SIF4, Fix B (owner, 2 Nov 2026): a shipment whose only date is past is still incoming,
+    told with the one marker; the next dated shipment is listed after it, in date order."""
     import app.services.incoming_stock_service as incoming
 
     monkeypatch.setattr(incoming, "today_myt", lambda: date(2026, 10, 13))
@@ -1223,9 +1225,10 @@ def test_a_dealer_is_never_told_a_past_eta(db, monkeypatch):
             p.id,
         )
 
-    assert _ask()["branch"] == "no_incoming"
+    entry = _ask()
+    assert (entry["branch"], entry["eta"]) == ("incoming", "13/09/2026 (delayed)")
     nxt = _incoming_shipment(db, eta=date(2026, 11, 20), attachment_id=_attachment(db).id)
     _incoming_line(db, shipment_id=nxt.id, product_id=p.id)
     db.flush()
     entry = _ask()
-    assert (entry["branch"], entry["eta"]) == ("incoming", "20/11/2026")
+    assert (entry["branch"], entry["eta"]) == ("incoming", "13/09/2026 (delayed), 20/11/2026")
