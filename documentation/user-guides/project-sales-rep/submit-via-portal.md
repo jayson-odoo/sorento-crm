@@ -44,7 +44,7 @@ Complaints support an **AI Extract** shortcut to pre-fill the form from a photo,
 
 If the upload doesn't return useful values, dismiss the dialog and fill the form manually.
 
-A long list (more than six pages of lines) is read in up to four parts at once, so it still comes back in well under a minute. If some parts could not be read, the rows from the other pages still show, with a line above them such as *"Pages 7-9 could not be read, try them again."* Extract those pages again (for example from a file with just those pages) to add their rows.
+On a price tag, purchase or sponsorship request, a long list (more than six pages) is read in up to four parts at once, so it still comes back in well under a minute. A complaint is always read in one go. If some parts could not be read, the rows from the other pages still show, with a line above them such as *"Pages 7-9 could not be read, try them again."* Extract those pages again (for example from a file with just those pages) to add their rows.
 
 If the AI reader fails for the whole file, the dialog shows one of these messages instead of values:
 

@@ -108,11 +108,17 @@ TOO_LONG_MESSAGE = "This file is too long to read in one go; try fewer pages."
 # with its own cap. Group size is ceil(pages / 4), so every group runs in ONE wave and the whole
 # read still ends inside one call's cap (plus render), under the host proxy's 60 s.
 MAX_PARALLEL_CALLS = 4
-# Only a line-item upload of MORE pages than this is split: crew read 6 pages / 168 rows in 34 s in
-# one call, and anything smaller reads better whole (review: a 2-photo complaint split in two
-# lost its second DO number). A form without line items is never split: its answer is one set of
-# fields, not rows per page.
+# Only an upload of MORE pages than this is split: crew read 6 pages / 168 rows in 34 s in one
+# call, and anything smaller reads better whole (review: a 2-photo complaint split in two lost its
+# second DO number).
 SPLIT_ABOVE_PAGES = 6
+# The forms whose answer is a long list of rows, one block per page. Not the complaint (crew ruling,
+# 2 Nov: it lists a few affected products, so a split buys no speed, and read apart its photos gave
+# near-duplicate rows and one group's defect description), and not a field-only form (one set of
+# fields, not rows per page).
+SPLIT_FORMS: frozenset[str] = frozenset(
+    {"portal.price_tag_request", "portal.purchase_request", "portal.sponsorship_form"}
+)
 
 # Forms that ship a separate items-list section. Complaints now capture one
 # line per affected product (code + quantity), so they receive a `products`
@@ -137,8 +143,8 @@ def _is_video(f: "ExtractFile") -> bool:
 
 def _page_groups(parts: list[ImagePart], *, split: bool) -> list[list[ImagePart]]:
     """Consecutive pages in at most MAX_PARALLEL_CALLS groups (one wave). The caller decides
-    `split` (line items, past SPLIT_ABOVE_PAGES, no video: a clip's frames show the same products
-    and read apart come back as near-copies)."""
+    `split` (a SPLIT_FORMS form, past SPLIT_ABOVE_PAGES, no video: a clip's frames show the same
+    products and read apart come back as near-copies)."""
     if not split or len(parts) <= 1:
         return [parts]
     size = -(-len(parts) // MAX_PARALLEL_CALLS)
@@ -500,7 +506,7 @@ class AIExtractService:
         has_line_items = _form_has_line_items(form_key)
         groups = _page_groups(
             image_parts,
-            split=has_line_items
+            split=form_key in SPLIT_FORMS
             and len(image_parts) > SPLIT_ABOVE_PAGES
             and not any(_is_video(f) for f in files),
         )
