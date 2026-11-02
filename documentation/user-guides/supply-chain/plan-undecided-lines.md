@@ -6,7 +6,7 @@ shipped, and when you want to tell from the Sales Orders list which orders still
 ## Where
 
 * **[Project Sales Admin → Sales Orders](/scm/sales-orders)** - tick the orders, then
-  **Start** → **Plan selected (N)**.
+  **Plan selected (N)**.
 * **[Supply Chain → Project Demand → Fulfilment Planning](/project-sales/fulfilment-planning)**
   (also reachable as **Project Sales → Fulfilment Planning**) - the board that opens.
 
@@ -44,7 +44,7 @@ An order whose every line is one of those has nothing to plan at all.
 1. Open **[Project Sales Admin → Sales Orders](/scm/sales-orders)**. Find the orders you want,
    whatever their status - a **Completed** one can be planned.
 2. Tick them in the list.
-3. Click **Start** → **Plan selected (N)**. With nothing ticked the item is greyed out and says
+3. Click **Plan selected (N)**. With nothing ticked the button is greyed out and says
    **Tick the sales orders to plan first.**; over the board's own limit it says how many the
    board takes at a time and how many you selected.
 4. The board opens on that selection. Work each line the usual way (see
@@ -59,15 +59,40 @@ cancelled or marked no purchase needed.
 
 ## Lines at a dealer location
 
-A project sales order line at a dealer location such as **BRW** or **MWH** can be planned like any
-other line.
+A line at a dealer location such as **BRW** or **MWH** can be planned like any other line, on a
+project sales order and on a dealer (retail) one.
 
-* The suggestion reads the location's stock after every line owed there, this one included, and the
-  share a dealer location keeps back for dealers still applies. So it can be a **Reserve** for part
-  of the line and a **Buy** for the rest, and a line whose location holds only enough for itself
-  suggests a **Buy**.
+* The suggestion reads the location's stock after every other line owed there. The line's own
+  demand is not counted against the stock it stands on, so a line whose location holds enough for
+  itself can reserve it.
+* **No share on a dealer order at its own location.** A dealer order's line takes what is available
+  there: 10 on hand and 10 ordered suggests **Reserve 10**. At any other location, and for a project
+  order's line at a dealer location, the share a location keeps back for dealers still applies, so
+  the same 10 on hand and 10 ordered on a project order suggests **Reserve 5** and **Buy 5**.
+* All the dealer locations are one pile. Stock the book owes at another location, or has reserved,
+  cannot be reserved here, so an oversold location elsewhere can turn a suggestion into a **Buy**.
 * A **Buy** on the line goes to purchasing in the order inquiry the usual way.
-* Dealer (retail) sales orders do not reach this board yet.
+* Once confirmed, the line shows on the Loading Plan in the **Retail** column, less whatever is
+  linked to a shipping order, but only while the order reads **Outstanding**. The Loading Plan
+  shows no line of a **Completed** order, dealer or project.
+
+## Finding a dealer order
+
+On [Fulfilment Planning](/project-sales/fulfilment-planning), open **Filters** and pick under
+**Type**. The list opens on **Project**. **Retail** also lists **Other** orders, and you can pick
+both Project and Retail to see them together. The **Type** column says which each order is.
+
+On [Sales Orders](/scm/sales-orders), use the **Type** filter, tick the orders, then
+**Plan selected (N)**. A sales order's own page offers **Plan** when it has a line the board can
+take.
+
+A dealer order reaches the board when at least one of its lines is at an active dealer location,
+whether it reads **Outstanding** or **Completed**, the same as a project order: a line already
+delivered can still be planned. A dealer order with no such line and an order with no class set
+stay off; the board says which when you open it.
+
+The Fulfilment Planning list shows only open orders that still owe quantity, so open a
+**Completed** dealer order from Sales Orders or from its own page.
 
 ## When a line cannot be planned
 
@@ -76,7 +101,8 @@ The line says why, in place of a suggestion:
 * **Needs a location**: the sales order line states no fulfilment location. Set it on the sales
   order, then plan the line again.
 * **Outside fulfilment planning**: the line is at a project location that is switched off for
-  planning. An admin controls this on the Warehouses screen.
+  planning, which an admin controls on the Warehouses screen, or it is a dealer order's line at a
+  project location, which is never planned here.
 
 The count on a board cell reads **N not plannable**, and the status filter option has the same
 name. Open the cell to see each line's reason.
@@ -100,6 +126,8 @@ name. Open the cell to see each line's reason.
   needed.** - the selection genuinely has nothing to decide.
 * **No lines in these dates** with **The selection holds N lines on other dates.** - the day
   window you are scrolled to is empty, the selection is not. Move the window.
+* **No lines to plan on these sales orders** with a sentence naming the order - the order has no
+  class set, or is a dealer order with no line at an active dealer location.
 
 ## The Planned pill
 
@@ -112,7 +140,7 @@ status, identical whether you are viewing or editing:
 | **Planned** | Every line that can be planned is decided. |
 | **Partly 2/3** | 2 of the 3 plannable lines are decided. |
 | **Not planned** | Nothing on the order has been decided yet. |
-| **-** | Nothing on the order can be planned: every line is cancelled or marked no purchase needed. |
+| **-** | Nothing on the order can be planned: every line is cancelled or marked no purchase needed, or the board does not take the order at all (see [Finding a dealer order](#finding-a-dealer-order)). |
 
 It counts lines by the same rule the board uses, so an order that reads **Partly 2/3** opens a
 board with one line left to decide. The column is not sortable and not filterable; the counts

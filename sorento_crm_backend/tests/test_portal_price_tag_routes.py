@@ -310,7 +310,7 @@ class TestAutoSplitThroughThePortalRoute:
                     {
                         "line_type": "product",
                         "product_id": cabinet_id,
-                        "combo_id": combo_id,
+                        "combo_id": None,  # PRICETAG-COMBO AC-3.3: only a line with no combo_id keeps one tag per combination
                         "parts": [{"role": "Basin", "candidates": [white, black]}],
                     }
                 ],
@@ -341,7 +341,7 @@ class TestAutoSplitThroughThePortalRoute:
                     "line_type": "product",
                     "product_id": sink_id,
                     "product_set_id": None,
-                    "combo_id": combo_id,
+                    "combo_id": None,  # PRICETAG-COMBO AC-3.3: only a line with no combo_id keeps one tag per combination
                     "quantity": 1,
                     "included_accessories": None,
                     "remarks": None,
@@ -582,7 +582,7 @@ class TestAutoSplitThroughThePortalRoute:
                     {
                         "line_type": "product",
                         "product_id": cabinet_id,
-                        "combo_id": combo_id,
+                        "combo_id": None,  # PRICETAG-COMBO AC-3.3: only a line with no combo_id keeps one tag per combination
                         "parts": [{"role": "Basin", "candidates": [white, black]}],
                     }
                 ],

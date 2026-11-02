@@ -253,6 +253,29 @@ def _register_core() -> None:
     )
 
     _register_certificate()
+    _register_order_inquiry()
+
+
+def _register_order_inquiry() -> None:
+    """Facts for the order inquiry handover / undo emails (DEALER-OI-ROUTE). The object is
+    the dispatch context itself (`TriggerSpec.context_facts`), not a row: one email can
+    cover many order inquiries, but every line on it shares one sales order class."""
+    register_fact_source(
+        "order_inquiry",
+        "Order inquiry",
+        [
+            FactDef(
+                key="order_inquiry.salesOrderClass",
+                label="Sales order class",
+                type="enum",
+                resolver=lambda ctx, db: (ctx or {}).get("sales_order_class"),
+                options=[
+                    {"value": "retail", "label": "Retail"},
+                    {"value": "project", "label": "Project"},
+                ],
+            ),
+        ],
+    )
 
 
 def _register_certificate() -> None:

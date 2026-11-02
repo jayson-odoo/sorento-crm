@@ -34,9 +34,9 @@
  *    parts are added one at a time below.
  *
  *  PATCH  /api/v1/master-data/product-combos/{combo_id}
- *    body { name?, sort_order? } -> ProductComboRow
- *    No UI consumer in S1 (nothing in the UAC renames or reorders a combo) -
- *    documented here because the route is part of D1's table.
+ *    body { name?, sort_order?, description?, free_items?, list_price?, sell_price? }
+ *    -> ProductComboRow. Omitted = left alone, null = cleared; a negative price is 422.
+ *    The Combos card saves the four PRICETAG-COMBO fields through it.
  *
  *  DELETE /api/v1/master-data/product-combos/{combo_id} -> 204
  *    Hard delete, cascading its parts (AC-S1-5). NOT what the UI calls: Delete
@@ -54,7 +54,8 @@
  *  PATCH  /api/v1/master-data/product-combo-parts/{part_id}
  *    body ProductComboPartUpdate -> ProductComboPartRow
  *    The choice-group control on a part row (AC-S1-4). `choice_group: null`
- *    clears it back to a fixed part.
+ *    clears it back to a fixed part. Also `sell_price`, `topup_amount` (null clears,
+ *    negative is 422) and `is_upgrade`.
  *
  *  DELETE /api/v1/master-data/product-combo-parts/{part_id} -> 204
  *    Same deferred-action note as the combo delete, action_key
@@ -89,6 +90,7 @@ import type {
   ProductComboPartRow,
   ProductComboPartUpdate,
   ProductComboRow,
+  ProductComboUpdate,
   ProductSoldWithRow,
 } from '../types/productCombo.types';
 
@@ -145,6 +147,19 @@ export async function addProductComboPart(
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to add the part'));
   return (await res.json()) as ProductComboPartRow;
+}
+
+export async function updateProductCombo(
+  comboId: string,
+  write: ProductComboUpdate,
+): Promise<ProductComboRow> {
+  const res = await apiFetch(`${COMBOS}/${encodeURIComponent(comboId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(write),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save the combo'));
+  return (await res.json()) as ProductComboRow;
 }
 
 export async function updateProductComboPart(

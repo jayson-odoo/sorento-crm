@@ -321,6 +321,14 @@ def _finish(
 
 def cancel(db, contact_respond_id: str, action_id: str, *, operator_user_id: str | None = None) -> ActionOutcome:
     action = _load(db, contact_respond_id, action_id)
+    if not operator_user_id:
+        # The chat path: only the linked user whose action it is (a contact principal has no user).
+        try:
+            ctx = build_context(db, contact_respond_id)
+        except AgentRefused:
+            raise ActionRefused("entry_refused")
+        if str(ctx.user_id) != str(action.user_id):
+            raise ActionRefused("entry_refused")
     if operator_user_id:
         # A console operator may cancel for the linked user only while that is still who the action is for,
         # and only when they could have confirmed at least one step themselves.
@@ -423,7 +431,8 @@ def actions_by_turn(db, turn_ids: list[str], user_id: str) -> dict[str, list[dic
         out.setdefault(str(a.turn_id), []).append(
             {
                 "id": str(a.id),
-                "status": a.status,
+                # A proposal nobody decided in time reads Expired, whatever the row still says.
+                "status": "expired" if a.status == "proposed" and _expires_at(a) < _now() else a.status,
                 "decided_at": a.decided_at,
                 "decided_by_name": names.get(str(a.decided_by_user_id)) if a.decided_by_user_id else None,
                 "steps": [step_out(st, default_status="proposed") for st in a.steps or []],

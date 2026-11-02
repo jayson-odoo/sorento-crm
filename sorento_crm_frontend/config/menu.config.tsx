@@ -267,6 +267,11 @@ const STAFF_SIDEBAR: MenuConfig = [
             path: '/project-sales/price-floors',
             permission: 'projects.types.view',
           },
+          {
+            title: 'Quotation Templates',
+            path: '/project-sales/quotation-templates',
+            permission: 'projects.types.view',
+          },
         ],
       },
     ],
@@ -873,6 +878,11 @@ const STAFF_SIDEBAR: MenuConfig = [
       {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
+        permission: 'resource.attachment_types.view',
+      },
+      {
+        title: 'Document Access',
+        path: '/resource-management/document-access',
         permission: 'resource.attachment_types.view',
       },
     ],
@@ -2306,6 +2316,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/project-sales/price-floors',
         permission: 'projects.types.view',
       },
+      {
+        title: 'Quotation Templates',
+        path: '/project-sales/quotation-templates',
+        permission: 'projects.types.view',
+      },
     ],
   },
   {
@@ -2387,6 +2402,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Attachment Types',
         path: '/resource-management/attachment-types',
+      },
+      {
+        title: 'Document Access',
+        path: '/resource-management/document-access',
       },
     ],
   },

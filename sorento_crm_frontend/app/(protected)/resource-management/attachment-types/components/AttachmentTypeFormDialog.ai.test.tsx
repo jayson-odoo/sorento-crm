@@ -1,10 +1,9 @@
 /**
- * AttachmentTypeFormDialog - "AI can read" and "Escalate to" (AGENTIC-KNOWLEDGE P1, AC-K3).
+ * AttachmentTypeFormDialog - "Escalate to" (AGENTIC-KNOWLEDGE P1, AC-K3) after DOC-ACCESS-SIMPLE.
  *
- * HR sets, per attachment TYPE, who the AI may answer from this type's files for, and which team
- * a question the documents do not cover is referred to. The two selects must default to Off / no
- * team, reload the saved values on edit, show the team by NAME (AC-K20, no UUID), and send
- * `ai_audience` + `ai_escalate_team_id` on create and update.
+ * DAS-FE-6: the "AI can read" select is gone (who reads a type is ticked on the Document Access
+ * page now); create and update no longer send `ai_audience`. "Escalate to" stays: it defaults to
+ * no team, reloads the saved team by NAME (AC-K20, no UUID), and sends `ai_escalate_team_id`.
  *
  * The team list is mocked at the lowest shared layer (`teamService.getTeams`) and the dialog is
  * rendered inside a QueryClientProvider, so the test holds whichever hook the form picks to read
@@ -68,7 +67,8 @@ function savedType(over: Record<string, unknown> = {}) {
     is_certificate: false,
     max_validity_months: null,
     created_at: new Date('2026-01-01'),
-    ai_audience: 'staff',
+    ai_read_staff: true,
+    ai_read_codes: ['dealer'],
     ai_escalate_team_id: 'team-hr',
     ai_escalate_team_name: 'HR',
     ...over,
@@ -113,106 +113,74 @@ function fillRequired() {
   fireEvent.change(screen.getByLabelText(/Allowed Extensions/i), { target: { value: 'pdf' } });
 }
 
-describe('AttachmentTypeFormDialog - AI can read', () => {
-  it('shows AI can read defaulting to Off, with the four audiences on offer', async () => {
+describe('AttachmentTypeFormDialog - Escalate to (DAS-FE-6)', () => {
+  it('no longer shows the AI can read field, on create or on edit', async () => {
     renderDialog();
+    expect(screen.queryByText('AI can read')).not.toBeInTheDocument();
+    expect(screen.getByText('Escalate to')).toBeInTheDocument();
+    cleanup();
 
-    expect(screen.getByText('AI can read')).toBeInTheDocument();
-    expect(selectOf('AI can read').textContent).toMatch(/Off/);
-
-    fireEvent.click(selectOf('AI can read'));
-    for (const name of ['Off', 'Staff only', 'Dealers', 'Everyone']) {
-      expect(await screen.findByRole('option', { name })).toBeInTheDocument();
-    }
+    hooks.useAttachmentType.mockReturnValue({ data: savedType(), isLoading: false });
+    renderDialog({ attachmentTypeId: 'type-1' });
+    await waitFor(() => expect(selectOf('Escalate to').textContent).toMatch(/HR/));
+    expect(screen.queryByText('AI can read')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Staff only/)).not.toBeInTheDocument();
   });
 
   it('shows Escalate to as an empty, clearable team select', async () => {
     renderDialog();
 
-    expect(screen.getByText('Escalate to')).toBeInTheDocument();
     fireEvent.click(selectOf('Escalate to'));
     expect(await screen.findByRole('option', { name: 'HR' })).toBeInTheDocument();
     expect(await screen.findByRole('option', { name: 'Sales Support' })).toBeInTheDocument();
     expect(within(itemOf('Escalate to')).queryByRole('button', { name: /Clear selection/i })).not.toBeInTheDocument();
   });
 
-  it('sends Off and no team when nothing is touched', async () => {
+  it('create sends no team and no ai_audience when nothing is touched', async () => {
     renderDialog();
     fillRequired();
 
     fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
 
     await waitFor(() => expect(hooks.createAsync).toHaveBeenCalledTimes(1));
-    expect(hooks.createAsync.mock.calls[0][0]).toMatchObject({
-      ai_audience: 'off',
-      ai_escalate_team_id: null,
-    });
+    const payload = hooks.createAsync.mock.calls[0][0];
+    expect(payload).toMatchObject({ ai_escalate_team_id: null });
+    expect(payload).not.toHaveProperty('ai_audience');
   });
 
-  it('sends the chosen audience and team id on create', async () => {
+  it('create sends the chosen team id', async () => {
     renderDialog();
     fillRequired();
-    await choose('AI can read', 'Staff only');
     await choose('Escalate to', 'HR');
 
     fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
 
     await waitFor(() => expect(hooks.createAsync).toHaveBeenCalledTimes(1));
-    expect(hooks.createAsync.mock.calls[0][0]).toMatchObject({
-      ai_audience: 'staff',
-      ai_escalate_team_id: 'team-hr',
-    });
+    expect(hooks.createAsync.mock.calls[0][0]).toMatchObject({ ai_escalate_team_id: 'team-hr' });
+    expect(hooks.createAsync.mock.calls[0][0]).not.toHaveProperty('ai_audience');
   });
 
-  it.each([
-    ['Dealers', 'dealer'],
-    ['Everyone', 'public'],
-  ])('maps the "%s" option to %s', async (labelText, value) => {
-    renderDialog();
-    fillRequired();
-    await choose('AI can read', labelText);
-
-    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
-
-    await waitFor(() => expect(hooks.createAsync).toHaveBeenCalledTimes(1));
-    expect(hooks.createAsync.mock.calls[0][0]).toMatchObject({ ai_audience: value });
-  });
-
-  it('reloads the saved audience and shows the saved team by name when editing', async () => {
-    hooks.useAttachmentType.mockReturnValue({ data: savedType({ ai_audience: 'dealer' }), isLoading: false });
+  it('reloads the saved team by name when editing', async () => {
+    hooks.useAttachmentType.mockReturnValue({ data: savedType(), isLoading: false });
     renderDialog({ attachmentTypeId: 'type-1' });
 
-    await waitFor(() => expect(selectOf('AI can read').textContent).toMatch(/Dealers/));
     await waitFor(() => expect(selectOf('Escalate to').textContent).toMatch(/HR/));
     expect(selectOf('Escalate to').textContent).not.toMatch(/team-hr/);
   });
 
-  it('keeps the saved audience and team on update when only another field is edited', async () => {
+  it('update keeps the saved team and sends no ai_audience when another field is edited', async () => {
     hooks.useAttachmentType.mockReturnValue({ data: savedType(), isLoading: false });
     renderDialog({ attachmentTypeId: 'type-1' });
-    await waitFor(() => expect(selectOf('AI can read').textContent).toMatch(/Staff only/));
+    await waitFor(() => expect(selectOf('Escalate to').textContent).toMatch(/HR/));
 
     // The Update button stays disabled until the form is dirty, so edit an unrelated field.
     fireEvent.change(screen.getByLabelText(/Allowed Extensions/i), { target: { value: 'pdf,docx,doc' } });
     fireEvent.click(screen.getByRole('button', { name: /^Update$/ }));
 
     await waitFor(() => expect(hooks.updateAsync).toHaveBeenCalledTimes(1));
-    expect(hooks.updateAsync.mock.calls[0][0]).toMatchObject({
-      id: 'type-1',
-      data: { ai_audience: 'staff', ai_escalate_team_id: 'team-hr' },
-    });
-  });
-
-  it('turning AI reading off on an existing type sends off', async () => {
-    hooks.useAttachmentType.mockReturnValue({ data: savedType(), isLoading: false });
-    renderDialog({ attachmentTypeId: 'type-1' });
-    await waitFor(() => expect(selectOf('AI can read').textContent).toMatch(/Staff only/));
-
-    await choose('AI can read', 'Off');
-    fireEvent.click(screen.getByRole('button', { name: /^Update$/ }));
-
-    await waitFor(() => expect(hooks.updateAsync).toHaveBeenCalledTimes(1));
-    expect(hooks.updateAsync.mock.calls[0][0].data).toMatchObject({ ai_audience: 'off' });
+    const call = hooks.updateAsync.mock.calls[0][0];
+    expect(call).toMatchObject({ id: 'type-1', data: { ai_escalate_team_id: 'team-hr' } });
+    expect(call.data).not.toHaveProperty('ai_audience');
   });
 
   it('clearing the team sends null', async () => {

@@ -121,13 +121,9 @@ def resolve_preview(
             raise AppException(
                 status_code=404, message="Product not found.", code="NOT_FOUND"
             )
-        return ResolvePreviewOut(
-            product=ProductTagData.model_validate(
-                tag_data_service.product_tag_data(
-                    db, product, viewer, payload.promotion_id
-                )
-            )
-        )
+        data = tag_data_service.product_tag_data(db, product, viewer, payload.promotion_id)
+        data = tag_data_service.with_preview_combo(db, product, data, payload.combo_id)
+        return ResolvePreviewOut(product=ProductTagData.model_validate(data))
 
     product_set = tag_data_service.get_product_set(db, payload.product_set_id)
     if product_set is None:

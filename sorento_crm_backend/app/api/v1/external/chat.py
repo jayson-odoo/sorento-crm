@@ -53,7 +53,8 @@ from app.models.user import SystemSetting
 from app.dependencies import get_external_api_user
 from app.schemas.chatbot_turn import ChatbotTurnResponse
 from app.schemas.integration import IntegrationLogCreate
-from app.services.chatbot import complete_turn, inbox_queue, run_turn
+# `panel_service`: the AI panel route (`system/ai_assistant.py`) comes through this doorway.
+from app.services.chatbot import complete_turn, inbox_queue, panel_service, run_turn  # noqa: F401
 # The head's OWN lookup for "which row is this message's turn" (D15), so the id-less
 # complete route and the duplicate-delivery check can never pick different rows.
 from app.services.chatbot.engine import _send_actions, find_turn_for_message
@@ -61,6 +62,7 @@ from app.services.error_handler import AppException
 from app.services.chatbot_reply_copy import CHATBOT_REPLY_TURN_FAILED
 from app.services.chatbot.contracts import (
     DIRECT_INGRESS,
+    PANEL_INGRESS,
     CompleteRequest,
     CompleteResponse,
     TurnRequest,
@@ -197,6 +199,13 @@ def chat_turn(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="The ingress value respond_webhook is reserved for the CRM's own webhook.",
+            )
+        # AGENTIC-UNIFY AC-10: `panel` is the AI side panel's own marker, the one ingress that
+        # carries a staff principal, so an API-key caller may not claim it either.
+        if payload.envelope.ingress == PANEL_INGRESS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="The ingress value panel is reserved for the CRM's own AI panel.",
             )
         # The serialised payload, so a chunked request with no `content-length` is bounded
         # too. See MAX_TURN_BODY_BYTES: this is a bound on what gets STORED.

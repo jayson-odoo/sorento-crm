@@ -16,6 +16,8 @@ from typing import Any, Callable
 
 from app.services.ai_assistant_service import mcp_schema_to_openai_tool
 
+from app.services.chatbot import principal as staff_principal
+
 logger = logging.getLogger(__name__)
 
 #: Server-injected, never model-chosen.
@@ -49,7 +51,7 @@ def _defs(*rows: tuple[str, str, str | None]) -> dict[str, ToolDef]:
 
 #: `crm_resolve` is local (the bot's resolver, in process); the GRN summary is a plain route.
 NON_RENDER_TOOLS = frozenset(
-    {"crm_resolve", "crm_products_find", "crm_procurement_grn_summary", "crm_knowledge_search", "user_guides_read"}
+    {"crm_resolve", "crm_products_find", "crm_procurement_grn_summary", "crm_knowledge_search", "user_guides_read", "crm_knowledge_handoff"}
 )
 RESOLVE = "crm_resolve"
 FIND = "crm_products_find"
@@ -57,6 +59,9 @@ FIND = "crm_products_find"
 KNOWLEDGE = "crm_knowledge_search"
 #: The Outline guide reader. Open to every linked user; its call carries only `query`.
 GUIDES = "user_guides_read"
+#: AGENTIC-KNOWLEDGE W1 S4: local, contact principal only. Not in REGISTRY or CONTACT_TOOLS (those
+#: are the plan's table): the loop adds its schema for a contact and `_dispatch_inner` answers it.
+HANDOFF = "crm_knowledge_handoff"
 PLAN = "plan"
 ANSWER = "answer"
 
@@ -83,6 +88,25 @@ REGISTRY: dict[str, ToolDef] = _defs(
     # No slug: guides are for any signed-in staff user (every agent caller is an active CRM user).
     ("user_guides_read", "", None),
 )
+
+#: The contact principal's gate (AGENTIC-KNOWLEDGE W1 S1): tool -> the reveal key the contact must
+#: hold (None = open to every contact). A tool not listed is refused; no user slug is ever read.
+CONTACT_TOOLS: dict[str, str | None] = {
+    "crm_knowledge_search": None,
+    "crm_products_find": None,
+    "crm_resolve": None,
+    "crm_inventory_stock_balance_list": "inventory.sellable",
+    "crm_incoming_stock_by_product": None,
+    "crm_incoming_stock_shipments": None,
+    "crm_procurement_po_placed_list": "purchase_orders.placed",
+    "crm_procurement_grn_summary": "purchase_orders.placed",
+    "crm_procurement_spo_allocations_last_receipt_list": "purchase_orders.placed",
+    "crm_procurement_po_last_cost_list": "purchase_orders.cost",
+    "crm_report_ask": "sales_orders.sales_report",
+    "crm_order_management_orders_by_product_list": "sales_orders.sales_report",
+}
+#: What `crm_resolve` may search for a contact principal.
+CONTACT_KINDS = frozenset({"product", "brand", "category"})
 
 #: Tools that read stock: today's bot refuses them for a contact with `chatbot_stock_allowed` off.
 STOCK_TOOLS = frozenset({"crm_inventory_stock_balance_list"})
@@ -117,6 +141,7 @@ KIND_SLUGS: dict[str, str] = {
     "category": "master_data.product_categories.view",
     "sales_agent": "master_data.sales_agents.view",
 }
+ORDER_VIEW = "order_management.orders.view"
 KIND_CONTACT_GRANTS: dict[str, str] = {"supplier": "purchase_orders.supplier"}
 #: Resolver entity types that stand for one of our kinds.
 _KIND_OF_ENTITY: dict[str, str] = {**{k: k for k in KIND_SLUGS}, "product_set": "product"}
@@ -143,6 +168,7 @@ TOOL_LABELS: dict[str, str] = {
     "crm_resolve": "finding names and codes",
     "crm_products_find": "finding products",
     "crm_knowledge_search": "searching company documents",
+    "crm_knowledge_handoff": "passing a question to the marketing product team",
     "user_guides_read": "reading the CRM user guides",
     "crm_customer_asks_list": "your customer asks",
     "crm_customer_ask_update": "change a customer ask",
@@ -266,6 +292,18 @@ KNOWLEDGE_SCHEMA: dict[str, Any] = {
     },
 }
 
+HANDOFF_SCHEMA: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": HANDOFF,
+        "description": (
+            "Call this when the product documents do not answer the customer's question. It offers a "
+            "hand-off to the marketing product team and returns the sentence to end your reply with."
+        ),
+        "parameters": {"type": "object", "properties": {}},
+    },
+}
+
 PLAN_SCHEMA: dict[str, Any] = {
     "type": "function",
     "function": {
@@ -328,8 +366,29 @@ ANSWER_SCHEMA: dict[str, Any] = {
 }
 
 
+def is_contact_principal(ctx: Any) -> bool:
+    return getattr(ctx, "principal", "user") == "contact"
+
+
+def contact_tool_open(ctx: Any, tool: ToolDef) -> bool:
+    """A contact principal's gate: the tool is in `CONTACT_TOOLS` and its reveal key is held."""
+    if tool.name not in CONTACT_TOOLS:
+        return False
+    key = CONTACT_TOOLS[tool.name]
+    return key is None or key in ctx.grants
+
+
 def user_may_use(db: Any, ctx: Any, tool: ToolDef) -> bool:
-    """Does the linked user hold what the tool needs (for `crm_resolve`: any searchable kind)."""
+    """Does the linked user hold what the tool needs (for `crm_resolve`: any searchable kind).
+    A contact principal is gated by `CONTACT_TOOLS` instead of a user slug."""
+    if is_contact_principal(ctx):
+        if not contact_tool_open(ctx, tool):
+            return False
+        if tool.name == RESOLVE:
+            return bool(searchable_kinds(db, ctx, list(KIND_SLUGS))[0])
+        if tool.name == KNOWLEDGE:
+            return _operator_may_read(db, ctx, tool.user_permission)
+        return True
     if tool.name == RESOLVE:
         return bool(searchable_kinds(db, ctx, list(KIND_SLUGS))[0])
     if tool.name == GUIDES:
@@ -364,6 +423,10 @@ def trace_safe(name: str, data: Any) -> Any:
 def searchable_kinds(db: Any, ctx: Any, requested: list[str]) -> tuple[list[str], list[str]]:
     """(kinds that may be searched, kinds left out): the user's slug now, and the contact's reveal."""
     allowed, skipped = [], []
+    if is_contact_principal(ctx):
+        for kind in requested:
+            (allowed if kind in CONTACT_KINDS else skipped).append(kind)
+        return allowed, skipped
     for kind in requested:
         grant = KIND_CONTACT_GRANTS.get(kind)
         if _permitted(db, ctx.user_id, KIND_SLUGS[kind]) and (grant is None or grant in ctx.grants):
@@ -371,6 +434,17 @@ def searchable_kinds(db: Any, ctx: Any, requested: list[str]) -> tuple[list[str]
         else:
             skipped.append(kind)
     return allowed, skipped
+
+
+def denied_entity_types(db: Any, user_id: str) -> set[str]:
+    """Resolver entity types of a kind this user has no slug for (`KIND_SLUGS`), for the in-process
+    resolver a staff turn calls. Products stay open: the resolver is the picker every staff member uses."""
+    denied_kinds = {kind for kind, slug in KIND_SLUGS.items() if kind != "product" and not _permitted(db, user_id, slug)}
+    denied = {entity for entity, kind in _KIND_OF_ENTITY.items() if kind in denied_kinds}
+    # A delivery order number prints the debtor's name: the orders screen's slug.
+    if not _permitted(db, user_id, ORDER_VIEW):
+        denied.add("customer_order")
+    return denied
 
 
 def contact_allows(ctx: Any, tool: ToolDef) -> bool:
@@ -593,6 +667,8 @@ def _sees_salespeople(db: Any, ctx: Any) -> bool:
     (the rule today's lookup block uses)."""
     from app.services import contact_asker
 
+    if staff_principal.current() is not None:
+        return staff_principal.current().may(db, staff_principal.SALES_AGENTS_VIEW)
     try:
         granted = "sales_orders.sales_report" in ctx.grants
         return contact_asker.may_ask_sales_ranking(db, str(ctx.contact_pk), granted=granted)[0] != "not_granted"
@@ -844,7 +920,11 @@ def _search_in_scope(db: Any, ctx: Any, query: str) -> dict:
 
     previous = get_company_scope(db)
     scope = previous
-    for person in writes.people(ctx):
+    contact = is_contact_principal(ctx)
+    # A contact principal has no user of its own: only the console operator (when there is one) narrows.
+    operator = getattr(ctx, "operator_user_id", None)
+    persons = ([str(operator)] if operator else []) if contact else writes.people(ctx)
+    for person in persons:
         own = company_scope_resolver._scope_for_user(db, person, None)
         if scope is None:  # the contact is unrestricted: the person's scope is the bound
             scope = own
@@ -856,9 +936,40 @@ def _search_in_scope(db: Any, ctx: Any, query: str) -> dict:
             scope = frozenset(scope) & frozenset(own)
     set_company_scope(db, scope)
     try:
+        if contact:
+            return knowledge_service.search_for_contact(db, access_codes=ctx.access_codes, query=query)
         return knowledge_service.search(db, user_id=ctx.user_id, query=query)
     finally:
         set_company_scope(db, previous)
+
+
+def _knowledge_handoff(db: Any, ctx: Any, args: Any) -> ToolResult:
+    """`crm_knowledge_handoff`: say whether the marketing product team offer can be made to this
+    contact, and the sentence to end the reply with. It writes nothing: the loop arms the offer at the
+    end of a live turn that answered, and the ticket is made on the contact's own "yes" later.
+
+    A contact that may not be offered gets `refer: True` and the miss line alone: the loop prints the
+    salesman line after it through `turn/refer.py` when it puts the sentence in a reply that did not
+    fail, so the turn is marked for Customer asks exactly when the customer is told to refer
+    (CUSTOMER-ASKS-REFER-ONLY), never for a turn that failed after this tool ran."""
+    from app.services import knowledge_service
+
+    if not is_contact_principal(ctx):
+        return ToolResult("denied", message=f"{HANDOFF} is not a tool you may use.")
+    if not isinstance(args, dict):
+        return ToolResult("invalid", message="Arguments must be an object of named values.")
+    unknown = sorted(k for k in args if k not in GUARD_PARAMS and k != VIEW_PARAM)
+    if unknown:
+        return ToolResult("invalid", message=f"Unknown argument(s): {', '.join(map(str, unknown))}.")
+    try:
+        armed = bool(knowledge_service.may_offer_knowledge_miss(db, str(ctx.contact_pk)))
+    except Exception:  # noqa: BLE001 - a tool failure is a result the model can work around
+        logger.warning("agent: %s failed", HANDOFF, exc_info=True)
+        return ToolResult("error", message=FIXED_ERROR)
+    if armed:
+        say = f"{knowledge_service.KNOWLEDGE_MISS_LINE} {knowledge_service.KNOWLEDGE_MISS_OFFER}"
+        return ToolResult("ok", data={"armed": True, "say": say})
+    return ToolResult("ok", data={"armed": False, "say": knowledge_service.KNOWLEDGE_MISS_LINE, "refer": True})
 
 
 def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
@@ -883,7 +994,9 @@ def _knowledge_search(db: Any, ctx: Any, args: dict) -> ToolResult:
         return ToolResult("denied", message=f"{KNOWLEDGE} is outside this user's access.")
     if status != "ok":
         return ToolResult("error", message=FIXED_ERROR)
-    data = {"passages": found.get("passages", []), "handoff_teams": found.get("handoff_teams", [])}
+    data = {"passages": found.get("passages", [])}
+    if not is_contact_principal(ctx):  # team names are staff data
+        data["handoff_teams"] = found.get("handoff_teams", [])
     return ToolResult("ok", data=data)
 
 
@@ -957,10 +1070,15 @@ def _dispatch_inner(
     from app.services.llm_provider import is_timeout
 
     seen = seen_ids if seen_ids is not None else set()
+    if name == HANDOFF:
+        return _knowledge_handoff(db, ctx, args)
     tool = REGISTRY.get(name) if isinstance(name, str) else None
     if tool is None:
         return ToolResult("denied", message=f"{name} is not a tool you may use.")
-    if tool.name not in (RESOLVE, GUIDES) and not _permitted(db, ctx.user_id, tool.user_permission):
+    if is_contact_principal(ctx):
+        if not contact_tool_open(ctx, tool):
+            return ToolResult("denied", message=f"{name} is outside this contact's access.")
+    elif tool.name not in (RESOLVE, GUIDES) and not _permitted(db, ctx.user_id, tool.user_permission):
         return ToolResult("denied", message=f"{name} is outside this user's access.")
     if not contact_allows(ctx, tool):
         return ToolResult("denied", message=f"{name} is outside this contact's access.")
@@ -994,7 +1112,13 @@ def _dispatch_inner(
             if key in args and not _plain_string(args[key]):
                 return ToolResult("invalid", message=f"{key} must be a single plain value.")
         for (key, value), slug in ARG_PERMISSIONS.items():
-            if _arg_value(args, key) == value and not _permitted(db, ctx.user_id, slug):
+            if _arg_value(args, key) != value:
+                continue
+            if is_contact_principal(ctx):
+                # Its gate is a user slug, which a contact does not have.
+                if (key, value) not in ARG_CONTACT_GRANTS:
+                    return ToolResult("denied", message=f"{key}={value} is outside this contact's access.")
+            elif not _permitted(db, ctx.user_id, slug):
                 return ToolResult("denied", message=f"{key}={value} is outside this user's access.")
         for (key, value), grant in ARG_CONTACT_GRANTS.items():
             if _arg_value(args, key) == value and grant not in ctx.grants:

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.schemas.price_tag import (
+    ComboSearchOut,
     ProductSearchItem,
     ProductSetSearchItem,
     ProductSetTagData,
@@ -52,10 +53,22 @@ def search_products(
     ]
 
 
+@router.get("/tag-data/combos", response_model=ComboSearchOut)
+def search_combos(
+    query: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Combos for the template editor's Preview combo picker, in the caller's company scope."""
+    return {"data": tag_data_service.search_combos(db, query, limit=limit)}
+
+
 @router.get("/products/{product_id}/tag-data", response_model=ProductTagData)
 def get_product_tag_data(
     product_id: str,
     promotion_id: Optional[str] = Query(None),
+    combo_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
@@ -65,10 +78,11 @@ def get_product_tag_data(
         raise AppException(
             status_code=404, message="Product not found.", code="NOT_FOUND"
         )
+    data = tag_data_service.product_tag_data(
+        db, product, tag_data_service.staff_viewer(), promotion_id
+    )
     return ProductTagData.model_validate(
-        tag_data_service.product_tag_data(
-            db, product, tag_data_service.staff_viewer(), promotion_id
-        )
+        tag_data_service.with_preview_combo(db, product, data, combo_id)
     )
 
 

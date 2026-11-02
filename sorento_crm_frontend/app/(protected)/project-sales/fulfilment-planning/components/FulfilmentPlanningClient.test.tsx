@@ -189,7 +189,7 @@ describe('FulfilmentPlanningClient', () => {
     );
 
     openFilters();
-    const picker = within(screen.getByRole('menu')).getByRole('combobox');
+    const picker = within(screen.getByRole('menu')).getByRole('combobox', { name: 'Any review state' });
     fireEvent.change(picker, { target: { value: 'needs_cs_review' } });
 
     await waitFor(() =>
@@ -239,7 +239,7 @@ describe('FulfilmentPlanningClient', () => {
     renderClient();
 
     openFilters();
-    fireEvent.change(within(screen.getByRole('menu')).getByRole('combobox'), {
+    fireEvent.change(within(screen.getByRole('menu')).getByRole('combobox', { name: 'Any review state' }), {
       target: { value: 'needs_cs_review' },
     });
 
@@ -256,7 +256,7 @@ describe('FulfilmentPlanningClient', () => {
     renderClient();
 
     openFilters();
-    fireEvent.change(within(screen.getByRole('menu')).getByRole('combobox'), {
+    fireEvent.change(within(screen.getByRole('menu')).getByRole('combobox', { name: 'Any review state' }), {
       target: { value: 'awaiting_reconciliation' },
     });
 
@@ -445,7 +445,7 @@ describe('FulfilmentPlanningClient, the AutoCount sales-order arm', () => {
     await screen.findByText('SO345418');
 
     openFilters();
-    const select = within(screen.getByRole('menu')).getByRole('combobox');
+    const select = within(screen.getByRole('menu')).getByRole('combobox', { name: 'Any review state' });
     expect(within(select).getByRole('option', { name: 'Not started' })).toBeInTheDocument();
     fireEvent.change(select, { target: { value: 'not_started' } });
 
@@ -715,7 +715,7 @@ describe('FulfilmentPlanningClient: sorting', () => {
     );
 
     openFilters();
-    fireEvent.change(within(screen.getByRole('menu')).getByRole('combobox'), {
+    fireEvent.change(within(screen.getByRole('menu')).getByRole('combobox', { name: 'Any review state' }), {
       target: { value: 'not_started' },
     });
 
@@ -1004,7 +1004,7 @@ describe('FulfilmentPlanningClient: search', () => {
     await screen.findByText('PSO-000123');
 
     openFilters();
-    fireEvent.change(within(screen.getByRole('menu')).getByRole('combobox'), {
+    fireEvent.change(within(screen.getByRole('menu')).getByRole('combobox', { name: 'Any review state' }), {
       target: { value: 'needs_cs_review' },
     });
     fireEvent.change(

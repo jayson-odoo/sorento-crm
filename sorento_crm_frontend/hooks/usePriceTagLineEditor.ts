@@ -60,6 +60,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           l.product_id,
           l.parts.map((p) => [p.product_id, p.candidates.map((c) => c.product_id)]),
           l.promotion_id,
+          l.combo_id,
         ]),
       ),
     [lines],
@@ -77,6 +78,7 @@ export function usePriceTagLineEditor({ lines, setLines, priceMode, lookups }: O
           p.candidates.map((c) => c.product_id),
         ),
         promotion_id: l.promotion_id,
+        combo_id: l.combo_id,
       }));
     if (inputs.length === 0) {
       setLinePricing({});

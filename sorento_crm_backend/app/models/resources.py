@@ -84,7 +84,11 @@ class AttachmentType(Base):
     is_shared = Column(Boolean, default=False, nullable=False, server_default="false")
     # AGENTIC-KNOWLEDGE (K1): who may ask the AI about files of this type - off / staff / dealer /
     # public. Read live at search time, so switching a type to off hides its files at once.
+    # DOC-ACCESS-SIMPLE: ai_audience is no longer read or written (dropped later, backlog BL-070). The AI
+    # reads a type through two ticks: Staff, and the access codes ticked for contacts.
     ai_audience = Column(String(16), nullable=False, default="off", server_default="off")
+    ai_read_staff = Column(Boolean, nullable=False, default=False, server_default="false")
+    ai_read_codes = Column(JSONB, nullable=False, default=list, server_default="[]")
     # The team a question these files do not answer is referred to (K3).
     ai_escalate_team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
     # The folder an upload of this type files into by default (R4, purchasing

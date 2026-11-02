@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
+from app.services.scm.demand_class import DEMAND_CLASSES
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.models.product import Product
@@ -166,6 +167,9 @@ def list_fulfilment_planning(
     # (AC-FP05) and means "an outstanding core sales order nobody has planned".
     # Several are OR-ed (FILTER-MULTISELECT PR6): comma-joined, repeated or single; each is checked.
     review_state: Optional[list[str]] = Query(None),
+    # DEALER-PLANNING R6: the class filter, closed like `review_state`. Nothing picked means
+    # Project, so a call with no filter returns what it always did.
+    demand_class: Optional[list[str]] = Query(None),
     project_id: Optional[str] = Query(None),
     sales_order_id: Optional[str] = Query(
         None, description="Narrow to one core sales order. Addressing only."
@@ -215,6 +219,7 @@ def list_fulfilment_planning(
         (REVIEW_NOT_STARTED, REVIEW_AWAITING, REVIEW_NEEDS_CS, REVIEW_CONFIRMED),
         "review_state",
     )
+    demand_classes = multi_choices(demand_class, DEMAND_CLASSES, "demand_class")
     try:
         if project_id:
             validate_uuid_path(project_id, resource="Project")
@@ -225,6 +230,7 @@ def list_fulfilment_planning(
             review_state=review_states,
             project_id=project_id,
             sales_order_id=sales_order_id,
+            demand_class=demand_classes,
             sort=sort,
             dir=direction,
             page=page,

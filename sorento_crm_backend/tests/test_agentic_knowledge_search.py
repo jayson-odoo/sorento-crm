@@ -215,12 +215,13 @@ def test_switching_the_type_to_off_hides_already_read_files_at_once(db):
     user_id, att_type, _, _ = _world(db)
     assert len(_ask(db, user_id)["passages"]) == 1
 
-    att_type.ai_audience = "off"
+    att_type.ai_read_staff = False
+    att_type.ai_read_codes = []
     db.flush()
 
     assert _ask(db, user_id)["passages"] == [], "audience is read live, with no re-embed"
 
-    att_type.ai_audience = "dealer"
+    att_type.ai_read_staff = True
     db.flush()
     assert len(_ask(db, user_id)["passages"]) == 1, "and switching back shows them again"
 

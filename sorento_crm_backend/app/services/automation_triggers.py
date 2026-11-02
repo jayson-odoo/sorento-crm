@@ -42,6 +42,11 @@ class TriggerSpec:
     # The FE reads it to decide whether to render the "Combine into one email"
     # switch, instead of hardcoding a trigger type.
     supports_grouping: bool = False
+    # Event triggers whose facts are read off the dispatch context itself (the context
+    # dict is the object every source in `fact_sources` resolves against), so
+    # `dispatch_event` can filter by conditions without an ORM row. DEALER-OI-ROUTE: the
+    # order inquiry handover / undo emails route by `sales_order_class`.
+    context_facts: bool = False
 
 
 @dataclass(frozen=True)
@@ -317,6 +322,15 @@ def fact_sources_for(trigger_type: str) -> tuple[str, ...]:
     return pair[0].fact_sources if pair else ()
 
 
+def context_fact_sources(trigger_type: str, context: dict[str, Any]) -> Optional[dict]:
+    """`{source: context}` for a `context_facts` trigger, so its conditions read the
+    dispatch context; `None` for every other trigger (no filtering, as before)."""
+    pair = _REGISTRY.get(trigger_type)
+    if pair is None or not pair[0].context_facts:
+        return None
+    return {name: context for name in pair[0].fact_sources}
+
+
 def _trigger_complaint_approved(
     db: Session,
     config: dict[str, Any],
@@ -532,6 +546,8 @@ register(
             "properties": {},
             "additionalProperties": False,
         },
+        fact_sources=("order_inquiry",),
+        context_facts=True,
     ),
     _trigger_order_inquiry_handover,
 )
@@ -565,6 +581,8 @@ register(
             "properties": {},
             "additionalProperties": False,
         },
+        fact_sources=("order_inquiry",),
+        context_facts=True,
     ),
     _trigger_order_inquiry_undone,
 )
@@ -626,7 +644,7 @@ register(
         label="Order inquiry: reserved by CS",
         description=(
             "Fires once CS confirms what was reserved against a request (event-driven), "
-            "telling the requester what was reserved and the balance still to buy."
+            "telling the requester what was reserved or rejected, line by line."
         ),
         config_schema={
             "type": "object",

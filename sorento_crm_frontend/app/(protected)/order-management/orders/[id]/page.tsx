@@ -11,7 +11,11 @@ import OrderDetail from '../components/OrderDetail';
 export default function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const searchParams = useSearchParams();
-  const listQueryString = searchParams.toString();
+  // The list state the record's links carry on (Back, Edit, post-delete). `tab` is this
+  // page's own open tab (NAV-KEEP-TAB), not list state, so it stays here.
+  const listParams = new URLSearchParams(searchParams.toString());
+  listParams.delete('tab');
+  const listQueryString = listParams.toString();
 
   return (
     <RequireAccess permission="order_management.orders.view">

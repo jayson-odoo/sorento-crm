@@ -25,6 +25,7 @@ import { RecordNavigation } from '@/components/common/RecordNavigation';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
+import { useUrlTab, withTab } from '@/hooks/useUrlTab';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import SalesOpportunityPortalDetail from '@/app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalDetail';
 import { formatCurrency, formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -94,7 +95,7 @@ function StaffSalesOpportunityDetail({ id }: { id: string }) {
   const rows = list?.data ?? [];
   const index = rows.findIndex((r) => r.id === id);
 
-  const [tab, setTab] = useState('details');
+  const [tab, setTab] = useUrlTab({ tabs: ['details', 'products'], defaultTab: 'details' });
 
   // The lost/won dialog a stage move can open (F6). Any other transition runs straight away.
   const [pending, setPending] = useState<SalesOpportunityTransition | null>(null);
@@ -337,8 +338,8 @@ function StaffSalesOpportunityDetail({ id }: { id: string }) {
                     total={rows.length}
                     hasPrevious={index > 0}
                     hasNext={index >= 0 && index < rows.length - 1}
-                    onPrevious={() => router.push(`/sales/opportunities/${rows[index - 1].id}`)}
-                    onNext={() => router.push(`/sales/opportunities/${rows[index + 1].id}`)}
+                    onPrevious={() => router.push(withTab(`/sales/opportunities/${rows[index - 1].id}`, tab, 'details'))}
+                    onNext={() => router.push(withTab(`/sales/opportunities/${rows[index + 1].id}`, tab, 'details'))}
                     ariaLabel="sales opportunity"
                   />
                 }

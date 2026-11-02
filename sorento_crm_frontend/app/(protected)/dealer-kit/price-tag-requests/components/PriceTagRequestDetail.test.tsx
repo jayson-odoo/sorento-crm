@@ -1249,3 +1249,20 @@ describe('PriceTagRequestDetail - pill wording follows status (AC-S8-9 amended)'
     expect(pill.textContent).toContain('Product data changed · 1');
   });
 });
+
+describe('PriceTagRequestDetail - line pricing is told the combo (PRICETAG-COMBO)', () => {
+  it('sends the line combo_id to lookupLinePricing', async () => {
+    const { lookupLinePricing } = await import('../../services/priceTagRequestService');
+    mockGet.mockResolvedValue(
+      requestWith({
+        lines: [lineWith({ id: 'line-c', code: 'SRTBF99999', combo_id: 'combo-1' })],
+      }),
+    );
+    renderDetail();
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+    await waitFor(() => expect(lookupLinePricing).toHaveBeenCalled());
+    const sent = vi.mocked(lookupLinePricing).mock.calls.flatMap((call) => call[1] as { key: string; combo_id?: string | null }[]);
+    expect(sent.find((line) => line.key === 'line-c')?.combo_id).toBe('combo-1');
+  });
+});

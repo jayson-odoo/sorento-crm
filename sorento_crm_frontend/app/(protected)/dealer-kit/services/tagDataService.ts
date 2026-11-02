@@ -11,6 +11,9 @@
  *   200 { id, code, name, dimensions, spec_lines[], images[], list_price,
  *         offer_price, promotion_id }
  *
+ * GET  /api/v1/dealer-kit/tag-data/combos?query=&limit=
+ *   200 { data: [{ combo_id, name, host_product_id, host_code }] }
+ *
  * GET  /api/v1/dealer-kit/product-sets/search?q=&limit=
  *   200 [{ id, set_code, name }]
  *
@@ -112,6 +115,36 @@ export async function productOptions(query: string): Promise<SearchableSelectOpt
   }));
 }
 
+export interface ComboSearchItem {
+  combo_id: string;
+  name: string;
+  host_product_id: string;
+  host_code: string;
+}
+
+/** A combo option carries its host so the editor can load the host's tag data with it. */
+export interface ComboOption extends SearchableSelectOption {
+  hostProductId: string;
+}
+
+/** Options for the template editor's Preview combo select. Name first, host code under it. */
+export async function comboOptions(query: string, limit = 25): Promise<ComboOption[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (query.trim()) params.set('query', query.trim());
+
+  const response = await apiFetch(`${BASE}/tag-data/combos?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to search combos'));
+  }
+  const body: { data: ComboSearchItem[] } = await response.json();
+  return body.data.map((row) => ({
+    value: row.combo_id,
+    label: row.name,
+    description: row.host_code,
+    hostProductId: row.host_product_id,
+  }));
+}
+
 export async function productSetOptions(
   query: string,
 ): Promise<SearchableSelectOption[]> {
@@ -130,9 +163,11 @@ export async function productSetOptions(
 export async function getProductTagData(
   productId: string,
   promotionId?: string | null,
+  comboId?: string | null,
 ): Promise<ProductTagData> {
   const params = new URLSearchParams();
   if (promotionId) params.set('promotion_id', promotionId);
+  if (comboId) params.set('combo_id', comboId);
   const qs = params.toString();
 
   const response = await apiFetch(

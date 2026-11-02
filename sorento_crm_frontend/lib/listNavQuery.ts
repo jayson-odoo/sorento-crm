@@ -64,8 +64,10 @@ export function parseDetailSearch(searchParams: URLSearchParams): {
 
   const sorting: SortingState = sort ? [{ id: sort, desc: dir === 'desc' }] : [];
 
-  // `from` (M5-07) names the row Back should restore, not a list filter.
-  const reserved = new Set(['page', 'limit', 'sort', 'dir', 'query', 'id', 'from']);
+  // `from` (M5-07) names the row Back should restore, and `tab` (NAV-KEEP-TAB) the detail
+  // page's open tab: neither is a list filter. A `tab` read as one put `tab=` into the list's
+  // cache key (a miss, a second fetch) and onto the list GET.
+  const reserved = new Set(['page', 'limit', 'sort', 'dir', 'query', 'id', 'from', 'tab']);
   const filters: Record<string, string> = {};
   for (const [k, v] of searchParams.entries()) {
     if (!reserved.has(k) && v !== '') filters[k] = v;

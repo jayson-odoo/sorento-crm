@@ -1663,6 +1663,13 @@ def portal_submission_type(parse_output: dict[str, Any]) -> str | None:
 FORM_NOT_AVAILABLE_MESSAGE = "That form is not available on your account."
 
 
+#: A panel turn has no contact to send a portal link to. MS / ZH in `label_catalog`.
+PANEL_NO_PORTAL_LINK = (
+    "Portal links go to a contact on WhatsApp, so I can't send one from here. "
+    "If you want the steps for something, ask me how to do it."
+)
+
+
 def portal_form_granted(db: Any, contact_respond_id: Any, space_id: Any, submission_type: str) -> bool:
     """Is `submission_type` a form the portal shows this contact? The portal's own gate
     (`portal_form_visibility_service.resolve_visible_form_types`, which the price tag tab
