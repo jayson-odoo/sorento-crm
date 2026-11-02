@@ -273,7 +273,17 @@ def _user(db: Session, user_id: Optional[str]):
     return db.query(User).filter(User.id == str(user_id)).first()
 
 
-def _eligible(db: Session, user_id: Optional[str], *, requester_id: Optional[str]) -> bool:
+def _eligible(
+    db: Session,
+    user_id: Optional[str],
+    *,
+    requester_id: Optional[str],
+    company_id: Optional[str],
+) -> bool:
+    """Active, a person, holds the grant, and may work in the quotation's company (the same
+    company rule ``project_notify_service.approver_user_ids`` applies): an approver who cannot
+    open the project cannot decide it."""
+    from app.models.company import UserCompany
     from app.models.user import UserStatus
     from app.services.user_service import UserPermissionService
 
@@ -281,6 +291,13 @@ def _eligible(db: Session, user_id: Optional[str], *, requester_id: Optional[str
     if user is None or str(user.id) == str(requester_id or ""):
         return False
     if user.status != UserStatus.ACTIVE.value or user.is_trashed or user.is_integration:
+        return False
+    if company_id and (
+        db.query(UserCompany.id)
+        .filter(UserCompany.user_id == user.id, UserCompany.company_id == str(company_id))
+        .first()
+        is None
+    ):
         return False
     return APPROVE_PERMISSION in UserPermissionService(db).get_user_permission_slugs(user.id)
 
@@ -301,13 +318,17 @@ def superior_chain(db: Session, user_id: Optional[str]) -> list[str]:
 
 
 def _first_eligible_from(
-    db: Session, user_id: Optional[str], *, requester_id: Optional[str]
+    db: Session,
+    user_id: Optional[str],
+    *,
+    requester_id: Optional[str],
+    company_id: Optional[str],
 ) -> Optional[str]:
     """``user_id`` if eligible, else the nearest eligible superior above them."""
     if not user_id:
         return None
     for candidate in [str(user_id), *superior_chain(db, user_id)]:
-        if _eligible(db, candidate, requester_id=requester_id):
+        if _eligible(db, candidate, requester_id=requester_id, company_id=company_id):
             return candidate
     return None
 
@@ -350,10 +371,12 @@ def route_approver(
             start = superior_chain(db, requester_id)[:1]
         candidates.extend(start)
     candidates.append(default_approver_id(db))
-    # A size ceiling (manager up to X%, above that the next level) slots in HERE, as one more
-    # candidate ahead of the superior, once the owner rules on it. Not built: no rule yet.
+    # No per-size tiers (owner 2 Nov ~21:40): the discount ceiling is the series' own max
+    # discount, which the minimum price already enforces; every request has ONE approver.
     for candidate in candidates:
-        found = _first_eligible_from(db, candidate, requester_id=requester_id)
+        found = _first_eligible_from(
+            db, candidate, requester_id=requester_id, company_id=document.company_id
+        )
         if found:
             return found
     return None

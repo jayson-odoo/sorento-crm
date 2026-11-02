@@ -110,6 +110,9 @@ def _manager(db) -> str:
     db.flush()
     db.add(UserRolePermission(id=_uid(), role_id=role.id, permission_id=perm.id))
     db.add(UserRoleAssignment(id=_uid(), user_id=user_id, role_id=role.id))
+    from app.models.company import UserCompany
+
+    db.add(UserCompany(id=_uid(), user_id=user_id, company_id=_sorento(db)))
     row.default_quotation_approver_user_id = user_id
     db.flush()
     return user_id

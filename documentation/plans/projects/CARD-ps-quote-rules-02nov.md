@@ -215,10 +215,9 @@ All recommendations accepted except R4.4, with these corrections:
   that only covers documents already pending at deploy.
 - Q3: the dev ladder has `final_negotiation` after Sample Submission and before Sponsorship Form,
   so the sort-order rule (move forward only from a lower, open rung) holds there.
-- Pending owner question (crew files it): a size ceiling (manager up to X%, above that the next
-  level). Not built. The trigger: when the owner rules, it is one more candidate in
-  `route_approver`, ahead of the superior (comment marks the place). Default stays one approver
-  per request.
+- Size ceiling: owner answered 2 Nov ~21:40, "the discount is set at the series for the discount
+  ceiling". No manager-then-CK % threshold: one routed approver per request; the ceiling is the
+  series max discount, which the minimum price (below-floor flag) already carries.
 - Dev data gap: no dev project owner has a superior set, so the hand-test script sets superiors
   and the default approver first.
 - No backfill of `is_discounted`: existing lines are judged on their next save (AC-E7). The

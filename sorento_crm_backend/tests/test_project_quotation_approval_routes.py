@@ -39,7 +39,9 @@ ALL_SLUGS = [VIEW, EDIT, "projects.projects.delete", "projects.projects.manage",
 
 LIST_PRICE = "300.00"
 BELOW_FLOOR = "120.00"  # against a 50%-of-list floor of 150.00
-ABOVE_FLOOR = "200.00"
+# PS-QUOTE-RULES: any discount needs approval, so a quotation that needs none is priced at its
+# default price (the list price here), not merely above the floor.
+CLEAN_PRICE = LIST_PRICE
 
 
 def _uid() -> str:
@@ -153,6 +155,36 @@ def _without_permission(slug: str):
         UserPermissionService.get_user_permission_slugs = original_slugs
 
 
+def _route_to_a_default_approver_the_actor_sits_above(db, actor_id: str) -> None:
+    """PS-QUOTE-RULES: every request is routed to ONE approver, and only they, someone above
+    them, or an admin decides. This suite drives the whole flow as one actor, so it configures a
+    default approver who REPORTS TO the actor: Send for approval routes there, and the actor's
+    own decisions stay allowed as "someone above them". No admin role, so the suite's
+    permission-denied checks still mean what they say."""
+    from app.models.user import SystemSetting, User, UserStatus
+
+    approver = _uid()
+    db.add(
+        User(
+            id=approver,
+            email=f"{approver}@zzt.test",
+            name=f"{MARKER} Default Approver",
+            status=UserStatus.ACTIVE.value,
+            superior_id=actor_id,
+        )
+    )
+    row = db.query(SystemSetting).first()
+    if row is None:
+        row = SystemSetting(id=_uid())
+        db.add(row)
+    db.flush()
+    from app.models.company import UserCompany
+
+    db.add(UserCompany(id=_uid(), user_id=approver, company_id=_sorento(db)))
+    row.default_quotation_approver_user_id = approver
+    db.flush()
+
+
 @pytest.fixture()
 def api():
     from app.models.base import company_scope
@@ -179,6 +211,7 @@ def api():
             developer_party_id=None,
             title=f"{MARKER} Cabana Elmina {_uid()[:12]}",
         )
+        _route_to_a_default_approver_the_actor_sits_above(db, user_id)
         db.commit()
         client, originals = _client(db, user_id)
         try:
@@ -272,7 +305,7 @@ def test_a_clean_quotation_still_issues_in_one_press(api):
     them to decide whether to show the block at all."""
     client, _, _, _, project, product = api
 
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
     assert document["requires_approval"] is False
     assert document["below_floor_line_count"] == 0
     assert document["approval_status_key"] is None
@@ -680,7 +713,7 @@ def test_d4_revise_needs_a_reason(api, reason):
 def test_d4_revise_is_refused_off_the_pending_and_approved_rungs(api, state):
     client, db, _, _, project, product = api
     if state is None:
-        document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+        document = _quotation(client, project.id, product.id, CLEAN_PRICE)
         root = _root(project, document)
     else:
         _, root = _in_state(client, db, project, product, state)
@@ -757,7 +790,7 @@ def _document_exists(db, document_id: str) -> bool:
 
 def test_f6_an_editor_with_the_delete_grant_parks_the_delete_and_nothing_is_removed_yet(api):
     client, _, _, _, project, product = api
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
 
     parked = _park_delete(client, document["id"])
 
@@ -767,7 +800,7 @@ def test_f6_an_editor_with_the_delete_grant_parks_the_delete_and_nothing_is_remo
 
 def test_f6_without_the_delete_slug_it_is_refused(api):
     client, db, _, _, project, product = api
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
 
     with _without_permission(DELETE_SLUG):
         refused = _park_delete(client, document["id"])
@@ -783,7 +816,7 @@ def test_f6_the_delete_slug_without_edit_rights_on_that_project_is_refused(api):
     from app.services.user_service import UserPermissionService
 
     client, db, _, _, project, product = api
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
     stranger = _active_user(db, f"{MARKER} Stranger")
     db.commit()
     actor = {"id": stranger, "email": f"{stranger}@zzt.test", "role": "user"}
@@ -820,7 +853,7 @@ def test_f6_when_the_window_lapses_the_server_hard_deletes_the_document(api):
     from app.models.sla import SlaFormAction
 
     client, db, _, _, project, product = api
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
     parked = _park_delete(client, document["id"])
     assert parked.status_code == 202, parked.text
     assert _document_exists(db, document["id"]), "nothing applies until the window lapses"

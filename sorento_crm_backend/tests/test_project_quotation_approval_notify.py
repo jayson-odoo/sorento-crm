@@ -21,7 +21,7 @@ from app.models.user import User, UserStatus
 
 from .test_project_quotation_approval import APPROVE
 from .test_project_quotation_approval_routes import (  # noqa: F401  (api is a fixture)
-    ABOVE_FLOOR,
+    CLEAN_PRICE,
     BASE,
     BELOW_FLOOR,
     _grant,
@@ -78,6 +78,18 @@ def _approver(db, name: str, company_id: str, *, with_company: bool = True, **ex
     return user_id
 
 
+def _route_to(db, user_id: str) -> str:
+    """PS-QUOTE-RULES: every request is routed to ONE approver. Point the configured default
+    approver at ``user_id`` (nobody here has a superior or a project override), so that is who
+    Send for approval routes to and who may decide it."""
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting).first()
+    row.default_quotation_approver_user_id = user_id
+    db.flush()
+    return user_id
+
+
 def _act_as(user_id: str) -> None:
     from app.dependencies import get_current_user, get_current_user_or_api_key
     from app.main import app
@@ -114,24 +126,28 @@ def _check_data(call: dict, project, document: dict) -> None:
 # ------------------------------------------------------------------ B1 + LINK + WHATSAPP
 
 
-def test_b1_sending_for_approval_tells_every_active_non_integration_approver(api, sent):
+def test_b1_sending_for_approval_tells_only_the_routed_approver(api, sent):
+    """PS-QUOTE-RULES R4 (owner 2 Nov): one routed approver per request, not every grant
+    holder. The others are not told, and an approver who cannot act (integration, inactive,
+    trashed) is never the one routed to."""
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     seller = _user(db, f"{MARKER} Seller")
     first = _approver(db, f"{MARKER} A", company_id)
     second = _approver(db, f"{MARKER} B", company_id)
-    _approver(db, f"{MARKER} Bot", company_id, is_integration=True)
-    _approver(db, f"{MARKER} Gone", company_id, status="INACTIVE")
-    _approver(db, f"{MARKER} Trashed", company_id, is_trashed=True)
+    bot = _approver(db, f"{MARKER} Bot", company_id, is_integration=True, superior_id=first)
     _user(db, f"{MARKER} No grant")
+    _route_to(db, bot)  # an integration is skipped; its superior gets the request
     db.commit()
     _act_as(seller)
 
     response = _send(client, db, _root(project, document))
     assert response.status_code == 200, response.text
+    assert response.json()["approver_user_id"] == first
 
     calls = _of_type(sent, REQUESTED)
-    assert sorted(c["user_id"] for c in calls) == sorted([first, second])
+    assert [c["user_id"] for c in calls] == [first]
+    assert second not in [c["user_id"] for c in sent]
     for call in calls:
         _check_data(call, project, document)
         assert call["send_in_app"] is True
@@ -147,7 +163,7 @@ def test_whatsapp_requested_and_withdrawn_carry_the_template_payload(api, sent):
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     seller = _user(db, f"{MARKER} Seller")
-    _approver(db, f"{MARKER} A", company_id)
+    _route_to(db, _approver(db, f"{MARKER} A", company_id))
     db.commit()
     _act_as(seller)
     root = _root(project, document)
@@ -173,7 +189,7 @@ def test_b2_approving_tells_the_salesperson_who_sent_it_and_not_the_approver(api
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     sender = _user(db, f"{MARKER} Sender")
-    manager = _approver(db, f"{MARKER} Manager", company_id)
+    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id))
     db.commit()
     root = _root(project, document)
     _act_as(sender)
@@ -196,7 +212,7 @@ def test_b3_rejecting_tells_the_same_recipient_and_the_body_carries_the_reason(a
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     sender = _user(db, f"{MARKER} Sender")
-    manager = _approver(db, f"{MARKER} Manager", company_id)
+    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id))
     db.commit()
     root = _root(project, document)
     _act_as(sender)
@@ -222,7 +238,7 @@ def test_b4_a_resubmit_from_rejected_tells_the_approvers_again_once_per_press(ap
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     sender = _user(db, f"{MARKER} Sender")
-    manager = _approver(db, f"{MARKER} Manager", company_id)
+    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id))
     db.commit()
     root = _root(project, document)
 
@@ -245,11 +261,11 @@ def test_b4_a_resubmit_from_rejected_tells_the_approvers_again_once_per_press(ap
 # ------------------------------------------------------------------ D5 + withdrawn body
 
 
-def test_d5_revise_from_pending_tells_the_approvers_and_the_body_carries_the_reason(api, sent):
+def test_d5_revise_from_pending_tells_the_routed_approver_and_the_body_carries_the_reason(api, sent):
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     seller = _user(db, f"{MARKER} Seller")
-    first = _approver(db, f"{MARKER} A", company_id)
+    first = _route_to(db, _approver(db, f"{MARKER} A", company_id))
     _approver(db, f"{MARKER} Bot", company_id, is_integration=True)
     db.commit()
     root = _root(project, document)
@@ -270,7 +286,7 @@ def test_d5_revise_from_approved_tells_nobody(api, sent):
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     seller = _user(db, f"{MARKER} Seller")
-    manager = _approver(db, f"{MARKER} Manager", company_id)
+    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id))
     db.commit()
     root = _root(project, document)
     _act_as(seller)
@@ -294,7 +310,7 @@ def test_b5_a_notification_backend_that_raises_never_fails_the_action(api, monke
 
     client, db, company_id, _, project, product = api
     seller = _user(db, f"{MARKER} Seller")
-    manager = _approver(db, f"{MARKER} Manager", company_id)
+    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id))
     db.commit()
     attempts: list[str] = []
 
@@ -338,7 +354,7 @@ def test_b5b_a_notification_that_poisons_the_session_does_not_roll_the_status_ba
 
     client, db, company_id, _, project, product = api
     seller = _user(db, f"{MARKER} Seller")
-    manager = _approver(db, f"{MARKER} Manager", company_id)
+    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id))
     db.commit()
     attempts: list[str] = []
 
@@ -364,12 +380,17 @@ def test_b5b_a_notification_that_poisons_the_session_does_not_roll_the_status_ba
 # ------------------------------------------------------------------ COMPANY SCOPE
 
 
-def test_company_scope_an_approver_without_a_company_grant_is_not_told(api, sent):
+def test_company_scope_an_approver_without_a_company_grant_is_never_routed_to(api, sent):
+    """Routed past: the stranger cannot open this company's project, so their superior, who
+    can, gets the request and the withdrawal."""
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     seller = _user(db, f"{MARKER} Seller")
     granted = _approver(db, f"{MARKER} Granted", company_id)
-    _approver(db, f"{MARKER} Stranger", company_id, with_company=False)
+    stranger = _approver(
+        db, f"{MARKER} Stranger", company_id, with_company=False, superior_id=granted
+    )
+    _route_to(db, stranger)
     db.commit()
     root = _root(project, document)
     _act_as(seller)
@@ -384,11 +405,13 @@ def test_company_scope_an_approver_without_a_company_grant_is_not_told(api, sent
 # ------------------------------------------------------------------ ACTOR EXCLUDED
 
 
-def test_actor_an_approver_who_sends_their_own_quotation_is_not_told(api, sent):
+def test_actor_an_approver_who_sends_their_own_quotation_goes_to_their_superior(api, sent):
+    """Nobody approves their own discount: the requester is skipped and the request goes up
+    their line."""
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
-    me = _approver(db, f"{MARKER} Me", company_id)
     other = _approver(db, f"{MARKER} Other", company_id)
+    me = _route_to(db, _approver(db, f"{MARKER} Me", company_id, superior_id=other))
     db.commit()
     _act_as(me)
 
@@ -400,9 +423,12 @@ def test_actor_an_approver_who_sends_their_own_quotation_is_not_told(api, sent):
 def test_actor_an_approver_who_decides_their_own_quotation_gets_no_decided_notification(
     api, sent
 ):
+    """`me` sits above the routed approver, so may decide; the requester is `me` too, so the
+    decided notification has nobody to tell."""
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     me = _approver(db, f"{MARKER} Me", company_id)
+    _route_to(db, _approver(db, f"{MARKER} Deputy", company_id, superior_id=me))
     db.commit()
     root = _root(project, document)
     _act_as(me)
@@ -419,8 +445,9 @@ def test_actor_an_approver_who_decides_their_own_quotation_gets_no_decided_notif
 
 @pytest.mark.parametrize("length,ok", [(1000, True), (1001, False)])
 def test_reason_length_revise_and_reject_cap_at_1000(api, sent, length, ok):
-    client, db, company_id, _, project, product = api
-    manager = _approver(db, f"{MARKER} Manager", company_id)
+    client, db, company_id, actor, project, product = api
+    # The fixture's actor sends, revises AND rejects, so the routed approver reports to them.
+    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id, superior_id=actor))
     db.commit()
     reason = "x" * length
 
@@ -459,7 +486,7 @@ def test_commit_time_recheck_a_delete_parked_on_a_draft_fails_once_it_is_issued(
     from app.models.sla import SlaFormAction
 
     client, db, _, _, project, product = api
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
     parked = client.post(
         PENDING,
         json={
@@ -506,7 +533,7 @@ def test_requester_is_the_latest_sender_of_this_document_despite_newer_rows_of_o
     other_document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     sender = _user(db, f"{MARKER} Sender")
     elsewhere = _user(db, f"{MARKER} Elsewhere")
-    manager = _approver(db, f"{MARKER} Manager", company_id)
+    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id))
     root = _root(project, document)
     db.commit()
     _act_as(sender)
@@ -542,7 +569,7 @@ def test_requester_fallback_skips_an_integration_project_owner(api, sent):
 
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
-    manager = _approver(db, f"{MARKER} Manager", company_id)
+    manager = _route_to(db, _approver(db, f"{MARKER} Manager", company_id))
     bot = _user(db, f"{MARKER} Bot owner", is_integration=True)
     project.owner_user_id = bot
     row = db.query(ProjectQuotationDocument).filter(
@@ -575,7 +602,9 @@ def test_company_scope_an_approver_granted_only_another_company_is_not_told(api,
     other = Company(id=str(uuid.uuid4()), name=f"{MARKER} Other Co", code=f"ZZ{uuid.uuid4().hex[:6]}")
     db.add(other)
     db.flush()
-    elsewhere = _approver(db, f"{MARKER} Elsewhere", other.id, with_company=True)
+    elsewhere = _approver(db, f"{MARKER} Elsewhere", other.id, with_company=True, superior_id=granted)
+    # Routed to the other company's approver: skipped, the request goes up to `granted`.
+    _route_to(db, elsewhere)
     db.commit()
     root = _root(project, document)
     _act_as(seller)
@@ -596,7 +625,7 @@ def test_whatsapp_portal_url_is_absolute_while_the_in_app_link_stays_relative(
     client, db, company_id, _, project, product = api
     document = _quotation(client, project.id, product.id, BELOW_FLOOR)
     seller = _user(db, f"{MARKER} Seller")
-    _approver(db, f"{MARKER} A", company_id)
+    _route_to(db, _approver(db, f"{MARKER} A", company_id))
     db.commit()
     _act_as(seller)
 
@@ -616,7 +645,7 @@ def test_commit_time_recheck_losing_edit_rights_before_the_commit_keeps_the_docu
     from app.services.user_service import UserPermissionService
 
     client, db, _, _, project, product = api
-    document = _quotation(client, project.id, product.id, ABOVE_FLOOR)
+    document = _quotation(client, project.id, product.id, CLEAN_PRICE)
     parked = client.post(
         PENDING,
         json={

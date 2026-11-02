@@ -465,6 +465,12 @@ def _approver(db, name: str, *, superior: str | None = None, grant: bool = True)
         )
     )
     db.flush()
+    from app.models.company import UserCompany
+    from sqlalchemy import text as _text
+
+    company_id = str(db.execute(_text("select id from companies where code = 'SRT'")).scalar())
+    db.add(UserCompany(id=_uid(), user_id=user_id, company_id=company_id))
+    db.flush()
     if grant:
         perm = db.query(UserPermission).filter(UserPermission.slug == APPROVE).first()
         if perm is None:
