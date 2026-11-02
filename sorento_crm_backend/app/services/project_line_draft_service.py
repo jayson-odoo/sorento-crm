@@ -379,6 +379,43 @@ def _line_snapshot(line: SalesOrderLine) -> Dict[str, Any]:
     }
 
 
+#: CONFIRM-PREVIEW-STALE: "the caller did not say what it stands on" (last writer wins).
+NOT_GIVEN: Any = object()
+
+
+def _as_naive_utc(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if value.tzinfo is not None:
+        from datetime import timezone
+
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _refuse_newer(db: Session, row: Any, based_on_saved_at: Any) -> None:
+    """CONFIRM-PREVIEW-STALE (crew browser pass, 2 Nov 2026): a tab holding an older decision
+    never overwrites or deletes a newer one saved elsewhere. `based_on_saved_at` is the
+    `saved_at` the caller's decision stands on (`None` = it holds no draft); a stored draft
+    saved after it refuses with 409. `NOT_GIVEN` keeps last writer wins."""
+    if based_on_saved_at is NOT_GIVEN or row is None or row.saved_at is None:
+        return
+    based = _as_naive_utc(based_on_saved_at)
+    if based is not None and row.saved_at <= based:
+        return
+    when = row.saved_at.strftime("%d/%m/%Y %H:%M")
+    raise AppException(
+        status_code=409,
+        message=(
+            f"This line was saved again by {_saver_name(db, row.saved_by)} at {when} UTC. "
+            "Reload the board to see it."
+        ),
+        code="board_line_draft_newer",
+    )
+
+
 def save_draft(
     db: Session,
     key: str,
@@ -386,6 +423,7 @@ def save_draft(
     decision: Dict[str, Any],
     proposed: Optional[list] = None,
     actor_user_id: str,
+    based_on_saved_at: Any = NOT_GIVEN,
 ) -> Dict[str, Any]:
     """Upsert the decision saved on one line, and re-stamp who saved it (AC-4.5).
 
@@ -452,6 +490,7 @@ def save_draft(
                 code="board_line_already_confirmed",
             )
     row = _row_for(db, str(core_line.id), company_id=core_line.company_id)
+    _refuse_newer(db, row, based_on_saved_at)
     if row is None:
         row = SOSupplyDecisionDraft(
             id=str(uuid.uuid4()),
@@ -488,7 +527,7 @@ def save_draft(
     }
 
 
-def remove_draft(db: Session, key: str) -> None:
+def remove_draft(db: Session, key: str, *, based_on_saved_at: Any = NOT_GIVEN) -> None:
     """Undo (AC-4.3). A line nobody saved is a 404: there is nothing to undo.
 
     Resolved through the CORE line, the same way the save is (C2), so an Undo made after
@@ -512,6 +551,7 @@ def remove_draft(db: Session, key: str) -> None:
             message="There is no saved decision on that line.",
             code="board_line_draft_not_found",
         )
+    _refuse_newer(db, row, based_on_saved_at)
     db.delete(row)
     db.flush()
 

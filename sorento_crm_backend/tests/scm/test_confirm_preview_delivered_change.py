@@ -81,3 +81,16 @@ def test_a_delivered_line_named_by_a_pending_change_is_still_listed_read_only(ap
     l10 = _line(_get(s), s.l10.id)
     assert l10["delivered_in_full"] is True
     assert l10["splits"] == []
+
+
+def test_a_delivered_line_autocount_closed_reads_its_change_word_not_cancel_all(api):
+    """Crew browser pass (2 Nov): on the copy every delivered-in-full line's AutoCount line is
+    CLOSED (closed by the delivery, not cancelled). Its words are the change's (DELAY), never
+    the cancelled-line words CANCEL ALL."""
+    s = _seed(api, pending=True)
+    s.c10.line_status = "closed"
+    s.db.commit()
+    l10 = _line(_get(s), s.l10.id)
+    assert l10["new_date"] == "2026-11-02"
+    assert "CANCEL" not in (l10["remark_generated"] or ""), l10["remark_generated"]
+    assert "DELAY" in (l10["remark_generated"] or ""), l10["remark_generated"]

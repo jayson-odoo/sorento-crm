@@ -428,6 +428,12 @@ def save_line_draft(
                 else None
             ),
             actor_user_id=current_user["id"],
+            # CONFIRM-PREVIEW-STALE: only a caller that SENT the field is checked.
+            based_on_saved_at=(
+                payload.based_on_saved_at
+                if "based_on_saved_at" in payload.model_fields_set
+                else project_line_draft_service.NOT_GIVEN
+            ),
         )
         db.commit()
         return body
@@ -445,6 +451,7 @@ def save_line_draft(
 )
 def delete_line_draft(
     contribution_key: str,
+    based_on_saved_at: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -455,7 +462,16 @@ def delete_line_draft(
     asked for either way.
     """
     try:
-        project_line_draft_service.remove_draft(db, contribution_key)
+        # CONFIRM-PREVIEW-STALE: an Undo from a tab holding an older draft is refused (409).
+        project_line_draft_service.remove_draft(
+            db,
+            contribution_key,
+            based_on_saved_at=(
+                based_on_saved_at
+                if based_on_saved_at
+                else project_line_draft_service.NOT_GIVEN
+            ),
+        )
         db.commit()
         return None
     except Exception as exc:

@@ -493,9 +493,14 @@ def line_plans(
             base_qty=base_qty,
             base_date=base_date,
             tell_qty=not involved and f.shows_change,
-            # AutoCount cancelled the line: the email's CANCEL ALL.
+            # AutoCount cancelled the line: the email's CANCEL ALL. A line it CLOSED because it
+            # was delivered in full is not cancelled (CONFIRM-PREVIEW-STALE, crew pass 2 Nov):
+            # it reads its change's words.
             cancelled=f.core is not None
-            and (f.core.line_status or "open") in ("closed", "cancelled"),
+            and (
+                (f.core.line_status or "open") == "cancelled"
+                or ((f.core.line_status or "open") == "closed" and not in_full)
+            ),
             was_item_code=was_item_code,
         )
         plan = LinePlan(
