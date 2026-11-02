@@ -548,7 +548,7 @@ describe('AC-B13: Undo on a pre-marked line returns to "Change proposed", not "S
     expect(deleteLineDraft.mock.calls[0][1]).toBeNull();
   });
 
-  it('saves and an Undo on one line wait for the save on the wire, and stand on its saved_at', async () => {
+  it('an Undo on a line waits for the save on the wire, and stands on its saved_at', async () => {
     getPlanningBoard.mockResolvedValue(
       buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
     );
@@ -568,18 +568,13 @@ describe('AC-B13: Undo on a pre-marked line returns to "Change proposed", not "S
     fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
     await waitFor(() => expect(within(row()).getByText('Saved')).toBeInTheDocument());
     const calls = put.mock.calls.length;
-    // A second save and an Undo while the first save is still on the wire.
-    const again = screen.queryByRole('button', { name: 'Save decision' });
-    if (again) fireEvent.click(again);
+    // An Undo while the save is still on the wire (the queue itself: `queuedPerKey` tests).
     fireEvent.click(within(row()).getByRole('button', { name: 'Undo SO381895 line 1' }));
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(put.mock.calls.length).toBe(calls);
     expect(deleteLineDraft).not.toHaveBeenCalled();
     answer({ decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-11-02T05:00:00' });
     await waitFor(() => expect(deleteLineDraft).toHaveBeenCalled());
-    if (put.mock.calls.length > calls) {
-      expect(put.mock.calls[calls][3]).toBe('2026-11-02T05:00:00');
-    }
     expect(deleteLineDraft.mock.calls[0][1]).toBe('2026-11-02T05:00:00');
   });
 

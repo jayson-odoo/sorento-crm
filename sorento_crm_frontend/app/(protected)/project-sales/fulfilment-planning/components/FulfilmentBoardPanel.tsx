@@ -1033,14 +1033,19 @@ export function FulfilmentBoardPanel({
     async (key: string): Promise<void> => {
       pendingDeletes.current.add(key);
       try {
-        // Review round 3 S1: a Save on this line still on the wire answers first, so the Undo
-        // stands on that save's saved_at and is never refused against this tab's own save.
-        const inFlight = savesInFlight.current.get(key);
-        if (inFlight) await inFlight;
+        // Review rounds 3 and 4: the Undo runs in the line's own write queue
+        // (`queuedPerKey`), after any save on the wire, so it stands on that save's saved_at
+        // and a save clicked after it waits for it.
         // CONFIRM-PREVIEW-STALE: the server refuses the Undo when the line was saved again
         // after the draft this tab holds; the board re-reads so the newer one shows.
         // `null`: this tab holds no draft for the line, so one saved elsewhere is refused too.
-        await removeLineDraft(key, savedAtByKey.current.get(key) || null);
+        // The last write on the line clears its pending-save mark, whichever kind it is.
+        await queuedPerKey(
+          savesInFlight.current,
+          key,
+          () => removeLineDraft(key, savedAtByKey.current.get(key) || null),
+          () => pendingSaves.current.delete(key),
+        );
         savedAtByKey.current.delete(key);
       } catch (error) {
         if (error instanceof LineDraftNewerError) void rawBoard.refetch();
