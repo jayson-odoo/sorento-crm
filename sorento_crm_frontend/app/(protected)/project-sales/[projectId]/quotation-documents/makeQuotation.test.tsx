@@ -70,7 +70,7 @@ function wrapper({ children }: { children: React.ReactNode }) {
 
 function offered(
   document: QuotationDocument,
-  opts: { canEdit?: boolean; projectOutcome?: string | null } = {},
+  opts: { canEdit?: boolean; projectOutcome?: string | null; projectHasQuotation?: boolean } = {},
 ) {
   const { result } = renderHook(
     () =>
@@ -79,6 +79,7 @@ function offered(
         document,
         canEdit: opts.canEdit ?? true,
         projectOutcome: 'projectOutcome' in opts ? opts.projectOutcome : 'won',
+        projectHasQuotation: opts.projectHasQuotation,
       }),
     { wrapper },
   );
@@ -115,6 +116,10 @@ describe('Make quotation action visibility', () => {
 
   it('is absent once a quotation has been made from the proposal', () => {
     expect(offered(doc({ quotation_document_id: 'q1' }))).toBe(false);
+  });
+
+  it('is absent once the project holds a quotation made from another proposal', () => {
+    expect(offered(doc(), { projectHasQuotation: true })).toBe(false);
   });
 
   it('is absent without edit rights', () => {
