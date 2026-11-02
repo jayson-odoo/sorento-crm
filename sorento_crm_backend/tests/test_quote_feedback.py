@@ -401,7 +401,7 @@ def test_the_sign_page_never_reports_open_feedback_as_a_block_and_signing_works(
 
 def test_the_sign_page_scopes_carry_matrix_columns_and_lines_carry_qty_cells(fb):
     page = fb.client.get(f"{PUBLIC}/{fb.token}").json()
-    by_label = {scope["label"]: scope for scope in page["scopes"]}
+    by_label = {scope["scope_label"]: scope for scope in page["scopes"]}
     unit = next(s for label, s in by_label.items() if "Townhouse" in label)
     guard = next(s for label, s in by_label.items() if "GUARD" in label)
     assert unit["matrix_columns"] == COLUMNS
