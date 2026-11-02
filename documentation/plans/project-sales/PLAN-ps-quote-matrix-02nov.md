@@ -1,6 +1,6 @@
 # PLAN: Quotation grid scopes (column headers x shoulders, qty per cell)
 
-Status: Plan (card v3 + mock v3 out to the owner; code waits for #2097 PS-PROPOSAL-QUOTATION to merge). Track: full (L):
+Status: Build, fix round 1 (mock v3 approved 2 Nov 00:05; built on #2097's branch, rebase after it merges). Track: full (L):
 one migration (nullable columns only), new editor behaviour on an existing screen, PDF + Excel + sign page, amendments.
 Lane: PS-QUOTE-MATRIX, PR #2108. Card (rules R1-R22, examples, data): `CARD-ps-quote-matrix-02nov.md`.
 UAC: `ps-quote-matrix-02nov-acceptance-criteria.md`. Mock: `mockups/quote-matrix.html`.

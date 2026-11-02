@@ -218,6 +218,8 @@ On the section's **Lines** tab, while the revision is still a draft:
 4. **Copy columns from** on the table's toolbar copies another section's headers and columns (not
    its quantities), so the second LEVEL sheet takes seconds.
 
+Column changes save as you make them: **Cancel** on the edit session does not undo them.
+
 Every column you already use stays: photo, drawing, product code, description, brand, UOM, rate,
 complete set, rate only, and the section headings (*Bathroom*, *Kitchen and yard*). Only the
 single Qty column is replaced by the grid.
