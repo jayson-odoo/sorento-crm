@@ -24,19 +24,16 @@ function setup(over: Partial<React.ComponentProps<typeof QtyOverQuoteDialog>> = 
 }
 
 describe('QtyOverQuoteDialog', () => {
-  it('renders each product with its ordered and quoted quantity', () => {
+  it('says one plain line per product: ordered and quoted', () => {
     setup();
-    expect(screen.getByText('SKU-1')).toBeInTheDocument();
-    expect(screen.getByText('12')).toBeInTheDocument();
-    expect(screen.getByText('10')).toBeInTheDocument();
-    expect(screen.getByText('Grout')).toBeInTheDocument();
-    expect(screen.getByText('5')).toBeInTheDocument();
-    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.getByText('SKU-1: 12 ordered, 10 quoted.')).toBeInTheDocument();
+    expect(screen.getByText('Grout: 5 ordered, 2 quoted.')).toBeInTheDocument();
+    expect(screen.queryByRole('table')).toBeNull();
   });
 
-  it('keeps Save with reason disabled until the reason is non-blank', () => {
+  it('keeps Save disabled until the reason is non-blank', () => {
     setup();
-    const save = screen.getByRole('button', { name: 'Save with reason' });
+    const save = screen.getByRole('button', { name: 'Save' });
     expect(save).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: '   ' } });
     expect(save).toBeDisabled();
@@ -47,13 +44,13 @@ describe('QtyOverQuoteDialog', () => {
   it('submits the trimmed reason', () => {
     const { onSubmit } = setup();
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: '  Extra stock  ' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save with reason' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(onSubmit).toHaveBeenCalledWith('Extra stock');
   });
 
-  it('Back calls onCancel', () => {
+  it('Cancel calls onCancel', () => {
     const { onCancel, onSubmit } = setup();
-    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onSubmit).not.toHaveBeenCalled();
   });
@@ -66,7 +63,7 @@ describe('QtyOverQuoteDialog', () => {
 
   it('renders nothing when products is null', () => {
     setup({ products: null });
-    expect(screen.queryByText('Quantity over the quotation')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Save with reason' })).toBeNull();
+    expect(screen.queryByText('More than quoted')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
   });
 });

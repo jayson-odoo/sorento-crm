@@ -9,7 +9,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type { QtyOverProduct } from '../lib/qtyOverQuote';
 
@@ -44,53 +43,40 @@ export function QtyOverQuoteDialog({
     <Dialog open={open} onOpenChange={(next) => (next ? undefined : onCancel())}>
       <DialogContent className="w-full max-w-md">
         <DialogHeader>
-          <DialogTitle>Quantity over the quotation</DialogTitle>
+          <DialogTitle>More than quoted</DialogTitle>
         </DialogHeader>
+        {/* Owner 23:15: one line per product and one reason box, nothing else. */}
         {products && products.length > 0 ? (
-          <table className="w-full table-fixed text-sm">
-            <thead>
-              <tr className="text-muted-foreground text-left text-xs">
-                <th className="py-1 font-medium">Product</th>
-                <th className="w-20 py-1 text-end font-medium">All POs</th>
-                <th className="w-20 py-1 text-end font-medium">Quoted</th>
-              </tr>
-            </thead>
-            <tbody>
-              {products.map((row, index) => {
-                const name = row.product_code ?? row.description ?? '-';
-                return (
-                  <tr key={`${name}-${index}`} className="border-t">
-                    <td className="truncate py-1.5" title={row.description ?? name}>
-                      {name}
-                    </td>
-                    <td className="py-1.5 text-end tabular-nums">{qty(row.ordered)}</td>
-                    <td className="py-1.5 text-end tabular-nums">{qty(row.quoted)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <ul className="space-y-1 text-sm">
+            {products.map((row, index) => {
+              const name = row.product_code ?? row.description ?? '-';
+              return (
+                <li key={`${name}-${index}`} className="break-words">
+                  {`${name}: ${qty(row.ordered)} ordered, ${qty(row.quoted)} quoted.`}
+                </li>
+              );
+            })}
+          </ul>
         ) : null}
-        <div className="space-y-1.5">
-          <Label htmlFor="qty-over-reason">Reason</Label>
-          <Textarea
-            id="qty-over-reason"
-            value={reason}
-            maxLength={2000}
-            rows={3}
-            onChange={(event) => setReason(event.target.value)}
-          />
-        </div>
+        <Textarea
+          id="qty-over-reason"
+          aria-label="Reason"
+          placeholder="Reason"
+          value={reason}
+          maxLength={2000}
+          rows={2}
+          onChange={(event) => setReason(event.target.value)}
+        />
         <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
           <Button type="button" variant="outline" onClick={onCancel}>
-            Back
+            Cancel
           </Button>
           <Button
             type="button"
             disabled={!reason.trim() || isSaving}
             onClick={() => void onSubmit(reason.trim())}
           >
-            {isSaving ? 'Saving...' : 'Save with reason'}
+            {isSaving ? 'Saving...' : 'Save'}
           </Button>
         </DialogFooter>
       </DialogContent>

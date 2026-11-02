@@ -72,7 +72,7 @@ td.num,th.num{text-align:right}
 <body>
 <div class="doc">
 <h1>Proposal and quotation (PS-PROPOSAL-QUOTATION)</h1>
-<p class="sub">Seven screens (6 and 7 added after the owner note of 2 Nov 23:11, feedback not accept): the Proposals tab, issuing a proposal revision whose price moved, "Make quotation" on a
+<p class="sub">Mock v3 (owner 23:15: screens 5 and 6 simpler). Seven screens (6 and 7 added after the owner note of 2 Nov 23:11, feedback not accept): the Proposals tab, issuing a proposal revision whose price moved, "Make quotation" on a
 won project, the quotation with a further discount waiting for approval, and a PO above the quoted quantity.
 Callouts map each element to the existing component it changes. Every new word is in the screen; no help text.</p>
 
@@ -174,13 +174,12 @@ Callouts map each element to the existing component it changes. Every new word i
 <h2 class="ft">5. PO save above the quoted quantity: reason, never a block (375 dialog + 1280 list)</h2>
 <div class="layout">
 <div class="frame w375 m375"><div class="dim"><div class="dlg">
-  <div class="hd">Quantity over the quotation <span class="co">13</span></div>
+  <div class="hd">More than quoted <span class="co">13</span></div>
   <div class="bd">
-    <table><thead><tr><th>Product</th><th class="num">All POs</th><th class="num">Quoted</th></tr></thead>
-      <tbody><tr><td>32MM TAIL PIECE COUPLING</td><td class="num">2</td><td class="num">1</td></tr></tbody></table>
-    <div class="field" style="margin-top:12px"><label>Reason</label><span class="input" style="display:block">Variation order VO-3</span></div>
+    <p style="margin:0 0 10px">32MM TAIL PIECE COUPLING: 13 ordered, 10 quoted.</p>
+    <span class="input" style="display:block;color:var(--muted)">Reason</span>
   </div>
-  <div class="ft"><span class="btn">Back</span><span class="btn primary">Save with reason</span></div>
+  <div class="ft"><span class="btn">Cancel</span><span class="btn primary">Save</span></div>
 </div></div></div>
 <div class="scroll"><div class="frame w1280"><div class="content">
   <b>Purchase Orders</b>
@@ -191,7 +190,7 @@ Callouts map each element to the existing component it changes. Every new word i
     </tbody></table>
 </div></div></div>
 <div class="notes"><ol>
-  <li><span class="co">13</span><div><b>Soft stop</b>Save / Confirm answers 409 po_qty_over_quoted with the products; the dialog asks one reason and re-sends with it. Totals cover every live PO of the project checked against the quotation.<span class="ref">PurchaseOrderDialog.tsx, POIntakeConfirmClient.tsx; project_po_service.py replace_lines, project_po_confirm.py confirm_version</span></div></li>
+  <li><span class="co">13</span><div><b>Soft stop, v3 simpler (owner 23:15)</b>One sentence per product over ("13 ordered, 10 quoted"), one Reason box, Save. No table. Save stays off until a reason is typed; the same save then goes through.<span class="ref">PurchaseOrderDialog.tsx, POIntakeConfirmClient.tsx; project_po_service.py replace_lines, project_po_confirm.py confirm_version</span></div></li>
   <li><span class="co">14</span><div><b>Badge + reason</b>Beside the model/price mismatch counts; management gets one alert per reason.<span class="ref">PurchaseOrdersPanel.tsx; serialize_pos (project_po_service.py:585)</span></div></li>
 </ol></div>
 </div>
@@ -202,23 +201,19 @@ Callouts map each element to the existing component it changes. Every new word i
 <div class="frame w375 m375"><div class="content">
   <div class="meta">Proposal from SORENTO</div>
   <div style="font-weight:600;margin:2px 0 10px">Proposal No. PRJQ-2026-0003-B</div>
-  <div class="card">
-    <div style="display:flex;justify-content:space-between"><b>32MM TAIL PIECE COUPLING</b><span>RM 280.00</span></div>
-    <div class="meta">Qty 10 EA</div>
-    <div class="field" style="margin-top:8px"><label>Your note on this line <span class="co">15</span></label>
-      <span class="input" style="display:block;color:var(--muted)">e.g. a cheaper model, a different quantity</span></div>
-  </div>
-  <div class="card">
-    <div style="display:flex;justify-content:space-between"><b>BRAC73080604-0001</b><span>RM 500.00</span></div>
-    <div class="meta">Qty 1 EA</div>
-    <div class="field" style="margin-top:8px"><label>Your note on this line</label>
-      <span class="input" style="display:block">Any model around RM 400? Need 2 units.</span></div>
-  </div>
+  <table>
+    <tbody>
+      <tr><td>32MM TAIL PIECE COUPLING<div class="meta">10 x RM 280.00</div></td></tr>
+      <tr><td style="border-bottom:0;padding-top:0"><span class="input" style="display:block;color:var(--muted)">Note</span> <span class="co">15</span></td></tr>
+      <tr><td>BRAC73080604-0001<div class="meta">1 x RM 500.00</div></td></tr>
+      <tr><td style="border-bottom:0;padding-top:0"><span class="input" style="display:block">Any model around RM 400? Need 2.</span></td></tr>
+    </tbody>
+  </table>
   <div class="field"><label>Anything else <span class="co">16</span></label><span class="input" style="display:block;min-height:48px"></span></div>
   <span class="btn primary" style="width:100%;justify-content:center">Send feedback</span> <span class="co">17</span>
 </div></div>
 <div class="notes"><ol>
-  <li><span class="co">15</span><div><b>A note per line</b>Free text replaces the quantity / price / remove inputs: a model swap by price fits in words, numbers alone could not say it.<span class="ref">QuotationSignScopes.tsx (SuggestRow), quotationSuggest.ts; quotation_amendment_request_rows + note column</span></div></li>
+  <li><span class="co">15</span><div><b>One note box per line, v3 simpler (owner 23:15)</b>The line as printed, then one box. No label, no hint text, no other inputs. Built by PS-QUOTE-MATRIX (#2108), which owns the feedback rework; drawn here so both lanes show the same thing.<span class="ref">QuotationSignScopes.tsx (SuggestRow), quotationSuggest.ts; quotation_amendment_request_rows + note column</span></div></li>
   <li><span class="co">16</span><div><b>One general note</b>Replaces today's separate "Request changes" text.<span class="ref">QuotationSignClient.tsx; request_changes()</span></div></li>
   <li><span class="co">17</span><div><b>No "Sign and accept" on a proposal</b>Only the quotation carries the e-signature (F1 a, pending owner). Feedback never blocks anything and can be sent again on the same revision.<span class="ref">QuotationSignClient.tsx CustomerSignature; accept_issue()</span></div></li>
 </ol></div>

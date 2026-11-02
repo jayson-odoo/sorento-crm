@@ -55,10 +55,10 @@ change, needs nothing.
 ## PO quantity above the quotation
 
 When the POs of a project together order more of a product than the quotation quotes, saving or
-confirming the PO opens **Quantity over the quotation**: it lists each product with the total on
-all POs and the quoted quantity. Type one reason (for example *Variation order VO-3*) and click
-**Save with reason**. The PO saves, shows a **Qty over quote** badge (hover for the reason), and
-management is told. You are asked once per PO.
+confirming the PO opens **More than quoted**, one line per product (for example *32MM TAIL PIECE
+COUPLING: 13 ordered, 10 quoted.*). Type a reason (for example *Variation order VO-3*) and click
+**Save**. The PO saves, shows a **Qty over quote** badge (hover for the reason), and management is
+told. You are asked once per PO.
 
 Once a project has a quotation, a new PO cannot be checked against a proposal.
 
