@@ -24,6 +24,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { FormSection } from '@/components/common/FormSection';
 import { WizardSteps } from '@/components/common/WizardSteps';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { toast } from '@/lib/toast';
 import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
@@ -44,6 +45,8 @@ import {
 } from '../hooks/useProjects';
 import type {
   ClashCandidate,
+  PartyLink,
+  PartyLinkRole,
   PartyType,
   Project,
   ProjectRegisterBody,
@@ -52,6 +55,31 @@ import type {
 import { isProjectApproved } from '../lib/projectApproval';
 import { isAwaitingDecision } from './ApprovalStatePill';
 import { ProjectAIExtractDialog, type ProjectExtractFill } from './ProjectAIExtractDialog';
+import { PartyContactsPicker } from './PartyContactsPicker';
+
+/** The district lookup set of a state: `my_district_<state>` (migration psr3_0001). */
+export function districtSetKey(state: string): string {
+  return state ? `my_district_${state.toLowerCase().split(/\s+/).filter(Boolean).join('_')}` : '';
+}
+
+/** The party roles linked beyond the three single columns (owner 2 Nov ~21:40, Q5 b). */
+const LINK_ROLES: { role: PartyLinkRole; label: string; many: boolean }[] = [
+  { role: 'subcontractor', label: 'Subcontractors', many: true },
+  { role: 'trading_house', label: 'Trading houses', many: true },
+  { role: 'tender_party', label: 'Tender parties', many: true },
+  { role: 'consultant', label: 'Consultant', many: false },
+  { role: 'interior_designer', label: 'Interior designer', many: false },
+];
+
+type LinkPicks = Record<PartyLinkRole, PickOption[]>;
+
+function linksFrom(project?: Project): LinkPicks {
+  const picks = Object.fromEntries(LINK_ROLES.map((r) => [r.role, []])) as unknown as LinkPicks;
+  for (const link of project?.party_links ?? []) {
+    picks[link.role]?.push({ value: link.party_id, label: link.name ?? 'Party' });
+  }
+  return picks;
+}
 
 const WIZARD_STEPS = [
   { id: 'check', label: 'Check' },
@@ -138,6 +166,13 @@ export function ProjectForm(props: ProjectFormProps) {
         }
       : null,
   );
+  const [leadSource, setLeadSource] = React.useState(project?.lead_source ?? '');
+  const [linkPicks, setLinkPicks] = React.useState<LinkPicks>(() => linksFrom(project));
+  // Register only: the picked contacts per party id. A party no longer picked drops its picks
+  // (rule 7) because only the picked parties' lists are sent.
+  const [contactPicks, setContactPicks] = React.useState<Record<string, string[]>>({});
+  // Names of party options seen in a multi picker, so a newly ticked party keeps its label.
+  const linkOptionCache = React.useRef<Record<string, PickOption>>({});
   const [customerId, setCustomerId] = React.useState(project?.customer_id ?? '');
   const [customerOption, setCustomerOption] = React.useState<PickOption | null>(
     project?.customer_id
@@ -166,6 +201,18 @@ export function ProjectForm(props: ProjectFormProps) {
   const fetchDeveloperOptions = useFetchPartyOptions('developer');
   const fetchArchitectOptions = useFetchPartyOptions('architect');
   const fetchContractorOptions = useFetchPartyOptions('main_contractor');
+  const fetchSubcontractorOptions = useFetchPartyOptions('subcontractor');
+  const fetchTradingHouseOptions = useFetchPartyOptions('trading_house');
+  const fetchTenderPartyOptions = useFetchPartyOptions('tender_party');
+  const fetchConsultantOptions = useFetchPartyOptions('consultant');
+  const fetchInteriorDesignerOptions = useFetchPartyOptions('interior_designer');
+  const fetchLinkOptions: Record<PartyLinkRole, (query: string) => Promise<PickOption[]>> = {
+    subcontractor: fetchSubcontractorOptions,
+    trading_house: fetchTradingHouseOptions,
+    tender_party: fetchTenderPartyOptions,
+    consultant: fetchConsultantOptions,
+    interior_designer: fetchInteriorDesignerOptions,
+  };
   const fetchCustomerOptions = useFetchCustomerOptions();
   // Both routes need projects.types.view: without it the type and template show as the
   // project's own text and nothing is requested.
@@ -173,6 +220,8 @@ export function ProjectForm(props: ProjectFormProps) {
   const types = useProjectTypes({ enabled: canViewTypes });
   const templates = useProjectTemplates(typeId || undefined, { enabled: canViewTypes });
   const states = useLookupSetOptions('my_state');
+  const leadSources = useLookupSetOptions('project_lead_source');
+  const districts = useLookupSetOptions(districtSetKey(state), { enabled: Boolean(state) });
   const users = useQuery({
     queryKey: ['user-lookup', 'project-owner'],
     queryFn: () => getUserLookup(),
@@ -195,6 +244,7 @@ export function ProjectForm(props: ProjectFormProps) {
   const [sectionOpen, setSectionOpen] = React.useState({
     who: true,
     details: mode === 'edit',
+    parties: true,
     salesCustomer: true,
   });
   // Edit mode never runs the auto-open below: every field already has a value, so
@@ -207,7 +257,10 @@ export function ProjectForm(props: ProjectFormProps) {
   // refurbishment has no launch date to count from.
   const derivesDelivery = selectedType?.derives_delivery_from_launch ?? false;
 
-  function toggleSection(key: 'who' | 'details' | 'salesCustomer', next: boolean) {
+  function toggleSection(
+    key: 'who' | 'details' | 'parties' | 'salesCustomer',
+    next: boolean,
+  ) {
     if (key === 'details') detailsSettledRef.current = true;
     setSectionOpen((prev) => ({ ...prev, [key]: next }));
   }
@@ -255,9 +308,10 @@ export function ProjectForm(props: ProjectFormProps) {
   const pending = register.isPending || update.isPending || submitDraft.isPending;
   const [showErrors, setShowErrors] = React.useState(false);
   const valueError = numberFieldError(estimatedValue, { min: 0, optional: true });
-  const customerMissing = (mode === 'create' || submitOnly) && !customerId;
+  // Customer optional, lead source required to register or submit (PS-REGISTRATION-V3).
+  const leadSourceMissing = (mode === 'create' || submitOnly) && !leadSource;
   const canSubmit =
-    title.trim().length > 0 && !customerMissing && !wouldBlock && !pending;
+    title.trim().length > 0 && !leadSourceMissing && !wouldBlock && !pending;
   const canSaveDraft = title.trim().length > 0 && !pending;
   // The top blocking candidate: the footer's one primary becomes Register as secondary lead (D2).
   const blocker =
@@ -331,8 +385,27 @@ export function ProjectForm(props: ProjectFormProps) {
     void handleCheck();
   }
 
+  /** The parties picked on the form, each with its role, for the contacts pickers. */
+  const pickedParties: { partyId: string; name: string }[] = [
+    ...(developerId ? [{ partyId: developerId, name: developerOption?.label ?? 'Developer' }] : []),
+    ...(architectId ? [{ partyId: architectId, name: architectOption?.label ?? 'Architect' }] : []),
+    ...(mainContractorId
+      ? [{ partyId: mainContractorId, name: contractorOption?.label ?? 'Main contractor' }]
+      : []),
+    ...LINK_ROLES.flatMap((r) => linkPicks[r.role].map((o) => ({ partyId: o.value, name: o.label }))),
+  ].filter((p, i, all) => all.findIndex((q) => q.partyId === p.partyId) === i);
+
   function buildBody(): ProjectRegisterBody {
+    const partyLinks: PartyLink[] = LINK_ROLES.flatMap((r) =>
+      linkPicks[r.role].map((o) => ({ role: r.role, party_id: o.value })),
+    );
+    const contactIds = Array.from(
+      new Set(pickedParties.flatMap((p) => contactPicks[p.partyId] ?? [])),
+    );
     return {
+      lead_source: leadSource || null,
+      party_links: partyLinks,
+      ...(mode === 'create' && contactIds.length ? { contact_ids: contactIds } : {}),
       title: title.trim(),
       developer_party_id: developerId || null,
       type_id: typeId || null,
@@ -341,7 +414,7 @@ export function ProjectForm(props: ProjectFormProps) {
       registered_company_name: registeredCompany.trim() || null,
       location: location.trim() || null,
       state: state || null,
-      mukim: mukim.trim() || null,
+      mukim: mukim || null,
       address: address.trim() || null,
       admin_ref: adminRef.trim() || null,
       architect_party_id: architectId || null,
@@ -709,16 +782,21 @@ export function ProjectForm(props: ProjectFormProps) {
                   placeholder="Optional"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="project-location">Location</Label>
-                <Input
-                  id="project-location"
-                  value={location}
-                  onChange={(event) => setLocation(event.target.value)}
-                  placeholder="e.g. Setia Alam, Selangor"
-                />
-              </div>
+              {!wizard && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="project-location">Location</Label>
+                  <Input
+                    id="project-location"
+                    value={location}
+                    onChange={(event) => setLocation(event.target.value)}
+                    placeholder="e.g. Setia Alam, Selangor"
+                  />
+                </div>
+              )}
             </div>
+
+            {/* State + Area say where it is; the free-text Location shows on edit only so older
+                projects keep their text (PS-REGISTRATION-V3 rule 2). */}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -726,7 +804,11 @@ export function ProjectForm(props: ProjectFormProps) {
                 <SearchableSelect
                   id="project-state"
                   value={state}
-                  onChange={setState}
+                  onChange={(next) => {
+                    setState(next);
+                    // An area belongs to its state: a new state starts the area over.
+                    if (next !== state) setMukim('');
+                  }}
                   clearable
                   loadError={states.error}
                   onRetry={() => void states.refetch()}
@@ -746,11 +828,25 @@ export function ProjectForm(props: ProjectFormProps) {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="project-mukim">Area</Label>
-                <Input
+                <SearchableSelect
                   id="project-mukim"
                   value={mukim}
-                  onChange={(event) => setMukim(event.target.value)}
-                  placeholder="Optional"
+                  onChange={setMukim}
+                  clearable
+                  disabled={!state}
+                  loadError={state ? districts.error : undefined}
+                  onRetry={() => void districts.refetch()}
+                  options={[
+                    // An area typed before the list existed still shows as itself.
+                    ...(mukim && !(districts.data ?? []).some((o) => o.value === mukim)
+                      ? [{ value: mukim, label: mukim }]
+                      : []),
+                    ...(districts.data ?? []).map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    })),
+                  ]}
+                  placeholder={state ? 'Select an area' : 'Pick a state first'}
                 />
               </div>
             </div>
@@ -823,6 +919,15 @@ export function ProjectForm(props: ProjectFormProps) {
               </div>
             )}
 
+          </FormSection>
+        )}
+
+        {(!wizard || step === 'details') && (
+          <FormSection
+            title="Parties and contacts"
+            open={sectionOpen.parties}
+            onOpenChange={(next) => toggleSection('parties', next)}
+          >
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="project-architect">Architect</Label>
@@ -874,23 +979,117 @@ export function ProjectForm(props: ProjectFormProps) {
                 />
               </div>
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {LINK_ROLES.map(({ role, label, many }) => {
+                const picks = linkPicks[role];
+                const setPicks = (next: PickOption[]) =>
+                  setLinkPicks((prev) => ({ ...prev, [role]: next }));
+                const id = `project-${role.replace('_', '-')}`;
+                const noun = label.toLowerCase();
+                return (
+                  <div key={role} className="space-y-1.5">
+                    <Label htmlFor={id}>{label}</Label>
+                    {many ? (
+                      <SearchableMultiSelect
+                        id={id}
+                        value={picks.map((o) => o.value)}
+                        onChange={(ids) =>
+                          setPicks(
+                            ids.map(
+                              (value) =>
+                                picks.find((o) => o.value === value) ??
+                                linkOptionCache.current[value] ?? { value, label: 'Party' },
+                            ),
+                          )
+                        }
+                        fetchOptions={async (query) => {
+                          const rows = await fetchLinkOptions[role](query);
+                          for (const row of rows) linkOptionCache.current[row.value] = row;
+                          return rows;
+                        }}
+                        selectedOptions={picks}
+                        clearable
+                        placeholder={`Search ${label.toLowerCase()}`}
+                        emptyMessage={`No ${label.toLowerCase()} found`}
+                      />
+                    ) : (
+                      <SearchableSelect
+                        id={id}
+                        value={picks[0]?.value ?? ''}
+                        onChange={(value) => {
+                          if (!value) setPicks([]);
+                        }}
+                        onOptionChange={(option) => setPicks(option ? [option] : [])}
+                        fetchOptions={fetchLinkOptions[role]}
+                        selectedOption={picks[0]}
+                        clearable
+                        placeholder={`Search ${noun}s`}
+                        emptyMessage={`No ${noun}s found`}
+                        createOption={partyCreateOption(role, noun, (pid, option) =>
+                          setPicks([{ ...option, value: pid }]),
+                        )}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {mode === 'create' && pickedParties.length > 0 && (
+              <div className="grid gap-4 sm:grid-cols-2">
+                {pickedParties.map((party) => (
+                  <PartyContactsPicker
+                    key={party.partyId}
+                    partyId={party.partyId}
+                    partyName={party.name}
+                    value={contactPicks[party.partyId] ?? []}
+                    onChange={(ids) =>
+                      setContactPicks((prev) => ({ ...prev, [party.partyId]: ids }))
+                    }
+                    canCreate={canCreateParty}
+                  />
+                ))}
+              </div>
+            )}
           </FormSection>
         )}
 
         {(!wizard || step === 'details') && (
           <FormSection
-            title="Customer and salesperson"
+            title="Lead source, customer and salesperson"
             open={sectionOpen.salesCustomer}
             onOpenChange={(next) => toggleSection('salesCustomer', next)}
           >
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
-                  <Label htmlFor="project-customer">
-                    Customer
-                    {(mode === 'create' || submitOnly) && (
-                      <span className="text-destructive"> *</span>
-                    )}
-                  </Label>
+                <Label htmlFor="project-lead-source">
+                  Lead source
+                  {(mode === 'create' || submitOnly) && (
+                    <span className="text-destructive"> *</span>
+                  )}
+                </Label>
+                <SearchableSelect
+                  id="project-lead-source"
+                  value={leadSource}
+                  onChange={setLeadSource}
+                  clearable={mode === 'edit' && !submitOnly}
+                  loadError={leadSources.error}
+                  onRetry={() => void leadSources.refetch()}
+                  options={[
+                    ...(leadSource &&
+                    !(leadSources.data ?? []).some((o) => o.value === leadSource)
+                      ? [{ value: leadSource, label: leadSource }]
+                      : []),
+                    ...(leadSources.data ?? []).map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                    })),
+                  ]}
+                  placeholder="Where did this project come from?"
+                />
+              </div>
+              <div className="space-y-1.5">
+                  <Label htmlFor="project-customer">Customer</Label>
                   <SearchableSelect
                     id="project-customer"
                     value={customerId}
