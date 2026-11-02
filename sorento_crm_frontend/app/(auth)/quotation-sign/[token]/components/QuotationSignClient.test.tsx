@@ -1028,7 +1028,7 @@ describe('QuotationSignClient designed cover card', () => {
   });
 
   it('hides the sender block when cover_show_letterhead is false', async () => {
-    getQuotationSignPage.mockResolvedValue(designed({ cover_show_letterhead: false }));
+    getQuotationSignPage.mockResolvedValue(designed({ cover_show_letterhead: false, document_kind: 'quotation' }));
     renderPage();
 
     await screen.findByText('OFFER SHEET');
@@ -1036,11 +1036,26 @@ describe('QuotationSignClient designed cover card', () => {
   });
 
   it('shows the sender block when cover_show_letterhead is true', async () => {
-    getQuotationSignPage.mockResolvedValue(designed());
+    getQuotationSignPage.mockResolvedValue(designed({ document_kind: 'quotation' }));
     renderPage();
 
     await screen.findByText('OFFER SHEET');
     expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+  });
+
+  it('names the sender row after the document kind: Proposal from / Quotation from', async () => {
+    getQuotationSignPage.mockResolvedValue(designed({ document_kind: 'proposal' }));
+    const first = renderPage();
+    await screen.findByText('OFFER SHEET');
+    expect(screen.getAllByText('Proposal from')).toHaveLength(1);
+    expect(screen.queryByText('Quotation from')).not.toBeInTheDocument();
+    first.unmount();
+
+    getQuotationSignPage.mockResolvedValue(designed({ document_kind: 'quotation' }));
+    renderPage();
+    await screen.findByText('OFFER SHEET');
+    expect(screen.getAllByText('Quotation from')).toHaveLength(1);
+    expect(screen.queryByText('Proposal from')).not.toBeInTheDocument();
   });
 
   it('a layout-2 payload with no design fields renders as today', async () => {
@@ -1048,6 +1063,7 @@ describe('QuotationSignClient designed cover card', () => {
       page({
         our_ref: 'PRJQ-2026-0042-R2 SERI MUTIARA',
         cover_rows: [{ key: 'reference', label: 'Reference No.', text: 'PRJQ-2026-0042-R2 SERI MUTIARA' }],
+        document_kind: 'quotation',
       }),
     );
     renderPage();

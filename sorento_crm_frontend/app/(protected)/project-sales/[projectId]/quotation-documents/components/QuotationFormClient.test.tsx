@@ -1475,7 +1475,7 @@ describe('QuotationFormClient cover page preview and editors', () => {
     fireEvent.change(await screen.findByLabelText('Intro text'), { target: { value: '<p>Intro typed</p>' } });
     fireEvent.change(screen.getByLabelText('Closing text'), { target: { value: '<p>Closing typed</p>' } });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
     await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
     expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({
       cover_letter_html: '<p>Intro typed</p>',

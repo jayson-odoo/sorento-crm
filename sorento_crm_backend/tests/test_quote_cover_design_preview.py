@@ -55,6 +55,16 @@ def active_design(client, **over):
     return d
 
 
+def quotation_document(client, db, project, **body):
+    """A saved document of kind quotation (counts R1, R2; prints Quotation), not the default proposal."""
+    from .test_project_quotation_document_routes import _document_row
+
+    created = _create_document(client, project.id, **body)
+    _document_row(db, created["id"]).kind = "quotation"
+    db.flush()
+    return created
+
+
 def project_url(project):
     return f"{PS}/projects/{project.id}/quotation-documents/cover-preview"
 
@@ -76,8 +86,9 @@ def body_for_project(**over):
 def test_project_preview_uses_the_active_design_and_the_unsaved_values(api):
     client, db, _c, _u, project, _party = api
     d = active_design(client)
+    created = quotation_document(client, db, project)
     before = counts(db)
-    res = client.post(project_url(project), json=body_for_project())
+    res = client.post(project_url(project), json={**body_for_project(), "document_id": created["id"]})
     assert res.status_code == 200, res.text
     out = res.json()
     assert counts(db) == before
@@ -99,7 +110,8 @@ def test_project_preview_uses_the_active_design_and_the_unsaved_values(api):
 
 def test_project_preview_with_no_design_follows_the_default_design(api):
     client, db, _c, _u, project, _party = api
-    out = client.post(project_url(project), json=body_for_project()).json()
+    created = quotation_document(client, db, project)
+    out = client.post(project_url(project), json={**body_for_project(), "document_id": created["id"]}).json()
     assert out["cover_title"] == "QUOTATION" and out["cover_show_letterhead"] is True
     keys = [r["key"] for r in out["cover_rows"]]
     assert keys == [k for k in KEYS if k in keys]
@@ -109,7 +121,7 @@ def test_project_preview_with_no_design_follows_the_default_design(api):
 
 def test_project_preview_for_an_existing_document_names_its_number_and_next_revision(api):
     client, db, _c, _u, project, _party = api
-    created = _create_document(client, project.id)
+    created = quotation_document(client, db, project)
     before = counts(db)
     out = client.post(project_url(project), json={**body_for_project(), "document_id": created["id"]}).json()
     assert counts(db) == before
@@ -121,7 +133,7 @@ def test_project_preview_after_a_send_names_r2_and_uses_the_typed_values(api):
     from .test_project_quotation_document_routes import _add_scope, _sign
 
     client, db, _c, _u, project, _party = api
-    created = _create_document(client, project.id, attn_name=f"{MARKER} Saved Attn")
+    created = quotation_document(client, db, project, attn_name=f"{MARKER} Saved Attn")
     root = f"{PS}/projects/{project.id}/quotation-documents"
     _add_scope(client, project.id, created["id"], f"{MARKER} Townhouse")
     _sign(client, root, created["id"])
@@ -135,6 +147,26 @@ def test_project_preview_after_a_send_names_r2_and_uses_the_typed_values(api):
     by = {r["key"]: r for r in out["cover_rows"]}
     assert by["reference"]["text"] == f"{created['document_no']}-R2 {project.title}"
     assert by["attn"]["text"] == f"{MARKER} Typed Attn"
+
+
+def test_new_document_preview_is_a_proposal_with_revision_a_and_a_sent_quotation_previews_r2(api):
+    client, db, _c, _u, project, _party = api
+    out = client.post(project_url(project), json=body_for_project()).json()
+    assert out["cover_title"] == "PROPOSAL"
+    ref = next(r for r in out["cover_rows"] if r["key"] == "reference")["text"]
+    assert ref.endswith(f"-A {project.title}"), ref
+
+    from .test_project_quotation_document_routes import _add_scope, _sign
+
+    created = quotation_document(client, db, project)
+    root = f"{PS}/projects/{project.id}/quotation-documents"
+    _add_scope(client, project.id, created["id"], f"{MARKER} Townhouse")
+    _sign(client, root, created["id"])
+    assert client.post(f"{root}/{created['id']}/issue").status_code == 201
+    out = client.post(project_url(project), json={**body_for_project(), "document_id": created["id"]}).json()
+    assert out["cover_title"] == "QUOTATION"
+    ref = next(r for r in out["cover_rows"] if r["key"] == "reference")["text"]
+    assert ref.endswith(f"-R2 {project.title}"), ref
 
 
 def test_project_preview_without_permission_is_403_and_stores_nothing(api):

@@ -48,13 +48,14 @@ def seed_design(db, env, d, *, body="", name=None, active=True):
     )
 
 
-def prepared(db, env, d=None, *, terms=TERMS):
+def prepared(db, env, d=None, *, terms=TERMS, kind="quotation"):
     """A document filled in, with intro and closing set, after any design is seeded."""
     if d is not None:
         seed_design(db, env, d)
     document = _full_document(db, env, terms=terms)
     document.cover_letter_html = INTRO
     document.cover_closing_html = CLOSING
+    document.kind = kind
     db.flush()
     return document
 
@@ -158,7 +159,7 @@ def test_pdf_layout_3_title_rows_order_labels_hidden_and_intro_closing_placement
         for gone in ("EMAIL:", "CONTACT:", f"{MARKER}@zzt.test"):
             assert gone not in html, gone
         order = ["PREPARED BY:", "OFFER NUMBER:", "DATE:", "SENT TO:", "ATTN:", "TERMS &amp; CONDITIONS:",
-                 "PAYMENT TERMS:", "VALIDITY:", "QUOTATION PURPOSE:", "ADD:"]
+                 "PAYMENT TERMS:", "VALIDITY:", "PROPOSAL PURPOSE:", "ADD:"]
         positions = [html.index(label) for label in order]
         assert positions == sorted(positions)
         assert "REFERENCE NO.:" not in html and "COMPANY:" not in html
@@ -287,7 +288,9 @@ def test_countersign_default_design_matches_the_2088_rows_and_title():
         record = _issue(db, prepared(db, env), env["owner"])
         body = sign_body(db, record)
         assert [r["key"] for r in body["cover_rows"]] == KEYS
-        assert [r["label"] for r in body["cover_rows"]] == LABELS
+        assert [r["label"] for r in body["cover_rows"]] == [
+            "Quotation Purpose" if label == "Proposal Purpose" else label for label in LABELS
+        ]
         assert body["cover_title"] == "QUOTATION" and body["cover_show_letterhead"] is True
 
 
@@ -340,3 +343,47 @@ def test_layout_2_html_has_exactly_the_2088_style_and_layout_3_adds_the_designed
     assert designed_css.strip() and designed_css not in html2
     assert designed_css in html3
     assert _style_of(html2).strip() == (qpdf._STYLE + qpdf._COVER_STYLE).strip()
+
+
+# ------------------------------------------------------------------ the noun rule (merge with #2097)
+
+
+def _cover_of(db, env, kind, d=None):
+    from app.services import project_quotation_pdf_service as qpdf
+
+    record = _issue(db, prepared(db, env, d, kind=kind), env["owner"])
+    db.refresh(record)
+    return record, qpdf.build_issue_html(db, record), sign_body(db, record)
+
+
+def test_unchanged_default_design_prints_the_documents_noun_on_the_pdf_cover():
+    with blank_session() as db:
+        env = _setup(db)
+        record, html, body = _cover_of(db, env, "proposal")
+        assert body["cover_title"] == "PROPOSAL"
+        assert "PROPOSAL" in html and "PROPOSAL PURPOSE:" in html and "QUOTATION PURPOSE:" not in html
+        assert record.revision_label == "A"
+        ref = next(r for r in body["cover_rows"] if r["key"] == "reference")["text"]
+        assert ref.split(" ")[0].endswith("-A")
+    with blank_session() as db:
+        env = _setup(db)
+        record, html, body = _cover_of(db, env, "quotation")
+        assert body["cover_title"] == "QUOTATION"
+        assert "QUOTATION PURPOSE:" in html and "PROPOSAL PURPOSE:" not in html
+        assert record.revision_label == "R1"
+        ref = next(r for r in body["cover_rows"] if r["key"] == "reference")["text"]
+        assert ref.split(" ")[0].endswith("-R1")
+
+
+def test_a_designs_own_title_and_purpose_label_print_as_written_for_a_proposal():
+    d = make_design(title="OFFER SHEET")
+    for row in d["rows"]:
+        if row["key"] == "purpose":
+            row["label"] = "SCOPE"
+    with blank_session() as db:
+        env = _setup(db)
+        _record, html, body = _cover_of(db, env, "proposal", d)
+        assert body["cover_title"] == "OFFER SHEET"
+        assert "OFFER SHEET" in html and "SCOPE:" in html
+        assert "PROPOSAL PURPOSE" not in html and "QUOTATION PURPOSE" not in html
+        assert "PROPOSAL" not in html.replace("PROPOSAL FROM", "")
