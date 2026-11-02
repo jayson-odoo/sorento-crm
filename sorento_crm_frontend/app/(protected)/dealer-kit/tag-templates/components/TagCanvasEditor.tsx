@@ -41,6 +41,7 @@ import type {
   TagBindingData,
   TagLayer,
   TagLayerProps,
+  TagPartData,
   TagTemplateDoc,
 } from '@/lib/dealer-kit/tag-template-types';
 import {
@@ -65,7 +66,11 @@ import {
   PRODUCT_BLOCK_SIZE,
   SET_BLOCK_SIZE,
 } from '@/lib/dealer-kit/product-block';
-import { renderMergeFields, soleMergeField } from '@/lib/dealer-kit/merge-fields';
+import {
+  renderMergeFields,
+  soleMergeField,
+  type MergeFieldGroup,
+} from '@/lib/dealer-kit/merge-fields';
 import {
   moveEdge,
   movePoint,
@@ -380,6 +385,11 @@ interface TagCanvasEditorProps {
   doc: TagTemplateDoc;
   onChange: (doc: TagTemplateDoc) => void;
   /**
+   * PS-SPEC-SHEET: this is a project spec sheet page template. Layers can then point at
+   * Accessory 1..N without a combo preview, and carry a "Show only when" condition.
+   */
+  specSheet?: boolean;
+  /**
    * Which promotion the preview prices resolve against. A template is not tied
    * to one, so this is normally absent and the badge previews list prices.
    */
@@ -476,6 +486,18 @@ interface DragSession {
   dy: number;
 }
 
+/**
+ * PS-SPEC-SHEET: the accessory rows a spec sheet page can point a layer at, before any real
+ * page data exists. Three, the most the owner's sample prints on one page.
+ */
+const PRICE_TAG_FIELD_GROUPS: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo'];
+
+const SPEC_SHEET_ACCESSORY_PARTS: TagPartData[] = [1, 2, 3].map((n) => ({
+  code: `Accessory ${n}`,
+  name: `Accessory ${n}`,
+  dimensions: '',
+}));
+
 export function TagCanvasEditor({
   doc,
   onChange,
@@ -489,6 +511,7 @@ export function TagCanvasEditor({
   toolbarTrailing,
   reviewPins,
   onReviewPinResolve,
+  specSheet = false,
 }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   /** Which change-request marker has its comment open (r9 S2/D6). */
@@ -3169,7 +3192,12 @@ export function TagCanvasEditor({
    * `boundData` at all) - neither carries parts, so the picker never shows
    * (AC-S4-2).
    */
-  const subjectParts = boundData?.kind === 'line' ? boundData.line.parts : undefined;
+  const subjectParts =
+    boundData?.kind === 'line'
+      ? boundData.line.parts
+      : specSheet
+        ? SPEC_SHEET_ACCESSORY_PARTS
+        : undefined;
   const subjectParentCode =
     boundData?.kind === 'line'
       ? boundData.line.code
@@ -4475,7 +4503,9 @@ export function TagCanvasEditor({
                 setEditingPointsId((prev) => (prev === layerId ? null : layerId))
               }
               subjectParts={subjectParts}
-              subjectParentCode={subjectParentCode}
+              subjectParentCode={specSheet && !subjectParentCode ? 'Main item' : subjectParentCode}
+              specSheet={specSheet}
+              specKeys={library.specKeys}
             />
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -4555,6 +4585,8 @@ export function TagCanvasEditor({
         value={selectedContent}
         data={selectedData ?? null}
         specKeys={library.specKeys}
+        // PS-SPEC-SHEET: the spec sheet's own fields are offered on its templates only.
+        groups={specSheet ? undefined : PRICE_TAG_FIELD_GROUPS}
         onCancel={() => setInsertFieldOpen(false)}
         onDone={(content) => {
           setInsertFieldOpen(false);

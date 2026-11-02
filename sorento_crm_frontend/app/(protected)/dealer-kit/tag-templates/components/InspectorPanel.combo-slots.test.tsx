@@ -74,6 +74,8 @@ const COMBO_SLOTS = [
 const EXISTING = [
   ['__none__', '(None)'],
   ['product_image', 'Product Image'],
+  // PS-SPEC-SHEET: the technical drawing slot.
+  ['drawing', 'Drawing'],
   ['code', 'Code'],
   ['name', 'Name'],
   ['dimensions', 'Dimensions'],
