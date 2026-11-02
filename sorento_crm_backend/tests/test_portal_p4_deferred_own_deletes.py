@@ -432,6 +432,10 @@ def test_attachment_unlink_commit_refuses_when_the_parent_stopped_being_editable
     r = _park(sc.client, req.headers, UNLINK, "my_request_attachment", link)
     assert r.status_code == 202, r.text
     req.submit(sid)
+    if req.kind == "price_tag_request":
+        # PRICETAG-SELF-APPROVAL: a submitted tag is his own proof and stays editable;
+        # it stops being editable once escalated to marketing.
+        s.ok(req.rep.me.call("POST", f"/submissions/{req.kind}/{sid}/escalate", json={"note": "ZZT redraw"}))
     _lapse(sc.db, r.json()["id"])
     _assert_commit_refused(sc.client, req.headers, "my_request_attachment", link)
     assert _link_exists(sc, req.kind, sid, link), "a file on a submitted request must survive"

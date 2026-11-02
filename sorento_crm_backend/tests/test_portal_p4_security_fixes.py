@@ -176,6 +176,7 @@ WRITE_ROUTES = {
     ("PUT", "/submissions/price_tag_request/{request_id}"): None,
     ("POST", "/submissions/price_tag_request/{request_id}/approve"): None,
     ("POST", "/submissions/price_tag_request/{request_id}/collect"): None,
+    ("POST", "/submissions/price_tag_request/{request_id}/escalate"): None,
     ("POST", "/submissions/price_tag_request/{request_id}/export"): None,
     ("POST", "/submissions/price_tag_request/{request_id}/request-changes"): None,
     ("POST", "/submissions/price_tag_request/{request_id}/submit"): None,

@@ -150,8 +150,8 @@ class TestAttachmentRoutesRefuseWhenNotEditable:
         contact = _contact(db)
         token = _token(db, contact)
 
-        # Locked: approved, not a draft - _require_editable would refuse a PUT here.
-        locked_req = _request(db, contact.id, status="approved", portal_draft_at=None)
+        # Locked: the office has printed it (PRICETAG-SELF-APPROVAL: approved is still his to edit).
+        locked_req = _request(db, contact.id, status="ready_for_collection", portal_draft_at=None)
 
         upload_res = c.post(
             _ATTACHMENTS_BASE,
@@ -235,7 +235,7 @@ class TestAttachmentRoutesRefuseWhenNotEditable:
         contact = _contact(db)
         token = _token(db, contact)
 
-        req = _request(db, contact.id, status="new", portal_draft_at=None)
+        req = _request(db, contact.id, status="proof_ready", portal_draft_at=None)
         db.add(
             PortalRevisionDraft(
                 id=str(uuid.uuid4()),
@@ -280,7 +280,7 @@ class TestAttachmentGateKeysOffPolicyNotDraftExistence:
         _seed_revision_config(db, enabled=True)
         contact = _contact(db)
         token = _token(db, contact)
-        req = _request(db, contact.id, status="new", portal_draft_at=None)
+        req = _request(db, contact.id, status="proof_ready", portal_draft_at=None)
 
         upload_res = c.post(
             _ATTACHMENTS_BASE,
@@ -297,9 +297,26 @@ class TestAttachmentGateKeysOffPolicyNotDraftExistence:
         )
         assert delete_res.status_code in (200, 204), delete_res.text
 
-    def test_refused_with_no_draft_row_when_config_disabled(self, client):
+    def test_allowed_on_his_own_proof_even_when_the_config_is_disabled(self, client):
+        """PRICETAG-SELF-APPROVAL: Settings > Portal revisions does not apply to price tags."""
         c, db = client
         _seed_revision_config(db, enabled=False)
+        contact = _contact(db)
+        token = _token(db, contact)
+        req = _request(db, contact.id, status="proof_ready", portal_draft_at=None)
+
+        upload_res = c.post(
+            _ATTACHMENTS_BASE,
+            data={"kind": "price_tag_request", "submission_id": req.id},
+            files={"file": ("po.pdf", io.BytesIO(b"%PDF-1.4 zzt"), "application/pdf")},
+            headers={"X-Portal-Token": token.token},
+        )
+        assert upload_res.status_code == 200, upload_res.text
+
+    def test_refused_while_marketing_holds_it_even_when_the_config_allows(self, client):
+        """PRICETAG-SELF-APPROVAL: `new` is with marketing, whatever the config says."""
+        c, db = client
+        _seed_revision_config(db, enabled=True)
         contact = _contact(db)
         token = _token(db, contact)
         req = _request(db, contact.id, status="new", portal_draft_at=None)

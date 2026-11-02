@@ -5,10 +5,12 @@ tests/_forms_chain_support.py. Price tag sends go out inside the request
 (`price_tag_notify`), so every transition's outbox row lands without a drain.
 
 A price tag request has no form-action undo (no dispatcher key) and only `submit` feeds its
-SLA. With an active stage, submit auto-assigns the request to the stage's assignee and moves it
-straight to `designing` (D8), so there is no Claim step here. The chains: draft -> submit ->
-proof -> changes -> proof -> approve -> collection -> collected; reject (terminal); revise in
-changes_requested; void; and the SLA stage's extend, escalation and overdue sweep.
+SLA. PRICETAG-SELF-APPROVAL: a portal submit lands at `proof_ready` for the salesperson with no
+tracker; only Escalate emits `submit`, and with an active stage it auto-assigns the request to the
+stage's assignee and moves it straight to `designing` (D8), so there is no Claim step here. The
+chains: draft -> submit -> escalate -> proof -> changes -> proof -> approve -> collection ->
+collected; reject (terminal); the salesperson's own revise; void; and the SLA stage's extend,
+escalation and overdue sweep.
 """
 from __future__ import annotations
 
@@ -28,8 +30,7 @@ from tests._forms_chain_support import (
     notifications,
     open_tracker,
     outbox,
-    revision_config,
-    sla_chain,
+        sla_chain,
     trackers,
     user,
     world,  # noqa: F401  (fixture)
@@ -90,9 +91,18 @@ def _draft(w):
     return res.json()["id"]
 
 
-def _submitted(w):
+def _submitted_self(w):
+    """Submitted and waiting for the salesperson himself (proof_ready, nobody assigned)."""
     rid = _draft(w)
     res = w.as_contact(w.contact).post(f"{SUB}/{KIND}/{rid}/submit")
+    assert res.status_code == 200, res.text
+    return rid
+
+
+def _submitted(w):
+    """Submitted, then escalated: the request is with marketing and the stage is open."""
+    rid = _submitted_self(w)
+    res = w.as_contact(w.contact).post(f"{SUB}/{KIND}/{rid}/escalate", json={"note": "please redraw"})
     assert res.status_code == 200, res.text
     return rid
 
@@ -119,7 +129,7 @@ def _status(w, rid):
 # ------------------------------------------------------------------ draft, save, submit
 
 
-def test_draft_save_submit_once_starts_the_stage_and_confirms_to_the_contact(world):
+def test_draft_save_submit_once_confirms_and_escalate_starts_the_stage(world):
     w = _setup(world)
     rid = _draft(w)
     c = w.as_contact(w.contact)
@@ -132,15 +142,22 @@ def test_draft_save_submit_once_starts_the_stage_and_confirms_to_the_contact(wor
     sub = c.post(f"{SUB}/{KIND}/{rid}/submit")
     assert sub.status_code == 200, sub.text
     assert sub.json()["portal_draft_at"] is None
-    tier1 = w.chain.stages[0].tier1
-    assert open_tracker(w.db, KIND, rid).assigned_to_id == tier1
-    # D8 auto-assign: straight to designing, owned by the stage's assignee
-    assert sub.json()["status"] == "designing"
-    assert sub.json()["assigned_to_id"] == tier1
-    assert len(_sends(w, rid)) == 2  # "we received it", then "being designed"
+    # PRICETAG-SELF-APPROVAL: waits for the salesperson, no stage, nobody assigned
+    assert sub.json()["status"] == "proof_ready"
+    assert sub.json()["assigned_to_id"] is None
+    assert trackers(w.db, KIND, rid) == []
+    assert len(_sends(w, rid)) == 1  # "we received it"
 
     again = c.post(f"{SUB}/{KIND}/{rid}/submit")
-    assert again.status_code == 409, again.text  # a second submit would start the SLA twice
+    assert again.status_code == 409, again.text
+
+    esc = c.post(f"{SUB}/{KIND}/{rid}/escalate", json={"note": "please redraw"})
+    assert esc.status_code == 200, esc.text
+    tier1 = w.chain.stages[0].tier1
+    assert open_tracker(w.db, KIND, rid).assigned_to_id == tier1
+    # D8 auto-assign on escalate: straight to designing, owned by the stage's assignee
+    assert esc.json()["status"] == "designing"
+    assert esc.json()["assigned_to_id"] == tier1
     assert len(trackers(w.db, KIND, rid)) == 1
     assert c.put(f"{SUB}/{KIND}/{rid}", json={"debtor_name": "late edit"}).status_code == 409
 
@@ -204,30 +221,29 @@ def test_reject_with_a_reason_is_terminal_and_tells_the_contact(world):
     assert revise.status_code == 422, revise.text
 
 
-def test_revise_after_requesting_changes_counts_and_restarts_the_stage(world):
+def test_revise_is_the_salesperson_own_and_never_restarts_the_stage(world):
+    """PRICETAG-SELF-APPROVAL R4: revise is allowed on his own proof, refused while marketing
+    holds the request, counts the revision and opens no stage."""
     w = _setup(world)
-    revision_config(w.db, KIND, allowed_statuses=["new", "changes_requested"], max_revisions=2)
-    rid = _submitted(w)
-    first = open_tracker(w.db, KIND, rid)
-    # designing is not a revisable status
-    early = w.as_contact(w.contact).post(f"{SUB}/{KIND}/{rid}/revise", json={
-        "reason": "too early", "expected_revision_no": 0, "fields": {}})
+    c = w.as_contact(w.contact)
+    body = {"reason": "dealer wants five tags", "expected_revision_no": 0,
+            "fields": {"debtor_name": "ZZT Example Dealer"},
+            "products": [{"product_id": w.product, "quantity": 5}]}
+
+    rid = _submitted(w)  # escalated: with marketing
+    early = c.post(f"{SUB}/{KIND}/{rid}/revise", json=body)
     assert early.status_code == 422, early.text
     assert _move(w, rid, "proof_ready").status_code == 200
-    assert w.as_contact(w.contact).post(f"{SUB}/{KIND}/{rid}/request-changes",
-                                        json={"note": "wrong dealer"}).status_code == 200
+    assert c.post(f"{SUB}/{KIND}/{rid}/request-changes", json={"note": "wrong dealer"}).status_code == 200
+    assert c.post(f"{SUB}/{KIND}/{rid}/revise", json=body).status_code == 422
 
-    rev = w.as_contact(w.contact).post(f"{SUB}/{KIND}/{rid}/revise", json={
-        "reason": "dealer wants five tags", "expected_revision_no": 0,
-        "fields": {"debtor_name": "ZZT Example Dealer"},
-        "products": [{"product_id": w.product, "quantity": 5}]})
+    own = _submitted_self(w)
+    rev = c.post(f"{SUB}/{KIND}/{own}/revise", json=body)
     assert rev.status_code == 200, rev.text
     assert rev.json()["revision_no"] == 1
-    assert rev.json()["revision"]["remaining"] == 1
-    assert rev.json()["submission"]["status"] == "new"  # restarts unclaimed (no auto-assign on revise)
-    w.db.refresh(first)
-    assert first.voided_at is not None
-    assert open_tracker(w.db, KIND, rid).id != first.id
+    assert rev.json()["submission"]["status"] == "proof_ready"
+    assert rev.json()["submission"]["assigned_to_id"] is None
+    assert trackers(w.db, KIND, own) == []
 
 
 def test_void_is_terminal(world):

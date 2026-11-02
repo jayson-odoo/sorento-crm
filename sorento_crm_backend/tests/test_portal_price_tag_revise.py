@@ -144,7 +144,7 @@ def _seed_product(db, *, class_label: str = "Kitchen Sink") -> str:
 
 
 def _seed_request(
-    db, contact, product_id: str, *, status: str = "new", portal_draft_at=None, revision_no: int = 0,
+    db, contact, product_id: str, *, status: str = "proof_ready", portal_draft_at=None, revision_no: int = 0,
 ):
     req = PriceTagRequestService.create_request(
         db,
@@ -180,7 +180,7 @@ def db():
         yield s
 
 
-def _setup(db, *, cap: int = 3, status: str = "new", **request_kwargs):
+def _setup(db, *, cap: int = 3, status: str = "proof_ready", **request_kwargs):
     _seed_system_settings(db, cap=cap)
     _seed_ptag_config(db, max_revisions=None)
     contact = _seed_contact(db)
@@ -254,8 +254,11 @@ class TestReviseHappyPath:
         assert fresh.debtor_name == "ZZT Revised"
         assert [line.product_id for line in fresh.lines] == [second_product]
 
-    def test_revise_restarts_status_at_new(self, db):
-        contact, product_id, row = _setup(db, status="changes_requested")
+    def test_revise_returns_the_request_to_the_salesperson_at_proof_ready(self, db):
+        """PRICETAG-SELF-APPROVAL: after a revise the proof is his again, with nobody assigned."""
+        contact, product_id, row = _setup(db, status="approved")
+        row.assigned_to_id = None
+        db.commit()
         token = _seed_token(contact)
 
         PortalRevisionService(db).revise(
@@ -264,9 +267,12 @@ class TestReviseHappyPath:
         )
 
         db.expire_all()
-        assert PriceTagRequestService.get_request(db, str(row.id)).status == "new"
+        fresh = PriceTagRequestService.get_request(db, str(row.id))
+        assert fresh.status == "proof_ready"
+        assert fresh.assigned_to_id is None
 
-    def test_revise_fires_the_form_sla_restart_once(self, db):
+    def test_revise_does_not_restart_the_form_sla(self, db):
+        """PRICETAG-SELF-APPROVAL: no SLA restart on revise."""
         contact, product_id, row = _setup(db)
         token = _seed_token(contact)
 
@@ -275,11 +281,12 @@ class TestReviseHappyPath:
                 token, "price_tag_request", str(row.id), _revise_payload(product_id),
                 "Dealer changed their mind", 0,
             )
-        assert emit.call_count == 1
+        assert emit.call_count == 0
 
 
 class TestReviseRefused:
-    def test_disabled_config_refuses_422(self, db):
+    def test_disabled_config_is_ignored(self, db):
+        """PRICETAG-SELF-APPROVAL: Settings > Portal revisions does not apply to price tags."""
         contact, product_id, row = _setup(db)
         token = _seed_token(contact)
         db.query(PortalRevisionConfig).filter(
@@ -287,16 +294,18 @@ class TestReviseRefused:
         ).update({"is_enabled": False})
         db.commit()
 
-        with pytest.raises(HTTPException) as exc:
-            PortalRevisionService(db).revise(
-                token, "price_tag_request", str(row.id), _revise_payload(product_id), "Reason", 0,
-            )
-        assert exc.value.status_code == 422
+        PortalRevisionService(db).revise(
+            token, "price_tag_request", str(row.id), _revise_payload(product_id), "Reason", 0,
+        )
         db.expire_all()
-        assert PriceTagRequestService.get_request(db, str(row.id)).revision_no == 0
+        assert PriceTagRequestService.get_request(db, str(row.id)).revision_no == 1
 
-    @pytest.mark.parametrize("status_value", ["designing", "proof_ready", "approved", "ready", "void"])
-    def test_status_outside_allowed_refuses_422(self, db, status_value):
+    @pytest.mark.parametrize(
+        "status_value",
+        ["new", "designing", "changes_requested", "ready_for_collection", "collected", "ready", "void", "rejected"],
+    )
+    def test_status_outside_his_hands_refuses_422(self, db, status_value):
+        """PRICETAG-SELF-APPROVAL: only his own proof or an approved request may be revised."""
         contact, product_id, row = _setup(db, status=status_value)
         token = _seed_token(contact)
 
@@ -308,16 +317,34 @@ class TestReviseRefused:
         db.expire_all()
         assert PriceTagRequestService.get_request(db, str(row.id)).revision_no == 0
 
-    def test_max_reached_refuses_422(self, db):
-        contact, product_id, row = _setup(db, cap=1, revision_no=1)
+    def test_a_proof_marketing_drew_refuses_422(self, db):
+        """PRICETAG-SELF-APPROVAL: proof_ready WITH an assignee is with marketing."""
+        from app.models.user import User
+
+        contact, product_id, row = _setup(db)
+        marketer = User(id=str(uuid.uuid4()), email=f"{uuid.uuid4()}@t.zzt", name="ZZT Marketer", status="ACTIVE")
+        db.add(marketer)
+        db.flush()
+        row.assigned_to_id = marketer.id
+        db.commit()
         token = _seed_token(contact)
 
         with pytest.raises(HTTPException) as exc:
             PortalRevisionService(db).revise(
-                token, "price_tag_request", str(row.id), _revise_payload(product_id), "Reason", 1,
+                token, "price_tag_request", str(row.id), _revise_payload(product_id), "Reason", 0,
             )
         assert exc.value.status_code == 422
-        assert "used all 1 revision" in str(exc.value.detail)
+
+    def test_there_is_no_cap(self, db):
+        """PRICETAG-SELF-APPROVAL: the revision cap does not apply to price tags."""
+        contact, product_id, row = _setup(db, cap=1, revision_no=1)
+        token = _seed_token(contact)
+
+        PortalRevisionService(db).revise(
+            token, "price_tag_request", str(row.id), _revise_payload(product_id), "Reason", 1,
+        )
+        db.expire_all()
+        assert PriceTagRequestService.get_request(db, str(row.id)).revision_no == 2
 
     def test_another_contact_gets_404(self, db):
         contact, product_id, row = _setup(db)
@@ -609,7 +636,7 @@ class TestRevisionsListAndDraftRoutes:
 # =========================================================================== #
 
 
-class TestPortalRevisionSettingsIncludesPriceTagRequest:
+class TestPortalRevisionSettingsExcludesPriceTagRequest:
     BASE = "/api/v1/forms-management/revision-configs"
 
     @pytest.fixture
@@ -639,20 +666,18 @@ class TestPortalRevisionSettingsIncludesPriceTagRequest:
         app.dependency_overrides[get_current_user] = lambda: actor
         app.dependency_overrides[get_current_user_or_api_key] = lambda: actor
 
-    def test_get_lists_price_tag_request_seeded_disabled(self, settings_client):
-        """The migration seeds this row disabled - a create_all schema (this
-        fixture) has the table with no rows, mirroring the other three types'
-        own 'missing row means disabled' test."""
+    def test_get_hides_price_tag_request_even_with_a_stored_row(self, settings_client):
+        """PRICETAG-SELF-APPROVAL: price tags have no revision settings, so the page
+        does not list the type even when its migration-seeded row exists."""
         c, db = settings_client
         self._as_office_user()
         _seed_ptag_config(db, is_enabled=False, allowed_statuses=[])
 
         items = c.get(self.BASE).json()["items"]
-        row = next((i for i in items if i["source_entity_type"] == "price_tag_request"), None)
-        assert row is not None, items
-        assert row["is_enabled"] is False
+        assert not any(i["source_entity_type"] == "price_tag_request" for i in items), items
 
-    def test_put_enables_price_tag_request_with_its_own_statuses(self, settings_client):
+    def test_put_refuses_price_tag_request(self, settings_client):
+        """PRICETAG-SELF-APPROVAL: there is nothing to configure for price tags."""
         c, _db = settings_client
         self._as_office_user()
 
@@ -665,10 +690,7 @@ class TestPortalRevisionSettingsIncludesPriceTagRequest:
                 "restart_stage_code": None,
             },
         )
-        assert res.status_code == 200, res.text
-        body = res.json()
-        assert body["source_entity_type"] == "price_tag_request"
-        assert body["allowed_statuses"] == ["new", "designing", "changes_requested"]
+        assert res.status_code == 400, res.text
 
 
 # =========================================================================== #
