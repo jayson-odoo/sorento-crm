@@ -1599,3 +1599,25 @@ def test_at35_c_refine_dropping_the_held_customer_with_a_covered_word_asks_no_co
     assert f"{sorento} or {mocha}?" not in text, text
     args = _only_report_ask(calls)
     assert not args.get("customer_ids") and args["account_types"] == ["4"], args
+
+
+def test_at35_d_followup_on_a_held_company_reads_a_word_in_that_company_only(bot) -> None:
+    """CABANA is a brand in the held company (no stored type there) and a stored type only in the other company: on a
+    follow-up the held company narrows the word to its own book, so it is the brand, with no question."""
+    ids = _seed(bot)  # brand Cabana in the default company, no stored account types there
+    sorento, mocha = _two_companies(bot)
+    db = bot.console.session_factory()
+    try:
+        _ledger(db, MOCHA_ID, "ZZT MOCHA LEDGER ONE [A/C II]", "CABANA")
+        _ledger(db, MOCHA_ID, "ZZT MOCHA LEDGER TWO [A/C II]", "CABANA")
+        db.commit()
+    finally:
+        db.close()
+    text, calls = bot.say(_sales(sales_company=sorento), "sorento sales in Jan")
+    assert _only_report_ask(calls)["company"] == DEFAULT_COMPANY_ID
+    follow = _sales(_word(), ranking_refine=False, entity_op="reuse")
+    text, calls = bot.say(follow, "and cabana")
+    assert calls and QUESTION not in text, (text, calls)
+    args = _only_report_ask(calls)
+    assert args["company"] == DEFAULT_COMPANY_ID and args.get("brand_ids") == [ids["CABANA"]], args
+    assert not args.get("account_types"), args
