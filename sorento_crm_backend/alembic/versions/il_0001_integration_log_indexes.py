@@ -19,7 +19,7 @@ composite builds first, so the budget goes to the index the bell needs. All of i
 ``app/utils/online_index.py`` (INTEGRATION_LOG_INDEXES).
 
 Revision ID: il_0001_integration_log_indexes
-Revises: qcp_0001_cover_page_fields
+Revises: join_0003_qiv_bnsp
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ from alembic import op
 from app.utils import online_index
 
 revision = "il_0001_integration_log_indexes"
-down_revision = "qcp_0001_cover_page_fields"
+down_revision = "join_0003_qiv_bnsp"
 branch_labels = None
 depends_on = None
 
