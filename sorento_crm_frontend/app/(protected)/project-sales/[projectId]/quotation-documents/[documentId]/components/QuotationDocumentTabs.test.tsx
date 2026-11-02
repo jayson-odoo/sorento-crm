@@ -180,7 +180,7 @@ async function expectIdentityOnScreen() {
   // E4: an unsigned, unblocked draft leads with Sign and offers no Send to Customer.
   expect(screen.getByRole('button', { name: 'Sign' })).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: /^Send to Customer/ })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Quotation actions' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Proposal actions' })).toBeInTheDocument();
 }
 
 /**

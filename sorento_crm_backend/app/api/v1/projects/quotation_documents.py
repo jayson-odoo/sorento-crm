@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -44,6 +44,7 @@ from app.schemas.projects import (
     ProjectQuotationScopeUpdate,
 )
 from app.schemas.status import StatusGraphResponse
+from app.services import after_response
 from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_document_service as svc
 from app.services import project_service as projects
@@ -400,6 +401,7 @@ def list_quotation_views(
 def issue_quotation_document(
     project_id: str,
     document_id: str,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -418,9 +420,16 @@ def issue_quotation_document(
         db.commit()
         db.refresh(record)
         payload = svc.serialize_issue(db, record)
-        # After the commit: the notification service commits per recipient (PS-PROPOSAL-QUOTATION).
-        record.price_changes = changes
-        svc.alert_price_changes(db, document, record)
+        # After the response: the alert fans out per recipient and must not hold the Send button.
+        if changes:
+            after_response.defer(
+                background_tasks,
+                db,
+                svc.alert_price_changes_job,
+                str(document.id),
+                str(record.id),
+                changes,
+            )
         return payload
     except Exception as exc:
         db.rollback()

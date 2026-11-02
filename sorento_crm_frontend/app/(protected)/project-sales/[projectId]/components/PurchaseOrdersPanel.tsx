@@ -338,22 +338,30 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
           const over = row.original.qty_over_reason;
           if (parts.length === 0 && !over) return <span className="text-muted-foreground">-</span>;
           return (
-            <span className="flex min-w-0 items-center gap-1">
-              {parts.length > 0 ? (
-                <Badge variant="destructive" appearance="light" className="truncate text-[11px]">
-                  {parts.join(', ')}
-                </Badge>
-              ) : null}
+            <span className="flex min-w-0 flex-col items-start gap-0.5">
+              <span className="flex min-w-0 items-center gap-1">
+                {parts.length > 0 ? (
+                  <Badge variant="destructive" appearance="light" className="truncate text-[11px]">
+                    {parts.join(', ')}
+                  </Badge>
+                ) : null}
+                {over ? (
+                  // PS-PROPOSAL-QUOTATION: the salesperson's reason for ordering above the quote.
+                  <Badge
+                    variant="warning"
+                    appearance="light"
+                    className="truncate text-[11px]"
+                    title={over}
+                  >
+                    Qty over quote
+                  </Badge>
+                ) : null}
+              </span>
               {over ? (
-                // PS-PROPOSAL-QUOTATION: the salesperson's reason for ordering above the quote.
-                <Badge
-                  variant="warning"
-                  appearance="light"
-                  className="truncate text-[11px]"
-                  title={over}
-                >
-                  Qty over quote
-                </Badge>
+                // Written out, not only on hover: a phone has no hover.
+                <span className="max-w-full truncate text-xs text-muted-foreground" title={over}>
+                  {over}
+                </span>
               ) : null}
             </span>
           );

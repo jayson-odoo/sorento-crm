@@ -20,12 +20,13 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import require_any_permission, require_permission
+from app.services import after_response
 from app.schemas.project_po_intake import (
     POConfirmRequest,
     AnnotationAcceptRequest,
@@ -336,6 +337,7 @@ def retry_purchase_order_extraction(
 )
 def confirm_purchase_order_version(
     po_version_id: str,
+    background_tasks: BackgroundTasks,
     payload: Optional[POConfirmRequest] = None,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -370,8 +372,11 @@ def confirm_purchase_order_version(
             "price_mismatch_count": result["price_mismatch_count"],
         }
         db.commit()
-        # After the commit: the notification service commits per recipient.
-        po_svc.alert_qty_over(db, po, over, current_user["id"])
+        # After the response: the alert fans out per recipient and must not hold Confirm.
+        if over:
+            after_response.defer(
+                background_tasks, db, po_svc.alert_qty_over_job, str(po.id), over, current_user["id"]
+            )
         return body
     except Exception as exc:
         db.rollback()

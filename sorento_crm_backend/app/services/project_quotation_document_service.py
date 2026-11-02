@@ -778,6 +778,22 @@ def alert_price_changes(
             pass
 
 
+def alert_price_changes_job(
+    db: Session, document_id: str, issue_id: str, changes: List[Dict[str, Any]]
+) -> None:
+    """``alert_price_changes`` for an after-response job: re-reads the rows on its own session."""
+    if not changes:
+        return
+    document = db.query(ProjectQuotationDocument).filter(
+        ProjectQuotationDocument.id == document_id
+    ).first()
+    record = db.query(ProjectQuotationIssue).filter(ProjectQuotationIssue.id == issue_id).first()
+    if document is None or record is None:
+        return
+    record.price_changes = changes
+    alert_price_changes(db, document, record)
+
+
 def project_quotation(db: Session, project_id: str) -> Optional[ProjectQuotationDocument]:
     """The project's quotation (one at most, held by a partial unique index)."""
     return (

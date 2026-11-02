@@ -347,7 +347,7 @@ describe('QuotationsPanel', () => {
 
 /** The row "..." menu. Radix opens on pointerdown, which jsdom does not synthesize from click. */
 async function openRowMenu() {
-  const trigger = await screen.findByRole('button', { name: /quotation actions/i });
+  const trigger = await screen.findByRole('button', { name: /proposal actions/i });
   trigger.focus();
   fireEvent.keyDown(trigger, { key: 'ArrowDown', code: 'ArrowDown' });
   return screen.findByRole('menu');
@@ -440,7 +440,7 @@ describe('QuotationsPanel: the standard list (QUOTE-APPROVAL-UX F2-F8)', () => {
 
     const row = (await screen.findByText('Nadi Cergas Sdn Bhd')).closest('tr') as HTMLElement;
     fireEvent.click(within(row).getByRole('checkbox'));
-    fireEvent.click(within(row).getByRole('button', { name: /quotation actions/i }));
+    fireEvent.click(within(row).getByRole('button', { name: /proposal actions/i }));
     expect(push).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByText('Nadi Cergas Sdn Bhd'));
