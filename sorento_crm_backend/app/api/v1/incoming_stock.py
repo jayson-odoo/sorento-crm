@@ -143,7 +143,18 @@ def _for_contact(
         # shipment as "No ETA" - unless a date window was asked, where no
         # row only means none in that window.
         windowed = eta_from is not None or eta_to is not None
-        result = dealer_view(result, asked=None if windowed else _asked_codes(db, asked))
+        told = None
+        if not windowed:
+            # Fix B: the stock check's own read, so both answers print the same dates.
+            from app.services import incoming_stock_service as incoming
+            from app.services.eta_policy import told_dates, told_text
+
+            today = incoming.today_myt()
+            told = {
+                code: [told_text(d, today) for d in days]
+                for code, days in told_dates(db, _asked_codes(db, asked), contact.rules).items()
+            }
+        result = dealer_view(result, asked=None if windowed else _asked_codes(db, asked), told=told)
         _stamp_discontinued(db, result)
     return result
 

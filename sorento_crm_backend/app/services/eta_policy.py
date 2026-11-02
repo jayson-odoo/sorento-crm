@@ -151,19 +151,64 @@ def _offsets_by_product_code(db: Session, codes: Iterable[str]) -> dict[str, int
     return out
 
 
-def told_offsets(db: Session, products: Iterable[Any], rules: ContactEtaRules) -> dict[str, int]:
-    """`{product id: days}` this contact's told ETA adds to the product's promised date.
+#: Printed after a told date that is before today (MYT). The label catalog translates it.
+DELAYED_MARK = "(delayed)"
 
-    The stock check's one read of the padding (STOCK-INCOMING-FLOOR, 2 Nov 2026): the same
-    by-code offsets the incoming routes pad with (`_offsets_by_product_code`), so the stock check
-    and the ETA ask tell one shipment one date. 0 for every product when the switch is off."""
-    products = [p for p in products if p is not None]
-    if not rules.offset_applied:
-        return {str(p.id): 0 for p in products}
-    by_code = _offsets_by_product_code(db, [p.product_code for p in products])
-    return {
-        str(p.id): by_code.get((p.product_code or "").strip().lower(), 0) for p in products
-    }
+
+def told_text(day: date, today: date) -> str:
+    """One told date as the chat prints it: dd/mm/yyyy, then the marker when it is past."""
+    text = day.strftime("%d/%m/%Y")
+    return f"{text} {DELAYED_MARK}" if day < today else text
+
+
+def told_dates(
+    db: Session, codes: Iterable[str], rules: ContactEtaRules
+) -> dict[str, list[date]]:
+    """`{lower(trimmed product code): [sorted distinct told dates]}`: the ONE read of the dates
+    a dealer is told (STOCK-INCOMING-FLOOR Fix B, owner 2 Nov 2026), shared by the stock check
+    and the ETA ask.
+
+    Lines: still incoming, on non-draft shipments, within the contact's regions and the company
+    scope, with an ETA. No packing list is required. Promised date = the revised date when there
+    is one, else the ETA; told date = promised + the by-code offset when the contact's switch
+    is on."""
+    from sqlalchemy import func
+
+    from app.models.procurement import InboundShipment, InboundShipmentLine
+    from app.models.product import Product
+    from app.services.contact_brand_scope import product_in_scope_clauses
+    from app.services.incoming_stock_service import (
+        _not_draft_shipment_filter,
+        _region_filter,
+        _still_incoming_filter,
+    )
+
+    wanted = {c.strip().lower() for c in codes if isinstance(c, str) and c.strip()}
+    if not wanted:
+        return {}
+    code = func.lower(func.trim(Product.product_code))
+    promised = func.coalesce(InboundShipment.eta_delay_date, InboundShipment.estimated_arrival_date)
+    rows = (
+        db.query(code, promised)
+        .select_from(InboundShipmentLine)
+        .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
+        .join(Product, Product.id == InboundShipmentLine.product_id)
+        .filter(
+            code.in_(wanted),
+            promised.isnot(None),
+            _not_draft_shipment_filter(),
+            _region_filter(rules.regions),
+            _still_incoming_filter(),
+            *product_in_scope_clauses(db, InboundShipmentLine.product_id),
+        )
+        .distinct()
+        .all()
+    )
+    offsets = _offsets_by_product_code(db, wanted) if rules.offset_applied else {}
+    out: dict[str, set[date]] = {}
+    for key, day in rows:
+        out.setdefault(key, set()).add(day + timedelta(days=offsets.get(key, 0)))
+    return {key: sorted(days) for key, days in out.items()}
 
 
 def _offsets_by_shipment(
@@ -412,7 +457,9 @@ def _ddmmyyyy(iso: str) -> str:
         return iso
 
 
-def dealer_view(payload: Any, asked: Optional[list[str]] = None) -> Any:
+def dealer_view(
+    payload: Any, asked: Optional[list[str]] = None, told: Optional[dict[str, list[str]]] = None
+) -> Any:
     """One row per product - `{"product_code", "etas"}`, the ETAs distinct, sorted and
     told as dd/mm/yyyy (AVAIL-MODE-REPLIES, the stock ask's own ETA format) - in the
     order the products first appear, plus `dealer_view`. No salesperson name: the
@@ -426,7 +473,10 @@ def dealer_view(payload: Any, asked: Optional[list[str]] = None) -> Any:
 
     Every row also carries `is_discontinued`, False here: the route stamps the real
     flag from the product rows (`incoming_stock._stamp_discontinued`, AVAIL-RENDER), so
-    the dealer's ETA line prints the marker compact/detailed print."""
+    the dealer's ETA line prints the marker compact/detailed print.
+
+    `told` (Fix B): `{lower(trimmed code): [dates already formatted]}` from the shared read
+    (`told_dates`); a row whose code is in it prints exactly those dates."""
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         return payload
     etas: dict[Optional[str], set[str]] = {}
@@ -448,8 +498,15 @@ def dealer_view(payload: Any, asked: Optional[list[str]] = None) -> Any:
         if code and str(code).casefold() not in seen:
             seen.add(str(code).casefold())
             etas[code] = set()
+    told = told or {}
     rows = [
-        {"product_code": code, "etas": [_ddmmyyyy(d) for d in sorted(dates)], "is_discontinued": False}
+        {
+            "product_code": code,
+            "etas": told[str(code).strip().lower()]
+            if code and str(code).strip().lower() in told
+            else [_ddmmyyyy(d) for d in sorted(dates)],
+            "is_discontinued": False,
+        }
         for code, dates in etas.items()
     ]
     out = {

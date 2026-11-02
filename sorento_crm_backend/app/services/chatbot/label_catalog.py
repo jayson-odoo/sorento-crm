@@ -14,6 +14,7 @@ from typing import Any
 # The one spelling of the refer line (CUSTOMER-ASKS-REFER-ONLY guards): the verdict keys below
 # are built from it, never spelled out.
 from app.services.chatbot.turn.task import REFER_TO_SALESMAN
+from app.services.eta_policy import DELAYED_MARK
 
 # The placeholder helpers live in a dependency-free core module (a staff edit is checked there
 # too); the chatbot package may import core, never the reverse (AC-002).
@@ -989,6 +990,11 @@ def _find_none_patterns() -> list[re.Pattern[str]]:
     return [re.compile(re.escape(x).replace(re.escape("{code}"), ".+?")) for x in lines]
 
 
+# STOCK-INCOMING-FLOOR Fix B: the marker `eta_policy.told_text` prints after a past told date.
+# It sits inside a date list the catalog's sentences pass through, so it is rewritten in place.
+DELAYED_MARKS = {"ms": "(lewat)", "zh": "（延迟）"}
+
+
 class Localizer:
     """Rewrites catalogued labels and sentences for `language`; everything else is untouched."""
 
@@ -1080,7 +1086,14 @@ class Localizer:
             return text
         return "\n".join(self._line(line) for line in text.split("\n"))
 
+    def _delayed(self, text: str) -> str:
+        mark = DELAYED_MARKS.get(self.language)
+        return text.replace(DELAYED_MARK, mark) if mark and text else text
+
     def reply(self, text: str) -> str:
+        return self._delayed(self._reply(text))
+
+    def _reply(self, text: str) -> str:
         """The final reply pass: `lines()`, then each INLINE sentence replaced where it starts a
         line or follows ". ", "? " or "! " and runs through its final punctuation. Tokens come back
         verbatim and never span a line; a line over `_INLINE_LINE_MAX` is left to `lines()`."""
@@ -1208,6 +1221,9 @@ class Localizer:
         return self.text(s)
 
     def tail(self, title: str) -> str:
+        return self._delayed(self._tail(title))
+
+    def _tail(self, title: str) -> str:
         """`"<code> x <qty>: <sentence>"`: only the sentence is translated, after any leading
         status mark (the #1430 verdicts open with one), which stays as printed."""
         prefix, sep, sentence = title.partition(": ")

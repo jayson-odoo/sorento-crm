@@ -187,11 +187,11 @@ def earliest_packing_list_shipment(
     db: Session,
     product_ids: list[str],
     regions=None,
-    not_before: Optional[date] = None,
-    offsets: Optional[dict[str, int]] = None,
 ) -> dict[str, tuple[str, date, str]]:
-    """R5 (chatbot stock ask v2 S3): the earliest still-incoming shipment WITH a
-    packing list, for each product id, at ANY location (AC-SA304 to AC-SA309).
+    """The packing list FILE for the stock check: the earliest still-incoming shipment WITH a
+    packing list, for each product id, at ANY location (AC-SA304 to AC-SA309). Since Fix B
+    (owner, 2 Nov 2026) it no longer decides incoming vs not: the dates told come from
+    `eta_policy.told_dates`, which needs no packing list.
 
     A candidate line must be `_still_incoming_filter()` (not received, remaining
     quantity > 0) on a `_not_draft_shipment_filter()` shipment that carries an
@@ -205,17 +205,6 @@ def earliest_packing_list_shipment(
     read, so a shipment's line landing outside the asking contact's policy
     locations still qualifies (AC-SA307 - this read has no location dimension to
     filter by in the first place).
-
-    `not_before` (CHAT-FIND round 3, crew live check 13 Oct 2026): a shipment whose told date
-    (promised date plus its `offsets` entry, below) is before that day does not qualify. A past date cannot be told to a dealer as the day it
-    comes (R10 has no "to be confirmed" answer), so the next dated one answers, else none.
-    The dealer availability read passes today (`StockService._shipments_from_today`).
-
-    `offsets` (STOCK-INCOMING-FLOOR, production 2 Nov 2026): `{product id: days}` the asking
-    contact's told date adds to the promised date (`eta_policy.told_offsets`). The floor compares
-    the TOLD date, the one the dealer reads: floored on the bare promised date, a shipment due
-    20/10 and told 03/11 read "no incoming" on 2 Nov while the ETA ask told 03/11. A product
-    absent from `offsets` is told its promised date. The promised date is still what is returned.
 
     Returns `{product_id: (shipment_id, promised date, attachment_id)}` -
     one entry per product id with a qualifying shipment; a product id with none is
@@ -251,14 +240,10 @@ def earliest_packing_list_shipment(
         )
         .all()
     )
-    offsets = offsets or {}
     out: dict[str, tuple[str, date, str]] = {}
     for product_id, shipment_id, eta, attachment_id in rows:
         pid = str(product_id)
         if pid in out:
-            continue
-        # The floor is on the told date; the earliest still ahead of it answers.
-        if not_before is not None and eta + timedelta(days=offsets.get(pid, 0)) < not_before:
             continue
         out[pid] = (str(shipment_id), eta, str(attachment_id))
     return out
