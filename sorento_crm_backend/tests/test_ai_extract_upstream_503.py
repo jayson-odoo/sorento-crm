@@ -464,9 +464,11 @@ def test_a_truncated_answer_from_any_provider_is_503_too_long(db, monkeypatch):
 
 # ---------------------------------------------------------------------------
 # AC-9..AC-12. Crew browser pass, 2 Nov: a 12-page / 336-row price list does not fit one call
-# inside the 45 s cap. A multi-page upload is read as at most 4 page groups at once (one wave,
-# so the whole read still ends inside one call's cap), rows merged in page order, an exact
-# duplicate row from a later group dropped, and pages that fail named in a plain note.
+# inside the 45 s cap (6 pages / 168 rows read in 34 s in one call). A line-item upload of MORE
+# than 6 pages is read as at most 4 page groups at once (one wave, so the whole read still ends
+# inside one call's cap), rows merged in page order, an exact duplicate row from a later group
+# dropped, and pages that fail named in a plain note. Anything smaller stays one call (review:
+# a 2-photo complaint split in two lost its second DO number).
 # ---------------------------------------------------------------------------
 
 import threading  # noqa: E402
@@ -548,7 +550,8 @@ def test_a_12_page_file_is_read_as_4_parallel_groups_merged_in_page_order(db, mo
 
 
 def test_each_group_gets_its_own_45_second_cap_and_the_answer_budget(db, monkeypatch):
-    _pages(monkeypatch, 3)
+    """7 pages, just past the line: 4 groups (2, 2, 2, 1), each with the cap and the budget."""
+    _pages(monkeypatch, 7)
     seen: list[dict] = []
 
     class _Records(_PagesProvider):
@@ -560,7 +563,7 @@ def test_each_group_gets_its_own_45_second_cap_and_the_answer_budget(db, monkeyp
 
     AIExtractService(db).extract(FORM, _pdf())
 
-    assert seen == [{"timeout": 45, "max_tokens": 16384}] * 3
+    assert seen == [{"timeout": 45, "max_tokens": 16384}] * 4
 
 
 def test_a_failing_group_keeps_the_other_rows_and_names_its_pages(db, monkeypatch):
@@ -577,7 +580,7 @@ def test_a_failing_group_keeps_the_other_rows_and_names_its_pages(db, monkeypatc
 
 def test_a_slow_group_that_runs_out_keeps_the_other_rows(db, monkeypatch):
     """One page group times out (its own cap); the read does not wait for it past the cap."""
-    _pages(monkeypatch, 4)
+    _pages(monkeypatch, 8)
     provider = _PagesProvider(
         fail=lambda pages: httpx.ReadTimeout("zzt read timed out") if "p3" in pages else None
     )
@@ -585,8 +588,8 @@ def test_a_slow_group_that_runs_out_keeps_the_other_rows(db, monkeypatch):
 
     result = AIExtractService(db).extract(FORM, _pdf())
 
-    assert _codes(result) == ["ZZT-p1", "ZZT-p2", "ZZT-p4"]
-    assert result.note == "Page 3 could not be read, try them again."
+    assert _codes(result) == ["ZZT-p1", "ZZT-p2", "ZZT-p5", "ZZT-p6", "ZZT-p7", "ZZT-p8"]
+    assert result.note == "Pages 3-4 could not be read, try them again."
 
 
 def test_two_failed_groups_are_named_together(db, monkeypatch):
@@ -616,49 +619,97 @@ def test_every_group_failing_is_the_503_path(db, monkeypatch):
 
 def test_an_exact_duplicate_row_from_a_later_group_is_dropped(db, monkeypatch):
     """A row printed on two pages (or a repeated header line) is read twice: keep the first.
-    A row that differs in any value is a different row and stays."""
-    _pages(monkeypatch, 4)
+    A row that differs in any value is a different row and stays. A repeat inside ONE group
+    stays too: that read saw both on its own pages, as a single call always did."""
+    _pages(monkeypatch, 8)
     same = {"product_code": "ZZT-SAME", "unit_price": 10}
-    provider = _PagesProvider(
-        extra=lambda pages: [dict(same)] if pages != ["p4"] else [dict(same), {**same, "unit_price": 12}]
-    )
+    per_group = {
+        ("p1", "p2"): [dict(same), dict(same)],
+        ("p7", "p8"): [dict(same), {**same, "unit_price": 12}],
+    }
+    provider = _PagesProvider(extra=lambda pages: per_group.get(tuple(pages), [dict(same)]))
     _use(monkeypatch, provider)
 
     result = AIExtractService(db).extract(FORM, _pdf())
 
-    assert _codes(result) == ["ZZT-p1", "ZZT-SAME", "ZZT-p2", "ZZT-p3", "ZZT-p4", "ZZT-SAME"]
-    assert [p.unit_price for p in result.products if p.product_code == "ZZT-SAME"] == [10, 12]
+    assert _codes(result) == [
+        "ZZT-p1", "ZZT-p2", "ZZT-SAME", "ZZT-SAME",
+        "ZZT-p3", "ZZT-p4", "ZZT-p5", "ZZT-p6", "ZZT-p7", "ZZT-p8", "ZZT-SAME",
+    ]
+    assert [p.unit_price for p in result.products if p.product_code == "ZZT-SAME"] == [10, 10, 12]
 
 
-def test_fields_take_the_first_pages_non_empty_value():
+def test_fields_take_the_first_non_empty_value_and_lists_combine():
+    """A single value (a name) takes the first page that has one; a list (DO numbers, codes)
+    gathers every group's entries in page order, each once (review: keeping only the first
+    group's list dropped DO-2)."""
     from app.services.ai_extract.extract_service import _merge_answers
 
     merged = _merge_answers(
         [
-            {"customer_name": "", "do_number": None, "products": [{"product_code": "A"}]},
-            {"customer_name": "ZZT Customer", "do_number": "DO-1", "products": [{"product_code": "B"}]},
-            {"customer_name": "ZZT Other", "do_number": "DO-2"},
+            {"customer_name": "", "delivery_order_number": ["DO-1"], "products": [{"product_code": "A"}]},
+            {"customer_name": "ZZT Customer", "delivery_order_number": ["DO-2", "DO-1"],
+             "products": [{"product_code": "B"}]},
+            {"customer_name": "ZZT Other", "delivery_order_number": None},
         ]
     )
 
     assert merged["customer_name"] == "ZZT Customer"
-    assert merged["do_number"] == "DO-1"
+    assert merged["delivery_order_number"] == ["DO-1", "DO-2"]
     assert merged["products"] == [{"product_code": "A"}, {"product_code": "B"}]
 
 
-def test_a_single_page_upload_is_still_one_call(db, monkeypatch):
-    _pages(monkeypatch, 1)
+@pytest.mark.parametrize(
+    "form_key, pages",
+    [
+        (FORM, 1),
+        (FORM, 6),  # crew: 6 pages / 168 rows read in 34 s in one call
+        ("portal.complaint", 2),  # review: two photos, two DO numbers, read together
+    ],
+)
+def test_an_upload_of_up_to_6_pages_is_still_one_call(db, monkeypatch, form_key, pages):
+    _pages(monkeypatch, pages)
     provider = _PagesProvider()
     _use(monkeypatch, provider)
 
-    AIExtractService(db).extract(FORM, _pdf())
+    AIExtractService(db).extract(form_key, _pdf())
 
-    assert provider.calls == [["p1"]]
+    assert provider.calls == [[f"p{k}" for k in range(1, pages + 1)]]
+
+
+@pytest.mark.parametrize("form_key", ["portal.stock_inquiry", "master.product_fields"])
+def test_a_form_without_line_items_is_never_split(db, monkeypatch, form_key):
+    """Its answer is one set of fields, not rows per page: read apart, fields would be lost."""
+    _pages(monkeypatch, 12)
+    provider = _PagesProvider()
+    _use(monkeypatch, provider)
+
+    AIExtractService(db).extract(form_key, _pdf())
+
+    assert len(provider.calls) == 1
+
+
+def test_pasted_text_is_read_once_with_the_first_group(db, monkeypatch):
+    _pages(monkeypatch, 8)
+    seen: dict[str, bool] = {}
+
+    class _Records(_PagesProvider):
+        def chat(self, **kwargs):
+            first = kwargs["images"][0].data_b64
+            seen[first] = "ZZT-PASTED-LINE" in str(kwargs["messages"])
+            return super().chat(**kwargs)
+
+    _use(monkeypatch, _Records())
+    files = _pdf() + [ExtractFile(filename="paste.txt", mime="text/plain", data=b"ZZT-PASTED-LINE x 3")]
+
+    AIExtractService(db).extract(FORM, files)
+
+    assert seen == {"p1": True, "p3": False, "p5": False, "p7": False}
 
 
 def test_a_video_is_not_split_its_frames_are_read_together(db, monkeypatch):
     """Frames of one clip show the same products; read apart they would come back as near-copies."""
-    _pages(monkeypatch, 6)
+    _pages(monkeypatch, 8)
     provider = _PagesProvider()
     _use(monkeypatch, provider)
 
@@ -666,16 +717,18 @@ def test_a_video_is_not_split_its_frames_are_read_together(db, monkeypatch):
         "portal.complaint", [ExtractFile(filename="zzt.mp4", mime="video/mp4", data=b"zzt")]
     )
 
-    assert provider.calls == [["p1", "p2", "p3", "p4", "p5", "p6"]]
+    assert provider.calls == [[f"p{k}" for k in range(1, 9)]]
 
 
 def test_portal_route_returns_the_rows_and_the_note_never_the_raw_error(monkeypatch):
-    _pages(monkeypatch, 4)
+    _pages(monkeypatch, 8)
     res = _portal_post(
-        monkeypatch, _PagesProvider(fail=lambda pages: RuntimeError(RAW) if "p2" in pages else None)
+        monkeypatch, _PagesProvider(fail=lambda pages: RuntimeError(RAW) if "p3" in pages else None)
     )
 
     assert res.status_code == 200, res.text
-    assert [p["product_code"] for p in res.json()["products"]] == ["ZZT-p1", "ZZT-p3", "ZZT-p4"]
-    assert res.json()["note"] == "Page 2 could not be read, try them again."
+    assert [p["product_code"] for p in res.json()["products"]] == [
+        "ZZT-p1", "ZZT-p2", "ZZT-p5", "ZZT-p6", "ZZT-p7", "ZZT-p8"
+    ]
+    assert res.json()["note"] == "Pages 3-4 could not be read, try them again."
     assert "zzt-raw" not in res.text
