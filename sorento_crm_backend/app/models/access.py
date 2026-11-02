@@ -811,8 +811,9 @@ class McpTool(Base):
     #: That search is gone: the business lane reads
     #: `contracts.DOMAIN_SPEC[domain].tools[0]` outright, so no name and no column
     #: decides retrievability any more. The column stays until the next migration that
-    #: touches `mcp_tools` carries the drop - production never populated it, so there is
-    #: nothing to lose and no reason to churn the table on its own.
+    #: touches `mcp_tools` carries the drop - nothing reads it (production only began
+    #: populating it with MCP-REGISTRY-IMAGE, 2 Nov 2026), so there is nothing to lose
+    #: and no reason to churn the table on its own.
     chatbot_domain = Column(String(64), nullable=True)
 
     __table_args__ = (

@@ -1,9 +1,9 @@
 # PLAN: the `mcp_tools` registry never syncs in the production image
 
-Status: in progress, small fix track (no migration, no auth/RBAC/permission change, no new
-ingest surface; expected diff well under 300 lines). Builds on #2085 (ASSISTANT-CATALOG-500,
-merge-ready, not yet merged): this branch merges its head 2ea5cdcea0 for
-`app/services/mcp_catalog_copy.py`, so #2085 must merge first.
+Status: PR #2086 open, reviewer READY (one test fix + two comment nits applied in round 1),
+waiting on CI and on the owner's run of the prod first-sync query (DEACTIVATE rows are an ask
+before merge). Small fix track (no migration, no auth/RBAC/permission change, no new ingest
+surface). #2085 merged as 56a48f0c02 and main is merged in.
 
 Lane: MCP-REGISTRY-IMAGE. Base: main at 6c446ed8f6.
 
@@ -74,16 +74,18 @@ Anything in DEACTIVATE is filed as an ask before merge.
    `app/modules/<key>/mcp/tools.json` (`find sorento_crm_backend/app/modules -name tools.json` is
    empty), and the production MCP server, built from `./sorento_crm_mcp`, cannot see the backend's
    modules either (`module_loader._backend_modules_root` needs `CRM_BACKEND_MODULES_DIR`, set
-   nowhere in compose or deploy.yml). So the registry then lists exactly what production's MCP
-   server serves. Trigger to revisit: the first module that ships a `tools.json`, which needs a
+   nowhere in compose or deploy.yml). So the registry then mirrors the catalog production's MCP
+   server serves from. The module upload re-sync (`module_upload_service.py`) existed only for
+   that overlay and is removed. Trigger to revisit: the first module that ships a `tools.json`, which needs a
    path into both images.
 3. One `pg_advisory_xact_lock` at the top of `sync_catalog`. Production boots 4 gunicorn workers
    (`gunicorn.conf.py:54`) and each runs `startup_event` (`app/main.py:335`), so 4 syncs start at
    once; on the first deploy they all insert the same new names and all but one fail on the
    `tool_name` unique index (and concurrent syncs already deadlocked in CI, see the fixture note
    in `tests/test_mcp_tool_registry_service.py`). The lock makes them run one after another.
-4. Stale comments: the `McpTool` docstring ("sync only ever runs where `sorento_crm_mcp` is
-   importable") and the module upload re-sync comment.
+4. Stale comments: the `McpTool` `restricted_fields` and `chatbot_domain` docstrings,
+   `chatbot_field_reveals.py` and `contact_field_reveal_service.py` (all said the sync never runs
+   in the image).
 
 ## Tests (red first)
 

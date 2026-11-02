@@ -52,7 +52,7 @@ def _load_specs() -> Iterable:
 
     No per-module `tools.json` overlay: no module ships one, and production's
     MCP server (its own image) cannot see the backend's modules either, so this
-    is exactly the set it serves.
+    is the catalog it serves from.
 
     Isolated as a function so tests can monkeypatch it.
     """

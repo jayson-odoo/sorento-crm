@@ -102,6 +102,9 @@ def test_two_boot_syncs_at_once_both_succeed(monkeypatch):
         def second_worker():
             with Session(bind=second_engine) as second:
                 outcome["pid"] = second.execute(text("SELECT pg_backend_pid()")).scalar()
+                # A broken lock (one commit does not release) then fails as
+                # LockNotAvailable instead of hanging the run.
+                second.execute(text("SET LOCAL lock_timeout = '20s'"))
                 try:
                     outcome["report"] = registry.sync_catalog(second)
                     second.commit()
@@ -110,7 +113,7 @@ def test_two_boot_syncs_at_once_both_succeed(monkeypatch):
                     outcome["error"] = exc
 
         registry.sync_catalog(first)  # holds its transaction open, as a booting worker does
-        worker = threading.Thread(target=second_worker)
+        worker = threading.Thread(target=second_worker, daemon=True)
         worker.start()
         while "pid" not in outcome and worker.is_alive():
             time.sleep(0.01)
