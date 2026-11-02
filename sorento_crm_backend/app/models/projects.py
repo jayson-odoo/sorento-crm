@@ -1326,6 +1326,35 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
     )
 
 
+class QuotationIssueView(Base, CompanyScopedMixin):
+    """One counted open of an issue's sign link by the customer (PS-QUOTE-VIEWS).
+
+    Counted means: a real browser, not signed in to the CRM, and not the same browser on the same
+    issue within 30 minutes of its last counted open (`quotation_view_service`). Deliberately
+    thin: no IP address, no user agent, no location. `device` is a coarse class read off the
+    user agent, which is then discarded; `visitor_hash` is a digest of a random id the sign page
+    keeps in the browser, used only for the 30-minute rule. It identifies a browser, not a person.
+    """
+
+    __tablename__ = "quotation_issue_views"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    issue_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.quotation_issues.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    viewed_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    # mobile | tablet | desktop
+    device = Column(String(16), nullable=False)
+    visitor_hash = Column(String(32), nullable=False)
+
+    __table_args__ = (
+        Index("ix_quotation_issue_views_issue_visitor", "issue_id", "visitor_hash", "viewed_at"),
+        {"schema": "projects"},
+    )
+
+
 AMENDMENT_STATUSES = ("open", "applied", "superseded")
 AMENDMENT_FIELDS = ("quantity", "unit_price", "remove")
 AMENDMENT_DECISIONS = ("pending", "accepted", "rejected")

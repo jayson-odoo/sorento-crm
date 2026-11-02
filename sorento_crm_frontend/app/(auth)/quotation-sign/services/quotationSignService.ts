@@ -253,3 +253,17 @@ export async function submitAmendmentRequest(
   }
   return response.json();
 }
+
+/**
+ * The view beacon (PS-QUOTE-VIEWS): the customer opened this link. `visitorId` is a random id this
+ * browser keeps; the backend stores only its digest, for the 30-minute "same browser" rule.
+ * Best-effort by design: a lost beacon costs one count, never the customer's page.
+ */
+export async function recordQuotationView(token: string, visitorId: string): Promise<void> {
+  await fetch(signUrl(`/${encodeURIComponent(token)}/view`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visitor_id: visitorId }),
+    keepalive: true,
+  });
+}

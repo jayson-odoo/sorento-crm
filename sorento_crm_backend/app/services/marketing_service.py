@@ -48,6 +48,7 @@ from app.schemas.marketing import (
     MarketingCampaignUpdate,
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_internal_error, handle_validation_error
+from app.services.promo_selling_price import brand_has_no_selling_price, refusal_message as no_selling_price_message
 from app.services.contact_access_type_service import ContactAccessTypeService
 from app.services.company_scope import stamp_lookup_companies
 from app.services.embedding_events import publish_embedding_event
@@ -1727,6 +1728,8 @@ class PromotionProductService:
         promo_selling_price = product_data.promo_selling_price
         discount_amount = None
         discount_percent = None
+        if promo_selling_price is not None and brand_has_no_selling_price(product):
+            raise handle_validation_error(no_selling_price_message(product))
         
         if promo_selling_price and product.list_price:
             list_price = float(product.list_price)
@@ -1783,6 +1786,14 @@ class PromotionProductService:
             if lp_dec < 0:
                 raise handle_validation_error("List price cannot be negative.")
             product.list_price = lp_dec
+
+        if 'promo_selling_price' in update_data and brand_has_no_selling_price(product):
+            # CABANA-NO-SELLING-PRICE: a typed price is refused; clearing one also clears
+            # the discount that was derived from it.
+            if update_data['promo_selling_price'] is not None:
+                raise handle_validation_error(no_selling_price_message(product))
+            update_data['discount_amount'] = None
+            update_data['discount_percent'] = None
 
         recompute_discount = (
             ('promo_selling_price' in update_data or list_price_new is not None)
