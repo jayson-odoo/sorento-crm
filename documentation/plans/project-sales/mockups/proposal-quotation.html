@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proposal and quotation</title>
+<!-- PS-PROPOSAL-QUOTATION Lavish mock. Annotated mockup, not shipped code. Plain inline CSS so it
+     opens from a file. Card: documentation/plans/project-sales/CARD-proposal-quotation-2nov.md
+     Data: dev-copy shape (PRJQ-2026-0003, Townhouse, RM 800.00), names masked. -->
+<style>
+:root{
+  --bg:#f6f7f9; --card:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+  --primary:#1b84ff; --primary-soft:#e9f3ff;
+  --amber:#b45309; --amber-soft:#fffbeb; --amber-line:#fde68a;
+  --green:#15803d; --green-soft:#f0fdf4; --red:#dc2626; --red-soft:#fef2f2;
+  --grey-soft:#f3f4f6; --callout:#e11d74; --radius:8px;
+  --font:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}
+.doc>.sub{color:var(--muted);margin:0 0 20px;max-width:900px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%;border-radius:12px}
+.frame{background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:300px;max-width:560px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.notes .ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;word-break:break-all}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.content{padding:20px 28px 28px}
+.phrow{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:flex-start;margin-bottom:16px}
+.phrow h1{font-size:20px;margin:0}
+.crumbs,.meta{color:var(--muted);font-size:13px;margin-top:2px}
+.actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:6px 12px;font:500 13px var(--font);color:var(--fg);white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.pill{display:inline-flex;align-items:center;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:500;white-space:nowrap;background:var(--grey-soft);color:#374151}
+.pill.blue{background:var(--primary-soft);color:var(--primary)}
+.pill.green{background:var(--green-soft);color:var(--green)}
+.pill.amber{background:var(--amber-soft);color:var(--amber)}
+.tabs{display:flex;gap:20px;border-bottom:1px solid var(--line);margin-bottom:16px;font-size:13px}
+.tabs span{padding:8px 0;color:var(--muted)}
+.tabs span.on{color:var(--primary);border-bottom:2px solid var(--primary);font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--muted);font-weight:500;padding:8px 10px;border-bottom:1px solid var(--line);background:#fafafa}
+td{padding:9px 10px;border-bottom:1px solid var(--line)}
+td.num,th.num{text-align:right}
+.card{border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:14px}
+.callout{border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;font-size:13px}
+.callout.amber{background:var(--amber-soft);border:1px solid var(--amber-line);color:#78350f}
+.callout.blue{background:var(--primary-soft);border:1px solid #bfdbfe;color:#1e3a8a}
+.dlg{width:520px;max-width:100%;margin:28px auto;border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.12);background:#fff}
+.dlg .hd{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:600}
+.dlg .bd{padding:16px 18px}
+.dlg .ft{padding:12px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.input{border:1px solid var(--line);border-radius:6px;padding:7px 10px;font-size:13px;background:#fff}
+.radio{display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-bottom:6px}
+.radio.on{border-color:var(--primary);background:var(--primary-soft)}
+.dim{background:rgba(17,24,39,.35);padding:1px 0}
+.m375 .content{padding:14px 16px}
+.m375 table{font-size:12px}
+.m375 .dlg{margin:16px}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Proposal and quotation (PS-PROPOSAL-QUOTATION)</h1>
+<p class="sub">Five screens: the Proposals tab, issuing a proposal revision whose price moved, "Make quotation" on a
+won project, the quotation with a further discount waiting for approval, and a PO above the quoted quantity.
+Callouts map each element to the existing component it changes. Every new word is in the screen; no help text.</p>
+
+<!-- ============================================================ 1 -->
+<h2 class="ft">1. Project detail, Proposals tab (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Taman Melati Townhouse</h1><div class="crumbs">Project Sales / Projects / PRJ-2026-0011</div></div>
+    <div class="actions"><span class="pill green">Won</span></div></div>
+  <div class="tabs"><span>Overview</span><span>Stakeholders</span><span class="on">Proposals <span class="co">1</span></span><span>Samples</span><span>Purchase Orders</span><span>Activity</span></div>
+  <div class="phrow" style="margin-bottom:10px"><b>Proposals</b>
+    <div class="actions"><span class="input" style="width:240px;color:var(--muted)">Search proposals</span><span class="btn primary">+ Add a proposal</span></div></div>
+  <table>
+    <thead><tr><th>Number</th><th>Kind <span class="co">2</span></th><th>To <span class="co">3</span></th><th>Latest</th><th class="num">Total (RM)</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>QT-2026-0001</td><td><span class="pill blue">Quotation</span></td><td>CUSTOMER A <span class="pill">Main contractor</span></td><td>Draft, from PRJQ-2026-0003-B <span class="co">4</span></td><td class="num">780.00</td><td><span class="pill amber">Needs approval</span></td></tr>
+      <tr><td>PRJQ-2026-0003</td><td><span class="pill">Proposal</span></td><td>CUSTOMER A <span class="pill">Main contractor</span></td><td>C, issued 2 Nov</td><td class="num">780.00</td><td><span class="pill green">Signed</span></td></tr>
+      <tr><td>PRJQ-2026-0004</td><td><span class="pill">Proposal</span></td><td>TRADING HOUSE B <span class="pill">Trading house</span></td><td>A, issued 30 Oct</td><td class="num">790.00</td><td><span class="pill">Sent</span></td></tr>
+      <tr><td>PRJQ-2026-0002</td><td><span class="pill">Proposal</span></td><td>DEVELOPER C <span class="pill">Developer</span></td><td>R1, issued 14 Oct <span class="co">5</span></td><td class="num">812.00</td><td><span class="pill">Sent</span></td></tr>
+    </tbody>
+  </table>
+</div></div></div>
+<div class="notes"><ol>
+  <li><span class="co">1</span><div><b>Tab "Quotation" becomes "Proposals"</b>The tab, panel title, search placeholder and Add button say proposal. The one quotation sits in the same list, first.<span class="ref">ProjectDetailClient.tsx:100 (tab label), QuotationsPanel.tsx:247 (PanelDataGrid title)</span></div></li>
+  <li><span class="co">2</span><div><b>Kind column</b>Badge: Proposal (grey) or Quotation (blue).<span class="ref">QuotationsPanel.tsx columns; components/ui/badge (status pill via Badge)</span></div></li>
+  <li><span class="co">3</span><div><b>To + party type</b>The recipient snapshot plus the party type of recipient_party_id.<span class="ref">serialize_document (project_quotation_document_service.py:709) gains recipient_party_type</span></div></li>
+  <li><span class="co">4</span><div><b>Link back</b>The quotation names the proposal revision it came from.<span class="ref">new column quotation_documents.source_issue_id</span></div></li>
+  <li><span class="co">5</span><div><b>Old documents keep R numbers</b>Anything already issued keeps counting R1, R2; a proposal first issued from now on counts A, B, C.<span class="ref">new column quotation_issues.revision_label</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ 2 -->
+<h2 class="ft">2. Proposal page: party picker, and the alert management gets on a price change (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Proposal PRJQ-2026-0003-C</h1><div class="crumbs">Project Sales / Taman Melati Townhouse / Proposals</div></div>
+    <div class="actions"><span class="btn">Download PDF</span><span class="btn">Revise</span><span class="btn primary">Make quotation <span class="co">6</span></span></div></div>
+  <div class="card" style="max-width:560px">
+    <div class="field"><label>To <span class="co">7</span></label><span class="input" style="display:block">CUSTOMER A (Main contractor) &#9662;</span></div>
+    <div style="font-size:12px;color:var(--muted)">On this project: DEVELOPER C (Developer), ARCHITECT D (Architect), CUSTOMER A (Main contractor), TRADING HOUSE B (Trading house), SUBCON E (Subcontractor), TENDER F (Tender party)</div>
+  </div>
+  <div class="card" style="max-width:640px;border-left:3px solid var(--amber)">
+    <div style="font-weight:600">Proposal price changed: PRJQ-2026-0003-B <span class="co">8</span></div>
+    <div class="meta">Taman Melati Townhouse, to CUSTOMER A, issued by SALES REP A</div>
+    <table style="margin-top:8px"><thead><tr><th>Product</th><th class="num">A</th><th class="num">B</th></tr></thead>
+    <tbody><tr><td>32MM TAIL PIECE COUPLING</td><td class="num">300.00</td><td class="num">280.00</td></tr></tbody></table>
+  </div>
+</div></div></div>
+<div class="notes"><ol>
+  <li><span class="co">6</span><div><b>Make quotation</b>Header action on an issued proposal, shown only when the project is Won and has no quotation yet.<span class="ref">QuotationDocumentPageHeader.tsx (header actions)</span></div></li>
+  <li><span class="co">7</span><div><b>To = a party of this project</b>SearchableSelect, clearable, grouped by party type; picking one refreshes the name/address/phone snapshot as today.<span class="ref">QuotationDocumentHeader.tsx:205 (recipient block); components/common SearchableSelect</span></div></li>
+  <li><span class="co">8</span><div><b>Management alert</b>In-app notification + email to users with projects.projects.manage, sent at Issue of revision B when any unit price differs from A. Not a gate.<span class="ref">project_notify_service.py (beside notify below-minimum, :296)</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ 3 -->
+<h2 class="ft">3. Make quotation dialog (375)</h2>
+<div class="layout">
+<div class="frame w375 m375"><div class="dim"><div class="dlg">
+  <div class="hd">Make quotation</div>
+  <div class="bd">
+    <div class="field"><label>From proposal revision <span class="co">9</span></label>
+      <div class="radio"><span>&#9675;</span><div>PRJQ-2026-0003-C<div class="meta">2 Nov, RM 780.00, signed</div></div></div>
+      <div class="radio on"><span>&#9673;</span><div>PRJQ-2026-0003-B<div class="meta">31 Oct, RM 780.00</div></div></div>
+      <div class="radio"><span>&#9675;</span><div>PRJQ-2026-0003-A<div class="meta">29 Oct, RM 800.00</div></div></div>
+    </div>
+  </div>
+  <div class="ft"><span class="btn">Cancel</span><span class="btn primary">Make quotation</span></div>
+</div></div></div>
+<div class="notes"><ol>
+  <li><span class="co">9</span><div><b>Pick one issued revision</b>Newest first, latest preselected. Creates QT-2026-0001 with this revision's party, letter, terms and lines (lost scopes left out) and opens it in edit. It needs its own Sorento signature before Issue.<span class="ref">new dialog beside ReviseQuotationDialog.tsx, components/ui/dialog; POST /project-sales/quotation-documents/{id}/make-quotation</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ 4 -->
+<h2 class="ft">4. Quotation page: a price below the proposal waits for approval (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Quotation QT-2026-0001</h1><div class="crumbs">Project Sales / Taman Melati Townhouse / Proposals</div>
+    <div class="meta">From proposal <a href="#" style="color:var(--primary)">PRJQ-2026-0003-B</a> <span class="co">10</span></div></div>
+    <div class="actions"><span class="btn">Download PDF</span><span class="btn primary">Ask for approval</span></div></div>
+  <div class="callout amber"><b>Needs approval</b>: 1 line priced below the proposal. <span class="co">11</span></div>
+  <table>
+    <thead><tr><th>Item</th><th>Product</th><th class="num">Qty</th><th class="num">Proposal price</th><th class="num">Unit price</th><th class="num">Amount</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>32MM TAIL PIECE COUPLING</td><td class="num">1</td><td class="num">280.00</td><td class="num">280.00</td><td class="num">280.00</td></tr>
+      <tr style="background:var(--amber-soft)"><td>2</td><td>BRAC73080604-0001 <span class="pill amber">Below proposal</span> <span class="co">12</span></td><td class="num">1</td><td class="num">500.00</td><td class="num">480.00</td><td class="num">480.00</td></tr>
+    </tbody>
+  </table>
+</div></div></div>
+<div class="notes"><ol>
+  <li><span class="co">10</span><div><b>Link back</b>Read-only metadata under the header, links to the proposal page.<span class="ref">QuotationDocumentPageHeader.tsx (meta row)</span></div></li>
+  <li><span class="co">11</span><div><b>Same approval block</b>The existing minimum-price approval panel counts "below the proposal" lines too; same approvers (projects.quotations.approve), same approve / reject / revise.<span class="ref">QuotationApprovalPanel.tsx; project_quotation_approval_service.py:139 requires_approval</span></div></li>
+  <li><span class="co">12</span><div><b>Line flag</b>Beside the existing below-minimum flag.<span class="ref">QuotationLineFlags.tsx</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ 5 -->
+<h2 class="ft">5. PO save above the quoted quantity: reason, never a block (375 dialog + 1280 list)</h2>
+<div class="layout">
+<div class="frame w375 m375"><div class="dim"><div class="dlg">
+  <div class="hd">Quantity over the quotation <span class="co">13</span></div>
+  <div class="bd">
+    <table><thead><tr><th>Product</th><th class="num">All POs</th><th class="num">Quoted</th></tr></thead>
+      <tbody><tr><td>32MM TAIL PIECE COUPLING</td><td class="num">2</td><td class="num">1</td></tr></tbody></table>
+    <div class="field" style="margin-top:12px"><label>Reason</label><span class="input" style="display:block">Variation order VO-3</span></div>
+  </div>
+  <div class="ft"><span class="btn">Back</span><span class="btn primary">Save with reason</span></div>
+</div></div></div>
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <b>Purchase Orders</b>
+  <table style="margin-top:10px"><thead><tr><th>PO</th><th>Checked against</th><th class="num">Amount (RM)</th><th>Flags</th></tr></thead>
+    <tbody>
+      <tr><td>PO-7781</td><td>QT-2026-0001-R1</td><td class="num">280.00</td><td></td></tr>
+      <tr><td>PO-7802</td><td>QT-2026-0001-R1</td><td class="num">280.00</td><td><span class="pill amber" title="Variation order VO-3">Qty over quote</span> <span class="co">14</span></td></tr>
+    </tbody></table>
+</div></div></div>
+<div class="notes"><ol>
+  <li><span class="co">13</span><div><b>Soft stop</b>Save / Confirm answers 409 po_qty_over_quoted with the products; the dialog asks one reason and re-sends with it. Totals cover every live PO of the project checked against the quotation.<span class="ref">PurchaseOrderDialog.tsx, POIntakeConfirmClient.tsx; project_po_service.py replace_lines, project_po_confirm.py confirm_version</span></div></li>
+  <li><span class="co">14</span><div><b>Badge + reason</b>Beside the model/price mismatch counts; management gets one alert per reason.<span class="ref">PurchaseOrdersPanel.tsx; serialize_pos (project_po_service.py:585)</span></div></li>
+</ol></div>
+</div>
+</div>
+</body>
+</html>
