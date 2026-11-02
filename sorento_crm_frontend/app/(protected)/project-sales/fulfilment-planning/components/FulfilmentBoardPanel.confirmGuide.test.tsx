@@ -1924,3 +1924,101 @@ describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', 
     expect(body.orders.find((o: { pso_id: string }) => o.pso_id === 'pso-so-2').so_remark).toBe('');
   });
 });
+
+/*
+ * CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): after a board Save, Confirm showed the old
+ * decision's words until a page refresh, and a delivered line a pending change names read
+ * "Delivered in full: nothing goes to purchasing" with a blank NEW DATE while the email prints
+ * its Was -> Now. Popup = email = Excel.
+ */
+describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
+  function boardWithRemark(remark: string, decision: Record<string, unknown>, savedAt: string) {
+    return mapContributions(boardOf([SO1_L3]), (entry) =>
+      entry.project_line_id === 'pl-1-3'
+        ? {
+            ...entry,
+            saved_remark: remark,
+            draft: { decision, saved_by: 'Test Planner', saved_at: savedAt },
+          }
+        : entry,
+    );
+  }
+
+  it('opening Confirm re-reads the board and waits for it: the page prints the newest saved words', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(
+      boardWithRemark('ORDER BACK', { verdict: 'approved' }, '2026-11-02T01:00:00Z'),
+      ['SO000001'],
+    );
+    const reads = getPlanningBoard.mock.calls.length;
+    // The board moved on the server (a Save elsewhere, or this tab's save reply carried no
+    // `saved_remark`): the next read says ORDER 3.
+    getPlanningBoard.mockResolvedValue(
+      boardWithRemark('ORDER 3', { verdict: 'approved' }, '2026-11-02T01:00:00Z'),
+    );
+    await openConfirmGuide();
+    await waitFor(() => expect(getPlanningBoard.mock.calls.length).toBeGreaterThan(reads));
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const block = await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(block).toHaveTextContent('ORDER 3'));
+    expect(block).not.toHaveTextContent('ORDER BACK');
+  });
+
+  it('a newer server decision replaces the one this tab holds, and the planner is told', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(
+      boardWithRemark('ORDER BACK', { verdict: 'amended', buy_qty: '0' }, '2026-11-02T01:00:00Z'),
+      ['SO000001'],
+    );
+    // Another tab saved a newer decision for the same line.
+    getPlanningBoard.mockResolvedValue(
+      boardWithRemark('ORDER 3', { verdict: 'amended', buy_qty: '3' }, '2026-11-02T02:00:00Z'),
+    );
+    await openConfirmGuide();
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('saved again')),
+    );
+  });
+
+  it('an older server decision never replaces the one this tab saved later', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(
+      boardWithRemark('ORDER 3', { verdict: 'amended', buy_qty: '3' }, '2026-11-02T02:00:00Z'),
+      ['SO000001'],
+    );
+    getPlanningBoard.mockResolvedValue(
+      boardWithRemark('ORDER 3', { verdict: 'amended', buy_qty: '3' }, '2026-11-02T02:00:00Z'),
+    );
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-split-page');
+    expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('saved again'));
+  });
+
+  it('a delivered line a pending change names prints its NEW DATE and no "nothing goes" note', async () => {
+    const read = LINE3_READ();
+    read.lines = [
+      {
+        ...wireLine(3, 'ZZT-ITEM-1C', 0, '2026-09-28', {
+          line_id: 'pl-1-3',
+          delivered_qty: 3,
+          now_qty: 0,
+          now_date: '2026-11-02',
+          pending_change: true,
+          new_date: '2026-11-02',
+          remark_generated: 'DELAY',
+          split_state: 'acting',
+          split_view: { status: 'confirmed' },
+        }),
+        delivered_in_full: true,
+      } as never,
+    ];
+    serveSplits({ 'pso-so-1': read });
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const block = await within(page).findByTestId('split-line-3');
+    expect(within(block).getByTestId('new-date-3')).toHaveTextContent('02/11/2026');
+    expect(block).not.toHaveTextContent('nothing goes to purchasing');
+    expect(block.querySelectorAll('input')).toHaveLength(0);
+  });
+});

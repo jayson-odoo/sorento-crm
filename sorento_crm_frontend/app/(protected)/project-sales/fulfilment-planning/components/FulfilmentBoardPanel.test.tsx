@@ -1256,6 +1256,9 @@ describe('FulfilmentBoardPanel: a background refetch dims the board, never blank
     // Confirm's own success invalidates the board (it changes what every OTHER order can be
     // offered) - held open here so the in-flight moment can be asserted.
     let resolveRefetch: (value: PlanningBoard) => void = () => {};
+    // The guided Confirm re-reads the board as it opens (CONFIRM-PREVIEW-STALE); that read
+    // answers at once, so the held one below is Confirm's own refetch.
+    getPlanningBoard.mockResolvedValueOnce(allSaved(boardOf([demand()])));
     getPlanningBoard.mockImplementationOnce(
       () =>
         new Promise<PlanningBoard>((resolve) => {
@@ -4291,7 +4294,9 @@ describe('FulfilmentBoardPanel: a local draft is dropped once the server confirm
     // the wire underneath it, and its own confirm attempt was refused, never committed.
     await pressPreviewThenConfirm();
     await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(getPlanningBoard).toHaveBeenCalledTimes(2));
+    // Three reads: the mount, the guided Confirm's own re-read as it opens
+    // (CONFIRM-PREVIEW-STALE), and Confirm's refetch.
+    await waitFor(() => expect(getPlanningBoard).toHaveBeenCalledTimes(3));
 
     expect(screen.getByTestId(`decision-pill-${KEY_A}`)).toHaveTextContent('Saved');
   });

@@ -24,6 +24,7 @@ import { LineSplitEditor, type LineSplitEditorHandle } from './LineSplitEditor';
 import { formatSplitDate } from '../lib/lineSplitModel';
 import { defaultSoRemark, shouldLabelMockupLines } from '../../_shared/lib/soRemark';
 import { MockupLinesContext } from './LineSplitSheet';
+import type { SuggestionMoved } from '../../_shared/lib/confirmPreviewFresh';
 
 /** One line this Confirm covers, as the board states it, with its editable remark (UAC F25). */
 export type ConfirmGuideLine = CoveredSheetLine & {
@@ -33,6 +34,11 @@ export type ConfirmGuideLine = CoveredSheetLine & {
   remarkEditable: boolean;
   /** FULFIL-SO-REMARK: the board says this line reads as a mockup line. */
   isMockup?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE: the saved decision differs from what AutoCount's pending change
+   * suggests. A warning with Keep / Take suggestion, never a refusal.
+   */
+  moved?: SuggestionMoved | null;
 };
 
 /** One page of the guide (UAC F2): an order this Confirm covers, and the lines it covers. */
@@ -105,6 +111,8 @@ export function ConfirmGuideDialog({
   runConfirm,
   saveRemarks,
   preparing = false,
+  refreshing = false,
+  onTakeSuggestion,
   prepareErrors,
   onRetryPrepare,
   onClose,
@@ -129,6 +137,13 @@ export function ConfirmGuideDialog({
    * record one (so their page is the editable sheet, never the read-only one), or that failed.
    */
   preparing?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): the board is re-reading the server as the guide
+   * opens; the review waits for it, so it never prints the decision as it was before a Save.
+   */
+  refreshing?: boolean;
+  /** CONFIRM-PREVIEW-STALE: drop the saved decision so the line takes AutoCount's suggestion. */
+  onTakeSuggestion?: (key: string) => void;
   /** Per core sales order id: why it could not be made ready (the server's sentence). */
   prepareErrors?: ReadonlyMap<string, string>;
   onRetryPrepare?: () => void;
@@ -150,14 +165,28 @@ export function ConfirmGuideDialog({
 
   const page = step.kind === 'review' ? pages[step.index] : undefined;
   // Every page's split read, kept while the guide is open; the current page reads its own.
-  const reads = useLineSplitsReads(pages.map((entry) => entry.psoId));
+  // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): each read is taken again as the guide opens,
+  // and a page reads as loading until the read answered after that moment: a cached sheet
+  // from before a Save is never what the review prints.
+  const [openedAt] = React.useState(() => Date.now());
+  const reads = useLineSplitsReads(
+    pages.map((entry) => entry.psoId),
+    { fresh: true },
+  );
   const splitRead = step.kind === 'review' && page ? reads[step.index] : undefined;
-  const reading = Boolean(page?.psoId) && Boolean(splitRead?.isPending);
+  const reading =
+    Boolean(page?.psoId) &&
+    Boolean(
+      splitRead?.isPending ||
+        (splitRead && !splitRead.isError && splitRead.dataUpdatedAt < openedAt),
+    );
+  /** CONFIRM-PREVIEW-STALE: the "AutoCount moved this line" warnings the planner chose to keep. */
+  const [keptMoved, setKeptMoved] = React.useState<ReadonlySet<string>>(new Set());
   // A page with no planning record waits for the board's adopt, never shown read-only while it
   // runs. Only a FAILED adopt leaves its lines read-only, under the error and its Retry, and
   // the guide can still move on: the press names that order in its results, and one order
   // that cannot be planned never holds up the others.
-  const unready = Boolean(page && !page.psoId && preparing);
+  const unready = Boolean(page && ((!page.psoId && preparing) || refreshing));
   const prepareError =
     page && !page.psoId && !preparing ? prepareErrors?.get(page.salesOrderId) ?? null : null;
   const prepareFailed = Boolean(prepareError);
@@ -378,6 +407,43 @@ export function ConfirmGuideDialog({
                   </Button>
                 </div>
               ) : null}
+              {!unready
+                ? page.covered
+                    .filter((line) => line.moved && !keptMoved.has(line.key))
+                    .map((line) => (
+                      <div
+                        key={line.key}
+                        role="status"
+                        data-testid="confirm-guide-moved"
+                        data-line={line.lineNo ?? ''}
+                        className="flex flex-wrap items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm"
+                      >
+                        <span className="min-w-0 flex-1 break-words">
+                          {`Line ${line.lineNo ?? ''} ${line.itemCode}: AutoCount moved this line: suggestion ${line.moved?.suggestion}, you keep ${line.moved?.kept}`}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() =>
+                            setKeptMoved((current) => new Set([...current, line.key]))
+                          }
+                        >
+                          Keep
+                        </Button>
+                        {onTakeSuggestion ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            disabled={dirty}
+                            onClick={() => onTakeSuggestion(line.key)}
+                          >
+                            Take suggestion
+                          </Button>
+                        ) : null}
+                      </div>
+                    ))
+                : null}
               {unready ? (
                 <SectionSkeleton rows={4} />
               ) : readFailed ? (

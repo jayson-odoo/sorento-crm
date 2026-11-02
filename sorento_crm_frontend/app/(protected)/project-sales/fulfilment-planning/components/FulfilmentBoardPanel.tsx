@@ -71,6 +71,7 @@ import {
 import {
   annotationsByCell,
   annotationsByLine,
+  lineKeyOf,
   preMarkedKeys,
   uncoverChangedLines,
 } from '../../_shared/lib/boardChangeAnnotations';
@@ -137,6 +138,10 @@ import { FulfilmentBoardListView } from './FulfilmentBoardListView';
 import { LineSplitDialog } from './LineSplitDialog';
 import { BoardOrderSplitsDialog } from './BoardOrderSplitsDialog';
 import { ConfirmGuideDialog, type ConfirmGuidePage } from './ConfirmGuideDialog';
+import {
+  newerServerDraftKeys,
+  suggestionMovedOf,
+} from '../../_shared/lib/confirmPreviewFresh';
 import { VERB_LABEL } from '../../_shared/components/OrderInquiryVerbPill';
 import { LineSplitOpenerContext, type LineSplitOpener } from './lineSplitOpener';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
@@ -424,6 +429,9 @@ export function FulfilmentBoardPanel({
    */
   const [view, setView] = React.useState<BoardView>(() => boardViewFrom(searchParams.get('view')));
   const [draft, setDraft] = React.useState<BoardDraft>({});
+  // CONFIRM-PREVIEW-STALE: the current map for effects that compare before they set.
+  const draftRef = React.useRef<BoardDraft>(draft);
+  draftRef.current = draft;
   /**
    * The decision-strip card currently narrowing the grid, or null (AC-D2).
    *
@@ -902,6 +910,13 @@ export function FulfilmentBoardPanel({
   const pendingDeletes = React.useRef<Set<string>>(new Set());
 
   /**
+   * CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): per line key, the `saved_at` of the server draft
+   * this tab's local decision stands on (seeded off a board read, or this tab's own save
+   * reply). A board read carrying a LATER `saved_at` is a save made elsewhere.
+   */
+  const savedAtByKey = React.useRef<Map<string, string>>(new Map());
+
+  /**
    * Keys whose SAVE is on the wire right now (R3, AC-F5): added before `saveLineDraft`
    * fires in `decide` below, cleared once it settles either way. The covered-line drop a
    * few lines down has to skip a key here - a board read that races an in-flight Save can
@@ -941,10 +956,37 @@ export function FulfilmentBoardPanel({
       (contribution) => contribution.covered && !contribution.draft,
     );
     if (serverDrafts.length === 0 && coveredWithNoDraft.length === 0) return;
+    // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): a decision saved again elsewhere (another
+    // tab, another planner) AFTER the one this tab holds replaces it, out loud, so Confirm
+    // never posts an older decision over a newer save.
+    const replaced = newerServerDraftKeys(
+      draftRef.current,
+      savedAtByKey.current,
+      serverDrafts,
+      (key) => pendingDeletes.current.has(key) || pendingSaves.current.has(key),
+    );
+    for (const contribution of serverDrafts) {
+      if (!savedAtByKey.current.has(contribution.key) || replaced.has(contribution.key)) {
+        savedAtByKey.current.set(contribution.key, contribution.draft?.saved_at ?? '');
+      }
+    }
+    if (replaced.size > 0) {
+      const lines = serverDrafts
+        .filter((contribution) => replaced.has(contribution.key))
+        .map((contribution) => `${contribution.so_number} line ${contribution.so_line_no ?? contribution.line_no}`);
+      toast.warning(
+        `${lines.join(', ')} ${lines.length === 1 ? 'was' : 'were'} saved again elsewhere: the board now shows the newer decision.`,
+      );
+    }
     setDraft((current) => {
       let changed = false;
       const next = { ...current };
       for (const contribution of serverDrafts) {
+        if (replaced.has(contribution.key) && contribution.draft) {
+          next[contribution.key] = contribution.draft.decision;
+          changed = true;
+          continue;
+        }
         if (pendingDeletes.current.has(contribution.key)) continue;
         // A bare pre-mark is the board's own suggestion, never a decision, so the saved
         // server draft replaces it (hotfix, SO422492): with the batch already cached, the
@@ -1065,6 +1107,9 @@ export function FulfilmentBoardPanel({
             const saved = await saveLineDraft(key, decision, contribution?.sources, {
               silent: options?.silent,
             });
+            // CONFIRM-PREVIEW-STALE: the save this tab holds, so a later board read can tell
+            // a newer save made elsewhere from this one.
+            if (saved?.saved_at) savedAtByKey.current.set(key, saved.saved_at);
             if (options?.adoptSaved && saved?.decision) {
               setDraft((current) => ({ ...current, [key]: saved.decision }));
             }
@@ -1073,6 +1118,7 @@ export function FulfilmentBoardPanel({
           }
         } else {
           await removeDraftKey(key);
+          savedAtByKey.current.delete(key);
         }
       } catch (error) {
         // The mutation's own `onError` already toasted the message unless `silent`
@@ -2237,6 +2283,14 @@ export function FulfilmentBoardPanel({
     },
     [ensure, board],
   );
+  /**
+   * The same annotations keyed by LINE, for the list view: a list row is one line, so it
+   * does not have to know which cell that line landed in to say what moved (AC-C9).
+   */
+  const changeAnnotationsByLine = React.useMemo(
+    () => annotationsByLine(changeBatchData),
+    [changeBatchData],
+  );
   const guidePages = React.useMemo<ConfirmGuidePage[]>(() => {
     const covered = confirmLinesByOrder(
       allContributions,
@@ -2269,6 +2323,15 @@ export function FulfilmentBoardPanel({
               ownRemark: facts.own,
               remarkEditable: facts.editable,
               isMockup: Boolean(line.is_mockup),
+              // CONFIRM-PREVIEW-STALE: the saved decision is not what AutoCount now suggests.
+              moved: suggestionMovedOf(
+                line,
+                draftWithoutPreMark[line.key],
+                (line.project_line_id
+                  ? changeAnnotationsByLine.get(line.project_line_id)
+                  : undefined) ??
+                  changeAnnotationsByLine.get(lineKeyOf(line.so_number, line.line_no)),
+              ),
             };
           }),
         },
@@ -2283,13 +2346,26 @@ export function FulfilmentBoardPanel({
     batchNamedKeys,
     remarkFactsOf,
     guideAdopted,
+    changeAnnotationsByLine,
   ]);
   const unplannedGuideOrders = React.useMemo(
     () => guidePages.filter((page) => !page.psoId).map((page) => page.salesOrderId),
     [guidePages],
   );
+  /**
+   * CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): Confirm re-reads the board as it opens and the
+   * review waits for that read, so a Save made a moment ago (whose reply carries no
+   * `saved_remark`) or one made elsewhere is what the page prints. The split sheets re-read
+   * themselves inside the guide (`ConfirmGuideDialog`).
+   */
+  const [guideRefreshing, setGuideRefreshing] = React.useState(false);
   const openGuide = () => {
     setGuideOpen(true);
+    setGuideRefreshing(true);
+    void board
+      .refetch()
+      .catch(() => undefined)
+      .finally(() => setGuideRefreshing(false));
     prepareGuide(unplannedGuideOrders);
   };
 
@@ -2421,14 +2497,6 @@ export function FulfilmentBoardPanel({
     [changeBatchData, axis],
   );
 
-  /**
-   * The same annotations keyed by LINE, for the list view: a list row is one line, so it
-   * does not have to know which cell that line landed in to say what moved (AC-C9).
-   */
-  const changeAnnotationsByLine = React.useMemo(
-    () => annotationsByLine(changeBatchData),
-    [changeBatchData],
-  );
 
   /**
    * What the decision strip is summed over: THE LINES THE CURRENT VIEW CAN SHOW.
@@ -3745,6 +3813,8 @@ export function FulfilmentBoardPanel({
           runConfirm={runConfirmAll}
           saveRemarks={saveLineRemarks}
           preparing={guidePrep.running}
+          refreshing={guideRefreshing}
+          onTakeSuggestion={(key) => void decide(key, null)}
           prepareErrors={guidePrep.errors}
           onRetryPrepare={() => prepareGuide(unplannedGuideOrders)}
           onClose={closeGuide}
