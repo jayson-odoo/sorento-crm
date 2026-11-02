@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { sanitizedHtml } from '@/lib/sanitize';
+import { TERMS_HTML_CLASS } from '@/lib/terms-html';
 
 /**
  * The prose half of the quotation: the letter the customer reads before the prices, and the
@@ -53,7 +54,7 @@ function LetterPanel({
           <RichTextEditor value={html ?? ''} onChange={onChange} placeholder={placeholder} />
         ) : html ? (
           <div
-            className="prose prose-sm max-w-none break-words text-sm"
+            className={TERMS_HTML_CLASS}
             dangerouslySetInnerHTML={sanitizedHtml(html)}
           />
         ) : (

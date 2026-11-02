@@ -273,15 +273,16 @@ export function QuotationDocumentHeader({
               <p className="min-w-0 break-words text-sm text-muted-foreground">
                 {document.recipient_phone_snapshot ?? '-'}
               </p>
-              {document.recipient_email_snapshot ? (
-                <div className="mt-1">
-                  <Field label="Email" value={document.recipient_email_snapshot} />
-                </div>
-              ) : null}
               <p className="mt-2 text-sm">
                 <span className="text-muted-foreground">Attn: </span>
                 <span className="font-medium">{document.attn_name ?? '-'}</span>
               </p>
+              {document.recipient_email_snapshot ? (
+                <p className="min-w-0 break-words text-sm">
+                  <span className="text-muted-foreground">Email: </span>
+                  <span className="font-medium">{document.recipient_email_snapshot}</span>
+                </p>
+              ) : null}
             </>
           )}
         </div>

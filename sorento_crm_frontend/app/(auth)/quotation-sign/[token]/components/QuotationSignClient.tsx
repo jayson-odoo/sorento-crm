@@ -30,6 +30,7 @@ import { signatureValueFrom } from '@/components/common/signatureValue';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { sanitizedHtml } from '@/lib/sanitize';
+import { TERMS_HTML_CLASS } from '@/lib/terms-html';
 import {
   useQuotationSignMutations,
   useQuotationSignPage,
@@ -124,7 +125,7 @@ function CoverCard({
               </span>
               {row.html ? (
                 <div
-                  className="min-w-0 break-words font-medium [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:m-0 [&_ul]:list-disc [&_ul]:pl-5 [&_ul_ul]:list-[circle]"
+                  className={cn(TERMS_HTML_CLASS, 'font-medium')}
                   dangerouslySetInnerHTML={sanitizedHtml(row.html)}
                 />
               ) : (
