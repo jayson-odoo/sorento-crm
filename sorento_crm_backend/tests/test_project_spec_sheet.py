@@ -1015,3 +1015,36 @@ def test_a_zero_priced_line_carries_no_price_and_the_page_list_route_never_retur
             assert "_price" not in json.dumps(got.json())
         finally:
             _restore(originals)
+
+
+def test_area_defaults_to_the_section_heading_the_line_sits_under_and_a_typed_area_wins():
+    """Owner, mock v5: one rule. The page's AREA is the quotation's Section heading over the line
+    (it does not run into the next scope); typing on the page overrides it."""
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        env = _setup(db)
+        document = _document(db, env)
+        first = _scope(db, env, document, "Block A")
+        second = _scope(db, env, document, "Block B")
+        wc = _product(db, env["category"].id, env["uom"], description=f"{MARKER} wc")
+        basin = _product(db, env["category"].id, env["uom"], description=f"{MARKER} basin")
+        tap = _product(db, env["category"].id, env["uom"], description=f"{MARKER} tap")
+        trap = _product(db, env["category"].id, env["uom"], description=f"{MARKER} trap")
+        _line(db, env, first, {"product_id": wc.id, "band_label": "UNIT"})
+        _line(db, env, first, {"product_id": basin.id})
+        _line(db, env, first, {"product_id": tap.id, "band_label": "PANTRY (TYPE A)"})
+        _line(db, env, second, {"product_id": trap.id})
+        issue = _issue(db, document, env["owner"])
+
+        pages = {p["key"]: p for p in spec.pages(db, document, issue)}
+        assert pages[wc.id]["area"] == "UNIT"
+        assert pages[basin.id]["area"] == "UNIT"
+        assert pages[tap.id]["area"] == "PANTRY (TYPE A)"
+        assert pages[trap.id]["area"] == ""  # a new scope starts with no heading
+        assert pages[basin.id]["area_default"] == "UNIT"
+
+        spec.save_settings(db, document, {"rows": [{"key": basin.id, "area": "Guard house"}]})
+        pages = {p["key"]: p for p in spec.pages(db, document, issue)}
+        assert pages[basin.id]["area"] == "Guard house"
+        assert pages[basin.id]["area_default"] == "UNIT"

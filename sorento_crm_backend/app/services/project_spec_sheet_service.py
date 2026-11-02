@@ -220,22 +220,32 @@ def issue_for(
     )
 
 
-def _issue_lines(db: Session, issue: ProjectQuotationIssue) -> List[ProjectQuotationLine]:
-    """Every line the issue froze, scope order then line order."""
+def _issue_lines(db: Session, issue: ProjectQuotationIssue) -> List[tuple]:
+    """``(line, section)`` for every line the issue froze, scope order then line order.
+
+    ``section`` is the Section heading the line sits under on the Lines tab: the nearest
+    ``band_label`` at or above it in its own scope (a heading never runs into the next scope).
+    It is the page's default AREA (owner, mock v5): one rule, typed over on the page when needed.
+    """
     scopes = (
         db.query(ProjectQuotationIssueScope)
         .filter(ProjectQuotationIssueScope.issue_id == issue.id)
         .order_by(ProjectQuotationIssueScope.sort_order, ProjectQuotationIssueScope.id)
         .all()
     )
-    lines: List[ProjectQuotationLine] = []
+    lines: List[tuple] = []
     for scope in scopes:
-        lines.extend(
+        section = ""
+        for line in (
             db.query(ProjectQuotationLine)
             .filter(ProjectQuotationLine.version_id == scope.version_id)
             .order_by(ProjectQuotationLine.sort_order, ProjectQuotationLine.created_at)
             .all()
-        )
+        ):
+            heading = (line.band_label or "").strip()
+            if heading:
+                section = heading
+            lines.append((line, section))
     return lines
 
 
@@ -262,7 +272,7 @@ def _set_parts(line: ProjectQuotationLine) -> List[dict]:
 def _items(db: Session, issue: ProjectQuotationIssue) -> Dict[str, dict]:
     """Ordered ``{key: item}``, one per product or set, at its first position."""
     items: Dict[str, dict] = {}
-    for line in _issue_lines(db, issue):
+    for line, section in _issue_lines(db, issue):
         key = item_key(line)
         if key is None or key in items:
             continue
@@ -274,6 +284,7 @@ def _items(db: Session, issue: ProjectQuotationIssue) -> Dict[str, dict]:
             "code": (driver or {}).get("product_code") or line.product_code_snapshot or "",
             "description": (driver or {}).get("description") or line.description_snapshot or "",
             "set_parts": _set_parts(line) if line.product_set_id else [],
+            "section": section,
         }
     return items
 
@@ -435,7 +446,9 @@ def pages(
                 "drawing_attachment_id": line.drawing_attachment_id,
                 "accessories": accessories,
                 "picked": list(setting["accessories"]),
-                "area": setting["area"],
+                # Typed on the page, else the Section heading the line sits under.
+                "area": setting["area"] or item["section"],
+                "area_default": item["section"],
                 "comment": setting["comment"],
                 "marker": setting["marker"],
                 "hidden": setting["hidden"],
