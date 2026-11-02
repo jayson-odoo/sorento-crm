@@ -8,6 +8,10 @@ mean, non-blocking). Q2: offer both `{{doc.your_ref}}` and `{{doc.quotation_no}}
 template prints it. Q3: (a) set parts + (c) hand-pick; NOT (b) position grouping (owner: no implicit
 matching). Q4 (a) free-text comment, blank prints an empty box. Q5 (a) add an `is_accessible` spec key next
 to `is_rimless`. Sample Q7: no product code starts with BBT; print the line's code as quoted.
+**Owner on mock v4 Q-D (3 Nov 00:05):** no page table ("all the layout I can see in canvas"). Mock v5: the tab shows
+the pages; AREA defaults from the quotation's Section heading (Q-E), COMMENT / AREA are typed on the page, "Leave
+out" and "Add accessory" are on the page, order = quotation order (Q-G). Rules 3, 4a, 12, 13 change accordingly once
+Q-E/F/G are answered; the built table is replaced in the next round.
 **Owner answers on mock v3 (2 Nov 23:29):** Q-A (a) the right band shows the project details; Q-B (b) an
 optional price area shows the quoted unit price of the issued revision, a template without one prints none
 (built through the price tag's own List Price slot / price badge, rows carry `list_price`); Q-C (a) any fixed

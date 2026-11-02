@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Project spec sheet (mock v4)</title>
+<title>Project spec sheet (mock v5)</title>
 <style>
 /* App tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/QUOTE-COVER-PAGE.
    Spec pages are drawn at 338.7 x 190.5 mm scaled to 880 x 495 px (16:9), as TagSheetRenderer draws a sheet. */
@@ -95,17 +95,86 @@ code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
 .mini3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .mini3 .pg{width:100%}
 @media (max-width:900px){.mini3,.opt{grid-template-columns:1fr}}
+.strip{display:flex;gap:8px;overflow-x:auto;padding:8px 0}
+.thumb2{flex:none;width:120px;aspect-ratio:16/9;border:1px solid var(--border);border-radius:4px;background:#fff;position:relative;font-size:9px;color:var(--muted-fg);display:flex;align-items:flex-end;padding:3px}
+.thumb2.on{outline:2px solid var(--primary)}
+.thumb2.off{opacity:.45}
+.thumb2.off:after{content:"Left out";position:absolute;top:3px;left:3px;font-weight:600;color:var(--bad)}
+.pgbar{position:absolute;top:1%;left:1%;display:flex;gap:4px;z-index:3}
+.pgbar span{font:500 11px/1 Inter,system-ui,sans-serif;background:#fff;border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--foreground);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.inl{position:absolute;outline:2px solid var(--primary);background:#fff;font:600 .85cqw Arial;padding:.3cqw .5cqw;z-index:3}
+.inl:after{content:"|";color:var(--primary);font-weight:400}
+.hint{font-size:11px;color:var(--primary)}
 @media (max-width:900px){.pickers{grid-template-columns:1fr 1fr}.ed{grid-template-columns:1fr}.ed .col{border-right:0;border-bottom:1px solid var(--border)}}
 @media (max-width:520px){.pickers{grid-template-columns:1fr}.hide-sm{display:none}}
 </style>
 </head>
 <body>
 <div class="doc">
-<h1>Project spec sheet <span class="newtag">MOCK v4</span></h1>
+<h1>Project spec sheet <span class="newtag">MOCK v5</span></h1>
 <p class="intro">PS-SPEC-SHEET. A cover page plus one page per quoted item, designed as tag templates and printed from an issued revision.
 Data is masked (project title, ref, names and phones are placeholders; codes are illustrative). Behaviour card:
 <code>documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md</code>.</p>
-<div class="nav"><a href="#reuse">R. Reuse of the price tag designer</a><a href="#listwhy">L. Why the page list</a><a href="#layout">0. Page layout (owner 23:17)</a><a href="#repeat">0b. Repeated per product</a><a href="#ask">0c. Questions</a><a href="#tab">A. Spec sheet tab</a><a href="#empty">B. Empty states</a><a href="#pages">C. Printed pages</a><a href="#editor">D. Template editor</a><a href="#map">E. Component map</a></div>
+<div class="nav"><a href="#canvas">V5. Spec sheet tab, canvas only</a><a href="#ask5">V5 questions</a><a href="#reuse">R. Reuse of the price tag designer</a><a href="#listwhy">L. Why the page list</a><a href="#layout">0. Page layout (owner 23:17)</a><a href="#repeat">0b. Repeated per product</a><a href="#ask">0c. Questions</a><a href="#tab">A. Spec sheet tab</a><a href="#empty">B. Empty states</a><a href="#pages">C. Printed pages</a><a href="#editor">D. Template editor</a><a href="#map">E. Component map</a></div>
+
+<section id="canvas">
+<h2>V5. Spec sheet tab: the pages ARE the editor (no table) <span class="newtag">NEW v5</span></h2>
+<p class="why">Owner 00:05: "dont need the table cause all the layout I can see in canvas". The page list is gone. The tab shows the pages exactly as they print (the price tag designer's sheet view, same renderer). Everything the table did now comes from the quotation, or is done on the page itself.</p>
+<div class="card">
+  <div class="hdr"><div><h3>Proposal PRJQ-2026-0042</h3><div class="meta">Project &lt;masked title&gt; &middot; Rev B issued 02 Nov 2026</div></div><span class="btn pri">Export PDF</span></div>
+  <div class="tabs"><span>Header</span><span>Lines</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span class="on">Spec sheet</span></div>
+  <div class="body">
+    <div class="pickers">
+      <div class="fld"><label>Revision</label><div class="sel">B, issued 02 Nov 2026</div></div>
+      <div class="fld"><label>Cover template</label><div class="sel">Project catalogue cover</div></div>
+      <div class="fld"><label>Page template</label><div class="sel">Item with accessories</div></div>
+      <div class="fld"><label>Single item template</label><div class="sel">Single item</div></div>
+    </div>
+    <div class="strip">
+      <div class="thumb2">1 Cover</div><div class="thumb2 on">2 SRTWC0001-RL</div><div class="thumb2">3 SRTWB0002</div><div class="thumb2">4 SRTBM0003</div><div class="thumb2 off">5 SRTSV0005</div>
+    </div>
+    <div class="pg">
+      <div class="pgbar"><span>Leave out</span><span>Add accessory</span></div>
+      <div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%">photo</div>
+      <div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">drawing</div>
+      <div class="abs txt" style="left:7%;top:65%;width:30%"><div class="c">SORENTO SRTWC0001-RL <span class="m">*</span></div><div class="n">Wall hung WC</div><div>- (L)540 X (W)360 X (H)350 MM</div></div>
+      <div class="abs acc" style="left:38%;top:65%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTAV0010</b><br>ANGLE VALVE</div></div>
+      <div class="abs acc" style="left:38%;top:78%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTFH0011</b><br>FLEXIBLE HOSE 40CM</div></div>
+      <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%">
+        <div class="desc">&lt;project title, masked&gt;</div>
+        <div><b>REF :</b> QS/REF/2026/07</div>
+        <div><b>AREA :</b> UNIT</div>
+        <div><b>PREPARED BY :</b> &lt;sales&gt;</div>
+        <div><b>DATE :</b> 02 NOV 2026</div>
+        <div><b>COMMENT :</b></div>
+      </div>
+      <div class="inl" style="left:81.5%;top:51.6%;width:17%">UNIT &amp; PODIUM FACILITIES</div>
+      <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+    </div>
+    <div class="cap"><span class="hint">Shown: the user clicked AREA on page 2 and is typing over it.</span> Click a page in the strip to open it; Previous / Next also work.</div>
+  </div>
+</div>
+<table class="map card" style="margin-top:12px">
+<colgroup><col style="width:28%"><col style="width:36%"><col style="width:36%"></colgroup>
+<thead><tr><th>What the table did</th><th>Now (v5)</th><th>Reused from the price tag designer</th></tr></thead>
+<tbody>
+<tr><td>Pages and their order</td><td>One page per quoted item, in quotation order (scope, then line). To reorder, reorder the quotation lines.</td><td>sheet view, TagSheetRenderer</td></tr>
+<tr><td>AREA per page</td><td>Defaults to the <b>Section heading</b> the line sits under on the Lines tab, else the scope name (Q-E). Click AREA on the page to type over it.</td><td>click-to-edit text over a layer (the request designer's per-tag text override)</td></tr>
+<tr><td>COMMENT per page</td><td>Empty by default; click COMMENT on the page to type.</td><td>same</td></tr>
+<tr><td>Marker</td><td>Typed in the template (owner 21:45); a page can type over it like AREA.</td><td>same</td></tr>
+<tr><td>Print on / off</td><td>"Leave out" on the page; the page stays in the strip, greyed, with "Put back".</td><td>the request designer's Not printed on a tag</td></tr>
+<tr><td>Hand-picked accessory</td><td>"Add accessory" on the page picks another item of the revision (Q-F). Set parts come by themselves.</td><td>-</td></tr>
+</tbody></table>
+</section>
+
+<section id="ask5">
+<h2>V5 questions <span class="newtag">PLEASE ANSWER</span></h2>
+<div class="opt">
+  <div class="o rec"><h4>Q-E. Where does AREA come from by default?</h4>(a) The Section heading the line sits under on the Lines tab (e.g. a heading "UNIT" over the WC lines), else the scope name; type over it on the page when needed. (b) The scope name only. (c) Blank, always typed on the page.<br><b>Recommend (a)</b>: your sample's areas are exactly how a BOQ is sectioned, so most pages need no typing.</div>
+  <div class="o rec"><h4>Q-F. A bottle trap under a basin (one page, two items)?</h4>(a) "Add accessory" on the basin's page picks it; the trap leaves its own page. (b) Only product sets: to show a trap under a basin, quote them as a set.<br><b>Recommend (a)</b>: one button, and no change to how the team quotes.</div>
+  <div class="o rec"><h4>Q-G. Page order?</h4>(a) Always the quotation's line order. (b) Also drag pages in the strip.<br><b>Recommend (a)</b>: one order to keep right, the quotation's.</div>
+</div>
+</section>
 
 <section id="reuse">
 <h2>R. Reuse of the price tag designer <span class="newtag">NEW v4</span></h2>
@@ -125,7 +194,7 @@ Data is masked (project title, ref, names and phones are placeholders; codes are
 </section>
 
 <section id="listwhy">
-<h2>L. Why the page list on the Spec sheet tab <span class="newtag">NEW v4</span></h2>
+<h2>L. Why the page list on the Spec sheet tab <span class="newtag">ANSWERED 00:05: no table, see V5</span></h2>
 <p class="why">Owner 23:29 on the "Item" column: "Why is this table needed". <b>In one line: the list IS the pages of the catalogue, in print order, and it is the only place to type each page's AREA (printed in the right band).</b> The quotation itself has no Area. The same list also lets you leave a page out (Print), put a bottle trap under a basin (Accessories) and drag pages into area order, as in your sample (UNIT, then PANTRY, then TOILET).</p>
 <div class="opt">
   <div class="o rec"><h4>Q-D. Keep the list?</h4>(a) Keep it as drawn in section A. (b) Drop it: every quoted item prints, in quotation order, with an empty AREA and no picked accessories. <b>Recommend (a)</b>: without it the right band's AREA can never be filled.</div>
@@ -195,7 +264,7 @@ Data is masked (project title, ref, names and phones are placeholders; codes are
 </section>
 
 <section id="tab">
-<h2>A. Quotation document &gt; Spec sheet tab <span class="newtag">NEW TAB</span></h2>
+<h2>A. Quotation document &gt; Spec sheet tab <span class="newtag">SUPERSEDED BY V5</span></h2>
 <p class="why">What the list is for: section L. Rules 1-15. Templates and revision on top; pages in print order, drag to reorder; Area / Comment typed per page; Hide drops a page. One CTA in the header: Export PDF (to My Downloads).</p>
 <div class="card">
   <div class="hdr"><div><h3>Proposal PRJQ-2026-0042</h3><div class="meta">Project &lt;masked title&gt; &middot; Rev B issued 02 Nov 2026</div></div><span class="btn pri">Export PDF</span></div>
