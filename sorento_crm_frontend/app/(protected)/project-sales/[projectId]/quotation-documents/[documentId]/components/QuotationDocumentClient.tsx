@@ -49,6 +49,7 @@ import { QuotationViewCount } from './QuotationViewCount';
 import { QuotationDocumentProvider } from './QuotationDocumentContext';
 import { QuotationDocumentTabs, quotationSiblingHref } from './QuotationDocumentTabs';
 import { ReviseToEditDialog } from './ReviseToEditDialog';
+import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
 
 /**
  * One quotation DOCUMENT: the letterhead the customer receives, and the tabs it is read through.
@@ -374,7 +375,10 @@ export function QuotationDocumentClient({
             }
             pendingAction={gear.pending}
             gear={
-              <DetailActionsMenu actions={gear.actions} ariaLabel="Quotation actions" />
+              <DetailActionsMenu
+                actions={gear.actions}
+                ariaLabel={`${documentNoun(document.data)} actions`}
+              />
             }
             primary={
               <>

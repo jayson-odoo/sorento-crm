@@ -342,6 +342,15 @@ export function PurchaseOrderDetailClient({
             ) : null}
           </div>
           <h2 className="mt-1 text-xl font-semibold break-words">{shown.po_number}</h2>
+          {po.qty_over_reason ? (
+            <p className="text-sm break-words">
+              <span className="text-muted-foreground">More than quoted: </span>
+              {po.qty_over_reason}
+              {po.qty_over_reason_by_name ? (
+                <span className="text-muted-foreground">{` (${po.qty_over_reason_by_name})`}</span>
+              ) : null}
+            </p>
+          ) : null}
           <p className="text-sm text-muted-foreground break-words">
             {[
               formatMyr(liveTotal ?? po.line_total),

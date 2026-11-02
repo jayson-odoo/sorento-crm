@@ -371,7 +371,7 @@ function seedOneScope(lines: QuotationLine[] = [line()]) {
 
 /** The gear. Radix opens it on pointerDown, not click. */
 async function openGear() {
-  fireEvent.pointerDown(await screen.findByRole('button', { name: 'Quotation actions' }), {
+  fireEvent.pointerDown(await screen.findByRole('button', { name: 'Proposal actions' }), {
     button: 0,
     ctrlKey: false,
   });
@@ -644,7 +644,7 @@ describe('QuotationDocumentClient Edit quotation (#1341)', () => {
     expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
     await pressEdit();
 
-    expect(screen.queryByRole('button', { name: 'Save quotation' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save proposal' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull();
     expect(screen.queryByLabelText('Your Ref')).toBeNull();
     expect(screen.queryByRole('button', { name: /Add a line/i })).toBeNull();
@@ -893,7 +893,7 @@ describe('QuotationDocumentClient queued exports', () => {
     // no revision, so there is nothing for it to count and it is not rendered.
     getQuotationDocument.mockResolvedValue(quotationDocument());
     const { unmount } = renderScreen();
-    await screen.findByRole('button', { name: 'Quotation actions' });
+    await screen.findByRole('button', { name: 'Proposal actions' });
     expect(fetchDownloadsForEntity).not.toHaveBeenCalled();
     unmount();
 
@@ -1359,7 +1359,7 @@ function primaryButtons() {
 }
 
 async function screenReady() {
-  await screen.findByRole('button', { name: 'Quotation actions' });
+  await screen.findByRole('button', { name: 'Proposal actions' });
 }
 
 describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {

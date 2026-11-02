@@ -261,6 +261,7 @@ export function useQuotationDocumentActions({
         open={signing}
         onOpenChange={setSigning}
         signatoryName={document.signatory_name}
+        noun={noun.toLowerCase()}
         isSaving={mutations.sign.isPending}
         onSign={async (body) => {
           try {

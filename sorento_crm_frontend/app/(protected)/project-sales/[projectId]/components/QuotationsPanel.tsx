@@ -58,7 +58,7 @@ function QuotationRowActions({
   });
   return (
     <div onClick={(event) => event.stopPropagation()}>
-      <RowActionsMenu actions={actions} ariaLabel="quotation" />
+      <RowActionsMenu actions={actions} ariaLabel={documentNoun(document).toLowerCase()} />
       {dialogs}
     </div>
   );
