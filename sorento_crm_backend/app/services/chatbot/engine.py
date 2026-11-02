@@ -1490,6 +1490,9 @@ class _SpanPrep:
     # Fix round 6: a party word the untyped read placed on a supplier AND a customer -> its best supplier row id, so a
     # supplier-hinted word with no id still binds (with its customers beside it) and is asked.
     party_suppliers: dict[str, str] = field(default_factory=dict)
+    # Review round 5-6 (B1): span text -> every (list, row id, line) a span reading named, so the untyped party read
+    # adds to what the span pass found instead of replacing it.
+    span_rows: dict[str, list[tuple[str, str, str]]] = field(default_factory=dict)
 
 
 def _span_override(db: Session, envelope: Envelope, *, dry_run: bool) -> str | None:
@@ -1660,6 +1663,20 @@ def _supplier_spans(
     return out
 
 
+def _row_line(row: lookup_lists.LookupRow) -> str:
+    return _supplier_line(row) if row.list_name == "supplier" else row.label
+
+
+def _span_rows(resolutions: list[list_resolver.Resolution]) -> dict[str, list[tuple[str, str, str]]]:
+    out: dict[str, list[tuple[str, str, str]]] = {}
+    for res in resolutions:
+        if not _names_rows(res):
+            continue
+        held = out.setdefault(res.span.text, [])
+        held.extend(x for x in ((c.row.list_name, str(c.row.key), _row_line(c.row)) for c in res.candidates) if x not in held)
+    return out
+
+
 def _supplier_customers(resolutions: list[list_resolver.Resolution]) -> dict[str, list[tuple[str, str]]]:
     """Fix round 6: per supplier row a span placed, the customer rows the same span named too (by `_names_rows`'s
     rule): the span is a name on both sides."""
@@ -1692,8 +1709,9 @@ def _span_kinds(resolutions: list[list_resolver.Resolution]) -> dict[str, frozen
 
 
 def _both_side_words(verdict: dict[str, Any], prep: Any) -> dict[str, Any]:
-    """Fix round 6: a supplier-hinted word on both sides with no grouped supplier id gets its best supplier id, so
-    `resolve_gate.bind_span_suppliers` binds it with the same name's customers beside it and the kind pick asks."""
+    """Fix round 6: a party word on both sides (`party_suppliers`), hinted customer or supplier, is bound as its best
+    supplier id unless it already carries a grouped supplier id, so `resolve_gate.bind_span_suppliers` binds it with
+    the same name's customers beside it and the kind pick asks "customer or supplier?"."""
     both = (getattr(prep, "party_suppliers", None) or {}) if prep is not None else {}
     groups = (getattr(prep, "supplier_groups", None) or {}) if prep is not None else {}
     if not both:
@@ -1704,10 +1722,15 @@ def _both_side_words(verdict: dict[str, Any], prep: Any) -> dict[str, Any]:
         text = jsc.nullish_str(e.get("raw")).strip() if isinstance(e, dict) else ""
         key = next((k for t, k in both.items() if text and t.casefold() == text.casefold()), None)
         if (
-            key is not None and e.get("hint") == "supplier" and e.get("current_message") is not False
-            and jsc.nullish_str(e.get("canonical_code")).strip() not in groups
+            key is not None and e.get("hint") in ("customer", "supplier") and e.get("current_message") is not False
+            and not (e.get("hint") == "supplier" and jsc.nullish_str(e.get("canonical_code")).strip() in groups)
         ):
-            out.append({**e, "canonical_code": key})
+            # Either hint (review S1: "kimlan" hinted customer, also a supplier): bound as the supplier with the same
+            # name's customers beside it, so the kind pick asks.
+            customers = [c for c, _n in ((getattr(prep, "supplier_customers", None) or {}).get(key) or [])]
+            # The word's own customers ride on it, so the kind pick's customer option binds THIS word's customer
+            # (review B2: never every customer the turn matched).
+            out.append({**e, "hint": "supplier", "canonical_code": key, "party_customers": customers})
             changed = True
         else:
             out.append(e)
@@ -1759,24 +1782,37 @@ def _with_party_readings(verdict: dict[str, Any], prep: "_SpanPrep | None") -> N
     if not spans:
         return
     party_rows = [r for r in prep.rows if r.list_name in ("customer", "supplier")]
-    readings = [r for r in list_resolver.resolve(spans, party_rows, embed=None) if r.status in ("resolved", "ambiguous")]
+    readings = [r for r in list_resolver.resolve(spans, party_rows, embed=None) if _names_rows(r)]
     if not readings:
         return
-    for key, group in _supplier_groups(readings).items():
-        prep.supplier_groups.setdefault(key, group)
-    for text, key in _supplier_spans(readings).items():
-        prep.supplier_spans.setdefault(text, key)
-    untyped = _span_kinds(readings)
-    prep.span_kinds = {
-        **{t: k for t, k in (prep.span_kinds or {}).items() if t.casefold() not in {u.casefold() for u in untyped}},
-        **untyped,
-    }
-    for key, customers in _supplier_customers(readings).items():
-        prep.supplier_customers.setdefault(key, customers)
+
+    def _same(table: dict[str, Any], text: str) -> list[str]:
+        return [t for t in table if t.casefold() == text.casefold()]
+
     for res in readings:
-        best = next((c for c in res.candidates if c.row.list_name == "supplier"), None)
-        if best is not None and _names_rows(res) and any(c.row.list_name == "customer" for c in res.candidates):
-            prep.party_suppliers.setdefault(res.span.text, str(best.row.key))
+        text = res.span.text
+        covered = _same(prep.span_kinds or {}, text)
+        if not covered:
+            # The span pass placed nothing for this word (67b179ee: skipped as a product code): the read decides.
+            for key, group in _supplier_groups([res]).items():
+                prep.supplier_groups.setdefault(key, group)
+            for t, key in _supplier_spans([res]).items():
+                prep.supplier_spans.setdefault(t, key)
+        rows = [r for t in _same(prep.span_rows or {}, text) for r in prep.span_rows[t]]
+        rows += [x for x in ((c.row.list_name, str(c.row.key), _row_line(c.row)) for c in res.candidates) if x not in rows]
+        kinds = frozenset(lst for lst, _k, _l in rows if lst in ("customer", "supplier")) | frozenset(
+            k for t in covered for k in prep.span_kinds[t]
+        )
+        prep.span_kinds = {**{t: k for t, k in prep.span_kinds.items() if t not in covered}, text: kinds}
+        if {"customer", "supplier"} <= kinds:
+            # A name on both sides (a span or the read named rows of each): asked, never assumed.
+            suppliers = [(k, line) for lst, k, line in rows if lst == "supplier"]
+            customers = [(k, line) for lst, k, line in rows if lst == "customer"]
+            prep.party_suppliers.setdefault(text, suppliers[0][0])
+            for key, _line in suppliers:
+                prep.supplier_groups.setdefault(key, suppliers)
+                held = prep.supplier_customers.setdefault(key, [])
+                held.extend(c for c in customers if c not in held)
 
 
 def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> dict[str, Any]:
@@ -1814,7 +1850,10 @@ def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> d
             continue
         # Fix round 5: a hint some reading of the span backs (the span list placed it on rows of that kind too, e.g.
         # 太阳 meaning "Sun" on Sun* brand rows, hinted brand) is the parser's call and stands.
-        if e.get("hint") != "supplier" and e.get("hint") in (getattr(prep, "span_kinds", None) or {}).get(text, frozenset()):
+        backed = next(
+            (k for t, k in (getattr(prep, "span_kinds", None) or {}).items() if t.casefold() == text.casefold()), frozenset()
+        )
+        if e.get("hint") != "supplier" and e.get("hint") in backed:
             out.append(e)
             continue
         out.append({**e, "hint": "supplier", "canonical_code": key})
@@ -1894,6 +1933,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 )
                 prep.span_kinds = _span_kinds([*resolutions, *readings])
                 prep.supplier_customers = _supplier_customers([*resolutions, *readings])
+                prep.span_rows = _span_rows([*resolutions, *readings])
                 span_keys = {h.row.key for hs in hits.values() for h in hs}
                 near_rows: list[dict[str, Any]] = []
                 # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling

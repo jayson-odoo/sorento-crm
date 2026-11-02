@@ -1492,3 +1492,75 @@ def test_a_word_the_resolver_retyped_to_a_supplier_moves_the_ask_to_the_purchase
     calls = _po_calls(captured)
     assert calls and calls[0].get("supplier_ids") == [ids["other"]], (reply, captured)
 
+
+
+# Review of rounds 5-6.
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_an_exact_supplier_name_inside_a_longer_customer_name_is_still_asked(session_factory, monkeypatch, hint):
+    """B1: 'ah hock' IS the supplier AH HOCK and sits inside the customer AH HOCK HARDWARE; the untyped read alone keeps
+    only the exact row. Both names are the word's: asked, never assigned to one side (S1: whatever the parser's hint)."""
+    _office_world(session_factory)
+    _seed_customer(session_factory, "ZZT AH HOCK HARDWARE SDN BHD")
+    _seed_named(session_factory, "ZZT AH HOCK", "ZZTSUP-AH01")
+    qf = _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        entities=[{"raw": "zzt ah hock", "hint": hint, "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "outstanding for zzt ah hock", list_resolver.Span("zzt ah hock", "customer"),
+        set(), qf=qf,
+    )
+    assert not _fetch_calls(captured), (reply, captured)
+    assert "(customer)" in reply and "(supplier)" in reply, reply
+
+
+def test_the_customer_pick_reaches_the_report_with_that_customer(session_factory, monkeypatch):
+    """S4: the 'customer' pick over the orionis question settles THAT customer: the report ask that follows filters
+    by its id."""
+    _office_world(session_factory)
+    customer = _seed_customer(session_factory, f"{ORIONIS} (PROJECT)")
+    _seed_named(session_factory, ORIONIS, "ZZTSUP-OR01")
+    owner = _parser_output(
+        domain_hint="purchase_order", intent_hint="check_po", order_status="outstanding", status="outstanding",
+        entities=[{"raw": "orionis", "hint": "supplier", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, _c, _s = _span_turn(
+        session_factory, monkeypatch, "Outstandinf for orionis", list_resolver.Span("orionis", "product_code"), set(),
+        qf=owner,
+    )
+    position = next(int(ln.split(". ", 1)[0]) for ln in reply.splitlines() if "(customer)" in ln)
+    pick = _parser_output(message_type="answer", intent_hint=None, domain_hint=None, entities=[], reference_positions=[position])
+    reply, captured, _s = _span_turn(session_factory, monkeypatch, str(position), list_resolver.Span(str(position)), set(), qf=pick)
+    basis = _parser_output(
+        message_type="answer", intent_hint="check_order", domain_hint="order", order_status="outstanding",
+        basis="pending_delivery", entities=[], reference_positions=[2],
+    )
+    if report_kind_asked := ("Undelivered orders or pending delivery?" in reply):
+        reply, captured, _s = _span_turn(
+            session_factory, monkeypatch, "Pending delivery", list_resolver.Span("Pending delivery"), set(), qf=basis,
+        )
+    asks = [a for n, a in captured if n in ORDER_TOOLS]
+    assert asks and customer in (asks[0].get("customer_ids") or []), (report_kind_asked, reply, captured)
+
+
+def test_a_meaning_placed_span_reaches_the_supplier_by_its_own_text_in_a_turn(session_factory, monkeypatch):
+    """S4: the text reading is wired into the turn: 太阳 glossed "Sun" (a SUN-named customer matches the gloss as a word)
+    still asks which TAIYANG supplier."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    _office_world(session_factory)
+    _seed_twin(session_factory)
+    _seed_customer(session_factory, "ZZT SUN CREST TRANSPORT SDN BHD")
+    qf = _parser_output(
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        entities=[{"raw": NATIVE, "hint": "customer", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    span = list_resolver.Span(NATIVE, "brand", meaning="Sun")
+    reply, captured, seen = _span_turn(
+        session_factory, monkeypatch, "outstanding for 太阳", span, {NATIVE, SUPPLIER, "ZZT TAIYANG SANITARY CO LTD"}, qf=qf,
+    )
+    assert ll.header("supplier") in seen[-1], seen[-1]
+    assert report_ask.KIND_QUESTION not in reply and not _fetch_calls(captured), (reply, captured)
+    assert len([ln for ln in reply.splitlines() if ln[:1].isdigit()]) == 2, reply

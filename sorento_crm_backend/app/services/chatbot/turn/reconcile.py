@@ -97,12 +97,33 @@ class ReconcileResult:
         self.queued_kind_picks: list[list[dict[str, Any]]] = []
 
 
+def _is_row_id(value: Any) -> bool:
+    """A row id (a uuid), never a code or a printed label."""
+    import uuid
+
+    try:
+        return isinstance(value, str) and str(uuid.UUID(value)) == value.lower()
+    except ValueError:
+        return False
+
+
+def _option_rows(entity: dict[str, Any], kind: str, hint_kind: Any) -> list[str]:
+    """SUPPLIER-ASK fix round 6: the rows a "customer or supplier?" option binds, from the word itself: its own row id
+    for the kind it carries one for, and for `customer` the one customer the same word named on a both-sides read
+    (`party_customers`, `engine._both_side_words`). Several, or none: [] and the word is resolved again (asked)."""
+    if kind == hint_kind and _is_row_id(entity.get("canonical_code")):
+        return [entity["canonical_code"]]
+    if kind == "customer":
+        rows = [r for r in (entity.get("party_customers") or []) if _is_row_id(r)]
+        return rows if len(rows) == 1 else []
+    return []
+
+
 def apply_reconciliation(
     entities: list[dict[str, Any]],
     resolved: dict[str, dict[str, int]] | None,
     exact: dict[str, dict[str, int]] | None = None,
     typed: str | None = None,
-    rows: dict[str, list[str]] | None = None,
 ) -> ReconcileResult:
     """`exact` is the same map counting only the resolver's EXACT whole-token hits (the token
     IS that row's code or name, `turn_runtime.resolve_kinds`); None treats every hit as one (a
@@ -175,9 +196,11 @@ def apply_reconciliation(
                     "raw": raw,
                     "code": raw,
                     "uuid": None,
-                    # SUPPLIER-ASK fix round 6: a party kind carries the rows the resolve placed (`rows`), so the
-                    # pick binds the record; every other kind is resolved again from its word, as before.
-                    "uuids": list((rows or {}).get(k) or []),
+                    # SUPPLIER-ASK fix round 6: the option of the kind the word already carries a row id for
+                    # (a both-sides supplier word bound by id, `engine._both_side_words`) binds that row, so a
+                    # supplier pick never lists the PO book with no supplier; every other option is resolved again
+                    # from its word, as before (several customers under one word still ask which).
+                    "uuids": _option_rows(e, k, hint_kind),
                     "entity_type": k,
                     "payload": {"kind": k},
                 }

@@ -1945,6 +1945,11 @@ def supplier_ask_reads_purchase_orders(verdict: dict[str, Any]) -> dict[str, Any
     if "supplier" not in hints or hints & ORDER_PARTY_HINTS:
         return verdict
     out = {**verdict, "domain_hint": "purchase_order", "intent_hint": "check_po", "order_status": None}
+    # Fix round 6: the order-side status set aside, so a "customer or supplier?" pick of the customer answers the same
+    # outstanding ask on the sales side (`turn/apply._reconcile_step`).
+    set_aside = verdict.get("order_status") or verdict.get("status")
+    if set_aside:
+        out["sales_side_status"] = set_aside
     if isinstance(verdict.get("asks"), list):
         # The plan reads `asks` before `domain_hint` (`turn/apply.py`), as `_dealer_cost_as_promotion` found.
         out["asks"] = [

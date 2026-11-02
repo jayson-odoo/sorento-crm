@@ -965,7 +965,11 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
                 for key, value in held_ask.items():
                     if verdict.get(key) in (None, "", []):
                         verdict[key] = value
-            if pending.kind == "customer_pick" and isinstance(verdict, dict):
+            if isinstance(verdict, dict) and (
+                pending.kind == "customer_pick"
+                # SUPPLIER-ASK fix round 6: "orionis (customer)" picked over an outstanding ask is that ask's customer.
+                or (pending.kind == "kind_pick" and kind_for_focus == "customer")
+            ):
                 # Only a customer pick: the picked row is the held report ask's customer, a ranking's or an outstanding
                 # ask's (REPORT-UNIFY), (engine key, never the parser's).
                 verdict["ranking_pick"] = True
@@ -973,10 +977,15 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
         # the parser read as a supplier's: the sales side; the supplier: the purchase side).
         picked_side = _side_of_the_parties(
             [{"hint": kind_for_focus, "current_message": True}], {"domain_hint": (focus.domains or [None])[0]}
-        ) if kind_for_focus and len(set(focus.domains or [])) == 1 else None
+        ) if kind_for_focus and not own_domain and len(set(focus.domains or [])) == 1 else None
         if picked_side is not None:
             focus.domains = [picked_side]
             trace.rules_fired.append(f"party_side_{picked_side}")
+        if pending.kind == "kind_pick" and kind_for_focus in _PARTY_KINDS:
+            # The word is the kind picked: the other party kind it was held as on the asking turn is dropped, so a
+            # customer pick never probes the held supplier id again (review round 5-6).
+            for other in _PARTY_KINDS - {kind_for_focus}:
+                _set_kind_field(focus, other, [])
         # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND ambiguous token
         # queued on THIS pick's own payload is asked NEXT, once this one is
         # answered - never the same options re-printed (`with_answered_positions`,
@@ -1538,7 +1547,7 @@ def _reconcile_step(
     typed: str | None = None,
     candidates: dict[str, list[dict[str, Any]]] | None = None,
 ):
-    result = apply_reconciliation(entities, resolved, exact=exact, typed=typed, rows=_party_uuids(candidates))
+    result = apply_reconciliation(entities, resolved, exact=exact, typed=typed)
     trace.reconciled = result.reconciled
 
     if result.kind_pick_options is not None and _named_teams(verdict):
@@ -1551,6 +1560,21 @@ def _reconcile_step(
         # asked in turn once this one is answered (`_answer_pending`'s kind_pick
         # arm below reads it) - never overwritten, never silently dropped.
         payload = {"queued_kind_picks": result.queued_kind_picks} if result.queued_kind_picks else {}
+        # SUPPLIER-ASK fix round 6: a "customer or supplier?" pick answers the asking turn's ask; its status rides on
+        # the question like every roster's (`_answer_pending` reads `payload["status"]`), so a customer picked over an
+        # outstanding ask is the outstanding report, never a fresh sales question.
+        asked_status = verdict.get("order_status") or verdict.get("status") or verdict.get("sales_side_status")
+        if isinstance(asked_status, str) and asked_status and any(
+            o.get("entity_type") in _PARTY_KINDS for o in result.kind_pick_options
+        ):
+            payload["status"] = asked_status
+            # The held ask rides too (`_answer_pending` merges `ranking_ask` into the answering verdict): an outstanding
+            # ask stays the outstanding report (its own reveal), never a bare sales ranking.
+            held = {k: verdict.get(k) for k in ("capability_from", "report_breakdown", "basis") if verdict.get(k)}
+            if not held and asked_status in _OUTSTANDING_STATUSES:
+                held = {"capability_from": "outstanding", "report_breakdown": True}
+            if held:
+                payload["ranking_ask"] = held
         # STALE-EXTRA-CARRY (prod, 6-7 Oct 2026): stamped with the turn that asks it,
         # like every other ask `apply` mints. A None stamp is never "older than" a
         # stock task touched later (`_stock_task_is_the_current_question` needs an
@@ -1571,23 +1595,14 @@ def _reconcile_step(
     return result.entities, domain_override, None
 
 
-def _party_uuids(candidates: dict[str, list[dict[str, Any]]] | None) -> dict[str, list[str]]:
-    """SUPPLIER-ASK fix round 6: per party kind, the row ids this turn's resolve placed, so a "customer or supplier?"
-    pick binds the record it names (a supplier picked by its word alone listed the PO book with no supplier)."""
-    out: dict[str, list[str]] = {}
-    for kind in _PARTY_KINDS:
-        ids = [c.get("uuid") for c in (candidates or {}).get(kind) or [] if isinstance(c, dict) and c.get("uuid")]
-        if ids:
-            out[kind] = list(dict.fromkeys(str(i) for i in ids))
-    return out
-
-
 #: SUPPLIER-ASK fix round 6 (owner, 2 Nov 2026: "when we identify the entity is a customer, it is obviously
 #: outstanding sales order or delivery order on the sales side; if it is a supplier, it is obviously the purchase
 #: side"): the order-side domains and the purchase side.
 _SALES_SIDE = frozenset({"order", "sales"})
 _PURCHASE_SIDE = "purchase_order"
 _PARTY_KINDS = frozenset({"customer", "supplier"})
+#: The outstanding statuses (`lanes/business/report_ask.OUTSTANDING_STATUSES`, restated: this package imports no lane).
+_OUTSTANDING_STATUSES = frozenset({"outstanding", "outstanding_both", "so_outstanding", "do_outstanding"})
 
 
 def _side_of_the_parties(entities: list[dict[str, Any]], verdict: dict[str, Any]) -> str | None:
