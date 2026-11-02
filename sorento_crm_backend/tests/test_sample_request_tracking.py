@@ -92,14 +92,6 @@ def test_feasible_drops_a_stray_proposed_date(world):
     assert res.json()["proposed_delivery_date"] is None
 
 
-def test_no_requested_date_means_no_question(world):
-    """Edge: a request without a requested delivery date starts processing as before."""
-    rid = _submitted(world, delivery_date=None)
-    res = _move(world, rid, "processing")
-    assert res.status_code == 200, res.text
-    assert res.json()["date_feasible"] is None
-
-
 # ------------------------------------------------------------------ rule 3: the salesperson sees it
 
 

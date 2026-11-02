@@ -42,6 +42,28 @@ CANCELLED = "cancelled"
 #: What the coordinator queue shows until a filter says otherwise (AC-SR-51).
 DEFAULT_OPEN = (SUBMITTED, PROCESSING, CUSTOMER_CONFIRMED)
 
+#: PS-SAMPLE-TRACKING rule 1: the two stages, by status KEY. Draft, Cancelled and any key an
+#: admin adds sit outside both. The graph itself is unchanged (owner Q2 a, 2 Nov).
+STAGE_PROCESSING = "processing"
+STAGE_DELIVERY = "delivery"
+STAGES = {
+    SUBMITTED: STAGE_PROCESSING,
+    PROCESSING: STAGE_PROCESSING,
+    CUSTOMER_CONFIRMED: STAGE_PROCESSING,
+    DELIVERED: STAGE_DELIVERY,
+}
+#: Where the team may still change its date answer (after Start processing, before Delivered).
+DATE_ANSWER_OPEN = (PROCESSING, CUSTOMER_CONFIRMED)
+
+
+def stage_for(key: Optional[str]) -> Optional[str]:
+    return STAGES.get(key or "")
+
+
+def stage_keys(stages: Iterable[str]) -> List[str]:
+    wanted = set(stages)
+    return [key for key, stage in STAGES.items() if stage in wanted]
+
 HEADER_TEXT = (
     "customer_name",
     "project_title",
@@ -519,7 +541,14 @@ def update_internal(
     db.flush()
 
 
-def _record(db: Session, req: SampleRequest, *, actor: Actor, label: str) -> None:
+def _record(
+    db: Session,
+    req: SampleRequest,
+    *,
+    actor: Actor,
+    label: str,
+    template: str = "sample_request_moved",
+) -> None:
     """One project activity row per move, when the request has a project (AC-SR-34)."""
     if not req.project_id:
         return
@@ -531,7 +560,7 @@ def _record(db: Session, req: SampleRequest, *, actor: Actor, label: str) -> Non
     activity.record_project_event(
         db,
         project=project,
-        template="sample_request_moved",
+        template=template,
         payload={"request_id": str(req.id), "request_no": req.request_no, "status": label},
         actor_id=actor.user_id,
         body_text=f"Sample request {req.request_no}: {label}",
@@ -555,6 +584,76 @@ def submit(db: Session, req: SampleRequest, *, actor: Actor) -> None:
     _record(db, req, actor=actor, label=_label(db, SUBMITTED))
 
 
+def _date_error(code: str, field: str, message: str) -> AppException:
+    return AppException(status_code=422, message=message, code=code, details={"field": field})
+
+
+def _apply_date_answer(
+    req: SampleRequest,
+    *,
+    actor: Actor,
+    feasible: Optional[bool],
+    proposed: Optional[date],
+    note: Optional[str],
+) -> None:
+    """Rule 2: Yes, or No with a proposed date (today or later). One-way: the salesperson
+    sees it, nothing waits for them (owner Q1 a)."""
+    if feasible is None:
+        raise _date_error(
+            "SAMPLE_REQUEST_DATE_ANSWER_REQUIRED",
+            "date_feasible",
+            "Say whether the requested delivery date can be met.",
+        )
+    if feasible:
+        proposed = None
+    elif proposed is None:
+        raise _date_error(
+            "SAMPLE_REQUEST_PROPOSED_DATE_REQUIRED",
+            "proposed_delivery_date",
+            "Enter the date the sample team can deliver.",
+        )
+    elif proposed < today_in_malaysia():
+        raise _date_error(
+            "SAMPLE_REQUEST_PROPOSED_DATE_PAST",
+            "proposed_delivery_date",
+            "The proposed date cannot be in the past.",
+        )
+    req.date_feasible = bool(feasible)
+    req.proposed_delivery_date = proposed
+    req.date_note = _clean(note)
+    req.date_answered_at = datetime.utcnow()
+    req.date_answered_by = actor.user_id
+
+
+def _answer_label(req: SampleRequest) -> str:
+    if req.date_feasible:
+        return "the sample team can meet the requested date"
+    return f"the sample team proposes {req.proposed_delivery_date:%d %b %Y}"
+
+
+def answer_date(
+    db: Session,
+    req: SampleRequest,
+    *,
+    actor: Actor,
+    feasible: Optional[bool],
+    proposed: Optional[date],
+    note: Optional[str],
+) -> None:
+    """Change the date answer while the request is in Stage 1, after Start processing."""
+    if not actor.can_process:
+        raise _forbidden("Only the sample team can answer the delivery date.")
+    if status_key(db, req) not in DATE_ANSWER_OPEN:
+        raise AppException(
+            status_code=409,
+            message="The delivery date can be answered only while the request is being processed.",
+            code="SAMPLE_REQUEST_DATE_ANSWER_CLOSED",
+        )
+    _apply_date_answer(req, actor=actor, feasible=feasible, proposed=proposed, note=note)
+    db.flush()
+    _record(db, req, actor=actor, label=_answer_label(req), template="sample_request_date_answered")
+
+
 def _add_loan(start: date, value: int, unit: str) -> date:
     return start + (relativedelta(months=value) if unit == "months" else relativedelta(days=value))
 
@@ -567,6 +666,9 @@ def move(
     to: str,
     on: Optional[date] = None,
     reason: Optional[str] = None,
+    date_feasible: Optional[bool] = None,
+    proposed_delivery_date: Optional[date] = None,
+    date_note: Optional[str] = None,
 ) -> None:
     frm = status_key(db, req)
     if to == CANCELLED and frm in (DRAFT, SUBMITTED):
@@ -594,6 +696,16 @@ def move(
             message="Enter the reason for cancelling.",
             code="SAMPLE_REQUEST_REASON_REQUIRED",
             details={"field": "reason"},
+        )
+
+    # Rule 2: Start processing carries the date answer (submit already requires the date).
+    if to == PROCESSING:
+        _apply_date_answer(
+            req,
+            actor=actor,
+            feasible=date_feasible,
+            proposed=proposed_delivery_date,
+            note=date_note,
         )
 
     _set_status(db, req, to)
@@ -888,7 +1000,9 @@ def quotation_prefill(
 LIST_SORTS = {
     "request_no": SampleRequest.request_no,
     "request_date": SampleRequest.request_date,
-    "delivery_date": SampleRequest.delivery_date,
+    # The Delivery date column shows the team's proposed date when it has one (rule 3), so it
+    # sorts by that.
+    "delivery_date": func.coalesce(SampleRequest.proposed_delivery_date, SampleRequest.delivery_date),
     "submitted_at": SampleRequest.submitted_at,
     # The debtor's name when there is one, else the typed name (set in `list_for`).
     "customer_name": None,
@@ -909,6 +1023,7 @@ def list_for(
     *,
     actor: Actor,
     statuses: Optional[List[str]] = None,
+    stages: Optional[List[str]] = None,
     project_id: Optional[str] = None,
     contact_id: Optional[str] = None,
     salesperson_id: Optional[str | Sequence[str]] = None,
@@ -937,6 +1052,10 @@ def list_for(
         query = query.filter(SampleRequest.salesperson_id.in_(salespeople))
     if statuses:
         ids = [s.id for k, s in _statuses(db).items() if k in statuses]
+        query = query.filter(SampleRequest.status_id.in_(ids))
+    if stages:
+        keys = stage_keys(stages)
+        ids = [s.id for k, s in _statuses(db).items() if k in keys]
         query = query.filter(SampleRequest.status_id.in_(ids))
     needle = (q or "").strip()
     if needle:
@@ -968,7 +1087,7 @@ def list_for(
     else:
         # The needed date, soonest first.
         query = query.order_by(
-            SampleRequest.delivery_date.asc().nulls_last(),
+            LIST_SORTS["delivery_date"].asc().nulls_last(),
             SampleRequest.request_no.asc(),
         )
     rows = query.offset((page - 1) * limit).limit(limit).all()
@@ -1023,6 +1142,9 @@ def _row_common(req: SampleRequest, ctx: Dict[str, Any]) -> Dict[str, Any]:
         "ship_to_name": req.ship_to_name,
         "salesperson_name": (user.name if user else None),
         "board_mounting": bool(req.board_mounting),
+        "stage": stage_for(key),
+        "date_feasible": req.date_feasible,
+        "proposed_delivery_date": req.proposed_delivery_date,
     }
 
 
@@ -1065,6 +1187,12 @@ def _source_ref(db: Session, req: SampleRequest) -> Optional[str]:
         else None
     )
     return quotation_label(doc_no, issue_no)
+
+
+def _user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
+    if not user_id:
+        return None
+    return db.query(User.name).filter(User.id == user_id).scalar()
 
 
 def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
@@ -1119,6 +1247,9 @@ def serialize_detail(db: Session, req: SampleRequest) -> Dict[str, Any]:
             "return_due": req.return_due,
             "cancelled_at": req.cancelled_at,
             "cancel_reason": req.cancel_reason,
+            "date_note": req.date_note,
+            "date_answered_at": req.date_answered_at,
+            "date_answered_by_name": _user_name(db, req.date_answered_by),
             "consignment_no": req.consignment_no,
             "po_no": req.po_no,
             "created_at": req.created_at,

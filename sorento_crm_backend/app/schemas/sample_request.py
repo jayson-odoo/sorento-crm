@@ -46,6 +46,16 @@ class SampleRequestMove(BaseModel):
     to: str
     date: Optional[Date] = None
     reason: Optional[str] = None
+    #: Start processing only (PS-SAMPLE-TRACKING rule 2).
+    date_feasible: Optional[bool] = None
+    proposed_delivery_date: Optional[Date] = None
+    date_note: Optional[str] = Field(None, max_length=255)
+
+
+class SampleRequestDateAnswer(BaseModel):
+    date_feasible: Optional[bool] = None
+    proposed_delivery_date: Optional[Date] = None
+    date_note: Optional[str] = Field(None, max_length=255)
 
 
 class SampleRequestInternal(BaseModel):

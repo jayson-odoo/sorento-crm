@@ -118,6 +118,21 @@ class SampleRequest(Base, CompanyScopedMixin):
     consignment_no = Column(String(80), nullable=True)
     po_no = Column(String(80), nullable=True)
 
+    #: PS-SAMPLE-TRACKING Stage 1: the sample team's answer to "can we meet `delivery_date`?",
+    #: given on Start processing. NULL = not asked (no requested date) or not answered yet.
+    date_feasible = Column(Boolean, nullable=True)
+    #: The team's date when it cannot meet the requested one (NULL when `date_feasible`).
+    proposed_delivery_date = Column(Date, nullable=True)
+    date_note = Column(String(255), nullable=True)
+    date_answered_at = Column(DateTime(timezone=False), nullable=True)
+    date_answered_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: PS-SAMPLE-TRACKING Stage 2: the AutoCount DO that delivered it, when one is linked.
+    delivery_order_id = Column(
+        UUID(as_uuid=False), ForeignKey("orders.id", ondelete="SET NULL"), nullable=True
+    )
+
     submitted_at = Column(DateTime(timezone=False), nullable=True)
     confirmed_at = Column(Date, nullable=True)
     delivered_at = Column(Date, nullable=True)
