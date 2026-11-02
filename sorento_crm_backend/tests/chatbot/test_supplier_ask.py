@@ -1564,3 +1564,42 @@ def test_a_meaning_placed_span_reaches_the_supplier_by_its_own_text_in_a_turn(se
     assert ll.header("supplier") in seen[-1], seen[-1]
     assert report_ask.KIND_QUESTION not in reply and not _fetch_calls(captured), (reply, captured)
     assert len([ln for ln in reply.splitlines() if ln[:1].isdigit()]) == 2, reply
+
+
+def test_a_both_sides_word_naming_two_suppliers_never_binds_only_one(session_factory, monkeypatch):
+    """Re-review B-new: two suppliers named ORIONIS and one customer; the supplier pick lists both suppliers (or asks
+    which), never only the first."""
+    _office_world(session_factory)
+    _seed_customer(session_factory, f"{ORIONIS} (PROJECT)")
+    s1 = _seed_named(session_factory, ORIONIS, "ZZTSUP-OR01")
+    s2 = _seed_named(session_factory, ORIONIS, "ZZTSUP-OR02")
+    owner = _parser_output(
+        domain_hint="purchase_order", intent_hint="check_po", order_status="outstanding", status="outstanding",
+        entities=[{"raw": "orionis", "hint": "supplier", "canonical_code": None, "current_message": True, "confident": True}],
+    )
+    reply, _c, _s = _span_turn(
+        session_factory, monkeypatch, "Outstandinf for orionis", list_resolver.Span("orionis", "product_code"), set(),
+        qf=owner,
+    )
+    position = next(int(ln.split(". ", 1)[0]) for ln in reply.splitlines() if "(supplier)" in ln)
+    pick = _parser_output(message_type="answer", intent_hint=None, domain_hint=None, entities=[], reference_positions=[position])
+    reply, captured, _s = _span_turn(session_factory, monkeypatch, str(position), list_resolver.Span(str(position)), set(), qf=pick)
+    calls = _po_calls(captured)
+    asked = len([ln for ln in reply.splitlines() if ln[:1].isdigit()]) >= 2
+    assert (calls and set(calls[0].get("supplier_ids") or []) == {s1, s2}) or (asked and not calls), (reply, captured)
+
+
+def test_a_kind_pick_drops_only_the_picked_word_from_the_other_party_kind():
+    """Re-review S-a: the other party kind loses only the picked word; another held party stays."""
+    from types import SimpleNamespace
+
+    from app.services.chatbot.turn import apply as apply_mod
+    from app.services.chatbot.turn.state import Focus
+
+    focus = Focus()
+    apply_mod._set_kind_field(focus, "supplier", [{"raw": "orionis", "uuid": "a"}, {"raw": "jinbai", "uuid": "b"}])
+    held = apply_mod._kind_rows(focus, "supplier")
+    assert [r["raw"] for r in held] == ["orionis", "jinbai"]
+    apply_mod._drop_words(focus, "supplier", {"orionis"})
+    assert [r["raw"] for r in apply_mod._kind_rows(focus, "supplier")] == ["jinbai"]
+    assert SimpleNamespace

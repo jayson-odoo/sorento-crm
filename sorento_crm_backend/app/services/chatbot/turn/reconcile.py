@@ -111,6 +111,10 @@ def _option_rows(entity: dict[str, Any], kind: str, hint_kind: Any) -> list[str]
     """SUPPLIER-ASK fix round 6: the rows a "customer or supplier?" option binds, from the word itself: its own row id
     for the kind it carries one for, and for `customer` the one customer the same word named on a both-sides read
     (`party_customers`, `engine._both_side_words`). Several, or none: [] and the word is resolved again (asked)."""
+    if kind == "supplier":
+        rows = [r for r in (entity.get("party_suppliers") or []) if _is_row_id(r)]
+        if rows:
+            return rows  # every supplier the word named; several are then narrowed or asked by purchase_order
     if kind == hint_kind and _is_row_id(entity.get("canonical_code")):
         return [entity["canonical_code"]]
     if kind == "customer":

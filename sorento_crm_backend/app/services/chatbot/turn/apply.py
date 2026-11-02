@@ -138,6 +138,24 @@ def _code_of_entity(entity: dict[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+def _kind_rows(focus: Focus, kind: str) -> list[Any]:
+    """The rows the `kind` slot of `focus` holds (the read side of `_set_kind_field`)."""
+    code_field = _CODE_ONLY_FIELDS.get(kind)
+    if code_field:
+        return [{"raw": c} for c in (getattr(focus, code_field, None) or [])]
+    attr = KIND_FIELD_MAP.get(kind)
+    return list(getattr(focus, attr, None) or []) if attr else list(focus.extra.get(EXTRA_KIND_ALIASES.get(kind, kind)) or [])
+
+
+def _drop_words(focus: Focus, kind: str, words: set[str]) -> None:
+    """SUPPLIER-ASK review round 5-6 (S-a): drop from the `kind` slot only the rows whose word (`raw`) is one of
+    `words` (casefolded); every other row there stays."""
+    held = _kind_rows(focus, kind)
+    kept = [r for r in held if not (isinstance(r, dict) and str(r.get("raw") or "").strip().casefold() in words)]
+    if len(kept) != len(held):
+        _set_kind_field(focus, kind, kept)
+
+
 def _set_kind_field(focus: Focus, kind: str, entities: list[dict[str, Any]]) -> None:
     code_field = _CODE_ONLY_FIELDS.get(kind)
     if code_field:
@@ -982,10 +1000,14 @@ def _answer_pending(state: State, decision: Decision, trace: Trace, verdict: dic
             focus.domains = [picked_side]
             trace.rules_fired.append(f"party_side_{picked_side}")
         if pending.kind == "kind_pick" and kind_for_focus in _PARTY_KINDS:
-            # The word is the kind picked: the other party kind it was held as on the asking turn is dropped, so a
-            # customer pick never probes the held supplier id again (review round 5-6).
+            # The word is the kind picked: the same WORD held as the other party kind on the asking turn is dropped
+            # (only it: an earlier pick or another carried party stays), so a customer pick never probes the held
+            # supplier id again (review round 5-6).
+            picked_words = {
+                str(o.get("raw") or o.get("code") or "").strip().casefold() for o in matched if isinstance(o, dict)
+            } - {""}
             for other in _PARTY_KINDS - {kind_for_focus}:
-                _set_kind_field(focus, other, [])
+                _drop_words(focus, other, picked_words)
         # #1262 slice 8 (F1b siblings), owner ruling 6: a SECOND ambiguous token
         # queued on THIS pick's own payload is asked NEXT, once this one is
         # answered - never the same options re-printed (`with_answered_positions`,
@@ -1567,14 +1589,13 @@ def _reconcile_step(
         if isinstance(asked_status, str) and asked_status and any(
             o.get("entity_type") in _PARTY_KINDS for o in result.kind_pick_options
         ):
-            payload["status"] = asked_status
-            # The held ask rides too (`_answer_pending` merges `ranking_ask` into the answering verdict): an outstanding
-            # ask stays the outstanding report (its own reveal), never a bare sales ranking.
-            held = {k: verdict.get(k) for k in ("capability_from", "report_breakdown", "basis") if verdict.get(k)}
-            if not held and asked_status in _OUTSTANDING_STATUSES:
-                held = {"capability_from": "outstanding", "report_breakdown": True}
-            if held:
-                payload["ranking_ask"] = held
+            # The ONE carry rule a roster pick uses (`pending.asked_report`); an outstanding ask the supplier swap set
+            # aside (`order_status` cleared) also keeps its kind, so it stays the outstanding report (its own reveal),
+            # never a bare sales ranking.
+            payload.update(asked_report({**verdict, "order_status": asked_status}))
+            payload.setdefault("status", asked_status)
+            if asked_status in _OUTSTANDING_STATUSES and "ranking_ask" not in payload:
+                payload["ranking_ask"] = {"capability_from": "outstanding", "report_breakdown": True}
         # STALE-EXTRA-CARRY (prod, 6-7 Oct 2026): stamped with the turn that asks it,
         # like every other ask `apply` mints. A None stamp is never "older than" a
         # stock task touched later (`_stock_task_is_the_current_question` needs an

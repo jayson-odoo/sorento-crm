@@ -1721,16 +1721,18 @@ def _both_side_words(verdict: dict[str, Any], prep: Any) -> dict[str, Any]:
     for e in jsc.array(verdict.get("entities")):
         text = jsc.nullish_str(e.get("raw")).strip() if isinstance(e, dict) else ""
         key = next((k for t, k in both.items() if text and t.casefold() == text.casefold()), None)
-        if (
-            key is not None and e.get("hint") in ("customer", "supplier") and e.get("current_message") is not False
-            and not (e.get("hint") == "supplier" and jsc.nullish_str(e.get("canonical_code")).strip() in groups)
-        ):
+        if key is not None and e.get("hint") in ("customer", "supplier") and e.get("current_message") is not False:
             # Either hint (review S1: "kimlan" hinted customer, also a supplier): bound as the supplier with the same
-            # name's customers beside it, so the kind pick asks.
-            customers = [c for c, _n in ((getattr(prep, "supplier_customers", None) or {}).get(key) or [])]
-            # The word's own customers ride on it, so the kind pick's customer option binds THIS word's customer
-            # (review B2: never every customer the turn matched).
-            out.append({**e, "hint": "supplier", "canonical_code": key, "party_customers": customers})
+            # name's customers beside it, so the kind pick asks. A supplier already carrying a grouped id keeps it.
+            held = jsc.nullish_str(e.get("canonical_code")).strip()
+            bound = held if e.get("hint") == "supplier" and held in groups else key
+            customers = [c for c, _n in ((getattr(prep, "supplier_customers", None) or {}).get(bound) or [])]
+            suppliers = [s for s, _n in (groups.get(bound) or [])] or [bound]
+            # The word's own customers AND suppliers ride on it, so each kind pick option binds THIS word's rows
+            # (review B2 and its supplier side: never every row the turn matched, never one of several suppliers).
+            out.append({
+                **e, "hint": "supplier", "canonical_code": bound, "party_customers": customers, "party_suppliers": suppliers,
+            })
             changed = True
         else:
             out.append(e)
