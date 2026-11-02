@@ -37,16 +37,22 @@ Validity defaults beside the company T&C template, 3a letterhead on page 1, term
 - **B2** On a NEW quotation, Email prefills from the customer's main contact email (the contact
   whose name prefills Attn), Payment Terms and Validity prefill from the active company terms
   template. Every value stays editable for this quotation only.
-- **B3** Cover values other than the terms are read from the quotation as it is now, exactly like
-  today's header (Attn, address, date): page 1 and the price pages can never disagree. The terms
-  come from the issue snapshot, as today.
+- **B3** Everything on the Terms tab is frozen when the quotation is sent: the terms (as today),
+  Payment Terms and Validity are copied onto the issue, and that issue's PDF and sign link always
+  show the copied values, even if the quotation is edited later (security review, 2 Nov: these
+  are what the customer signs). Header-tab values (Attn, Company, Add, Contact, Email, Purpose,
+  Prepared By, the project title in the reference) are read as they are now, exactly like today's
+  header, so page 1 and the price pages can never disagree.
+- **B6** Each new free-text field holds at most 2000 characters.
+- **B7** Prepared By on the Header tab shows the same name the PDF prints: the project
+  salesperson, or the quotation's creator when the project has no salesperson.
 - **B4** Validity is printed and shown, never enforced: the sign link keeps working after it.
 - **B5** Usable and not clipped at 375px and 1280px.
 
 ## C. Terms print (new issues)
 
-- **C1** Terms print as written: a heading line stays a plain (bold) line, not a numbered
-  clause; a blank line keeps its gap; a typed "- " line prints as typed with no number before
+- **C1** Terms print as written: a heading line (bold text or an editor heading H1-H3) stays its
+  own bold line, not a numbered clause and never joined to the next heading; a blank line keeps its gap; a typed "- " line prints as typed with no number before
   it; a bulleted list prints as bullets; a nested list prints nested.
 - **C2** The countersign page shows the same structure as the PDF for the same issue.
 - **C3** Bold, italic and underline survive; every other tag is dropped (scripts and styles with

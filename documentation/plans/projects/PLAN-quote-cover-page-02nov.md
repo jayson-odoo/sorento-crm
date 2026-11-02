@@ -72,10 +72,13 @@ NULL DEFAULT 1`; existing rows get 1 from the default, `issue()` sets `COVER_LAY
 (today's layout) unless it opts in. Every branch reads `layout_of(issue)`; nothing infers layout
 from dates or null columns.
 
-**Values follow today's header rule** (B3): cover values other than terms are read live from the
-document/project, exactly like the attn/address/date the price-page header already prints, so page
-1 and page 2 cannot disagree. Freezing header values per issue is a pre-existing gap for every
-header field; not widened here (noted for backlog).
+**Terms tab frozen, Header tab live** (B3, revised after security review 2 Nov): terms (as today),
+Payment Terms and Validity are copied onto the issue by `issue()` (`quotation_issues.payment_terms`,
+`quotation_issues.validity`) and layout-2 cover rows read them from the issue, because they are
+what the customer signs. Header-tab values are read live from the document/project, exactly like
+the attn/address/date the price-page header already prints, so page 1 and page 2 cannot disagree.
+Freezing header values per issue is a pre-existing gap for every header field; not widened here
+(noted for backlog).
 
 **PDF** (`project_quotation_pdf_service.py`): layout 2 -> `@page cover { size: A4 portrait }`
 plus a `.cover { page: cover; break-after: page }` section (letterhead from `_sender` as
