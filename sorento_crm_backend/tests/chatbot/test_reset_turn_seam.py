@@ -1222,3 +1222,33 @@ def test_capability_guard_the_same_read_over_a_held_subject_still_resets(turn, g
     stored = _held_subject()
     result = t.say(stored, _measured_all_broaden(gate, message_type="clarification"), "clear all")
     _assert_the_reset_turn(t, result, stored)
+
+
+#: Held slots `chat_state._subject` does not show (reviewer should-fix): each still holds a subject.
+HIDDEN_HELD = {
+    "id_only_customer": Focus(customers=[{"uuid": ht.uuid_of("ZZC001"), "hint": "customer"}]),
+    "outstanding_brand_ids_only": Focus(outstanding_brand_ids=[ht.uuid_of("ZZB001")]),
+    "mode_only_date_window": Focus(date_window={"mode": "this_year", "start": None, "end": None}),
+    "code_only_extra_row": Focus(extra={"order": [{"code": "SO900001"}]}),
+}
+
+
+@pytest.mark.parametrize("name", list(HIDDEN_HELD))
+def test_capability_guard_a_held_slot_the_subject_line_hides_still_counts(name):
+    state = type("S", (), {"focus": HIDDEN_HELD[name], "pending": None})()
+    assert engine_mod._all_broaden_over_nothing_open(_measured_all_broaden(False), state)
+
+
+@pytest.mark.parametrize("focus", [Focus(), Focus(tier=["dealer"], brands=["SORENTO"]), Focus(extra={"order": []})],
+                         ids=["new_chat", "after_reset", "extra_kind_with_no_rows"])
+def test_capability_nothing_beyond_reset_keeps_is_nothing_to_clear(focus):
+    state = type("S", (), {"focus": focus, "pending": None})()
+    assert not engine_mod._all_broaden_over_nothing_open(_measured_all_broaden(False), state)
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_capability_guard_clear_all_over_an_id_only_customer_still_resets(turn, gate):
+    t = turn(gate)
+    stored = _focus_session(HIDDEN_HELD["id_only_customer"])
+    result = t.say(stored, _measured_all_broaden(gate), "clear all")
+    _assert_the_reset_turn(t, result, stored)
