@@ -1953,12 +1953,13 @@ describe('QuotationDocumentClient cover page fields', () => {
         quotation_purpose: 'Supply of sanitary ware',
         payment_terms: '30 days net',
         validity: '60 days',
+        prepared_by: 'Ahmad Faizal',
       } as unknown as Partial<QuotationDocument>),
     });
 
   it('the Header tab shows Email, Quotation Purpose and Prepared By', async () => {
     getQuotationDocument.mockResolvedValue(coverDocument());
-    getProject.mockResolvedValue(project({ owner_name: 'Ahmad Faizal' }));
+    getProject.mockResolvedValue(project({ owner_name: 'Wrong Project Owner' }));
     renderScreen(<QuotationHeaderTab />);
 
     const card = await screen.findByTestId('quotation-header-card');
@@ -1968,6 +1969,7 @@ describe('QuotationDocumentClient cover page fields', () => {
     expect(card).toHaveTextContent('Supply of sanitary ware');
     expect(card).toHaveTextContent('Prepared By');
     expect(card).toHaveTextContent('Ahmad Faizal');
+    expect(card).not.toHaveTextContent('Wrong Project Owner');
   });
 
   it('the Terms tab shows Payment Terms and Validity with the terms', async () => {

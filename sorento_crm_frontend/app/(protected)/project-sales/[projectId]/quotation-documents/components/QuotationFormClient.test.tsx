@@ -1361,4 +1361,15 @@ describe('QuotationFormClient cover page fields', () => {
       validity: 'Saved validity',
     });
   });
+
+  it('edit shows Prepared By from the saved quotation, not the project owner', async () => {
+    getProject.mockResolvedValue(withEmail({ owner_name: 'Wrong Project Owner' }));
+    getQuotationDocument.mockResolvedValue(
+      document({ ...({ prepared_by: 'Saved Creator' } as unknown as Partial<QuotationDocument>) }),
+    );
+    renderForm('d1');
+
+    expect(await screen.findByText('Saved Creator')).toBeInTheDocument();
+    expect(screen.queryByText('Wrong Project Owner')).not.toBeInTheDocument();
+  });
 });

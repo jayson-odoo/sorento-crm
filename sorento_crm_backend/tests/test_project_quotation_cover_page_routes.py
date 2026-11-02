@@ -106,3 +106,54 @@ def test_letter_templates_with_no_active_template_has_null_payment_terms_and_val
     ).json()
     assert "payment_terms" in body and body["payment_terms"] is None
     assert "validity" in body and body["validity"] is None
+
+
+# ------------------------------------------------------------------ fix round 1
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("field", list(FIELDS))
+def test_document_free_text_fields_cap_at_2000_characters(api, field):
+    client, _db, _company_id, _user_id, project, _party = api
+    root = f"{BASE}/projects/{project.id}/quotation-documents"
+
+    too_long = client.post(root, json={field: "x" * 2001})
+    assert too_long.status_code == 422, too_long.text
+
+    created = _create_document(client, project.id, **{field: "x" * 2000})
+    assert created[field] == "x" * 2000
+
+    patched = client.patch(f"{root}/{created['id']}", json={field: "y" * 2001})
+    assert patched.status_code == 422, patched.text
+
+
+@pytest.mark.parametrize("field", ["payment_terms", "validity"])
+def test_template_free_text_fields_cap_at_2000_characters(api, field):
+    client, *_ = api
+    body = {"kind": "terms", "name": f"{MARKER} cap", "body_html": "<p>c</p>"}
+    assert client.post(TEMPLATES, json={**body, field: "x" * 2001}).status_code == 422
+    ok = client.post(TEMPLATES, json={**body, field: "x" * 2000})
+    assert ok.status_code == 201, ok.text
+    assert client.put(f"{TEMPLATES}/{ok.json()['id']}", json={field: "y" * 2001}).status_code == 422
+
+
+def test_document_response_carries_prepared_by_the_project_owner(api):
+    client, _db, _company_id, _user_id, project, _party = api
+    created = _create_document(client, project.id)
+    assert created["prepared_by"] == f"{MARKER} Baser"
+    got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/{created['id']}").json()
+    assert got["prepared_by"] == f"{MARKER} Baser"
+
+
+def test_document_prepared_by_falls_back_to_the_creator_when_the_project_has_no_owner(api):
+    from sqlalchemy import text
+
+    client, db, _company_id, _user_id, project, _party = api
+    created = _create_document(client, project.id)
+    db.execute(text("update projects set owner_user_id = null where id = :i"), {"i": str(project.id)})
+    db.commit()
+    got = client.get(f"{BASE}/projects/{project.id}/quotation-documents/{created['id']}").json()
+    assert "prepared_by" in got
+    assert got["prepared_by"] == f"{MARKER} Baser"

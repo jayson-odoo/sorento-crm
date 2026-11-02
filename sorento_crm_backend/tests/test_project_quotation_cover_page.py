@@ -442,3 +442,87 @@ def test_countersign_layout_1_has_null_cover_rows_and_the_old_ref():
         document, record, body = _sign_page(db, env, layout=1)
         assert "cover_rows" in body and body["cover_rows"] is None
         assert body["our_ref"] == f"{document.document_no}-R{record.issue_no}"
+
+
+# ------------------------------------------------------------------ fix round 1
+
+
+def test_clean_terms_each_heading_becomes_its_own_bold_paragraph():
+    out = _clean("<h2>Payment</h2><h2>Delivery</h2><p>clause</p>")
+    assert "<h2" not in out and "</h2>" not in out
+    assert "<p><strong>Payment</strong></p>" in out
+    assert "<p><strong>Delivery</strong></p>" in out
+    assert out.index("Payment") < out.index("Delivery") < out.index("<p>clause</p>")
+
+
+def test_clean_terms_a_void_embed_does_not_swallow_the_text_after_it():
+    out = _clean("b<embed src=x>after")
+    assert "b" in out and "after" in out
+    assert "embed" not in out and "src" not in out
+
+
+def _edit_document_after_issue(db, document):
+    document.payment_terms = f"{MARKER} CHANGED payment"
+    document.validity = f"{MARKER} CHANGED validity"
+    db.flush()
+    db.expire_all()
+
+
+def test_payment_terms_and_validity_are_frozen_on_the_issue_row():
+    with blank_session() as db:
+        env = _setup(db)
+        document = _full_document(db, env)
+        record = _issue(db, document, env["owner"])
+        _edit_document_after_issue(db, document)
+        db.refresh(record)
+        assert record.payment_terms == f"{MARKER} 30 days net"
+        assert record.validity == f"{MARKER} 60 days"
+
+
+def test_pdf_cover_shows_the_issued_payment_terms_and_validity_not_the_edited_ones():
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        env = _setup(db)
+        document = _full_document(db, env)
+        record = _issue(db, document, env["owner"])
+        _edit_document_after_issue(db, document)
+        html = qpdf.build_issue_html(db, record)
+        assert f"{MARKER} 30 days net" in html and f"{MARKER} 60 days" in html
+        assert "CHANGED" not in html
+
+
+def test_countersign_cover_rows_show_the_issued_payment_terms_and_validity():
+    from app.services import project_quotation_document_service as qdocs
+
+    from .test_project_quotation_signing import _public_client
+
+    with blank_session() as db:
+        env = _setup(db)
+        document = _full_document(db, env)
+        record = _issue(db, document, env["owner"])
+        token = qdocs.issue_sign_link(db, record=record)
+        _edit_document_after_issue(db, document)
+        db.commit()
+        client, app = _public_client(db)
+        try:
+            body = client.get(f"/api/v1/public/quotation-sign/{token}").json()
+        finally:
+            app.dependency_overrides.clear()
+        by = {r["key"]: r for r in body["cover_rows"]}
+        assert by["payment_terms"]["text"] == f"{MARKER} 30 days net"
+        assert by["validity"]["text"] == f"{MARKER} 60 days"
+
+
+def test_pdf_cover_prepared_by_falls_back_to_the_creator_when_the_project_has_no_owner():
+    from app.services import project_quotation_pdf_service as qpdf
+
+    with blank_session() as db:
+        env = _setup(db)
+        env["project"].owner_user_id = None
+        db.flush()
+        document = _full_document(db, env)
+        record = _issue(db, document, env["owner"])
+        html = qpdf.build_issue_html(db, record)
+        cover = html[: html.index(f"{MARKER} Townhouse")]
+        assert re.search(r"PREPARED BY:.*?Baser Ramli", cover, re.S)
