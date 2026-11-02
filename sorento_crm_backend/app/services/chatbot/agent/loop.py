@@ -978,7 +978,7 @@ def tool_detail(name: str, args: Any, out: ToolResult, names: dict[str, str]) ->
         if rows:
             text = f"{head}: {rows} row{'s' if rows != 1 else ''}"
         else:
-            text = f"{head}: done" if _has_record(out.data) else f"{head}: nothing found"
+            text = f"{head}: nothing found" if _only_empty_lists(out.data) else f"{head}: done"
     elif out.status == "timeout":
         text = f"{head}: timed out"
     elif out.status == "error":
@@ -996,9 +996,13 @@ def reasoning_for_steps(text: Any) -> str:
     return cleaned if len(cleaned) <= REASONING_CHARS else cleaned[:REASONING_CHARS].rstrip() + "\u2026"
 
 
-def _has_record(data: Any) -> bool:
-    """A body that carries a record (a dict value anywhere at its top level), not only lists and scalars."""
-    return isinstance(data, dict) and any(isinstance(v, dict) for v in data.values())
+def _only_empty_lists(data: Any) -> bool:
+    """A body that is a list, or holds a list and no record (dict value): rows were asked for and none came."""
+    if isinstance(data, list):
+        return True
+    return isinstance(data, dict) and (
+        any(isinstance(v, list) for v in data.values()) and not any(isinstance(v, dict) for v in data.values())
+    )
 
 
 def _args_for_digest(args: Any) -> Any:
