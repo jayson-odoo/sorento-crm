@@ -270,7 +270,9 @@ def test_a_restricted_field_is_kept_when_the_contact_holds_the_grant():
 # ------------------------------------------------------------------ size cap
 
 
-def test_the_twelve_thousand_char_cap_cuts_list_items_whole_and_counts_more():
+def test_the_result_char_cap_cuts_list_items_whole_and_counts_more():
+    from app.services.chatbot.agent import tools as agent_tools
+
     items = [{"row": i, "text": "x" * 500} for i in range(100)]
     rec = Recorder(result={"items": items, "has_result": True})
     out = _dispatch(STOCK, {"query": "x"}, rec)
@@ -279,7 +281,7 @@ def test_the_twelve_thousand_char_cap_cuts_list_items_whole_and_counts_more():
     shown = out.data["items"]
     assert 0 < len(shown) < 100
     assert out.more == 100 - len(shown)
-    assert len(json.dumps(out.data)) <= 12_000
+    assert len(json.dumps(out.data)) <= agent_tools.RESULT_CHAR_CAP
     # whole items only, from the front, never a row cut mid-way
     assert shown == items[: len(shown)]
 
