@@ -1,6 +1,6 @@
 # PLAN: the stock check and the ETA ask tell one shipment the same date (STOCK-INCOMING-FLOOR)
 
-Status: Fix B building (size M since the owner's 2 Nov ruling: new wording, one shared rule; no
+Status: Fix B built, in review (size M since the owner's 2 Nov ruling: new wording, one shared rule; no
 migration, no auth/RBAC change, no screen change so no mock). Fix A built and reviewed READY at 02f3c71c78;
 Fix B supersedes its today floor.
 UAC: `stock-incoming-floor-2nov-acceptance-criteria.md`.

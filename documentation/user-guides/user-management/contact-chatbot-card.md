@@ -17,10 +17,12 @@ scroll to the **Chatbot** card.
   **[Chatbot settings](chatbot-settings.md)** also has to be switched on - that is a separate,
   system-wide switch.)
 * **ETA buffer days** - on by default. When on, every arrival date the bot tells this contact
-  is the shipment's date plus the product's **ETA offset (days)** (set on the product, else on
-  its category). A stock check counts a shipment as incoming while the date this contact is told
-  is today or later, so a stock check and a question about the ETA name the same date. When off,
-  the contact is told the shipment's own date.
+  is the shipment's date (its revised date, when one is set) plus the product's **ETA offset
+  (days)** (set on the product, else on its category). When off, the contact is told the
+  shipment's own date. A dealer asking for stock that is not there, and a dealer asking for the
+  ETA, are told the same dates: every shipment still coming, earliest first, for example
+  "No stock, ETA 03/11/2026, 06/11/2026." A date that has already passed while the shipment is
+  still coming is shown with "(delayed)" after it.
 * **Episode recall** - whether the bot may pull details back in from an earlier closed topic in
   this same conversation when the contact refers back to it (e.g. "same report as yesterday"),
   instead of asking everything over again. This overrides the system-wide default set on
