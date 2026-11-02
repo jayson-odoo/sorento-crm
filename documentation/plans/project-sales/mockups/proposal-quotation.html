@@ -72,7 +72,7 @@ td.num,th.num{text-align:right}
 <body>
 <div class="doc">
 <h1>Proposal and quotation (PS-PROPOSAL-QUOTATION)</h1>
-<p class="sub">Five screens: the Proposals tab, issuing a proposal revision whose price moved, "Make quotation" on a
+<p class="sub">Seven screens (6 and 7 added after the owner note of 2 Nov 23:11, feedback not accept): the Proposals tab, issuing a proposal revision whose price moved, "Make quotation" on a
 won project, the quotation with a further discount waiting for approval, and a PO above the quoted quantity.
 Callouts map each element to the existing component it changes. Every new word is in the screen; no help text.</p>
 
@@ -193,6 +193,55 @@ Callouts map each element to the existing component it changes. Every new word i
 <div class="notes"><ol>
   <li><span class="co">13</span><div><b>Soft stop</b>Save / Confirm answers 409 po_qty_over_quoted with the products; the dialog asks one reason and re-sends with it. Totals cover every live PO of the project checked against the quotation.<span class="ref">PurchaseOrderDialog.tsx, POIntakeConfirmClient.tsx; project_po_service.py replace_lines, project_po_confirm.py confirm_version</span></div></li>
   <li><span class="co">14</span><div><b>Badge + reason</b>Beside the model/price mismatch counts; management gets one alert per reason.<span class="ref">PurchaseOrdersPanel.tsx; serialize_pos (project_po_service.py:585)</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ 6 -->
+<h2 class="ft">6. Customer's proposal link: feedback, not accept (375), owner note 2 Nov 23:11</h2>
+<div class="layout">
+<div class="frame w375 m375"><div class="content">
+  <div class="meta">Proposal from SORENTO</div>
+  <div style="font-weight:600;margin:2px 0 10px">Proposal No. PRJQ-2026-0003-B</div>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between"><b>32MM TAIL PIECE COUPLING</b><span>RM 280.00</span></div>
+    <div class="meta">Qty 10 EA</div>
+    <div class="field" style="margin-top:8px"><label>Your note on this line <span class="co">15</span></label>
+      <span class="input" style="display:block;color:var(--muted)">e.g. a cheaper model, a different quantity</span></div>
+  </div>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between"><b>BRAC73080604-0001</b><span>RM 500.00</span></div>
+    <div class="meta">Qty 1 EA</div>
+    <div class="field" style="margin-top:8px"><label>Your note on this line</label>
+      <span class="input" style="display:block">Any model around RM 400? Need 2 units.</span></div>
+  </div>
+  <div class="field"><label>Anything else <span class="co">16</span></label><span class="input" style="display:block;min-height:48px"></span></div>
+  <span class="btn primary" style="width:100%;justify-content:center">Send feedback</span> <span class="co">17</span>
+</div></div>
+<div class="notes"><ol>
+  <li><span class="co">15</span><div><b>A note per line</b>Free text replaces the quantity / price / remove inputs: a model swap by price fits in words, numbers alone could not say it.<span class="ref">QuotationSignScopes.tsx (SuggestRow), quotationSuggest.ts; quotation_amendment_request_rows + note column</span></div></li>
+  <li><span class="co">16</span><div><b>One general note</b>Replaces today's separate "Request changes" text.<span class="ref">QuotationSignClient.tsx; request_changes()</span></div></li>
+  <li><span class="co">17</span><div><b>No "Sign and accept" on a proposal</b>Only the quotation carries the e-signature (F1 a, pending owner). Feedback never blocks anything and can be sent again on the same revision.<span class="ref">QuotationSignClient.tsx CustomerSignature; accept_issue()</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ 7 -->
+<h2 class="ft">7. Salesperson reads the feedback; no Accept / Reject (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280"><div class="content">
+  <div class="phrow"><div><h1>Proposal PRJQ-2026-0003-B</h1><div class="crumbs">Project Sales / Taman Melati Townhouse / Proposals</div></div>
+    <div class="actions"><span class="btn primary">Revise</span></div></div>
+  <div class="callout blue"><b>Feedback from CUSTOMER A on B</b>, 2 Nov 21:40 <span class="co">18</span></div>
+  <table>
+    <thead><tr><th>Item</th><th>Product</th><th class="num">Qty</th><th class="num">Unit price</th><th>Customer's note</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>32MM TAIL PIECE COUPLING</td><td class="num">10</td><td class="num">280.00</td><td class="meta">-</td></tr>
+      <tr style="background:var(--primary-soft)"><td>2</td><td>BRAC73080604-0001</td><td class="num">1</td><td class="num">500.00</td><td>Any model around RM 400? Need 2 units.</td></tr>
+    </tbody>
+  </table>
+  <div class="card" style="margin-top:12px"><div class="meta">Anything else</div>Can deliver by March?</div>
+</div></div></div>
+<div class="notes"><ol>
+  <li><span class="co">18</span><div><b>Notes beside the lines</b>Read-only, shown on the proposal's Lines tab and kept with the revision; the salesperson acts on them by revising (or not). No per-row Accept / Reject, no Apply. Older structured suggestions read as notes ("Qty 10 -> 12").<span class="ref">QuotationAmendmentSummary.tsx (buttons removed), decide_row / apply_request retired</span></div></li>
 </ol></div>
 </div>
 </div>
