@@ -30,7 +30,18 @@ Status: in progress (small fix track: one additive index-only migration, no auth
    POLLING only when its `started_at` is within the last 30 minutes. Optimistic (still uploading in
    this tab) sessions always poll. Display status is unchanged (no UI change); opening the drawer
    still refetches. 30 min: n8n intake replies in seconds to a few minutes; anything older is stuck,
-   and the drawer-open refetch still shows a late reply.
+   and the drawer-open refetch still shows a late reply. `import_job` sessions are NOT capped (review
+   finding 3): an RQ import reports its own progress and can legitimately run past 30 minutes.
+   Logic in `components/upload-activity/pollCap.ts` (`pollIntervalFor`, used as the query's
+   `refetchInterval`).
+
+## Known limits
+
+- The online helper keeps any VALID index of the right NAME. A DB bootstrapped by create_all on the
+  old model has a 2-column `ix_integration_log_business_table_business_id` and keeps it; it still
+  serves the bell's IN filter (only the sort is done in memory), so no extra mechanism.
+- Every build shares the repo's 180s migration budget; one it does not reach is built by
+  `scripts/ensure_goods_chain_indexes.py` on the next backend start.
 
 ## UAC
 

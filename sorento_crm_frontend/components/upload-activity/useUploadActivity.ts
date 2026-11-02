@@ -30,7 +30,7 @@ import {
   getDismissedSnapshot,
   subscribeDismissed,
 } from './dismissedSessions';
-import { shouldPollBackend } from './pollCap';
+import { pollIntervalFor } from './pollCap';
 import { UPLOAD_ACTIVITY_QUERY_KEY } from './queryKeys';
 import type { UploadActivitySession } from './types';
 import { useUploadManager } from './UploadManagerContext';
@@ -91,8 +91,7 @@ export function useUploadActivity(): UploadActivityFeed {
       const latest = (q.state.data as UploadActivityResponse | undefined)
         ?.sessions;
       // Capped: a session stuck `processing` past POLL_CAP_MINUTES stops the poll (pollCap.ts).
-      const beInFlight = latest ? shouldPollBackend(latest) : false;
-      return optimisticInFlight || beInFlight ? 5_000 : false;
+      return pollIntervalFor(latest, optimisticInFlight);
     },
     refetchIntervalInBackground: false,
     // Stale immediately so refetch on drawer-open (handled in
