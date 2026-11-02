@@ -35,6 +35,8 @@ vi.mock('../../services/quotationSignService', async (importOriginal) => {
   };
 });
 
+// The page's open beacon reaches NextAuth's logger outside a browser; not what this file tests.
+vi.mock('../../hooks/useQuotationViewBeacon', () => ({ useQuotationViewBeacon: () => {} }));
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));

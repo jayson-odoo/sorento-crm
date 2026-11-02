@@ -13,6 +13,8 @@ import { arrayMove } from '@dnd-kit/sortable';
 import { ChevronDown, Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from '@/lib/toast';
+import { useDeferredDeleteSeconds } from '@/hooks/useDeferredDeleteSeconds';
+import { DEFAULT_DEFERRED_DELETE_SECONDS } from '@/services/deferredWindowService';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -162,8 +164,11 @@ export interface QuotationLinesMatrix {
   copySources?: { label: string; columns: MatrixHeader[] }[];
 }
 
-/** How long a header or column removal counts down before it is written (D7 hard-delete window). */
-export const COLUMN_REMOVAL_MS = 10_000;
+/**
+ * How long a header or column removal counts down before it is written when System Settings has
+ * not answered: the D7 hard-delete window. The live value is `deferred_delete_seconds`.
+ */
+export const COLUMN_REMOVAL_MS = DEFAULT_DEFERRED_DELETE_SECONDS * 1000;
 
 const GridContext = React.createContext<GridContextValue | null>(null);
 
@@ -1491,6 +1496,9 @@ export function QuotationLinesGrid({
   // ------------------------------------------------------------ grid scope (PS-QUOTE-MATRIX)
 
   const [pending, setPending] = React.useState<PendingRemoval | null>(null);
+  const removalSeconds = useDeferredDeleteSeconds();
+  const removalMsRef = React.useRef(removalSeconds * 1000);
+  removalMsRef.current = removalSeconds * 1000;
   const [focusKey, setFocusKey] = React.useState<string | null>(null);
   const headersRef = React.useRef(headers);
   headersRef.current = headers;
@@ -1535,7 +1543,7 @@ export function QuotationLinesGrid({
     setPending({
       key,
       label: item.label,
-      commitAt: Date.now() + COLUMN_REMOVAL_MS,
+      commitAt: Date.now() + removalMsRef.current,
       lines: cellsUnder(
         headersRef.current,
         key,
@@ -1545,14 +1553,32 @@ export function QuotationLinesGrid({
   }, []);
   // The countdown commits on its own clock; Undo clears it first. One removal at a time, so two
   // writes never race each other with stale columns.
+  const pendingRef = React.useRef(pending);
+  pendingRef.current = pending;
+  // The last handler the edit session gave: once it ends the grid has none, and the parked
+  // removal still has to reach the version it was started on.
+  const changeRef = React.useRef(onMatrixChange);
+  if (onMatrixChange) changeRef.current = onMatrixChange;
+  /** Writes the parked removal now, once. Safe to call when nothing is parked. */
+  const commitPending = React.useCallback(() => {
+    const held = pendingRef.current;
+    if (!held) return;
+    pendingRef.current = null;
+    setPending(null);
+    changeRef.current?.(removeKey(headersRef.current, held.key));
+  }, []);
   React.useEffect(() => {
     if (!pending) return;
-    const timer = window.setTimeout(() => {
-      setPending(null);
-      change(removeKey(headersRef.current, pending.key));
-    }, Math.max(0, pending.commitAt - Date.now()));
+    const timer = window.setTimeout(commitPending, Math.max(0, pending.commitAt - Date.now()));
     return () => window.clearTimeout(timer);
-  }, [change, pending]);
+  }, [commitPending, pending]);
+  // Leaving the edit session (Save, Cancel, a scope or tab switch) never drops a removal the user
+  // let run: it commits at once rather than vanishing with the countdown, which has no handler
+  // outside edit mode. Undo is the only way back, and it had its window.
+  React.useEffect(() => {
+    if (!columnsEditable) commitPending();
+  }, [columnsEditable, commitPending]);
+  React.useEffect(() => commitPending, [commitPending]);
 
   const updateCell = React.useCallback(
     (rowKey: string, leafKey: string, value: string) => {

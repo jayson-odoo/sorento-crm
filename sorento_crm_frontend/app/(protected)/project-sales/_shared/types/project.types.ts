@@ -890,6 +890,8 @@ export type QuotationFeedbackKind = 'note' | 'quantity' | 'unit_price' | 'remove
 export interface QuotationFeedbackRow {
   id: string;
   line_id: string;
+  /** The scope (quotation) the note's line sits in. Absent on a payload from before it. */
+  scope_id?: string | null;
   scope_label: string;
   line_description: string | null;
   /** The cell it points at, or null for the whole item. */

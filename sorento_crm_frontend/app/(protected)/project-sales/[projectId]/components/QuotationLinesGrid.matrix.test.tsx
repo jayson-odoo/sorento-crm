@@ -42,6 +42,11 @@ vi.mock('./QuotationLineFlags', () => ({
   MinimumPriceBadge: () => null,
   MinimumPriceFlag: () => null,
 }));
+// The hard-delete window from System Settings (deferred_delete_seconds), per test.
+const settings = { deleteSeconds: 10 };
+vi.mock('@/hooks/useDeferredDeleteSeconds', () => ({
+  useDeferredDeleteSeconds: () => settings.deleteSeconds,
+}));
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
@@ -142,10 +147,19 @@ function renderGrid({
   );
   return {
     ...view,
-    rerenderWith: (next: { lines?: StagedQuotationLine[]; matrix?: QuotationLinesMatrix }) =>
+      rerenderWith: (next: {
+      lines?: StagedQuotationLine[];
+      matrix?: QuotationLinesMatrix;
+      editing?: boolean;
+    }) =>
       view.rerender(
         <QueryClientProvider client={client}>
-          <QuotationLinesGrid lines={next.lines ?? lines} {...props} matrix={next.matrix ?? matrix} />
+          <QuotationLinesGrid
+            lines={next.lines ?? lines}
+            {...props}
+            editing={next.editing ?? editing}
+            matrix={next.matrix ?? matrix}
+          />
         </QueryClientProvider>,
       ),
   };
@@ -166,6 +180,7 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  settings.deleteSeconds = 10;
 });
 
 describe('a scope with no columns (AC-1)', () => {
@@ -389,5 +404,58 @@ describe('a scope with columns, editing (mock frame 2)', () => {
     expect(onChange.mock.calls[0][0]).toEqual([
       { key: expect.stringMatching(/^[a-z0-9][a-z0-9_-]{0,39}$/), label: 'Header 1', cols: [] },
     ]);
+  });
+});
+
+describe('a parked column removal (fix round 1)', () => {
+  it('counts down the hard-delete window System Settings holds', () => {
+    vi.useFakeTimers();
+    settings.deleteSeconds = 4;
+    const onChange = vi.fn();
+    renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Type A - 1 BH' }));
+    expect(screen.getByTestId('matrix-removal-countdown')).toHaveTextContent('removing in 4s');
+    act(() => {
+      vi.advanceTimersByTime(3_900);
+    });
+    expect(onChange).not.toHaveBeenCalled();
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to 10s when the setting has not answered', () => {
+    expect(COLUMN_REMOVAL_MS).toBe(10_000);
+  });
+
+  it('commits at once when edit mode ends mid-countdown, and never shows it in view mode', () => {
+    vi.useFakeTimers();
+    const onChange = vi.fn();
+    const view = renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange } });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Type A - 1 BH' }));
+    expect(onChange).not.toHaveBeenCalled();
+
+    // The session ends (Save or Cancel): the read has no editor, so no handler of its own.
+    view.rerenderWith({ editing: false, matrix: { columns: UNIT } });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0].map((header: MatrixHeader) => header.key)).toEqual(['b', 'c']);
+    expect(screen.queryByTestId('matrix-removal-countdown')).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(COLUMN_REMOVAL_MS * 2);
+    });
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits at once when the grid goes away mid-countdown (Save remounts it, a scope switch unmounts it)', () => {
+    vi.useFakeTimers();
+    const onChange = vi.fn();
+    const view = renderGrid({ lines: [staged(TRAP, true)], editing: true, matrix: { columns: UNIT, onChange } });
+    // Type C's Balcony column.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove Balcony' })[2]);
+    view.unmount();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange.mock.calls[0][0][2].cols.map((item: { key: string }) => item.key)).toEqual(['c-bh']);
   });
 });

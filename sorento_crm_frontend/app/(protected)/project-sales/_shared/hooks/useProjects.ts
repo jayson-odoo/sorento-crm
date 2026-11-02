@@ -133,6 +133,7 @@ import type {
   ProjectSeriesBody,
   QuotationLineBody,
   MediaKind,
+  QuotationLine,
   QuotationLineBulkItem,
   QuotationOutcomeBody,
   QuotationVersion,
@@ -1042,6 +1043,23 @@ export function useQuotationLines(versionId: string | undefined) {
     queryKey: linesKey(versionId ?? ''),
     queryFn: () => listQuotationLines(versionId as string),
     enabled: Boolean(versionId),
+  });
+}
+
+/**
+ * The lines of several versions at once, each under the same key `useQuotationLines` uses, so a
+ * version already open costs nothing. One array per version that has loaded.
+ */
+export function useQuotationLinesOf(versionIds: string[]): QuotationLine[][] {
+  return useQueries({
+    queries: versionIds.map((versionId) => ({
+      queryKey: linesKey(versionId),
+      queryFn: () => listQuotationLines(versionId),
+      staleTime: 30_000,
+    })),
+    // Combined, so the answer keeps its identity until a version's lines actually change.
+    combine: (results) =>
+      results.flatMap((result) => (result.data ? [result.data] : [])),
   });
 }
 

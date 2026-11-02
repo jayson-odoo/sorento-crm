@@ -22,6 +22,7 @@ import {
   useProjectQuotationVersions,
   useQuotationColumnsMutation,
   useQuotationLines,
+  useQuotationLinesOf,
   useQuotationRecomputeMutation,
   useQuotationVersions,
   useSeriesPricedRows,
@@ -37,6 +38,7 @@ import type {
   StagedQuotationLine,
 } from '../../_shared/types/project.types';
 import { hasColumns, reshapeCells, type MatrixHeader } from '../../_shared/lib/quotationMatrix';
+import { carryFeedback } from '../../_shared/lib/quotationFeedbackMarks';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
 import { QuotationLinesGrid, type QuotationLinesMatrix } from './QuotationLinesGrid';
 import {
@@ -121,8 +123,8 @@ export function QuotationVersionEditor({
 }: {
   project: Project;
   /**
-   * Open customer feedback on this document (PS-QUOTE-MATRIX): marked on the lines it names, in
-   * whichever version holds them.
+   * Open customer feedback on this document (PS-QUOTE-MATRIX): marked on the lines it names, and
+   * on their copies in a later revision (same product, same occurrence), so a draft shows them.
    */
   feedback?: QuotationFeedbackRow[];
   /** The document's other scopes, offered by Copy columns from while editing. */
@@ -508,6 +510,33 @@ export function QuotationVersionEditor({
     },
     [columnsMutation, matrixColumns, stageForColumns, versionForColumns],
   );
+  /**
+   * The notes as marks on the version on screen (R20, E6). They name the ISSUED version's lines;
+   * when a note's line is not on screen, the other versions' lines are read (cached per version)
+   * to carry it to its copy here.
+   */
+  const scopeNotes = React.useMemo(
+    () =>
+      (feedback ?? []).filter(
+        (note) => !note.scope_id || !quotation || note.scope_id === quotation.id,
+      ),
+    [feedback, quotation],
+  );
+  const shownIds = React.useMemo(() => new Set(sortedLines.map((line) => line.id)), [sortedLines]);
+  const needsSources = scopeNotes.some((note) => !shownIds.has(note.line_id));
+  const sourceVersionIds = React.useMemo(
+    () =>
+      needsSources
+        ? rows.filter((version) => version.id !== selected?.id).map((version) => version.id)
+        : [],
+    [needsSources, rows, selected?.id],
+  );
+  const sourceLines = useQuotationLinesOf(sourceVersionIds);
+  const gridFeedback = React.useMemo(
+    () => carryFeedback(scopeNotes, sourceLines, sortedLines),
+    [scopeNotes, sourceLines, sortedLines],
+  );
+
   const matrix = React.useMemo<QuotationLinesMatrix>(
     () => ({
       columns: matrixColumns,
@@ -678,7 +707,7 @@ export function QuotationVersionEditor({
           onStage={gridEditing ? stageLines : undefined}
           onToggleRemoved={gridEditing ? toggleRemoved : undefined}
           matrix={matrix}
-          feedback={feedback}
+          feedback={gridFeedback}
         />
       )}
 

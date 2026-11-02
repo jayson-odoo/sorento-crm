@@ -232,7 +232,10 @@ function LabelEditor({
     }
   }, [matrix, itemKey]);
 
-  if (matrix.pending?.key === itemKey) return <RemovalCountdown compact={kind === 'col'} />;
+  // A countdown only ever shows where it can be undone: in edit mode, with a handler.
+  if (matrix.editable && matrix.pending?.key === itemKey) {
+    return <RemovalCountdown compact={kind === 'col'} />;
+  }
 
   if (!matrix.editable) {
     return (

@@ -162,12 +162,32 @@ export function QuotationFeedbackPanel() {
   const handled = useQuotationFeedbackMutation(projectId, documentId);
 
   const show = (row: QuotationFeedbackRow) => {
-    const scope = (record.scopes ?? []).find((item) => item.scope_label === row.scope_label);
+    // By id when the row carries one (two scopes may share a label), by label otherwise. The
+    // Lines tab opens the scope on its current version, where the notes are marked.
+    const scopes = record.scopes ?? [];
+    const scope =
+      (row.scope_id ? scopes.find((item) => item.id === row.scope_id) : undefined) ??
+      scopes.find((item) => item.scope_label === row.scope_label);
     if (scope) selectScope(scope.id);
     router.push(`/project-sales/${projectId}/quotation-documents/${documentId}/lines`);
   };
 
   if (feedback.isLoading) return <Skeleton className="h-48 w-full" />;
+
+  if (feedback.isError) {
+    return (
+      <Card>
+        <CardContent className="px-6 py-10 text-center" role="alert">
+          <h3 className="text-sm font-semibold">The customer feedback could not be loaded</h3>
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+            {feedback.error instanceof Error && feedback.error.message
+              ? feedback.error.message
+              : 'Reload the page to try again.'}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const requests = feedback.data?.requests ?? [];
   if (requests.length === 0) {
@@ -176,7 +196,7 @@ export function QuotationFeedbackPanel() {
         <CardContent className="px-6 py-10 text-center">
           <h3 className="text-sm font-semibold">No customer feedback yet</h3>
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            {feedback.isError ? 'It could not be loaded. Reload the page to try again.' : 'Nothing has come in from the sign link.'}
+            Nothing has come in from the sign link.
           </p>
         </CardContent>
       </Card>

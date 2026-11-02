@@ -2639,3 +2639,58 @@ describe('QuotationVersionEditor column headers (PS-QUOTE-MATRIX)', () => {
     expect(screen.queryByRole('button', { name: 'Column header' })).toBeNull();
   });
 });
+
+describe('QuotationVersionEditor feedback marks on the draft (PS-QUOTE-MATRIX fix round 1, E6)', () => {
+  it('carries a note on issued line L1 to its copy L1\' on the draft: amber corner and dot', async () => {
+    const columns = [{ key: 'a', label: 'Type A', cols: [{ key: 'a1', label: 'Kitchen' }, { key: 'a2', label: 'Yard' }] }];
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v1', version_no: 1, is_issued: true, matrix_columns: columns }),
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: columns }),
+    ]);
+    listQuotationLines.mockImplementation(async (versionId: string) =>
+      versionId === 'v1'
+        ? [line({ id: 'L1', version_id: 'v1', product_id: 'p-sink', qty_cells: { a1: '133.00' } })]
+        : [line({ id: 'L1-draft', version_id: 'v2', product_id: 'p-sink', qty_cells: { a1: '133.00' } })],
+    );
+    const note = (overrides: Record<string, unknown>) => ({
+      id: 'f1',
+      line_id: 'L1',
+      scope_id: QUOTATION.id,
+      scope_label: QUOTATION.scope_label,
+      line_description: 'Sink',
+      cell_key: null,
+      cell_label: null,
+      kind: 'note' as const,
+      value_from: null,
+      value_to: null,
+      model: null,
+      note: 'Check',
+      handled_at: null,
+      handled_by_name: null,
+      ...overrides,
+    });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <QuotationVersionEditor
+          project={project()}
+          quotation={QUOTATION}
+          feedback={[
+            note({ id: 'f1', cell_key: 'a1', cell_label: 'Type A / Kitchen' }),
+            note({ id: 'f2' }),
+            // Another scope's note never lands here.
+            note({ id: 'f3', scope_id: 'other-scope', line_id: 'L1', cell_key: 'a2' }),
+          ]}
+        />
+      </QueryClientProvider>,
+    );
+
+    // The draft (v2) is what opens, and its line wears the marks the issued line's notes made.
+    expect(await screen.findByTestId('matrix-feedback-corner')).toBeInTheDocument();
+    expect(screen.getAllByTestId('matrix-feedback-corner')).toHaveLength(1);
+    expect(screen.getAllByTestId('line-feedback-dot')).toHaveLength(1);
+    expect(listQuotationLines).toHaveBeenCalledWith('v1');
+  });
+});
