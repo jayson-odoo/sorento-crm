@@ -888,8 +888,9 @@ describe('QuotationSignClient cover card', () => {
 
     await screen.findByText('Reference No.');
     const labels = ['Reference No.', 'Date', 'Attn', 'Company', 'Email', 'Payment Terms', 'Prepared By'];
+    const cover = within(screen.getByTestId('quotation-sign-cover'));
     const positions = labels.map((label) => {
-      const node = screen.getByText(label);
+      const node = cover.getByText(label);
       return Array.from(document.body.querySelectorAll('*')).indexOf(node);
     });
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
