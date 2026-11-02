@@ -9,12 +9,12 @@ Card: documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md. Additive an
 re-run, or a dev DB built by create_all, is harmless.
 
 Revision ID: pss_0001_spec_sheet
-Revises: join_0003_qiv_bnsp
+Revises: il_0001_integration_log_indexes
 """
 from alembic import op
 
 revision = "pss_0001_spec_sheet"
-down_revision = "join_0003_qiv_bnsp"
+down_revision = "il_0001_integration_log_indexes"
 branch_labels = None
 depends_on = None
 
