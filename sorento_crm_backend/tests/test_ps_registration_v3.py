@@ -525,3 +525,69 @@ def test_r4_the_parked_delete_removes_the_contact_and_keeps_the_stakeholder_copy
     (stake,) = _stakeholders(v2, pid)
     v2.db.refresh(stake)
     assert stake.person_name == "Ar. Leaving" and stake.party_contact_id is None
+
+
+# ------------------------------------------------------------------ security review gaps (L1, L2 + attack paths)
+
+
+def test_sec_a_picker_without_parties_view_gets_names_only(v2):
+    party = _party(v2, "architect")
+    _contact(v2, party, name="Ar. Private", phone="+60120009999")
+    row = as_user(v2, v2.sub_a).get(f"{PARTIES}/{party.id}/contacts").json()["data"][0]
+    assert row["name"] == "Ar. Private"
+    assert "phone" not in row and "email" not in row
+    full = as_user(v2, v2.owner).get(f"{PARTIES}/{party.id}/contacts").json()["data"][0]
+    assert full["phone"] == "+60120009999"
+
+
+def test_sec_contact_ids_are_capped(v2):
+    res = _register(v2, contact_ids=[uid() for _ in range(201)])
+    assert res.status_code == 422, res.text
+
+
+def test_sec_phone_fill_refuses_a_stakeholder_of_another_project(v2):
+    pid, dev, mc, two, three = _project_with_parties(v2)
+    other_pid, _d, other_mc, _t, other_three = _project_with_parties(v2)
+    foreign = next(s for s in _stakeholders(v2, other_pid) if s.party_contact_id == other_three.id)
+    res = as_user(v2, v2.owner).post(
+        f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "+60120000001", "stakeholder_id": foreign.id}
+    )
+    assert res.status_code == 404, res.text
+    v2.db.refresh(foreign)
+    assert foreign.phone is None
+
+
+def test_sec_phone_fill_refuses_a_stakeholder_of_another_party_on_the_same_project(v2):
+    pid, dev, mc, two, three = _project_with_parties(v2)
+    stake = next(s for s in _stakeholders(v2, pid) if s.party_contact_id == three.id)
+    res = as_user(v2, v2.owner).post(
+        f"{PROJECTS}/{pid}/parties/{dev.id}/phone", json={"phone": "+60120000002", "stakeholder_id": stake.id}
+    )
+    assert res.status_code == 404, res.text
+
+
+def test_sec_a_contact_of_another_company_is_refused_at_registration(v2):
+    arch = _party(v2, "architect")
+    foreign_party = _party(v2, "architect", company_id=v2.other_company)
+    foreign = _contact(v2, foreign_party)
+    res = _register(v2, architect_party_id=arch.id, contact_ids=[foreign.id])
+    assert res.status_code == 422, res.text
+    assert res.json()["code"] == "project_contact_not_on_party"
+
+
+def test_sec_an_own_projects_user_cannot_read_parties_of_a_project_not_theirs(v2):
+    pid, *_ = _project_with_parties(v2)
+    res = as_user(v2, v2.viewer_own).get(f"{PROJECTS}/{pid}/parties")
+    assert res.status_code == 404, res.text
+
+
+def test_sec_the_phone_fill_is_audited(v2):
+    from app.models.audit import AuditLog
+
+    pid, dev, mc, *_ = _project_with_parties(v2)
+    res = as_user(v2, v2.owner).post(f"{PROJECTS}/{pid}/parties/{mc.id}/phone", json={"phone": "+60135551111"})
+    assert res.status_code == 200, res.text
+    rows = v2.db.query(AuditLog).filter(AuditLog.entity_id == mc.id, AuditLog.action == "UPDATE").all()
+    assert any((r.new_values or {}).get("phone") == "+60135551111" for r in rows), [
+        (r.action, r.new_values) for r in rows
+    ]

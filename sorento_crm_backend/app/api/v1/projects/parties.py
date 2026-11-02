@@ -183,7 +183,13 @@ def list_party_contacts(
     try:
         party = _company_party_or_404(db, party_id)
         rows = contacts.list_contacts(db, party, include_inactive=include_inactive)
-        return {"data": [contacts.serialize_contact(r) for r in rows]}
+        data = [contacts.serialize_contact(r) for r in rows]
+        if VIEW not in permission_slugs(db, _user["id"]):
+            # Picking needs the name only; phone and email stay with the parties grant
+            # (security review L1). Register copies them from the database itself.
+            keep = ("id", "party_id", "name", "job_title", "is_active")
+            data = [{k: row.get(k) for k in keep} for row in data]
+        return {"data": data}
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

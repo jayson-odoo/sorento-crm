@@ -227,9 +227,9 @@ class ProjectRegisterRequest(BaseModel):
     submit: bool = False
     # Required to register or submit (422 project_lead_source_required); a draft may leave it out.
     lead_source: Optional[str] = Field(None, max_length=32)
-    party_links: Optional[List[ProjectPartyLinkIn]] = None
+    party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
     # Party contacts picked at registration, copied into the project's stakeholders (rule 6).
-    contact_ids: Optional[List[str]] = None
+    contact_ids: Optional[List[str]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -257,7 +257,7 @@ class ProjectUpdateRequest(BaseModel):
     admin_ref: Optional[str] = Field(None, max_length=64)
     lead_source: Optional[str] = Field(None, max_length=32)
     # Present = replace every link; absent = keep them.
-    party_links: Optional[List[ProjectPartyLinkIn]] = None
+    party_links: Optional[List[ProjectPartyLinkIn]] = Field(None, max_length=200)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
