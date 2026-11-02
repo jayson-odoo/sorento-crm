@@ -27,6 +27,7 @@ from app.services.marketing_service import (
 )
 
 from app.services.product_code_resolution import resolve_codes_to_products
+from app.services.promo_selling_price import brand_has_no_selling_price
 
 #: The ONE resolver, shared with `product_attachments`. Promotions used to do an
 #: exact match with a `+`-split fallback while attachments did a substring match,
@@ -73,6 +74,10 @@ def _promotion_product_values(product, selling_price, discount_amount, discount_
     promo_price = selling_price
     da = discount_amount
     dp = discount_percent
+    if brand_has_no_selling_price(product):
+        # CABANA-NO-SELLING-PRICE: the flyer reader invents a price for such a brand.
+        # Dropped, not refused, so one invented price never fails the whole flyer.
+        promo_price = da = dp = None
     # Same as legacy flat path: derive discount from list vs selling when both exist
     if promo_price is not None and lp is not None:
         da = lp - float(promo_price)

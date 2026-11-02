@@ -14,5 +14,6 @@ export interface BrandFormData {
   flows_to_purchasing?: boolean;
   chatbot_weight?: number;
   is_searchable?: boolean;
+  no_promo_selling_price?: boolean;
   dealer_company_id?: string | null;
 }
