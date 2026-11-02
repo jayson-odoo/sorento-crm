@@ -5,7 +5,9 @@ Status: PR ready - reviewer READY (round 3), browser pass PASS; waiting on CI la
 Amended 2 Nov 2026 (owner ruling, CONSIGN-OWN-BIN-EMAIL, PR #2084): Q1's "nothing to purchasing"
 is reversed for the own-bin Borrow. Confirmed, it raises its ORDER_BACK row and the purchasing
 email says ORDER BACK, the same as a sales order line's own-bin Borrow. The proposal stays a
-Borrow at the own bin, never a Buy. UAC-06 and UAC-06a below read with that change.
+Borrow at the own bin, never a Buy. Every line below that says the own-bin Borrow sends
+nothing to purchasing (Q1, Round 1 B1, the CON holding 0 paragraph, UAC-06, UAC-06a) reads
+with that change: it raises ORDER_BACK, e.g. ORDER_BACK 1 at CON holding 0.
 
 UAC: `consign-plan-acceptance-criteria.md` (alongside).
 
