@@ -2481,6 +2481,12 @@ def run_fetch(
     _tool_started = time.perf_counter()
     try:
         raw = fetch_mod.call_tool(tool_name, args, mcp=_McpSeam(services.mcp_call))
+        parsed = fetch_mod.parse_mcp_content(raw)
+        if isinstance(parsed, str):
+            # Plain text is no envelope: the MCP server hands back a 2xx body it cannot parse
+            # unchanged (`presenters.present_response`). Read as an answer it has no rows, and
+            # would be told to the customer as a real empty result ("No stock and no incoming").
+            raise RuntimeError("answered with no readable result")
     except fetch_mod.ToolNotAllowed as refused:
         # H58: the top hit was a WRITE tool and nothing was called. Recorded with its own
         # outcome rather than as a tool failure, because the two need different reading:
@@ -2503,7 +2509,7 @@ def run_fetch(
         )
 
     envelope = brand_guard.guard_result(
-        tool_name, fetch_mod.parse_mcp_content(raw), semantic_input.get("scope_brand_ids"), db
+        tool_name, parsed, semantic_input.get("scope_brand_ids"), db
     )
     second_group = semantic_input.get("report_ask_second_group") if tool_name == report_ask.TOOL else None
     if second_group and isinstance(envelope, dict) and envelope.get("response"):
@@ -2583,6 +2589,11 @@ def run_fetch(
     # The ERROR check comes BEFORE the render: an error envelope has no rows, and rendering
     # it first would build a "No matching results found." message for a turn that failed.
     if isinstance(envelope, dict) and isinstance(envelope.get("error"), str):
+        if tool_name == _LOW_STOCK_TOOL:
+            # A 502 from the MCP server is the same failure as the raise above: this tool
+            # says its own line and names its filters.
+            filters = semantic_input.get("low_stock_filters")
+            return _low_stock_unavailable(filters.get("header") if isinstance(filters, dict) else None)
         # REPORT-ENGINE slice 1b: the route's own refusal (the audience check is the
         # route's) is said as its message, a 404 as one line.
         refusal = report_ask.error_line(envelope) if tool_name == report_ask.TOOL else None
