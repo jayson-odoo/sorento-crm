@@ -2306,6 +2306,9 @@ def run_fetch(
             sole = report_ask.sole_unapplied_question(unapplied, semantic_input["report_ask_args"])
             if sole:
                 return _fixed_reply(_with_so_line(sole))
+        # Semantic carry: a carried customer the named company does not have is said, and the ask still runs.
+        unapplied = [*unapplied, *[str(w) for w in settled.extras.get("carried_not_applied") or []]]
+        if unapplied:
             semantic_input["report_ask_not_applied"] = unapplied
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]
