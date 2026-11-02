@@ -29,7 +29,7 @@ import pytest
 
 from app.services.chatbot.head import closed_lists_prompt
 from app.services.chatbot.head import parser as parser_mod
-from app.models.product import Brand
+from app.models.product import Brand, ProductCategory
 from app.models.sales_agent import SalesAgent
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import MOCHA_ID
@@ -1007,17 +1007,28 @@ def test_r2_4a_the_declared_company_pick_runs_that_company_with_a_null_object_co
     assert ran and ran[0].get("company") == DEFAULT_COMPANY_ID, f"R2-4a: want Sorento, got {ran[0].get('company') if ran else text!r}"
 
 
-def test_r2_4b_the_declared_measure_pick_runs_that_measure_with_a_null_object_measure(rbot, world) -> None:
+def test_r2_4b_the_measure_question_is_free_and_the_object_fills_it(rbot, world) -> None:
+    """The measure question is a FREE question (R3-4, no numbered options): the object fills `measure` and it runs."""
     sorento, _mocha = world
     ask = _ra(basis="invoiced", group_by="customer", top_n=5, company=sorento, **Y)
     t1 = _v("sales_ranking", ask, basis="invoiced", group_by="customer", top_n=5, rank_direction="top", sales_company=sorento, domain_in_message=True, **YR)
     text, calls = rbot.say(t1, "top 5 customers sorento 2026 invoiced")
     assert not calls and MEASURE_Q in text, f"setup: want {MEASURE_Q!r}, got {text!r}"
-    t2 = _v("sales_ranking", dict(ask), entity_op="reuse", continuation=True, open_question_answer=_pick_of(2), reference_positions=[2])
-    text, calls = rbot.say(t2, "the second")
-    assert MEASURE_Q not in text, "R2-4b: the measure was asked again after the pick"
+    assert not re.search(r"^\s*\d+[.)]\s", text, re.M), f"R3-4: the measure question is shown as a numbered option list: {text!r}"
+    t2 = _v("sales_ranking", _ra(basis="invoiced", group_by="customer", top_n=5, measure="amount", company=sorento, **Y), entity_op="reuse", continuation=True)
+    text, calls = rbot.say(t2, "by amount")
+    assert MEASURE_Q not in text, "R3-4: the measure was asked again after the object filled it"
     ran = _ran(calls)
-    assert ran and ran[0].get("measure") == "amount", f"R2-4b: want measure amount, got {ran[0].get('measure') if ran else text!r}"
+    assert ran and ran[0].get("measure") == "amount", f"R3-4: want measure amount, got {ran[0].get('measure') if ran else text!r}"
+
+
+def test_r3_4_with_the_basis_also_owed_the_measure_question_is_never_numbered(rbot, world) -> None:
+    sorento, _mocha = world
+    t1 = _v("sales_ranking", _ra(group_by="customer", top_n=5, company=sorento, **Y), group_by="customer", top_n=5, rank_direction="top", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(t1, "top 5 customers sorento 2026")
+    assert not calls, f"setup: {text!r}"
+    assert not re.search(r"^\s*\d+[.)]\s", text.replace("Invoiced, delivered", ""), re.M) or MEASURE_Q not in text, f"R3-4: the measure question is numbered as an option list: {text!r}"
+    assert not (MEASURE_Q in text and re.search(r"^\s*\d+[.)]\s", text, re.M)), f"R3-4: {text!r}"
 
 
 def _top10(sorento: str) -> dict[str, Any]:
@@ -1099,3 +1110,106 @@ def test_r2_7_a_continuation_over_a_cut_summary_is_driven_by_the_object(rbot, wo
     ran = _ran(calls)
     assert ran, f"R2-7: the follow-up over the cut summary did not run: {text!r}"
     assert ran[0].get("customer_ids") == [rbot.ids["customer"]] and not ran[0].get("group_offset"), f"R2-7: the object did not drive the args (read as the next page?): {ran[0]}"
+
+
+# ------------------------------------------------------------------------------------------ round 3
+def _seed_twins(rbot_: Routing, model: Any, rows: list[tuple[str, str]], code_col: str, name_col: str) -> dict[str, str]:
+    db = rbot_.console.session_factory()
+    ids: dict[str, str] = {}
+    try:
+        for code, name in rows:
+            row = model(id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, **{code_col: code, name_col: name})
+            db.add(row)
+            ids[code] = str(row.id)
+        db.commit()
+    finally:
+        db.close()
+    return ids
+
+
+def test_r3_1_two_brands_sharing_a_name_carry_only_the_held_one(rbot, world) -> None:
+    sorento, _mocha = world
+    ids = _seed_twins(rbot, Brand, [("ZZTWB1", "ZZ TWINBRAND"), ("ZZTWB2", "ZZ TWINBRAND")], "brand_code", "brand_name")
+    t1 = _v("sales_report", _ra(basis="invoiced", company=sorento, brands=["ZZTWB1"], **Y), _ent("ZZTWB1", "brand", None, "brand"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(t1, "sorento sales for brand zztwb1 2026 invoiced")
+    assert _ran(calls) and _ran(calls)[0].get("brand_ids") == [ids["ZZTWB1"]], f"setup: {_ran(calls) or text!r}"
+    t2 = _v("sales_report", _ra(), continuation=True, entity_op="reuse", date_filter_start="2025-01-01", date_filter_end="2025-12-31")
+    seen = _copy_held(rbot, t2, date_from="2025-01-01", date_to="2025-12-31")
+    text, calls = rbot.say(t2, "and 2025")
+    ran = _ran(calls)
+    assert ran and ran[0].get("brand_ids") == [ids["ZZTWB1"]], f"R3-1: want only ZZTWB1 (held line {seen.get('brands')}), got {ran[0].get('brand_ids') if ran else text!r}"
+
+
+def test_r3_2_two_categories_sharing_a_name_carry_only_the_held_one(rbot, world) -> None:
+    sorento, _mocha = world
+    ids = _seed_twins(rbot, ProductCategory, [("ZZTC1", "ZZ TWINCAT"), ("ZZTC2", "ZZ TWINCAT")], "category_code", "category_name")
+    t1 = _v("sales_report", _ra(basis="invoiced", company=sorento, categories=["ZZTC1"], **Y), _ent("ZZTC1", "category"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(t1, "sorento sales for category zztc1 2026 invoiced")
+    assert _ran(calls) and _ran(calls)[0].get("category_ids") == [ids["ZZTC1"]], f"setup: {_ran(calls) or text!r}"
+    t2 = _v("sales_report", _ra(), continuation=True, entity_op="reuse", date_filter_start="2025-01-01", date_filter_end="2025-12-31")
+    seen = _copy_held(rbot, t2, date_from="2025-01-01", date_to="2025-12-31")
+    text, calls = rbot.say(t2, "and 2025")
+    assert "matches several categories" not in text, f"R3-2: {text!r}"
+    ran = _ran(calls)
+    assert ran and ran[0].get("category_ids") == [ids["ZZTC1"]], f"R3-2: want only ZZTC1 (held line {seen.get('categories')}), got {ran[0].get('category_ids') if ran else text!r}"
+
+
+def test_r3_3_an_outstanding_parse_with_an_object_of_kind_null_still_runs_the_outstanding_report(rbot, world) -> None:
+    v = _v("outstanding", _ra(kind=None), basis="outstanding", domain_in_message=True)
+    text, calls = rbot.say(v, "undelivered orders")
+    for q in ("Which period?", BASIS_Q):
+        assert q not in text, f"R3-3: an outstanding ask was answered with the report question {q!r}: {text!r}"
+    ran = _ran(calls)
+    assert ran and ran[0].get("basis") == "outstanding", f"R3-3: the outstanding report did not run: {ran or text!r}"
+
+
+def test_r3_5a_without_the_customers_permission_a_held_customer_is_not_resolved_in_another_company(rbot, world, monkeypatch) -> None:
+    from tests._mc_lookup_seed import customer
+
+    from app.services.chatbot.lanes.business import report_ask
+
+    sorento, mocha = world
+    name = "ZZ GATED TRADING"
+    db = rbot.console.session_factory()
+    try:
+        s_id = customer(db, company_id=DEFAULT_COMPANY_ID, name=name).id
+        m_id = customer(db, company_id=MOCHA_ID, name=name).id
+        db.commit()
+    finally:
+        db.close()
+    t1 = _v("sales_report", _ra(basis="invoiced", company=sorento, **Y), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(t1, "sorento sales 2026 invoiced")
+    assert _ran(calls), f"setup: {text!r}"
+    frame = rbot.console.session_vars["focus"]["sales_ranking_frame"]
+    frame["customer_ids"] = [s_id]
+    frame.setdefault("names", {})["customer_ids"] = {s_id: name}
+    perm = report_ask.staff_principal.CUSTOMERS_VIEW
+    monkeypatch.setattr(report_ask.staff_principal, "lacks", lambda db_, *slugs: perm in slugs)
+    t2 = _v("sales_report", _ra(basis="invoiced", company=mocha, customers=[name], **Y), sales_company=mocha, continuation=True, entity_op="reuse", **YR)
+    text, calls = rbot.say(t2, "mocha")
+    ran = _ran(calls)
+    assert not (ran and m_id in (ran[0].get("customer_ids") or [])), f"R3-5a: a principal without {perm} got Mocha's customer resolved: {ran[0].get('customer_ids')}"
+    lines = [ln for ln in text.splitlines() if ln.startswith("Not applied:")]
+    assert lines and name.casefold() in lines[0].casefold(), f"R3-5a: the held name is not on a Not applied line: {text!r}"
+
+
+def test_r3_5b_a_dealers_held_customer_never_resolves_to_an_unlinked_same_name_customer(rdealer) -> None:
+    from tests._mc_lookup_seed import customer
+
+    sorento, mocha = _two_companies(rdealer)
+    own = "ZZT OWN DEALER SDN BHD"
+    db = rdealer.console.session_factory()
+    try:
+        other_id = customer(db, company_id=MOCHA_ID, name=own).id
+        db.commit()
+    finally:
+        db.close()
+    t1 = _v("sales_report", _ra(basis="invoiced", company=sorento, customers=[own], **Y), _e(own, "customer"), basis="invoiced", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rdealer.say(t1, "my sales 2026 invoiced")
+    assert _ran(calls), f"setup: {text!r}"
+    t2 = _v("sales_report", _ra(basis="invoiced", company=mocha, customers=[own], **Y), sales_company=mocha, continuation=True, entity_op="reuse", **YR)
+    text, calls = rdealer.say(t2, "mocha")
+    assert "customer_not_permitted" not in text and "403" not in text, f"R3-5b: a permission error was shown: {text!r}"
+    ran = _ran(calls)
+    assert not (ran and other_id in (ran[0].get("customer_ids") or [])), f"R3-5b: an unlinked customer of the same name was resolved: {ran[0].get('customer_ids')}"
+    assert any(ln.startswith("Not applied:") for ln in text.splitlines()), f"R3-5b: no Not applied line: {text!r}"
