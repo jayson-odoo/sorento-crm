@@ -111,6 +111,7 @@ from app.models.projects import (
     ProjectType,
     QuotationAmendmentRequest,
     QuotationAmendmentRequestRow,
+    QuotationIssueView,
     QuotationSignature,
     QuotationTemplate,
 )
@@ -198,6 +199,8 @@ PURGE_ORDER: List[Type] = [
     # own statement so the operator sees the customer's suggestions counted.
     QuotationAmendmentRequestRow,
     QuotationAmendmentRequest,
+    # quotation_issue_views CASCADEs off the issue (PS-QUOTE-VIEWS); counted on its own.
+    QuotationIssueView,
     ProjectQuotationIssueScope,
     ProjectQuotationIssue,
     ProjectQuotationLine,

@@ -34,6 +34,7 @@
     "projects.samples",
     "projects.quotation_amendment_request_rows",
     "projects.quotation_amendment_requests",
+    "projects.quotation_issue_views",
     "projects.quotation_issue_scopes",
     "projects.quotation_issues",
     "projects.quotation_lines",

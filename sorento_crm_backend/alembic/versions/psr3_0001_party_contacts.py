@@ -14,15 +14,13 @@ Card: documentation/plans/projects/CARD-ps-registration-v3-02nov.md. Additive an
 re-run, or a dev DB built by create_all, is harmless.
 
 Revision ID: psr3_0001_party_contacts
-Revises: qiv_0001_issue_views, bnsp_0001_brand_no_selling_price
+Revises: join_0003_qiv_bnsp
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "psr3_0001_party_contacts"
-# Also the merge point of main's two heads at the time (qiv_0001 #2102 and bnsp_0001 #2104 both
-# revise qcp_0001), so the graph has one head again.
-down_revision = ("qiv_0001_issue_views", "bnsp_0001_brand_no_selling_price")
+down_revision = "join_0003_qiv_bnsp"
 branch_labels = None
 depends_on = None
 

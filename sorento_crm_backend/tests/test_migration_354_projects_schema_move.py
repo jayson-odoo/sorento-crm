@@ -96,6 +96,8 @@ BORN_AFTER_THE_MOVE = frozenset({
     # the parties a project links by role, born straight into `projects`.
     "party_contacts",
     "party_links",
+    # PS-QUOTE-VIEWS (#2102, migration qiv_0001_issue_views): counted opens of a sign link.
+    "quotation_issue_views",
 })
 
 MIGRATION = (
