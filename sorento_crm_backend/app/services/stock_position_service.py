@@ -11,6 +11,9 @@ once rather than one, so the panel and this report cannot disagree:
 * **Incoming BRW / Incoming (Project)**: the panel's open SPO rows (`_spo_rows`), split by
   whether the SPO row's warehouse is a site pool or a project location.
 * **Total stock** = the warehouse columns + Incoming BRW. **Total incoming** = the two SPO columns.
+  Both add up only the parts the user SHOWS (owner 2 Nov, lane STOCK-POS-DYNAMIC-TOTAL, reversing
+  Q5's "hiding does not change the total"): the caller names its hidden columns (`hide`) and the
+  totals are recomputed before the sort, so sort, paging and export read one visible set.
 * **Packing list not on an SPO**: the panel's `counted` figure (rule R3), kept out of both totals.
 * **Outstanding dealer**: the panel's SO rule (`so_outstanding_clauses`) on non-project orders,
   printed negative as the sheet does (owed, Q2). **Outstanding PO**: `po_outstanding_clauses`.
@@ -69,6 +72,8 @@ FIGURE_COLUMNS = (
 _TEXT_SORTS = ("item_code", "description", "supplier_name", "brand_name")
 #: A warehouse column's sort key: this prefix + its code (`wh:BRW`).
 WAREHOUSE_SORT_PREFIX = "wh:"
+#: The figure columns that are parts of a total; any other hidden id changes no total.
+INCOMING_PARTS = ("incoming_pool", "incoming_project")
 
 
 def _num(value: Any) -> float:
@@ -224,6 +229,28 @@ def build_rows(db: Session, *, as_of: Optional[date] = None) -> dict:
     return {"warehouses": columns, "rows": rows}
 
 
+def _apply_hidden(rows: list[dict], hide: Optional[list[str]]) -> list[dict]:
+    """Each row's two totals over the columns the user shows: `hide` names the hidden column ids
+    (`wh:<code>`, `incoming_pool`, `incoming_project`); any other id is no part of a total and is
+    ignored. The figures themselves are untouched. Rows are copied, never mutated in place."""
+    hidden = set(hide or ())
+    if not hidden:
+        return rows
+    gone_codes = {h[len(WAREHOUSE_SORT_PREFIX):] for h in hidden if h.startswith(WAREHOUSE_SORT_PREFIX)}
+    pool = "incoming_pool" not in hidden
+    project = "incoming_project" not in hidden
+    out = []
+    for r in rows:
+        stock = sum(qty for code, qty in r["stock"].items() if code not in gone_codes)
+        out.append({
+            **r,
+            "total_stock": stock + (r["incoming_pool"] if pool else 0.0),
+            "total_incoming": (r["incoming_pool"] if pool else 0.0)
+            + (r["incoming_project"] if project else 0.0),
+        })
+    return out
+
+
 def _sort_key(sort: str, codes: set[str]):
     if sort in _TEXT_SORTS:
         # Blank last on either direction is not asked for; a blank reads as "" and sorts first asc.
@@ -245,13 +272,15 @@ def stock_position(
     warehouse_ids: Optional[list[str]] = None,
     sort: Optional[str] = None,
     direction: str = "asc",
+    hide: Optional[list[str]] = None,
     as_of: Optional[date] = None,
 ) -> dict:
-    """The filtered, sorted row set (unpaged) and its warehouse columns."""
+    """The filtered, sorted row set (unpaged) and its warehouse columns. `hide`: the column ids
+    the user hides; the totals add up only the shown parts (`_apply_hidden`)."""
     built = build_rows(db, as_of=as_of)
     # A warehouse sort names one of THIS result's columns; any other is as unknown as `sort=nope`.
     key = _sort_key(sort or "item_code", {c["code"] for c in built["warehouses"]})
-    rows = built["rows"]
+    rows = _apply_hidden(built["rows"], hide)
     if query:
         needle = query.strip().lower()
         rows = [r for r in rows if needle in (r["item_code"] or "").lower()
@@ -271,7 +300,7 @@ def stock_position(
         } if ids else set()
         rows = [r for r in rows if any(r["stock"].get(code) for code in codes)]
     rows.sort(key=key, reverse=(direction == "desc"))
-    return {**built, "rows": rows}
+    return {**built, "rows": rows, "hide": list(hide or [])}
 
 
 def page(result: dict, page_no: int, limit: int) -> dict:
@@ -291,18 +320,16 @@ def page(result: dict, page_no: int, limit: int) -> dict:
     }
 
 
-def workbook(result: dict, warehouse_codes: Optional[list[str]] = None) -> bytes:
+def workbook(result: dict) -> bytes:
     """Every row of a `stock_position` result as one sheet, headed as the screen is.
 
-    `warehouse_codes`: the warehouse columns the user shows (Q5, the grid's Columns chooser),
-    written in the report's own order; None writes them all. The totals are not recomputed:
-    hiding a column hides it, it does not take that warehouse out of Total stock."""
+    The warehouse columns are the ones the user shows (the result's `hide`, the grid's Columns
+    chooser), in the report's own order; the totals are the result's own, already over the shown
+    parts, so the workbook's Total stock is the screen's."""
     from openpyxl import Workbook
 
-    codes = [c["code"] for c in result["warehouses"]]
-    if warehouse_codes is not None:
-        shown = set(warehouse_codes)
-        codes = [code for code in codes if code in shown]
+    hidden = set(result.get("hide") or ())
+    codes = [c["code"] for c in result["warehouses"] if f"{WAREHOUSE_SORT_PREFIX}{c['code']}" not in hidden]
     wb = Workbook()
     ws = wb.active
     ws.title = "Stock position"

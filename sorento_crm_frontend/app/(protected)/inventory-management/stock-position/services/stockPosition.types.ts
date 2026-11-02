@@ -33,4 +33,9 @@ export interface StockPositionFilters {
   supplierId?: string;
   brandId?: string;
   warehouseId?: string;
+  /**
+   * The total-part columns the user hides (`wh:<code>`, `incoming_pool`, `incoming_project`): Total
+   * stock and Total incoming add up only the shown ones, on the server, before the sort and the export.
+   */
+  hiddenColumns?: string[];
 }
