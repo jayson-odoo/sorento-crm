@@ -1,4 +1,20 @@
-# CARD: PS-REGISTRATION-V3 v1.1 (2 Nov 2026)
+# CARD: PS-REGISTRATION-V3 v1.2 (2 Nov 2026)
+
+**v1.2, as built (PR #2099).** All five questions answered (crew 2 Nov, owner ~21:20 and ~21:40): Q1 (b) phone
+optional; Q2 the WhatsApp send picks a party of the project and a typed number for a pick with none is saved to it;
+Q3 (a) Area is a selection from an editable district list per state, old free text left as typed; Q4 one
+lead-source list editable in Settings, shared with leads, seeded with the list in Q4 plus "Interior designer (ID)" and
+"Referral"; Q5 (b) several trading houses, subcontractors and tender parties, one of each other role. This lane owns
+every new party type, `tender_party` included (#2097 reuses them). What changed from v1.1 while building:
+
+- The roles beyond developer / architect / main contractor live in one table `projects.party_links` (project, role,
+  party), not four columns, because Q5 needs several per role. The role IS the party's type.
+- Lead source sits in the always-open bottom section, renamed "Lead source, customer and salesperson": Details starts
+  folded in create mode, and a required field there would leave Register disabled with no visible reason.
+- Contacts live in a Contacts section on the party's own page, not inside the party dialog (a new party has no id to
+  hang contacts on, and the view page renders every section).
+- The WhatsApp dialog keeps its free To field and adds one "Send to" picker above it (rules 10-11 as built).
+- The Parties grid sorts and pages on the server (owner rule), with a Contacts column.
 
 **Owner ruling 2 Nov ~21:20 (Q1, Q2 answered):** phone is NOT mandatory. When a proposal or quotation is sent by
 WhatsApp, the user chooses which of the project's parties to send to; a chosen party with no number gets it typed on
@@ -6,8 +22,8 @@ the spot and it is saved to that party (master data). Added to this lane's scope
 free text (`FE/[projectId]/quotation-documents/[documentId]/components/QuotationWhatsAppDialog.tsx:134-140`), seeded
 from the developer's phone snapshot (`:99-102`); the dialog is shared with PS-PROPOSAL-QUOTATION (#2097).
 
-Status: Plan - card posted to the owner (crew-ask), no code yet. Track: normal (carries a migration: one new
-table, five new columns). Size M.
+Status: Build done, in review (PR #2099). Track: normal (migration `psr3_0001_party_contacts`: two tables, two
+columns, lookup seeds). Size M. Plan: `PLAN-ps-registration-v3-02nov.md`.
 
 Paths: BE = `sorento_crm_backend/app`, FE = `sorento_crm_frontend/app/(protected)/project-sales`. Code read on
 origin/main 46de2f6d. Owner rulings used: 2 Nov ~21:05 ("most fields are selections; party master data holds each
@@ -93,13 +109,13 @@ Not in scope
 - Quotation recipient snapshot (`recipient_*_snapshot`) is not changed; only the WhatsApp dialog's To is (rules 10-13).
 
 WhatsApp send: choose the parties (owner 2 Nov ~21:20)
-10. The send dialog's free-text **To** becomes a list of the project's parties: developer, architect, main contractor,
-    subcontractor, trading house, consultant, interior designer, plus each party's registered contacts (the project's
-    stakeholders that carry a `party_contact_id`). One row per recipient: party, person, number, and its own "Open
-    WhatsApp" button (wa.me opens ONE chat per click, so several parties = several clicks). Message and counter-sign
-    link unchanged.
-11. A row with no number shows an empty phone input. Typing a number and pressing Open WhatsApp saves it: to the
-    party contact when the row is a contact, else to the party's own phone. It fills an EMPTY number only; a number
+10. (as built) The send dialog gets a **Send to** picker above its free-text To: one option per party of the project
+    (every role) and per person registered at it (the project's stakeholders at that party), each with its number.
+    Picking one fills To. wa.me opens ONE chat per click, so several parties = pick, open, pick the next. Message and
+    counter-sign link unchanged; a typed To with no pick still works and saves nothing.
+11. A pick with no number on file leaves To empty with a line saying so. Typing a number and pressing Open WhatsApp
+    saves it (normalised to +digits): to the person and their party contact when a person was picked, else to the
+    party's own phone. It fills an EMPTY number only; a number
     already on file is used as is and can be edited for this send without being saved (no silent overwrite of master
     data).
 12. The save needs the send right the user already has (`projects.projects.edit` on this project), not
@@ -117,8 +133,8 @@ through a `crew-data-request:` comment; crew masks names. Wanted: (1) a project 
 
 ## Edge cases
 
-- A party picked twice in different roles (main con also subcon): allowed; contacts are picked once per role row, a
-  person picked under both becomes ONE stakeholder (dedup on party_contact_id).
+- A party in two roles cannot happen: a role takes only a party of that type (the role IS the type). A contact picked
+  twice becomes ONE stakeholder (dedup on party_contact_id).
 - A deactivated contact still shows on old projects (stakeholder is a copy) but is not offered.
 - Contact create row with no phone: allowed (Q1 answered: phone optional); the number can be added at send time.
 - AI extract fills names it read; party contacts are never invented from it (no match = hint only, as today).
