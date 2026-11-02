@@ -775,3 +775,83 @@ def test_a_routed_request_whose_approver_was_deleted_goes_to_an_admin_not_to_eve
         assert refused.value.status_code == 403
         approval.approve(db, document=document, actor_user_id=_admin(db), permissions=EVERYTHING)
         assert approval.current_key(db, document) == "approved"
+
+
+# ------------------------------------------------- reviewer round: surviving mutants
+
+
+def test_a_regional_manager_pressing_send_on_their_reps_project_is_skipped_up_to_ck():
+    """The routing table's "Regional manager" row: owner = rep, requester = rep's superior."""
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        org = _org(db, owner)
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        _ask(db, document, org["south"])
+        assert document.approver_user_id == org["ck"]
+
+
+def test_an_owner_with_no_superior_routes_by_the_requesters_superior():
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        boss = _approver(db, "Colleague's Boss")
+        colleague = _approver(db, "Colleague", superior=boss, grant=False)
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        _ask(db, document, colleague)
+        assert document.approver_user_id == boss
+
+
+@pytest.mark.parametrize("flaw", ["integration", "inactive"])
+def test_an_integration_or_inactive_superior_is_skipped_by_routing(flaw):
+    from app.models.user import User
+
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        ck = _approver(db, "CK")
+        bad = _approver(db, "Bad Superior", superior=ck)
+        db.query(User).filter(User.id == bad).update(
+            {"is_integration": True} if flaw == "integration" else {"status": "INACTIVE"}
+        )
+        db.query(User).filter(User.id == owner).update({"superior_id": bad})
+        db.flush()
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        _ask(db, document, owner)
+        assert document.approver_user_id == ck
+
+
+def test_an_archived_final_negotiation_rung_is_never_entered():
+    with blank_session() as db:
+        _, owner, product, project, document, scope = _setup(db)
+        rows = _ladder(db)
+        rows["final_negotiation"].is_archived = True
+        _put_on(db, project, rows, "specified")
+        _line(db, scope, product, owner, BELOW_FLOOR)
+        _ask(db, document, owner)
+        assert _project_key(db, project) == "specified"
+        assert project.is_critical is True
+
+
+def test_a_closed_rung_earlier_in_the_order_is_never_left():
+    with blank_session() as db:
+        _, owner, product, project, document, scope = _setup(db)
+        rows = _ladder(db)
+        rows["lost"].sort_order = 3  # a terminal rung sorted before Final Negotiation
+        _put_on(db, project, rows, "lost")
+        _line(db, scope, product, owner, BELOW_FLOOR)
+        _ask(db, document, owner)
+        assert _project_key(db, project) == "lost"
+
+
+def test_the_payload_says_whether_this_viewer_may_decide():
+    from app.services import project_quotation_document_service as qdocs
+
+    with blank_session() as db:
+        _, owner, product, _, document, scope = _setup(db)
+        org = _org(db, owner)
+        north = _approver(db, "North Manager", superior=org["ck"])
+        _line(db, scope, product, owner, ABOVE_FLOOR)
+        _ask(db, document, owner)
+        assert qdocs.serialize_document(db, document, viewer_id=org["south"])["viewer_may_decide"] is True
+        assert qdocs.serialize_document(db, document, viewer_id=org["ck"])["viewer_may_decide"] is True
+        assert qdocs.serialize_document(db, document, viewer_id=north)["viewer_may_decide"] is False
+        assert qdocs.serialize_document(db, document, viewer_id=owner)["viewer_may_decide"] is False
+        assert qdocs.serialize_document(db, document)["viewer_may_decide"] is None

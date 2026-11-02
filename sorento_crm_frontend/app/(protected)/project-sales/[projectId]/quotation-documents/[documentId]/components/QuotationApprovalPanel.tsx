@@ -44,8 +44,9 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
     (belowFloor === 1
       ? 'One line is priced below minimum price'
       : `${belowFloor} lines are priced below minimum price`);
+  // Named only while it waits: whoever decides may be someone above the routed approver, so
+  // the decided sentences do not credit a name.
   const who = document.approver_name || 'a manager';
-  const Who = document.approver_name || 'A manager';
 
   const tone = blocked
     ? 'border-amber-500/40 bg-amber-500/5'
@@ -68,7 +69,7 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
           {statusKey === 'rejected' && (
             <>
               <BlockLine>
-                {`${Who} sent this back. Change the lines they asked about, then ask again.`}
+                A manager sent this back. Change the lines they asked about, then ask again.
               </BlockLine>
               {document.approval_rejected_reason && (
                 <p className="min-w-0 break-words text-sm text-muted-foreground">
@@ -79,7 +80,7 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
           )}
           {statusKey === 'approved' && (
             <BlockLine>
-              {`${priced}, and ${who} has approved it. It can be sent to the customer.`}
+              {`${priced}, and a manager has approved it. It can be sent to the customer.`}
             </BlockLine>
           )}
           {blocked && !withManager && statusKey !== 'rejected' && (

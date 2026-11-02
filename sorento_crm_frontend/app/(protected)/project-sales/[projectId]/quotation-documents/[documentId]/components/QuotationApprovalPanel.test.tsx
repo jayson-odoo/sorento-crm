@@ -312,7 +312,8 @@ describe('QuotationApprovalPanel: PS-QUOTE-RULES reasons and routing', () => {
         })}
       />,
     );
-    expect(screen.getByText(/^Aminah Rahman sent this back\./)).toBeInTheDocument();
+    // The decider may be someone above the routed approver, so the decision credits no name.
+    expect(screen.getByText(/^A manager sent this back\./)).toBeInTheDocument();
   });
 });
 

@@ -706,7 +706,9 @@ def _prepared_by(db: Session, document: ProjectQuotationDocument) -> Optional[st
     return salesperson_of(db, project, document)
 
 
-def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
+def serialize_document(
+    db: Session, document: ProjectQuotationDocument, viewer_id: Optional[str] = None
+) -> Dict[str, Any]:
     """One document, with its tabs and its money.
 
     `grand_total` is summed HERE rather than by the caller, so the header, the tabs and the PDF
@@ -794,16 +796,16 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
         # absent would be as bad as wrong. Spread from one function so this manual dict and the
         # approval service cannot drift - this repo has been bitten by a manual builder silently
         # dropping a new column more than once (`get_user`, `system_settings`).
-        **approvals.serialize_approval(db, document),
+        **approvals.serialize_approval(db, document, viewer_id=viewer_id),
         "created_at": document.created_at,
         "updated_at": document.updated_at,
     }
 
 
 def serialize_documents(
-    db: Session, documents: List[ProjectQuotationDocument]
+    db: Session, documents: List[ProjectQuotationDocument], viewer_id: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    return [serialize_document(db, document) for document in documents]
+    return [serialize_document(db, document, viewer_id=viewer_id) for document in documents]
 
 
 def serialize_issue(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any]:

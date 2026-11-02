@@ -1462,6 +1462,19 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     await waitFor(() => expect(approveQuotationDocument).toHaveBeenCalledWith('p1', 'd1'));
   });
 
+  it('PS-QUOTE-RULES: a grant holder the request is NOT routed to is not offered Approve or Reject', async () => {
+    granted = new Set(['projects.quotations.approve']);
+    graphData = approvalGraph();
+    getQuotationDocument.mockResolvedValue(
+      belowFloor('pending_approval', { viewer_may_decide: false }),
+    );
+    renderScreen();
+
+    expect((await screen.findAllByText(/for approval/i)).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
+  });
+
   it('E2: Reject asks for a reason before it can be sent', async () => {
     granted = new Set(['projects.quotations.approve']);
     graphData = approvalGraph();

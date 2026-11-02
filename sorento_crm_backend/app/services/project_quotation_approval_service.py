@@ -163,12 +163,27 @@ def off_series_line_count(db: Session, document: ProjectQuotationDocument) -> in
 
 
 def counts(db: Session, document: ProjectQuotationDocument) -> Dict[str, int]:
-    """The three reasons, together, for messages and the payload."""
-    return {
-        "discounted": discounted_line_count(db, document),
-        "below_floor": below_floor_line_count(db, document),
-        "off_series": off_series_line_count(db, document),
-    }
+    """The three reasons, together, for messages and the payload: one query, not three."""
+    from sqlalchemy import Integer, cast
+
+    version_ids = current_version_ids(db, document)
+    if not version_ids:
+        return {"discounted": 0, "below_floor": 0, "off_series": 0}
+    row = (
+        db.query(
+            func.coalesce(func.sum(cast(ProjectQuotationLine.is_discounted, Integer)), 0),
+            func.coalesce(func.sum(cast(ProjectQuotationLine.is_below_floor, Integer)), 0),
+            func.coalesce(func.sum(cast(ProjectQuotationLine.is_non_standard, Integer)), 0),
+        )
+        .filter(ProjectQuotationLine.version_id.in_(version_ids))
+        .one()
+    )
+    return {"discounted": int(row[0]), "below_floor": int(row[1]), "off_series": int(row[2])}
+
+
+def _reasons_lower(db: Session, document: ProjectQuotationDocument) -> str:
+    text = reasons_text(counts(db, document)) or "no line needs it now"
+    return text[:1].lower() + text[1:]
 
 
 def requires_approval(db: Session, document: ProjectQuotationDocument) -> bool:
@@ -716,23 +731,11 @@ def _enter_final_negotiation(
 
     set_critical(project, True)
 
-    from app.status_engine.registry import get_status_entity
-
-    entity = get_status_entity("project")
-    scope_id = entity.scope_for(project) if entity is not None else None
-    target = None
-    for scope in ([scope_id, None] if scope_id is not None else [None]):
-        target = (
-            db.query(Status)
-            .filter(
-                Status.entity_type == "project",
-                Status.key == FINAL_NEGOTIATION_KEY,
-                Status.scope_id.is_(None) if scope is None else Status.scope_id == scope,
-            )
-            .first()
-        )
-        if target is not None:
-            break
+    # The project's OWN graph (a fork is used exclusively when it exists), and only a live rung:
+    # never a default-graph status on a forked project, never an archived or inactive one.
+    target = status_service.graph_for_record(db, "project", project).by_key(FINAL_NEGOTIATION_KEY)
+    if target is not None and (not target.is_active or target.is_archived):
+        target = None
     current = (
         db.query(Status).filter(Status.id == project.status_id).first()
         if project.status_id
@@ -820,8 +823,8 @@ def approve(
         document,
         template="quotation_approval_granted",
         body_text=(
-            f"{_actor_name(db, actor_user_id)} approved the pricing below minimum price on "
-            f"quotation {document.document_no}."
+            f"{_actor_name(db, actor_user_id)} approved quotation {document.document_no} "
+            f"({_reasons_lower(db, document)})."
         ),
         actor_user_id=actor_user_id,
     )
@@ -1015,7 +1018,9 @@ def notify_withdrawn(
 # ------------------------------------------------------------------ serialize
 
 
-def serialize_approval(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
+def serialize_approval(
+    db: Session, document: ProjectQuotationDocument, *, viewer_id: Optional[str] = None
+) -> Dict[str, Any]:
     """The approval block of the document payload.
 
     Its own function so ``serialize_document`` cannot drift from it, and so every one of these
@@ -1037,4 +1042,20 @@ def serialize_approval(db: Session, document: ProjectQuotationDocument) -> Dict[
         "approval_reasons": reasons_text(c) if any(c.values()) else None,
         "approver_user_id": str(approver.id) if approver is not None else None,
         "approver_name": (approver.name or approver.email) if approver is not None else None,
+        # Whether THIS viewer may approve or reject the request now (R5), so the screen offers
+        # the decision only to someone the server will accept. None when no viewer is known.
+        "viewer_may_decide": _viewer_may_decide(db, document, viewer_id),
     }
+
+
+def _viewer_may_decide(
+    db: Session, document: ProjectQuotationDocument, viewer_id: Optional[str]
+) -> Optional[bool]:
+    if not viewer_id:
+        return None
+    if current_key(db, document) not in AWAITING_KEYS:
+        return False
+    from app.services.user_service import UserPermissionService
+
+    permissions = UserPermissionService(db).get_user_permission_slugs(viewer_id)
+    return may_decide(db, document, actor_user_id=viewer_id, permissions=permissions)

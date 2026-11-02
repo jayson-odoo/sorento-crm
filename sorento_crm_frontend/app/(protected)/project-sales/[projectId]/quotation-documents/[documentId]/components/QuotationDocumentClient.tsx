@@ -205,7 +205,14 @@ export function QuotationDocumentClient({
    * server refuses it.
    */
   const isSigned = Boolean(sorentoSignature);
-  const action = nextAction(record, { canEdit, canApprove, isSigned });
+  // The grant is the RIGHT to approve; the server says whether THIS viewer may decide THIS
+  // request (routed approver, someone above them, or an admin, never the sender). An older
+  // payload without the field falls back to the grant.
+  const mayDecide =
+    record.viewer_may_decide === undefined || record.viewer_may_decide === null
+      ? canApprove
+      : canApprove && record.viewer_may_decide;
+  const action = nextAction(record, { canEdit, canApprove: mayDecide, isSigned });
   const locked = isLockedForApproval(record);
   /**
    * The "Send for approval" label comes off the graph's own draft -> pending edge, so a renamed

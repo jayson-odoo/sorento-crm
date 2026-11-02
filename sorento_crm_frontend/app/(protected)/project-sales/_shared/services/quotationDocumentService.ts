@@ -170,6 +170,8 @@ export type QuotationDocument = {
   /** Who the current request was routed to, frozen when it was sent. */
   approver_user_id?: string | null;
   approver_name?: string | null;
+  /** Whether the signed-in viewer may approve or reject the current request. */
+  viewer_may_decide?: boolean | null;
 
   /**
    * What the customer did with the revision they are CURRENTLY holding (S17).

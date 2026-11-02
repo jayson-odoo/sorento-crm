@@ -2122,6 +2122,7 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     approval_reasons: Optional[str] = None
     approver_user_id: Optional[str] = None
     approver_name: Optional[str] = None
+    viewer_may_decide: Optional[bool] = None
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
