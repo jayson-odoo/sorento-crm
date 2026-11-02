@@ -541,3 +541,50 @@ def test_H2_a_plain_or_zero_width_hidden_id_is_still_text_refused(text):
                          ids=["precomposed", "decomposed", "chinese", "emoji"])
 def test_H2_ordinary_text_is_allowed(text):
     assert not _text_refused(text)
+
+
+# ------------------------------------------------------------------ H1 review: ported reads only, own record ids only
+
+
+def test_H1_a_non_ported_empty_read_is_not_backed_by_an_id_from_a_find_row():
+    pid = str(uuid.uuid4())
+    ledger = {
+        "p1": _ok("crm_products_find", {"rows": [{"id": pid, "code": f"B{i}"} for i in range(5)]}, {"query": "basin"}),
+        **_empty_read("crm_inventory_stock_balance_list", {"product_ids": [pid]}),
+    }
+    assert _nf_bad(ledger, "no stock for basin") == ["no stock for basin"]
+
+
+def test_H1_a_bare_detail_counts_its_own_id_not_a_nested_records():
+    pid, cid = str(uuid.uuid4()), str(uuid.uuid4())
+    detail = {"p1": _ok("crm_project_detail", {"id": pid, "customer": {"id": cid}})}
+    own = {**detail, **_empty_read("crm_project_quotations_list", {"project_id": pid})}
+    nested = {**detail, **_empty_read("crm_project_quotations_list", {"project_id": cid})}
+    assert _nf_bad(own) == []
+    assert _nf_bad(nested) == ["quotations for ZZT tower"]
+
+
+def test_H1_a_response_wrapped_detail_record_still_counts_its_own_id():
+    pid = str(uuid.uuid4())
+    ledger = {
+        "p1": _ok("crm_project_detail", {"response": {"id": pid, "title": "ZZT tower"}}),
+        **_empty_read("crm_project_quotations_list", {"project_id": pid}),
+    }
+    assert _nf_bad(ledger) == []
+
+
+def test_H1_a_star_id_field_never_counts():
+    pid, qid = str(uuid.uuid4()), str(uuid.uuid4())
+    ledger = {
+        "p1": _ok("crm_projects_list", {"data": [{"id": pid, "project_id": qid}]}),
+        **_empty_read("crm_project_quotations_list", {"project_id": qid}),
+    }
+    assert _nf_bad(ledger) == ["quotations for ZZT tower"]
+
+
+# ------------------------------------------------------------------ H2 review: an id glued after a mark
+
+
+@pytest.mark.parametrize("glue", ["̀", "‍"], ids=["combining_mark", "zero_width_joiner"])
+def test_H2_an_id_glued_after_a_letter_and_a_mark_or_joiner_is_refused(glue):
+    assert _text_refused("ID" + glue + _ID)
