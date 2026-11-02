@@ -105,7 +105,7 @@ describe('ProductTagTemplatesSection', () => {
     expect(save).not.toHaveBeenCalled();
     expect(start).toHaveBeenCalled();
     const last = deferredInputs[deferredInputs.length - 1];
-    expect(last.actionKey).toBe('product_tag_template.unlink');
+    expect(last.actionKey).toBe('product.unlink_tag_templates');
     expect(last.payload).toEqual({ template_ids: ['a'] });
   });
 });

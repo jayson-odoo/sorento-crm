@@ -355,7 +355,7 @@ _PARK_SCOPED_MODELS: dict = {
     # unlinked from; the filter rides in the payload.
     "tag_template.unassign_products": TagTemplate,
     # PRICETAG-TEMPLATE-PER-PRODUCT: parked on the product; the template ids ride in the payload.
-    "product_tag_template.unlink": Product,
+    "product.unlink_tag_templates": Product,
     "team.delete": Team,
     "uom.delete": UnitOfMeasure,
     "warehouse.delete": Warehouse,

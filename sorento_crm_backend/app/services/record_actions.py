@@ -1748,7 +1748,7 @@ def _unlink_product_tag_templates(db: Session, payload: dict):
 
 register(
     FormAction(
-        key="product_tag_template.unlink",
+        key="product.unlink_tag_templates",
         entity_types=("product",),
         execute=_unlink_product_tag_templates,
         window=WINDOW_REVERSIBLE,

@@ -11,7 +11,7 @@ Plan: `PLAN-pricetag-template-per-product-02nov.md`. Card: `CARD-pricetag-templa
   `dealer_kit.tag_templates.manage`; 403 without it; 404 for an unknown product or template.
 - AC-4 The product page Overview shows a "Price tag templates" card to anyone holding
   `dealer_kit.tag_templates.view`: SearchableMultiSelect for a manager (an add saves at once, an
-  untick parks `product_tag_template.unlink` with a countdown), chips only for a viewer, heading +
+  untick parks `product.unlink_tag_templates` with a countdown), chips only for a viewer, heading +
   hint when empty.
 
 ## Bulk assignment

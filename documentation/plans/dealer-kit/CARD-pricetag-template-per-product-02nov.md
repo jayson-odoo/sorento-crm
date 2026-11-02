@@ -29,7 +29,7 @@ R2. Product page, Overview tab, new section "Price tag templates" under Combos: 
     templates as chips, edited with a `SearchableMultiSelect` (clearable). Editing needs
     `dealer_kit.tag_templates.manage` (marketing); seeing the card needs
     `dealer_kit.tag_templates.view` (the route's own gate). An add saves at once; an untick is an
-    unlink, so it parks with a countdown and Cancel (`product_tag_template.unlink`).
+    unlink, so it parks with a countdown and Cancel (`product.unlink_tag_templates`).
     Empty state: heading + hint, no button.
 R3. Bulk assignment, Dealer Kit > Tag Templates, row action "Assign to products": pick brands,
     categories, item classes and model families (each a multi-select; any mix, matched as AND

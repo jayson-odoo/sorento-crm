@@ -686,7 +686,7 @@ def test_preview_never_prices_a_promotion_outside_the_contacts_audience(env, pri
 
 
 def test_deferred_product_unlink_removes_only_the_named_links(env):
-    """`product_tag_template.unlink` (the product card's untick, a parked unlink)."""
+    """`product.unlink_tag_templates` (the product card's untick, a parked unlink)."""
     from app.models.dealer_kit import ProductTagTemplate
     import app.services.record_actions  # noqa: F401  (registers the actions)
     from app.services.form_action_registry import get_action
@@ -698,7 +698,7 @@ def test_deferred_product_unlink_removes_only_the_named_links(env):
     b = _template(db, "B")
     _link(db, product, a, b)
 
-    action = get_action("product_tag_template.unlink")
+    action = get_action("product.unlink_tag_templates")
     assert action.permission == "dealer_kit.tag_templates.manage"
     assert action.execute(db, {"entity_id": product, "template_ids": [a]}) == {"changed": 1}
     assert {r.template_id for r in db.query(ProductTagTemplate).filter_by(product_id=product)} == {b}

@@ -39,7 +39,7 @@ export default function ProductTagTemplatesSection({ productId }: { productId: s
     null,
   );
   const unlinking = useDeferredAction({
-    actionKey: 'product_tag_template.unlink',
+    actionKey: 'product.unlink_tag_templates',
     entityType: 'product',
     entityId: unlink ? productId : null,
     verb: 'Unlinking',

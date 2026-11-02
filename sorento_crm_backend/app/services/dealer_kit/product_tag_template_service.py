@@ -184,7 +184,7 @@ def product_exists(db: Session, product_id: str) -> bool:
 
 def unlink_product_templates(db: Session, product_id: str, template_ids: list[str]) -> dict:
     """The product page's Remove, committed after its countdown (an unlink, so
-    it parks: ``product_tag_template.unlink``). Only links of a product in
+    it parks: ``product.unlink_tag_templates``). Only links of a product in
     scope are touched; ids it does not hold are ignored."""
     if not product_exists(db, product_id):
         raise _not_found("Product")
