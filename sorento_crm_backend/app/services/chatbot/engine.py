@@ -477,6 +477,9 @@ def _open_supplier_question_again(
     pending = getattr(state, "pending", None)
     if pending is None or getattr(pending, "kind", None) != "supplier_pick" or not pending.options:
         return None
+    if pending.answered_positions:
+        # Review round 4: a roster stays open after its pick; a picked supplier is settled, never asked again.
+        return None
     if verdict.get("reference_positions") or not set(jsc.array(domains)) & SUPPLIER_FETCH_DOMAINS:
         return None
     if any(
@@ -492,9 +495,10 @@ def _open_supplier_question_again(
 
 
 def _bare_both_over_not_two(pending: Any, message: str) -> bool:
-    """A message that is nothing but "both" over an open numbered roster that does not offer exactly two options
-    (read in code, as `_bare_roster_positions` reads a bare "all")."""
-    if pending is None or not turn_pending.is_roster(pending.kind) or not pending.options:
+    """A message that is nothing but "both" over the open supplier question when it does not offer exactly two
+    suppliers (read in code, as `_bare_roster_positions` reads a bare "all")."""
+    if pending is None or getattr(pending, "kind", None) != "supplier_pick" or not pending.options:
+        # Review round 4: the supplier question only, the one roster with a re-ask (`_open_supplier_question_again`).
         return False
     if str(message or "").strip().lower().rstrip(".!") != "both":
         return False
@@ -1615,15 +1619,28 @@ def _supplier_groups(resolutions: list[list_resolver.Resolution]) -> dict[str, l
     return out
 
 
-def _supplier_spans(resolutions: list[list_resolver.Resolution]) -> dict[str, str]:
-    """SUPPLIER-ASK fix round 3: per span the lookup placed on supplier rows ALONE (every candidate a supplier, by the
-    scores, whatever the span's type), its best row id. A span that also scored a customer or a product is not here."""
+def _supplier_only(res: list_resolver.Resolution) -> bool:
+    return res.status in ("resolved", "ambiguous") and bool(res.candidates) and all(
+        c.row.list_name == "supplier" for c in res.candidates
+    )
+
+
+def _supplier_spans(
+    resolutions: list[list_resolver.Resolution], untyped: Any = None
+) -> dict[str, str]:
+    """SUPPLIER-ASK fix round 3: per span the lookup placed on supplier rows ALONE, its best row id. The span model's
+    type narrows the resolver's pool (`list_resolver.TYPE_MARGIN`), so a name that is a customer AND a supplier, typed
+    `supplier`, would read as supplier-only (review round 4): `untyped`, given, re-resolves each such span with no
+    type, and the span stays only when the scores alone still place it on suppliers only."""
     out: dict[str, str] = {}
     for res in resolutions:
-        if res.status not in ("resolved", "ambiguous") or not res.candidates:
+        if not _supplier_only(res):
             continue
-        if all(c.row.list_name == "supplier" for c in res.candidates):
-            out.setdefault(res.span.text, str(res.candidates[0].row.key))
+        if untyped is not None:
+            again = untyped(list_resolver.Span(res.span.text, None, meaning=res.span.meaning))
+            if again is None or not _supplier_only(again):
+                continue
+        out.setdefault(res.span.text, str(res.candidates[0].row.key))
     return out
 
 
@@ -1652,6 +1669,8 @@ def _with_span_suppliers(verdict: dict[str, Any], prep: "_SpanPrep | None") -> d
             out.append(e)
             continue
         covered.add(key)
+        # Already a supplier carrying a row id the span pass grouped (`supplier_groups` keys every placed supplier):
+        # the parser's own pick binds as it is.
         if jsc.nullish_str(e.get("canonical_code")).strip() in groups and e.get("hint") == "supplier":
             out.append(e)
             continue
@@ -1724,7 +1743,9 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
                 hits = _hits_of([*resolutions, *extra])
                 prep.supplier_groups = _supplier_groups([*resolutions, *extra])
-                prep.supplier_spans = _supplier_spans(resolutions)
+                prep.supplier_spans = _supplier_spans(
+                    resolutions, untyped=lambda span: next(iter(list_resolver.resolve([span], all_rows, embed=embed)), None)
+                )
                 span_keys = {h.row.key for hs in hits.values() for h in hs}
                 near_rows: list[dict[str, Any]] = []
                 # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
@@ -6267,7 +6288,8 @@ def _run_stages_body(  # noqa: PLR0915
 
             with_spans = _with_span_suppliers(verdict, span_prep)
             if with_spans is not verdict:
-                # The parser named no entity for it; the scores did, and the id binds that span's supplier group.
+                # The span list placed a phrase on suppliers alone; the parser named no supplier id for it (no entity,
+                # a customer hint, or a supplier with no id), and the id now binds that span's supplier group.
                 turn_trace.add(
                     "supplier_span",
                     {

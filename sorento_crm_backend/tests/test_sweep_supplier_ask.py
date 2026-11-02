@@ -85,3 +85,26 @@ def test_a_gemini_model_is_priced_from_the_seed_prices_not_the_flat_fallback():
     assert sweep._price_of("gemini-3.5-flash-lite-preview-10-2026", prices) == prices["gemini-3.5-flash-lite"]
     calls = [{"model": "gemini-3.5-flash-lite", "prompt": 50_000, "completion": 500, "cached": 0}]
     assert sweep._usd(calls, prices, Decimal("0.01")) == Decimal("0.01625")
+
+
+def test_turn_cost_goes_through_the_model_name_rules():
+    """Review round 4 (M8c): `_usd` prices a `models/` id through `_price_of`."""
+    prices = {"gemini-3.5-flash-lite": (Decimal("0.30"), Decimal("0.03"), Decimal("2.50"))}
+    calls = [{"model": "models/gemini-3.5-flash-lite", "prompt": 1_000_000, "completion": 0, "cached": 0}]
+    assert sweep._usd(calls, prices, Decimal("9")) == Decimal("0.30")
+
+
+def test_the_price_table_carries_the_seed_prices_under_the_db_rows():
+    """Review round 4 (M8d): a copy whose table has no Gemini row still prices Gemini from the seed list; a DB row wins."""
+
+    class _Db:
+        def execute(self, *_a, **_k):
+            class _R:
+                def all(self):
+                    return [("gpt-5.4-mini", Decimal("1"), None, Decimal("2"))]
+
+            return _R()
+
+    table = sweep._price_table(_Db())
+    assert table["gemini-3.5-flash-lite"] == (Decimal("0.30"), Decimal("0.03"), Decimal("2.50"))
+    assert table["gpt-5.4-mini"] == (Decimal("1"), Decimal("1"), Decimal("2"))

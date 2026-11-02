@@ -1198,3 +1198,63 @@ def test_a_non_answer_over_the_supplier_question_never_lists_without_a_supplier(
     )
     again, captured, _s = _span_turn(session_factory, monkeypatch, "all", list_resolver.Span("all"), set(), qf=aside)
     assert not [a for a in _po_calls(captured) if not a.get("supplier_ids")], (again, captured)
+
+
+def _prep(spans: dict[str, str], groups: dict[str, list]):
+    import types
+
+    return types.SimpleNamespace(supplier_spans=spans, supplier_groups=groups)
+
+
+@pytest.mark.parametrize("canonical", [None, "太阳", "not-an-id"])
+def test_a_supplier_named_without_its_row_id_gets_the_span_id(canonical):
+    """Review round 4 (B1): crew's 1 of 5 'couldn't find a supplier called 太阳': the parser hinted supplier with no
+    row id. The span's best row id is put on it."""
+    from app.services.chatbot import engine as engine_mod
+
+    verdict = {"entities": [{"raw": "太阳", "hint": "supplier", "canonical_code": canonical, "current_message": True}]}
+    out = engine_mod._with_span_suppliers(verdict, _prep({"太阳": "id-1"}, {"id-1": [("id-1", "A (X1)")]}))
+    assert out["entities"] == [{"raw": "太阳", "hint": "supplier", "canonical_code": "id-1", "current_message": True}]
+
+
+def test_a_supplier_already_carrying_a_grouped_id_is_kept_as_the_parser_picked_it():
+    """Review round 4 (B2): the parser picked the second, near-tied supplier of the span's group; its pick stands."""
+    from app.services.chatbot import engine as engine_mod
+
+    groups = {"id-1": [("id-1", "A (X1)"), ("id-2", "A (X2)")], "id-2": [("id-1", "A (X1)"), ("id-2", "A (X2)")]}
+    verdict = {"entities": [{"raw": "太阳", "hint": "supplier", "canonical_code": "id-2", "current_message": True}]}
+    assert engine_mod._with_span_suppliers(verdict, _prep({"太阳": "id-1"}, groups)) is verdict
+
+
+def test_a_name_that_is_also_a_customer_is_not_supplier_only_without_its_type():
+    """Review round 4 (S4): the span model's type narrows the pool; a name shared by a customer and a supplier, typed
+    `supplier`, reads supplier-only. Re-resolved with no type it scores both, so the parser's customer reading stands."""
+    import types
+
+    from app.services.chatbot import engine as engine_mod
+
+    def _res(*lists):
+        return types.SimpleNamespace(
+            status="ambiguous", span=list_resolver.Span("zz", "supplier"),
+            candidates=[types.SimpleNamespace(row=types.SimpleNamespace(list_name=n, key=f"k{i}")) for i, n in enumerate(lists)],
+        )
+
+    typed = [_res("supplier")]
+    assert engine_mod._supplier_spans(typed, untyped=lambda span: _res("customer", "supplier")) == {}
+    assert engine_mod._supplier_spans(typed, untyped=lambda span: _res("supplier")) == {"zz": "k0"}
+
+
+def test_a_follow_up_after_the_supplier_was_picked_is_not_asked_which_supplier_again(session_factory, monkeypatch):
+    """Review round 4 (S3): the supplier roster stays open after its pick; a follow-up never re-asks it."""
+    _three_taiyang(session_factory, monkeypatch)
+    one = _parser_output(message_type="answer", intent_hint=None, domain_hint=None, entities=[], reference_positions=[1])
+    _r, captured, _s = _span_turn(session_factory, monkeypatch, "1", list_resolver.Span("1"), set(), qf=one)
+    assert _po_calls(captured), captured
+    more = _parser_output(
+        message_type="business_query", intent_hint="check_po", domain_hint="purchase_order", entities=[],
+        date_filter_start="2026-03-01", date_filter_end="2026-03-31", entity_op="reuse",
+    )
+    reply, _c, _s = _span_turn(
+        session_factory, monkeypatch, "and in March 2026?", list_resolver.Span("March 2026"), set(), qf=more
+    )
+    assert "Which one do you mean?" not in reply, reply
