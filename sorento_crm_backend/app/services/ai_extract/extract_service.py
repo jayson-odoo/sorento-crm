@@ -49,6 +49,7 @@ from app.services.llm_provider import (
     ImagePart,
     LLMProvider,
     get_provider,
+    is_timeout,
     resolve_api_key,
     resolve_model,
 )
@@ -79,6 +80,16 @@ VIDEO_FRAME_MAX_DIM = 1280  # downscale frames before base64 to stay within toke
 ALLOWED_TEXT_MIMES = {"text/plain"}
 _TEXT_EXTS = (".txt",)
 TEXT_MAX_CHARS = 200_000
+
+# AI-EXTRACT-502. The provider call's own cap, under the host proxy's 60 s, so a hung call ends
+# with the app's answer rather than a proxy page. A caller-set timeout also turns the SDK's own
+# retries off (`llm_provider` OpenAI / Anthropic build their client with `max_retries=0`; Gemini
+# has no retry loop). Dev copy, 28 Oct: 840 successful extracts, slowest 10.3 s.
+EXTRACT_PROVIDER_TIMEOUT_SECONDS = 45.0
+# Every upstream failure inside an extract (the AI provider, its answer, the storage read)
+# answers 503, never 502: Cloudflare replaces an origin 502/504 with its own HTML page, which
+# hid the reason from the dialog. Cloudflare's Error Pages do not apply to 503.
+UPSTREAM_FAILED_STATUS = 503
 
 # Forms that ship a separate items-list section. Complaints now capture one
 # line per affected product (code + quantity), so they receive a `products`
@@ -264,7 +275,7 @@ class AIExtractService:
                 "ai_extract attachment download failed (id=%s): %s", attachment_id, exc
             )
             raise AppException(
-                status_code=502,
+                status_code=UPSTREAM_FAILED_STATUS,
                 message="Failed to load attachment bytes from storage.",
                 code="ai_extract_attachment_download_failed",
             ) from exc
@@ -356,11 +367,24 @@ class AIExtractService:
                 temperature=0.0,
                 max_tokens=4096,
                 model=model_name,
+                timeout=EXTRACT_PROVIDER_TIMEOUT_SECONDS,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("ai_extract provider call failed: %s", exc)
+            logger.warning(
+                "ai_extract provider call failed (%s %s): %s", provider_name, model_name, exc
+            )
+            if is_timeout(exc):
+                raise AppException(
+                    status_code=UPSTREAM_FAILED_STATUS,
+                    message=(
+                        "The AI reader did not answer within "
+                        f"{EXTRACT_PROVIDER_TIMEOUT_SECONDS:g} seconds and was stopped. "
+                        "Try again, or send fewer pages."
+                    ),
+                    code="ai_extract_provider_timeout",
+                ) from exc
             raise AppException(
-                status_code=502,
+                status_code=UPSTREAM_FAILED_STATUS,
                 message=f"AI provider call failed: {exc}",
                 code="ai_extract_provider_failed",
             ) from exc
@@ -426,7 +450,15 @@ class AIExtractService:
         label_provider, label_model = (
             agent_model(self.db, extract_prompt_key(key)) if key else (None, None)
         )
-        provider_name = label_provider or (cfg.provider if cfg else "openai") or "openai"
+        # No hard-coded vendor: `ai_assistant_configs.provider` is NOT NULL (default "openai"),
+        # so this is reached only with no config row, and a guessed vendor is not a setting.
+        provider_name = label_provider or (cfg.provider if cfg else None)
+        if not provider_name:
+            raise AppException(
+                status_code=400,
+                message="No AI provider is set. Choose one in System → AI Assistant Settings.",
+                code="ai_extract_no_provider",
+            )
         model_name = resolve_model(cfg, provider_name, label_model)
         api_key = resolve_api_key(cfg, provider_name)
         if not api_key:
@@ -820,7 +852,7 @@ class AIExtractService:
     def _parse_json(self, content: str) -> dict[str, Any]:
         if not content:
             raise AppException(
-                status_code=502,
+                status_code=UPSTREAM_FAILED_STATUS,
                 message="AI provider returned an empty response.",
                 code="ai_extract_empty_response",
             )
@@ -841,19 +873,19 @@ class AIExtractService:
                     data = json.loads(text[start : end + 1])
                 except json.JSONDecodeError:
                     raise AppException(
-                        status_code=502,
+                        status_code=UPSTREAM_FAILED_STATUS,
                         message=f"AI provider returned non-JSON content: {exc}",
                         code="ai_extract_bad_json",
                     ) from exc
             else:
                 raise AppException(
-                    status_code=502,
+                    status_code=UPSTREAM_FAILED_STATUS,
                     message=f"AI provider returned non-JSON content: {exc}",
                     code="ai_extract_bad_json",
                 ) from exc
         if not isinstance(data, dict):
             raise AppException(
-                status_code=502,
+                status_code=UPSTREAM_FAILED_STATUS,
                 message="AI provider returned a non-object JSON value.",
                 code="ai_extract_bad_json",
             )

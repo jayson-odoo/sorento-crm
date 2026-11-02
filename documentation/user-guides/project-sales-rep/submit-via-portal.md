@@ -44,6 +44,8 @@ Complaints support an **AI Extract** shortcut to pre-fill the form from a photo,
 
 If the upload doesn't return useful values, dismiss the dialog and fill the form manually.
 
+If the AI reader itself fails, the dialog says why (for example the AI service refused the request) and offers **Retry**. A read that takes longer than 45 seconds is stopped with *"The AI reader did not answer within 45 seconds and was stopped. Try again, or send fewer pages."* The same applies to the **Extract with AI** action on a price tag request's sales order file.
+
 ## Save as draft
 
 Click **Save as draft** at the bottom of the form. Toast: *"Draft saved."* The submission keeps the **Draft** status - visible to you on the dashboard, not yet visible to project sales admin / manager / purchasing.

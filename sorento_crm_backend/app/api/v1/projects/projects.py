@@ -172,7 +172,11 @@ def ai_extract_project(
     Plain ``def`` so the PDF render and the provider round trip run in a thread, not on the
     event loop (same as the portal's extract route)."""
     from app.services import portal_rate_limit, project_ai_extract_service
-    from app.services.ai_extract.extract_service import AIExtractService, ExtractFile
+    from app.services.ai_extract.extract_service import (
+        UPSTREAM_FAILED_STATUS,
+        AIExtractService,
+        ExtractFile,
+    )
     from app.services.error_handler import AppException, handle_unprocessable
 
     try:
@@ -216,10 +220,10 @@ def ai_extract_project(
                 "portal.project_registration", payload, user_id=str(current_user["id"])
             )
         except AppException as exc:
-            if exc.status_code == 502:
+            if exc.status_code == UPSTREAM_FAILED_STATUS:
                 # The provider's own error text can carry keys and traces: never echo it.
                 raise AppException(
-                    status_code=502,
+                    status_code=UPSTREAM_FAILED_STATUS,
                     message="The AI reader could not be reached. Fill the form in by hand.",
                     code="ai_extract_provider_failed",
                 ) from exc
