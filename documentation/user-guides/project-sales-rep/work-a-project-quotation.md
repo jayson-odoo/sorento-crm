@@ -162,6 +162,12 @@ The link opens a sign page that matches the PDF:
   contact** (your name and phone).
 * One **Quotation** card. Each section is a row with its item count and total; with more than one
   section they start closed. The last row is **Total amount**.
+* Each section's table has the same columns as that section in the PDF, in the same order and
+  with the same headings: **ITEM**, **PRODUCT IMAGE** (only when a line in that section has a
+  photo, as in the PDF), **TECHNICAL SPEC** (the line's drawing), **DESCRIPTION**, **BRAND**,
+  **PRODUCT CODE**, **QTY**, **UNIT RATE (RM)**, **COMPLETE SET** and **GRAND TOTAL**. The
+  customer sees the photos and drawings without signing in. On a phone they scroll the table
+  sideways; no column is left out.
 * To accept, the customer types **Your name**, ticks *I have read and agree to the Terms and
   conditions.*, signs in **Sign here** and clicks **Sign and accept**. If they skip a step, the
   page tells them which one. The terms they agree to are the ones on the cover page card.

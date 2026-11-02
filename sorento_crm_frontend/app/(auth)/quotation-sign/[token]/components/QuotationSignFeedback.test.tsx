@@ -42,6 +42,7 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 import { QuotationSignClient } from './QuotationSignClient';
+import { SIGN_COLUMNS } from './signColumns.fixture';
 
 function signLine(overrides: Partial<QuotationSignLine> = {}): QuotationSignLine {
   return {
@@ -93,6 +94,7 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
       {
         scope_label: 'UNIT',
         scope_total: '155930.00',
+        columns: SIGN_COLUMNS,
         matrix_columns: [
           { key: 'a', label: 'Type A - 1 BH', cols: [{ key: 'a-bh', label: '1 BH' }, { key: 'a-kit', label: 'Kitchen' }] },
           { key: 'b', label: 'Type B - 2 BH', cols: [{ key: 'b-bh', label: '2 BH' }, { key: 'b-kit', label: 'Kitchen' }] },
@@ -104,6 +106,7 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
       {
         scope_label: 'GUARD HOUSE',
         scope_total: '102000.00',
+        columns: SIGN_COLUMNS,
         lines: [signLine()],
       },
     ],

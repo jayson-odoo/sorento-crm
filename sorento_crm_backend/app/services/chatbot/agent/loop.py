@@ -18,7 +18,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, Callable
 
 from app.models.chatbot_turn import ChatbotTurn
@@ -39,8 +39,10 @@ from app.services.chatbot.agent.tools import (
     KNOWLEDGE,
     REGISTRY,
     RESOLVE,
+    PORTED_READS,
     TOOL_LABELS,
     ToolResult,
+    panel_closed,
     _id_args,
     clip_args,
     dispatch,
@@ -201,10 +203,11 @@ def _mask(text: str) -> str:
     return _LIST_MARKER.sub(lambda m: m.group(1) + " " * len(m.group(2)), text)
 
 
-def _figures(text: str) -> list[tuple[int, int, str, set[str]]]:
-    """(start, end, as written, accepted normal forms) for each figure in `text`."""
+def _figures(text: str, blank: Any = None) -> list[tuple[int, int, str, set[str]]]:
+    """(start, end, as written, accepted normal forms) for each figure in `text`. `blank`, when given,
+    blanks data-text spans first (same length, so positions hold)."""
     out = []
-    for m in _NUMBER.finditer(_mask(text)):
+    for m in _NUMBER.finditer(_mask(blank(text) if blank else text)):
         base = _normal(m.group("int") + (m.group("dec") or ""))
         forms = {base}
         if (m.group("unit") or "").lower() == "k":
@@ -352,6 +355,75 @@ def _column_totals(data: Any) -> set[str]:
     return found
 
 
+def _data_strings(data: Any) -> set[str]:
+    """String values, under any key, that hold a letter and a digit (3 characters or more)."""
+    found: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+        elif isinstance(node, str):
+            v = node.strip()
+            if len(v) >= 3 and re.search(r"[^\W\d_]", v) and re.search(r"\d", v):
+                found.add(v)
+
+    walk(data)
+    return found
+
+
+def _data_text_blank(ledger: dict[str, dict] | None, text: str) -> Any:
+    """A function blanking, in an answer, every span that repeats (letter case aside) a string value of
+    one of this turn's ok results (longest first, no overlap), where it stands whole: data text is not a
+    figure, so its digits are neither checked nor redacted. Only strings that occur in `text` are kept.
+    None when the answer repeats none."""
+    values: set[str] = set()
+    for entry in (ledger or {}).values():
+        if entry["status"] == "ok":
+            values |= _data_strings(entry["data"])
+    low = text.casefold()
+    values = {v for v in values if v.casefold() in low}
+    if not values:
+        return None
+    alternation = "|".join(re.escape(v) for v in sorted(values, key=len, reverse=True))
+    pattern = re.compile(
+        rf"(?<![A-Za-z0-9_])(?<!\d[.,])(?:{alternation})(?![A-Za-z0-9_])(?![.,]\d)", re.I
+    )
+    return lambda text: pattern.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def _rounded_backed(written: str, backed: set[str]) -> bool:
+    """Is the written figure a source number rounded half up to its decimal places? The source must have
+    more places than the figure and at least 3 (an unrounded computed number, not a price). A figure
+    with a unit multiplier ("1.2k") is exact only."""
+    m = _NUMBER.search(written)
+    if not m or (m.group("unit") or "").lower() == "k":
+        return False
+    dec = (m.group("dec") or "")[1:]
+    places = len(dec)
+    try:
+        target = Decimal(m.group("int").replace(",", "") + ("." + dec if dec else ""))
+        quantum = Decimal(1).scaleb(-places)
+        for src in backed:
+            n = Decimal(src)
+            if not n.is_finite():
+                continue
+            if -n.as_tuple().exponent >= max(3, places + 1) and n.quantize(quantum, rounding=ROUND_HALF_UP) == target:
+                return True
+    except (InvalidOperation, ValueError):
+        return False
+    return False
+
+
+def _figure_backed(written: str, forms: set[str], backed: set[str], user_forms: set[str]) -> bool:
+    """The one check for a written figure: held exactly by a result or the user's text, or a result's
+    number rounded to it."""
+    return bool(forms & (backed | user_forms)) or _rounded_backed(written, backed)
+
+
 def _answer_parts(args: Any) -> tuple[str, list[dict], list[dict], list[str]]:
     args = args if isinstance(args, dict) else {}
     text = args.get("text")
@@ -372,6 +444,37 @@ def _found_ids(ledger: dict[str, dict]) -> set[str]:
     return ids
 
 
+def _returned_ids(ledger: dict[str, dict]) -> set[str]:
+    """Ids of records this turn's ok reads returned (a ported read may be narrowed by them; the others need a
+    clean resolve, `_found_ids`)."""
+    ids: set[str] = set()
+    for entry in ledger.values():
+        if entry["name"] != RESOLVE and entry["status"] == "ok":
+            ids |= _record_ids(entry["data"])
+    return ids
+
+
+def _record_ids(data: Any) -> set[str]:
+    """A record's own `id`, never another nested dict's (a `customer: {id}` reference) and never a `*_id`: each
+    row of a list (top level, or a list value of the top-level dict) and the top-level dict's own `id`."""
+    found: set[str] = set()
+
+    def take(record: Any) -> None:
+        if isinstance(record, dict) and isinstance(record.get("id"), str) and record["id"].strip():
+            found.add(record["id"].strip().lower())
+
+    if isinstance(data, list):
+        for row in data:
+            take(row)
+    elif isinstance(data, dict):
+        take(data)
+        for value in data.values():
+            if isinstance(value, list):
+                for row in value:
+                    take(row)
+    return found
+
+
 def _fold_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.casefold()).strip()
 
@@ -389,6 +492,21 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
             ):
                 return True
         return False
+    if entry["name"] in PORTED_READS and entry["status"] == "empty":
+        # An unfiltered empty read says "none found". One narrowed by an assignee says nothing about the whole;
+        # one narrowed by ids says "none" only for ids this turn resolved cleanly or an ok read returned (an ambiguous
+        # one is not found).
+        if entry["args"].get("assigned_to"):
+            return False
+        ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
+        returned = _returned_ids(ledger)
+        return all(i in found or i in returned for i in ids)
+    if entry["name"] in (writes.FIND_COMPLAINTS, writes.FIND_PROJECTS):
+        # An empty find backs a claim for the term it searched, and only that term.
+        term = _fold_text(str(entry["args"].get("query") or ""))
+        return entry["status"] == "empty" and bool(term) and (
+            term == low or bool(re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", low))
+        )
     if entry["status"] == "empty":
         ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
         return bool(ids) and all(i in found for i in ids)
@@ -406,8 +524,8 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
             backed |= _number_leaves(entry["data"]) | _column_totals(entry["data"])
     user_forms = _supported_forms([user_text])
     bad_numbers: list[str] = []
-    for _, _, written, forms in _figures(text):
-        if not forms & (backed | user_forms) and written not in bad_numbers:
+    for _, _, written, forms in _figures(text, _data_text_blank(ledger, text)):
+        if not _figure_backed(written, forms, backed, user_forms) and written not in bad_numbers:
             bad_numbers.append(written)
     found = _found_ids(ledger)
     bad_not_found = [
@@ -418,9 +536,9 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
     return bad_numbers, [w for w in bad_not_found if w]
 
 
-def _redact_written(text: str, bad: set[str]) -> str:
+def _redact_written(text: str, bad: set[str], blank: Any = None) -> str:
     out, last = [], 0
-    for start, end, written, _ in _figures(text):
+    for start, end, written, _ in _figures(text, blank):
         if written in bad:
             out.append(text[last:start])
             out.append(NOT_VERIFIED)
@@ -448,12 +566,12 @@ def open_parts(args: Any, plan: list[str], on_limit: bool) -> list[str]:
 
 def final_reply(
     args: Any, bad_numbers: list[str], bad_not_found: list[str], *, plan: list[str] | None = None,
-    on_limit: bool = False,
+    on_limit: bool = False, ledger: dict[str, dict] | None = None,
 ) -> tuple[str, bool]:
     """The user-facing text of an accepted answer, and whether the model named what it did not check."""
     text, _, _, not_checked = _answer_parts(args)
     if bad_numbers:
-        text = _redact_written(text, set(bad_numbers))
+        text = _redact_written(text, set(bad_numbers), _data_text_blank(ledger, text))
     if bad_not_found:
         text = f"I could not confirm that nothing exists for: {'; '.join(bad_not_found)}. {text}".strip()
     if not_checked:
@@ -563,9 +681,13 @@ def _propose(
     if step is None:
         return out
     steps.append(step)
+    data = {"action_id": action_id, "step": len(steps), "summary": step["summary"]}
+    definition = writes.WRITES.get(name)
+    if definition is not None and definition.proposal_note:
+        data["note"] = definition.proposal_note
     return ToolResult(
         "proposed",
-        data={"action_id": action_id, "step": len(steps), "summary": step["summary"]},
+        data=data,
         message="Proposed, not done. The user must confirm in a later message.",
     )
 
@@ -596,7 +718,19 @@ def _decide(db, ctx, name: str, args: Any, turn_id: str, notes: list[str], waiti
         # The notes are added to the reply in code; the model never reads them, so it cannot invent or repeat one.
         for note in outcome.notes:
             reply_text = reply_text.replace(f" {note}", "").replace(note, "")
-        message = "The idea's number and link are added to your reply automatically. Do not write them."
+        # A ticket's link is the only thing a ticket adds; an idea keeps main's exact words.
+        from app.models.chatbot_agent import AgentAction
+
+        row = db.get(AgentAction, outcome.action_id)
+        tools = {
+            s.get("tool") for s in (row.steps if row is not None else [])
+            if s.get("note") and getattr(writes.WRITES.get(s.get("tool")), "note_in_reply", False)
+        }
+        message = (
+            "The ticket link is added to your reply automatically. Do not write it."
+            if tools == {writes.CREATE_TICKET}
+            else "The idea's number and link are added to your reply automatically. Do not write them."
+        )
     return ToolResult(
         "ok", data={"status": outcome.status, "reply_text": reply_text, "steps": outcome.steps}, message=message
     )
@@ -791,7 +925,9 @@ def _system_prompt(db, user_name: str, tool_names: Any = (), principal: str = "u
     # What this user's permissions leave out, by the constant labels (never outside text in the system role).
     names = set(tool_names)
     left_out = list(dict.fromkeys(
-        TOOL_LABELS[n] for n in [*REGISTRY, *writes.USER_READS, *writes.WRITES] if n not in names and n in TOOL_LABELS
+        TOOL_LABELS[n] for n in [*REGISTRY, *writes.USER_READS, *writes.WRITES]
+        # A panel-only tool is named only on a panel turn: elsewhere it is not "outside access", it does not exist.
+        if n not in names and n in TOOL_LABELS and not panel_closed(n)
     ))
     if left_out:
         text = (
@@ -888,7 +1024,7 @@ def tool_detail(name: str, args: Any, out: ToolResult, names: dict[str, str]) ->
         if rows:
             text = f"{head}: {rows} row{'s' if rows != 1 else ''}"
         else:
-            text = f"{head}: nothing found" if _is_rows(out.data) else f"{head}: done"
+            text = f"{head}: nothing found" if _only_empty_lists(out.data) else f"{head}: done"
     elif out.status == "timeout":
         text = f"{head}: timed out"
     elif out.status == "error":
@@ -906,8 +1042,13 @@ def reasoning_for_steps(text: Any) -> str:
     return cleaned if len(cleaned) <= REASONING_CHARS else cleaned[:REASONING_CHARS].rstrip() + "\u2026"
 
 
-def _is_rows(data: Any) -> bool:
-    return isinstance(data, list) or (isinstance(data, dict) and any(isinstance(v, list) for v in data.values()))
+def _only_empty_lists(data: Any) -> bool:
+    """A body that is a list, or holds a list and no record (dict value): rows were asked for and none came."""
+    if isinstance(data, list):
+        return True
+    return isinstance(data, dict) and (
+        any(isinstance(v, list) for v in data.values()) and not any(isinstance(v, dict) for v in data.values())
+    )
 
 
 def _args_for_digest(args: Any) -> Any:
@@ -1178,7 +1319,7 @@ def _run(
             res = chat(messages, [ANSWER_SCHEMA], kind="final", grace=FINAL_GRACE)
             args = answer_of(res)
             bad_numbers, bad_nf = verify_answer(args, ledger, text)
-            return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True)
+            return final_reply(args, bad_numbers, bad_nf, plan=plan_parts, on_limit=True, ledger=ledger)
 
         def add_limit_sentence(reply_text: str, named: bool, word: str) -> str:
             if named:
@@ -1370,7 +1511,7 @@ def _run(
 
         if final_args is not None:
             bad_numbers, bad_nf = verify_answer(final_args, ledger, text)
-            reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts)
+            reply, _ = final_reply(final_args, bad_numbers, bad_nf, plan=plan_parts, ledger=ledger)
     except _AgentUnavailable as exc:
         status, error, limit_hit = "failed", str(exc), None
     except _ProviderFailed:

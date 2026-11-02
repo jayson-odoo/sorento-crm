@@ -66,8 +66,11 @@ from app.models.projects import (
 )
 from app.services import product_image_service as product_images
 from app.services import project_quotation_pdf_service as pdf
+from app.services import quotation_columns
 from app.services import quotation_matrix as matrix
 from app.services.project_quotation_document_service import document_noun, quotation_no
+
+_IMAGE_LABEL = dict(quotation_columns.COLUMNS)[quotation_columns.IMAGE]
 
 logger = logging.getLogger(__name__)
 
@@ -484,8 +487,9 @@ def _write_scope(
 
     # Judged per SHEET (AC-F4): a workbook-wide decision would either put an empty column on a
     # scope that has no pictures, or drop it from one that does because its neighbour has none.
-    show_image = any(line.image_attachment_id for line in lines)
-    columns = [c for c in pdf._COLUMNS if c != pdf._IMAGE_COLUMN or show_image]
+    # The same column set as the PDF and the customer's sign page: one definition.
+    columns = [label for _key, label in quotation_columns.for_lines(lines)]
+    show_image = _IMAGE_LABEL in columns
     money_column = len(columns)
     # PS-QUOTE-MATRIX: with column headers the QTY column becomes one column per leaf, a QTY /
     # AMOUNT pair per pair header and a TOTAL QTY. A plain scope never enters this branch.
@@ -574,7 +578,7 @@ def _write_scope(
         # sorted. The photo goes in PRODUCT IMAGE, the drawing in TECHNICAL SPEC.
         placed = []
         if show_image:
-            placed.append((pdf._IMAGE_COLUMN, line.image_attachment_id))
+            placed.append((_IMAGE_LABEL, line.image_attachment_id))
         placed.append(("TECHNICAL SPEC", line.drawing_attachment_id))
         for column_name, attachment_id in placed:
             data = pictures.get(str(attachment_id or ""))

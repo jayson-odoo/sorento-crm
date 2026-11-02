@@ -2441,9 +2441,13 @@ class QuotationSignScopeLine(BaseModel):
     item_label: Optional[str] = None
     description: Optional[str] = None
     technical_spec: Optional[str] = None
+    # Inline data URIs (the PDF's own downscaled bytes), never a storage key or signed link.
+    image_url: Optional[str] = None
+    drawing_url: Optional[str] = None
     brand: Optional[str] = None
     product_code: Optional[str] = None
     quantity: Decimal = Decimal("0")
+    uom: Optional[str] = None
     unit_price: Decimal = Decimal("0")
     complete_set: Optional[str] = None
     band_label: Optional[str] = None
@@ -2452,10 +2456,17 @@ class QuotationSignScopeLine(BaseModel):
     qty_cells: Dict[str, Any] = Field(default_factory=dict)
 
 
+class QuotationSignColumn(BaseModel):
+    key: str
+    label: str
+
+
 class QuotationSignScope(BaseModel):
     scope_label: str
     scope_total: Decimal = Decimal("0")
     matrix_columns: List[Dict[str, Any]] = Field(default_factory=list)
+    # The quotation's own column set for this scope (`app.services.quotation_columns`).
+    columns: List[QuotationSignColumn] = Field(default_factory=list)
     lines: List[QuotationSignScopeLine] = Field(default_factory=list)
 
 

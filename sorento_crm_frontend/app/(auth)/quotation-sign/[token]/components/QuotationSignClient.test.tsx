@@ -42,6 +42,7 @@ vi.mock('../../services/quotationSignService', async (importOriginal) => {
 
 import { QuotationSignClient } from './QuotationSignClient';
 import { QuotationSignError } from '../../services/quotationSignService';
+import { SIGN_COLUMNS } from './signColumns.fixture';
 
 function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
   return {
@@ -66,6 +67,7 @@ function page(overrides: Partial<QuotationSignPage> = {}): QuotationSignPage {
       {
         scope_label: 'Townhouse',
         scope_total: '235000.00',
+        columns: SIGN_COLUMNS,
         lines: [
           {
             id: 'line-1',
@@ -140,9 +142,9 @@ describe('QuotationSignClient reading the quotation', () => {
 
     expect(await screen.findByText('rate only')).toBeInTheDocument();
     // The priced line still shows its money, so this is not a blanket suppression.
-    expect(screen.getByText('RM 102,000.00')).toBeInTheDocument();
+    expect(screen.getByText('102,000.00')).toBeInTheDocument();
     // A zero would read as "free" to the person about to sign.
-    expect(screen.queryByText('RM 0.00')).not.toBeInTheDocument();
+    expect(screen.queryByText('0.00')).not.toBeInTheDocument();
   });
 
   it('leaves the money blank on a set component priced at nothing', async () => {
@@ -156,6 +158,7 @@ describe('QuotationSignClient reading the quotation', () => {
           {
             scope_label: 'Type A',
             scope_total: '102000.00',
+            columns: SIGN_COLUMNS,
             lines: [
               {
                 id: 'line-3',
@@ -197,11 +200,11 @@ describe('QuotationSignClient reading the quotation', () => {
     // Both rows carry 894 (a set and its part ship together), so count rather than match one.
     expect(screen.getAllByText('894')).toHaveLength(2);
     // No money on it, in either column, and no "rate only" standing in for the blank.
-    expect(screen.queryByText('RM 0.00')).not.toBeInTheDocument();
+    expect(screen.queryByText('0.00')).not.toBeInTheDocument();
     expect(screen.queryByText('rate only')).not.toBeInTheDocument();
     // The priced parent is untouched.
-    expect(screen.getByText('RM 305.55')).toBeInTheDocument();
-    expect(screen.getByText('RM 273,161.70')).toBeInTheDocument();
+    expect(screen.getByText('305.55')).toBeInTheDocument();
+    expect(screen.getByText('273,161.70')).toBeInTheDocument();
   });
 
   it('heads a band once, above the lines it covers', async () => {
@@ -426,6 +429,7 @@ function scopeOf(label: string, total: string, descriptions: string[]) {
   return {
     scope_label: label,
     scope_total: total,
+    columns: SIGN_COLUMNS,
     lines: descriptions.map((description, index) => ({
       id: `line-${index}`,
       item_label: String(index + 1),

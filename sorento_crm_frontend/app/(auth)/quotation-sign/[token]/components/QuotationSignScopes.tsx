@@ -14,7 +14,11 @@ import { cn } from '@/lib/utils';
 // The one decimal-exact money formatter in the repo. Imported rather than re-implemented: a
 // second formatter is how the public page and the PDF end up disagreeing by a cent, and the
 // customer reading this screen is the person who would notice.
-import { formatMyrExact, formatQty } from '@/app/(protected)/project-sales/_shared/lib/money';
+import {
+  formatFigureExact,
+  formatMyrExact,
+  formatQty,
+} from '@/app/(protected)/project-sales/_shared/lib/money';
 import {
   hasColumns,
   leaves,
@@ -22,13 +26,106 @@ import {
 } from '@/app/(protected)/project-sales/_shared/lib/quotationMatrix';
 import type {
   QuotationSignAmendment,
+  QuotationSignColumn,
   QuotationSignLine,
   QuotationSignScope,
 } from '../../services/quotationSignService';
 import type { FeedbackTarget } from './quotationSuggest';
 
-/** The sample workbook's column set, minus the product image. */
-const COLUMNS = 9;
+/**
+ * How each column the server sends is drawn. The SET, order and labels are the server's
+ * (`scope.columns`, the PDF's own definition); only width and alignment live here. An unknown key
+ * still gets its header and an empty cell, so a column added on the server is never dropped.
+ */
+const PRESENTATION: Record<string, { th: string; td: string }> = {
+  item: { th: 'min-w-[60px] text-left', td: '' },
+  image: { th: 'min-w-[84px] text-left', td: '' },
+  spec: { th: 'min-w-[84px] text-left', td: '' },
+  description: { th: 'min-w-[200px] text-left', td: '' },
+  brand: { th: 'min-w-[100px] text-left', td: '' },
+  product_code: { th: 'min-w-[120px] text-left', td: '' },
+  qty: { th: 'min-w-[70px] text-right', td: 'text-right tabular-nums' },
+  unit_rate: { th: 'min-w-[120px] text-right', td: 'text-right tabular-nums' },
+  complete_set: { th: 'min-w-[140px] text-left', td: 'text-muted-foreground' },
+  amount: { th: 'min-w-[120px] text-right', td: 'text-right' },
+};
+
+function presentation(key: string) {
+  return PRESENTATION[key] ?? { th: 'text-left', td: '' };
+}
+
+/** A picture cell: the photo or the drawing, inline, at the PDF's scale. Empty when there is none. */
+function Picture({ src, alt }: { src?: string | null; alt: string }) {
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="size-16 max-w-none rounded-sm object-contain"
+    />
+  );
+}
+
+/** The QTY cell as the PDF prints it: the count, then the unit when there is one ("2 pcs"). */
+function withUom(line: QuotationSignLine): string {
+  const uom = line.uom?.trim();
+  return uom ? `${formatQty(line.quantity)} ${uom}` : formatQty(line.quantity);
+}
+
+/** Description, with any typed technical-spec text from before drawings beneath it, as the PDF. */
+function Description({ line }: { line: QuotationSignLine }) {
+  return (
+    <>
+      {cell(line.description)}
+      {line.technical_spec?.trim() ? (
+        <span className="mt-1 block whitespace-pre-line text-xs text-muted-foreground">
+          {line.technical_spec}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+/** The cells every mode shares, by column key. Qty, rate and amount are each mode's own. */
+function commonCells(
+  line: QuotationSignLine,
+  position: number,
+): Record<string, React.ReactNode> {
+  const name = line.item_label?.trim() || String(position + 1);
+  return {
+    item: cell(line.item_label),
+    image: <Picture src={line.image_url} alt={`Product photo, line ${name}`} />,
+    spec: (
+      <Picture src={line.drawing_url} alt={`Technical drawing, line ${name}`} />
+    ),
+    description: <Description line={line} />,
+    brand: cell(line.brand),
+    product_code: cell(line.product_code),
+    complete_set: cell(line.complete_set),
+  };
+}
+
+function Cells({
+  columns,
+  cells,
+}: {
+  columns: QuotationSignColumn[];
+  cells: Record<string, React.ReactNode>;
+}) {
+  return (
+    <>
+      {columns.map((column) => (
+        <td
+          key={column.key}
+          className={cn('px-2 py-2', presentation(column.key).td)}
+        >
+          {cells[column.key] ?? null}
+        </td>
+      ))}
+    </>
+  );
+}
+
 
 /** What already has feedback on it: whole items by line, cells by line and cell. */
 type Sent = { items: Set<string>; cells: Set<string> };
@@ -41,6 +138,14 @@ function sentOf(amendment: QuotationSignAmendment | null | undefined): Sent {
     else items.add(row.line_id);
   });
   return { items, cells };
+}
+
+/**
+ * A table cell's text: blank when there is nothing, as the PDF's `_cell` prints it. A dash in a
+ * cell the PDF leaves empty is the page and the document disagreeing.
+ */
+function cell(value: string | null | undefined): string {
+  return value?.trim() ? value : '';
 }
 
 function text(value: string | null | undefined): string {
@@ -59,7 +164,7 @@ function lineMoney(value: string | null | undefined): string {
   const amount = Number(value ?? 0);
   return Number.isFinite(amount) && amount === 0
     ? ''
-    : formatMyrExact(value ?? '0');
+    : formatFigureExact(value ?? '0');
 }
 
 /**
@@ -123,23 +228,27 @@ function bandsOf(lines: QuotationSignLine[]): (string | null)[] {
 
 function ScopeTable({
   scopeLabel,
+  columns,
   lines,
   sent,
   onFeedback,
 }: {
   scopeLabel: string;
+  /** The quotation's own column set for this scope, as the server (and the PDF) decides it. */
+  columns: QuotationSignColumn[];
   lines: QuotationSignLine[];
   sent: Sent;
   onFeedback?: (target: FeedbackTarget) => void;
 }) {
-  const columns = onFeedback ? COLUMNS + 1 : COLUMNS;
+  const span = onFeedback ? columns.length + 1 : columns.length;
   const bands = bandsOf(lines);
 
   return (
     // Hand-rolled and read-only on purpose: this is a printed quotation being read by a stranger
     // on a phone, with nothing to sort, page or select, so DataGrid's toolbar and pagination
     // would be furniture in the way. `overflow-x-auto` + `min-w-0` keep the wide table scrolling
-    // inside its own gutter instead of dragging the whole PAGE sideways at 375px.
+    // inside its own gutter instead of dragging the whole PAGE sideways at 375px, and every
+    // column stays: a phone scrolls the quotation, it never reads a shorter one.
     // `relative` so the sr-only header label (position: absolute) is clipped by this scroller
     // instead of escaping it and widening the whole page at 375px.
     <div
@@ -149,33 +258,14 @@ function ScopeTable({
       <table className="w-full text-sm">
         <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
-            <th className="min-w-[140px] px-2 py-2 text-left font-semibold">
-              Item
-            </th>
-            <th className="min-w-[160px] px-2 py-2 text-left font-semibold">
-              Technical spec
-            </th>
-            <th className="min-w-[200px] px-2 py-2 text-left font-semibold">
-              Description
-            </th>
-            <th className="min-w-[100px] px-2 py-2 text-left font-semibold">
-              Brand
-            </th>
-            <th className="min-w-[120px] px-2 py-2 text-left font-semibold">
-              Product code
-            </th>
-            <th className="min-w-[70px] px-2 py-2 text-right font-semibold">
-              Qty
-            </th>
-            <th className="min-w-[120px] px-2 py-2 text-right font-semibold">
-              Unit rate
-            </th>
-            <th className="min-w-[140px] px-2 py-2 text-left font-semibold">
-              Complete set
-            </th>
-            <th className="min-w-[120px] px-2 py-2 text-right font-semibold">
-              Amount
-            </th>
+            {columns.map((column) => (
+              <th
+                key={column.key}
+                className={cn('px-2 py-2 font-semibold', presentation(column.key).th)}
+              >
+                {column.label}
+              </th>
+            ))}
             {onFeedback && (
               <th className="w-10 px-1 py-2">
                 <span className="sr-only">Feedback</span>
@@ -184,54 +274,50 @@ function ScopeTable({
           </tr>
         </thead>
         <tbody>
-          {lines.map((line, index) => (
-            <React.Fragment key={index}>
-              {bands[index] !== null && (
-                <tr className="bg-muted/60">
-                  <td
-                    colSpan={columns}
-                    className="px-2 py-2 text-xs font-semibold uppercase tracking-wide"
-                  >
-                    {bands[index]}
-                  </td>
-                </tr>
-              )}
-              <tr className="border-t border-border align-top">
-                <td className="px-2 py-2">
-                  {text(line.item_label)}
-                  {sent.items.has(line.id) && <SentDot />}
-                </td>
-                <td className="px-2 py-2 text-muted-foreground">
-                  {text(line.technical_spec)}
-                </td>
-                <td className="px-2 py-2">{text(line.description)}</td>
-                <td className="px-2 py-2">{text(line.brand)}</td>
-                <td className="px-2 py-2">{text(line.product_code)}</td>
-                <td className="px-2 py-2 text-right tabular-nums">
-                  {formatQty(line.quantity)}
-                </td>
-                <td className="px-2 py-2 text-right tabular-nums">
-                  {lineMoney(line.unit_price)}
-                </td>
-                <td className="px-2 py-2 text-muted-foreground">
-                  {text(line.complete_set)}
-                </td>
-                <td className="px-2 py-2 text-right">
-                  <LineAmount line={line} />
-                </td>
-                {onFeedback && (
-                  <td className="px-1 py-1.5 text-center">
-                    <FeedbackButton
-                      name={itemName(line, index)}
-                      onClick={() =>
-                        onFeedback({ line, itemLabel: itemName(line, index), scopeLabel })
-                      }
-                    />
-                  </td>
+          {lines.map((line, index) => {
+            const name = itemName(line, index);
+            const common = commonCells(line, index);
+            return (
+              <React.Fragment key={index}>
+                {bands[index] !== null && (
+                  <tr className="bg-muted/60">
+                    <td
+                      colSpan={span}
+                      className="px-2 py-2 text-xs font-semibold uppercase tracking-wide"
+                    >
+                      {bands[index]}
+                    </td>
+                  </tr>
                 )}
-              </tr>
-            </React.Fragment>
-          ))}
+                <tr className="border-t border-border align-top">
+                  <Cells
+                    columns={columns}
+                    cells={{
+                      ...common,
+                      // The dot marks an item that already has feedback, beside its number.
+                      item: (
+                        <>
+                          {common.item}
+                          {sent.items.has(line.id) && <SentDot />}
+                        </>
+                      ),
+                      qty: withUom(line),
+                      unit_rate: lineMoney(line.unit_price),
+                      amount: <LineAmount line={line} />,
+                    }}
+                  />
+                  {onFeedback && (
+                    <td className="px-1 py-1.5 text-center">
+                      <FeedbackButton
+                        name={name}
+                        onClick={() => onFeedback({ line, itemLabel: name, scopeLabel })}
+                      />
+                    </td>
+                  )}
+                </tr>
+              </React.Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -245,19 +331,23 @@ function ScopeTable({
  */
 function MatrixScopeTable({
   scopeLabel,
+  columns,
   headers,
   lines,
   sent,
   onFeedback,
 }: {
   scopeLabel: string;
+  /** The quotation's own column set: the grid shows the photo column when it carries one. */
+  columns: QuotationSignColumn[];
   headers: MatrixHeader[];
   lines: QuotationSignLine[];
   sent: Sent;
   onFeedback?: (target: FeedbackTarget) => void;
 }) {
   const allLeaves = leaves(headers);
-  const columns = 1 + allLeaves.length + 3 + (onFeedback ? 1 : 0);
+  const photo = columns.find((column) => column.key === 'image');
+  const span = 1 + (photo ? 1 : 0) + allLeaves.length + 3 + (onFeedback ? 1 : 0);
   const bands = bandsOf(lines);
   const pinned = 'sticky left-0 z-10 bg-background';
 
@@ -275,6 +365,11 @@ function MatrixScopeTable({
             >
               Item
             </th>
+            {photo && (
+              <th rowSpan={2} className={cn('bg-muted/40 px-2 py-2 font-semibold', presentation('image').th)}>
+                {photo.label}
+              </th>
+            )}
             {headers.map((header) => (
               <th
                 key={header.key}
@@ -319,7 +414,7 @@ function MatrixScopeTable({
                 {bands[index] !== null && (
                   <tr className="bg-muted/60">
                     <td
-                      colSpan={columns}
+                      colSpan={span}
                       className="px-2 py-2 text-xs font-semibold uppercase tracking-wide"
                     >
                       {bands[index]}
@@ -333,6 +428,11 @@ function MatrixScopeTable({
                       {sent.items.has(line.id) && <SentDot />}
                     </span>
                   </td>
+                  {photo && (
+                    <td className="border-t border-border px-2 py-2">
+                      {commonCells(line, index).image}
+                    </td>
+                  )}
                   {allLeaves.map((leaf) => {
                     const value = cells[leaf.key] ?? '';
                     const shown = value.trim() ? formatQty(value) : '';
@@ -481,6 +581,7 @@ export function QuotationSignScopes({
                   ) : hasColumns(scope.matrix_columns) ? (
                     <MatrixScopeTable
                       scopeLabel={scope.scope_label}
+                      columns={scope.columns ?? []}
                       headers={scope.matrix_columns}
                       lines={scope.lines}
                       sent={marks}
@@ -489,6 +590,7 @@ export function QuotationSignScopes({
                   ) : (
                     <ScopeTable
                       scopeLabel={scope.scope_label}
+                      columns={scope.columns ?? []}
                       lines={scope.lines}
                       sent={marks}
                       onFeedback={onFeedback}

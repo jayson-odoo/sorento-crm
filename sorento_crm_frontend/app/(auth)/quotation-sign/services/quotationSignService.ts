@@ -96,9 +96,15 @@ export type QuotationSignLine = {
   item_label: string | null;
   description: string | null;
   technical_spec: string | null;
+  /** The product photo as an inline data URI (the PDF's own bytes), null when the line has none. */
+  image_url?: string | null;
+  /** The technical drawing, the same way. It fills the TECHNICAL SPEC column. */
+  drawing_url?: string | null;
   brand: string | null;
   product_code: string | null;
   quantity: string;
+  /** Printed after the quantity, as the PDF's QTY cell does ("2 pcs"). */
+  uom?: string | null;
   unit_price: string;
   complete_set: string | null;
   band_label: string | null;
@@ -109,9 +115,19 @@ export type QuotationSignLine = {
   qty_cells?: Record<string, string> | null;
 };
 
+/**
+ * One column of the quotation, as the server decides it for this scope: the same set, order and
+ * label as the PDF (backend `app/services/quotation_columns.py`). The page keeps no list of its own.
+ */
+export type QuotationSignColumn = {
+  key: string;
+  label: string;
+};
+
 export type QuotationSignScope = {
   scope_label: string;
   scope_total: string;
+  columns: QuotationSignColumn[];
   lines: QuotationSignLine[];
   /** PS-QUOTE-MATRIX: the scope's column headers; `[]` or absent = one Qty column. */
   matrix_columns?: MatrixHeader[] | null;
