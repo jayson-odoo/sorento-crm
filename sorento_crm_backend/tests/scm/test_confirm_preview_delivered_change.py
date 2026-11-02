@@ -94,3 +94,102 @@ def test_a_delivered_line_autocount_closed_reads_its_change_word_not_cancel_all(
     assert l10["new_date"] == "2026-11-02"
     assert "CANCEL" not in (l10["remark_generated"] or ""), l10["remark_generated"]
     assert "DELAY" in (l10["remark_generated"] or ""), l10["remark_generated"]
+
+
+# --------------------------------------------------------------------------------------------
+# Round 3 (crew final pass, 2 Nov): popup REMARK = email REMARK, one source. The guided
+# Confirm's dry run (`confirm-all` with `preview: true`) answers, per order, the purchasing
+# email's own lines (`email_lines`), built by the same queue and context builder the real press
+# sends; the popup prints those words.
+
+CONFIRM_ALL = "/api/v1/project-sales/fulfilment-planning/confirm-all"
+
+
+def _fresh_request(s):
+    """Each request gets its own session in production; the test client shares the world's,
+    so what the seeding queued for its own (already committed) writes is cleared first."""
+    from app.services import project_order_inquiry_service as oi
+
+    for key in (oi._HANDOVER_PENDING_KEY, oi._SAVED_TOLD_KEY):
+        s.db.info.pop(key, None)
+
+
+def _press(s, line_payload, *, preview):
+    _fresh_request(s)
+    return s.client.post(
+        CONFIRM_ALL,
+        json={
+            "preview": preview,
+            "orders": [
+                {"pso_id": str(s.order.id), "lines": [line_payload], "batch_id": str(s.batch.id)}
+            ],
+        },
+    )
+
+
+def _email_remarks(answer, line_id):
+    order = answer["results"][0]
+    assert order["ok"], order
+    return [entry["remark"] for entry in order.get("email_lines") or [] if entry["so_line_id"] == str(line_id)]
+
+
+def _sent_remarks(calls, item_code):
+    from tests.test_order_inquiry_handover_automation import _handover_calls
+
+    return [
+        line["remark"]
+        for call in _handover_calls(calls)
+        for line in call["context"]["handover"]["lines"]
+        if line["item_code"] == item_code
+    ]
+
+
+def _same_as_email(api, monkeypatch, line_payload):
+    from tests.test_order_inquiry_handover_automation import _captured_dispatches, _register
+
+    s = _seed(api, pending=True)
+    _register(s.world)
+    calls = _captured_dispatches(monkeypatch)
+    preview = _press(s, line_payload(s), preview=True)
+    assert preview.status_code == 200, preview.text
+    popup = _email_remarks(preview.json(), s.l10.id)
+    calls.clear()
+    real = _press(s, line_payload(s), preview=False)
+    assert real.status_code == 200, real.text
+    item_code = s.world.product.product_code
+    return popup, _sent_remarks(calls, item_code)
+
+
+def test_the_dry_run_answers_the_email_remark_for_a_held_buy_with_a_date_move(api, monkeypatch):
+    """Crew case 1: Buy saved again as held, AutoCount moved the date: the email says DELAY,
+    and so must the popup (it said ORDER)."""
+    popup, sent = _same_as_email(api, monkeypatch, lambda s: _line_payload(s.l10.id, buy_qty="3"))
+    assert sent, "premise: the real press tells purchasing about the line"
+    assert popup == sent, (popup, sent)
+    assert any("DELAY" in remark for remark in popup), popup
+
+
+def test_the_dry_run_answers_the_email_remark_for_a_changed_decision_with_a_date_move(
+    api, monkeypatch
+):
+    """Crew case 2: Reserve + Buy over a held Buy, with a date move: the email says
+    "DELAY, CHANGED: ...", and so must the popup (it dropped "DELAY, ")."""
+    from tests.test_so_supply_confirmation import _stock
+
+    seeded = set()
+
+    def payload(s):
+        if not seeded:
+            _stock(s.db, s.world.product, s.world.own_wh, on_hand=5)
+            s.db.commit()
+            seeded.add(True)
+        return _line_payload(
+            s.l10.id,
+            reserve=[{"warehouse_id": str(s.world.own_wh.id), "qty": "1"}],
+            buy_qty="2",
+            amend_reason="Part from the bin.",
+        )
+
+    popup, sent = _same_as_email(api, monkeypatch, payload)
+    assert sent, "premise: the real press tells purchasing about the line"
+    assert popup == sent, (popup, sent)
