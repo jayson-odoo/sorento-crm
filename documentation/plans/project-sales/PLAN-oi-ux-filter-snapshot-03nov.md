@@ -1,6 +1,6 @@
 # PLAN: OI detail filters survive prev/next; snapshot OI/SO views show project + customer
 
-Status: in progress (small fix track: FE-only expected, no migration, no RBAC change)
+Status: in progress (small fix track for item 1; item 2 widened by the owner 3 Nov 19:35 to every SO cell, standard track: no migration, no RBAC change; inventory in oi-ux-filter-snapshot-so-inventory.md)
 
 Lane: OI-UX-FILTER-SNAPSHOT. Owner ask 3 Nov 19:15.
 
