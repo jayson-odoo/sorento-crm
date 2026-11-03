@@ -403,3 +403,113 @@ def test_q6_an_old_stored_company_question_and_a_reply_is_read_fresh(bot, world)
     text, calls = bot.say(v, "2")
     assert not _ran(calls), f"Q6: the reply ran the held ask: {calls}"
     assert text.strip() == BASIS_Q, f"Q6: want the basis question (read fresh), got {text!r}"
+
+
+# ------------------------------------------------------------------------------------------ round 7c (the `_carry` widening seam, every axis)
+
+WIDE_BRAND = "ZZT WIDEBRAND"
+
+
+def _seed_wide_brand(b) -> None:
+    import uuid
+
+    from app.models.product import Brand
+
+    db = b.console.session_factory()
+    try:
+        db.add(Brand(id=str(uuid.uuid4()), brand_code="ZZTWIDE", brand_name=WIDE_BRAND, company_id=DEFAULT_COMPANY_ID))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _axis_specs():
+    from tests.chatbot.test_report_ask_lane import CUSTOMER_NAME, PRODUCT_CODE
+
+    # axis word as the parser emits it -> (held entities, held object fields, verdict extras, arg keys of that kind,
+    # whether brand / account type clear together)
+    return {
+        "sales_agent": ([_ent(AGENT_1, "sales_agent")], dict(sales_agents=[AGENT_1]), {}, ("sales_agent_ids",)),
+        "brand": ([_ent("zzt widebrand", "brand")], dict(brands=[WIDE_BRAND]), {}, ("brand_ids", "account_types")),
+        "account_type": ([_ent("ceramic", "account_type", None, "account type")], dict(account_types=["ceramic"]), {}, ("account_types", "brand_ids")),
+        "category": ([_ent("ZZT CATEGORY", "category")], dict(categories=["ZZT CATEGORY"]), {}, ("category_ids",)),
+        "customer": ([_ent(CUSTOMER_NAME, "customer")], dict(customers=[CUSTOMER_NAME]), {}, ("customer_ids",)),
+        "product": ([_ent(PRODUCT_CODE, "product")], dict(products=[PRODUCT_CODE]), {}, ("product_code", "product_ids")),
+        "channel": ([], dict(channel="dealer"), dict(sales_channel="dealer"), ("channel",)),
+        "company": ([], dict(), {}, ("company",)),
+    }
+
+
+#: channel is not a carried kind (SC-8: a restated ask drops it), so it has the widen case only.
+_C7_CASES = [
+    (axis, mode)
+    for axis in ("sales_agent", "brand", "account_type", "category", "customer", "product", "channel", "company")
+    for mode in ("widen", "no-broaden", "family")
+    if not (axis == "channel" and mode != "widen")
+]
+
+
+@pytest.mark.parametrize("axis,mode", _C7_CASES, ids=[f"{a}-{m}" for a, m in _C7_CASES])
+def test_c7_a_widened_axis_drops_only_its_own_kind_on_every_axis(rbot, world, axis, mode) -> None:
+    """C6-2 + R-P3-09 (flag ON, the `_carry` widening seam): for EVERY carried kind, held X then a follow-up with no
+    current-message entity and the object's list for that kind empty. `broaden_to` "all" + `broaden_axis` <kind> -> the run has
+    no filter of that kind (brand and account type clear together) and keeps every OTHER held filter. Controls: no broaden
+    fields (X carries, C6-2) and `broaden_to` "family" (no widening drop by this rule)."""
+    sorento, _m = world
+    _seed_wide_brand(rbot)
+    ents, held_fields, verdict_extra, keys = _axis_specs()[axis]
+    company_held = axis != "company"
+    witness_channel = axis not in ("channel",)
+    base = dict(basis="invoiced", **Y)
+    obj1 = _ra(company=sorento, **held_fields, **base)
+    v1 = _v("sales_report", obj1, *ents, basis="invoiced", sales_basis="invoiced", sales_company=sorento, domain_in_message=True,
+            **verdict_extra, **YR)
+    text, calls = rbot.say(v1, f"sorento invoiced sales {axis} 2026")
+    ran = _ran(calls)
+    assert ran, f"setup ({axis}): the held ask did not run: {text!r}"
+    assert any(ran[0].get(k) for k in keys[:2] if k in ("channel", "company", "sales_agent_ids", "category_ids", "customer_ids", "product_code", "product_ids", "brand_ids", "account_types")), f"setup ({axis}): X not on the first run: {ran[0]}"
+    # the follow-up: the model re-states the company (unless the axis is the company) and drops the kind's list
+    obj2 = _ra(company=(sorento if company_held else None), channel=None, **base)
+    extra = {}
+    if mode == "widen":
+        extra = dict(broaden_axis=axis, broaden_to="all")
+    elif mode == "family":
+        extra = dict(broaden_axis=axis, broaden_to="family")
+    v2 = _v("sales_report", obj2, basis="invoiced", entity_op="reuse", continuation=True,
+            sales_company=(sorento if company_held else None), **extra, **YR)
+    text, calls = rbot.say(v2, "and for all" if mode == "widen" else "and again")
+    ran2 = _ran(calls)
+    assert ran2, f"({axis}, {mode}): no run; the bot said {text.strip()!r}"
+    args = ran2[0]
+    present = [k for k in keys if args.get(k)]
+    if mode == "widen":
+        assert not present, f"C6-2/R-P3-09 ({axis}): a widened '{axis}' kept {present}: {args}"
+        assert args.get("basis") == "invoiced" and args.get("date_from") == "2026-01-01", f"({axis}) lost a witness: {args}"
+        if company_held:
+            assert args.get("company") == DEFAULT_COMPANY_ID, f"({axis}) widening one axis dropped the company: {args}"
+    else:
+        assert any(args.get(k) for k in keys[:1]) or (axis in ("brand", "account_type") and any(args.get(k) for k in keys)), (
+            f"C6-2 control ({axis}, {mode}): the held {axis} did not carry: {args}"
+        )
+
+
+@pytest.mark.parametrize("shape", ["reuse", "refine"])
+def test_c7_flag_off_and_for_all_companies_runs_with_no_company_keeps_the_rest(bot, world, shape) -> None:
+    """R-P3-09 + O-R2 (flag OFF, P5c): 'and for all companies' after a report for company Sorento: broaden_axis company,
+    broaden_to all, in the reuse and the refine shapes -> no company arg, the other held filters (channel, basis, period) kept."""
+    sorento, _m = world
+    t1 = _v("sales_report", None, basis="invoiced", sales_basis="invoiced", sales_channel="dealer", sales_company=sorento,
+            domain_in_message=True, **YR)
+    text, calls = bot.say(t1, "sorento dealer sales 2026 invoiced")
+    assert _ran(calls) and _ran(calls)[0].get("company") == DEFAULT_COMPANY_ID and _ran(calls)[0].get("channel") == "dealer", (text, calls)
+    shapes = {
+        "reuse": dict(entity_op="reuse", continuation=True),
+        "refine": dict(entity_op="modify", continuation=True, ranking_refine=True),
+    }
+    t2 = _v("sales_report", None, basis="invoiced", sales_basis="invoiced", broaden_axis="company", broaden_to="all",
+            **shapes[shape], **YR)
+    text, calls = bot.say(t2, "and for all companies")
+    ran = _ran(calls)
+    assert ran, f"no run; the bot said {text.strip()!r}"
+    assert "company" not in ran[0], f"P5c ({shape}): 'all companies' kept the held company: {ran[0]}"
+    assert ran[0].get("channel") == "dealer" and ran[0].get("basis") == "invoiced" and ran[0].get("date_from") == "2026-01-01", ran[0]
