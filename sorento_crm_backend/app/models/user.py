@@ -555,6 +555,18 @@ class SystemSetting(Base):
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # Who approves a project quotation carrying a line outside its series (PS-QUOTE-RULES R4.1).
+    off_series_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Who approves a project quotation discount when no override or superior resolves (R4.4).
+    default_quotation_approver_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # Email guardrail thresholds: global + per-recipient caps + drainer cadence.
     # Tune below the SMTP provider's documented limits to prevent mail-server flagging.
