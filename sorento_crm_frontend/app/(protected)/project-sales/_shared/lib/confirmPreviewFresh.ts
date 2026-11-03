@@ -1,14 +1,12 @@
 /**
- * CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): the guided Confirm shows what the server holds now,
- * and says so when a line's saved decision is not what AutoCount's pending change suggests.
+ * CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): the guided Confirm shows what the server holds now.
+ * A saved decision stands silently: nothing compares it with AutoCount's suggestion
+ * (NO-AC-MOVED-WARNING, owner 3 Nov 2026).
  *
  * Pure: no fetch, no React. `FulfilmentBoardPanel` hands it the board's lines.
  */
-import { decisionWords, type BoardChangeAnnotation } from './boardChangeAnnotations';
-import { contributionDecision, partsBreakdown, type SupplyPart } from './supplyVocabulary';
 import type {
   BoardContribution,
-  BoardDecision,
   BoardDraft,
   ConfirmEmailLine,
   ConfirmManyBody,
@@ -51,69 +49,6 @@ export function newerServerDraftKeys(
     }
   }
   return out;
-}
-
-/** What the guide says for a line whose saved decision differs from AutoCount's suggestion. */
-export interface SuggestionMoved {
-  /** The pending change's suggestion in board words, e.g. `Buy 3`. */
-  suggestion: string;
-  /** The saved decision in the same words, e.g. `Borrow 3`. */
-  kept: string;
-}
-
-/**
- * Do two compositions say the same thing? By board row kind and qty, the way the cards group
- * them (`partsBreakdown`); the places are compared only where BOTH sides name them, because a
- * change row's composition often carries no location while a saved decision does (review
- * round 1: "Use incoming 3" against "Use incoming 3 from BRW" is the same answer).
- */
-function sameComposition(
-  a: SupplyPart[],
-  b: SupplyPart[],
-  ownLocation: string | null,
-): boolean {
-  const rows = (parts: SupplyPart[]) =>
-    new Map(partsBreakdown([{ parts, ownLocation }]).map((row) => [row.key, row]));
-  const left = rows(a);
-  const right = rows(b);
-  if (left.size !== right.size) return false;
-  for (const [key, row] of left) {
-    const other = right.get(key);
-    if (!other || Number(other.qty) !== Number(row.qty)) return false;
-    const places = (r: typeof row) =>
-      r.places.map((place) => `${place.location}:${Number(place.qty)}`).sort().join('|');
-    if (row.places.length > 0 && other.places.length > 0 && places(row) !== places(other))
-      return false;
-  }
-  return true;
-}
-
-/**
- * A warning, never a refusal (owner ruling "one bad line never refuses an order"): the line
- * a pending AutoCount change names carries a SAVED decision (not the board's own pre-mark)
- * whose words differ from what that change suggests (`annotation.now.decision`, what Apply
- * would post). `null` when there is nothing to say.
- */
-export function suggestionMovedOf(
-  contribution: BoardContribution,
-  decision: BoardDecision | undefined,
-  annotations: readonly BoardChangeAnnotation[] | undefined,
-): SuggestionMoved | null {
-  if (!decision || decision.preMarked) return null;
-  if (decision.verdict !== 'approved' && decision.verdict !== 'amended') return null;
-  const latest = [...(annotations ?? [])].reverse().find(
-    (annotation) => !annotation.closed && annotation.now.decision,
-  );
-  const suggestion = latest?.now.decision ?? null;
-  if (!latest || !suggestion) return null;
-  const ownLocation = contribution.fulfilment_location ?? null;
-  // A bare approval composes nothing of its own: it takes the proposal (`contributionDecision`).
-  const keptParts = contributionDecision(contribution, decision) ?? [];
-  const kept = decisionWords(keptParts, ownLocation);
-  if (!kept) return null;
-  if (latest.nowParts ? sameComposition(keptParts, latest.nowParts, ownLocation) : kept === suggestion)
-    return null;
-  return { suggestion, kept };
 }
 
 /**
@@ -178,10 +113,17 @@ export function emailWordsFor(
 /**
  * The guided Confirm's email dry run body (review round 3, S3): the press's own body, `quiet`
  * (the server records no refusal for it), with every order that has no planning record yet
- * (an empty `pso_id`, adoption deferred) left out. `null` when nothing is left to preview.
+ * (an empty `pso_id`, adoption deferred) left out. `onlyPsoId` (CONFIRM-REMARK-FIX) keeps the
+ * order on screen alone: a dry run costs the order's whole Confirm, so the guide never pays
+ * for the pages nobody is looking at. `null` when nothing is left to preview.
  */
-export function emailPreviewBody(body: ConfirmManyBody | null | undefined): ConfirmManyBody | null {
-  const orders = (body?.orders ?? []).filter((order) => Boolean(order.pso_id));
+export function emailPreviewBody(
+  body: ConfirmManyBody | null | undefined,
+  onlyPsoId?: string | null,
+): ConfirmManyBody | null {
+  const orders = (body?.orders ?? []).filter(
+    (order) => Boolean(order.pso_id) && (onlyPsoId == null || order.pso_id === onlyPsoId),
+  );
   if (!body || orders.length === 0) return null;
   return { ...body, orders, quiet: true };
 }

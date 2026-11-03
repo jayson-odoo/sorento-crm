@@ -17,6 +17,8 @@ from app.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.schemas.sample_request import (
     SampleRequestInternal,
+    SampleRequestConsignmentLink,
+    SampleRequestDateAnswer,
     SampleRequestMove,
     SampleRequestWrite,
 )
@@ -133,6 +135,7 @@ def quotation_prefill(
 @router.get("/sample-requests")
 def list_requests(
     status_filter: Optional[list[str]] = Query(None, alias="status"),
+    stage: Optional[list[str]] = Query(None),
     project_id: Optional[str] = Query(None),
     salesperson_id: Optional[list[str]] = Query(None),
     q: Optional[str] = Query(None),
@@ -144,10 +147,16 @@ def list_requests(
     db: Session = Depends(get_db),
 ):
     actor = _list_actor(db, user)
+    stages = multi_values(stage)
     return svc.list_for(
         db,
         actor=actor,
-        statuses=_statuses(status_filter, actor),
+        # A stage filter replaces the open-set default: "Delivery" must find Delivered rows.
+        # A bare `?stage=` is no stage filter at all.
+        statuses=(
+            None if stages and status_filter is None else _statuses(status_filter, actor)
+        ),
+        stages=stages or None,
         project_id=validate_uuid_path(project_id, resource="Project") if project_id else None,
         salesperson_id=multi_uuids(salesperson_id, "salesperson_id"),
         q=q,
@@ -277,6 +286,74 @@ def move_request(
             to=payload.to,
             on=payload.date,
             reason=payload.reason,
+            date_feasible=payload.date_feasible,
+            proposed_delivery_date=payload.proposed_delivery_date,
+            date_note=payload.date_note,
+        )
+        db.commit()
+        db.refresh(req)
+        return svc.serialize_detail(db, req)
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.put("/sample-requests/{request_id}/date-answer")
+def answer_date(
+    request_id: str,
+    payload: SampleRequestDateAnswer,
+    user: dict = Depends(require_permission(PROCESS)),
+    db: Session = Depends(get_db),
+):
+    """PS-SAMPLE-TRACKING rule 2: the sample team changes its date answer in Stage 1."""
+    try:
+        req = _load(db, request_id)
+        actor = _actor(db, user)
+        svc.assert_can_view(req, actor)
+        svc.answer_date(
+            db,
+            req,
+            actor=actor,
+            feasible=payload.date_feasible,
+            proposed=payload.proposed_delivery_date,
+            note=payload.date_note,
+        )
+        db.commit()
+        db.refresh(req)
+        return svc.serialize_detail(db, req)
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.get("/sample-requests/{request_id}/consignments")
+def search_consignments(
+    request_id: str,
+    q: Optional[str] = Query(None),
+    user: dict = Depends(require_permission(PROCESS)),
+    db: Session = Depends(get_db),
+):
+    """PS-SAMPLE-TRACKING Stage 2: the live consignments the sample team can link."""
+    req = _load(db, request_id)
+    actor = _actor(db, user)
+    svc.assert_can_view(req, actor)
+    return svc.search_consignments(db, req, actor=actor, q=q or "")
+
+
+@router.put("/sample-requests/{request_id}/consignment")
+def link_consignment(
+    request_id: str,
+    payload: SampleRequestConsignmentLink,
+    user: dict = Depends(require_permission(PROCESS)),
+    db: Session = Depends(get_db),
+):
+    """PS-SAMPLE-TRACKING Stage 2: the linked consignment is the delivery."""
+    try:
+        req = _load(db, request_id)
+        actor = _actor(db, user)
+        svc.assert_can_view(req, actor)
+        svc.link_consignment(
+            db, req, actor=actor, consignment_order_id=payload.consignment_order_id
         )
         db.commit()
         db.refresh(req)

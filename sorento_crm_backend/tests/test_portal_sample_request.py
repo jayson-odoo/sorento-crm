@@ -494,3 +494,13 @@ def test_review_customer_picker_leaves_out_an_order_only_debtor(portal):
     rows = _as(portal, portal.granted).get(f"{PORTAL}/sample-request/customers").json()
     assert [r["customer_id"] for r in rows] == [mine.id]
     assert all(r["customer_id"] for r in rows)
+
+
+def test_ps_sample_tracking_portal_gets_the_date_answer_not_the_internals(portal):
+    """PS-SAMPLE-TRACKING review S3: the contact sees the team's answer (date_feasible,
+    proposed date, note) but never who answered, when, or the AutoCount consignment record."""
+    d = _create(portal)
+    c = _as(portal, portal.granted)
+    for body in (d, c.get(f"{BASE}/{d['id']}").json()):
+        assert {"date_feasible", "proposed_delivery_date", "date_note"} <= set(body)
+        assert not {"consignment", "date_answered_at", "date_answered_by_name"} & set(body)
