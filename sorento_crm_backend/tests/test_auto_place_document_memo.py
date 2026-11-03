@@ -258,3 +258,29 @@ def test_a_read_under_one_company_scope_never_answers_another(api):
     with company_scope(world.db, {"00000000-0000-0000-0000-0000000000bb"}):
         got = service._document_rows(("po", "p", False), lambda: reads.append("b") or ["b"])
     assert got == ["b"] and reads == ["a", "b"]
+
+
+def test_an_unscoped_read_never_answers_a_scoped_one_or_back(api):
+    """Security review nit: the two states where a leak would hurt most. `None` (every
+    company) and UNSET each keep their own entry, apart from any company's."""
+    from app.models.base import UNSET, company_scope, set_company_scope
+
+    _client, world = api
+    service = ProjectOrderInquiryService(world.db)
+    service._document_rows_memo = {}
+    reads = []
+
+    def read(tag):
+        return lambda: reads.append(tag) or [tag]
+
+    company = {"00000000-0000-0000-0000-0000000000aa"}
+    with company_scope(world.db, None):
+        assert service._document_rows(("spo", "p"), read("all")) == ["all"]
+    with company_scope(world.db, company):
+        assert service._document_rows(("spo", "p"), read("one")) == ["one"]
+    with company_scope(world.db, None):
+        assert service._document_rows(("spo", "p"), read("all-again")) == ["all"]
+    with company_scope(world.db, company):
+        set_company_scope(world.db, UNSET)
+        assert service._document_rows(("spo", "p"), read("unset")) == ["unset"]
+    assert reads == ["all", "one", "unset"]
