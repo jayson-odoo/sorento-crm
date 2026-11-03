@@ -407,7 +407,13 @@ def render(db: Session, attachment_id: Optional[str]) -> Optional[RenderedImage]
     return _downscale(raw, attachment_id)
 
 
-def _downscale(raw: bytes, attachment_id: Any) -> Optional[RenderedImage]:
+def _downscale(
+    raw: bytes,
+    attachment_id: Any,
+    box: int = PRINT_BOX,
+    quality: int = JPEG_QUALITY,
+) -> Optional[RenderedImage]:
+    """Pillow's own JPEG re-encode of ``raw`` inside ``box`` px; ``None`` when it cannot be."""
     try:
         from PIL import Image
 
@@ -432,9 +438,9 @@ def _downscale(raw: bytes, attachment_id: Any) -> Optional[RenderedImage]:
             else:
                 # CMYK is the other one that bites: a CMYK JPEG re-saved as-is renders inverted.
                 image = opened.convert("RGB")
-            image.thumbnail((PRINT_BOX, PRINT_BOX), Image.Resampling.LANCZOS)
+            image.thumbnail((box, box), Image.Resampling.LANCZOS)
             buffer = io.BytesIO()
-            image.save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+            image.save(buffer, format="JPEG", quality=quality, optimize=True)
             return RenderedImage(
                 data=buffer.getvalue(),
                 mime_type="image/jpeg",
@@ -449,6 +455,65 @@ def _downscale(raw: bytes, attachment_id: Any) -> Optional[RenderedImage]:
             len(raw),
         )
         return None
+
+
+def as_data_uri(rendered: Optional[RenderedImage]) -> Optional[str]:
+    if rendered is None:
+        return None
+    return f"data:{rendered.mime_type};base64,{base64.b64encode(rendered.data).decode('ascii')}"
+
+
+@dataclass(frozen=True)
+class PictureSource:
+    """Where one attachment's bytes live, read while the DB connection is held so the fetch
+    itself needs none (QUOTE-PERF-HOTFIX)."""
+
+    attachment_id: str
+    thumbnail_key: Optional[str]
+    original_key: Optional[str]
+    provider: str
+    mime_type: Optional[str]
+
+
+def picture_sources(db: Session, attachment_ids: Iterable[Optional[str]]) -> Dict[str, PictureSource]:
+    """One query for every picture a page will inline."""
+    wanted = list(dict.fromkeys(str(a) for a in attachment_ids if a))
+    if not wanted:
+        return {}
+    return {
+        str(row.id): PictureSource(
+            attachment_id=str(row.id),
+            thumbnail_key=extract_key(row.thumbnail_path) if row.thumbnail_path else None,
+            original_key=extract_key(row.file_path) if row.file_path else None,
+            provider=normalize_provider(row.storage_provider),
+            mime_type=row.mime_type,
+        )
+        for row in db.query(Attachment).filter(Attachment.id.in_(wanted)).all()
+    }
+
+
+def render_source(source: PictureSource) -> Tuple[Optional[RenderedImage], Optional[str]]:
+    """``(picture, new thumbnail url)`` with no DB access.
+
+    The stored thumbnail when there is one. Otherwise the original is read ONCE, a thumbnail is
+    made from it and uploaded exactly as the upload path does (``store_thumbnail``), and its URL
+    is handed back for the caller to save on the attachment, so the original is never read for
+    this picture again.
+    """
+    from app.services.image_thumbnailer import store_thumbnail
+
+    try:
+        backend = get_backend(source.provider)
+        if source.thumbnail_key:
+            return _downscale(backend.download_file(source.thumbnail_key), source.attachment_id), None
+        if not source.original_key:
+            return None, None
+        raw = backend.download_file(source.original_key)
+    except Exception:  # noqa: BLE001 - cosmetic, never fatal to the page
+        logger.warning("product image: cannot fetch %s", source.attachment_id, exc_info=True)
+        return None, None
+    made = store_thumbnail(backend, source.provider, source.original_key, raw, source.mime_type)
+    return _downscale(raw, source.attachment_id), made
 
 
 def data_uri(
@@ -553,6 +618,10 @@ __all__: List[str] = [
     "CHOSEN",
     "DRAWING_TYPE",
     "NOT_CHOSEN",
+    "PictureSource",
+    "as_data_uri",
+    "picture_sources",
+    "render_source",
     "NO_PHOTOS",
     "OFF_CATALOG",
     "PRINT_BOX",

@@ -358,3 +358,54 @@ def test_the_public_route_releases_its_session_before_pictures(monkeypatch):
     body = src[src.index("def read_quotation_for_signing") :]
     body = body[: body.index("\n@router")]
     assert "release=db.close" in body
+
+
+def test_a_picture_with_no_thumbnail_reads_its_original_once_and_saves_a_thumbnail(monkeypatch):
+    """Crew ruling (b): no visible change. The original is read once, a thumbnail is stored the
+    way the upload path stores one, and every later render reads that thumbnail."""
+    from app.models.resources import Attachment
+    from app.services import product_image_service as images
+    from app.services import project_quotation_document_service as qdocs
+
+    class Store(_FakeBackend):
+        def __init__(self, payload):
+            super().__init__(payload)
+            self.uploads = {}
+
+        def download_file(self, key):
+            self.keys.append(key)
+            return self.uploads.get(key, self.payload)
+
+        def upload_file(self, file_content, file_path, content_type=None, **_kw):
+            self.uploads[file_path] = file_content
+            return file_path, file_path
+
+    with blank_session() as db:
+        issued = _sign_issue(db, monkeypatch, photos=1, thumbnails=False)
+        from app.services import storage_router
+
+        store = Store(_photo_bytes(1200, 1200))
+        monkeypatch.setattr(images, "get_backend", lambda provider: store)
+        monkeypatch.setattr(
+            storage_router, "cdn_base_url", lambda provider, key: f"https://cdn.zzt.test/{key}"
+        )
+
+        first = qdocs.serialize_sign_page(db, issued)
+        assert first["scopes"][0]["lines"][0]["image_url"].startswith("data:image/jpeg;base64,")
+        assert store.keys and not any("thumb" in k for k in store.keys)
+        assert len(store.uploads) == 2
+
+        line = first["scopes"][0]["lines"][0]
+        assert line["drawing_url"]
+        saved = (
+            db.query(Attachment)
+            .filter(Attachment.original_filename.like("%zzt%"), Attachment.thumbnail_path.isnot(None))
+            .count()
+        )
+        assert saved == 2
+
+        qdocs._SIGN_PICTURES.clear()
+        store.keys.clear()
+        qdocs.serialize_sign_page(db, issued)
+        assert len(store.keys) == 2
+        assert all(k in store.uploads for k in store.keys)  # the stored thumbnails, not originals
