@@ -442,3 +442,44 @@ describe('AC-RF-91 narrowing by hand with the chip on survives a reload', () => 
     expect(sent(lastList().inquiry_no)).toBe(NUMBERS);
   });
 });
+
+describe('AC-10 (OI-RESERVE-ROUND) the Lines screen reads and sends reserve_request', () => {
+  const IDS = 'req-x,req-y';
+  const RESERVE_CHIP = /clear filter:.*reserve requests/i;
+
+  it('sends it with inquiry_no on the list and the summary request, and shows the chip', async () => {
+    arriveWith(`display=lines&inquiry_no=${NUMBERS}&reserve_request=${IDS}`);
+    renderClient();
+    await screen.findByText('SO385126');
+    await waitFor(() => expect(sent(lastList().reserve_request)).toBe(IDS));
+    expect(sent(lastList().inquiry_no)).toBe(NUMBERS);
+    expect(sent(lastSummary().reserve_request)).toBe(IDS);
+    expect(await screen.findByRole('button', { name: RESERVE_CHIP })).toHaveTextContent(
+      'Reserve requests: 2',
+    );
+  });
+
+  it('without the param nothing is sent', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+    expect(sent(lastList().reserve_request)).toBeUndefined();
+  });
+
+  it('the chip drops it from the request and the URL', async () => {
+    arriveWith(`display=lines&inquiry_no=${NUMBERS}&reserve_request=${IDS}`);
+    renderClient();
+    fireEvent.click(await screen.findByRole('button', { name: RESERVE_CHIP }));
+    await waitFor(() => expect(sent(lastList().reserve_request)).toBeUndefined());
+    expect(new URLSearchParams(nav.state.search).get('reserve_request')).toBeNull();
+  });
+
+  it('"Clear filters" drops it from the request and the URL', async () => {
+    arriveWith(`display=lines&inquiry_no=${NUMBERS}&reserve_request=${IDS}`);
+    renderClient();
+    await screen.findByText('SO385126');
+    fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('button', { name: /^clear filters$/i }));
+    await waitFor(() => expect(sent(lastList().reserve_request)).toBeUndefined());
+    expect(new URLSearchParams(nav.state.search).get('reserve_request')).toBeNull();
+  });
+});
