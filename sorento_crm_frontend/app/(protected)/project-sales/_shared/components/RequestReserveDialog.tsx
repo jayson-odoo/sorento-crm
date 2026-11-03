@@ -8,6 +8,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 import {
   Dialog,
   DialogBody,
@@ -93,6 +94,8 @@ export function RequestReserveDialog({
   onOpenChange: (open: boolean) => void;
   onSent?: () => void;
 }) {
+  // One OI is one sales order: any row names it.
+  const order = worklistRows.find((row) => row.so_number) ?? null;
   const createMutation = useCreateOrderInquiryReserveRequest(inquiryId);
   // Memoised on what the options depend on: the hook below registers queries from this
   // array, so a fresh one on every dialog state change (the Park tickbox) kept it notifying.
@@ -358,6 +361,13 @@ export function RequestReserveDialog({
       <DialogContent className="flex max-h-[85dvh] flex-col sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Request CS to reserve</DialogTitle>
+          {/* OI-UX-FILTER-SNAPSHOT: the order this OI is for, with its customer / project. */}
+          {order?.so_number && (
+            <div className="min-w-0 text-sm">
+              <span className="font-medium tabular-nums">{order.so_number}</span>
+              <SoCustomerProject customer={order.customer_name} project={order.project_title} />
+            </div>
+          )}
           <DialogDescription>
             {ticked.length} of {rows.length} lines
           </DialogDescription>
