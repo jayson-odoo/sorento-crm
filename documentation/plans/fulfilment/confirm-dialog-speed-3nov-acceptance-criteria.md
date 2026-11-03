@@ -40,7 +40,10 @@ describe "CONFIRM-DIALOG-SPEED".
 - **P5** A confirm-all dry run and a real confirm return the same response and issue the same
   writes in the same order as main.
 - **P6** A Confirm page whose dry run answers `ok=false` shows the dry run's error in the
-  failed-run pattern with Retry, its REMARK cells print no words, and Confirm is disabled.
-- **P7** Every line of a page's dry-run email appears on that page's Review split (pending the
-  line-8 verification, plan item 5).
+  failed-run pattern with Retry and its REMARK cells print no words. Confirm stays enabled
+  (crew ruling 3 Nov: holding it would block the other orders); the press posts only the ok
+  orders and the refused one lands on today's result card with its reason table.
+- **P7** Every line of a page's dry-run email appears on that page's Review split, once its words
+  land: a line the press does not change (SO373923 line 8, a carried borrow owing ORDER BACK MWH-BB)
+  as a read-only row with the email's words; an email line on no board row from its own entry.
 - **P8** On the clone (SO373923): board GET under 3 s warm, dry run under 5 s.

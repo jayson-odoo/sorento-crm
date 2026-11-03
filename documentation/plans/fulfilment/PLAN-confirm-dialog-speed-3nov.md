@@ -92,9 +92,10 @@ endpoint or setting. Items 4-5 are frontend only, inside the Confirm dialog.
    (`fulfilmentBoard.ts:917-923`) leaves it off the page (`:1136`).
 
 Behaviour card answered by crew from the owner's rules (3 Nov): item 4 reuses the failed-run
-pattern (`role=alert` line + Retry, `ConfirmGuideDialog.tsx:598-610`), REMARK cells empty,
-Confirm held; no mock (existing row + alert pattern). Item 5: first verify why line 8 is in
-this press's email. If it leaks from an earlier press, the EMAIL is the bug (purchasing must not
+pattern (`role=alert` line + Retry, `ConfirmGuideDialog.tsx:598-610`), REMARK cells empty;
+Confirm NOT held (second ruling: today's press already posts only the ok orders and lands a
+refused one on the result card with its reason table, pinned by 10 tests); no mock (existing row + alert pattern). Item 5: verified, line 8 belongs (a carried borrow
+owing ORDER BACK under #1534's rule; this press raises it; policy kept as is). If it leaks from an earlier press, the EMAIL is the bug (purchasing must not
 get a line this press did not confirm, or it is labelled as carried) and crew is told; if it
 belongs, the page shows it as a read-only row in the same split sheet once the dry run lands,
 remark = the email's words (an email line whose SO line is not on the board: item, qty, remark
