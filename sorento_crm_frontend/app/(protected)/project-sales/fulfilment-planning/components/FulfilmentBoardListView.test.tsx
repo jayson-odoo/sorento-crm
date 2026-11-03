@@ -2200,9 +2200,19 @@ describe('FulfilmentBoardListView: every column sorts (owner ruling 22 Sep)', ()
 
   it('OI-UX-FILTER-SNAPSHOT: shows each line project beside its customer', async () => {
     renderView({
-      contributions: [contribution({ project_label: 'TAMAN JAYA' })],
+      contributions: [contribution({ project_label: 'OWN COLLECT', so_project_label: 'TAMAN JAYA' })],
     });
     expect(await screen.findByText('TAMAN JAYA')).toBeInTheDocument();
+    // The SO list's Project, never the board's note fallback (crew browser pass, 4 Nov).
+    expect(screen.queryByText('OWN COLLECT')).toBeNull();
+  });
+
+  it('OI-UX-FILTER-SNAPSHOT: a dash, never the note, when the order names no project', async () => {
+    renderView({
+      contributions: [contribution({ project_label: 'OWN COLLECT', so_project_label: null })],
+    });
+    await screen.findByText('SO397450');
+    expect(screen.queryByText('OWN COLLECT')).toBeNull();
   });
 
   it('sorts Outstanding qty numerically, not lexicographically (9 before 20)', async () => {

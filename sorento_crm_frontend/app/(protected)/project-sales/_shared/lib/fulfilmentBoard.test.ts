@@ -2488,8 +2488,12 @@ describe('boardAxis: pivoting the rows', () => {
       ...cell,
       contributions: cell.contributions.map((entry) => ({
         ...entry,
-        customer_name: 'ACME SDN BHD',
-        project_label: entry.sales_order_id === 'so-a' ? 'TAMAN JAYA' : null,
+        // The board's own project (note fallback, #813) is NOT what the label prints: the
+        // label is the SO list's own Customer and Project (crew browser pass, 4 Nov).
+        customer_name: 'BOARD CUSTOMER',
+        project_label: 'OWN COLLECT',
+        so_customer_name: 'ACME SDN BHD',
+        so_project_label: entry.sales_order_id === 'so-a' ? 'TAMAN JAYA' : null,
       })),
     }));
     const { rows } = boardAxis('sales_order', named);
@@ -3215,17 +3219,23 @@ describe('pressPostsContribution: Saved is exactly what Confirm posts', () => {
 });
 
 describe('orderPartyLabels (OI-UX-FILTER-SNAPSHOT)', () => {
-  it('names each board order CUSTOMER / project, from the order then its lines', async () => {
+  it('names each board order by the SO list\'s Customer and Project, never the board\'s note fallback', async () => {
     const { orderPartyLabels } = await import('./fulfilmentBoard');
     const labels = orderPartyLabels(
       [
-        { sales_order_id: 'so-a', customer_name: 'ACME SDN BHD' },
+        { sales_order_id: 'so-a', customer_name: 'BOARD CUSTOMER' },
         { sales_order_id: 'so-b', customer_name: null },
         { sales_order_id: 'so-c', customer_name: null },
       ],
       [
-        { sales_order_id: 'so-a', customer_name: 'IGNORED', project_label: 'TAMAN JAYA' },
-        { sales_order_id: 'so-b', customer_name: 'BETA', project_label: null },
+        {
+          sales_order_id: 'so-a', customer_name: 'IGNORED', project_label: 'NOTE TEXT',
+          so_customer_name: 'ACME SDN BHD', so_project_label: 'TAMAN JAYA',
+        },
+        {
+          sales_order_id: 'so-b', customer_name: 'BETA', project_label: 'OWN COLLECT',
+          so_customer_name: 'BETA', so_project_label: null,
+        },
       ],
     );
     expect(labels.get('so-a')).toBe('ACME SDN BHD / TAMAN JAYA');
