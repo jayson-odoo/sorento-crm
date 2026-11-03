@@ -592,3 +592,130 @@ def test_a_thumbnail_made_after_release_is_saved_through_its_own_session_pinned_
             .count()
         )
         assert saved == 2
+
+
+# ------------------------------------------------------------------ crew round 2
+
+
+def _big_jpeg(width=8000, height=6000) -> bytes:
+    """A 48 MP photograph, over the 40 MP decode ceiling."""
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), (40, 90, 160)).save(buffer, format="JPEG", quality=70)
+    return buffer.getvalue()
+
+
+def test_export_caps_a_photo_over_40_megapixels(monkeypatch):
+    from PIL import Image
+
+    from app.services import project_spec_sheet_service as spec
+    from app.services.storage_router import extract_key
+
+    with blank_session() as db:
+        c = _chain(db)
+        photo, drawing = _with_line_media(db, c)
+        _settings(db, c)
+        download = _download(db, c)
+        store = _Store(
+            {
+                extract_key(photo.file_path): _big_jpeg(),
+                extract_key(drawing.file_path): _photo_bytes(800, 600, seed=1),
+            }
+        )
+        monkeypatch.setattr(spec, "_storage", lambda provider=None: store)
+        monkeypatch.setattr(spec, "_default_provider", lambda: "s3")
+
+        manifest = spec.prepare_export_images(db, download)
+
+        key = manifest[photo.id]["key"]
+        assert key != photo.file_path
+        with Image.open(io.BytesIO(store.uploads[key])) as im:
+            assert max(im.size) == spec.export_cap_px((338.7, 190.5))
+
+
+class _MediumStore(_Store):
+    def file_exists(self, key):
+        return key in self.uploads
+
+
+def _open_page_env(db, monkeypatch, original: bytes):
+    from app.services import product_image_service as images
+    from app.services.storage_router import extract_key
+
+    c = _chain(db)
+    photo, drawing = _with_line_media(db, c)
+    _settings(db, c)
+    store = _MediumStore(
+        {
+            extract_key(photo.file_path): original,
+            extract_key(drawing.file_path): _photo_bytes(800, 600, seed=1),
+        }
+    )
+    monkeypatch.setattr(images, "get_backend", lambda provider: store)
+    signed = []
+
+    def fake_sign(source, *, provider=None, expires_in=3600, strict=False):
+        signed.append(source)
+        return f"https://signed.zzt.test/{source}"
+
+    monkeypatch.setattr(images, "resolve_signed_url", fake_sign)
+    images._medium_cache.clear()
+    return c, photo, drawing, store, signed
+
+
+def test_the_open_page_gets_a_1024_px_rendition_never_the_original(monkeypatch):
+    from PIL import Image
+
+    from app.services import product_image_service as images
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c, photo, drawing, store, signed = _open_page_env(db, monkeypatch, _big_jpeg())
+
+        out = spec.page_images(db, c["document"], c["issue"], c["basin"].id)
+
+        assert set(out) == {photo.id, drawing.id}
+        assert all(".medium.jpg" in url for url in out.values())
+        assert not any(s in (photo.file_path, drawing.file_path) for s in signed)
+        medium = next(k for k in store.uploads if k.startswith("products/") and "basin.png" in k)
+        with Image.open(io.BytesIO(store.uploads[medium])) as im:
+            assert max(im.size) == images.MEDIUM_BOX == 1024
+
+        # Made once: a later open signs the stored rendition without reading the original.
+        images._medium_cache.clear()
+        store.downloads.clear()
+        spec.page_images(db, c["document"], c["issue"], c["basin"].id)
+        assert store.downloads == []
+
+
+def test_the_cover_and_unknown_pages_ask_for_no_rendition(monkeypatch):
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c, _photo, _drawing, store, _signed = _open_page_env(db, monkeypatch, _photo_bytes(600, 600))
+
+        assert spec.page_images(db, c["document"], c["issue"], "cover") == {}
+        assert spec.page_images(db, c["document"], c["issue"], "no-such-page") == {}
+        assert store.downloads == []
+
+
+def test_the_page_images_route_answers_the_open_pages_renditions(monkeypatch):
+    from app.services import project_spec_sheet_service as spec
+
+    from .test_project_spec_sheet import _client, _restore, _url
+
+    with blank_session() as db:
+        c = _chain(db)
+        _settings(db, c)
+        monkeypatch.setattr(
+            spec, "page_images", lambda db, document, issue, key, release=None: {"a": f"u-{key}"}
+        )
+        client, originals = _client(db, c["owner"])
+        try:
+            response = client.get(_url(c, "/page-images"), params={"key": c["basin"].id})
+        finally:
+            _restore(originals)
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {"images": {"a": f"u-{c['basin'].id}"}}

@@ -54,6 +54,10 @@ KIND = "quotation_spec_sheet_pdf"
 
 #: QUOTE-PERF-HOTFIX (3 Nov): the export prints no picture finer than this on its page.
 EXPORT_DPI = 200
+#: The export's decode ceiling, in the worker, one picture at a time: a JPEG over it is decoded
+#: at reduced scale first (``draft``), so this bounds only a PNG or WebP. Above it the original
+#: prints as before.
+EXPORT_MAX_PIXELS = 100_000_000
 #: How long the print page's signed links stay valid (the render waits up to 15 minutes).
 _EXPORT_URL_SECONDS = 60 * 60
 
@@ -651,6 +655,27 @@ def _export_urls(db: Session, wanted: List[Optional[str]], manifest: Optional[di
     return urls
 
 
+def page_images(
+    db: Session,
+    document: ProjectQuotationDocument,
+    issue: ProjectQuotationIssue,
+    key: str,
+    release=None,
+) -> Dict[str, str]:
+    """The ONE open page's pictures at ``MEDIUM_BOX`` (crew, 3 Nov): the strip keeps its
+    thumbnails, the page being read gets a rendition sharp enough for a drawing's figures.
+    Only pictures of a visible page of this issue, so nothing else can be asked for."""
+    from app.services import product_image_service as images
+
+    if key == COVER_KEY:
+        return {}
+    page = [p for p in pages(db, document, issue) if p["key"] == key and not p["hidden"]]
+    if not page:
+        return {}
+    _products_unused, wanted = _media(db, page)
+    return images.medium_urls(db, wanted, release=release)
+
+
 def export_cap_px(size_mm: tuple) -> int:
     """Longest edge, in px, a picture on this page can use: the page's own long edge at
     ``EXPORT_DPI``. No picture slot is bigger than the page, so nothing visible is lost."""
@@ -706,7 +731,15 @@ def prepare_export_images(db: Session, download) -> Dict[str, dict]:
             if max(size) <= cap:
                 manifest[attachment_id] = {"key": file_path, "provider": normalize_provider(provider)}
                 continue
-            rendered = images._downscale(raw, attachment_id, box=cap, quality=85, upright=True)
+            rendered = images._downscale(
+                raw,
+                attachment_id,
+                box=cap,
+                quality=85,
+                upright=True,
+                draft=True,
+                max_pixels=EXPORT_MAX_PIXELS,
+            )
             del raw
             if rendered is None:
                 continue

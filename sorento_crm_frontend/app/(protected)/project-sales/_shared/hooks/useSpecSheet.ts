@@ -8,6 +8,7 @@ import {
 } from '@/services/myDownloadsService';
 import {
   getSpecSheet,
+  getSpecSheetPageImages,
   getSpecSheetPreview,
   queueSpecSheetPdf,
   saveSpecSheet,
@@ -44,6 +45,25 @@ export function useSpecSheetPreview(
     queryFn: () => getSpecSheetPreview(projectId, documentId, issueId),
     enabled,
     retry: false,
+  });
+}
+
+/**
+ * The ONE open page's pictures at a sharper rendition (QUOTE-PERF-HOTFIX): the strip keeps its
+ * thumbnails. Asked for only when a page (not the cover) is open.
+ */
+export function useSpecSheetPageImages(
+  projectId: string,
+  documentId: string,
+  issueId: string | null,
+  key: string | null,
+) {
+  return useQuery({
+    queryKey: [SPEC_SHEET_PREVIEW_KEY, documentId, issueId ?? 'latest', 'page-images', key],
+    queryFn: () => getSpecSheetPageImages(projectId, documentId, issueId, key as string),
+    enabled: Boolean(key),
+    retry: false,
+    staleTime: 30 * 60_000,
   });
 }
 

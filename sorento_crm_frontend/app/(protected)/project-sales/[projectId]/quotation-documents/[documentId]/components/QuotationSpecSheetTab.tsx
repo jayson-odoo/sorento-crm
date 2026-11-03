@@ -33,6 +33,7 @@ import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import {
   useSpecSheet,
   useSpecSheetMutations,
+  useSpecSheetPageImages,
   useSpecSheetPreview,
 } from '../../../../_shared/hooks/useSpecSheet';
 import type {
@@ -168,6 +169,7 @@ export function QuotationSpecSheetTab() {
         <SpecSheetPages
           pages={data.pages}
           payload={preview.data}
+          issueId={effectiveIssueId}
           canEdit={canEdit}
           onRows={(rows) => save.mutate({ rows })}
         />
@@ -337,11 +339,13 @@ function editableField(layer: TagLayer): EditableField | null {
 function SpecSheetPages({
   pages,
   payload,
+  issueId,
   canEdit,
   onRows,
 }: {
   pages: SpecSheetPage[];
   payload: SpecSheetPreview;
+  issueId: string | null;
   canEdit: boolean;
   onRows: (rows: SpecSheetRow[]) => void;
 }) {
@@ -375,11 +379,28 @@ function SpecSheetPages({
   const order = [COVER, ...items.map((p) => p.key)];
   const position = order.indexOf(selected);
   const current = items.find((p) => p.key === selected) ?? null;
-  const fullPayload = {
-    ...payload,
-    page_id: '',
-    source: 'version',
-  } as TagSheetDesignPayload;
+  const fullPayload = React.useMemo(
+    () => ({ ...payload, page_id: '', source: 'version' }) as TagSheetDesignPayload,
+    [payload],
+  );
+  // The open page alone draws a sharper rendition; the strip keeps the thumbnails.
+  const { projectId, documentId } = useQuotationDocumentScreen();
+  const sharper = useSpecSheetPageImages(
+    projectId,
+    documentId,
+    issueId,
+    selected === COVER || current?.hidden ? null : selected,
+  ).data?.images;
+  const openPayload = React.useMemo(
+    () =>
+      sharper && Object.keys(sharper).length > 0
+        ? ({
+            ...fullPayload,
+            images: { ...(fullPayload.images ?? {}), ...sharper },
+          } as TagSheetDesignPayload)
+        : fullPayload,
+    [fullPayload, sharper],
+  );
   const natural = sheetPixelSize(payload.doc ?? null);
   const thumbScale = natural.width > 0 ? THUMB_WIDTH / natural.width : 0;
   // The template decides the page size (16:9 in the sample, any size allowed), so the
@@ -484,7 +505,7 @@ function SpecSheetPages({
       </div>
 
       <OpenPage
-        payload={fullPayload}
+        payload={openPayload}
         sheet={sheetIndex.get(selected)}
         page={current}
         canEdit={canEdit}

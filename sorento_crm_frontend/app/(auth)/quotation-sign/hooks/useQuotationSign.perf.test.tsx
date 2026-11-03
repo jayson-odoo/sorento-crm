@@ -1,9 +1,10 @@
 /**
  * QUOTE-PERF-HOTFIX (3 Nov): the public sign page is not read again each time the customer
- * switches back to the tab. Every read inlines the quotation's pictures server side.
+ * switches back to the tab. Every read inlines the quotation's pictures server side. The app's
+ * own QueryProvider (root layout) is what guarantees it, so the hook is rendered inside it.
  */
 import React from 'react';
-import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
+import { focusManager } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -16,14 +17,15 @@ vi.mock('../services/quotationSignService', () => ({
   QuotationSignError: class extends Error {},
 }));
 
+import { QueryProvider } from '@/providers/query-provider';
+
 import { useQuotationSignPage } from './useQuotationSign';
 
 describe('useQuotationSignPage', () => {
   it('does not refetch the page when the window regains focus', async () => {
     getQuotationSignPage.mockResolvedValue({ scopes: [] });
-    const client = new QueryClient();
     const wrapper = ({ children }: { children: React.ReactNode }) => (
-      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      <QueryProvider>{children}</QueryProvider>
     );
     const { result } = renderHook(() => useQuotationSignPage('tok'), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
@@ -33,7 +35,7 @@ describe('useQuotationSignPage', () => {
       focusManager.setFocused(false);
       focusManager.setFocused(true);
     });
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 50));
 
     expect(getQuotationSignPage).toHaveBeenCalledTimes(1);
     focusManager.setFocused(undefined);

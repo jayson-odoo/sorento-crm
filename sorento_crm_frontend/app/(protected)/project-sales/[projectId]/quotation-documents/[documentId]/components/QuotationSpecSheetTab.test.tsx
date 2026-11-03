@@ -42,16 +42,29 @@ const getSpecSheet = vi.fn();
 const saveSpecSheet = vi.fn();
 const getSpecSheetPreview = vi.fn();
 const queueSpecSheetPdf = vi.fn();
+const getSpecSheetPageImages = vi.fn();
 
 vi.mock('../../../../_shared/services/specSheetService', () => ({
   getSpecSheet: (...a: unknown[]) => getSpecSheet(...a),
   saveSpecSheet: (...a: unknown[]) => saveSpecSheet(...a),
   getSpecSheetPreview: (...a: unknown[]) => getSpecSheetPreview(...a),
   queueSpecSheetPdf: (...a: unknown[]) => queueSpecSheetPdf(...a),
+  getSpecSheetPageImages: (...a: unknown[]) => getSpecSheetPageImages(...a),
 }));
 
 vi.mock('@/components/dealer-kit/ScaledSheet', () => ({
-  default: ({ sheetIndex }: { sheetIndex: number }) => <div data-testid={`sheet-${sheetIndex}`} />,
+  default: ({
+    sheetIndex,
+    payload,
+  }: {
+    sheetIndex: number;
+    payload?: { images?: Record<string, string> };
+  }) => (
+    <div
+      data-testid={`sheet-${sheetIndex}`}
+      data-images={JSON.stringify(payload?.images ?? {})}
+    />
+  ),
   sheetPixelSize: () => ({ width: 1280, height: 720 }),
   PX_PER_MM: 96 / 25.4,
 }));
@@ -195,9 +208,16 @@ function renderTab() {
 
 beforeEach(() => {
   canEdit = true;
-  for (const fn of [getSpecSheet, saveSpecSheet, getSpecSheetPreview, queueSpecSheetPdf]) {
+  for (const fn of [
+    getSpecSheet,
+    saveSpecSheet,
+    getSpecSheetPreview,
+    queueSpecSheetPdf,
+    getSpecSheetPageImages,
+  ]) {
     fn.mockReset();
   }
+  getSpecSheetPageImages.mockResolvedValue({ images: {} });
   getSpecSheetPreview.mockResolvedValue({
     doc: {
       kind: 'tag_sheet',
@@ -501,5 +521,34 @@ describe('Spec sheet strip draws only the pages in view (QUOTE-PERF-HOTFIX)', ()
     } finally {
       globalThis.IntersectionObserver = original;
     }
+  });
+});
+
+describe('The open page draws a sharper rendition than the strip (QUOTE-PERF-HOTFIX round 2)', () => {
+  it('asks for the open page only, never the cover, and draws it over the thumbnails', async () => {
+    getSpecSheet.mockResolvedValue(view());
+    getSpecSheetPreview.mockResolvedValueOnce({
+      ...(await getSpecSheetPreview()),
+      images: { a1: 'https://cdn/thumb-a1', a2: 'https://cdn/thumb-a2' },
+    });
+    getSpecSheetPageImages.mockResolvedValue({ images: { a1: 'https://cdn/medium-a1' } });
+    renderTab();
+    await screen.findByTestId('spec-sheet-open-page');
+
+    // The cover is open: nothing extra is fetched.
+    expect(getSpecSheetPageImages).not.toHaveBeenCalled();
+
+    await openPage('SRTWB0002');
+    await waitFor(() =>
+      expect(getSpecSheetPageImages).toHaveBeenCalledWith('p1', 'd1', 'issue-1', 'basin'),
+    );
+    expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      const open = within(screen.getByTestId('spec-sheet-open')).getByTestId('sheet-2');
+      expect(JSON.parse(open.getAttribute('data-images') ?? '{}')).toEqual({
+        a1: 'https://cdn/medium-a1',
+        a2: 'https://cdn/thumb-a2',
+      });
+    });
   });
 });

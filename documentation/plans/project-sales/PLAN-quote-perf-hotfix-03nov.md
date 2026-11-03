@@ -27,6 +27,17 @@ No worker memory limit was added: the repo's compose files (`sorento_crm/docker-
 already one at a time: `catalogue_render` drains only on the single `batch` worker role
 (`worker.py` QUEUES), and RQ runs one job per worker process; a test pins that.
 
+## Round 2 (crew perf check, 3 Nov)
+
+- The ONE open page draws a 1024 px rendition (`<key>.medium.jpg`, made from the original once,
+  stored and reused; `GET .../spec-sheet/page-images?key=`), lazily, only for a page that is
+  open. The strip keeps thumbnails; the cover asks for nothing, so bytes and renderers on open
+  are unchanged.
+- Export: photos over 40 MP are now capped too (JPEG decoded at reduced scale first; PNG/WebP
+  up to 100 MP in the worker).
+- CI: the app's QueryProvider already sets `refetchOnWindowFocus: false` for every query (a guard
+  test forbids repeating it), so the hook line is dropped and the test renders inside it.
+
 ## Tests (red first)
 
 - BE: preview payload signs thumbnails; export payload caps resolution; sign page skips images for
