@@ -259,6 +259,9 @@ export interface OrderInquiryLinkSuggestionCandidate {
   inquiry_no: string | null;
   item_code: string | null;
   so_number: string | null;
+  /** That order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   delivery_date: string;
   open_qty: string;
 }
@@ -1046,6 +1049,9 @@ export interface OrderInquiryMatrixBucket {
 /** One EXISTING tag already on a candidate's PO line - the row's expand. */
 export interface OrderInquiryPoCandidateClaim {
   so_number?: string | null;
+  /** That order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   item_code?: string | null;
   qty: string;
   placed_date?: string | null;
@@ -1104,6 +1110,9 @@ export interface OrderInquiryPoCandidate {
    * Null on the ordinary line, or when this row's own SO is the one holding it.
    */
   dedicated_to?: string | null;
+  /** The dedicating order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  dedicated_customer_name?: string | null;
+  dedicated_project_label?: string | null;
   /**
    * G12's project-bin lock: this line sits at a project-segment warehouse and NO SO has
    * claimed it, not even this row's own - "Unattributed - link manually". A manual link
