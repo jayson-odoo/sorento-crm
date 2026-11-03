@@ -56,6 +56,9 @@ owner a reviewed grouping list for those, separately.
 - An UNGROUPED ledger whose full name is IDENTICAL in both company books stays ONE entry
   ("NAME (SRT, MCH)"): the owner's 3 Nov R2 on #2105 forbids asking "Sorento or Mocha?" for the
   same account. A near-identical name (another marker, punctuation) is another customer.
+
+## Lane decisions (for review)
+
 - `customer_groups_auto.py` (staff-run group PROPOSALS) keeps the trading-name key: it proposes
   explicit groups for review, it does not join anything itself.
 
