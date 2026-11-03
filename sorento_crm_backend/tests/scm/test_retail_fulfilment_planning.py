@@ -194,17 +194,10 @@ def test_r1_an_admitted_retail_order_confirms_and_raises_its_order_inquiry_row(a
 # --------------------------------------------------------------------------- R2
 
 
-def test_r2_a_retail_order_with_no_line_at_a_dealer_location_stays_out(api):
-    """R2: its one line is at a project-segment bin, so there is nothing at a dealer location."""
-    client, world = api
-    core, _lines = _retail_order(world, lines=(("project", "10"),))
-
-    listed = _numbers(_listed(client, demand_class=["retail", "other", "project"]))
-    with pytest.raises(AppException) as refused:
-        ProjectSOAdoptionService(world.db).adopt(str(core.id))
-
-    assert core.so_number not in listed
-    assert refused.value.status_code == 409
+# R2 as written for PR 2 ("a retail order whose only line is at a project bin stays out") was
+# loosened by the owner on 3 Nov 2026 (DEALER-AT-PROJECT-BIN, Q3 (b)): a planning-ON project bin
+# admits too. Its replacement, and the planning-OFF / inactive cases that still stay out, live in
+# `test_dealer_at_project_bin.py`.
 
 
 # --------------------------------------------------------------------------- R1, any status but cancelled, active location
@@ -561,36 +554,9 @@ def test_r3_the_board_names_why_it_left_a_classless_order_out(api):
 # --------------------------------------------------------------------------- R4
 
 
-def _adopt_two_lines(client, world):
-    """A retail order admitted on its dealer line, with a second line at a project bin that is
-    in fulfilment planning."""
-    core, _lines = _retail_order(world, lines=(("dealer", "10"), ("project", "10")))
-    order_id = _adopt(client, core)["project_sales_order_id"]
-    sheet = client.get(f"{BASE}/sales-orders/{order_id}/supply").json()
-    return core, order_id, sheet["lines"]
-
-
-def test_r4_a_retail_line_at_a_project_location_reads_outside_fulfilment_planning(api):
-    client, world = api
-    _core, _order_id, lines = _adopt_two_lines(client, world)
-
-    reasons = sorted(str(line["unplannable_reason"]) for line in lines)
-
-    assert reasons == ["None", OUTSIDE_FULFILMENT_PLANNING], reasons
-
-
-def test_r4_a_retail_line_at_a_project_location_cannot_be_decided(api):
-    client, world = api
-    _core, order_id, lines = _adopt_two_lines(client, world)
-    refused = next(line for line in lines if line["unplannable_reason"])
-
-    response = client.post(
-        f"{BASE}/sales-orders/{order_id}/confirm",
-        json={"lines": [_line_payload(refused["project_line_id"], buy_qty=refused["open_qty"])]},
-    )
-
-    assert response.status_code in (409, 422), response.text
-    assert OUTSIDE_FULFILMENT_PLANNING in response.text
+# R4 ("a retail line at a project location reads outside fulfilment planning") was reversed by
+# the owner on 3 Nov 2026 (DEALER-AT-PROJECT-BIN): a planning-ON project bin is plannable for a
+# Dealer order. See `test_dealer_at_project_bin.py`.
 
 
 # --------------------------------------------------------------------------- R5
