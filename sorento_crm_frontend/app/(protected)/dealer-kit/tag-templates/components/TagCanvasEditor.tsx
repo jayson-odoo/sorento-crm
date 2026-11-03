@@ -199,6 +199,15 @@ import {
   setTagClipboard,
   subscribeTagClipboard,
 } from '@/lib/dealer-kit/tag-clipboard';
+import {
+  TAG_LAYERS_MIME,
+  classifyPaste,
+  copiedLayersText,
+  fitPastedImage,
+  pastedImageProblem,
+  readImageSize,
+} from '@/lib/dealer-kit/clipboard-paste';
+import { uploadAsset } from '../../services/assetService';
 import { InlineTextEditor } from './InlineTextEditor';
 
 /** What a previewed block is showing, named the way a person reads it. */
@@ -351,6 +360,23 @@ function PreviewEyeButton({
 const ZOOM_BUTTON_FACTOR = 1.25;
 /** Pixels the pointer may wander before a click counts as a marquee drag. */
 const MARQUEE_SLOP_PX = 3;
+/** A control that takes typing, where keys and paste belong to the browser. */
+function isFormControl(node: EventTarget | null): boolean {
+  return (
+    node instanceof HTMLInputElement ||
+    node instanceof HTMLTextAreaElement ||
+    node instanceof HTMLSelectElement ||
+    (node instanceof HTMLElement && node.isContentEditable)
+  );
+}
+
+/** Library name for a pasted picture: browsers call every one `image.png`. */
+function pastedAssetName(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `Pasted image ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
 /** How far a duplicate or a paste lands from its original, in mm. */
 const CLONE_OFFSET_MM = 5;
 /** Arrow-key nudge distances in mm: plain, Shift, Alt/Option. */
@@ -2909,13 +2935,44 @@ export function TagCanvasEditor({
 
   // -- Keyboard shortcuts ----------------------------------------------------
 
-  useEffect(() => {
-    const isFormControl = (node: EventTarget | null): boolean =>
-      node instanceof HTMLInputElement ||
-      node instanceof HTMLTextAreaElement ||
-      node instanceof HTMLSelectElement ||
-      (node instanceof HTMLElement && node.isContentEditable);
+  /**
+   * Set by the Ctrl+C / Ctrl+X keydown once it has filled the editor's own
+   * clipboard, read by the `copy` / `cut` event the browser fires right after
+   * it, which then writes `TAG_LAYERS_MIME` onto the system clipboard
+   * (DESIGNER-PASTE). Any other keydown clears it, so a copy event that did
+   * not come from the editor's shortcut is left to the browser.
+   */
+  const copyMarkPending = useRef(false);
 
+  /**
+   * After the editor's own Copy/Cut: get the marker onto the system
+   * clipboard. `viaCommand` (the context menu, which has no keystroke of its
+   * own) runs the browser's copy command so the `copy` listener fires. If no
+   * `copy` event came at all, write the copied words with the async clipboard
+   * API instead, so a stale screenshot cannot win the next paste;
+   * `classifyPaste` reads those words back as the layers.
+   */
+  const markSystemClipboard = useCallback((viaCommand: boolean) => {
+    copyMarkPending.current = true;
+    if (viaCommand) {
+      try {
+        document.execCommand?.('copy');
+      } catch {
+        // No copy command here: the fallback below covers it.
+      }
+    }
+    window.setTimeout(() => {
+      if (!copyMarkPending.current) return;
+      copyMarkPending.current = false;
+      const copied = getTagClipboard();
+      if (!copied || typeof navigator === 'undefined' || !navigator.clipboard) return;
+      navigator.clipboard.writeText(copiedLayersText(copied.layers) || ' ').catch(() => {
+        // Clipboard permission refused: nothing more to do.
+      });
+    }, 0);
+  }, []);
+
+  useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // The listener is on `window`, so `e.target` is only ever right when
       // the control that has focus is also what dispatched the event. A
@@ -2928,6 +2985,7 @@ export function TagCanvasEditor({
       // selection, out from under whatever the user is actually typing in.
       const isInput = isFormControl(e.target) || isFormControl(document.activeElement);
       const modifier = e.ctrlKey || e.metaKey;
+      copyMarkPending.current = false;
 
       // B/I/U/Shift+X format the selected text layer(s) whether the inline
       // editor has focus or not (AC-S2-4, D4) - checked ahead of the
@@ -3074,17 +3132,19 @@ export function TagCanvasEditor({
         e.preventDefault();
         selectAll();
       }
-      if (e.key === 'c' && modifier) {
-        e.preventDefault();
+      // Copy, cut and paste are NOT `preventDefault`ed: cancelling the keydown
+      // would cancel the browser's own `copy` / `cut` / `paste` event too, and
+      // that event is the only way to reach the system clipboard (a pasted
+      // screenshot, DESIGNER-PASTE). Ctrl+V is handled entirely by the `paste`
+      // listener below; Ctrl+C / Ctrl+X fill the editor clipboard here and
+      // leave a marker for the `copy` / `cut` listener to write.
+      if (e.key === 'c' && modifier && selectionRoots.length > 0) {
         handleCopy();
+        markSystemClipboard(false);
       }
-      if (e.key === 'x' && modifier) {
-        e.preventDefault();
+      if (e.key === 'x' && modifier && selectionRoots.length > 0) {
         handleCut();
-      }
-      if (e.key === 'v' && modifier) {
-        e.preventDefault();
-        handlePaste();
+        markSystemClipboard(false);
       }
 
       // Nudge with arrow keys (0.25mm, 1mm with shift, 0.1mm with alt/option).
@@ -3133,7 +3193,8 @@ export function TagCanvasEditor({
     handleRedo,
     handleCopy,
     handleCut,
-    handlePaste,
+    markSystemClipboard,
+    selectionRoots,
     handleFit,
     handleZoomReset,
     nudgeSelection,
@@ -3143,6 +3204,150 @@ export function TagCanvasEditor({
     cancelCropMode,
     commitCrop,
   ]);
+
+  // -- System clipboard (DESIGNER-PASTE) -------------------------------------
+
+  /**
+   * A pasted picture: uploaded exactly as the Image tool's picker uploads
+   * (`uploadAsset`, kind `decorative`, same types and 20 MB cap), then either
+   * swapped into the one selected image layer or added as a new image layer,
+   * centred and fitted to the canvas. One history entry either way, so one
+   * Ctrl+Z takes it back.
+   */
+  const handlePasteImage = useCallback(
+    async (file: File) => {
+      const problem = pastedImageProblem(file);
+      if (problem) {
+        toast.error(problem);
+        return;
+      }
+      const only = selectedIds.size === 1 ? layers.find((l) => selectedIds.has(l.id)) : undefined;
+      const replaceId = only && only.props.kind === 'image' && !only.locked ? only.id : null;
+      const canvas = { width_mm: doc.width_mm, height_mm: doc.height_mm };
+      const toastId = toast.loading('Uploading pasted image');
+      try {
+        const [asset, natural] = await Promise.all([
+          uploadAsset({ file, kind: 'decorative', name: pastedAssetName() }),
+          readImageSize(file),
+        ]);
+        const source: ImageSource = { type: 'asset', assetId: asset.id };
+        // Reusing the replace target's id when it vanished mid-upload (deleted,
+        // undone) keeps the selection below pointing at a layer that exists.
+        const layerId = replaceId ?? newLayerId();
+        setLayers((prev) => {
+          const target = replaceId ? prev.find((l) => l.id === replaceId) : undefined;
+          let next: TagLayer[];
+          if (target && target.props.kind === 'image') {
+            // The old crop was cut to the old picture's pixels.
+            const props = { ...target.props, source };
+            delete props.cropRect;
+            next = prev.map((l) => (l.id === target.id ? { ...l, props } : l));
+          } else {
+            const z = prev.length ? Math.max(...prev.map((l) => l.z_index)) + 1 : 1;
+            const layer: TagLayer = {
+              id: layerId,
+              type: 'image',
+              ...fitPastedImage(natural, canvas),
+              rotation_deg: 0,
+              z_index: z,
+              locked: false,
+              visible: true,
+              slot_binding: null,
+              text_override: null,
+              props: { ...defaultImageProps(), source },
+            };
+            next = [...prev, layer];
+          }
+          history.pushState(next);
+          return next;
+        });
+        setSelectedIds(new Set([layerId]));
+        // A freshly uploaded asset is not in the library map yet (as in
+        // `handleImagePicked`), so the layer would draw empty until reloaded.
+        void library.reload();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Upload failed');
+      } finally {
+        toast.dismiss(toastId);
+      }
+    },
+    [selectedIds, layers, doc.width_mm, doc.height_mm, history, library],
+  );
+
+  /** Pasted text from another app: a new text layer holding it, centred. */
+  const handlePasteText = useCallback(
+    (text: string) => {
+      const lineCount = text.split('\n').length;
+      const width = Math.min(doc.width_mm, 80);
+      const height = Math.min(doc.height_mm, Math.max(10, lineCount * 6));
+      addLayer({ ...makeBaseLayer('text', width, height), props: { ...defaultTextProps(), text } });
+    },
+    [addLayer, makeBaseLayer, doc.width_mm, doc.height_mm],
+  );
+
+  useEffect(() => {
+    /** Focus is somewhere typing belongs, or in a dialog other than the editor's own. */
+    const elsewhere = (target: EventTarget | null): boolean => {
+      if (editingLayerId) return true;
+      if (isFormControl(target) || isFormControl(document.activeElement)) return true;
+      const active = document.activeElement;
+      const dialog = active instanceof Element ? active.closest('[role="dialog"]') : null;
+      return Boolean(dialog && !(containerRef.current && dialog.contains(containerRef.current)));
+    };
+
+    // WebKit fires copy/cut/paste on a page with nothing editable focused
+    // only when the matching `before*` event was cancelled. There is no
+    // keydown fallback for Ctrl+V: on macOS Cmd+V reaches the page through
+    // the app's Edit menu AFTER the keydown, so a timer would race the real
+    // paste event and paste twice.
+    const onBeforeCopyOrCut = (e: Event) => {
+      if (copyMarkPending.current) e.preventDefault();
+    };
+    const onBeforePaste = (e: Event) => {
+      if (!elsewhere(e.target)) e.preventDefault();
+    };
+
+    const onCopyOrCut = (e: ClipboardEvent) => {
+      if (!copyMarkPending.current) return;
+      copyMarkPending.current = false;
+      const copied = getTagClipboard();
+      if (!copied || !e.clipboardData || elsewhere(e.target)) return;
+      e.clipboardData.setData(TAG_LAYERS_MIME, copied.sourceDocId ?? 'tag-layers');
+      // Plain text alongside, so pasting into a text box elsewhere gives the
+      // words that were copied rather than nothing.
+      e.clipboardData.setData('text/plain', copiedLayersText(copied.layers));
+      e.preventDefault();
+    };
+
+    const onPaste = (e: ClipboardEvent) => {
+      if (elsewhere(e.target)) return;
+      const copied = getTagClipboard();
+      const intent = classifyPaste(
+        e.clipboardData,
+        copied && copied.layers.length > 0 ? copiedLayersText(copied.layers) : null,
+      );
+      if (intent.kind === 'none') return;
+      e.preventDefault();
+      if (intent.kind === 'layers') handlePaste();
+      else if (intent.kind === 'image') void handlePasteImage(intent.file);
+      else handlePasteText(intent.text);
+    };
+
+    window.addEventListener('beforecopy', onBeforeCopyOrCut);
+    window.addEventListener('beforecut', onBeforeCopyOrCut);
+    window.addEventListener('beforepaste', onBeforePaste);
+    window.addEventListener('copy', onCopyOrCut);
+    window.addEventListener('cut', onCopyOrCut);
+    window.addEventListener('paste', onPaste);
+    return () => {
+      window.removeEventListener('beforecopy', onBeforeCopyOrCut);
+      window.removeEventListener('beforecut', onBeforeCopyOrCut);
+      window.removeEventListener('beforepaste', onBeforePaste);
+      window.removeEventListener('copy', onCopyOrCut);
+      window.removeEventListener('cut', onCopyOrCut);
+      window.removeEventListener('paste', onPaste);
+    };
+  }, [editingLayerId, handlePaste, handlePasteImage, handlePasteText]);
 
   // A window that loses focus while Space is down would otherwise stay in hand.
   useEffect(() => {
@@ -4313,12 +4518,22 @@ export function TagCanvasEditor({
           <ContextMenuContent className="w-56">
             {hasSelection && !menuOnEmpty ? (
               <>
-                <ContextMenuItem onSelect={handleCut}>
+                <ContextMenuItem
+                  onSelect={() => {
+                    handleCut();
+                    markSystemClipboard(true);
+                  }}
+                >
                   <Scissors />
                   Cut
                   <ContextMenuShortcut>Ctrl+X</ContextMenuShortcut>
                 </ContextMenuItem>
-                <ContextMenuItem onSelect={handleCopy}>
+                <ContextMenuItem
+                  onSelect={() => {
+                    handleCopy();
+                    markSystemClipboard(true);
+                  }}
+                >
                   <Copy />
                   Copy
                   <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
