@@ -90,6 +90,19 @@ vi.mock(
   },
 );
 
+// QUOTE-COVER-DESIGN: only the cover preview call is intercepted; every other apiFetch is real.
+const coverPreview = vi.fn();
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>();
+  return {
+    ...actual,
+    apiFetch: (url: string, init?: RequestInit) =>
+      String(url).includes('/quotation-documents/cover-preview')
+        ? coverPreview(String(url), init)
+        : actual.apiFetch(url, init),
+  };
+});
+
 const getProject = vi.fn();
 const listQuotations = vi.fn();
 const listQuotationVersions = vi.fn();
@@ -161,13 +174,19 @@ vi.mock('@/components/ui/rich-text-editor', () => ({
     value,
     onChange,
     placeholder,
+    id,
+    'aria-labelledby': labelledBy,
   }: {
     value: string;
     onChange: (html: string) => void;
     placeholder?: string;
+    id?: string;
+    'aria-labelledby'?: string;
   }) => (
     <textarea
-      aria-label={placeholder}
+      id={id}
+      aria-labelledby={labelledBy}
+      aria-label={labelledBy ? undefined : placeholder}
       value={value}
       onChange={(event) => onChange(event.target.value)}
     />
@@ -951,7 +970,7 @@ describe('QuotationFormClient letter on create (AC-QF056)', () => {
 
     await openTab('Cover letter');
     const letter = await screen.findByRole('textbox', {
-      name: 'The letter the customer reads before the prices',
+      name: 'Intro text',
     });
     expect(letter).toHaveValue('<p>Dear {{attn_name}}</p>');
     fireEvent.change(letter, { target: { value: '<p>Dear {{attn_name}}, edited</p>' } });
@@ -976,7 +995,7 @@ describe('QuotationFormClient letter on create (AC-QF056)', () => {
     await openTab('Cover letter');
     expect(
       await screen.findByRole('textbox', {
-        name: 'The letter the customer reads before the prices',
+        name: 'Intro text',
       }),
     ).toHaveValue('');
     fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
@@ -1374,6 +1393,118 @@ describe('QuotationFormClient cover page fields', () => {
 
     expect(await screen.findByText('Saved Creator')).toBeInTheDocument();
     expect(screen.queryByText('Wrong Project Owner')).not.toBeInTheDocument();
+  });
+});
+
+
+/** QUOTE-COVER-DESIGN (UAC B1, B2): the Cover letter tab is a preview card plus Intro/Closing editors. */
+describe('QuotationFormClient cover page preview and editors', () => {
+  const previewBody = () =>
+    new Response(
+      JSON.stringify({
+        cover_title: 'OFFER SHEET',
+        cover_show_letterhead: true,
+        cover_rows: [{ key: 'reference', label: 'Offer Number', text: 'SRT/Q/2026/0141-R1 Menara Test' }],
+        cover_intro_html: '<p>INTRO PREVIEW</p>',
+        cover_closing_html: '<p>CLOSING PREVIEW</p>',
+        sender_name: 'Sorento Sdn Bhd',
+        sender_logo_url: null,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  const lastPreviewBody = () => {
+    const init = coverPreview.mock.calls.at(-1)?.[1] as RequestInit | undefined;
+    return init?.body ? JSON.parse(String(init.body)) : null;
+  };
+
+  beforeEach(() => {
+    coverPreview.mockReset();
+    coverPreview.mockImplementation(async () => previewBody());
+  });
+
+  it('shows the preview card from the preview endpoint with the design title and rows', async () => {
+    renderForm();
+    await openTab('Cover letter');
+
+    expect(await screen.findByText('OFFER SHEET')).toBeInTheDocument();
+    expect(screen.getByText('Offer Number')).toBeInTheDocument();
+    expect(screen.getByText('SRT/Q/2026/0141-R1 Menara Test')).toBeInTheDocument();
+    expect((coverPreview.mock.calls[0][1] as RequestInit).method).toBe('POST');
+  });
+
+  it('M1: a new proposal prints PROPOSAL FROM on the cover letter tab, not QUOTATION FROM', async () => {
+    renderForm();
+    await openTab('Cover letter');
+
+    expect(await screen.findByText('OFFER SHEET')).toBeInTheDocument();
+    expect(screen.getByText('Proposal from')).toBeInTheDocument();
+    expect(screen.queryByText('Quotation from')).toBeNull();
+  });
+
+  it('has Intro text and Closing text editors, the intro prefilled from the template', async () => {
+    renderForm();
+    await openTab('Cover letter');
+
+    expect(await screen.findByLabelText('Intro text')).toHaveValue('<p>Dear {{attn_name}}</p>');
+    expect(screen.getByLabelText('Closing text')).toBeInTheDocument();
+  });
+
+  it('the preview follows an unsaved intro edit', async () => {
+    renderForm();
+    await openTab('Cover letter');
+    fireEvent.change(await screen.findByLabelText('Intro text'), { target: { value: '<p>EDITED INTRO</p>' } });
+
+    await waitFor(() => expect(lastPreviewBody()).toMatchObject({ cover_letter_html: '<p>EDITED INTRO</p>' }), {
+      timeout: 4000,
+    });
+  });
+
+  it('B2: the preview body follows unsaved closing, Attn and terms edits from other tabs', async () => {
+    renderForm();
+    await openTab('Header');
+    fireEvent.change(await screen.findByLabelText('Attn'), { target: { value: 'Mr Preview' } });
+    await openTab('Terms');
+    fireEvent.change(await screen.findByRole('textbox', { name: 'The clauses the customer holds us to' }), {
+      target: { value: '<p>TERMS EDITED</p>' },
+    });
+    await openTab('Cover letter');
+    fireEvent.change(await screen.findByLabelText('Closing text'), { target: { value: '<p>CLOSING EDITED</p>' } });
+
+    await waitFor(
+      () =>
+        expect(lastPreviewBody()).toMatchObject({
+          cover_closing_html: '<p>CLOSING EDITED</p>',
+          attn_name: 'Mr Preview',
+          terms_html: '<p>TERMS EDITED</p>',
+        }),
+      { timeout: 4000 },
+    );
+  });
+
+  it('save sends cover_letter_html and cover_closing_html', async () => {
+    renderForm();
+    await openTab('Cover letter');
+    fireEvent.change(await screen.findByLabelText('Intro text'), { target: { value: '<p>Intro typed</p>' } });
+    fireEvent.change(screen.getByLabelText('Closing text'), { target: { value: '<p>Closing typed</p>' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({
+      cover_letter_html: '<p>Intro typed</p>',
+      cover_closing_html: '<p>Closing typed</p>',
+    });
+  });
+});
+
+
+/** QUOTE-COVER-DESIGN round 2: the editors' names come from a visible label, not the placeholder. */
+describe('QuotationFormClient cover editor labels', () => {
+  it('Intro text and Closing text are named by their label with seeded text present', async () => {
+    renderForm();
+    await openTab('Cover letter');
+    const intro = await screen.findByRole('textbox', { name: 'Intro text' });
+    expect(intro).toHaveValue('<p>Dear {{attn_name}}</p>');
+    expect(screen.getByRole('textbox', { name: 'Closing text' })).toBeInTheDocument();
   });
 });
 
