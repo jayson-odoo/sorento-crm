@@ -16,7 +16,7 @@ import {
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
-import { SoCustomerProject } from '@/components/common/SoCustomerProject';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
@@ -235,11 +235,13 @@ function OiGroupGrid({
               >
                 {group.inquiryNo}
               </Link>
-              <SoCustomerProject
-                customer={group.customerName}
-                project={group.projectLabel}
-                className="font-normal"
-              />
+              {/* Wraps rather than truncates: at 375 px the card header sizes this title by its
+                  content, so a truncating line was clipped with no ellipsis (crew, 4 Nov). */}
+              {soCustomerProjectLabel(group.customerName, group.projectLabel) ? (
+                <span className="text-xs font-normal break-words text-muted-foreground">
+                  {soCustomerProjectLabel(group.customerName, group.projectLabel)}
+                </span>
+              ) : null}
             </span>
           ) : (
             'No OI'
