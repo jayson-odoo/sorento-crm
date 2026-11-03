@@ -60,7 +60,7 @@ from app.models.project_so import (
 )
 from app.services.certificate_service import today_malaysia
 from app.services.error_handler import AppException
-from app.services.oi_delivery_date import resolve as resolve_oi_date
+from app.services.oi_delivery_date import OiDate, resolve as resolve_oi_date
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +321,8 @@ def _status_of(rr: OrderInquiryReserveRequestRow) -> tuple:
 
 
 def _row_context(
-    db: Session, row: OrderInquiryRow, rr: OrderInquiryReserveRequestRow, dates: Any = None
+    db: Session, row: OrderInquiryRow, rr: OrderInquiryReserveRequestRow,
+    dates: Optional[Dict[str, OiDate]] = None,
 ) -> Dict[str, Any]:
     """One `reserve.rows[]` entry, read fresh off the row/request-row at dispatch time -
     the same field set both the request and the reserved template read (3.6): `remaining`

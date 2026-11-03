@@ -1,101 +1,10 @@
-"""RETIRED BY OI-ONE-DELIVERY-DATE (3 Nov 2026): the sheet-date repairs below no longer run; the raised row takes the SO LINE date (see test_oi_one_delivery_date_sheet_import.py). Kept: the helpers other suites import and the tests of what still holds.
+"""What still holds of the OI sheet's delivery date (OI-ONE-DELIVERY-DATE, 3 Nov 2026).
 
-The order inquiry sheet's raised row took the SHEET's own delivery date.
-
-Contract: `documentation/plans/scm/oi-sheet-date-follow-sheet-acceptance-criteria.md`,
-AC-1 to AC-29 (AC-19 onward carried by `PLAN-oi-sheet-date-settled-rows.md`'s own UAC,
-AC-25 onward by `PLAN-oi-sheet-date-adopt-was.md`'s).
-`PLAN-oi-sheet-date-follow-sheet.md` (18 Sep 2026 owner ruling: "we should
-have followed the sheet's date") REVERSES section 7.4 of
-`PLAN-scm-oi-sheet-pairing-repair.md`. Measured on prod: SO314593's open AutoCount lines
-are 220 @ 01/03/2027 while the sheet said 182 @ 1.9.2026 - 7.4 wrote the LINE's date onto
-every migrated row, so the worklist read a delivery purchasing was not working to, and a
-re-upload of a corrected sheet did nothing because `_already_raised` skips a line that
-already carries a row.
-
-TEST-FIRST: the red state before the fix is the OLD rule (the raised row's `delivery_date`
-reads the line's `required_date` over the sheet's) and a missing `DELIVERY_DATE_UPDATED`
-repair on re-upload - never an import error.
-
-Fix round 1 (19 Sep 2026, Opus review) added AC-8 to AC-13: B1 (repair candidates are
-resolved per LINE, not per row - a sheet that splits one line's quantity across several
-dated rows has no per-row identity a bare item/qty match can tell apart), B2 (a migrated
-row a planning change has since restated keeps the change's own date, never the repair's),
-S1 (`preview` forecasts the exact count `apply` writes) and S5 (a sibling's Was/Now moves
-with the repair). AC-4/AC-5 were adjusted so their sibling carries a real
-`redirected_to_pool` migrated row to recompute FROM, matching S5's own rule instead of the
-superseded ad-hoc qty/date match the first round shipped.
-
-Fix round 2 (19 Sep 2026, Opus review round 2) added AC-14 to AC-16 and the two DB-free
-`_resolve_line_repairs` unit tests: B3 (a sibling's Was/Now is only ever touched when its
-OWN `(previous_delivery_date, previous_qty)` is EXACTLY the redirected rows' pairing,
-captured BEFORE this run's own repairs - never "any sibling on the mirror" - and the note
-edit is anchored to the `"Was {qty} on {date}"` fragment, never a bare date substring), S7
-(each of B2's three markers blocks the repair alone), S8 (the repair is confined to rows
-still on their core line's own `required_date` - 7.4's own fingerprint, and nothing else)
-and S9 (the resolver's ordering contract, pinned once DB-free on the pure function and once
-against the database). AC-8 was rewritten to the 7.4-legacy shape (two migrated rows
-sharing the LINE's date, not two sheet-dated rows) since S8 confines a repair to exactly
-that fingerprint.
-
-Fix round 3 (19 Sep 2026, Opus review round 3, READY) closed three fixture-guard mutants on
-AC-14a (S12: a matched sibling whose OWN note also carries an "AutoCount moved ... on
-<date>" line at the date the repair moves; a near-miss sibling sharing only the matched
-sibling's quantity; a near-miss sibling sharing only its date) and moved S8's equality out
-of SQL into a plain Python comparison for performance (S13) with no change to the
-criterion AC-15 pins.
-
-Round 4 (19 Sep 2026, found running the real book `JAN - DEC 2026 ORDERabc.xlsx` through
-the lane stack) added AC-18: SO314593's rows were skipped as already-raised rather than
-repaired because `_as_date` (`project_order_inquiry_reader.py`) answered `None` for a
-DELIVERY DATE cell written as TEXT - the book stores some as literal strings - so
-`row.delivery_date` was `None` at migration (the LINE's date fallback fired regardless of
-7.4) and stayed `None` on re-upload (an undated row correctly claims nothing, per AC-10).
-The root cause is upstream of this plan's own change and is fixed in the reader, not the
-importer; `test_project_order_inquiry_import_reader.py` carries the reader-level reds.
-
-Round 5 (19 Sep 2026, found on prod after #1004 deployed and the owner ran the real book)
-added AC-19 to AC-23, a second repair shape. SO314593's SRTWCX8605-S-RL-PJ / CB2806A-DIY /
-SRTWB245 rows were skipped as already-raised rather than repaired: the MIGRATED row itself
-had been restated IN PLACE by a planning change (no fresh sibling), so its Now
-(`qty`/`delivery_date`) is a change's own correct figure, but its Was
-(`previous_qty`/`previous_delivery_date`) still carried 7.4's mistake - the sheet's row
-describes the row's WAS state, not a fresh instruction, and shape A's own rule (B2's
-`previous_*` NULL markers, plus the qty match against the row's CURRENT `qty`) excludes it
-by design. Shape B repairs `previous_delivery_date` instead, matching the sheet's quantity
-against `previous_qty`, leaving the row's Now, `changed_at` and `ack_state` untouched -
-`_resolve_shape_b_repairs`, run only for sheet rows shape A leaves unclaimed.
-
-Round 5's own review (19 Sep 2026, READY with two should-fixes) added AC-24 and adjusted
-AC-19: S14, shape B's first cut had no date comparison of its own, so a sheet row already
-on the settled row's Was date was counted and reported `DELIVERY_DATE_UPDATED` on every
-run while nothing changed - fixed with shape B's own pass-1 no-op claim, mirroring shape
-A's. S15, AC-19's note put the old date in only ONE clause, so an unanchored bare-date
-replace and the correct anchored one produced the SAME final note and the mutant survived
-undetected - fixed by giving the note's "expected ..." clause the SAME old date as its
-"Was ..." fragment (AC-14a, shape A's own version of this test from round 3, was checked
-against the same gap and found already correct). N10 (optional, taken): `_resolve_line_
-repairs` now returns `(repairs, exact_matched)` so `_resolve_shape_b_repairs` reads shape
-A's own pass-1 result instead of re-deriving it; its two DB-free unit tests were adjusted
-for the tuple.
-
-Round 6 (19 Sep 2026, owner go, prod feedback after #1011 deployed) added AC-25 to AC-29,
-a THIRD repair shape. SO314593's CB2806A-DIY (220) and SRTWB245 (280) were skipped as
-already-raised: a board Confirm restated each row IN PLACE on 17 Sep 2026 (10:11 and 11:25
-MYT), BEFORE #992 deployed and before any Was was ever recorded - so both carry
-`changed_at IS NOT NULL` (something restated an acknowledged row) but `previous_qty`/
-`previous_delivery_date` are still `NULL`. Verified against
-`ProjectOrderInquiryService._settle_row_in_place`, the ONLY writer of `changed_at` in that
-service, at both its pre-#992 shape (`git show a3d215ab9:...`, the commit `e91ec3614`/#992
-was built on) and its current one: both ALWAYS pair the `changed_at` stamp with
-`previous_qty`/`previous_delivery_date` in the SAME write, so `changed_at` alone is a
-trustworthy "this row was restated" marker - never "somebody just edited the sheet's
-quantity", which never reaches this service at all. Shape C adopts the sheet row as the
-Was the settle never got to write - `previous_qty`/`previous_delivery_date` move from
-`NULL` to the sheet's own figures, the note's "Was ... on ..." fragment is appended (none
-existed to anchor onto before), and the row's Now, `qty`, `state` and `ack_state` stay
-untouched. `_resolve_shape_c_repairs`, run only for sheet rows shapes A and B leave
-unclaimed - "exact match, shape A, shape B, shape C" is the full priority order.
+The 18 Sep 2026 rule ("we should have followed the sheet's date") and the three re-upload
+repair shapes it grew (A, B, C, fix rounds 1 to 6) are retired: a raised row now takes the SO
+LINE's date, with the sheet's date kept as its Was (`test_oi_one_delivery_date_sheet_import.py`),
+and a re-upload moves no date. This file keeps the helpers other suites import and the
+tests of what the retirement left in force.
 
 Postgres only (`tests/_pg_fixture.py`, via `world()`). The world, sheet and apply builders
 are IMPORTED from `tests/test_project_order_inquiry_import_migration.py` and
