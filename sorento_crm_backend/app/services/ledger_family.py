@@ -75,6 +75,7 @@ _GROUPS: ContextVar[_TurnGroups | None] = ContextVar("ledger_family_groups", def
 #: Appended to an UNGROUPED ledger's key: the ledger is its own entry, and the parenthesis
 #: keeps its key apart from every group's key (`_words` never yields one).
 _UNGROUPED = " (NO GROUP)"
+UNGROUPED_SUFFIX = _UNGROUPED
 
 
 @contextmanager

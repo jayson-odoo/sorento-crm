@@ -134,10 +134,18 @@ def test_s4_staff_narrowing_keys_on_the_canonical_code_token(session_factory, mo
 
 
 def _hanlim_staff_book(session_factory) -> dict[str, dict[str, Any]]:
+    """The three HANLIM ledgers, in one customer group: only a group makes them one customer
+    (CUSTOMER-GROUP-GATE, owner ruling 3 Nov 2026)."""
+    from app.models.order import CustomerGroup
+
     db = session_factory()
+    group = CustomerGroup(name=H_BARE, company_id=DEFAULT_COMPANY_ID)
+    db.add(group)
+    db.flush()
     rows: dict[str, dict[str, Any]] = {}
     for name, level in ((H_1, 1), (H_2, 2), (H_BARE, None)):
         row = seed_customer(db, company_id=DEFAULT_COMPANY_ID, name=name)
+        row.customer_group_id = group.id
         if level is not None:
             db.execute(text("UPDATE customers SET account_level = :n WHERE id = :i"), {"n": level, "i": str(row.id)})
         rows[name] = {"id": str(row.id), "code": row.customer_code, "level": level}
