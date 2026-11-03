@@ -5,9 +5,11 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 import { OrderInquiryDocumentLink } from '../../order-inquiries/components/OrderInquiryDocumentDialog';
 import type {
   StockDebtAssignedFrom,
+  StockDebtAssignedTo,
   StockDebtDemandLine,
   StockDebtDemandStatus,
 } from '../types/stockDebt.types';
@@ -127,6 +129,41 @@ function CoveredByEntry({ entry }: { entry: StockDebtAssignedFrom }) {
   );
 }
 
+function TextOrDash({ value }: { value: string | null | undefined }) {
+  return value ? (
+    <span className="block truncate" title={value}>
+      {value}
+    </span>
+  ) : (
+    <span className="text-muted-foreground">-</span>
+  );
+}
+
+/**
+ * The supply grid's "Assigned to": each receiving order as "SO382618 line 2 (100)" (R29), with
+ * its `CUSTOMER / project` under it (OI-UX-FILTER-SNAPSHOT); "Free" when nothing took it.
+ */
+export function AssignedToList({ entries }: { entries: StockDebtAssignedTo[] }) {
+  if (!entries.length) {
+    return <span className="block truncate text-muted-foreground">Free</span>;
+  }
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      {entries.map((entry, index) => {
+        const text = `${entry.so_number}${entry.line_no != null ? ` line ${entry.line_no}` : ''} (${entry.qty.toLocaleString()})`;
+        return (
+          <div key={`${entry.so_number}:${entry.line_no ?? ''}:${index}`} className="min-w-0">
+            <span className="block truncate text-muted-foreground" title={text}>
+              {text}
+            </span>
+            <SoCustomerProject customer={entry.customer_name} project={entry.project_label} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The Demand footer's figures, over the rows a grid is showing. */
 export interface DemandTotals {
   ordered: number;
@@ -179,6 +216,22 @@ export function buildDemandColumns<R extends StockDebtDemandLine = StockDebtDema
           {row.original.so_number}
         </span>
       ),
+  },
+  {
+    // OI-UX-FILTER-SNAPSHOT (owner, 3 Nov; crew answer (a)): the SO list's own Customer and
+    // Project columns, right after the order they belong to.
+    id: 'customer_name',
+    accessorKey: 'customer_name',
+    header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+    size: 200,
+    cell: ({ row }) => <TextOrDash value={row.original.customer_name} />,
+  },
+  {
+    id: 'project_label',
+    accessorKey: 'project_label',
+    header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+    size: 200,
+    cell: ({ row }) => <TextOrDash value={row.original.project_label} />,
   },
   {
     id: 'agent_code',

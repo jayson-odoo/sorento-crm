@@ -27,7 +27,7 @@ import type {
   StockDebtSupplyKind,
 } from '../types/stockDebt.types';
 import { distinctName } from '@/lib/product-display';
-import { PoLineLink, buildDemandColumns, dateOrDash as date, sumDemand } from '../lib/stockDebtDemandColumns';
+import { AssignedToList, PoLineLink, buildDemandColumns, dateOrDash as date, sumDemand } from '../lib/stockDebtDemandColumns';
 
 /**
  * The two tables behind one cell (R28, AC-S2-11): what is DUE in that month, and what
@@ -142,7 +142,7 @@ export function StockDebtCellDialog({
     const needle = demandSearch.trim().toLowerCase();
     if (!needle) return demand;
     return demand.filter((line) =>
-      `${line.so_number} ${line.agent_code ?? ''} ${line.warehouse_code ?? ''}`
+      `${line.so_number} ${line.customer_name ?? ''} ${line.project_label ?? ''} ${line.agent_code ?? ''} ${line.warehouse_code ?? ''}`
         .toLowerCase()
         .includes(needle),
     );
@@ -284,24 +284,9 @@ export function StockDebtCellDialog({
         id: 'assigned_to',
         header: 'Assigned to',
         size: 190,
-        cell: ({ row }) => {
-          // R29: `line_no` names the SO LINE itself, beside the SO number - "SO382618
-          // line 2 (100)" - null when the core line has no project-line number of its
-          // own, which keeps the pre-R29 "SO382618 (100)" shape.
-          const label = row.original.assigned_to.length
-            ? row.original.assigned_to
-                .map(
-                  (entry) =>
-                    `${entry.so_number}${entry.line_no != null ? ` line ${entry.line_no}` : ''} (${entry.qty.toLocaleString()})`,
-                )
-                .join(', ')
-            : 'Free';
-          return (
-            <span className="block truncate text-muted-foreground" title={label}>
-              {label}
-            </span>
-          );
-        },
+        // R29: `line_no` names the SO LINE itself, beside the SO number - "SO382618 line 2
+        // (100)"; OI-UX-FILTER-SNAPSHOT adds each order's customer / project under it.
+        cell: ({ row }) => <AssignedToList entries={row.original.assigned_to} />,
       },
       {
         id: 'note',

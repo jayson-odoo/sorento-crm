@@ -183,6 +183,10 @@ export interface StockDebtDemandLine {
    * line that lent nothing.
    */
   lent_qty?: number;
+  /** OI-UX-FILTER-SNAPSHOT: the order's customer and project, as the SO list names them.
+   *  Null when the order names neither. Optional on the TYPE for older fixtures. */
+  customer_name?: string | null;
+  project_label?: string | null;
 }
 
 /**
@@ -283,7 +287,16 @@ export interface StockDebtSupplyEvent {
    *  `so_number` - "SO382618 line 2 (100)". Optional/nullable on this TYPE only so a
    *  fixture built before this round still type-checks; null when the core line has no
    *  project-line number of its own. */
-  assigned_to: { so_number: string; line_no?: number | null; qty: number }[];
+  assigned_to: StockDebtAssignedTo[];
+}
+
+/** One receiving order on a supply row (OI-UX-FILTER-SNAPSHOT: with its customer and project). */
+export interface StockDebtAssignedTo {
+  so_number: string;
+  line_no?: number | null;
+  qty: number;
+  customer_name?: string | null;
+  project_label?: string | null;
 }
 
 /** One location and kind of project-reserve supply in a month (`HQ reserve PO`). */

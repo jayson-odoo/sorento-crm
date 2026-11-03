@@ -744,7 +744,7 @@ def test_a_po_line_hold_pins_the_line_in_stock_debt(scm_app):
     assert rows[0]["date"] == arrival.isoformat()
     assert rows[0]["po_line_id"] == str(po_line.id)
     assert rows[0]["assigned_to"] == [
-        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 50},
+        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 50, "customer_name": None, "project_label": None},
     ]
 
 
@@ -856,7 +856,7 @@ def test_a_placement_still_pins_and_only_the_placed_part_leaves_the_free_pile(sc
     assert (entry["kind"], entry["po_line_id"], entry["qty"]) == ("po", str(po_line.id), 30)
     [row] = supply_cell["supply"]
     assert row["free_qty"] == 50
-    assert row["assigned_to"] == [{"so_number": f"{marker}-SO1", "line_no": None, "qty": 30}]
+    assert row["assigned_to"] == [{"so_number": f"{marker}-SO1", "line_no": None, "qty": 30, "customer_name": None, "project_label": None}]
 
 
 def test_an_spo_line_naming_the_order_pins_it_through_its_s_o(scm_app):
@@ -903,7 +903,7 @@ def test_an_spo_line_naming_the_order_pins_it_through_its_s_o(scm_app):
     [row] = supply_cell["supply"]
     assert row["kind"] == "spo"
     assert row["free_qty"] == 20
-    assert row["assigned_to"] == [{"so_number": f"{marker}-SO1", "line_no": None, "qty": 50}]
+    assert row["assigned_to"] == [{"so_number": f"{marker}-SO1", "line_no": None, "qty": 50, "customer_name": None, "project_label": None}]
 
 
 def test_a_document_landing_after_the_line_never_clears_its_shortfall_in_the_view(scm_app):
@@ -1159,7 +1159,7 @@ def test_the_cell_carries_linked_documents_and_named_lines(scm_app):
     assert supply_row["spo_number"] == allocation.spo_number
     assert supply_row["spo_line_number"] == allocation.spo_line_number
     assert supply_row["assigned_to"] == [
-        {"so_number": f"{marker}-SO1", "line_no": 2, "qty": 100},
+        {"so_number": f"{marker}-SO1", "line_no": 2, "qty": 100, "customer_name": None, "project_label": None},
     ]
 
 
@@ -1268,7 +1268,7 @@ def test_the_cell_lists_the_demand_with_its_bin_and_the_supply_with_its_assignme
     # `response_model_exclude_unset=True` to make that stick - the coder is to emit the
     # key unconditionally and drop `exclude_unset`.
     assert current[0]["assigned_to"] == [
-        {"so_number": f"{marker}-SO1", "qty": 40, "line_no": None},
+        {"so_number": f"{marker}-SO1", "qty": 40, "line_no": None, "customer_name": None, "project_label": None},
     ]
 
 
@@ -1776,7 +1776,7 @@ def _assert_pinned_on_the_bin(c, *, marker, warehouse, product, due):
     ] == [
         (
             "on_hand", warehouse.warehouse_code, 0,
-            [{"so_number": f"{marker}-SO1", "line_no": None, "qty": 50}],
+            [{"so_number": f"{marker}-SO1", "line_no": None, "qty": 50, "customer_name": None, "project_label": None}],
         ),
     ]
     assert [row["kind"] for row in now["supply"]] == ["on_hand"]
@@ -1785,7 +1785,7 @@ def _assert_pinned_on_the_bin(c, *, marker, warehouse, product, due):
     assert on_hand["qty"] == 50
     assert on_hand["free_qty"] == 0
     assert on_hand["assigned_to"] == [
-        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 50},
+        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 50, "customer_name": None, "project_label": None},
     ]
     assert now["supply_total_qty"] == 50
 

@@ -519,7 +519,7 @@ def test_a_routed_line_due_later_is_listed_in_todays_supply_column_only(scm_app)
     )
     assert home["free_qty"] == 74
     assert home["assigned_to"] == [
-        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 126},
+        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 126, "customer_name": None, "project_label": None},
     ]
 
 
