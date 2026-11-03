@@ -606,11 +606,15 @@ export async function getClassificationEvidence(
  * `extractApiError` is not enough here: a 200 can still carry `ok: false` entries, so the
  * caller reads `results` even on a successful response.
  */
-export async function confirmMany(body: ConfirmManyBody): Promise<ConfirmManyResult> {
+export async function confirmMany(
+  body: ConfirmManyBody,
+  signal?: AbortSignal,
+): Promise<ConfirmManyResult> {
   const response = await apiFetch(`${BASE}/fulfilment-planning/confirm-all`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok)
     throw new Error(
@@ -624,8 +628,11 @@ export async function confirmMany(body: ConfirmManyBody): Promise<ConfirmManyRes
  * `preview: true`. The server runs the press and rolls it back, answering per order with the
  * lines, order inquiry rows and transfers it would write. Nothing is committed.
  */
-export async function previewConfirmMany(body: ConfirmManyBody): Promise<ConfirmManyResult> {
-  return confirmMany({ ...body, preview: true });
+export async function previewConfirmMany(
+  body: ConfirmManyBody,
+  signal?: AbortSignal,
+): Promise<ConfirmManyResult> {
+  return confirmMany({ ...body, preview: true }, signal);
 }
 
 /**

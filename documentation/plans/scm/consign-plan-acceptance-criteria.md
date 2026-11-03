@@ -7,6 +7,11 @@ consignment lines only; Q3 (a) plan = ordered less returned. Crew 15 Oct: Q4 (a)
 Owner note: the coming Sample Request flow borrows through this same path, so the rule is keyed
 on a doc-type set, not on the code `CON` and not on `consignment` spelled inline.
 
+Amended 2 Nov 2026 (owner ruling, CONSIGN-OWN-BIN-EMAIL, PR #2084): Q1's "nothing to purchasing"
+is reversed for the own-bin Borrow. Confirmed, it raises its ORDER_BACK row and the purchasing
+email says ORDER BACK, the same as a sales order line's own-bin Borrow. The proposal stays a
+Borrow at the own bin, never a Buy. UAC-06 and UAC-06a below read with that change.
+
 ## Board (backend)
 
 - **UAC-01 [BE][T]** A closed, fully delivered, project-class consignment typed into
@@ -20,10 +25,10 @@ on a doc-type set, not on the code `CON` and not on `consignment` spelled inline
 - **UAC-05 [BE][T]** A sales order line whose own bin is flagged off still reads "Outside
   fulfilment planning" (the lift is doc-type scoped).
 - **UAC-06a [BE][T]** The board's own proposal for a consignment line is a Borrow from its own bin
-  for the whole plan qty, never a Buy, so Approve all / confirm-all writes nothing to purchasing
-  (reviewer B1, round 1).
-- **UAC-06 [BE][T]** Confirming Borrow from CON on a consignment line succeeds, writes no Buy and
-  no purchasing (Order Inquiry) row, and the line then counts as planned
+  for the whole plan qty, never a Buy (reviewer B1, round 1). Since 2 Nov 2026 its confirm
+  raises the own-bin ORDER_BACK row, see the note above.
+- **UAC-06 [BE][T]** Confirming Borrow from CON on a consignment line succeeds, writes no Buy,
+  raises its ORDER_BACK row at CON (owner ruling 2 Nov 2026), and the line then counts as planned
   (`planned_lines == plannable_lines` on the order read).
 - **UAC-07 [BE][T]** Plan qty = ordered (or required) less cancelled less returned, floored at 0,
   in both the SQL `plan_qty()` and the Python `plan_qty_of`. A fully returned line is not admitted

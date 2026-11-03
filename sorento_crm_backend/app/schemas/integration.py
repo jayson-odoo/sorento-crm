@@ -116,6 +116,25 @@ class IntegrationLogResponse(IntegrationLogBase):
         from_attributes = True
 
 
+class IntegrationLogPagination(BaseModel):
+    """The Integration Log list's pagination: the shared shape plus ``total_capped``.
+
+    The list never counts the whole table (INTLOG-SPEED): when more rows match than the count
+    window holds, ``total`` is the window's size and ``total_capped`` is true, so the UI shows
+    "10,000+" and keeps Next enabled.
+    """
+    total: int
+    page: int
+    limit: int
+    total_capped: bool = False
+
+
+class IntegrationLogListResponse(BaseModel):
+    data: List[IntegrationLogResponse]
+    pagination: IntegrationLogPagination
+    empty: bool = False
+
+
 class IntegrationLogWebhookPayload(BaseModel):
     """Payload sent to n8n webhook."""
     integration_log_id: str

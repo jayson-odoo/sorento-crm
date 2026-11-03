@@ -17,12 +17,12 @@ from __future__ import annotations
 import uuid
 from datetime import date, timedelta
 
-from app.models.notification import Notification
 from app.models.user import User, UserRole, UserRoleAssignment, UserStatus
 from app.services import planning_change_service
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm.outstanding_diff import DATE_MOVED, Diff
 
+from tests.scm.test_planning_change_apply_notifies_purchasing import sent_notices  # noqa: F401
 from tests.test_planning_changes import (  # noqa: F401  (api is the fixture)
     api,
     _confirm,
@@ -56,7 +56,9 @@ def _seed_purchasing_user(db) -> User:
     return user
 
 
-def test_order_1_still_notifies_purchasing_when_order_2_fails_to_apply(api, monkeypatch):
+def test_order_1_still_notifies_purchasing_when_order_2_fails_to_apply(
+    api, monkeypatch, sent_notices
+):
     client, world = api
     db = world.db
     _seed_purchasing_user(db)
@@ -138,12 +140,11 @@ def test_order_1_still_notifies_purchasing_when_order_2_fails_to_apply(api, monk
     failed_numbers = {f["so_number"] for f in result["failed_orders"]}
     assert core_so_2.so_number in failed_numbers, result
 
-    notifications = (
-        db.query(Notification)
-        .filter(Notification.source_entity_type == "planning_change_batch",
-                Notification.source_entity_id == str(batch.id))
-        .all()
-    )
-    dedup_keys = {n.dedup_key for n in notifications if getattr(n, "dedup_key", None)}
+    dedup_keys = {
+        n["dedup_key"]
+        for n in sent_notices
+        if n["source_entity_type"] == "planning_change_batch"
+        and n["source_entity_id"] == str(batch.id)
+    }
     assert f"{batch.id}:{order_1.id}:planning_change_applied" in dedup_keys, dedup_keys
     assert f"{batch.id}:{order_2.id}:planning_change_applied" not in dedup_keys, dedup_keys

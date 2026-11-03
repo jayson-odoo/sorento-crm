@@ -54,6 +54,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   PLANNING_BOARD_KEY,
   useConfirmManyMutation,
+  usePlanningBoardReadAt,
   usePreviewConfirmManyMutation,
   useSimulateConfirmMutation,
   useFulfilmentPlanningMutations,
@@ -71,7 +72,6 @@ import {
 import {
   annotationsByCell,
   annotationsByLine,
-  lineKeyOf,
   preMarkedKeys,
   uncoverChangedLines,
 } from '../../_shared/lib/boardChangeAnnotations';
@@ -145,7 +145,6 @@ import {
   emailWordsFor,
   newerServerDraftKeys,
   queuedPerKey,
-  suggestionMovedOf,
 } from '../../_shared/lib/confirmPreviewFresh';
 import { VERB_LABEL } from '../../_shared/components/OrderInquiryVerbPill';
 import { LineSplitOpenerContext, type LineSplitOpener } from './lineSplitOpener';
@@ -2282,9 +2281,11 @@ export function FulfilmentBoardPanel({
   const [guideEmail, setGuideEmail] = React.useState<{
     status: 'idle' | 'loading' | 'ready' | 'failed';
     byOrder: ReadonlyMap<string, ReadonlyMap<string, string>>;
-    /** The words have loaded once this open: a later re-run keeps the sheet up (S1). */
-    loadedOnce?: boolean;
   }>({ status: 'idle', byOrder: new Map() });
+  /** CONFIRM-REMARK-FIX: the planning record of the guide page on screen (`onPageChange`). */
+  const [guidePagePso, setGuidePagePso] = React.useState<string | null>(null);
+  /** Per order: the board read its email words were dry-run for (one dry run per read). */
+  const emailWordsRead = React.useRef(new Map<string, number>());
   const closeGuide = React.useCallback(() => setGuideOpen(false), []);
   /**
    * OI-SPLIT-CONFIRM-POLISH (owner, SO426939): Review split is ALWAYS the editable sheet. An
@@ -2372,6 +2373,7 @@ export function FulfilmentBoardPanel({
           covered: lines.map((line) => {
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
             const facts = remarkFactsOf(line);
+            const email = emailWordsFor(guideEmail.byOrder, order.project_sales_order_id, line);
             return {
               lineId: line.project_line_id ?? null,
               key: line.key,
@@ -2383,21 +2385,13 @@ export function FulfilmentBoardPanel({
               // The email's own words when the dry run previewed this order (round 3); none
               // when the email sends no line for it; the board's words only for an order the
               // dry run did not preview.
-              savedRemark: ((email) => (email === undefined ? facts.words : email))(
-                emailWordsFor(guideEmail.byOrder, order.project_sales_order_id, line),
-              ),
+              savedRemark: email === undefined ? facts.words : email,
+              // CONFIRM-ITEM4: the dry run says the email holds no line for it (null), so
+              // Confirm sends purchasing nothing for it; unknown (undefined) claims nothing.
+              purchasingSilent: email === null,
               ownRemark: facts.own,
               remarkEditable: facts.editable,
               isMockup: Boolean(line.is_mockup),
-              // CONFIRM-PREVIEW-STALE: the saved decision is not what AutoCount now suggests.
-              moved: suggestionMovedOf(
-                line,
-                draftWithoutPreMark[line.key],
-                (line.project_line_id
-                  ? changeAnnotationsByLine.get(line.project_line_id)
-                  : undefined) ??
-                  changeAnnotationsByLine.get(lineKeyOf(line.so_number, line.line_no)),
-              ),
             };
           }),
         },
@@ -2412,7 +2406,6 @@ export function FulfilmentBoardPanel({
     batchNamedKeys,
     remarkFactsOf,
     guideAdopted,
-    changeAnnotationsByLine,
     guideEmail,
   ]);
   const unplannedGuideOrders = React.useMemo(
@@ -2429,13 +2422,14 @@ export function FulfilmentBoardPanel({
   /**
    * CONFIRM-PREVIEW-STALE round 2 (crew browser pass, 2 Nov 2026): a re-read that FAILED (a
    * timeout on a slow board) leaves the guide on the tab's older decisions, so the guide
-   * writes nothing from it: Next, Keep and Take suggestion wait behind a Retry.
+   * writes nothing from it: Next and Confirm wait behind a Retry.
    */
   const [guideRefreshFailed, setGuideRefreshFailed] = React.useState(false);
   const refreshGuide = React.useCallback(() => {
     setGuideRefreshing(true);
     setGuideRefreshFailed(false);
     setGuideEmail({ status: 'loading', byOrder: new Map() });
+    emailWordsRead.current = new Map();
     void rawBoard
       .refetch()
       .then((result) => {
@@ -2452,17 +2446,31 @@ export function FulfilmentBoardPanel({
   }, [rawBoard]);
   const openGuide = () => {
     setGuideOpen(true);
+    // The first page is on screen from the start (the dialog reports later pages itself), so
+    // the guide never shows a page before its words are read.
+    setGuidePagePso(guidePages[0]?.psoId ?? null);
     refreshGuide();
     prepareGuide(unplannedGuideOrders);
   };
   /**
+   * CONFIRM-REMARK-FIX (F3): when a board READ last finished. A save patches the board cache
+   * (`useLineDraftMutation`), which moves `dataUpdatedAt` too, and then re-reads the board:
+   * keyed on `dataUpdatedAt`, the email dry run ran twice per save. Only a finished fetch
+   * moves this, so a save costs one dry run, after its re-read.
+   */
+  const boardReadAt = usePlanningBoardReadAt();
+  /**
    * CONFIRM-PREVIEW-STALE round 3: once the board read is fresh, and again after every board
    * read while the guide is open (each save on a page re-reads the board), the press's own dry
-   * run says what the purchasing email will print. ONE dry run per read (review round 3, S1):
-   * keyed on the read alone, and started a moment after it so the decisions that read brought in
-   * (the seeding effect) are in the body; the latest `buildConfirmOrders` is read through a ref.
-   * Orders nobody adopted are left out (`adopt: 'defer'` gives them no id), and the dry run is
-   * `quiet`, so it records no refusal (S3).
+   * run says what the purchasing email will print. Started a moment after the read so the
+   * decisions that read brought in (the seeding effect) are in the body; the latest
+   * `buildConfirmOrders` is read through a ref. Orders nobody adopted are left out (`adopt:
+   * 'defer'` gives them no id), and the dry run is `quiet`, so it records no refusal (S3).
+   *
+   * CONFIRM-REMARK-FIX (speed): a dry run costs the order's whole Confirm, so it covers the
+   * order on screen only (`guidePagePso`), once per board read (a page already read for this
+   * read is not run again), and at most ONE is in flight: a newer one cancels the one it
+   * replaces. The Confirm step runs none; the press runs its own.
    */
   const emailRun = React.useRef(0);
   const buildConfirmOrdersRef = React.useRef(buildConfirmOrders);
@@ -2470,35 +2478,62 @@ export function FulfilmentBoardPanel({
   const previewConfirmManyRef = React.useRef(previewConfirmMany);
   previewConfirmManyRef.current = previewConfirmMany;
   React.useEffect(() => {
-    if (!guideOpen || guideRefreshing || guideRefreshFailed || !rawBoard.data) return undefined;
+    if (!guideOpen) {
+      emailWordsRead.current = new Map();
+      return undefined;
+    }
+    if (guideRefreshing || guideRefreshFailed || !rawBoard.data) return undefined;
+    const psoId = guidePagePso;
+    const readAt = boardReadAt;
+    if (!psoId || emailWordsRead.current.get(psoId) === readAt) {
+      // Nothing to read for this page: whatever was loading was superseded.
+      setGuideEmail((current) =>
+        current.status === 'loading' ? { ...current, status: 'ready' } : current,
+      );
+      return undefined;
+    }
     const run = ++emailRun.current;
+    const abort = new AbortController();
     setGuideEmail((current) => ({ ...current, status: 'loading' }));
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
           const built = await buildConfirmOrdersRef.current(new Set(), { adopt: 'defer' });
-          const byOrder = new Map<string, ReadonlyMap<string, string>>();
-          const body = emailPreviewBody(built?.body);
+          const body = emailPreviewBody(built?.body, psoId);
+          let words: ReadonlyMap<string, string> | null = null;
           if (body) {
-            const dry = await previewConfirmManyRef.current.mutateAsync(body);
-            for (const entry of dry.results) {
-              if (!entry.ok || !entry.email_lines) continue;
-              byOrder.set(entry.pso_id, emailWordsByLine(entry.email_lines));
-            }
+            const dry = await previewConfirmManyRef.current.mutateAsync({
+              ...body,
+              signal: abort.signal,
+            });
+            const entry = dry.results.find((result) => result.pso_id === psoId);
+            if (entry?.ok && entry.email_lines) words = emailWordsByLine(entry.email_lines);
           }
-          if (run === emailRun.current)
-            setGuideEmail({ status: 'ready', byOrder, loadedOnce: true });
+          if (run !== emailRun.current) return;
+          emailWordsRead.current.set(psoId, readAt);
+          setGuideEmail((current) => {
+            const byOrder = new Map(current.byOrder);
+            if (words) byOrder.set(psoId, words);
+            else byOrder.delete(psoId);
+            return { status: 'ready', byOrder };
+          });
         } catch {
+          // Cancelled because the page or the read moved on: not a failed read. Whatever
+          // replaced it (a new run, or a page already read) owns the status now.
+          if (abort.signal.aborted) return;
           if (run === emailRun.current)
             setGuideEmail((current) => ({ ...current, status: 'failed' }));
         }
       })();
     }, 0);
-    return () => window.clearTimeout(timer);
-    // `rawBoard.dataUpdatedAt`, never `board.data`: the latter is rebuilt on renders
-    // (`uncoverChangedLines`), and depending on it re-ran this effect into a render loop.
+    return () => {
+      window.clearTimeout(timer);
+      abort.abort();
+    };
+    // `boardReadAt`, never `board.data` (rebuilt on renders, a render loop) nor
+    // `rawBoard.dataUpdatedAt` (a save's cache patch moves it: two dry runs per save, F3).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [guideOpen, guideRefreshing, guideRefreshFailed, rawBoard.dataUpdatedAt]);
+  }, [guideOpen, guideRefreshing, guideRefreshFailed, boardReadAt, guidePagePso]);
 
   /**
    * OI-SPLIT-GUIDE (UAC F26): the board's own Split delivery gets the same Remark facts for
@@ -3944,14 +3979,18 @@ export function FulfilmentBoardPanel({
           runConfirm={runConfirmAll}
           saveRemarks={saveLineRemarks}
           preparing={guidePrep.running}
-          // The first words wait behind the page's loading state; a later re-run (after a save)
+          // A page's first words wait behind its loading state; a later re-run (after a save)
           // keeps the sheet up with the last words and only holds Next and Confirm (S1).
-          refreshing={guideRefreshing || (guideEmail.status === 'loading' && !guideEmail.loadedOnce)}
+          refreshing={
+            guideRefreshing ||
+            (guideEmail.status === 'loading' &&
+              Boolean(guidePagePso) &&
+              !guideEmail.byOrder.has(guidePagePso as string))
+          }
           wordsLoading={guideEmail.status === 'loading'}
           refreshFailed={guideRefreshFailed || guideEmail.status === 'failed'}
           onRetryRefresh={refreshGuide}
-          // The board is read again after it, so the email words follow (one dry run per read).
-          onTakeSuggestion={(key) => decide(key, null).finally(() => void rawBoard.refetch())}
+          onPageChange={setGuidePagePso}
           prepareErrors={guidePrep.errors}
           onRetryPrepare={() => prepareGuide(unplannedGuideOrders)}
           onClose={closeGuide}

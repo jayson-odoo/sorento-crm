@@ -206,7 +206,7 @@ or use own location, just like our email to purchasing". Plan crew-note 62883955
   explicit-remark hook (`_queue_saved_line(..., remark=...)`), the remark part of `_saved_decision_key` so a
   remark-only change is still told; a split row's remark part of `split_plan_key` so a remark-only split edit
   is told again after the plan was applied; Excel REMARK for an unsplit row reads the same text.
-- F28. A line delivered in full (Confirm drops it; nothing reaches purchasing) keeps a read-only Remark and
+- F28. (SUPERSEDED by CONFIRM-PREVIEW-STALE item 4, PR #2107: Confirm plans a delivered line at its ordered qty, so its decision does reach purchasing.) A line delivered in full (Confirm drops it; nothing reaches purchasing) keeps a read-only Remark and
   shows one short line in the row: "Delivered in full: nothing goes to purchasing" (crew ruling (a)).
 - F29. Phone: the Remark cell wraps in both the editor and the read-only views (no "..." truncation); the
   qty / date / remark boxes are reachable inside the sheet's sideways scroll. The SO/OI split popup headers

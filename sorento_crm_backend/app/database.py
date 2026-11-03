@@ -14,6 +14,11 @@ engine = create_engine(
     max_overflow=20,
     pool_pre_ping=True,  # Verify connections before using
     echo=settings.debug,
+    # SIGN-TOKEN-LOG-REDACT: a DB error's message carries its bound parameters, so a failed
+    # lookup on a customer link token (portal_tokens.token, a sign token) wrote the token into the
+    # error log. Outside debug SQLAlchemy keeps the bound parameters out of its error text
+    # (Postgres's own detail, e.g. `Key (x)=(...)`, is not covered).
+    hide_parameters=not settings.debug,
     connect_args={
         "options": "-c timezone=utc"
     }
