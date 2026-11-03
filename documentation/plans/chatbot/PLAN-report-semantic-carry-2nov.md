@@ -194,6 +194,20 @@ side question belongs to SUPPLIER-ASK-L and is not touched here.
   the object's axis is untyped on a turn that answers an open question (round 5 rule; it now restores the held axis
   instead of none) or is a slot the ask filters to one value (a one-row breakdown is the filter: turn 23d6cb50).
 
+Review rounds 7b / 7c (3 Nov):
+- A held value never carries over a kind the parse itself widens (`broaden_to` "all" on that kind's axis, any axis;
+  brand and account type widen together; the customer also on a global drill or "my ..."). Flag off, "all
+  companies" drops a held company on the reuse and refine shapes too.
+- After the customer-or-supplier pick, the picked word reaches the resolver as if typed: one customer binds, several
+  get the usual which-one pick. One customer's ledgers are joined only by the office's explicit `customer_group_id`
+  link (crew R4 answer (a), owner "explicit links only"); no name grouping added. A supplier answer still binds every
+  matching supplier row (SUPPLIER-ASK-L's side).
+- The company option is offered whenever the both-table word is one of the contact's companies, the held one included.
+- Flag off, a "replace" that names no subject of its own is a follow-up (held customer and channel stay; owner R3
+  supersedes the older pins test_s2 / u4[replace]); a restated ask naming a subject still drops what it does not name.
+- Known limits: whether v71 / v72 ever emit `broaden_axis` "company" is unverified (the console runs check v72);
+  flag off, "sales 2026" after "dealer sales may 2026" (no subject named) keeps the dealer channel.
+
 Round-6 turns (copy DB, parser v72): 17023f41 agent change dropped CERAMIC (entities: the agent only); f26a5645
 "invoiced" dropped CERAMIC and swapped month for sales agent (no entities); 23d6cb50 "for ceramic account type" set
 `group_by` account_type over a CERAMIC filter ("Top 1 account type"); 35e6909a fixed at 4a5babb25b (the asked word
