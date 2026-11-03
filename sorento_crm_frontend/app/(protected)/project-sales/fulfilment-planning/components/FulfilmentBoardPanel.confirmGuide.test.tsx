@@ -169,6 +169,7 @@ import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsuppor
 import { addBtn, qty, splitLine, typeDate, typeQty, wireLine, wireSplit } from '@/test-mocks/lineSplitSheetKit';
 import { openConfirmGuide, walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
 import { toast } from '@/lib/toast';
+import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
 import userEvent from '@testing-library/user-event';
 
 const TODAY = '2026-09-17';
@@ -2365,5 +2366,89 @@ describe('CONFIRM-REMARK-FIX: one email dry run per read, for the order on scree
     await waitFor(() => expect(emailDryRuns()).toHaveLength(3));
     expect(heldSignal?.aborted).toBe(true);
     await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+  });
+});
+
+/*
+ * NO-AC-MOVED-WARNING (owner, 3 Nov 2026, prod SO423361): "I already decided so why are you
+ * still suggesting to me ... the warning shouldn't even appear." A saved decision stands
+ * silently on the Review split, as before #2091: no suggestion, no Keep, no Take suggestion.
+ */
+describe('NO-AC-MOVED-WARNING: a saved decision is never second-guessed by the change suggestion', () => {
+  const BATCH = MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE;
+  // The batch row `pcr-381895-1` names this line and suggests Buy 25 (was 10).
+  const NAMED = demand({
+    sales_order_id: 'so-381895',
+    so_number: 'SO381895',
+    project_sales_order_id: 'pso-381895',
+    project_line_id: 'pl-381895-1',
+    line_no: 1,
+    item_code: 'SRTWCX7405-RL-S-PJ',
+    qty: '25',
+    required_date: '2026-09-20',
+  });
+  // What the planner saved: Borrow 25 from another location, not the suggested Buy.
+  const SAVED_BORROW = {
+    verdict: 'amended',
+    timely_spo_qty: '0',
+    reserve: [],
+    borrow: [{ qty: '25', warehouse_id: 'wh-brw-bb', location: 'BRW-BB', donor_project_id: null }],
+    buy_qty: '0',
+    reason: 'Order back already raised.',
+  };
+  const boardWithSavedBorrow = () =>
+    mapContributions(buildBoard([NAMED], { today: TODAY, freeStock: {}, granularity: 'week' }), (entry) =>
+      entry.project_line_id === 'pl-381895-1'
+        ? {
+            ...entry,
+            saved_remark: 'BORROW BRW-BB 25',
+            draft: { decision: SAVED_BORROW, saved_by: 'Test Planner', saved_at: '2026-11-02T01:00:00Z' },
+          }
+        : entry,
+    );
+
+  async function mountOnBatch() {
+    getPlanningChangeBatch.mockResolvedValue(BATCH);
+    getPlanningBoard.mockResolvedValue(boardWithSavedBorrow());
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <FulfilmentBoardPanel soNumbers={['SO381895']} batchId={BATCH.id} onBack={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
+  }
+
+  it('the Review split shows no "AutoCount moved this line", no Keep, no Take suggestion; Next is on', async () => {
+    await mountOnBatch();
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    expect(page).toHaveTextContent('SRTWCX7405-RL-S-PJ');
+    expect(screen.getByTestId('confirm-guide')).not.toHaveTextContent('AutoCount moved this line');
+    expect(screen.queryByTestId('confirm-guide-moved')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Keep' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Take suggestion' })).not.toBeInTheDocument();
+  });
+
+  it('Confirm proceeds with the saved Borrow, never the change suggestion, and the Confirm step says nothing of it', async () => {
+    await mountOnBatch();
+    const confirm = await walkToConfirmStep();
+    expect(confirm).not.toBeNull();
+    expect(screen.getByTestId('confirm-guide')).not.toHaveTextContent('AutoCount moved this line');
+    expect(screen.queryByRole('button', { name: 'Take suggestion' })).not.toBeInTheDocument();
+    await waitFor(() => expect(confirm).toBeEnabled());
+    fireEvent.click(confirm as HTMLElement);
+    await waitFor(() => expect(pressDryRuns().length).toBeGreaterThan(0));
+    const posted = JSON.stringify(pressDryRuns().at(-1));
+    expect(posted).toContain('"qty":"25"');
+    expect(posted).toContain('wh-brw-bb');
+    expect(posted).toContain('"buy_qty":"0"');
+    expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('suggest'));
+    expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining('suggest'));
   });
 });
