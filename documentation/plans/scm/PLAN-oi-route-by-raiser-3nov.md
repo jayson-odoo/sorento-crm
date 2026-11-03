@@ -1,6 +1,6 @@
 # PLAN: Order inquiry emails routed by who raised the order inquiry
 
-**Status:** In build. Small fix track (no migration, no auth/RBAC change, no new ingest surface). Crew lane OI-ROUTE-BY-RAISER.
+**Status:** Built, in review (PR #2152). Small fix track (no migration, no auth/RBAC change, no new ingest surface). Crew lane OI-ROUTE-BY-RAISER.
 
 UAC: `oi-route-by-raiser-3nov-acceptance-criteria.md` beside this file. Builds on `PLAN-dealer-oi-route-1nov.md` (class routing).
 
@@ -29,11 +29,13 @@ people Agnes' orders should reach. Confirms, undos and "Send to purchasing" then
 3. **One email per matching row set.** `handover_route_groups(db, items)` replaces the class split: lines are grouped by (class, the set of ENABLED handover rows whose conditions pass for that line). Lines matching the same rows share one email; a line never goes to a row it does not match, and never twice. `build_handover_email` stamps the group's class and its first line's raiser on the context; every line in the group passes exactly the same rows, so `dispatch_event`'s own filter fires exactly that row set.
 4. **Resend.** `handover_automations(db, facts)` returns every enabled row passing for the OI's class and raiser (the automatic send's rule); when no row is enabled, the oldest switched-off passing row (unchanged fallback). `_plan` yields one email per (OI, row); `send` sends each. `inquiry_total` counts distinct OIs.
 
+5. **Resend dialog (review round 1).** A single OI going through several rows keeps its line ticks (`single` counts OIs, not emails); the 50 limit counts OIs; the dialog names each OI once on Send; an OI some of whose emails went reads `partly_failed` and is not retried (no second email to a row that has it); a tab names its recipient when one OI has several emails.
+
 ## Not changed
 
-- No migration, no FE code (the RuleBuilder already renders the picker), reserve emails untouched.
+- No migration; no condition-editor code (the RuleBuilder already renders the picker); reserve emails untouched.
 - A row with no raiser condition keeps matching every raiser: nothing changes on deploy.
 
 ## Tests
 
-`tests/test_oi_route_by_raiser.py`.
+`tests/test_oi_route_by_raiser.py` (19), `OrderInquiryHeadersList.handoverResend.test.tsx` (+2).

@@ -391,3 +391,71 @@ describe('lastSentText', () => {
     expect(lastSentText(null)).toBe('No handover email on record');
   });
 });
+
+describe('Send to purchasing for ONE order inquiry that goes through two rows (OI-ROUTE-BY-RAISER)', () => {
+  beforeEach(() => {
+    const ticks = [
+      {
+        row_id: 'r-a',
+        item_code: 'ITEM-A',
+        qty: '5',
+        location: 'BRW-BB',
+        delivery_date: '2026-10-30',
+        selected: true,
+        sent_at: null,
+      },
+    ];
+    previewResendSpy.mockImplementation(async () => ({
+      emails: [
+        { ...email('h-1', 'OI-0001'), to: { name: 'Agnes Team' }, lines: ticks },
+        { ...email('h-1', 'OI-0001'), to: { name: 'Eling' }, lines: ticks },
+      ],
+      inquiry_total: 1,
+      unresolved: [],
+      skipped: [],
+      automation_enabled: true,
+    }));
+  });
+
+  it('names each email by its recipient, keeps the ticks and sends the OI once', async () => {
+    renderList();
+    const dialog = await tickAndOpen(['OI-0001']);
+    expect(
+      await within(dialog).findByRole('tab', { name: 'OI-0001 to Agnes Team' }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('tab', { name: 'OI-0001 to Eling' }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('checkbox', { name: 'Send ITEM-A' }),
+    ).toBeChecked();
+    const sendButton = within(dialog).getByRole('button', {
+      name: 'Send 2 emails',
+    });
+    await waitFor(() => expect(sendButton).toBeEnabled());
+    fireEvent.click(sendButton);
+    await waitFor(() =>
+      expect(sendResendSpy).toHaveBeenCalledWith(['h-1']),
+    );
+  });
+
+  it('a partly sent OI is reported, never sent again', async () => {
+    sendResendSpy.mockImplementation(async () => ({
+      emails_sent: 1,
+      items_sent: 1,
+      skipped: [
+        { inquiry_id: 'h-1', inquiry_no: 'OI-0001', reason: 'partly_failed' },
+      ],
+    }));
+    renderList();
+    const dialog = await tickAndOpen(['OI-0001']);
+    fireEvent.click(
+      await within(dialog).findByRole('button', { name: 'Send 2 emails' }),
+    );
+    // Not kept open on the OI for a retry (that would email the row that has it again).
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
+    );
+    expect(sendResendSpy).toHaveBeenCalledTimes(1);
+  });
+});
