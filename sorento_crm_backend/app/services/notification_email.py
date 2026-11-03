@@ -6,9 +6,27 @@ from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import format_datetime, make_msgid
+from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Malaysia has no DST, so a fixed offset needs no tzdata in the container.
+_MALAYSIA_TZ = timezone(timedelta(hours=8))
+
+
+def _stamp_date_and_message_id(msg, from_addr: Optional[str]) -> None:
+    """Give an outbound message its RFC 5322 Date and Message-ID.
+
+    smtplib does not add either. Without Date, Outlook shows "None" as the sent time (owner
+    report, 3 Nov 2026). Every builder below calls this right before handing bytes to SMTP.
+    """
+    if "Date" not in msg:
+        msg["Date"] = format_datetime(datetime.now(_MALAYSIA_TZ))
+    if "Message-ID" not in msg:
+        domain = (from_addr or "").rpartition("@")[2].strip().strip(">") or None
+        msg["Message-ID"] = make_msgid(domain=domain)
 
 
 def _smtp_config_from_env() -> dict:
@@ -110,6 +128,8 @@ def send_mime_email(
     if not envelope:
         return "No recipients"
 
+    _stamp_date_and_message_id(msg, from_addr)
+
     def do_login(server: smtplib.SMTP) -> None:
         if user and password:
             try:
@@ -189,6 +209,8 @@ def send_notification_email_multi(
     if body_html:
         msg.attach(MIMEText(body_html, "html", "utf-8"))
 
+    _stamp_date_and_message_id(msg, from_addr)
+
     def do_login(server: smtplib.SMTP) -> None:
         if user and password:
             try:
@@ -262,6 +284,8 @@ def send_notification_email(
     msg.attach(MIMEText(body_text or body_html or "", "plain", "utf-8"))
     if body_html:
         msg.attach(MIMEText(body_html, "html", "utf-8"))
+
+    _stamp_date_and_message_id(msg, from_addr)
 
     def do_login(server: smtplib.SMTP) -> None:
         if user and password:
