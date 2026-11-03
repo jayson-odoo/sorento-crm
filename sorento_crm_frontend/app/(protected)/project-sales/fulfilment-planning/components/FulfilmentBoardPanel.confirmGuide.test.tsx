@@ -3190,18 +3190,26 @@ describe('CONFIRM-SPEED-PR2 every email line on Review split', () => {
   it('P7 RED: an email line on no board row at all still shows a read-only row from the email\'s own entry', async () => {
     emailAnswers([
       { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
-      { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-9', qty: '5', remark: 'ORDER 5 FOR ORPHAN' },
+      { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-Q', qty: '5', remark: 'ORDER 5 FOR ORPHAN' },
     ]);
     const page = await openPage();
     const words = await within(page).findByText(/ORDER 5 FOR ORPHAN/);
     const row = words.closest('tr') as HTMLElement;
-    expect(row).toHaveTextContent('ZZT-ORPHAN-9');
+    expect(row).toHaveTextContent('ZZT-ORPHAN-Q');
     expect(row).toHaveTextContent('5');
     expect(row.querySelectorAll('input, textarea')).toHaveLength(0);
     expect(within(page).getByTestId('split-line-3')).toHaveTextContent('USE BRW');
   });
 
   describe('review round: one email line told twice', () => {
+    /** The text of a row's Qty cell, located by the header of its own table. */
+    const qtyCell = (row: HTMLElement) => {
+      const table = row.closest('table') as HTMLElement;
+      const headers = Array.from(table.querySelectorAll('th')).map((th) => th.textContent?.trim());
+      const at = headers.indexOf('Qty');
+      expect(at, `no Qty header in ${headers.join('|')}`).toBeGreaterThanOrEqual(0);
+      return (row.closest('tr') ?? row).querySelectorAll('td')[at]?.textContent?.trim();
+    };
     const TWICE = demand({ project_line_id: 'pl-1-2', line_no: 2, item_code: 'CKSW015', qty: '9' });
     const readOf = () => ({
       ...bothLinesRead(),
@@ -3234,8 +3242,7 @@ describe('CONFIRM-SPEED-PR2 every email line on Review split', () => {
       const block = await within(page).findByTestId('split-line-2');
       expect(within(page).getAllByTestId('split-line-2')).toHaveLength(1);
       expect(block).toHaveTextContent('ORDER BACK MWH-BB / ORDER BACK BRW-BB');
-      expect(block).toHaveTextContent(/\b9\b/);
-      expect(block).not.toHaveTextContent(/\b8\b/);
+      expect(qtyCell(block.querySelector('tr') as HTMLElement)).toBe('9');
       expect(block.querySelectorAll('input, textarea')).toHaveLength(0);
       const duplicate = errors.mock.calls.filter((call) => /same key|unique "key"/i.test(String(call[0])));
       errors.mockRestore();
@@ -3246,17 +3253,17 @@ describe('CONFIRM-SPEED-PR2 every email line on Review split', () => {
       const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
       emailAnswers([
         { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
-        { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-9', qty: '5', remark: 'ORDER BACK MWH-BB' },
-        { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-9', qty: '3', remark: 'ORDER BACK BRW-BB' },
+        { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-Q', qty: '5', remark: 'ORDER BACK MWH-BB' },
+        { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-Q', qty: '3', remark: 'ORDER BACK BRW-BB' },
       ]);
       const page = await openPage();
       const words = await within(page).findByText(/ORDER BACK MWH-BB/);
       const row = words.closest('tr') as HTMLElement;
-      expect(row).toHaveTextContent('ZZT-ORPHAN-9');
-      expect(row).toHaveTextContent(/\b8\b/);
+      expect(row).toHaveTextContent('ZZT-ORPHAN-Q');
+      expect(qtyCell(row)).toBe('8');
       expect(row).toHaveTextContent('ORDER BACK BRW-BB');
       const orphanRows = Array.from(page.querySelectorAll('tr')).filter((tr) =>
-        tr.textContent?.includes('ZZT-ORPHAN-9'),
+        tr.textContent?.includes('ZZT-ORPHAN-Q'),
       );
       expect(orphanRows).toHaveLength(1);
       const duplicate = errors.mock.calls.filter((call) => /same key|unique "key"/i.test(String(call[0])));
