@@ -38,6 +38,10 @@ export function useCanvasHistory(initialLayers: TagLayer[]): CanvasHistory {
 
   const pushState = useCallback(
     (layers: TagLayer[]) => {
+      // Nothing changed: no undo step. This is also what keeps one action one
+      // step on `next dev`, where StrictMode replays the `setLayers` updaters
+      // that push from inside (`addLayer`, the paste paths) with the same input.
+      if (JSON.stringify(layers) === JSON.stringify(currentRef.current)) return;
       const snapshot = structuredClone(layers);
       pastRef.current = [
         ...pastRef.current.slice(-(MAX_HISTORY - 1)),
