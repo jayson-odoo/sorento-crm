@@ -8,7 +8,7 @@ its rows, an items snapshot and the templates' current published versions. The o
 The backfill is inline SQL on purpose: a migration must not import models later migrations change.
 
 Revision ID: ssv2_0001_spec_sheets
-Revises: pqr_0001_quote_rules_routing
+Revises: qcd_0001_cover_designs
 Create Date: 2026-11-03
 """
 import json
@@ -19,7 +19,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "ssv2_0001_spec_sheets"
-down_revision = "pqr_0001_quote_rules_routing"
+down_revision = "qcd_0001_cover_designs"
 branch_labels = None
 depends_on = None
 
