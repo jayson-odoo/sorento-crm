@@ -97,8 +97,8 @@ will say, line for line:
 * If stock moved since you planned and the order can no longer be confirmed as saved, the page
   shows the reason and offers **Retry**, and its remark cells stay empty: nothing for that order
   is going to purchasing. **Confirm** still sends the other orders; this one is not sent and
-  appears on the result card with its reasons. To send it, plan the line again on the board,
-  save, then press **Retry**.
+  appears on the result card with its reasons. To send it, close the dialog, plan the line again
+  on the board, save, and open **Confirm** again.
 
 ## What Confirm does to Order Inquiries
 
