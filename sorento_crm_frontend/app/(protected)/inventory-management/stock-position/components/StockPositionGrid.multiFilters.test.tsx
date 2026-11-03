@@ -47,22 +47,34 @@ vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/components/common/SearchableMultiSelect')>();
   const React = await import('react');
   type Props = Parameters<typeof actual.SearchableMultiSelect>[0];
-  const Stub = ({ value, onChange, options, fetchOptions, placeholder }: Props) => {
+  const Stub = ({ value, onChange, options, fetchOptions, selectedOptions, renderTriggerLabel, placeholder }: Props) => {
     const [loaded, setLoaded] = React.useState(options ?? []);
     React.useEffect(() => {
       if (fetchOptions) void fetchOptions('', 0).then(setLoaded);
     }, [fetchOptions]);
+    // The trigger as the real control builds it: a chosen value's option, else its selectedOption,
+    // else a bare chip whose label is the value.
+    const known = [...(fetchOptions ? loaded : (options ?? [])), ...(selectedOptions ?? [])];
+    const chosen = value.map((v) => known.find((o) => o.value === v) ?? { value: v, label: v });
     return (
-      <select multiple aria-label={placeholder ?? 'multi'} value={value}
-        onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}>
-        {(fetchOptions ? loaded : (options ?? [])).map((o) => (
-          <option key={o.value} value={o.value}>{o.label}</option>
-        ))}
-      </select>
+      <>
+        <span data-testid={`trigger-${placeholder}`}>{renderTriggerLabel?.(chosen)}</span>
+        <select multiple aria-label={placeholder ?? 'multi'} value={value}
+          onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}>
+          {(fetchOptions ? loaded : (options ?? [])).map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </>
     );
   };
   return { ...actual, SearchableMultiSelect: (props: Props) => <Stub {...props} /> };
 });
+
+const supplierLookup = vi.hoisted(() => ({
+  getSupplier: vi.fn(async (id: string) => ({ id, supplier_name: id === 's-9' ? 'Supplier Nine' : `Name ${id}` })),
+}));
+vi.mock('@/app/(protected)/procurement-management/suppliers/services/supplierService', () => supplierLookup);
 
 const hook = vi.hoisted(() => ({ useStockPosition: vi.fn() }));
 vi.mock('../hooks/useStockPosition', () => hook);
@@ -169,6 +181,28 @@ describe('Stock position: Supplier, Brand, Warehouse are multi-select', () => {
       </QueryClientProvider>,
     );
     expect(box.value).toBe('abcd');
+  });
+
+  it("names a chosen supplier that is on no row and was never in the picker's pages (no 'Selected supplier')", async () => {
+    nav.search = 'supplier_id=s-9';
+    const user = userEvent.setup();
+    renderGrid();
+    await openFilters(user);
+    await waitFor(() =>
+      expect(screen.getByTestId('trigger-All suppliers').textContent).toBe('Supplier: Supplier Nine'),
+    );
+    expect(supplierLookup.getSupplier).toHaveBeenCalledWith('s-9');
+    expect(screen.getByTestId('trigger-All suppliers').textContent).not.toContain('Selected');
+  });
+
+  it('labels each trigger as Stock does: "Title: a, b", "Title: any" when none', async () => {
+    nav.search = 'brand_id=b-1,b-2&warehouse_id=w-1,w-2';
+    const user = userEvent.setup();
+    renderGrid();
+    await openFilters(user);
+    expect(screen.getByTestId('trigger-All brands').textContent).toBe('Brand: Brand One, Brand Two');
+    expect(screen.getByTestId('trigger-All warehouses').textContent).toBe('Warehouse: BRW, DC1');
+    expect(screen.getByTestId('trigger-All suppliers').textContent).toBe('Supplier: any');
   });
 
   it('restores the selection, sort and page from the URL', () => {
