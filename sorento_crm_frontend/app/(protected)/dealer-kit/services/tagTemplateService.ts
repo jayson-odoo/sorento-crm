@@ -33,6 +33,7 @@ import type {
   TagTemplateVersionDetail,
 } from '@/lib/dealer-kit/tag-template-types';
 import { printSizeOf } from '@/lib/dealer-kit/request-tags';
+import { isSpecSheetFamily } from '@/lib/dealer-kit/tag-template-types';
 
 const BASE = '/api/v1/dealer-kit/tag-templates';
 
@@ -146,7 +147,10 @@ export async function listPublishedTemplates(): Promise<TagTemplate[]> {
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load tag templates'));
   }
-  return response.json();
+  const templates: TagTemplate[] = await response.json();
+  // PS-SPEC-SHEET: spec sheet pages are not price tags - never a request's template or a
+  // tag size preset.
+  return templates.filter((template) => !isSpecSheetFamily(template.family));
 }
 
 /**

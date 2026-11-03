@@ -34,7 +34,7 @@ import type { MergeField, MergeFieldGroup, SpecKeyOption } from '@/lib/dealer-ki
 import { mergeFieldCatalog, renderMergeFields } from '@/lib/dealer-kit/merge-fields';
 import type { TagBindingData } from '@/lib/dealer-kit/tag-template-types';
 
-const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo'];
+const GROUP_ORDER: MergeFieldGroup[] = ['Product', 'Specs', 'Set', 'Line', 'Combo', 'Spec sheet'];
 
 interface InsertFieldDialogProps {
   open: boolean;

@@ -36,6 +36,7 @@ import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { STAGE_LABELS, shownDeliveryDate } from '@/lib/sample-request-tracking';
 import { getUserLookup } from '@/services/userSelectService';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
@@ -57,8 +58,27 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'cancelled', label: 'Cancelled' },
 ];
 
-export function deliveryText(row: Pick<SampleRequestRow, 'delivery_date'>) {
-  return row.delivery_date ? formatDateInMalaysia(row.delivery_date) : '-';
+const STAGE_OPTIONS = Object.entries(STAGE_LABELS).map(([value, label]) => ({ value, label }));
+
+type DeliveryCellRow = Pick<
+  SampleRequestRow,
+  'delivery_date' | 'date_feasible' | 'proposed_delivery_date'
+>;
+
+/** The date shown, which is the sample team's proposed date when it gave one (PS-SAMPLE-TRACKING). */
+export function deliveryText(row: DeliveryCellRow) {
+  const { date } = shownDeliveryDate(row);
+  return date ? formatDateInMalaysia(date) : '-';
+}
+
+export function DeliveryCell({ row }: { row: DeliveryCellRow }) {
+  const { isNew } = shownDeliveryDate(row);
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+      <span className="truncate tabular-nums">{deliveryText(row)}</span>
+      {isNew && <Badge variant="warning">New date</Badge>}
+    </div>
+  );
 }
 
 /**
@@ -84,6 +104,7 @@ function StaffSampleRequestsList() {
     reset: resetSearch,
   } = useDebouncedSearch();
   const [statusFilter, setStatusFilter] = useState('');
+  const [stageFilter, setStageFilter] = useState('');
   const [salespersonFilter, setSalespersonFilter] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
@@ -92,6 +113,7 @@ function StaffSampleRequestsList() {
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
     setStatusFilter(joinMulti(splitMulti(state.filters.status)));
+    setStageFilter(joinMulti(splitMulti(state.filters.stage)));
     setSalespersonFilter(joinMulti(splitMulti(state.filters.salesperson_id)));
   });
 
@@ -102,6 +124,7 @@ function StaffSampleRequestsList() {
   });
 
   const status = statusFilter || undefined;
+  const stage = stageFilter || undefined;
   const salespersonId = salespersonFilter || undefined;
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } =
     useSampleRequestsQuery({
@@ -110,10 +133,16 @@ function StaffSampleRequestsList() {
       sorting,
       searchQuery,
       status,
+      stage,
       salespersonId,
     });
 
-  useResetPageOnFilterChange(setPagination, [statusFilter, salespersonFilter, searchQuery]);
+  useResetPageOnFilterChange(setPagination, [
+    statusFilter,
+    stageFilter,
+    salespersonFilter,
+    searchQuery,
+  ]);
 
   const rowHref = (row: SampleRequestRow) => {
     const search = buildDetailSearch(
@@ -123,7 +152,7 @@ function StaffSampleRequestsList() {
         sorting,
         searchQuery,
       },
-      { status, salesperson_id: salespersonId },
+      { status, stage, salesperson_id: salespersonId },
     );
     return `${BASE_PATH}/${row.id}${search ? `?${search}` : ''}`;
   };
@@ -166,8 +195,8 @@ function StaffSampleRequestsList() {
       {
         accessorKey: 'delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
-        size: 120,
-        cell: ({ row }) => deliveryText(row.original),
+        size: 150,
+        cell: ({ row }) => <DeliveryCell row={row.original} />,
         meta: { headerTitle: 'Delivery', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
@@ -241,7 +270,7 @@ function StaffSampleRequestsList() {
   });
 
   const filtersActiveCount =
-    (statusFilter ? 1 : 0) + (salespersonFilter ? 1 : 0);
+    (statusFilter ? 1 : 0) + (stageFilter ? 1 : 0) + (salespersonFilter ? 1 : 0);
 
   return (
     <DataGrid
@@ -286,6 +315,17 @@ function StaffSampleRequestsList() {
                     />
                   </div>
                   <div>
+                    <Label>Stage</Label>
+                    <SearchableMultiSelect
+                      value={splitMulti(stageFilter)}
+                      onChange={(v) => setStageFilter(joinMulti(v))}
+                      placeholder="Any stage"
+                      triggerClassName="mt-1 w-full"
+                      options={STAGE_OPTIONS}
+                      clearable
+                    />
+                  </div>
+                  <div>
                     <Label>Salesperson</Label>
                     <SearchableMultiSelect
                       value={splitMulti(salespersonFilter)}
@@ -316,6 +356,7 @@ function StaffSampleRequestsList() {
                         size="sm"
                         onClick={() => {
                           setStatusFilter('');
+                          setStageFilter('');
                           setSalespersonFilter('');
                         }}
                       >

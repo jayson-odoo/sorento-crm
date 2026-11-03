@@ -419,7 +419,7 @@ def test_a_clash_does_not_name_a_foreign_project_to_a_limited_user(scene):
     )
     db.add(lead)
     db.flush()
-    body = {"title": foreign.title, "customer_id": customer.id, "lead_id": lead.id}
+    body = {"title": foreign.title, "customer_id": customer.id, "lead_id": lead.id, "lead_source": "site_visit"}
     db.commit()
     with acting(db, w.a, LIMITED) as client:
         response = client.post(f"{BASE}/projects/", json=body)
@@ -547,3 +547,20 @@ def test_a_cross_project_write_follows_its_own_slug_for_a_limited_user(scene):
     with acting(db, w.a, LIMITED) as client:
         response = client.post(BASE + "/leads", json={"title": f"{MARKER} lead"})
         assert GUARD_REFUSAL not in response.text
+
+
+def test_make_quotation_follows_the_project_guard_like_its_siblings(scene):
+    """PS-PROPOSAL-QUOTATION: the new POST .../make-quotation is reachable by a limited user only
+    on their own project, through the same router guard as /issue and /sign. A foreign project
+    is a 404 before the route runs; on their own project the guard lets it through and the
+    route's own rules answer (here 404: the document id does not exist under that project)."""
+    db, w, p = scene
+    missing = str(uuid.uuid4())
+    body = {"issue_id": str(uuid.uuid4())}
+    template = BASE + "/projects/{project}/quotation-documents/" + missing + "/make-quotation"
+    with acting(db, w.a, LIMITED) as client:
+        foreign = client.post(template.format(project=p["p4"]), json=body)
+        assert foreign.status_code == 404, foreign.text
+        own = client.post(template.format(project=p["p1"]), json=body)
+        assert own.status_code == 404, own.text
+        assert own.json().get("code") == "quotation_document_not_found", own.text

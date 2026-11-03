@@ -18,6 +18,7 @@ plain `/sales-orders/{pso_id}` one removes any question of shadowing.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from datetime import date
 from dataclasses import dataclass, field
@@ -428,6 +429,12 @@ def save_line_draft(
                 else None
             ),
             actor_user_id=current_user["id"],
+            # CONFIRM-PREVIEW-STALE: only a caller that SENT the field is checked.
+            based_on_saved_at=(
+                payload.based_on_saved_at
+                if "based_on_saved_at" in payload.model_fields_set
+                else project_line_draft_service.NOT_GIVEN
+            ),
         )
         db.commit()
         return body
@@ -445,6 +452,7 @@ def save_line_draft(
 )
 def delete_line_draft(
     contribution_key: str,
+    based_on_saved_at: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -455,7 +463,13 @@ def delete_line_draft(
     asked for either way.
     """
     try:
-        project_line_draft_service.remove_draft(db, contribution_key)
+        # CONFIRM-PREVIEW-STALE: an Undo from a tab holding an older draft is refused (409).
+        project_line_draft_service.remove_draft(
+            db,
+            contribution_key,
+            # `none`: the caller holds no draft, so any stored one is newer than it.
+            based_on_saved_at=project_line_draft_service.based_on_from_query(based_on_saved_at),
+        )
         db.commit()
         return None
     except Exception as exc:
@@ -580,7 +594,8 @@ def _run_confirm_many(
         describe_writes=describe_writes,
     )
     stash = db.info.pop(_REFUSAL_STASH, {})
-    if not describe_writes:  # the admin Simulate records nothing (AC-W7)
+    # The admin Simulate records nothing (AC-W7), nor does the guide's quiet email dry run.
+    if not describe_writes and not (preview and getattr(payload, "quiet", False)):
         batch_of = {
             str(entry.pso_id): entry.batch_id or (None if any_per_order else payload.batch_id)
             for entry in payload.orders
@@ -722,6 +737,19 @@ _SIMULATE_PROBE_BUDGET = 200
 _SIMULATE_MAX_ORDERS = 50
 _PENDING_ADOPTION = "pending-adoption:"
 _NOT_PROBED = " (not probed: the simulation's per-line budget was spent)"
+#: Probing stops once this many lines in a row have failed with the very same text: that is
+#: the ORDER's failure (reported as when every line fails the same way), not a line's.
+_SIMULATE_PROBE_SAME_FAILURE_STOP = 5
+#: Keys `confirm_many(raw_errors=True)` adds for the simulation only; never in the reply.
+_SIMULATE_INTERNAL_KEYS = ("error_class", "elapsed_ms")
+
+
+def _is_order_level_failure(result: dict) -> bool:
+    """A refused commit or queued job (`SimulationWouldCommit`): the order's own refusal, so
+    probing line by line only repeats it. A 409 is NOT read as order-level: several name one
+    line without `failing_lines` (an already cancelled line, a superseded planning row), and
+    an order-wide 409 fails every line the same way, which the early stop already cuts."""
+    return result.get("error_class") == "SimulationWouldCommit"
 
 
 @router.post("/fulfilment-planning/simulate-confirm", response_model=ConfirmManyResult)
@@ -759,9 +787,16 @@ def simulate_confirm(
             message=f"Simulate at most {_SIMULATE_MAX_ORDERS} orders at a time.",
             code="simulate_too_many_orders",
         )
+    started = time.monotonic()
     try:
         with simulating(), simulation_session(db) as sim:
-            return {"results": _simulate_on(sim, payload, current_user)}
+            results = _simulate_on(sim, payload, current_user)
+        logger.info(
+            "simulate_confirm total orders=%d ms=%d",
+            len(payload.orders),
+            int((time.monotonic() - started) * 1000),
+        )
+        return {"results": results}
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(error_text(exc))
@@ -772,7 +807,7 @@ def simulate_confirm(
 def _simulate_on(sim: Session, payload: SimulateConfirmBody, current_user: dict) -> list:
     """The body of `simulate_confirm`, on the simulation session."""
     from app.models.project_so import ProjectSalesOrderLine
-    from app.services.confirm_simulation import LOCK_BUSY_MESSAGE, MAX_ERROR_CHARS, error_text
+    from app.services.confirm_simulation import error_text
 
     actor_id = current_user["id"]
     results: list = [None] * len(payload.orders)
@@ -898,61 +933,87 @@ def _simulate_on(sim: Session, payload: SimulateConfirmBody, current_user: dict)
             "error": error,
         }
 
+    def probe(entry, alone_line_id):
+        alone = ConfirmManyBody(
+            orders=[entry.model_copy(update={"only_line_ids": [alone_line_id]})],
+            batch_id=payload.batch_id,
+        )
+        # A probe that succeeds COMMITS on the simulation session, so it runs inside a
+        # connection-level savepoint that is rolled back: probes never change state.
+        sim.rollback()
+        savepoint = conn.begin_nested()
+        try:
+            return _run_confirm_many(
+                sim, alone, current_user, preview=False, raw_errors=True, describe_writes=True
+            )[0]
+        finally:
+            sim.rollback()
+            if savepoint.is_active:
+                savepoint.rollback()
+            sim.expire_all()
+
     for index, entry in resolved:
         result = results[index]
         result["simulated_errors"] = None
-        if result.get("ok") or result.get("failing_lines"):
-            continue
-        if result.get("error") == LOCK_BUSY_MESSAGE:
-            continue  # nothing ran for this order; probing line by line would only wait again
-        # Only the lines the run actually posted: `only_line_ids` narrows them.
-        keep = {str(x) for x in entry.only_line_ids} if entry.only_line_ids is not None else None
-        posted = [
-            str(line.project_line_id)
-            for line in entry.lines
-            if keep is None or str(line.project_line_id) in keep
-        ]
-        if len(posted) == 1:
-            result["simulated_errors"] = [line_error(entry, posted[0], result.get("error") or "")]
-            continue
-        to_probe = posted[:_SIMULATE_PROBE_LINE_CAP]
-        if len(to_probe) < 2:
-            continue
-        if len(to_probe) > budget:
-            result["error"] = (
-                (result.get("error") or "")[: MAX_ERROR_CHARS - len(_NOT_PROBED)] + _NOT_PROBED
-            )
-            continue
-        budget -= len(to_probe)
-        failed = []
-        for line_id in to_probe:
-            alone = ConfirmManyBody(
-                orders=[entry.model_copy(update={"only_line_ids": [line_id]})],
-                batch_id=payload.batch_id,
-            )
-            # A probe that succeeds COMMITS on the simulation session, so it runs inside a
-            # connection-level savepoint that is rolled back: probes never change state.
-            sim.rollback()
-            probe = conn.begin_nested()
-            try:
-                outcome = _run_confirm_many(
-                    sim, alone, current_user, preview=False, raw_errors=True, describe_writes=True
-                )[0]
-            finally:
-                sim.rollback()
-                if probe.is_active:
-                    probe.rollback()
-                sim.expire_all()
-            if not outcome.get("ok"):
-                failed.append((line_id, outcome.get("error") or ""))
-        # Every probed line failing the same way is the ORDER's failure, not a line's.
-        if len(failed) == len(to_probe) and len({text for _id, text in failed}) == 1:
-            continue
-        result["simulated_errors"] = [
-            line_error(entry, line_id, text) for line_id, text in failed
-        ] or None
+        started = time.monotonic()
+        try:
+            budget = _probe_order(entry, result, budget, probe, line_error)
+        finally:
+            order_ms = (result.get("elapsed_ms") or 0) + int((time.monotonic() - started) * 1000)
+            for key in _SIMULATE_INTERNAL_KEYS:
+                result.pop(key, None)
+            logger.info("simulate_confirm order=%s ms=%d", result.get("pso_id"), order_ms)
     return results
 
+
+def _probe_order(entry, result: dict, budget: int, probe, line_error) -> int:
+    """Name the line a failing order fails on by running each line alone (R1..R6). Writes
+    `result["simulated_errors"]` / `result["error"]`; answers the probe budget left."""
+    from app.services.confirm_simulation import LOCK_BUSY_MESSAGE, MAX_ERROR_CHARS
+
+    if result.get("ok") or result.get("failing_lines"):
+        return budget
+    if result.get("error") == LOCK_BUSY_MESSAGE:
+        return budget  # nothing ran for this order; probing line by line would only wait again
+    # Only the lines the run actually posted: `only_line_ids` narrows them.
+    keep = {str(x) for x in entry.only_line_ids} if entry.only_line_ids is not None else None
+    posted = [
+        str(line.project_line_id)
+        for line in entry.lines
+        if keep is None or str(line.project_line_id) in keep
+    ]
+    if len(posted) == 1:
+        result["simulated_errors"] = [line_error(entry, posted[0], result.get("error") or "")]
+        return budget
+    to_probe = posted[:_SIMULATE_PROBE_LINE_CAP]
+    if len(to_probe) < 2:
+        return budget
+    if len(to_probe) > budget:
+        result["error"] = (
+            (result.get("error") or "")[: MAX_ERROR_CHARS - len(_NOT_PROBED)] + _NOT_PROBED
+        )
+        return budget
+    if _is_order_level_failure(result):
+        return budget  # every line would repeat the order's own refusal
+    budget -= len(to_probe)
+    failed = []
+    for probed, line_id in enumerate(to_probe, start=1):
+        outcome = probe(entry, line_id)
+        if not outcome.get("ok"):
+            failed.append((line_id, outcome.get("error") or ""))
+        if (
+            probed == _SIMULATE_PROBE_SAME_FAILURE_STOP < len(to_probe)
+            and len(failed) == probed
+            and len({text for _id, text in failed}) == 1
+        ):
+            return budget  # the first lines all fail the same way: the order's failure
+    # Every probed line failing the same way is the ORDER's failure, not a line's.
+    if len(failed) == len(to_probe) and len({text for _id, text in failed}) == 1:
+        return budget
+    result["simulated_errors"] = [
+        line_error(entry, line_id, text) for line_id, text in failed
+    ] or None
+    return budget
 
 
 @router.get("/fulfilment-planning/stock-detail", response_model=StockDetail)

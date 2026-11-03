@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -634,6 +634,10 @@ class ConfirmManyBody(BaseModel):
     #: Run every order exactly as a real press and roll it back instead of committing; each
     #: ok order then answers with the order inquiry rows and transfers it would raise.
     preview: bool = False
+    #: CONFIRM-PREVIEW-STALE (review round 3, S3): with `preview`, the guided Confirm's own
+    #: dry run for the email's words, re-run on open and on each save. Records no refusal
+    #: (`_record_refusals`); the press's own dry run and the real press still do.
+    quiet: bool = False
 
 
 class PreviewInquiryRow(BaseModel):
@@ -740,6 +744,10 @@ class ConfirmManyOrderResult(BaseModel):
     landed_buy_notices: Optional[List[SupplyFailingLine]] = None
     #: The per-order twin of `ConfirmResult.stock_short_notices` (OI-CLOSED-LINE).
     stock_short_notices: Optional[List[SupplyFailingLine]] = None
+    #: CONFIRM-PREVIEW-STALE: on a dry run (`preview: true`) only, the purchasing email's own
+    #: lines for this order (`so_line_id`, `item_code`, `qty`, `delivery_date`, `remark`,
+    #: `was`), rendered by the same builder the real send uses. The guided Confirm prints them.
+    email_lines: Optional[List[Dict[str, Any]]] = None
     error: Optional[str] = None
     #: The lines the server refused, named the way `SupplyFailingLine` always is (AC-C02),
     #: when the refusal named any.

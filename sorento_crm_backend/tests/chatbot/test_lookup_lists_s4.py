@@ -220,7 +220,14 @@ def test_a_warm_up_longer_than_the_turn_budget_still_completes_and_turns_never_w
     t0 = time.monotonic()
     ll.warm(rows, embed)
     assert time.monotonic() - t0 < 0.5, "warm must return at once"
-    assert ll.usable_embedder(rows, embed) is None, "a turn during warm-up is spelling only"
+    during = ll.usable_embedder(rows, embed)
+    # SUPPLIER-ASK fix round 7: during the warm-up a turn reads the rows already cached (meaning) and spells the
+    # rest; it never embeds a row itself.
+    assert during is not embed and getattr(during, "needs_warm", True) is False, "a turn during warm-up embeds no row"
+    try:
+        during.matrix(ll.row_texts(rows))
+    except LookupError:
+        pass  # nothing cached yet: spelling only
     assert time.monotonic() - t0 < 0.5, "a turn never waits on the warm-up"
     deadline = time.monotonic() + 14
     while time.monotonic() < deadline and not embed.is_cached(ll.row_texts(rows)):

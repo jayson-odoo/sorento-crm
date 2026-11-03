@@ -58,7 +58,7 @@ def seed_user(db, *, contact_pk: str | None, slugs=(), status: str = "ACTIVE") -
         role = UserRole(id=str(uuid.uuid4()), slug=unique_code("role").lower(), name=unique_code("Role"))
         db.add(role)
         db.flush()
-        for slug in slugs:
+        for slug in dict.fromkeys(slugs):  # a slug named twice is held once
             perm = db.query(UserPermission).filter(UserPermission.slug == slug).first()
             if perm is None:
                 perm = UserPermission(id=str(uuid.uuid4()), slug=slug, name=slug)
@@ -79,10 +79,12 @@ def seed_agent_contact(db, *, slugs=("inventory.stock.view", "order_management.o
 
 def all_agent_slugs() -> tuple[str, ...]:
     """Every permission slug the agent's writes and user reads need: a user holding them is told of every tool."""
+    from app.services.chatbot.agent import tools as agent_tools
     from app.services.chatbot.agent import writes
 
     out: list[str] = []
-    for definition in [*writes.WRITES.values(), *writes.USER_READS.values()]:
+    ported = [agent_tools.REGISTRY[name] for name in agent_tools.PORTED_READS]
+    for definition in [*writes.WRITES.values(), *writes.USER_READS.values(), *ported]:
         slugs = (definition.user_permission,) if isinstance(definition.user_permission, str) else definition.user_permission
         out += [slug for slug in slugs if slug]
     return tuple(dict.fromkeys(out))

@@ -22,6 +22,7 @@ from app.schemas.projects import (
     ClashPreviewResponse,
     ProjectApproveRequest,
     ProjectCollaboratorResponse,
+    ProjectPartyPhoneFill,
     ProjectRegisterRequest,
     ProjectRejectRequest,
     ProjectResponse,
@@ -74,6 +75,7 @@ _PROFILE_KEYS = (
     "mukim",
     "architect_party_id",
     "main_contractor_party_id",
+    "lead_source",
     "estimated_sales_value",
     "launch_date",
     "expected_delivery_from",
@@ -407,11 +409,12 @@ def register_project(
                 db, project, actor_user_id=current_user["id"], permissions=permissions
             )
 
-        from app.services import project_registration_service as registrations
+        from app.services import project_party_contact_service as party_contacts
 
+        # Customer optional, lead source required (PS-REGISTRATION-V3 rules 8, 9).
         customer_id = payload.customer_id
-        registrations.require_customer(customer_id)
         svc.check_company_refs(db, company_id, {"customer_id": customer_id})
+        party_contacts.assert_lead_source(db, payload.lead_source, required=True)
 
         owner = payload.owner_user_id
         if owner and owner != current_user["id"] and MANAGE not in permissions:
@@ -438,6 +441,7 @@ def register_project(
             owner_user_id=owner,
             details=details,
         )
+        party_contacts.apply_registration_extras(db, project, body)
         db.commit()
         db.refresh(project)
         return svc.serialize_project(
@@ -677,6 +681,67 @@ def delete_project(
         )
         db.commit()
         return {"message": f"{code or 'The project registration'} deleted"}
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+# ------------------------------------------------------------- the project's parties (PS-REGISTRATION-V3)
+
+
+@router.get("/{project_id}/parties")
+def list_project_parties(
+    project_id: str,
+    _user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """Every party on the project, by role, with the project's people at each (rule 10)."""
+    from app.schemas.projects import ProjectPartyOnProject
+    from app.services import project_party_contact_service as party_contacts
+
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        project = svc.get_project_or_404(db, project_id, viewer_user_id=_user["id"])
+        data = [
+            ProjectPartyOnProject(**row).model_dump()
+            for row in party_contacts.list_project_parties(db, project)
+        ]
+        return {"data": data}
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/{project_id}/parties/{party_id}/phone")
+def fill_project_party_phone(
+    project_id: str,
+    party_id: str,
+    payload: ProjectPartyPhoneFill,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Save a number typed in the WhatsApp send for a party (or a person at it) that had none
+    (rules 11-13). The send right on THIS project is enough; an existing number is never
+    overwritten from here."""
+    from app.services import project_party_contact_service as party_contacts
+
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        validate_uuid_path(party_id, resource="Party")
+        if payload.stakeholder_id:
+            validate_uuid_path(payload.stakeholder_id, resource="Stakeholder")
+        project = svc.get_project_or_404(db, project_id)
+        svc.assert_can_write_project(
+            db, project, current_user["id"], permission_slugs(db, current_user["id"])
+        )
+        result = party_contacts.fill_party_phone(
+            db,
+            project,
+            party_id=party_id,
+            phone=payload.phone,
+            stakeholder_id=payload.stakeholder_id,
+        )
+        db.commit()
+        return result
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

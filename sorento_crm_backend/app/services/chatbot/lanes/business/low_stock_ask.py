@@ -28,10 +28,10 @@ from typing import Any
 
 from app.services.chatbot import principal as staff_principal
 from app.services.chatbot import required_fields as rf
+from app.services.chatbot.contracts import SUPPLIER_GRANT  # noqa: F401 - re-exported, the one copy of the key
 from app.services.chatbot.lanes.business import services as business_services
 
 ASK_NAME = "low_stock_report"
-SUPPLIER_GRANT = "purchase_orders.supplier"
 
 QUESTION = 'Which product category? Reply with a category (e.g. water tap) or "all".'
 GROUPING_QUESTION = "How should the low stock report be grouped?"

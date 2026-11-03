@@ -16,9 +16,15 @@ import {
 export const LINE_SPLITS_KEY = 'project-so-line-splits';
 
 /** One order's split read, the same key and read for every caller. */
-function lineSplitsQuery(psoId: string | null | undefined, enabled: boolean) {
+function lineSplitsQuery(
+  psoId: string | null | undefined,
+  enabled: boolean,
+  fresh = false,
+) {
   return {
     queryKey: [LINE_SPLITS_KEY, psoId ?? ''],
+    // CONFIRM-PREVIEW-STALE: a `fresh` reader (the guided Confirm) always reads again on mount.
+    ...(fresh ? { refetchOnMount: 'always' as const } : {}),
     // A read that answers no body is "no split lines" (`null`, the popups' empty state), not
     // a failed read: React Query refuses `undefined` as data.
     queryFn: async () => (await getLineSplits(psoId as string)) ?? null,
@@ -62,6 +68,11 @@ export function useLineSplits(
  * reads every page while it is open, so a page is ready by the time it is reached (and its
  * Next stays off only while its own read is still out). A null id reads nothing.
  */
-export function useLineSplitsReads(psoIds: readonly (string | null)[]) {
-  return useQueries({ queries: psoIds.map((psoId) => lineSplitsQuery(psoId, true)) });
+export function useLineSplitsReads(
+  psoIds: readonly (string | null)[],
+  options: { fresh?: boolean } = {},
+) {
+  return useQueries({
+    queries: psoIds.map((psoId) => lineSplitsQuery(psoId, true, Boolean(options.fresh))),
+  });
 }

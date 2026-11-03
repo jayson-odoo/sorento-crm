@@ -1195,7 +1195,8 @@ CATALOG: tuple[ToolSpec, ...] = (
     # --- sla-management (conversation tracking) ---
     ToolSpec(
         "crm_sla_conversation_tracking_dashboard",
-        "SLA conversation-tracking dashboard metrics.",
+        "SLA conversation-tracking dashboard metrics. average_response_time and average_resolution_time are in "
+        "hours; escalation_rate is a percent (0 to 100).",
         "/api/v1/sla-management/conversation-sla-tracking/dashboard",
         (),
         (),
@@ -1298,12 +1299,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Each row returns complaint_number, complaint_date, delivery_order_number, customer_name, "
             "product_code / product_type, defect_description, status, assigned_to_name, root_cause_name "
             "and resolution_name.\n\n"
-            "ALL FILTERS OPTIONAL - call with none to get the newest complaints page.\n"
+            "ALL FILTERS OPTIONAL - call with none to get the OLDEST complaints page; pass sort=complaint_date&dir=desc for the newest.\n"
             "  • `status` - EXACT single complaint status. Known values: draft, submitted, resubmitted "
             "(submitted again after a rejection), new, "
             "responded, updated, approved, rejected, processed_by_cs, fulfilled, closed. There is NO "
             "combined 'open' value: for 'open / unresolved complaints' either omit status (list all "
-            "newest-first) or pass one concrete in-progress status; closed / fulfilled are the terminal "
+            "oldest-first by default, or add sort=complaint_date&dir=desc for newest-first) or pass one concrete in-progress status; closed / fulfilled are the terminal "
             "states.\n"
             "  • `assigned_to` - respond_user_id of the assignee (or `__unassigned__` for unassigned).\n"
             "SORT KEYS: complaint_date, created_at, delivery_order_number, customer_name, product_code, "
@@ -1501,7 +1502,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "incoming, but a PO is placed') the CRM probes this tool itself.\n\n"
             "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
             "repeated; the line's warehouse - an SPO allocation also matches by its book "
-            "location code). "
+            "location code), `supplier_ids` (the PO's supplier, for 'outstanding POs for supplier "
+            "X'; under a `contact_id` it needs that contact's purchase_orders.supplier reveal, else "
+            "a 403). "
             "Date window: expected_date_from / expected_date_to (filters only; the expected "
             "date is not rendered in the reply).\n\n"
             "SORT: `sort` = expected_date | product | supplier | outstanding_qty | po_date | "
@@ -1516,8 +1519,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/procurement/purchase-orders/placed",
         (),
         (
-            "limit", "product_ids", "warehouse_ids", "expected_date_from", "expected_date_to",
-            "group_by", "include_summary", "sort", "dir",
+            "limit", "product_ids", "warehouse_ids", "supplier_ids", "expected_date_from",
+            "expected_date_to", "group_by", "include_summary", "sort", "dir",
             "contact_id", "space_id",
         ),
         domain="purchase_order",
@@ -1739,6 +1742,9 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "List the QUOTATION SCOPES on one project (e.g. House Units, Common Area) with each scope's "
             "current version number, current total, outcome (open / won / lost) and loss reason. "
+            "Each row names its document (`document_no`) and `document_kind`: 'proposal' (a priced offer, "
+            "a project may hold several, one per party) or 'quotation' (the one the won project's POs "
+            "are checked against; quote ITS figure when it exists). "
             "USE for 'what did we quote on <project>', 'how much is <project> worth', 'did we win the "
             "common area', 'why did we lose <project>'. "
             "A project has MANY quotations, one per scope, and each quotation has versions -- the total "

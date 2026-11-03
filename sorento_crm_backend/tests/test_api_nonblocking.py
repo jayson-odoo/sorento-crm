@@ -16,6 +16,7 @@ Red on main for every case: the light request finishes only after the slow one.
 from __future__ import annotations
 
 import asyncio
+import gc
 import threading
 import time
 import uuid
@@ -198,6 +199,34 @@ async def _race(method: str, url: str, kwargs: dict, light_path: str = "/health"
         return _entered_at["t"], done
 
 
+# A slow part that ran longer than its sleeps by more than this was stalled from outside.
+_STALL_SLACK = SLOW_SECONDS / 2
+
+
+def _race_without_process_stall(method: str, url: str, kwargs: dict, touches) -> tuple:
+    """`_race`, re-run (at most twice more) when the whole PROCESS stalled during it.
+
+    Release run 41547116862 (3 Nov): get_sales_report, a plain `def` route whose slow part ran
+    in the threadpool, took 3.29 s for ONE 1.5 s sleep, and /health answered at the same
+    instant. Nothing in the request can do that: a stop-the-world pause (a full GC pass in a
+    long-lived xdist worker on Python 3.12, a starved runner) froze the sleeping handler thread
+    and the event loop alike. Such a run proves nothing either way, so it is run again; a real
+    loop hold is never mistaken for one, because the handler's slow part then takes exactly
+    its sleeps and the race is not repeated. GC is also held off for the race itself.
+    """
+    for _ in range(3):
+        before = touches()
+        gc.collect()
+        gc.disable()
+        try:
+            started, done = asyncio.run(_race(method, url, kwargs))
+        finally:
+            gc.enable()
+        if done["slow"] - started <= (touches() - before) * SLOW_SECONDS + _STALL_SLACK:
+            break
+    return started, done
+
+
 @pytest.mark.parametrize("module,name,query,kwargs,params,hook", CASES, ids=[c[1] for c in CASES])
 def test_a_slow_report_does_not_freeze_the_worker(
     stubbed, monkeypatch, module, name, query, kwargs, params, hook
@@ -221,7 +250,9 @@ def test_a_slow_report_does_not_freeze_the_worker(
         monkeypatch.setattr(importlib.import_module(hook[0]), hook[1], _slow)
 
     method = sorted(route.methods)[0]
-    started, done = asyncio.run(_race(method, _url(route, query, params), kwargs))
+    started, done = _race_without_process_stall(
+        method, _url(route, query, params), kwargs, lambda: slow_db.touched + hooked["calls"]
+    )
 
     # Not vacuous: the slow part really ran, and really took its time.
     assert slow_db.touched + hooked["calls"] >= 1, "the request never reached its slow part"

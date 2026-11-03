@@ -139,6 +139,17 @@ export function formatMoneyExact(
   return `${negative ? '-' : ''}${currencyLabel(currency)} ${grouped}.${fraction}`;
 }
 
+/**
+ * `1,810,640.62`: the figure alone, for a cell whose heading already names the currency
+ * (`UNIT RATE (RM)`). The twin of the quotation PDF's `_money`
+ * (`project_quotation_pdf_service.py`), so the customer's sign page and the PDF print the same
+ * text in the same cell.
+ */
+export function formatFigureExact(value: string | null | undefined): string {
+  const money = formatMoneyExact(value, 'MYR');
+  return money.replace(/^(-?)RM /, '$1');
+}
+
 /** The same figure in the currency everything in project sales is quoted in. */
 export function formatMyrExact(value: string | null | undefined): string {
   return formatMoneyExact(value, 'MYR');
