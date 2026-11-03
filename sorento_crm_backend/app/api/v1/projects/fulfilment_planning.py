@@ -253,7 +253,15 @@ def list_plans(
     ),
     agent_code: Optional[str] = Query(None, description="One agent's code, exact match."),
     sort: Optional[
-        Literal["so_number", "customer_name", "agent_code", "revision_no", "state", "decided_at"]
+        Literal[
+            "so_number",
+            "customer_name",
+            "project_label",
+            "agent_code",
+            "revision_no",
+            "state",
+            "decided_at",
+        ]
     ] = Query(None, description="Defaults to decided_at, most recent first."),
     direction: Optional[Literal["asc", "desc"]] = Query("desc", alias="dir"),
     page: int = Query(1, ge=1),

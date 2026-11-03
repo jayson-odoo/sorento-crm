@@ -573,6 +573,7 @@ class PlanRow(BaseModel):
     project_id: Optional[str] = None
     so_number: Optional[str] = None
     customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     agent_code: Optional[str] = None
     agent_label: Optional[str] = None
     revision_no: int
