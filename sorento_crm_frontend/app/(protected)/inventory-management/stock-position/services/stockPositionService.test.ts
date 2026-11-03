@@ -17,7 +17,7 @@ beforeEach(() => {
 describe('stockPositionService', () => {
   it('sends the DataGrid params and only the filters that are set', async () => {
     api.apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
-    await getStockPosition(params, { supplierId: 's1' });
+    await getStockPosition(params, { supplierIds: ['s1'] });
     const url = new URL(api.apiFetch.mock.calls[0][0], 'http://x');
     expect(url.pathname).toBe('/api/v1/inventory/stock-position');
     expect(Object.fromEntries(url.searchParams)).toEqual({
@@ -27,13 +27,37 @@ describe('stockPositionService', () => {
 
   it('exports the same filtered, sorted set unpaged and saves the workbook', async () => {
     api.apiFetch.mockResolvedValue(new Response('xlsx', { status: 200 }));
-    await exportStockPosition(params, { brandId: 'b1' });
+    await exportStockPosition(params, { brandIds: ['b1'] });
     const url = new URL(api.apiFetch.mock.calls[0][0], 'http://x');
     expect(url.pathname).toBe('/api/v1/inventory/stock-position/export');
     expect(url.searchParams.get('page')).toBeNull();
     expect(url.searchParams.get('limit')).toBeNull();
     expect(url.searchParams.get('brand_id')).toBe('b1');
     expect(blob.saveBlobAs).toHaveBeenCalledWith(expect.anything(), 'stock-position.xlsx');
+  });
+
+  it('sends several values of a filter comma-joined in one param, and the export the same (FILTER-MULTISELECT)', async () => {
+    api.apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    const filters = { supplierIds: ['s1', 's2'], brandIds: ['b1', 'b2', 'b3'], warehouseIds: ['w1', 'w2'] };
+    await getStockPosition(params, filters);
+    const read = new URL(api.apiFetch.mock.calls[0][0], 'http://x').searchParams;
+    expect(read.getAll('supplier_id')).toEqual(['s1,s2']);
+    expect(read.getAll('brand_id')).toEqual(['b1,b2,b3']);
+    expect(read.getAll('warehouse_id')).toEqual(['w1,w2']);
+    api.apiFetch.mockResolvedValue(new Response('xlsx', { status: 200 }));
+    await exportStockPosition(params, filters);
+    const exp = new URL(api.apiFetch.mock.calls[1][0], 'http://x').searchParams;
+    expect(exp.get('supplier_id')).toBe('s1,s2');
+    expect(exp.get('brand_id')).toBe('b1,b2,b3');
+    expect(exp.get('warehouse_id')).toBe('w1,w2');
+    expect(exp.get('sort')).toBe('wh:BRW');
+  });
+
+  it('leaves an empty selection out of the query (no filter)', async () => {
+    api.apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    await getStockPosition(params, { supplierIds: [], brandIds: [], warehouseIds: [] });
+    const read = new URL(api.apiFetch.mock.calls[0][0], 'http://x').searchParams;
+    expect(read.has('supplier_id') || read.has('brand_id') || read.has('warehouse_id')).toBe(false);
   });
 
   it('sends the hidden total-part columns as repeated hide params, none when nothing is hidden', async () => {
