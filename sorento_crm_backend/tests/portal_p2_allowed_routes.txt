@@ -267,7 +267,6 @@ PUT /fulfilment-planning/lines/{contribution_key}/draft
 PUT /leads/{lead_id}
 PUT /planning-changes/{batch_id}/rows/{row_id}
 PUT /projects/{project_id}
-PUT /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/rows/{row_id}
 PUT /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/pages/{page_key}/edit
 PUT /projects/{project_id}/stakeholders/{stakeholder_id}
 PUT /projects/{project_id}/tasks/{task_id}

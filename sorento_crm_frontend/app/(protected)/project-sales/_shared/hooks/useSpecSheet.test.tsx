@@ -22,6 +22,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createAppQueryClient } from '@/providers/query-provider';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -64,7 +65,11 @@ function wrapperFor(client: QueryClient) {
 
 function newClient() {
   // Library defaults on purpose: the hooks must opt out themselves, not rely on a test default.
-  return new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  // The app's own client, so the focus rule under test is the shared default every query gets
+  // (QueryProvider, M4-04); hooks must not restate it. Retries off only to keep the test fast.
+  const client = createAppQueryClient();
+  client.setDefaultOptions({ queries: { ...client.getDefaultOptions().queries, retry: false } });
+  return client;
 }
 
 beforeEach(() => {
@@ -79,7 +84,7 @@ beforeEach(() => {
 });
 
 describe('useSpecSheet queries', () => {
-  it('every query opts out of refetch on window focus', async () => {
+  it('every query resolves to no refetch on window focus (the app default, not restated per hook)', async () => {
     const client = newClient();
     renderHook(
       () => ({

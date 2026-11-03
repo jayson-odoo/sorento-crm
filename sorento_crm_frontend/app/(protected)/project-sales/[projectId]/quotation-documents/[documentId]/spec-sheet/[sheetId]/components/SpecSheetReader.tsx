@@ -17,6 +17,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import RecordNavigation from '@/components/common/RecordNavigation';
+import { PageHeader } from '@/components/common/PageHeader';
+import { projectCrumbs } from '../../../../../../_shared/lib/crumbs';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import type { RecordAction } from '@/components/common/recordActions';
 import { PX_PER_MM } from '@/components/dealer-kit/ScaledSheet';
@@ -92,13 +94,17 @@ export function SpecSheetReader({
   // Local copy of the pages while a write is in flight, so a drag or a toggle lands at once.
   const [override, setOverride] = React.useState<SpecSheetPage[] | null>(null);
   const detailPages = detail?.pages;
-  const pages = React.useMemo(() => override ?? detailPages ?? [], [override, detailPages]);
+  const pages = React.useMemo(
+    () => override ?? detailPages ?? [],
+    [override, detailPages],
+  );
 
   // Page numbers count printed pages only; the cover is page 1.
   const numbers = React.useMemo(() => {
     const map = new Map<string, number>();
     let printed = 0;
-    for (const page of pages) if (page.key === COVER || !page.hidden) map.set(page.key, ++printed);
+    for (const page of pages)
+      if (page.key === COVER || !page.hidden) map.set(page.key, ++printed);
     return map;
   }, [pages]);
   const printedCount = numbers.size;
@@ -110,7 +116,10 @@ export function SpecSheetReader({
     setOverride(next);
     inflight.current += 1;
     update
-      .mutateAsync({ sheetId, body: { rows: next.filter((p) => p.key !== COVER).map(rowOf) } })
+      .mutateAsync({
+        sheetId,
+        body: { rows: next.filter((p) => p.key !== COVER).map(rowOf) },
+      })
       .catch(() => undefined)
       .finally(() => {
         inflight.current -= 1;
@@ -125,7 +134,11 @@ export function SpecSheetReader({
   commitRef.current = commit;
   const patch = React.useCallback(
     (key: string, change: Partial<SpecSheetPage>) =>
-      commitRef.current(pagesRef.current.map((page) => (page.key === key ? { ...page, ...change } : page))),
+      commitRef.current(
+        pagesRef.current.map((page) =>
+          page.key === key ? { ...page, ...change } : page,
+        ),
+      ),
     [],
   );
 
@@ -152,7 +165,9 @@ export function SpecSheetReader({
   const naturalW = (detail?.page_size.width_mm ?? 0) * PX_PER_MM;
   const naturalH = (detail?.page_size.height_mm ?? 0) * PX_PER_MM;
   const fitScale =
-    naturalW > 0 && width > 0 ? Math.max(0.1, (width - STACK_PAD * 2) / naturalW) : FALLBACK_SCALE;
+    naturalW > 0 && width > 0
+      ? Math.max(0.1, (width - STACK_PAD * 2) / naturalW)
+      : FALLBACK_SCALE;
   const scale = zoom ?? fitScale;
   const boxWidth = Math.round(naturalW * scale);
   const boxHeight = Math.round(naturalH * scale);
@@ -165,7 +180,9 @@ export function SpecSheetReader({
   const publishVisible = React.useCallback(() => {
     const next = visibleRef.current;
     setVisible((prev) =>
-      prev.size === next.size && [...next].every((k) => prev.has(k)) ? prev : new Set(next),
+      prev.size === next.size && [...next].every((k) => prev.has(k))
+        ? prev
+        : new Set(next),
     );
   }, []);
 
@@ -185,7 +202,9 @@ export function SpecSheetReader({
       },
       { root, rootMargin: WINDOW_MARGIN },
     );
-    root.querySelectorAll('[data-page-key]').forEach((el) => observer.observe(el));
+    root
+      .querySelectorAll('[data-page-key]')
+      .forEach((el) => observer.observe(el));
     return () => observer.disconnect();
   }, [pageKeys, publishVisible]);
 
@@ -202,26 +221,43 @@ export function SpecSheetReader({
     () => chunks.filter((keys) => keys.some((k) => visible.has(k))),
     [chunks, visible],
   );
-  const previews = useSpecSheetPreviews(projectId, documentId, sheetId, windowChunks);
+  const previews = useSpecSheetPreviews(
+    projectId,
+    documentId,
+    sheetId,
+    windowChunks,
+  );
 
   // key -> the payload that holds its sheet, for the pages that are near AND already fetched.
   // One payload object per fetched answer, so a page's props stay the same between renders.
   const payloads = React.useRef(new WeakMap<object, TagSheetDesignPayload>());
   const drawn = (() => {
-    const map = new Map<string, { payload: TagSheetDesignPayload; index: number }>();
+    const map = new Map<
+      string,
+      { payload: TagSheetDesignPayload; index: number }
+    >();
     const hidden = new Set(pages.filter((p) => p.hidden).map((p) => p.key));
     for (const result of previews) {
       const data = result.data;
       if (!data) continue;
       let payload = payloads.current.get(data);
       if (!payload) {
-        payload = { ...data, page_id: '', source: 'version' } as TagSheetDesignPayload;
+        payload = {
+          ...data,
+          page_id: '',
+          source: 'version',
+        } as TagSheetDesignPayload;
         payloads.current.set(data, payload);
       }
       const shared = payload;
       (data.doc?.sheets ?? []).forEach((sheet, index) => {
         const key = sheet.tags[0]?.request_tag_id;
-        if (key && visible.has(key) && !hidden.has(key) && map.size < DRAWN_MAX) {
+        if (
+          key &&
+          visible.has(key) &&
+          !hidden.has(key) &&
+          map.size < DRAWN_MAX
+        ) {
           map.set(key, { payload: shared, index });
         }
       });
@@ -296,16 +332,24 @@ export function SpecSheetReader({
   if (detailQuery.error || !detail) {
     return (
       <div className="rounded-lg border border-border px-4 py-10 text-center">
-        <h3 className="text-sm font-semibold text-foreground">The spec sheet could not load</h3>
+        <h3 className="text-sm font-semibold text-foreground">
+          The spec sheet could not load
+        </h3>
         <p className="mt-1 text-sm text-muted-foreground">
-          {detailQuery.error instanceof Error ? detailQuery.error.message : 'Try again in a moment.'}
+          {detailQuery.error instanceof Error
+            ? detailQuery.error.message
+            : 'Try again in a moment.'}
         </p>
       </div>
     );
   }
 
   const canEdit = detail.can_edit;
-  const versions = [detail.templates.cover, detail.templates.page, detail.templates.single]
+  const versions = [
+    detail.templates.cover,
+    detail.templates.page,
+    detail.templates.single,
+  ]
     .filter((t): t is NonNullable<typeof t> => t !== null)
     .map((t) => `${t.name} v${t.version_no}`)
     .join(' / ');
@@ -332,72 +376,111 @@ export function SpecSheetReader({
   const activeNumber = activeKey ? numbers.get(activeKey) : undefined;
 
   return (
-    <div className="flex min-w-0 flex-col gap-3" data-testid="spec-sheet-reader">
-      <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border bg-background px-4 py-3">
-        <div className="min-w-0">
-          <Button variant="ghost" size="sm" asChild className="-ms-2 mb-1">
-            <Link href={listHref}>
-              <ArrowLeft className="size-4" aria-hidden />
-              Spec sheets
-            </Link>
-          </Button>
-          <h1 className="truncate text-lg font-semibold" title={`${detail.label} ${detail.source_label}`}>
-            {detail.label} &middot; {detail.source_label}
-          </h1>
-          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span className="truncate" title={versions}>
-              {versions} &middot; {printedCount} pages
-            </span>
-            {detail.source_hint && <span>{detail.source_hint}</span>}
-            {detail.newer_templates && (
-              <Badge variant="warning" appearance="light" size="sm">
-                newer template published
-              </Badge>
+    <div
+      className="flex min-w-0 flex-col gap-3"
+      data-testid="spec-sheet-reader"
+    >
+      <PageHeader
+        title={`${detail.label} \u00b7 ${detail.source_label}`}
+        crumbs={projectCrumbs(
+          projectId,
+          { tab: 'quotations' },
+          { title: 'Spec sheets', path: listHref },
+          { title: detail.label },
+        )}
+        titleClassName="truncate"
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link href={listHref}>
+                <ArrowLeft className="size-4" aria-hidden />
+                Spec sheets
+              </Link>
+            </Button>
+            {canEdit && detail.newer_templates && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={update.isPending}
+                onClick={() =>
+                  update.mutate({
+                    sheetId,
+                    body: { use_latest_templates: true },
+                  })
+                }
+              >
+                Use latest templates
+              </Button>
+            )}
+            <RecordNavigation
+              index={null}
+              total={0}
+              hasPrevious={detail.prev_id !== null}
+              hasNext={detail.next_id !== null}
+              onPrevious={() =>
+                detail.prev_id && router.push(sheetHref(detail.prev_id))
+              }
+              onNext={() =>
+                detail.next_id && router.push(sheetHref(detail.next_id))
+              }
+              ariaLabel="spec sheet"
+            />
+            {deletion.countdown ?? (
+              <Button
+                size="sm"
+                disabled={exportPdf.isPending}
+                onClick={() => exportPdf.mutate(sheetId)}
+              >
+                <FileDown className="size-4" aria-hidden />
+                Export PDF
+              </Button>
+            )}
+            {menu.length > 0 && !deletion.countdown && (
+              <DetailActionsMenu
+                actions={menu}
+                trigger="ellipsis"
+                ariaLabel="spec sheet actions"
+              />
             )}
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {canEdit && detail.newer_templates && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={update.isPending}
-              onClick={() => update.mutate({ sheetId, body: { use_latest_templates: true } })}
-            >
-              Use latest templates
-            </Button>
-          )}
-          <RecordNavigation
-            index={null}
-            total={0}
-            hasPrevious={detail.prev_id !== null}
-            hasNext={detail.next_id !== null}
-            onPrevious={() => detail.prev_id && router.push(sheetHref(detail.prev_id))}
-            onNext={() => detail.next_id && router.push(sheetHref(detail.next_id))}
-            ariaLabel="spec sheet"
-          />
-          {deletion.countdown ?? (
-            <Button size="sm" disabled={exportPdf.isPending} onClick={() => exportPdf.mutate(sheetId)}>
-              <FileDown className="size-4" aria-hidden />
-              Export PDF
-            </Button>
-          )}
-          {menu.length > 0 && !deletion.countdown && (
-            <DetailActionsMenu actions={menu} trigger="ellipsis" ariaLabel="spec sheet actions" />
-          )}
-        </div>
+        }
+      />
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span className="truncate" title={versions}>
+          {versions} &middot; {printedCount} pages
+        </span>
+        {detail.source_hint && <span>{detail.source_hint}</span>}
+        {detail.newer_templates && (
+          <Badge variant="warning" appearance="light" size="sm">
+            newer template published
+          </Badge>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
         {isMobile && (
-          <Button size="sm" variant="outline" onClick={() => setRailOpen((open) => !open)}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setRailOpen((open) => !open)}
+          >
             Pages
           </Button>
         )}
-        <Button size="icon" variant="outline" aria-label="Previous page" onClick={() => step(-1)}>
+        <Button
+          size="icon"
+          variant="outline"
+          aria-label="Previous page"
+          onClick={() => step(-1)}
+        >
           <ChevronUp className="size-4" />
         </Button>
-        <Button size="icon" variant="outline" aria-label="Next page" onClick={() => step(1)}>
+        <Button
+          size="icon"
+          variant="outline"
+          aria-label="Next page"
+          onClick={() => step(1)}
+        >
           <ChevronDown className="size-4" />
         </Button>
         <span className="text-sm tabular-nums" data-testid="spec-sheet-page-of">
@@ -412,7 +495,9 @@ export function SpecSheetReader({
         >
           <Minus className="size-4" />
         </Button>
-        <span className="min-w-[3rem] text-center text-sm tabular-nums">{Math.round(scale * 100)}%</span>
+        <span className="min-w-[3rem] text-center text-sm tabular-nums">
+          {Math.round(scale * 100)}%
+        </span>
         <Button
           size="icon"
           variant="outline"
@@ -429,8 +514,10 @@ export function SpecSheetReader({
       <div className="relative flex min-w-0 gap-3">
         {(!isMobile || railOpen) && (
           <aside
-            className={`max-h-[calc(100vh-16rem)] min-h-[20rem] shrink-0 overflow-y-auto ${
-              isMobile ? 'absolute z-20 w-56 rounded-lg border border-border bg-background p-2 shadow-lg' : 'w-56'
+            className={`max-h-[calc(100dvh-16rem)] min-h-[20rem] shrink-0 overflow-y-auto ${
+              isMobile
+                ? 'absolute z-20 w-56 rounded-lg border border-border bg-background p-2 shadow-lg'
+                : 'w-56'
             }`}
           >
             <PageRail
@@ -439,14 +526,16 @@ export function SpecSheetReader({
               currentKey={activeKey}
               canEdit={canEdit}
               onSelect={scrollTo}
-              onReorder={(items) => commit([...pages.filter((p) => p.key === COVER), ...items])}
+              onReorder={(items) =>
+                commit([...pages.filter((p) => p.key === COVER), ...items])
+              }
             />
           </aside>
         )}
         <div
           ref={scroller}
           onScroll={onScroll}
-          className="relative max-h-[calc(100vh-16rem)] min-h-[20rem] min-w-0 flex-1 overflow-auto rounded-lg bg-muted"
+          className="relative max-h-[calc(100dvh-16rem)] min-h-[20rem] min-w-0 flex-1 overflow-auto rounded-lg bg-muted"
           data-testid="spec-sheet-stack"
         >
           <div
@@ -465,7 +554,11 @@ export function SpecSheetReader({
                 payload={drawn.get(page.key)?.payload ?? null}
                 sheetIndex={drawn.get(page.key)?.index}
                 canEdit={canEdit}
-                editDisabledReason={isMobile ? 'Open this on a desktop screen to edit a page.' : undefined}
+                editDisabledReason={
+                  isMobile
+                    ? 'Open this on a desktop screen to edit a page.'
+                    : undefined
+                }
                 editHref={`${sheetHref(sheetId)}/pages/${encodeURIComponent(page.key)}/edit`}
                 pages={pages}
                 documentId={documentId}

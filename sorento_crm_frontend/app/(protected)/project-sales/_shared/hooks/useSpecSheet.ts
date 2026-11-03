@@ -52,7 +52,6 @@ export function useSpecSheets(projectId: string, documentId: string) {
   return useQuery({
     queryKey: specSheetListKey(documentId),
     queryFn: () => listSpecSheets(projectId, documentId),
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -60,7 +59,6 @@ export function useSpecSheetDetail(projectId: string, documentId: string, sheetI
   return useQuery({
     queryKey: specSheetDetailKey(documentId, sheetId),
     queryFn: () => getSpecSheet(projectId, documentId, sheetId),
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -80,7 +78,6 @@ export function useSpecSheetPreview(
     queryKey: [...specSheetPreviewPrefix(documentId, sheetId), sorted],
     queryFn: () => getSpecSheetPreview(projectId, documentId, sheetId, sorted),
     enabled: enabled && sorted.length > 0,
-    refetchOnWindowFocus: false,
     retry: false,
     // Scrolling to a new window keeps the pages both windows share on screen while the next
     // preview loads, instead of blanking them.
@@ -106,7 +103,6 @@ export function useSpecSheetPreviews(
         queryKey: [...specSheetPreviewPrefix(documentId, sheetId), sorted],
         queryFn: () => getSpecSheetPreview(projectId, documentId, sheetId, sorted),
         enabled: sorted.length > 0,
-        refetchOnWindowFocus: false,
         retry: false,
         // Scrolling back to a chunk is a cache hit; writes invalidate the previews explicitly.
         staleTime: PREVIEW_STALE_MS,
@@ -124,7 +120,6 @@ export function useSpecSheetPageDesign(
   return useQuery({
     queryKey: [DESIGN_KEY, documentId, sheetId, key],
     queryFn: () => getSpecSheetPageDesign(projectId, documentId, sheetId, key),
-    refetchOnWindowFocus: false,
     // The designer owns its layers once opened; a background refetch would not reach them.
     staleTime: Infinity,
   });
