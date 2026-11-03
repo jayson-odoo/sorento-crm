@@ -235,12 +235,20 @@ export function ConfirmGuideDialog({
             ? [
                 [
                   line.lineId,
-                  { words: line.savedRemark, own: line.ownRemark, editable: line.remarkEditable },
+                  {
+                    words: line.savedRemark,
+                    own: line.ownRemark,
+                    editable: line.remarkEditable,
+                    silent: Boolean(line.purchasingSilent),
+                  },
                 ] as const,
               ]
             : [],
         ),
-      ) as ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>,
+      ) as ReadonlyMap<
+        string,
+        { words: string | null; own: string | null; editable: boolean; silent?: boolean }
+      >,
       keyOf: new Map(
         page.covered.flatMap((line) => (line.lineId ? [[line.lineId, line.key] as const] : [])),
       ) as ReadonlyMap<string, string>,

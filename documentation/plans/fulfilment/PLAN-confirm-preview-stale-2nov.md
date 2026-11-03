@@ -4,9 +4,8 @@
 > suggestion is removed by `PLAN-no-ac-moved-warning-3nov.md` (owner: a saved decision stands
 > silently). Do not restore it.
 
-Status: in review, round 2, PR #2091. Track: standard (the diff is past the ~300 line small fix
-limit; no migration, no auth/RBAC change). Items 1-3 here; item 4 is a stacked follow-up PR
-(crew ruling, 2 Nov). UAC: `confirm-preview-stale-2nov-acceptance-criteria.md`.
+Status: items 1-3 merged (#2091); item 4 in review, PR #2107 (fix round 3 Nov, CONFIRM-ITEM4).
+Track: standard for #2091; item 4 is the small fix track (no migration, no auth/RBAC change). UAC: `confirm-preview-stale-2nov-acceptance-criteria.md`.
 
 Owner report (2 Nov 2026, Fulfilment Planning): a sales order whose lines are all delivered in
 full, with a pending AutoCount change on one line (date 28/09 -> 02/11; suggestion Borrow 3 ->
@@ -74,6 +73,23 @@ Tests: `tests/scm/test_confirm_preview_delivered_change.py` (red first); vitest
   sidebar (`config/menu.config.tsx:390-396`); the Project Sales entry exists only in the compact
   menu (`:2260`). Not a bug.
 
+## Item 4 (stacked PR)
+
+Measured, not assumed: Confirm's facts plan a line at `plan_qty_of(core)` (ordered qty, owner
+ruling 14 Sep, `project_supply_service.py:518-543`, `_facts_for` `:9766`), so the #1362 skip
+(`:5785`, `open_qty <= 0`) only catches a line whose PLAN qty is 0 (cancelled, returned,
+`qty_required` 0). A delivered line's saved decision already reaches purchasing on a plain
+Confirm (pin: `test_a_delivered_line_s_saved_buy_on_a_plain_confirm_reaches_purchasing`). So no
+engine change: the sheet's F28 note was the only wrong part and is removed; the row prints the
+saved decision's words. The crew ruling "a Buy on a delivered line keeps the skip" rested on my
+earlier reading of the skip and is moot: the engine never skipped it. A Borrow on a delivered
+line raises its ORDER_BACK too (pin: `test_a_delivered_line_s_saved_borrow_on_a_plain_confirm_
+raises_its_order_back`): with "Borrow from another order" OFF (the default) `_location_order_backs`
+owes a borrow back on the borrowing line, its own location included. Only with that switch ON does
+an own-bin or own-group Borrow raise nothing (`_borrow_shortfalls`, "own location is never a
+hole"), delivered or not; whether the owner's 2 Nov ruling ("own-bin borrow emails purchasing")
+must hold with the switch ON too is a separate question, not this lane.
+
 ## Round 3 (crew final pass at 95e55739, 2 Nov): REMARK from the email itself
 
 Captured final Confirm, run through the real confirm and rendered with the live template: every
@@ -104,3 +120,13 @@ equal the email the real press dispatches; vitest the page prints the dry run's 
 - S4: a two-line order (DELAY on one, ADVANCE on the other) pins each line's own email row and
   the whole list against the real send (the zip). The builder's only REMARK transform is the
   mockup prefix, which no backend test covers yet.
+
+## Item 4 fix round (CONFIRM-ITEM4, 3 Nov)
+
+Crew's check on #2122 saw "Delivered in full: nothing goes to purchasing" beside ORDER BACK on a
+delivered dealer line while Confirm raised the order back and the email. Rule now, every order
+class: the note reads only when the guide's quiet email dry run previewed the order and its
+`email_lines` hold no line for the delivered line (`emailWordsFor` = null, carried as
+`purchasingSilent` from `FulfilmentBoardPanel` through `ConfirmGuideDialog` / `coveredSheetLines`
+/ `LineSplitEditor` into `LineSplitSheet`). Not previewed or a failed dry run: no claim. Merged
+main with #2116, #2122, #2123 (no suggestion rows over a saved decision) kept.
