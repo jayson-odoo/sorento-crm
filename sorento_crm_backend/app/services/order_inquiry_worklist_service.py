@@ -30,6 +30,7 @@ screen.
 """
 from __future__ import annotations
 
+from itertools import groupby
 import logging
 from datetime import date, datetime
 from decimal import Decimal
@@ -189,27 +190,77 @@ MONTH_WORD = (
     "DEC",
 )
 
-#: OI-EXPORT-SHARED (owner, 3 Nov 2026): every OI export prints the owner's eight columns
-#: (`order_inquiry_export.HEADINGS`), header row first, no title row. The reserve figures,
-#: SUPPLIER / PO NO, ACKNOWLEDGED, TAKEN / REMAINING / SUGGESTED and the split change
-#: columns the list export used to append are gone from it; `_records` still fills them so a
-#: caller may name them in `columns`.
-EXPORT_HEADINGS = order_inquiry_export.HEADINGS
+#: OI-EXPORT-SHARED (owner, 3 Nov 2026, answer (b)): one shared exporter, two layouts. This
+#: full layout is the LIST PAGE's own export (Excel and PDF); emails, their attachments and
+#: the per-project download print the eight-column `order_inquiry_export.HEADINGS`. Both are
+#: written header row first (no title row) and sorted S/O then delivery date.
+#: Read off `JAN - DEC 2026 ORDER.xlsx` row 2, trailing space and all. Retyping it
+#: tidier is how a column their filters no longer find gets introduced.
+EXPORT_HEADINGS = (
+    "SO DATE",
+    "S/O NO",
+    "ITEM CODE",
+    "QTY",
+    # OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026, "we just need more
+    # visibility"): the reserve figures right beside QTY, so a 170 line with a 70 reserve
+    # request never reads as one number. Inserted, not appended, on that ruling; the
+    # planning-board worksheet keeps its own ten columns (`WORKSHEET_HEADINGS`). Checked
+    # first: nothing in this repo reads the sheet back by position - the importer finds
+    # every column by its heading (`project_order_inquiry_reader.py` `_header_map`).
+    "REQUESTED RESERVE",
+    "RESERVED",
+    "TOTAL QTY",
+    "DELIVERY DATE",
+    "PROJECT/CUSTOMER",
+    "SUPPLIER",
+    "PO NO ",
+    "LOCATION",
+    # APPENDED after LOCATION (`PLAN-scm-oi-handshake.md` section 4): their own filters
+    # and habits are keyed on the columns above. The one exception is the owner's own
+    # ruling above (REQUESTED RESERVE / RESERVED beside QTY, 21 Oct 2026); any other new
+    # column still goes after these, never between them.
+    "ACKNOWLEDGED",
+    # Fix round (22 Sep): parity with the grid's own S3 columns (AC-D15) - the SAME
+    # row-level Taken/Remaining the grid has shown since S3, never the retired
+    # LINE-scoped `taken_from_po`/`remaining_open` pair. APPENDED for the same reason
+    # ACKNOWLEDGED was (review round, 22 Sep): they first landed BETWEEN Location and
+    # Acknowledged, which pushed a column purchasing's own filters already point at one
+    # place to the right.
+    "TAKEN",
+    "REMAINING",
+    # AC-LT-39 (G9, `PLAN-oi-links-autocount-truth-24sep.md` 3.5): the cascade's own
+    # guess, beside PO and SPO on every other surface - PO NO above stays real-links
+    # only. APPENDED for the same reason ACKNOWLEDGED/TAKEN/REMAINING were: their own
+    # filters are keyed on the columns before it being where they have always been.
+    "SUGGESTED",
+    # OI-LINE-SPLIT round 3 (UAC AC-G7, mock section 6): a split line's rows, the owner's
+    # own Excel: QTY / DELIVERY DATE the line's (first row only), CHANGE QUANTITY / CHANGE
+    # DATE each row's. APPENDED before REMARK; no existing column moves or is renamed.
+    "CHANGE QUANTITY",
+    "CHANGE DATE",
+    # OI-LINE-SPLIT (UAC D2, AC-G7): the sheet's remark for the row, else the generated one.
+    "REMARK",
+)
 
-#: The planning-board OI worksheet's columns (Lane C, AC-C3): the buyer's SUPPLIER and PO NO
-#: beside the owner's columns. No TOTAL QTY (OI-EXPORT-SHARED): it totalled a supplier and
-#: item code run, and under the S/O-then-date order such a run is no longer one block.
+#: The planning-board OI worksheet's columns (Lane C, AC-C3): the sheet's first ten as they
+#: stood before the reserve figures went in, no ACKNOWLEDGED / TAKEN / REMAINING. Unchanged by
+#: OI-EXPORT-SHARED apart from the order and the missing title row.
 WORKSHEET_HEADINGS = (
     "SO DATE",
     "S/O NO",
     "ITEM CODE",
     "QTY",
+    "TOTAL QTY",
     "DELIVERY DATE",
     "PROJECT/CUSTOMER",
     "SUPPLIER",
     "PO NO ",
     "LOCATION",
 )
+
+
+#: A record key, not a heading: the row's live quantity, which TOTAL QTY adds up.
+_LIVE_QTY = "_live_qty"
 
 
 def _export_reserve_qty(value: Any) -> Optional[float]:
@@ -3842,8 +3893,13 @@ class OrderInquiryWorklistService:
         self, rows: Sequence[Dict[str, Any]], *, columns: Sequence[str] = EXPORT_HEADINGS
     ) -> List[Dict[str, Any]]:
         """The sheet's rows as records (heading -> value) for the shared exporter
-        (`order_inquiry_export`), which owns the header row and the order (S/O, then
-        DELIVERY DATE). The ONE source the workbook and the PDF both print."""
+        (`order_inquiry_export`), in its order (S/O, then DELIVERY DATE). The ONE source the
+        workbook and the PDF both print.
+
+        TOTAL QTY prints on the last row of each run of rows sharing a SUPPLIER and ITEM
+        CODE, in the printed order, and totals that run: the same rule as before
+        OI-EXPORT-SHARED, over the new order. A single-row run has its own quantity as its
+        total, and printing it twice is noise."""
         out: List[Dict[str, Any]] = []
         # Without CHANGE QUANTITY a split line's rows print each row's own qty and date
         # (AC-G13), never a blank QTY ...
@@ -3890,8 +3946,17 @@ class OrderInquiryWorklistService:
                     order_inquiry_export.CONTINUED: not own_figures
                     and plan_key is not None
                     and plan_key[2] > 0,
+                    # What the row asks for now (a split inside another line's qty, or a
+                    # cancel, asks for nothing), for TOTAL QTY.
+                    _LIVE_QTY: _dec(row["live_qty"] if "live_qty" in row else row.get("qty")),
                 }
             )
+        out = order_inquiry_export.ordered(out)
+        runs = groupby(out, key=lambda record: (record["SUPPLIER"], record["ITEM CODE"]))
+        for _pair, members in runs:
+            run = list(members)
+            if len(run) > 1:
+                run[-1]["TOTAL QTY"] = float(sum((r[_LIVE_QTY] for r in run), _ZERO))
         return out
 
 

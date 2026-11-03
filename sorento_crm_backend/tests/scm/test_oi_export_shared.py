@@ -30,6 +30,30 @@ OWNER_HEADER = [
 ]
 
 
+#: The list page's own full layout (owner answer (b), 3 Nov 22:50), header row first.
+LIST_HEADER = [
+    "SO DATE",
+    "S/O NO",
+    "ITEM CODE",
+    "QTY",
+    "REQUESTED RESERVE",
+    "RESERVED",
+    "TOTAL QTY",
+    "DELIVERY DATE",
+    "PROJECT/CUSTOMER",
+    "SUPPLIER",
+    "PO NO ",
+    "LOCATION",
+    "ACKNOWLEDGED",
+    "TAKEN",
+    "REMAINING",
+    "SUGGESTED",
+    "CHANGE QUANTITY",
+    "CHANGE DATE",
+    "REMARK",
+]
+
+
 def _sheet(content: bytes):
     workbook = openpyxl.load_workbook(io.BytesIO(content))
     assert len(workbook.worksheets) == 1, workbook.sheetnames
@@ -235,9 +259,10 @@ def test_the_list_export_starts_with_the_header_and_sorts_by_so_then_date(db, ch
 
     _filename, content = OrderInquiryWorklistService(db).export_xlsx(row_ids=row_ids)
     sheet = _sheet(content)
-    assert _header(sheet) == OWNER_HEADER
+    assert _header(sheet) == LIST_HEADER
+    so_col, date_col, qty_col = (LIST_HEADER.index(h) for h in ("S/O NO", "DELIVERY DATE", "QTY"))
     body = _body(sheet)
-    assert [(row[1], _day(row[4]), row[3]) for row in body] == [
+    assert [(row[so_col], _day(row[date_col]), row[qty_col]) for row in body] == [
         (so_a, date(2026, 10, 1), 3.0),
         (so_a, date(2026, 12, 1), 2.0),
         (so_b, date(2026, 9, 1), 1.0),
@@ -258,8 +283,9 @@ def test_the_list_pdf_prints_the_same_header_and_order(db, chain, monkeypatch):
     so_a, so_b, seeded = _seed(db, chain["product"])
 
     OrderInquiryWorklistService(db).export_pdf(row_ids=[row.id for row in seeded])
-    assert printed["columns"] == OWNER_HEADER
-    assert [(row[1], row[4]) for row in printed["values"]] == [
+    assert printed["columns"] == LIST_HEADER
+    so_col, date_col = LIST_HEADER.index("S/O NO"), LIST_HEADER.index("DELIVERY DATE")
+    assert [(row[so_col], row[date_col]) for row in printed["values"]] == [
         (so_a, date(2026, 10, 1)),
         (so_a, date(2026, 12, 1)),
         (so_b, date(2026, 9, 1)),
@@ -280,13 +306,16 @@ def test_the_worksheet_starts_with_its_header_and_sorts_by_so_then_date(db, chai
     )
     sheet = _sheet(content)
     assert _header(sheet) == list(WORKSHEET_HEADINGS)
-    assert "TOTAL QTY" not in WORKSHEET_HEADINGS
-    so_col = list(WORKSHEET_HEADINGS).index("S/O NO")
-    date_col = list(WORKSHEET_HEADINGS).index("DELIVERY DATE")
-    assert [(row[so_col], _day(row[date_col])) for row in _body(sheet)] == [
-        (so_a, date(2026, 10, 1)),
-        (so_a, date(2026, 12, 1)),
-        (so_b, date(2026, 9, 1)),
+    heads = list(WORKSHEET_HEADINGS)
+    so_col, date_col, total_col = (heads.index(h) for h in ("S/O NO", "DELIVERY DATE", "TOTAL QTY"))
+    # All three rows are one item code with no supplier: one run in the printed order, so
+    # TOTAL QTY sits on its last row only and totals it.
+    assert [
+        (row[so_col], _day(row[date_col]), row[total_col]) for row in _body(sheet)
+    ] == [
+        (so_a, date(2026, 10, 1), None),
+        (so_a, date(2026, 12, 1), None),
+        (so_b, date(2026, 9, 1), 6.0),
     ]
 
 
