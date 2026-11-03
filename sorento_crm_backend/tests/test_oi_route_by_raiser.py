@@ -17,7 +17,7 @@ import pytest
 
 from app.models.project_so import INQUIRY_RAISED
 
-from .test_oi_route_by_class import _class_rule, _template
+from .test_oi_route_by_class import _class_rule
 from .test_order_inquiry_reserve import _api, _pso
 from .test_order_inquiry_worklist import LIST, _inquiry_for, _row, _uid, _user
 
@@ -52,6 +52,26 @@ def rs(monkeypatch):
     )
     monkeypatch.setattr("app.services.queue_service.enqueue_job", lambda *a, **kw: None)
     yield from _api(ACTION_PERMISSIONS)
+
+
+def _template(db):
+    """Prints every line's item code, so a test can read which lines an email carried."""
+    from app.models.email_template import EmailTemplate
+
+    template = EmailTemplate(
+        id=str(uuid.uuid4()),
+        code=f"zzt-oiraiser-{uuid.uuid4().hex[:6]}",
+        name="ZZT OI raiser",
+        subject="OI {{ sales_order_class }}",
+        body_html=(
+            "<p>{% for line in handover.lines %}[{{ line.item_code }}]{% endfor %}</p>"
+        ),
+        body_text=None,
+        is_active=True,
+    )
+    db.add(template)
+    db.flush()
+    return template
 
 
 def _row_automation(db, template, creator, *, name, recipient, conditions=None,
@@ -424,3 +444,16 @@ def test_resend_with_rows_off_falls_back_to_the_oldest_passing_row(rs):
     body = _ok(client.post(PREVIEW, json={"inquiry_ids": [agnes_oi.id]}))
     assert [e["to"]["name"] for e in body["emails"]] == ["ZZT Agnes Team"]
     assert body["automation_enabled"] is False
+
+
+def test_detail_names_the_raiser_not_the_id(rs):
+    """No ids in the UI: the automation detail's condition text reads the person's name."""
+    from app.rule_engine.prose import tree_text
+    from app.rule_engine.registry import fact_map
+    from app.services import automation_triggers
+
+    _client, world = rs
+    agnes = _user(world.db, "ZZT Agnes Prose")
+    facts = fact_map(automation_triggers.fact_sources_for(HANDOVER))
+    text = tree_text(_rule("not_in", [agnes]), facts, world.db)
+    assert text == "Sales order class is Project AND Raised by is none of ZZT Agnes Prose"

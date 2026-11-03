@@ -4815,6 +4815,11 @@ class ProjectOrderInquiryService:
             #: row lines with its one decision line (`record_saved_line`).
             "so_line_id": str(row.so_line_id) if row.so_line_id else None,
             "order_inquiry_id": str(row.order_inquiry_id),
+            #: OI-ROUTE-BY-RAISER: who raised this OI (the header's, never the actor), the
+            #: `order_inquiry.raisedBy` fact the automation rows read.
+            "raised_by": (
+                str(inquiry_scalars[0]) if inquiry_scalars and inquiry_scalars[0] else None
+            ),
             "pso_id": pso_id,
             "so_number": so_number,
             "customer": facts.get("customer"),
@@ -5840,6 +5845,12 @@ class ProjectOrderInquiryService:
                 "so_number": so_number,
                 #: DEALER-OI-ROUTE: the undo email routes by the same class rule.
                 "sales_order_class": email_class(facts.get("demand_class")),
+                #: OI-ROUTE-BY-RAISER: and by who raised the OI.
+                "raised_by": (
+                    str(existing_inquiry.raised_by)
+                    if existing_inquiry is not None and existing_inquiry.raised_by
+                    else None
+                ),
                 "customer": facts.get("customer"),
                 "project": facts.get("project"),
                 "revision_no": revision_no,
@@ -15161,13 +15172,89 @@ def _lines_by_inquiry(
     return out
 
 
-def handover_class_groups(items: Sequence[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
-    """The queued handover lines split by sales order class (DEALER-OI-ROUTE), in the
-    order each class first appears; one group when the write touched one class."""
-    groups: Dict[str, List[Dict[str, Any]]] = {}
+def handover_route_groups(
+    db: Session, items: Sequence[Dict[str, Any]]
+) -> List[List[Dict[str, Any]]]:
+    """The queued handover lines split into one email each (OI-ROUTE-BY-RAISER), in the
+    order each group first appears.
+
+    A group is the lines of one sales order class (DEALER-OI-ROUTE) that pass exactly the
+    same ENABLED handover rows for their class and their OI's raiser. So lines matching the
+    same rows share one email, a line never reaches a row it does not match, and no row gets
+    a line twice. Every line of a group answers every row's conditions the same way, so
+    `build_handover_email` stamps the group's first line's facts on the context and
+    `dispatch_event`'s own filter fires exactly that group's rows.
+
+    A line with no `raised_by` (queued before the field existed, or a stand-in) reads it off
+    its OI header."""
+    from app.models.automation import Automation
+    from app.services.automation_service import AutomationService
+
+    missing = {
+        str(item["order_inquiry_id"])
+        for item in items
+        if not item.get("raised_by") and item.get("order_inquiry_id")
+    }
+    if missing:
+        raisers = dict(
+            db.query(OrderInquiry.id, OrderInquiry.raised_by)
+            .filter(OrderInquiry.id.in_(list(missing)))
+            .all()
+        )
+        for item in items:
+            if not item.get("raised_by") and item.get("order_inquiry_id"):
+                raiser = raisers.get(str(item["order_inquiry_id"]))
+                item["raised_by"] = str(raiser) if raiser else None
+    rows = (
+        db.query(Automation)
+        .filter(
+            Automation.enabled.is_(True),
+            Automation.trigger_type == "order_inquiry_handover",
+        )
+        .order_by(Automation.created_at.asc())
+        .all()
+    )
+    service = AutomationService(db)
+    passing: Dict[Tuple[str, Optional[str]], frozenset] = {}
+    groups: Dict[Tuple[str, frozenset], List[Dict[str, Any]]] = {}
     for item in items:
-        groups.setdefault(item.get("sales_order_class") or PROJECT_DEMAND_CLASS, []).append(item)
+        cls = item.get("sales_order_class") or PROJECT_DEMAND_CLASS
+        facts = (cls, item.get("raised_by"))
+        if facts not in passing:
+            passing[facts] = frozenset(
+                str(row.id)
+                for row in service.passing_rows(
+                    "order_inquiry_handover",
+                    {"sales_order_class": cls, "raised_by": facts[1]},
+                    rows,
+                )
+            )
+        groups.setdefault((cls, passing[facts]), []).append(item)
     return list(groups.values())
+
+
+def send_handover_groups(
+    db: Session, items: Sequence[Dict[str, Any]], *, store_excel: bool
+) -> None:
+    """One `order_inquiry_handover` dispatch per `handover_route_groups` group, each
+    best-effort on its own: one failing never stops another's email."""
+    from app.services.automation_service import AutomationService
+
+    for group in handover_route_groups(db, items):
+        try:
+            built = build_handover_email(db, group, store_excel=store_excel)
+            if built is None:
+                continue
+            context, source_id = built
+            AutomationService(db).dispatch_event(
+                "order_inquiry_handover",
+                context=context,
+                source_kind="order_inquiry_handover",
+                source_id=source_id,
+            )
+        except Exception:  # noqa: BLE001 - a post-commit side effect never raises
+            db.rollback()
+            logger.exception("Automation dispatch(order_inquiry_handover) failed for one group")
 
 
 def build_handover_email(
@@ -15199,9 +15286,11 @@ def build_handover_email(
     if built is None:
         return None
     context, source_id = built
-    # DEALER-OI-ROUTE: the class the automation rows' conditions read. Every caller hands
-    # one class's lines (`handover_class_groups`; a resend is one OI, so one order).
+    # DEALER-OI-ROUTE / OI-ROUTE-BY-RAISER: the facts the automation rows' conditions read.
+    # Every caller hands lines that pass the same rows (`handover_route_groups`; a resend is
+    # one OI), so the first line's class and raiser answer for all of them.
     context["sales_order_class"] = items[0].get("sales_order_class") or PROJECT_DEMAND_CLASS
+    context["raised_by"] = items[0].get("raised_by")
     inquiry_ids = list(
         dict.fromkeys(item["order_inquiry_id"] for item in items if item.get("order_inquiry_id"))
     )
@@ -15244,6 +15333,8 @@ def _build_undo_context(
         "today": date.today().strftime("%d/%m/%Y"),
         # DEALER-OI-ROUTE: the class the automation rows' conditions read.
         "sales_order_class": item.get("sales_order_class") or PROJECT_DEMAND_CLASS,
+        # OI-ROUTE-BY-RAISER: and who raised the OI.
+        "raised_by": item.get("raised_by"),
     }
     return context, item["decision_id"]
 
@@ -15495,7 +15586,6 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             session.info.pop(_HANDOVER_PENDING_KEY, None)
 
         from app.database import SessionLocal
-        from app.services.automation_service import AutomationService
 
         fresh = SessionLocal()
         try:
@@ -15506,26 +15596,10 @@ def register_order_inquiry_post_commit_dispatch() -> None:
             from app.services import park_send
 
             store_excel = park_send.first_automation(fresh, "order_inquiry_handover") is not None
-            # DEALER-OI-ROUTE: one email per sales order class, so retail and project
-            # lines confirmed in one write reach their own purchasing team. Each class is
-            # best-effort on its own: one failing never stops the other's email.
-            for group in handover_class_groups(concluded):
-                try:
-                    built = build_handover_email(fresh, group, store_excel=store_excel)
-                    if built is None:
-                        continue
-                    context, source_id = built
-                    AutomationService(fresh).dispatch_event(
-                        "order_inquiry_handover",
-                        context=context,
-                        source_kind="order_inquiry_handover",
-                        source_id=source_id,
-                    )
-                except Exception:  # noqa: BLE001 - a post-commit side effect never raises
-                    fresh.rollback()
-                    logger.exception(
-                        "Automation dispatch(order_inquiry_handover) failed for one class"
-                    )
+            # DEALER-OI-ROUTE + OI-ROUTE-BY-RAISER: one email per sales order class and
+            # set of matching rows, so retail and project lines, and one raiser's lines
+            # routed apart, each reach their own people, once.
+            send_handover_groups(fresh, concluded, store_excel=store_excel)
         except Exception:  # noqa: BLE001 - a post-commit side effect never raises
             fresh.rollback()
             logger.exception("Automation dispatch(order_inquiry_handover) failed to queue")

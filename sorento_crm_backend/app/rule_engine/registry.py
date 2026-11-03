@@ -274,8 +274,35 @@ def _register_order_inquiry() -> None:
                     {"value": "project", "label": "Project"},
                 ],
             ),
+            # OI-ROUTE-BY-RAISER: who raised the order inquiry (`order_inquiries.raised_by`),
+            # so one person's orders can go to their own people. Every line of one email
+            # passes the same rows (`handover_route_groups`), so the context's one raiser
+            # answers for all of them.
+            FactDef(
+                key="order_inquiry.raisedBy",
+                label="Raised by",
+                type="enum",
+                # No raiser reads "" not None: a null fact fails every operator (D5), and
+                # an OI nobody raised must still reach the "is none of [Agnes]" row.
+                resolver=lambda ctx, db: str((ctx or {}).get("raised_by") or ""),
+                options=_raiser_options,
+            ),
         ],
     )
+
+
+def _raiser_options(db: Session, current_user: Any) -> List[Dict[str, str]]:
+    """Every person not in the trash, by name. A deactivated raiser stays pickable: a row
+    naming someone who left must still read back, and their open OIs can still be resent."""
+    from app.models.user import User
+
+    rows = (
+        db.query(User.id, User.name, User.email)
+        .filter(User.is_trashed.is_(False))
+        .order_by(User.name, User.email)
+        .all()
+    )
+    return [{"value": str(uid), "label": name or email} for uid, name, email in rows]
 
 
 def _register_certificate() -> None:
