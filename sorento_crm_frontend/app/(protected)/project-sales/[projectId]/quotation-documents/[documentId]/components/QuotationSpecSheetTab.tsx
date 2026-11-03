@@ -33,6 +33,7 @@ import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import {
   useSpecSheet,
   useSpecSheetMutations,
+  useSpecSheetPageImages,
   useSpecSheetPreview,
 } from '../../../../_shared/hooks/useSpecSheet';
 import type {
@@ -168,6 +169,7 @@ export function QuotationSpecSheetTab() {
         <SpecSheetPages
           pages={data.pages}
           payload={preview.data}
+          issueId={effectiveIssueId}
           canEdit={canEdit}
           onRows={(rows) => save.mutate({ rows })}
         />
@@ -337,11 +339,13 @@ function editableField(layer: TagLayer): EditableField | null {
 function SpecSheetPages({
   pages,
   payload,
+  issueId,
   canEdit,
   onRows,
 }: {
   pages: SpecSheetPage[];
   payload: SpecSheetPreview;
+  issueId: string | null;
   canEdit: boolean;
   onRows: (rows: SpecSheetRow[]) => void;
 }) {
@@ -375,11 +379,28 @@ function SpecSheetPages({
   const order = [COVER, ...items.map((p) => p.key)];
   const position = order.indexOf(selected);
   const current = items.find((p) => p.key === selected) ?? null;
-  const fullPayload = {
-    ...payload,
-    page_id: '',
-    source: 'version',
-  } as TagSheetDesignPayload;
+  const fullPayload = React.useMemo(
+    () => ({ ...payload, page_id: '', source: 'version' }) as TagSheetDesignPayload,
+    [payload],
+  );
+  // The open page alone draws a sharper rendition; the strip keeps the thumbnails.
+  const { projectId, documentId } = useQuotationDocumentScreen();
+  const sharper = useSpecSheetPageImages(
+    projectId,
+    documentId,
+    issueId,
+    selected === COVER || current?.hidden ? null : selected,
+  ).data?.images;
+  const openPayload = React.useMemo(
+    () =>
+      sharper && Object.keys(sharper).length > 0
+        ? ({
+            ...fullPayload,
+            images: { ...(fullPayload.images ?? {}), ...sharper },
+          } as TagSheetDesignPayload)
+        : fullPayload,
+    [fullPayload, sharper],
+  );
   const natural = sheetPixelSize(payload.doc ?? null);
   const thumbScale = natural.width > 0 ? THUMB_WIDTH / natural.width : 0;
   // The template decides the page size (16:9 in the sample, any size allowed), so the
@@ -484,7 +505,7 @@ function SpecSheetPages({
       </div>
 
       <OpenPage
-        payload={fullPayload}
+        payload={openPayload}
         sheet={sheetIndex.get(selected)}
         page={current}
         canEdit={canEdit}
@@ -492,6 +513,26 @@ function SpecSheetPages({
       />
     </div>
   );
+}
+
+/** Whether the element is within (or near) the viewport; true where there is no observer. */
+function useInView<T extends Element>() {
+  const [node, setNode] = React.useState<T | null>(null);
+  const [visible, setVisible] = React.useState(
+    () => typeof IntersectionObserver === 'undefined',
+  );
+  React.useEffect(() => {
+    if (!node || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) setVisible(entry.isIntersecting);
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [node]);
+  return { ref: setNode, visible };
 }
 
 function PageThumb({
@@ -515,6 +556,7 @@ function PageThumb({
   height: number;
   handle?: React.ReactNode;
 }) {
+  const inView = useInView<HTMLDivElement>();
   return (
     <div
       className={`relative flex shrink-0 flex-col gap-1 rounded-md p-1 ${
@@ -523,13 +565,18 @@ function PageThumb({
       style={{ width: THUMB_WIDTH + 8 }}
     >
       <div
+        ref={inView.ref}
         className="overflow-hidden rounded-sm bg-muted"
         style={{ width: THUMB_WIDTH, height }}
         onClick={onSelect}
         aria-hidden
       >
         {sheet !== undefined && scale > 0 ? (
-          <ScaledSheet payload={payload} sheetIndex={sheet} scale={scale} />
+          // Drawn only while in view of the strip (QUOTE-PERF-HOTFIX): one full renderer per
+          // page of a long quotation froze the browser.
+          inView.visible ? (
+            <ScaledSheet payload={payload} sheetIndex={sheet} scale={scale} />
+          ) : null
         ) : (
           <div className="flex size-full items-center justify-center text-2xs text-muted-foreground">
             Left out
