@@ -3347,8 +3347,13 @@ class ProductAttachmentService:
         product_attachment_data: ProductAttachmentCreate,
         created_by: Optional[str] = None,
         company_id: Optional[str] = None,
+        before_commit=None,
     ):
         """Create or refresh a product attachment relationship.
+
+        `before_commit(row)` runs on a NEW link only, after the flush and before the commit, so
+        a caller's audit row lands in the same transaction as the link (HOTFIX-ATTACH-AUDIT: a
+        failed audit insert must not leave a committed link behind a 500).
 
         TCK-2026-000020: external n8n intake re-posts the same (product_id,
         attachment_id) when an attachment is replaced. Switch from hard
@@ -3415,6 +3420,8 @@ class ProductAttachmentService:
         # back, and a refused choice (a PDF) must leave no link behind.
         self.db.flush()
         self._apply_brochure_choice(product_attachment, chosen)
+        if before_commit is not None:
+            before_commit(product_attachment)
         self.db.commit()
         self.db.refresh(product_attachment)
         self._notify_if_drawing(product_attachment)
