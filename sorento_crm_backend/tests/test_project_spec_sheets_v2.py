@@ -1735,3 +1735,28 @@ def test_nit_page_keys_with_a_slash_or_comma_work_through_the_routes():
             assert put.status_code == 200, put.text
         finally:
             _restore(originals)
+
+
+@pytest.mark.parametrize(
+    "props",
+    [
+        "a string",
+        ["a", "list"],
+        {"kind": "image", "assetId": ["x"]},
+        {"kind": "image", "assetId": {"id": "x"}},
+        {"kind": "image", "source": {"type": "asset", "assetId": ["x"]}},
+        {"kind": "image", "source": {"type": "asset", "assetId": {"id": "x"}}},
+        {"kind": "image", "source": "a string"},
+    ],
+)
+def test_malformed_props_or_asset_ids_answer_422_and_store_nothing(props):
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c)
+        with pytest.raises(AppException) as raised:
+            spec.save_page_edit(db, sheet, c["basin"].id, [{"id": "l1", "type": "image", "props": props}])
+        assert (raised.value.status_code, raised.value.code) == (422, "spec_sheet_page_edit_invalid")
+        assert sheet.page_edits == {}

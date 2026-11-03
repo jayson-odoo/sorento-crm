@@ -1139,6 +1139,18 @@ def _check_layer(layer: Any) -> None:
     """A bound check, not a schema: a dict with a known designer `type`, bounded depth and text."""
     if not isinstance(layer, dict) or layer.get("type") not in LAYER_TYPES:
         raise _invalid_layer("A layer is not one the designer produces.")
+    props = layer.get("props")
+    if props is not None:
+        if not isinstance(props, dict):
+            raise _invalid_layer("A layer's properties are malformed.")
+        source = props.get("source")
+        if source is not None and not isinstance(source, (dict, str)):
+            raise _invalid_layer("A layer's artwork source is malformed.")
+        # `_layer_asset_ids` reads these two places; each must be a plain id.
+        holders = [props] + ([source] if isinstance(source, dict) else [])
+        for holder in holders:
+            if holder.get("assetId") is not None and not isinstance(holder["assetId"], str):
+                raise _invalid_layer("A layer's artwork id is malformed.")
     _check_value(layer, 1)
 
 
