@@ -1512,3 +1512,41 @@ describe('QuotationFormClient: New and Edit proposal are one editor (PS-QUOTE-MA
     ]);
   });
 });
+
+describe('QuotationFormClient round 4: Copy columns from on New proposal', () => {
+  it('a second unsaved section copies the first one\'s headers and columns (fresh keys, no quantities)', async () => {
+    renderForm();
+    await nameScope(await openLines(), 'UNIT');
+    const unit = scopeCard('UNIT');
+    await addLine(unit, 1);
+    await pickProduct(unit, 1);
+    fireEvent.click(within(unit).getByRole('button', { name: 'Column header' }));
+    await within(unit).findByRole('textbox', { name: 'Column header Header 1' });
+    fireEvent.click(within(unit).getByRole('button', { name: '+ Column' }));
+    await within(unit).findByRole('textbox', { name: 'Column Column 1' });
+    fireEvent.change(within(unit).getByRole('textbox', { name: /^Qty on SRT-BASIN-02, Header 1 \/ Column 1/ }), {
+      target: { value: '7' },
+    });
+
+    const second = await addScope('LEVEL 9');
+    const trigger = within(second).getByRole('button', { name: /Copy columns from/ });
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    const menu = await screen.findByRole('menu');
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'UNIT' }));
+
+    const card = scopeCard('LEVEL 9');
+    expect(await within(card).findByRole('textbox', { name: 'Column header Header 1' })).toBeInTheDocument();
+    expect(within(card).getByRole('textbox', { name: 'Column Column 1' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    const [, body] = createQuotationDocument.mock.calls[0];
+    const [first, copy] = body.scopes;
+    expect(copy.matrix_columns.map((h: { label: string }) => h.label)).toEqual(['Header 1']);
+    expect(copy.matrix_columns[0].cols.map((c: { label: string }) => c.label)).toEqual(['Column 1']);
+    // Fresh keys, never the source's; and no quantities come across.
+    expect(copy.matrix_columns[0].key).not.toBe(first.matrix_columns[0].key);
+    expect(copy.matrix_columns[0].cols[0].key).not.toBe(first.matrix_columns[0].cols[0].key);
+    expect(copy.lines).toEqual([]);
+  });
+});

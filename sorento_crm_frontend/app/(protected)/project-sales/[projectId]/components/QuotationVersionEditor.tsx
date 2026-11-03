@@ -132,6 +132,7 @@ export function QuotationVersionEditor({
   locked = false,
   feedback,
   siblingScopes,
+  formCopySources,
 }: {
   project: Project;
   /**
@@ -141,6 +142,11 @@ export function QuotationVersionEditor({
   feedback?: QuotationFeedbackRow[];
   /** The document's other scopes, offered by Copy columns from while editing. */
   siblingScopes?: ProjectQuotation[];
+  /**
+   * The form's other sections not saved yet, with the headers they hold (round 4): offered by
+   * Copy columns from too, so on New proposal a second section can copy the first.
+   */
+  formCopySources?: { label: string; columns: MatrixHeader[] }[];
   /** The quotation is locked for approval: no per-scope revise is offered. */
   locked?: boolean;
   /**
@@ -174,9 +180,15 @@ export function QuotationVersionEditor({
   // The version's column headers (PS-QUOTE-MATRIX); `[]` is today's single Qty column. A scope
   // added on the form has no version yet: its headers are the form's, until Save.
   const formColumns = isUnsaved ? edit?.columns : undefined;
+  /**
+   * A saved scope's header as edited here, ahead of the server: the source of truth until every
+   * column write has answered (round 4). An answer never overwrites a change made after its
+   * request went out; when the queue drains the server's columns take over again.
+   */
+  const [localColumns, setLocalColumns] = React.useState<MatrixHeader[] | null>(null);
   const matrixColumns = React.useMemo<MatrixHeader[]>(
-    () => (isUnsaved ? (formColumns ?? []) : (selected?.matrix_columns ?? [])),
-    [formColumns, isUnsaved, selected?.matrix_columns],
+    () => (isUnsaved ? (formColumns ?? []) : (localColumns ?? selected?.matrix_columns ?? [])),
+    [formColumns, isUnsaved, localColumns, selected?.matrix_columns],
   );
   const withCells = hasColumns(matrixColumns);
 
@@ -496,8 +508,8 @@ export function QuotationVersionEditor({
           siblingVersions.rows.find(
             (row) => row.quotation.id === scope.id && row.version.is_current,
           )?.version.matrix_columns ?? [],
-      })),
-    [canEditColumns, siblingScopes, siblingVersions.rows],
+      })).concat(canEditColumns ? (formCopySources ?? []) : []),
+    [canEditColumns, formCopySources, siblingScopes, siblingVersions.rows],
   );
   /** The staged lines carried across a header change, by the server's own rule (R12). */
   const reshapeStaged = React.useCallback(
@@ -513,6 +525,46 @@ export function QuotationVersionEditor({
     },
     [stageForColumns],
   );
+  /**
+   * Column writes for a saved scope, one in flight at a time (round 4). Each is the WHOLE matrix,
+   * so two racing writes let the later ANSWER win: a rename made while "+ Column" was saving went
+   * back to "Column 1", on screen and in the database. A change made while a write is out only
+   * replaces `queued`; when the write answers, the latest matrix goes out once. A refused write
+   * puts the header and the staged lines back as they were before the batch, and toasts (the
+   * mutation's own toast).
+   */
+  const writes = React.useRef<{
+    inFlight: boolean;
+    queued: MatrixHeader[] | null;
+    /** The staged lines and header before the first unanswered change, for a rollback. */
+    before: { lines: StagedQuotationLine[] | null; columns: MatrixHeader[] } | null;
+  }>({ inFlight: false, queued: null, before: null });
+  const [writing, setWriting] = React.useState(false);
+  const pump = React.useCallback(async () => {
+    const queue = writes.current;
+    if (queue.inFlight || !queue.queued || !versionForColumns) return;
+    queue.inFlight = true;
+    setWriting(true);
+    try {
+      while (queue.queued) {
+        const columns = queue.queued;
+        queue.queued = null;
+        await columnsMutation.mutateAsync({ versionId: versionForColumns, columns });
+      }
+      queue.before = null;
+      // Drained: the server's columns (set from the last answer) take over.
+      setLocalColumns(null);
+    } catch {
+      const before = queue.before;
+      queue.queued = null;
+      queue.before = null;
+      setLocalColumns(null);
+      if (before?.lines && stageForColumns) stageForColumns(before.lines);
+    } finally {
+      queue.inFlight = false;
+      setWriting(false);
+    }
+  }, [columnsMutation, stageForColumns, versionForColumns]);
   const changeColumns = React.useCallback(
     async (next: MatrixHeader[]): Promise<boolean> => {
       const before = matrixColumns;
@@ -524,20 +576,16 @@ export function QuotationVersionEditor({
         return true;
       }
       if (!versionForColumns) return false;
-      try {
-        const result = await columnsMutation.mutateAsync({
-          versionId: versionForColumns,
-          columns: next,
-        });
-        reshapeStaged(before, result.version.matrix_columns ?? next);
-        return true;
-      } catch {
-        // The mutation already toasted the reason; the grid puts the header back as the
-        // server has it.
-        return false;
-      }
+      const queue = writes.current;
+      if (!queue.before) queue.before = { lines: stagedRef.current, columns: before };
+      // Optimistic, like create: the header and the moved quantities are on screen at once.
+      setLocalColumns(next);
+      reshapeStaged(before, next);
+      queue.queued = next;
+      void pump();
+      return true;
     },
-    [columnsMutation, isUnsaved, matrixColumns, reshapeStaged, setFormColumns, versionForColumns],
+    [isUnsaved, matrixColumns, pump, reshapeStaged, setFormColumns, versionForColumns],
   );
   /**
    * The notes as marks on the version on screen (R20, E6). They name the ISSUED version's lines;
@@ -568,7 +616,10 @@ export function QuotationVersionEditor({
 
   const [removalPending, setRemovalPending] = React.useState(false);
   const setColumnsBusy = edit?.setColumnsBusy;
-  const columnsBusy = removalPending || columnsMutation.isPending;
+  // Save waits only while a removal counts down or a column write is out (normally well under a
+  // second): lines sent across a column write would 422 on cells under keys not stored yet. The
+  // screen is already right meanwhile (optimistic), so nothing reads blank or 0.
+  const columnsBusy = removalPending || writing;
   React.useEffect(() => {
     setColumnsBusy?.(columnsBusy);
   }, [columnsBusy, setColumnsBusy]);
@@ -579,11 +630,12 @@ export function QuotationVersionEditor({
     () => ({
       columns: matrixColumns,
       onChange: canEditColumns ? changeColumns : undefined,
-      saving: columnsMutation.isPending,
+      // Never locks the header: changes made while a write is out are queued and merged.
+      saving: false,
       copySources,
       onRemovalPending: setRemovalPending,
     }),
-    [canEditColumns, changeColumns, columnsMutation.isPending, copySources, matrixColumns],
+    [canEditColumns, changeColumns, copySources, matrixColumns],
   );
 
   // Matched on the LIVE draft, so a description typed seconds ago is already findable, plus the

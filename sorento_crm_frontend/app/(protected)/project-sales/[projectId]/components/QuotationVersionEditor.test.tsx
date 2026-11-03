@@ -2797,3 +2797,112 @@ describe('QuotationVersionEditor fix round 3 (M2a): a new header is typed into b
     expect(toast.error).toHaveBeenCalledWith('Column labels must be unique');
   });
 });
+
+/**
+ * Crew NO-GO on 36047efdad (round 4). A column write is a whole-matrix save; two in flight and
+ * the last ANSWER won, so a rename made while "+ Column" was saving reverted to "Column 1" on
+ * screen and in the DB. And Edit waited for the server to show a moved quantity.
+ */
+describe('QuotationVersionEditor round 4: column writes are serial, Edit is optimistic', () => {
+  type Columns = { key: string; label: string; cols: { key: string; label: string }[] }[];
+
+  /** A fake column API: every write waits until the test releases it, in any order. */
+  function deferredWrites(base: QuotationVersion) {
+    const calls: { columns: Columns; release: () => void }[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    replaceQuotationColumns.mockImplementation(
+      (_versionId: string, columns: Columns) =>
+        new Promise((resolve) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          calls.push({
+            columns,
+            release: () => {
+              inFlight -= 1;
+              resolve({ version: { ...base, matrix_columns: columns }, lines: [] });
+            },
+          });
+        }),
+    );
+    return { calls, maxInFlight: () => maxInFlight };
+  }
+
+  const TANK: Columns = [{ key: 'bt', label: 'Break tank', cols: [] }];
+
+  it('a rename made while "+ Column" is saving survives, on screen and in the last write', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: TANK });
+    let stored = editable;
+    listQuotationVersions.mockImplementation(async () => [stored]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '5.00', qty_cells: { bt: '5.00' } })]);
+    const api = deferredWrites(editable);
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    const name = await screen.findByRole('textbox', { name: 'Column Column 1' });
+    fireEvent.change(name, { target: { value: 'Kitchen' } });
+    fireEvent.blur(name);
+
+    // One write at a time: the rename waits for the add.
+    await waitFor(() => expect(api.calls).toHaveLength(1));
+    expect(api.calls[0].columns[0].cols[0].label).toBe('Column 1');
+    expect(screen.getByRole('textbox', { name: 'Column Kitchen' })).toBeInTheDocument();
+
+    await act(async () => {
+      stored = { ...editable, matrix_columns: api.calls[0].columns };
+      api.calls[0].release();
+    });
+    // The first answer ("Column 1") does not overwrite the rename made after it was sent.
+    expect(screen.getByRole('textbox', { name: 'Column Kitchen' })).toBeInTheDocument();
+    await waitFor(() => expect(api.calls).toHaveLength(2));
+    expect(api.calls[1].columns[0].cols[0].label).toBe('Kitchen');
+
+    await act(async () => {
+      stored = { ...editable, matrix_columns: api.calls[1].columns };
+      api.calls[1].release();
+    });
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Column Kitchen' })).toBeInTheDocument());
+    expect(screen.queryByRole('textbox', { name: 'Column Column 1' })).toBeNull();
+    expect(api.maxInFlight()).toBe(1);
+  });
+
+  it('edits made during a write merge into ONE follow-up write of the latest matrix', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: TANK });
+    listQuotationVersions.mockResolvedValue([editable]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '5.00', qty_cells: { bt: '5.00' } })]);
+    const api = deferredWrites(editable);
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    await waitFor(() => expect(api.calls).toHaveLength(1));
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Column header' }));
+    expect(api.calls).toHaveLength(1);
+
+    await act(async () => api.calls[0].release());
+    await waitFor(() => expect(api.calls).toHaveLength(2));
+    expect(api.calls[1].columns.map((header) => header.label)).toEqual(['Break tank', 'Header 2', 'Header 3']);
+    await act(async () => api.calls[1].release());
+    expect(api.calls).toHaveLength(2);
+    expect(api.maxInFlight()).toBe(1);
+  });
+
+  it('Edit is optimistic: a header holding 5 that gets "+ Column" shows 5 and Total qty 5 at once', async () => {
+    const editable = version({ id: 'v2', version_no: 2, is_current: true, is_editable: true, matrix_columns: TANK });
+    listQuotationVersions.mockResolvedValue([editable]);
+    listQuotationLines.mockResolvedValue([line({ quantity: '5.00', qty_cells: { bt: '5.00' } })]);
+    const api = deferredWrites(editable);
+    await renderEditing();
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Column' }));
+    // Before the write answers: the moved quantity is in the new column, and the totals hold.
+    const cell = screen.getByRole('textbox', { name: /^Qty on SRT-WC-01, Break tank \/ Column 1/ });
+    expect(cell).toHaveValue('5.00');
+    const total = screen.getByRole('columnheader', { name: 'Total qty' });
+    expect(total).toBeInTheDocument();
+    const row = cell.closest('tr') as HTMLElement;
+    expect(within(row).getAllByText('5').length).toBeGreaterThan(0);
+    expect(stagedBody()[0]).toMatchObject({ quantity: '5.00' });
+    expect(api.calls.length).toBeLessThanOrEqual(1);
+  });
+});

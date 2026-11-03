@@ -946,11 +946,19 @@ function FormLines({
                 seriesId={active.series_id || null}
                 edit={scopeEditing}
                 feedback={feedback}
-                // Copy columns from: the document's other SAVED scopes (an unsaved one has none).
+                // Copy columns from: the document's other saved scopes, as their versions hold them...
                 siblingScopes={scopes
                   .filter((scope) => scope.id && scope.id !== active.id)
                   .map((scope) => quotations.find((row) => row.id === scope.id))
                   .filter((row): row is ProjectQuotation => Boolean(row))}
+                // ...and its sections not saved yet (New proposal): their headers as the form
+                // holds them. Copying takes headers and columns with fresh keys, never quantities.
+                formCopySources={scopes
+                  .filter((scope) => !scope.id && scope.key !== active.key)
+                  .map((scope) => ({
+                    label: scopeTitle(scope, scopes.indexOf(scope)),
+                    columns: scope.matrix_columns ?? [],
+                  }))}
               />
             )}
           </CardContent>
