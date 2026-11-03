@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 import AutomationForm from './AutomationForm';
 import type { Automation } from '../types/automation.types';
@@ -143,8 +143,72 @@ describe('AutomationForm - edit-open hydration (AC-H16)', () => {
     expect(payload.group_matches).toBe(false);
   });
 
-  it('a save through the To/Cc picker marks the row explicit (DEALER-OI-ROUTE card Q2 (b))', async () => {
+  // DEALER-OI-ROUTE card Q2 (b), as ruled on 1 Nov: an existing row keeps "first address To,
+  // the rest Cc" until someone changes a To or Cc address; only then do the boxes mean
+  // exactly To and Cc (OI-ROUTE-BY-RAISER review, 4 Nov).
+  it('a save that changes no To/Cc address keeps a legacy row legacy', async () => {
     renderEditForm();
+    await screen.findByLabelText(/Cc the person who raised it/i);
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
+    expect(updateMutateAsync.mock.calls[0][0].recipient_config.explicit_to_cc).toBe(false);
+  });
+
+  it('changing a checkbox is not a To/Cc address change', async () => {
+    renderEditForm();
+    fireEvent.click(await screen.findByLabelText(/Cc the person who raised it/i));
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
+    const config = updateMutateAsync.mock.calls[0][0].recipient_config;
+    expect(config.include_actor).toBe(false);
+    expect(config.explicit_to_cc).toBe(false);
+  });
+
+  it('adding a Cc address marks the row explicit', async () => {
+    renderEditForm();
+    await screen.findByLabelText(/Cc the person who raised it/i);
+    const cc = within(screen.getByRole('group', { name: 'Cc' }));
+    fireEvent.change(cc.getByPlaceholderText('someone@example.com'), {
+      target: { value: 'cc@example.com' },
+    });
+    fireEvent.click(cc.getByRole('button', { name: 'Add' }));
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
+    const config = updateMutateAsync.mock.calls[0][0].recipient_config;
+    expect(config.cc_emails).toEqual(['cc@example.com']);
+    expect(config.explicit_to_cc).toBe(true);
+  });
+
+  it('removing a To address marks the row explicit', async () => {
+    render(
+      <AutomationForm
+        open
+        onOpenChange={vi.fn()}
+        automation={{
+          ...AUTOMATION,
+          recipient_config: { ...AUTOMATION.recipient_config, extra_emails: ['to@example.com'] },
+        }}
+      />,
+    );
+    await screen.findByLabelText(/Cc the person who raised it/i);
+    const to = within(screen.getByRole('group', { name: 'To' }));
+    fireEvent.click(to.getByRole('button', { name: /remove to@example.com/i }));
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
+    expect(updateMutateAsync.mock.calls[0][0].recipient_config.explicit_to_cc).toBe(true);
+  });
+
+  it('a row already explicit stays explicit on an unchanged save', async () => {
+    render(
+      <AutomationForm
+        open
+        onOpenChange={vi.fn()}
+        automation={{
+          ...AUTOMATION,
+          recipient_config: { ...AUTOMATION.recipient_config, explicit_to_cc: true },
+        }}
+      />,
+    );
     await screen.findByLabelText(/Cc the person who raised it/i);
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
