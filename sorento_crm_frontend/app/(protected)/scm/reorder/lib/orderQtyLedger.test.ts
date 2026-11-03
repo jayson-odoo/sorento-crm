@@ -376,10 +376,10 @@ describe('ledgerDemandRows (OI-UX-FILTER-SNAPSHOT)', () => {
     ]);
     expect(row.customer).toBe('ACME / TAMAN JAYA');
   });
-  it('keeps the customer alone when the order has no project', () => {
+  it('prints a dash for the project when the order has none (AC-6)', () => {
     const [row] = ledgerDemandRows([
       { so_number: 'SO1', customer_label: 'ACME', project_title: null, required_date: null, qty: 1 },
     ]);
-    expect(row.customer).toBe('ACME');
+    expect(row.customer).toBe('ACME / -');
   });
 });

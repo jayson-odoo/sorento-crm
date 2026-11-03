@@ -759,6 +759,9 @@ class SpoPlanCover(BaseModel):
 
     so_number: Optional[str] = None
     customer: Optional[str] = None
+    # OI-UX-FILTER-SNAPSHOT: the order's customer and project, as the SO list names them.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     qty: float = 0.0
     warehouse: Optional[str] = None
 

@@ -415,7 +415,9 @@ export function StockTransfersPanel({
         },
       },
       {
-        id: 'customer_name',
+        id: 'customer',
+        // Sorts on the server by the column id (`customer`); the accessor only makes it sortable.
+        accessorKey: 'customer_name',
         header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
         size: 190,
         meta: { headerTitle: 'Customer' },
@@ -427,6 +429,7 @@ export function StockTransfersPanel({
       },
       {
         id: 'project_label',
+        accessorKey: 'project_label',
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
         size: 190,
         meta: { headerTitle: 'Project' },

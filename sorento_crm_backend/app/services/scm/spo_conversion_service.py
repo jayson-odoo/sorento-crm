@@ -1279,7 +1279,10 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
             "key": f"{_COVERAGE_PROJECT}:{row.id}",
             "kind": _COVERAGE_PROJECT,
             "document": doc_no or provisional,
-            "customer_name": project_title,
+            "customer_name": None,
+            # The inquiry's own project until its sales order is read below; an order not
+            # synced from AutoCount yet (or named by its provisional ref) keeps it.
+            "project_label": project_title,
             "required_date": row.delivery_date.isoformat() if row.delivery_date else None,
             "qty": need,
             "taken_qty": taken_qty,
@@ -1290,11 +1293,12 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
             # `sales_orders.demand_class` to read here, so this is a constant, not a lookup.
             "demand_class": _DEMAND_CLASS_PROJECT,
         })
-    # OI-UX-FILTER-SNAPSHOT: `customer_name` above held the project title; it now names the
+    # OI-UX-FILTER-SNAPSHOT: `customer_name` used to hold the project title; it now names the
     # order's own customer, and `project_label` is the order's project.
     parties = so_parties(db, numbers=[o["document"] for o in out])
     for o in out:
-        with_party(o, parties, o["document"])
+        if o["document"] in parties:
+            with_party(o, parties, o["document"])
     return out
 
 

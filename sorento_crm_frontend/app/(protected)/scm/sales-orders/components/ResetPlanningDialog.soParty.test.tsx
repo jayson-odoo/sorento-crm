@@ -30,6 +30,6 @@ describe('ResetPlanningDialog lists each order with customer / project', () => {
     expect(screen.getByText('SO1')).toBeInTheDocument();
     expect(screen.getByText('ACME / TAMAN JAYA')).toBeInTheDocument();
     expect(screen.getByText('SO2')).toBeInTheDocument();
-    expect(screen.getByText('BETA')).toBeInTheDocument();
+    expect(screen.getByText('BETA / -')).toBeInTheDocument();
   });
 });

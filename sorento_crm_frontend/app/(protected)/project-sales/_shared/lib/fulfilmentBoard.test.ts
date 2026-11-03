@@ -2493,7 +2493,7 @@ describe('boardAxis: pivoting the rows', () => {
       })),
     }));
     const { rows } = boardAxis('sales_order', named);
-    expect(rows.map((row) => row.party)).toEqual(['ACME SDN BHD / TAMAN JAYA', 'ACME SDN BHD']);
+    expect(rows.map((row) => row.party)).toEqual(['ACME SDN BHD / TAMAN JAYA', 'ACME SDN BHD / -']);
   });
 
   it('groups a sales-order row by ORDER, across every product it owes', () => {
@@ -3229,7 +3229,7 @@ describe('orderPartyLabels (OI-UX-FILTER-SNAPSHOT)', () => {
       ],
     );
     expect(labels.get('so-a')).toBe('ACME SDN BHD / TAMAN JAYA');
-    expect(labels.get('so-b')).toBe('BETA');
+    expect(labels.get('so-b')).toBe('BETA / -');
     expect(labels.has('so-c')).toBe(false);
   });
 });

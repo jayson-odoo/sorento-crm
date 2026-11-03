@@ -43,6 +43,6 @@ describe('NetDrill open sales orders', () => {
     render(<NetDrill row={{ id: 'r1' } as unknown as M8PlanRow} />);
 
     expect(screen.getByText('Alpha Debtor / Tuju Residences')).toBeInTheDocument();
-    expect(screen.getByText('Beta Trading')).toBeInTheDocument();
+    expect(screen.getByText('Beta Trading / -')).toBeInTheDocument();
   });
 });

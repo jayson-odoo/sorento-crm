@@ -113,7 +113,7 @@ SORTABLE_FIELDS = (
     "from_location",
     "to_location",
     "so_number",
-    "customer_name",
+    "customer",
     "project_label",
     "proposed_at",
 )
@@ -615,7 +615,7 @@ class StockTransferService:
             "from_location": _FromWarehouse.c.warehouse_code,
             "to_location": _ToWarehouse.c.warehouse_code,
             "so_number": SalesOrder.so_number,
-            "customer_name": _SO_CUSTOMER,
+            "customer": _SO_CUSTOMER,
             "project_label": SalesOrder.project_label,
             "proposed_at": StockTransfer.proposed_at,
         }.get(sort or "", StockTransfer.proposed_at)

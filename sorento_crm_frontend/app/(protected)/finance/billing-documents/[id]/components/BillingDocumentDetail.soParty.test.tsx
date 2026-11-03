@@ -48,7 +48,7 @@ describe('BillingDocumentDetail LineFrom', () => {
         doIds={new Map()}
       />,
     );
-    expect(screen.getByText('Maju Debtor')).toBeInTheDocument();
+    expect(screen.getByText('Maju Debtor / -')).toBeInTheDocument();
   });
 
   it('prints nothing extra when the order names neither', () => {
