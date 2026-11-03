@@ -130,6 +130,15 @@ def trading_name_key(text: str) -> str:
     return _words(_without_brackets(text.upper()))
 
 
+def group_named(text: str) -> str | None:
+    """The key of the turn's customer group whose own name `text` is, or None (a word typed as
+    a group's exact name speaks for that group)."""
+    groups = _GROUPS.get()
+    if groups is not None and normalise_customer_name(text) in groups.own:
+        return group_key(text)
+    return None
+
+
 def ledger_family_key(text: str, uuid: str | None = None) -> str:
     """The key the rows of ONE which-one-list entry share.
 

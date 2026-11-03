@@ -62,7 +62,10 @@ class TestFinding1FamilyGroupingOnTheCustomerRoster:
     returns six rows; the grouping is entirely the NARROWER's job, downstream, via the
     new `family_grouping` parameter `decide()`/`_choices()`/`_options()` gained). Re-
     pinned at the real landed seam after re-running this class post-merge caught the
-    stale one (same class of catch as finding 2's own re-pin note)."""
+    stale one (same class of catch as finding 2's own re-pin note).
+
+    Re-pinned 3 Nov 2026 (CUSTOMER-GROUP-GATE, owner ruling: explicit links only): the six
+    ledgers are one family because the office GROUPED them; ungrouped, each is its own line."""
 
     def test_six_ledgers_of_one_trading_name_are_one_family_not_six_options(self) -> None:
         """A resolver that returned all six real HANLIM ledger rows (seeded off the
@@ -81,14 +84,22 @@ class TestFinding1FamilyGroupingOnTheCustomerRoster:
             {"uuid": "6b52807a-537b-437d-9f55-12f7fda29df8", "canonical_code": "300-H118", "name": "HANLIM TRADING SDN BHD [A/C III]", "entity_type": "customer"},
             {"uuid": "2a4575e0-836b-4a5d-8566-73223465020d", "canonical_code": "300-H119", "name": "HANLIM TRADING SDN BHD [A/C IV]", "entity_type": "customer"},
         ]
-        outcome = decide(
-            kind="customer",
-            policy_value="must_narrow_one",
-            focus=Focus(),
-            profile=Profile(),
-            resolved_candidates=hanlim,
-            family_grouping="ledger_family",
-        )
+        from app.services.ledger_family import customer_groups
+
+        def run():
+            return decide(
+                kind="customer",
+                policy_value="must_narrow_one",
+                focus=Focus(),
+                profile=Profile(),
+                resolved_candidates=hanlim,
+                family_grouping="ledger_family",
+            )
+
+        ungrouped = run()
+        assert ungrouped.ask_kind == "customer_pick" and len(ungrouped.ask_options) == 6
+        with customer_groups({h["name"]: "HANLIM TRADING SDN BHD" for h in hanlim}):
+            outcome = run()
         assert outcome.ask_kind is None, (
             "six ledgers of ONE trading name must settle, never ask - "
             f"got ask_kind={outcome.ask_kind!r} options={outcome.ask_options!r}"

@@ -46,7 +46,7 @@ from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.predicate import derive_predicate_words, derive_require
 from app.services.chatbot.lanes.business.services import ResolveGateServices
 from app.services.chatbot.lanes.business.tier_gate import tier_gate as run_tier_gate
-from app.services.ledger_family import ledger_family_key, ledger_family_label, trading_name_key
+from app.services.ledger_family import group_named, ledger_family_key, ledger_family_label, trading_name_key
 
 logger = logging.getLogger(__name__)
 
@@ -1360,8 +1360,15 @@ def narrow_by_account(
             # alone (crew ruling, 2 Oct 2026): the names merely carrying its words (SOON
             # GUAN HENG TRADING) are dropped for this word, so neither their levels nor
             # their rows answer it. No match of that exact name -> every match counts.
+            # A word that is a customer group's own name speaks for that group's ledgers; any
+            # other word matches by trading name (search only, CUSTOMER-GROUP-GATE).
+            group = group_named(typed)
             exact = (
-                [m for m in customers if trading_name_key(_match_name(m)) == trading_name_key(typed)]
+                [
+                    m for m in customers
+                    if (ledger_family_key(_match_name(m), m.get("uuid")) == group if group
+                        else trading_name_key(_match_name(m)) == trading_name_key(typed))
+                ]
                 if exact_names
                 else []
             )

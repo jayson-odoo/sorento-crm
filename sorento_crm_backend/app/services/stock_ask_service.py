@@ -547,7 +547,7 @@ def _family_names_by_contact(db: Session, contact_ids: set[str]) -> dict[str, st
     from app.models.access import RespondContactCustomer
     from app.models.order import Customer
     from app.services.customer_group_service import family_ids, family_overrides
-    from app.services.ledger_family import customer_groups, ledger_family_key, ledger_family_label
+    from app.services.ledger_family import customer_group_of, customer_groups, ledger_family_key, without_ledger_marker
 
     keys: dict[str, set[str]] = {}
     labels: dict[str, str] = {}
@@ -564,7 +564,9 @@ def _family_names_by_contact(db: Session, contact_ids: set[str]) -> dict[str, st
             if not key:
                 continue
             keys.setdefault(contact_id, set()).add(key)
-            labels.setdefault(contact_id, ledger_family_label(name, str(customer_id)))
+            # The group's name, or the one ledger's name without its marker (ASKS-UX item 4).
+            group = customer_group_of(name or "", str(customer_id))
+            labels.setdefault(contact_id, group or without_ledger_marker(name))
     return {cid: labels[cid] for cid, found in keys.items() if len(found) == 1}
 
 
