@@ -659,6 +659,9 @@ def test_08_a_republished_template_keeps_the_old_version_until_use_latest_templa
         db.flush()
         t["page"].published_version_id = v2.id
         db.flush()
+        # Expire so `published_version` reloads as v2: a cached relationship would keep reading v1
+        # and hide a payload that draws the template's CURRENT version instead of the pinned one.
+        db.expire(t["page"])
 
         # Re-publish the single-item template (the basin page, no override) and the cover too.
         single_v1 = t["single"].published_version
@@ -675,6 +678,7 @@ def test_08_a_republished_template_keeps_the_old_version_until_use_latest_templa
             db.flush()
             template.published_version_id = fresh.id
             db.flush()
+            db.expire(template)
 
         # The sheet still draws the VERSIONS it pinned, in the window and in the export.
         for payload in (
