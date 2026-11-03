@@ -1178,7 +1178,9 @@ async def create_attachment(
             # (a) on #2133): a Replace never deletes in the request and never fails on the cleanup.
             from app.tasks.s3_tasks import enqueue_replaced_original_cleanup
 
-            enqueue_replaced_original_cleanup(replaced_provider, replaced_file_path, s3_key)
+            enqueue_replaced_original_cleanup(
+                replaced_provider, replaced_file_path, s3_key, db=db, attachment_id=attachment.id
+            )
             if attachment_type is not None and not is_promotion_upload:
                 try:
                     _create_and_send_webhook(

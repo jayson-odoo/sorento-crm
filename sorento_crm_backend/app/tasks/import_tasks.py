@@ -991,7 +991,9 @@ def process_attachment_bulk_import(
                         # Old bytes + renditions go in their own job, after the commit (#2133 (a)).
                         from app.tasks.s3_tasks import enqueue_replaced_original_cleanup
 
-                        enqueue_replaced_original_cleanup(replaced_provider, replaced_file_path, s3_key)
+                        enqueue_replaced_original_cleanup(
+                            replaced_provider, replaced_file_path, s3_key, db=db, attachment_id=attachment.id
+                        )
                         try:
                             create_and_send_webhook(
                                 db,

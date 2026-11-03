@@ -6,7 +6,7 @@ The legacy ``delete_s3_files`` entrypoint is preserved so already-queued jobs
 keep draining after deploy.
 """
 import logging
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,9 @@ def _normalize_key(raw_key: str) -> str:
     key = (raw_key or "").strip()
     if key.startswith("https://") or key.startswith("http://"):
         parsed = urlparse(key)
-        key = (parsed.path or "").lstrip("/")
+        # Decoded, as storage_router.extract_key does: a legacy stored URL carries %20 for the space
+        # the real object key has.
+        key = unquote(parsed.path or "").lstrip("/")
     return key
 
 
@@ -81,7 +83,21 @@ def delete_storage_files(items: list) -> dict:
     return {"deleted": deleted, "failed": failed}
 
 
-def enqueue_replaced_original_cleanup(provider, old_file_path, new_key: str) -> None:
+def _still_referenced(db, file_path: str, attachment_id) -> bool:
+    """Whether any OTHER attachment row, in any company, still points at ``file_path``."""
+    from app.models.base import company_scope
+    from app.models.resources import Attachment
+
+    with company_scope(db, None):
+        query = db.query(Attachment.id).filter(Attachment.file_path == file_path)
+        if attachment_id is not None:
+            query = query.filter(Attachment.id != str(attachment_id))
+        return query.first() is not None
+
+
+def enqueue_replaced_original_cleanup(
+    provider, old_file_path, new_key: str, *, db=None, attachment_id=None
+) -> None:
     """After a Replace commits: delete the OLD original and its renditions in the worker.
 
     Crew ruling (a) on #2133: a Replace writes new bytes under a new key, and the old objects would
@@ -91,6 +107,10 @@ def enqueue_replaced_original_cleanup(provider, old_file_path, new_key: str) -> 
     """
     old_key = _normalize_key(old_file_path or "")
     if not old_key or old_key == _normalize_key(new_key or ""):
+        return
+    if db is not None and old_file_path and _still_referenced(db, old_file_path, attachment_id):
+        # Rows from the old flat key schemes can share one object; the other row still shows it.
+        logger.info("Replaced file kept: another attachment still points at key=%s", old_key)
         return
     try:
         from app.services.queue_service import enqueue_job

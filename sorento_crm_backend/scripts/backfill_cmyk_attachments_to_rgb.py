@@ -143,7 +143,7 @@ def _process_one(db: Session, row: Attachment, dry_run: bool) -> str:
     db.add(row)
     db.commit()
     # The CMYK original and its renditions go too, in the worker (#2133 ruling (a)).
-    enqueue_replaced_original_cleanup(provider, old_file_path, new_key)
+    enqueue_replaced_original_cleanup(provider, old_file_path, new_key, db=db, attachment_id=row.id)
     return "converted"
 
 

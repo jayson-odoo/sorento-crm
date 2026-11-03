@@ -188,12 +188,24 @@ def test_cmyk_fix_script_writes_a_new_key_and_fresh_renditions(monkeypatch, inli
     monkeypatch.setattr(storage_router, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}")
     monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: store)
 
+    class _NoOtherRow:
+        def filter(self, *_a):
+            return self
+
+        def first(self):
+            return None
+
     class Db:
+        info: dict = {}
+
         def add(self, row):
             pass
 
         def commit(self):
             pass
+
+        def query(self, *_a):
+            return _NoOtherRow()
 
     row = SimpleNamespace(
         id="A1", storage_provider="r2", file_path=f"https://cdn.test/{old_key}",
@@ -416,3 +428,73 @@ def test_bulk_zip_replace_writes_a_new_key_and_queues_the_old_one_for_deletion(m
         assert new_key + ".medium.jpg" in store.objects
         for suffix in ("", ".thumb.jpg", ".medium.jpg"):
             assert old_key + suffix not in store.objects
+
+        # A second ZIP Replace with different bytes gets its own key (review B-new) ...
+        newer_bytes = _png((0, 200, 0))
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("zz-replace.png", newer_bytes)
+        store.objects["staging/zz2.zip"] = buffer.getvalue()
+        job2 = JobService(db).create_job("attachment_bulk_import", user["id"], filename="zz2.zip")
+        db.commit()
+        with patch("app.tasks.import_tasks.SessionLocal", _session_on_this_connection):
+            process_attachment_bulk_import(
+                str(job2.id), "staging/zz2.zip", kind.id, "[]", folder.id, user["id"],
+                on_conflict="replace", storage_provider="r2",
+            )
+        db.expire_all()
+        newest_key = _key(db.query(Attachment).filter(Attachment.id == existing.id).one().file_path)
+        assert newest_key != new_key
+        assert store.objects[newest_key] == newer_bytes
+        # ... and the first Replace's bytes go with it.
+        for suffix in ("", ".thumb.jpg", ".medium.jpg"):
+            assert new_key + suffix not in store.objects
+
+
+# --------------------------------------------------------------------------- review round 2
+
+
+def test_each_replace_with_new_bytes_gets_its_own_key_and_queues_the_last_one(env, inline_jobs):
+    """The key must follow the BYTES (review B-new): a constant version segment would let the second
+    Replace overwrite the first under one key, cached as immutable for a year."""
+    client, store = env
+    _upload(client, _png((10, 10, 10)))
+    first = _key(_upload(client, _png((200, 0, 0)), on_conflict="replace").json()["file_path"])
+    second = _key(_upload(client, _png((0, 200, 0)), on_conflict="replace").json()["file_path"])
+    assert first != second
+    for suffix in ("", ".thumb.jpg", ".medium.jpg"):
+        assert first + suffix not in store.objects  # the first Replace's bytes went with the second
+        assert second + suffix in store.objects
+
+
+def test_replace_keeps_an_old_object_another_row_still_points_at(env, inline_jobs):
+    """Review S-new: rows from the old flat key schemes can share a file_path; a Replace of one must
+    never delete the bytes the other still shows."""
+    import uuid
+
+    from app.models.resources import Attachment
+
+    client, store = env
+    first = _upload(client, _png((5, 5, 5))).json()
+    old_key = _key(first["file_path"])
+    db = app.dependency_overrides[app_database.get_db]().__next__()
+    db.add(Attachment(
+        id=str(uuid.uuid4()), original_filename="zz-twin.png", stored_filename="zz-twin.png",
+        file_path=first["file_path"], mime_type="image/png", storage_provider="r2",
+    ))
+    db.commit()
+
+    _upload(client, _png((6, 6, 6)), on_conflict="replace")
+    for suffix in ("", ".thumb.jpg", ".medium.jpg"):
+        assert old_key + suffix in store.objects
+
+
+def test_delete_storage_files_reads_an_encoded_legacy_url_as_its_real_key(monkeypatch):
+    from app.services import storage_router
+    from app.tasks.s3_tasks import delete_storage_files
+
+    store = MemoryStore()
+    store.objects["p/my photo.png"] = b"x"
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: store)
+    delete_storage_files([("r2", "https://cdn.test/p/my%20photo.png")])
+    assert store.objects == {}
