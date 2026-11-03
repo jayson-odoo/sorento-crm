@@ -28,7 +28,8 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from app.models.notification import Notification
+import pytest
+
 from app.models.planning_change import (
     PLANNING_CHANGE_STATE_APPLIED,
     PlanningChangeBatch,
@@ -41,6 +42,35 @@ from tests.scm.test_planning_change_gate_held_or_inquiry import _adopted_line, _
 from tests.test_planning_changes import BASE, _confirm, _line_payload, _stock, api  # noqa: F401
 
 DELAY_PAST_WINDOW = date(2027, 3, 10)
+
+
+@pytest.fixture()
+def sent_notices(monkeypatch) -> list:
+    """What purchasing was sent. The notice is queued during the write and sent on a FRESH
+    session once it commits (CONFIRM-REMARK-FIX F1: the notify must never commit the Confirm
+    mid-write), so it is read off the send itself, not off this test's own session."""
+    from app.services.notification_service import NotificationService
+    from app.services.project_order_inquiry_service import (
+        register_order_inquiry_post_commit_dispatch,
+    )
+
+    register_order_inquiry_post_commit_dispatch()
+    sent: list = []
+
+    def _spy(self, **kwargs):
+        sent.append(kwargs)
+        # The real send commits its session; so does the spy, or a notify that commits the
+        # Confirm mid-write (the F1 bug) would pass here.
+        self.db.commit()
+
+    monkeypatch.setattr(NotificationService, "create_with_channel_preferences", _spy)
+    return sent
+
+
+def _notices(sent: list, *, user_id, dedup_key) -> list:
+    return [
+        n for n in sent if n["user_id"] == str(user_id) and n["dedup_key"] == dedup_key
+    ]
 
 
 def _seed_purchasing_user(db) -> User:
@@ -63,7 +93,7 @@ def _seed_purchasing_user(db) -> User:
     return user
 
 
-def test_confirm_all_applies_the_batch_and_notifies_purchasing_without_dying(api):
+def test_confirm_all_applies_the_batch_and_notifies_purchasing_without_dying(api, sent_notices):
     client, world = api
     db = world.db
     purchasing_user = _seed_purchasing_user(db)
@@ -96,12 +126,8 @@ def test_confirm_all_applies_the_batch_and_notifies_purchasing_without_dying(api
     assert reloaded_batch.applied_at is not None
 
     dedup_key = f"{a_batch.id}:{a_order.id}:planning_change_applied"
-    notifications = (
-        db.query(Notification)
-        .filter_by(user_id=purchasing_user.id, dedup_key=dedup_key)
-        .all()
-    )
-    assert len(notifications) == 1, notifications
+    notifications = _notices(sent_notices, user_id=purchasing_user.id, dedup_key=dedup_key)
+    assert len(notifications) == 1, sent_notices
 
 
 # --------------------------------------------------------------------------- #
@@ -131,7 +157,7 @@ def _seed_user_with_role(db, slug: str) -> User:
     return user
 
 
-def test_purchasing_manager_and_executive_roles_are_notified(api):
+def test_purchasing_manager_and_executive_roles_are_notified(api, sent_notices):
     """Neither seeded user holds the bare `purchasing` slug - only the two roles live
     people actually hold - so a notification for both proves the resolution widened past
     the one literal string."""
@@ -161,15 +187,11 @@ def test_purchasing_manager_and_executive_roles_are_notified(api):
 
     dedup_key = f"{a_batch.id}:{a_order.id}:planning_change_applied"
     for user in (manager, executive):
-        notifications = (
-            db.query(Notification)
-            .filter_by(user_id=user.id, dedup_key=dedup_key)
-            .all()
-        )
-        assert len(notifications) == 1, (user.email, notifications)
+        notifications = _notices(sent_notices, user_id=user.id, dedup_key=dedup_key)
+        assert len(notifications) == 1, (user.email, sent_notices)
 
 
-def test_a_role_that_merely_contains_the_word_is_not_notified(api):
+def test_a_role_that_merely_contains_the_word_is_not_notified(api, sent_notices):
     """A role slug that happens to CONTAIN "purchasing" but is not a purchasing role
     itself (an admin role covering purchasing among other things, say) must not resolve -
     the widened match is by every role whose slug STARTS WITH `purchasing`, not a
@@ -198,9 +220,4 @@ def test_a_role_that_merely_contains_the_word_is_not_notified(api):
     assert a_result["ok"] is True, a_result
 
     dedup_key = f"{a_batch.id}:{a_order.id}:planning_change_applied"
-    notifications = (
-        db.query(Notification)
-        .filter_by(user_id=bystander.id, dedup_key=dedup_key)
-        .all()
-    )
-    assert notifications == [], notifications
+    assert _notices(sent_notices, user_id=bystander.id, dedup_key=dedup_key) == []

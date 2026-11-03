@@ -12,9 +12,10 @@ Raw SQL naming a ``projects`` table MUST be schema-qualified: the default search
 """
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Iterable, Sequence, Tuple
 
 from sqlalchemy import text as sa_text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # Children before parents: template_roles -> templates -> types. These are the only tables
@@ -36,3 +37,33 @@ def delete_project_seed_rows(db: Session, company_ids: Sequence[str]) -> None:
                 sa_text(f"DELETE FROM {table} WHERE company_id = :company_id"),
                 {"company_id": company_id},
             )
+
+
+def delete_companies_and_children(
+    db: Session,
+    company_ids: Sequence[str],
+    statements: Iterable[Tuple[str, dict]],
+    attempts: int = 3,
+) -> None:
+    """Delete the project seed rows, run ``statements`` (the suite's own children-first deletes,
+    ending with ``DELETE FROM companies``) and commit, retrying when the seed raced in.
+
+    ``project_seed_service.run`` seeds every active company in ONE transaction and commits at
+    the end. When another xdist worker's seed has inserted ``projects.types`` for these
+    companies but not committed yet, ``delete_project_seed_rows`` cannot see those rows, the
+    ``DELETE FROM companies`` waits on the seed's key-share lock, and once the seed commits the
+    FK check finds them: ``types_company_id_fkey`` (release run 41547116862, shard 5). On a
+    retry the seed rows are committed and visible, so the same deletes go through.
+    """
+    statements = list(statements)
+    for attempt in range(attempts):
+        try:
+            delete_project_seed_rows(db, company_ids)
+            for sql, params in statements:
+                db.execute(sa_text(sql), params)
+            db.commit()
+            return
+        except IntegrityError as exc:
+            db.rollback()
+            if "types_company_id_fkey" not in str(exc) or attempt == attempts - 1:
+                raise

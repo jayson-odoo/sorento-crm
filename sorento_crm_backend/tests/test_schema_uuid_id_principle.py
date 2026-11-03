@@ -51,6 +51,9 @@ EXEMPTIONS: dict[str, str] = {
     # not, and a bare "brands" key here would exempt the wrong table.
     "projects.brands": "JUNCTION (project_id + brand_id)",
     "projects.collaborators": "JUNCTION (project_id + user_id)",
+    # PS-REGISTRATION-V3 (psr3_0001): a party playing a role on a project. Set and read as a
+    # whole list per project (set_party_links), never addressed by its own id.
+    "projects.party_links": "JUNCTION (project_id + role + party_id)",
     "projects.series_brands": "JUNCTION (series_id + brand_id), mirrors series_categories",
     "projects.series_categories": "JUNCTION (series_id + category_id)",
     "projects.series_products": "JUNCTION (series_id + product_id)",
