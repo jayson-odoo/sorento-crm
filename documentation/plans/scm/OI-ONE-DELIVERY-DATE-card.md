@@ -1,6 +1,6 @@
 # OI-ONE-DELIVERY-DATE owner card (3 Nov 2026)
 
-Status: CARD POSTED with dev data (3 Nov), waiting on the owner (Q1 to Q5). Size L, LEAD pattern, full track
+Status: ANSWERED 3 Nov 22:50 (Q1 a, Q2 a, Q3 a, Q4 print 01/01/2030 as it is, Q5 a, extra: reuse the SO line change lightbox). Plan: `PLAN-oi-one-delivery-date-03nov.md`. Size L, LEAD pattern, full track
 (data migration). No code until the card is answered.
 
 Owner ask (3 Nov 19:15): "we only need one delivery date, which is the SO line delivery date ...
