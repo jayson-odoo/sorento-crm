@@ -4,9 +4,8 @@
 > suggestion is removed by `PLAN-no-ac-moved-warning-3nov.md` (owner: a saved decision stands
 > silently). Do not restore it.
 
-Status: in review, round 2, PR #2091. Track: standard (the diff is past the ~300 line small fix
-limit; no migration, no auth/RBAC change). Items 1-3 here; item 4 is a stacked follow-up PR
-(crew ruling, 2 Nov). UAC: `confirm-preview-stale-2nov-acceptance-criteria.md`.
+Status: items 1-3 merged (#2091); item 4 in review, PR #2107 (fix round 3 Nov, CONFIRM-ITEM4).
+Track: standard for #2091; item 4 is the small fix track (no migration, no auth/RBAC change). UAC: `confirm-preview-stale-2nov-acceptance-criteria.md`.
 
 Owner report (2 Nov 2026, Fulfilment Planning): a sales order whose lines are all delivered in
 full, with a pending AutoCount change on one line (date 28/09 -> 02/11; suggestion Borrow 3 ->
@@ -121,3 +120,13 @@ equal the email the real press dispatches; vitest the page prints the dry run's 
 - S4: a two-line order (DELAY on one, ADVANCE on the other) pins each line's own email row and
   the whole list against the real send (the zip). The builder's only REMARK transform is the
   mockup prefix, which no backend test covers yet.
+
+## Item 4 fix round (CONFIRM-ITEM4, 3 Nov)
+
+Crew's check on #2122 saw "Delivered in full: nothing goes to purchasing" beside ORDER BACK on a
+delivered dealer line while Confirm raised the order back and the email. Rule now, every order
+class: the note reads only when the guide's quiet email dry run previewed the order and its
+`email_lines` hold no line for the delivered line (`emailWordsFor` = null, carried as
+`purchasingSilent` from `FulfilmentBoardPanel` through `ConfirmGuideDialog` / `coveredSheetLines`
+/ `LineSplitEditor` into `LineSplitSheet`). Not previewed or a failed dry run: no claim. Merged
+main with #2116, #2122, #2123 (no suggestion rows over a saved decision) kept.

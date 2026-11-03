@@ -28,4 +28,5 @@ never refuses an order.
   purchasing (Confirm plans it at its ordered qty, owner ruling 14 Sep): a Buy raises its row, a
   Borrow raises its order back; only a plan qty of 0 (cancelled, returned, `qty_required` 0) is
   skipped (#1362). Nothing refuses the order. The Review split prints the saved decision's words,
-  never "nothing goes to purchasing".
+  and says "Delivered in full: nothing goes to purchasing" only when the guide's email dry run
+  holds no line for it (any order class); never beside an ORDER BACK or Buy row, never unchecked.
