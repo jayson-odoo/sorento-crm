@@ -1,7 +1,8 @@
 # PLAN: Stock position Supplier, Brand, Warehouse filters multi-select (STOCKPOS-FILTER-MULTI)
 
-Status: Review (reviewer READY 3 Nov, should-fix items folded in; owner hand test next). Small fix track (expected diff under 300 lines, no migration, no auth/RBAC change,
-no new ingest surface).
+Status: Implemented. #2130 merged 3 Nov (owner hand test OK, crew browser pass GO); follow-up
+PR (STOCKPOS-FILTER-MULTI round 2) names every chosen supplier and uses Stock's trigger format.
+Small fix track.
 
 ## Why
 
@@ -38,3 +39,11 @@ still single-select for Supplier, Brand and Warehouse: a second Brand pick repla
 - FE `services/stockPositionService.test.ts` (comma-joined params, export too) and
   `components/StockPositionGrid.multiFilters.test.tsx` (a second Brand pick adds, not replaces;
   export and URL carry the selection; the list's own URL write never re-applies over typing).
+
+## Round 2 (crew browser pass, 3 Nov)
+
+- A chosen supplier on no row of the page and never in the picker's pages read "Selected supplier":
+  `hooks/useSupplierNames.ts` looks its name up by id (`getSupplier`, cache key `['supplier', id]`
+  shared with `useSupplier`; same `get_current_user` gate as the picker's `/select`).
+- Trigger labels use Stock's format (`StockBalanceGrid.tsx`): `Warehouse: BRW, DC1`, `Warehouse: any`.
+- Tests: `StockPositionGrid.multiFilters.test.tsx` (both red on the #2130 code first).
