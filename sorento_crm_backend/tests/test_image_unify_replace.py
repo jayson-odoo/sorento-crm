@@ -64,6 +64,10 @@ def env(monkeypatch):
     monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: store)
     monkeypatch.setattr(storage_router, "default_provider", lambda: "r2")
     monkeypatch.setattr(storage_router, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}")
+    from app.services import queue_service
+
+    # Never the real queue: a job is recorded, not run (the `inline_jobs` fixture runs them).
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda func, *a, **k: None)
     with blank_session() as db:
         import uuid
 
@@ -131,7 +135,7 @@ def test_replace_writes_new_keys_and_the_new_bytes_are_served_on_a_different_url
         assert old_key + suffix in store.objects
         assert new_key + suffix in store.objects
         assert store.objects[old_key + suffix] != store.objects[new_key + suffix]
-        assert store.cache_control[new_key + suffix] == "public, max-age=31536000, immutable"
+        assert store.cache_control[new_key + suffix] == "public, max-age=31536000, s-maxage=86400, immutable"
     # Nothing is deleted in the request.
     assert store.objects[old_key] == old_bytes
 
@@ -158,7 +162,7 @@ def test_replace_storage_key_shape():
     assert key == "general/A1/v-abababababababab/x.png"
 
 
-def test_cmyk_fix_script_writes_a_new_key_and_fresh_renditions(monkeypatch):
+def test_cmyk_fix_script_writes_a_new_key_and_fresh_renditions(monkeypatch, inline_jobs):
     """The CMYK -> RGB script used to overwrite originals in place; now it never does."""
     import importlib.util
     import os
@@ -182,6 +186,7 @@ def test_cmyk_fix_script_writes_a_new_key_and_fresh_renditions(monkeypatch):
     from app.services import storage_router
 
     monkeypatch.setattr(storage_router, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}")
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: store)
 
     class Db:
         def add(self, row):
@@ -199,7 +204,9 @@ def test_cmyk_fix_script_writes_a_new_key_and_fresh_renditions(monkeypatch):
 
     new_key = _key(row.file_path)
     assert new_key != old_key and new_key.startswith("general/A1/v-")
-    assert store.objects[old_key] == buffer.getvalue()  # the CMYK original is kept
+    # The CMYK original and its renditions go, in the worker job (#2133 ruling (a)).
+    assert [name for name, _ in inline_jobs] == ["delete_storage_files"]
+    assert old_key not in store.objects
     with Image.open(io.BytesIO(store.objects[new_key])) as im:
         assert im.mode == "RGB"
     assert _key(row.thumbnail_path) == new_key + ".thumb.jpg"
@@ -337,3 +344,75 @@ def test_hard_delete_of_an_attachment_removes_its_renditions(monkeypatch, inline
         db.commit()
         AttachmentService(db).delete_attachment(row.id, deleted_by=None)
     assert store.objects == {}
+
+
+def test_bulk_zip_replace_writes_a_new_key_and_queues_the_old_one_for_deletion(monkeypatch, inline_jobs):
+    """The ZIP import's Replace branch follows the same rule as the upload route (review S2)."""
+    import uuid
+    import zipfile
+    from unittest.mock import patch
+
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session
+
+    from app.models.base import set_company_scope
+    from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
+    from app.services import storage_router
+    from app.services.job_service import JobService
+    from app.tasks.import_tasks import process_attachment_bulk_import
+
+    store = MemoryStore()
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: store)
+    monkeypatch.setattr(storage_router, "default_provider", lambda: "r2")
+    monkeypatch.setattr(storage_router, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}")
+
+    old_bytes, new_bytes = _png((200, 0, 0)), _png((0, 0, 200))
+    with blank_session() as db:
+        set_company_scope(db, None)
+        user = _user(db, "zipper", "zz_zipper", ["resource.attachments.upload"])
+        kind = AttachmentType(
+            id=str(uuid.uuid4()), type_name=f"zz-zip-{uuid.uuid4().hex[:6]}",
+            allowed_extensions="png,.png", max_file_size_mb=10, triggers_n8n_webhook=False,
+        )
+        folder = AttachmentDirectory(id=str(uuid.uuid4()), name=f"zz-folder-{uuid.uuid4().hex[:6]}")
+        db.add_all([kind, folder])
+        db.flush()
+        old_key = f"zz-zip/{uuid.uuid4()}/zz-replace.png"
+        store.objects[old_key] = old_bytes
+        store.objects[old_key + ".thumb.jpg"] = b"t"
+        store.objects[old_key + ".medium.jpg"] = b"m"
+        existing = Attachment(
+            id=str(uuid.uuid4()), original_filename="zz-replace.png", stored_filename="zz-replace.png",
+            file_path=f"https://cdn.test/{old_key}", mime_type="image/png", storage_provider="r2",
+            directory_id=folder.id, attachment_type_id=kind.id,
+        )
+        db.add(existing)
+        job = JobService(db).create_job("attachment_bulk_import", user["id"], filename="zz.zip")
+        db.commit()
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("zz-replace.png", new_bytes)
+        store.objects["staging/zz.zip"] = buffer.getvalue()
+
+        bind = db.get_bind()
+
+        def _session_on_this_connection():
+            session = Session(bind=bind, join_transaction_mode="create_savepoint")
+            session.execute(text("SELECT 1"))
+            return session
+
+        with patch("app.tasks.import_tasks.SessionLocal", _session_on_this_connection):
+            process_attachment_bulk_import(
+                str(job.id), "staging/zz.zip", kind.id, "[]", folder.id, user["id"],
+                on_conflict="replace", storage_provider="r2",
+            )
+
+        db.expire_all()
+        row = db.query(Attachment).filter(Attachment.id == existing.id).one()
+        new_key = _key(row.file_path)
+        assert new_key != old_key and "/v-" in new_key
+        assert store.objects[new_key] == new_bytes
+        assert new_key + ".medium.jpg" in store.objects
+        for suffix in ("", ".thumb.jpg", ".medium.jpg"):
+            assert old_key + suffix not in store.objects

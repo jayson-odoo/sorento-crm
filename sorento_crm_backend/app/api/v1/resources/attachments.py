@@ -1149,6 +1149,8 @@ async def create_attachment(
         # event_type=attachment_replaced so n8n intake updates the linked
         # record instead of duplicate-rejecting.
         if existing_to_replace is not None:
+            replaced_provider = existing_to_replace.storage_provider
+            replaced_file_path = existing_to_replace.file_path
             existing_to_replace.attachment_type_id = type_id  # type: ignore[assignment]
             existing_to_replace.stored_filename = stored_filename  # type: ignore[assignment]
             existing_to_replace.file_path = stored_file_path  # type: ignore[assignment]
@@ -1172,6 +1174,11 @@ async def create_attachment(
             db.commit()
             db.refresh(existing_to_replace)
             attachment = existing_to_replace
+            # The old bytes and their renditions go in the worker, after the commit (crew ruling
+            # (a) on #2133): a Replace never deletes in the request and never fails on the cleanup.
+            from app.tasks.s3_tasks import enqueue_replaced_original_cleanup
+
+            enqueue_replaced_original_cleanup(replaced_provider, replaced_file_path, s3_key)
             if attachment_type is not None and not is_promotion_upload:
                 try:
                     _create_and_send_webhook(

@@ -14,13 +14,14 @@ For each image attachment whose stored bytes decode to a CMYK/YCCK color space,
 the script:
     1. downloads the bytes from the row's storage provider (s3 or r2)
     2. transcodes CMYK/YCCK -> RGB JPEG (via image_normalizer.ensure_rgb_image)
-    3. re-uploads to the SAME key on the SAME provider (overwrite in place)
-    4. updates file_size_bytes + mime_type in the DB
+    3. uploads the RGB bytes under a NEW content-derived key on the SAME provider, with fresh
+       thumb + medium renditions (never in place: renditions are cached as immutable, IMAGE-UNIFY)
+    4. points the row at the new key (file_path, thumbnail_path, file_hash, size, mime)
+    5. queues the delete of the CMYK original and its renditions on the worker
 
 Idempotent: a row already in an accepted color space is skipped, so re-runs are
-safe and only touch rows that still need fixing. The storage key and filenames
-are left unchanged (CMYK source is always JPEG, so the extension already fits),
-so n8n linkages, signed URLs, and display names stay stable. No n8n webhook is
+safe and only touch rows that still need fixing. Display names are unchanged and
+the row id keeps every linkage; the stored URL changes. No n8n webhook is
 re-triggered - this is a byte-level fix, not a content change.
 """
 from __future__ import annotations
@@ -42,6 +43,7 @@ from app.database import SessionLocal
 from app.models.resources import Attachment
 from app.services.image_normalizer import ensure_rgb_image, needs_rgb_conversion
 from app.services.image_thumbnailer import store_renditions
+from app.tasks.s3_tasks import enqueue_replaced_original_cleanup
 from app.services.storage_router import (
     cdn_base_url,
     extract_key,
@@ -132,6 +134,7 @@ def _process_one(db: Session, row: Attachment, dry_run: bool) -> str:
         return "error"
     thumb = store_renditions(backend, provider, new_key, new_content, "image/jpeg")
 
+    old_file_path = row.file_path
     row.file_path = cdn_base_url(provider, new_key)
     row.thumbnail_path = thumb
     row.file_hash = hashlib.sha256(new_content).hexdigest()
@@ -139,6 +142,8 @@ def _process_one(db: Session, row: Attachment, dry_run: bool) -> str:
     row.mime_type = new_mime or "image/jpeg"
     db.add(row)
     db.commit()
+    # The CMYK original and its renditions go too, in the worker (#2133 ruling (a)).
+    enqueue_replaced_original_cleanup(provider, old_file_path, new_key)
     return "converted"
 
 

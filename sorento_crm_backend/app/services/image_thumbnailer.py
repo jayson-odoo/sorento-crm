@@ -42,8 +42,10 @@ _MAX_EDGE = RENDITIONS["thumb"]
 _JPEG_QUALITY = _QUALITY["thumb"]
 
 #: A rendition's bytes never change under its key: an original is never overwritten in place
-#: (Files "Replace" writes a NEW key, crew ruling (b) on #2133), so a cache may keep it a year.
-RENDITION_CACHE_CONTROL = "public, max-age=31536000, immutable"
+#: (Files "Replace" writes a NEW key, crew ruling (b) on #2133), so a browser may keep it a year.
+#: A shared cache (the CDN edge) keeps it a day, so a deleted image stops being served there within
+#: a day rather than a year (security review, #2133).
+RENDITION_CACHE_CONTROL = "public, max-age=31536000, s-maxage=86400, immutable"
 
 #: Only these formats are decoded for a document embed; what comes out is always Pillow's own JPEG
 #: re-encode. An SVG (whatever its stored mime) is markup a renderer would follow links out of.
@@ -51,6 +53,15 @@ EMBEDDABLE_FORMATS = ("PNG", "JPEG", "WEBP")
 #: Refused before decoding (checked after a JPEG draft): a tiny palette PNG can claim hundreds of
 #: millions of pixels, and a 40 MP RGBA decode is ~160 MB already.
 MAX_IMAGE_PIXELS = 40_000_000
+
+#: What a rendition is ever decoded from. Pillow reads far more (TIFF, PSD, ICO, EPS ...), and those
+#: parsers carry most of its CVE history; renditions are for photographs (security review, #2133).
+RENDITION_FORMATS = ("JPEG", "PNG", "WEBP", "GIF")
+#: The ceiling for renditions. Higher than a document embed's: an upload's thumbnail was made with
+#: no ceiling before IMAGE-UNIFY, and a big PNG cannot draft-decode, so 40 MP would leave a 42 MP
+#: PNG with no thumbnail and the grid loading its original (code review B1). 100 MP is the
+#: ceiling #2126's spec sheet export already decodes to.
+RENDITION_MAX_PIXELS = 100_000_000
 
 # Only bytes that decode as a raster image get a rendition. Anything else (PDF, xlsx, ...) is None.
 _RASTER_MIMES = {"image/jpeg", "image/jpg", "image/pjpeg", "image/png", "image/webp"}
@@ -162,7 +173,14 @@ def generate_thumbnail(
     """A small RGB JPEG thumbnail of ``content``, or ``None`` (non-image, decode failure)."""
     if not content or not _looks_like_image(mime):
         return None
-    made = downscale(content, max_edge, quality, label=mime)
+    made = downscale(
+        content,
+        max_edge,
+        quality,
+        formats=RENDITION_FORMATS,
+        max_pixels=RENDITION_MAX_PIXELS,
+        label=mime,
+    )
     return made.data if made is not None else None
 
 
@@ -178,7 +196,14 @@ def _write_renditions(backend, original_key: str, content: bytes, mime) -> Dict[
     written = {"thumb": False, "medium": False}
     if not content or not _looks_like_image(mime):
         return written
-    medium = downscale(content, RENDITIONS["medium"], _QUALITY["medium"], label=original_key[:80])
+    medium = downscale(
+        content,
+        RENDITIONS["medium"],
+        _QUALITY["medium"],
+        formats=RENDITION_FORMATS,
+        max_pixels=RENDITION_MAX_PIXELS,
+        label=original_key[:80],
+    )
     if medium is None:
         return written
     thumb = downscale(medium.data, RENDITIONS["thumb"], _QUALITY["thumb"], label=original_key[:80])
@@ -201,8 +226,8 @@ def _write_renditions(backend, original_key: str, content: bytes, mime) -> Dict[
 def store_renditions(backend, provider, original_key: str, content: bytes, mime) -> Optional[str]:
     """Make and upload the thumb and medium of an image; return the thumb's CDN base URL.
 
-    Shared by every upload path, including a Replace that overwrote the original under the same
-    key (both renditions are remade, and this process forgets what it knew about them).
+    Shared by every upload path, including a Replace (which writes its new bytes under a NEW key,
+    ``storage_router.replace_storage_key``); this process forgets what it knew about the keys.
     Best-effort: a non-image or any failure returns None; a rendition must NEVER fail an upload.
     """
     from app.services.storage_router import cdn_base_url, normalize_provider
@@ -317,11 +342,21 @@ def _remember(token: str) -> None:
         _missed.pop(token, None)
 
 
-def _miss(token: str) -> None:
+#: Another process held the file's lock past a caller's whole budget (it may have crashed while
+#: holding it): later callers skip the wait for this long instead of each spending their budget.
+_HELD_MISS_SECONDS = 30
+
+
+def _miss(token: str, seconds: float = _MISS_SECONDS) -> None:
     with _memo_lock:
         if len(_missed) >= _MISSED_MAX:
             _missed.clear()
-        _missed[token] = time.monotonic() + _MISS_SECONDS
+        _missed[token] = time.monotonic() + seconds
+
+
+def _is_known(token: str) -> bool:
+    with _memo_lock:
+        return token in _known
 
 
 def _default_redis():
@@ -434,12 +469,15 @@ def single_flight(
 
 
 def _wait_for_other_process(token, exists, client, name, deadline) -> bool:
+    held = True
     while time.monotonic() < deadline:
         time.sleep(min(_LOCK_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
         try:
             if not client.exists(name):
+                held = False
                 break
         except Exception:  # noqa: BLE001 - Redis gone mid-wait: just look at storage
+            held = False
             break
     try:
         if exists():
@@ -447,6 +485,8 @@ def _wait_for_other_process(token, exists, client, name, deadline) -> bool:
             return True
     except Exception:  # noqa: BLE001
         pass
+    if held:
+        _miss(token, _HELD_MISS_SECONDS)
     return False
 
 
@@ -504,40 +544,54 @@ def rendition_urls(
         release()
     deadline = time.monotonic() + wait_seconds
 
-    def one(row) -> Optional[str]:
-        attachment_id, file_path, thumbnail_path, provider_name, mime = row
+    def sign(target: str, provider: str) -> Optional[str]:
+        return resolve_signed_url(target, provider=provider, expires_in=expires_in, strict=True)
+
+    def make_and_sign(attachment_id, backend, provider, original, target, mime) -> Optional[str]:
+        def make() -> bool:
+            raw = backend.download_file(original)
+            return _write_renditions(backend, original, raw, mime)[size]
+
         try:
-            original = extract_key(file_path) if file_path else None
-            if not original:
-                return None
-            provider = normalize_provider(provider_name)
-            backend = get_backend(provider)
-            stored_thumb = extract_key(thumbnail_path) if thumbnail_path else None
-            target = stored_thumb if size == "thumb" and stored_thumb else rendition_key(original, size)
-            if not (size == "thumb" and stored_thumb):
-
-                def make() -> bool:
-                    raw = backend.download_file(original)
-                    return _write_renditions(backend, original, raw, mime)[size]
-
-                ready = single_flight(
-                    _token(provider, target),
-                    lambda: bool(backend.file_exists(target)),
-                    make,
-                    deadline=deadline,
-                )
-                if not ready:
-                    return None
-            return resolve_signed_url(target, provider=provider, expires_in=expires_in, strict=True)
+            ready = single_flight(
+                _token(provider, target),
+                lambda: bool(backend.file_exists(target)),
+                make,
+                deadline=deadline,
+            )
+            return sign(target, provider) if ready else None
         except Exception:  # noqa: BLE001 - the next size down stays on screen
             logger.warning("rendition: no %s for %s", size, attachment_id, exc_info=True)
             return None
 
     out: Dict[str, str] = {}
-    futures = {row[0]: _waiters.submit(one, row) for row in rows}
-    for attachment_id, future in futures.items():
+    pending = {}
+    for attachment_id, file_path, thumbnail_path, provider_name, mime in rows:
         try:
-            url = future.result(timeout=max(0.0, deadline - time.monotonic()) + 1.0)
+            original = extract_key(file_path) if file_path else None
+            if not original:
+                continue
+            provider = normalize_provider(provider_name)
+            stored_thumb = extract_key(thumbnail_path) if thumbnail_path else None
+            if size == "thumb" and stored_thumb:
+                target, settled = stored_thumb, True
+            else:
+                target = rendition_key(original, size)
+                settled = _is_known(_token(provider, target))
+            if settled:
+                # Known to exist: signed here, never queued behind another request's generations.
+                url = sign(target, provider)
+                if url:
+                    out[attachment_id] = url
+                continue
+            pending[attachment_id] = _waiters.submit(
+                make_and_sign, attachment_id, get_backend(provider), provider, original, target, mime
+            )
+        except Exception:  # noqa: BLE001 - the next size down stays on screen
+            logger.warning("rendition: no %s for %s", size, attachment_id, exc_info=True)
+    for attachment_id, future in pending.items():
+        try:
+            url = future.result(timeout=max(0.0, deadline - time.monotonic()) + 0.05)
         except Exception:  # noqa: BLE001 - out of time: left out, generation carries on
             url = None
         if url:

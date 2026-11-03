@@ -298,7 +298,7 @@ def test_upload_file_sends_cache_control_when_given(make):
         content_type="image/jpeg",
         cache_control=rt.RENDITION_CACHE_CONTROL,
     )
-    assert client.calls[-1]["CacheControl"] == "public, max-age=31536000, immutable"
+    assert client.calls[-1]["CacheControl"] == "public, max-age=31536000, s-maxage=86400, immutable"
     assert client.calls[-1]["ContentType"] == "image/jpeg"
 
 
@@ -374,6 +374,8 @@ def test_every_upload_path_writes_both_renditions():
         "app/tasks/import_tasks.py",
         "app/api/v1/public/portal.py",
         "app/services/product_image_service.py",
+        "app/services/scm/shipment_line_photos.py",
+        "app/services/so_line_attachments.py",
     ]
     for rel in sites:
         text = (root / rel).read_text(encoding="utf-8")
@@ -445,7 +447,7 @@ def test_store_renditions_writes_thumb_and_medium_from_one_decode(cdn, monkeypat
     assert url == "https://cdn.test/p/a.jpg.thumb.jpg"
     assert decoded.count(True) == 1  # the original is decoded once; the thumb comes from the medium
     for key, edge in (("p/a.jpg.thumb.jpg", 320), ("p/a.jpg.medium.jpg", 1024)):
-        assert bucket.headers[key] == ("image/jpeg", "public, max-age=31536000, immutable")
+        assert bucket.headers[key] == ("image/jpeg", "public, max-age=31536000, s-maxage=86400, immutable")
         with Image.open(io.BytesIO(bucket.objects[key])) as im:
             assert max(im.size) == edge
 
@@ -553,3 +555,62 @@ def test_a_stored_thumbnail_is_signed_as_is_and_an_unreadable_file_is_left_out(s
     rt.rendition_urls(db, ["B"], "thumb")
     assert bucket.downloads == ["p/bad.jpg"]
     assert "p/bad.jpg" not in signed and "p/t.jpg" not in signed
+
+
+# --------------------------------------------------------------------------- review round 1
+
+
+def test_a_big_png_still_gets_its_renditions(cdn):
+    """Review B1: a PNG cannot draft-decode, so a 40 MP ceiling left a 42 MP PNG with no thumbnail
+    and the grid loading its original. main made that thumbnail; so must this."""
+    bucket = Bucket()
+    big = _photo((7000, 6000), fmt="PNG")
+    assert rt.generate_thumbnail(big, "image/png") is not None
+    assert rt.store_renditions(bucket, "r2", "p/big.png", big, "image/png")
+    assert {"p/big.png.thumb.jpg", "p/big.png.medium.jpg"} <= set(bucket.objects)
+
+
+def test_renditions_decode_only_photograph_formats(cdn):
+    """Security review: TIFF, PSD, ICO, EPS ... parsers carry most of Pillow's CVE history."""
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (800, 600), (1, 2, 3)).save(buffer, format="TIFF")
+    bucket = Bucket()
+    assert rt.store_renditions(bucket, "r2", "p/scan.tif", buffer.getvalue(), "image/tiff") is None
+    assert bucket.objects == {}
+    assert rt.store_renditions(bucket, "r2", "p/anim.gif", _photo((400, 300), fmt="GIF"), "image/gif")
+
+
+def test_a_known_rendition_is_not_queued_behind_another_requests_generations(storage, monkeypatch):
+    """Review S1: one slow page must not hold up a request whose rendition already exists."""
+    import time as _time
+
+    bucket, _signed = storage
+    bucket.objects["p/k.jpg"] = _photo((600, 400))
+    db_known = _Db([_Row("K", "https://cdn.test/p/k.jpg")])
+    assert rt.rendition_urls(db_known, ["K"], "medium")  # now known in this process
+
+    real_submit = rt._waiters.submit
+
+    def blocked(*_a, **_k):
+        raise AssertionError("a known rendition must be signed without the waiter pool")
+
+    monkeypatch.setattr(rt._waiters, "submit", blocked)
+    started = _time.monotonic()
+    assert rt.rendition_urls(db_known, ["K"], "medium") == {"K": "https://signed.test/p/k.jpg.medium.jpg"}
+    assert _time.monotonic() - started < 0.5
+    monkeypatch.setattr(rt._waiters, "submit", real_submit)
+
+
+def test_a_lock_held_past_the_budget_is_not_waited_on_again_at_once():
+    """Security review nit: a holder that crashed costs one caller its budget, not every caller."""
+    store = FakeStore()
+    redis = FakeRedis(held_by_other=True)
+    assert not rt.single_flight("held", store.exists, store.make, deadline=_deadline(0.3), redis=redis)
+    started = time.monotonic()
+    assert not rt.single_flight("held", store.exists, store.make, deadline=_deadline(5), redis=redis)
+    assert time.monotonic() - started < 0.2
+    assert store.made == 0

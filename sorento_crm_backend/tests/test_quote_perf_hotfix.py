@@ -685,7 +685,11 @@ def test_the_open_page_gets_a_1024_px_rendition_never_the_original(monkeypatch):
 
         assert set(out) == {photo.id, drawing.id}
         assert all(".medium.jpg" in url for url in out.values())
-        assert not any(s in (photo.file_path, drawing.file_path) for s in signed)
+        # `signed` holds storage KEYS; compare keys, so this can actually fail (review nit).
+        from app.services.storage_router import extract_key
+
+        originals = {extract_key(photo.file_path), extract_key(drawing.file_path)}
+        assert originals and not originals & set(signed)
         medium = next(k for k in store.uploads if k.endswith("basin.png.medium.jpg"))
         with Image.open(io.BytesIO(store.uploads[medium])) as im:
             assert max(im.size) == images.MEDIUM_BOX == 1024
