@@ -67,6 +67,17 @@ def sanitize_storage_filename(name: Optional[str]) -> str:
     return base or "file"
 
 
+def replace_storage_key(entity_type: str, attachment_id: str, basename: str, content_sha256: str) -> str:
+    """Key for the NEW bytes of a replaced attachment: never the key it had.
+
+    Renditions beside a key are cached for a year as immutable (IMAGE-UNIFY, crew ruling (b) on
+    #2133), so overwriting an original in place would leave every CDN and browser showing the old
+    picture. The content hash makes the key differ whenever the bytes do, and replacing with the
+    same bytes again lands on the same key. The old objects are left for a cleanup job.
+    """
+    return f"{entity_type}/{attachment_id}/v-{content_sha256[:16]}/{basename}"
+
+
 def normalize_provider(value: Optional[str]) -> str:
     """Coerce stored provider values to one of the canonical names; default to S3."""
     if not value:

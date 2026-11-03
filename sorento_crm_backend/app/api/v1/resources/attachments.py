@@ -1032,15 +1032,17 @@ async def create_attachment(
                 db, existing_to_replace.entity_type, existing_to_replace.entity_id, current_user
             )
 
-        # Construct storage key (`new_upload_storage_key`). Replace keeps its existing key.
+        # Construct storage key. A Replace keeps the row (same id, every link) but never the key:
+        # renditions are cached as immutable, so the new bytes go under a new key
+        # (`replace_storage_key`) and the old objects stay for a cleanup job (IMAGE-UNIFY).
         if existing_to_replace is not None:
-            # Replace-in-place: overwrite the EXISTING object at its own key so we
-            # don't orphan bytes or desync the uuid-segregated key from the row id.
-            # Fall back to a computed key only when the prior path is blank/legacy.
-            from app.services.storage_router import extract_key as _extract_key
-            s3_file_path = _extract_key(existing_to_replace.file_path) or (
-                f"{final_entity_type}/{existing_to_replace.id}/"
-                f"{sanitize_storage_filename(existing_to_replace.original_filename) or original_filename}"
+            from app.services.storage_router import replace_storage_key
+
+            s3_file_path = replace_storage_key(
+                final_entity_type,
+                str(existing_to_replace.id),
+                sanitize_storage_filename(existing_to_replace.original_filename) or original_filename,
+                file_hash,
             )
         else:
             s3_file_path = new_upload_storage_key(

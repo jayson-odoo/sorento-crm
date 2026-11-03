@@ -26,6 +26,7 @@ re-triggered - this is a byte-level fix, not a content change.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import os
 import sys
@@ -40,7 +41,15 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.resources import Attachment
 from app.services.image_normalizer import ensure_rgb_image, needs_rgb_conversion
-from app.services.storage_router import extract_key, get_backend, normalize_provider
+from app.services.image_thumbnailer import store_renditions
+from app.services.storage_router import (
+    cdn_base_url,
+    extract_key,
+    get_backend,
+    normalize_provider,
+    replace_storage_key,
+    sanitize_storage_filename,
+)
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
@@ -107,12 +116,25 @@ def _process_one(db: Session, row: Attachment, dry_run: bool) -> str:
     if dry_run:
         return "converted"
 
+    # Never overwrite in place: renditions are cached as immutable (IMAGE-UNIFY), so the RGB copy
+    # goes under a new content-derived key with fresh renditions, and the row points at it. The
+    # CMYK original stays for a cleanup job.
+    new_key = replace_storage_key(
+        row.entity_type or "general",
+        str(row.id),
+        sanitize_storage_filename(row.original_filename) or key.rsplit("/", 1)[-1],
+        hashlib.sha256(new_content).hexdigest(),
+    )
     try:
-        backend.upload_file(file_content=new_content, file_path=key, content_type="image/jpeg")
+        backend.upload_file(file_content=new_content, file_path=new_key, content_type="image/jpeg")
     except Exception as exc:  # noqa: BLE001
-        logger.error("attachment %s re-upload failed (%s/%s): %s", row.id, provider, key, exc)
+        logger.error("attachment %s re-upload failed (%s/%s): %s", row.id, provider, new_key, exc)
         return "error"
+    thumb = store_renditions(backend, provider, new_key, new_content, "image/jpeg")
 
+    row.file_path = cdn_base_url(provider, new_key)
+    row.thumbnail_path = thumb
+    row.file_hash = hashlib.sha256(new_content).hexdigest()
     row.file_size_bytes = len(new_content)
     row.mime_type = new_mime or "image/jpeg"
     db.add(row)
