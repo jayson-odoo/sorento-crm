@@ -1070,3 +1070,26 @@ def test_the_list_names_the_so_line_number_not_the_planning_orders_own(one_trans
     row = client.get(TRANSFERS, params={"query": transfer.transfer_no}).json()["data"][0]
 
     assert row["so_line_no"] == 224, row
+
+
+def test_the_list_names_the_orders_customer_and_project_and_sorts_by_both(one_transfer):
+    """OI-UX-FILTER-SNAPSHOT: customer is the debtor name, else the customer master; project
+    is the order's `project_label`. Both are declared on the wire and sort on the server."""
+    from app.models.order import SalesOrder
+
+    client, world, transfer = one_transfer
+    sales_order_id = client.get(f"{TRANSFERS}/{transfer.id}").json()["sales_order_id"]
+    order = world.db.query(SalesOrder).filter(SalesOrder.id == sales_order_id).one()
+    order.debtor_name = " ZZT Debtor Sdn Bhd "
+    order.project_label = "ZZT Tower"
+    world.db.flush()
+
+    row = client.get(TRANSFERS, params={"query": transfer.transfer_no}).json()["data"][0]
+    assert row["customer_name"] == "ZZT Debtor Sdn Bhd"
+    assert row["project_label"] == "ZZT Tower"
+    assert client.get(f"{TRANSFERS}/{transfer.id}").json()["project_label"] == "ZZT Tower"
+    for sort in ("customer_name", "project_label"):
+        response = client.get(TRANSFERS, params={"query": transfer.transfer_no, "sort": sort})
+        assert response.status_code == 200, (sort, response.text)
+    searched = client.get(TRANSFERS, params={"query": "ZZT Tower"}).json()["data"]
+    assert [r["id"] for r in searched] == [str(transfer.id)]

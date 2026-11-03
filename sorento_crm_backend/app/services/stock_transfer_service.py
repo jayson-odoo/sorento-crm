@@ -113,8 +113,15 @@ SORTABLE_FIELDS = (
     "from_location",
     "to_location",
     "so_number",
+    "customer_name",
+    "project_label",
     "proposed_at",
 )
+
+
+#: The order's customer as the SO list names it: the debtor name it was issued under, else the
+#: customer master's name (OI-UX-FILTER-SNAPSHOT; `app.services.scm.so_party`, in SQL).
+_SO_CUSTOMER = func.coalesce(func.nullif(func.trim(SalesOrder.debtor_name), ""), Customer.customer_name)
 
 
 def _dec(value: Any) -> Decimal:
@@ -501,7 +508,8 @@ class StockTransferService:
                 _ToWarehouse.c.warehouse_code,
                 SalesOrder.id,
                 SalesOrder.so_number,
-                Customer.customer_name,
+                _SO_CUSTOMER,
+                SalesOrder.project_label,
                 SalesAgent.id,
                 SalesAgent.sales_agent,
                 SalesAgent.person_label,
@@ -584,7 +592,8 @@ class StockTransferService:
                     SalesOrder.so_number.ilike(like),
                     _FromWarehouse.c.warehouse_code.ilike(like),
                     _ToWarehouse.c.warehouse_code.ilike(like),
-                    Customer.customer_name.ilike(like),
+                    _SO_CUSTOMER.ilike(like),
+                    SalesOrder.project_label.ilike(like),
                     # The AGENT is searched here rather than offered as a select. The page's
                     # audience is the warehouse, and neither `master_data.sales_agents.view`
                     # nor `scm.dashboard.view` - the two reads a select would need - is
@@ -606,6 +615,8 @@ class StockTransferService:
             "from_location": _FromWarehouse.c.warehouse_code,
             "to_location": _ToWarehouse.c.warehouse_code,
             "so_number": SalesOrder.so_number,
+            "customer_name": _SO_CUSTOMER,
+            "project_label": SalesOrder.project_label,
             "proposed_at": StockTransfer.proposed_at,
         }.get(sort or "", StockTransfer.proposed_at)
 
@@ -784,6 +795,7 @@ def _serialize(row) -> Dict[str, Any]:
         sales_order_id,
         so_number,
         customer_name,
+        project_label,
         sales_agent_id,
         agent_code,
         person_label,
@@ -814,7 +826,8 @@ def _serialize(row) -> Dict[str, Any]:
         "project_sales_order_id": str(transfer.project_sales_order_id)
         if transfer.project_sales_order_id
         else None,
-        "customer_name": customer_name,
+        "customer_name": (customer_name or "").strip() or None,
+        "project_label": (project_label or "").strip() or None,
         "sales_agent_id": str(sales_agent_id) if sales_agent_id else None,
         "agent_code": agent_code,
         "agent_name": person_label,
