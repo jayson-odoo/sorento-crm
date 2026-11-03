@@ -55,3 +55,26 @@ SS1 was created from issued revision A through the API (the dialog itself is sho
   - Row menu > Delete on SS2 turns into the toast countdown `Deleting in 9s / Cancel / SS2` (`08b-delete-countdown-1280.png`). No dialog.
   - After the window the list holds only SS1 (`08c-after-delete-1280.png`).
 - No API request answered 4xx/5xx during steps 5-8 after the fix.
+
+## F4: every page editable in place (Playwright library scripts, sandbox, 31-page SS1, 3 Nov evening)
+
+Measured at ca7c241b. The cover's page edits were cleared first so each run starts from the template.
+
+| Check | 1280 | 375 |
+|---|---|---|
+| Live designer canvases mounted | 3 | 3 |
+| Sideways scroll (scrollWidth) | 1280 (none) | 375 (none) |
+| Click a text layer | selected; inspector shows its fields and "Apply to: Every page" | selected; drawer does NOT open; "Properties" button appears |
+| Drag the selected layer | x 26 -> 66, y 26 -> 45 | x 47 -> 87, y 32 -> 51 |
+| Autosave after the drag | exactly 1 `PUT .../pages/cover/edit`, "Saved" | exactly 1 PUT, "Saved" |
+| Inspector X 140 -> 160 | 1 PUT, "Saved" | |
+| Undo | 1 PUT | |
+
+The Tag Templates editor control drag (`/dealer-kit/tag-templates/<id>`) still moves its layer (X 8 -> 28).
+
+Found and fixed during this pass:
+- **Round 7d.** Live pages drew blank for layers stored without `visible`. The designer read a missing `visible` as hidden, while the PDF reads it as shown; the reader now normalises layers the way the PDF does.
+- **Round 7e.** The hover action bar wrapped onto a second line and shifted every page about 60px, so a press missed its layer. The header is now one fixed line.
+- **Round 7f.** On a phone, selecting auto-opened a drawer covering 650 of 812px, including the selected layer. The drawer now opens only from the "Properties" button, is compact (45dvh), and scrolls the layer above itself.
+
+Screenshots: `f4-1280-*.png`, `f4-375-*.png`.
