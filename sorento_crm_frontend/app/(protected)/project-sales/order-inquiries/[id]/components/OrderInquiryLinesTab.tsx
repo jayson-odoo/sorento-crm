@@ -388,6 +388,7 @@ export function OrderInquiryLinesTab({
                     options={STATE_FILTER_OPTIONS}
                     placeholder="State"
                     className="w-48"
+                    clearable
                   />
                 </div>
                 {reserveRequests.length > 0 ? (
@@ -402,6 +403,7 @@ export function OrderInquiryLinesTab({
                       options={requestOptions}
                       placeholder="Request"
                       className="w-40"
+                      clearable
                     />
                   </div>
                 ) : null}
