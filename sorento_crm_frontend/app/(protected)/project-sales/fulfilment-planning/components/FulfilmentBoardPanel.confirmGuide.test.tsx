@@ -2961,14 +2961,72 @@ describe('CONFIRM-SPEED-PR2 refused dry run', () => {
     expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument();
   });
 
-  it('P6 RED: Confirm is held while the page\'s dry run is refused', async () => {
-    await openRefusedPage();
-    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+  it('P6 RED: with one of two orders refused, the refused page shows its error and no words, Confirm stays enabled, and the press posts only the ok order and reports the refusal', async () => {
+    serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+    previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) =>
+      Promise.resolve({
+        results: body.orders.map((order) =>
+          order.pso_id === 'pso-so-2'
+            ? {
+                pso_id: order.pso_id,
+                ok: false,
+                preview: true,
+                error: REFUSAL,
+                email_lines: [],
+                lines_confirmed: [],
+                lines_carried: 0,
+                lines_held_back: [],
+                lines_fulfilled_skipped: 0,
+                inquiry_rows: [],
+                transfers: [],
+              }
+            : {
+                pso_id: order.pso_id,
+                ok: true,
+                preview: true,
+                decision_revision: 4,
+                lines_confirmed: [{ project_line_id: 'pl-1-3', line_no: 3, item_code: 'ZZT-ITEM-1C' }],
+                lines_carried: 0,
+                lines_held_back: [],
+                lines_fulfilled_skipped: 0,
+                inquiry_rows: [],
+                transfers: [],
+                email_lines: [],
+              },
+        ),
+      }),
+    );
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    await waitFor(() => expect(emailDryRuns().length).toBeGreaterThanOrEqual(2));
     await new Promise((resolve) => setTimeout(resolve, 150));
+    await clickNext();
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
+    );
+    // (1) the refused page: the error with Retry, and no words in its REMARK cells.
+    const refusedPage = screen.getByTestId('confirm-guide-split-page');
+    const alert = await within(screen.getByTestId('confirm-guide')).findByRole('alert');
+    expect(alert).toHaveTextContent(REFUSAL);
+    const holder = (alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!) as HTMLElement;
+    expect(within(holder).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(refusedPage).not.toHaveTextContent('ORDER BACK');
+    expect(refusedPage).not.toHaveTextContent('Preparing email preview...');
+    // (2) Confirm stays enabled.
     await clickNext();
     const confirm = await screen.findByTestId('confirm-guide-confirm');
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(confirm).toBeDisabled();
+    expect(confirm).toBeEnabled();
+    // (3) it posts only the ok order.
+    fireEvent.click(confirm);
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const posted = (confirmMany.mock.calls[0][0] as { orders: { pso_id: string }[] }).orders.map(
+      (order) => order.pso_id,
+    );
+    expect(posted).toEqual(['pso-so-1']);
+    // (4) the result card carries the refusal.
+    const card = await screen.findByTestId('board-confirm-results');
+    expect(card).toHaveTextContent(REFUSAL);
   });
 
   it('P6 RED: pressing Retry sends the dry run again', async () => {
