@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spec sheets v2 (mock v1)</title>
+<style>
+/* App tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), as in documentation/mockups/PS-SPEC-SHEET.
+   Spec pages are 338.7 x 190.5 mm (16:9), drawn as TagSheetRenderer draws a sheet. */
+:root{--background:#fff;--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--primary:#3b82f6;--primary-soft:#eff6ff;--new:#b45309;--new-soft:#fffbeb;--bad:#b91c1c;--good:#15803d;--page:#f7f7f8;--green:#3f7d3a;--viewer:#e9e9ec}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1400px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:940px}
+.nav{position:sticky;top:0;z-index:20;background:var(--page);padding:8px 0 10px;border-bottom:1px solid var(--border);margin-bottom:16px;display:flex;flex-wrap:wrap;gap:6px}
+.nav a{font-size:12px;text-decoration:none;border:1px solid var(--border);background:#fff;border-radius:999px;padding:3px 10px;color:var(--muted-fg)}
+section{margin:0 0 36px}
+section>h2{font-size:15px;margin:0 0 4px}
+.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 12px;max-width:940px}
+.newtag{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.04em;color:var(--new);background:var(--new-soft);border:1px solid #fcd34d;border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:middle}
+.card{background:#fff;border:1px solid var(--border);border-radius:12px}
+.hdr{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.hdr h3{margin:0;font-size:17px}
+.meta{font-size:12px;color:var(--muted-fg)}
+.tabs{display:flex;gap:18px;padding:0 18px;border-bottom:1px solid var(--border);overflow-x:auto}
+.tabs span{padding:10px 0;font-size:13px;color:var(--muted-fg);white-space:nowrap}
+.tabs span.on{color:var(--foreground);border-bottom:2px solid var(--foreground);font-weight:500}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 12px;font-size:13px;white-space:nowrap;cursor:default}
+.btn.pri{background:var(--foreground);color:#fff;border-color:var(--foreground)}
+.btn.sm{padding:3px 8px;font-size:12px;border-radius:6px}
+.btn.ic{padding:5px 8px}
+.btn.dis{opacity:.45}
+.body{padding:16px 18px;display:flex;flex-direction:column;gap:12px}
+.tabbar{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.tabbar h4{margin:0;font-size:14px}
+/* DataGrid look (PanelDataGrid) */
+.grid{border:1px solid var(--border);border-radius:10px;overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
+th{text-align:left;font-weight:500;color:var(--muted-fg);font-size:12px;padding:9px 10px;border-bottom:1px solid var(--border);background:#fafafa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tbody tr:last-child td{border-bottom:0}
+tbody tr.link:hover td{background:#fafafa}
+.num{font-weight:600}
+.sub{display:block;font-size:11.5px;color:var(--muted-fg)}
+.badge{display:inline-block;border-radius:999px;padding:1px 8px;font-size:11px;background:var(--muted);color:var(--muted-fg);white-space:nowrap}
+.badge.blue{background:var(--primary-soft);color:#1d4ed8}
+.badge.warn{background:var(--new-soft);color:var(--new)}
+.kebab{color:var(--muted-fg);font-size:16px;letter-spacing:1px}
+.menu{position:absolute;right:8px;top:30px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.1);padding:4px;font-size:13px;z-index:4;min-width:150px}
+.menu div{padding:6px 10px;border-radius:6px}
+.menu div.on{background:var(--muted)}
+.menu .del{color:var(--bad)}
+.count{display:inline-flex;align-items:center;gap:8px;border:1px solid #fecaca;background:#fef2f2;color:var(--bad);border-radius:6px;padding:3px 8px;font-size:12px}
+.count u{text-decoration:none;color:var(--foreground);border-left:1px solid #fecaca;padding-left:8px}
+.empty{padding:44px 18px;text-align:center;border:1px dashed var(--border);border-radius:10px}
+.empty h4{margin:0 0 4px;font-size:15px}
+.empty p{margin:0;color:var(--muted-fg);font-size:13px}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.row>div{min-width:0;max-width:100%}
+.cap{font-size:11.5px;color:var(--muted-fg);padding:6px 0}
+.hint{font-size:11.5px;color:var(--primary)}
+code{font-size:11.5px;background:var(--muted);padding:0 4px;border-radius:4px}
+/* Dialog (FormDialogScaffold) */
+.scrim{background:rgba(9,9,11,.35);padding:28px 16px;border-radius:12px;display:flex;justify-content:center}
+.dlg{background:#fff;border-radius:12px;width:520px;max-width:100%;box-shadow:0 12px 40px rgba(0,0,0,.2)}
+.dlg .dh{padding:16px 20px 4px;font-weight:600;font-size:16px;display:flex;justify-content:space-between}
+.dlg .db{padding:12px 20px;display:flex;flex-direction:column;gap:14px}
+.dlg .df{padding:12px 20px 16px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border)}
+.fld label{display:block;font-size:12.5px;font-weight:500;margin-bottom:5px}
+.fld .help{font-size:11.5px;color:var(--muted-fg);margin-top:4px}
+.sel{border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fff;white-space:nowrap;overflow:hidden}
+.sel span{overflow:hidden;text-overflow:ellipsis}
+.sel:after{content:"\25BE";color:var(--muted-fg)}
+.sel .x{color:var(--muted-fg);font-size:12px}
+.pop{border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.08);margin-top:4px;font-size:13px;overflow:hidden}
+.pop .s{padding:7px 10px;border-bottom:1px solid var(--border);color:#a1a1aa}
+.pop .o{padding:7px 10px;display:flex;justify-content:space-between;gap:8px}
+.pop .o.on{background:var(--primary-soft)}
+.pop .o small{color:var(--muted-fg)}
+/* Reader */
+.reader{display:grid;grid-template-columns:150px minmax(0,1fr);border-top:1px solid var(--border);height:720px}
+.rail{border-right:1px solid var(--border);overflow-y:auto;padding:10px;background:#fafafa;display:flex;flex-direction:column;gap:10px}
+.rt{position:relative}
+.rt .pv{aspect-ratio:16/9;background:#fff;border:1px solid var(--border);border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--muted-fg);overflow:hidden}
+.rt.on .pv{outline:2px solid var(--primary)}
+.rt.off .pv{opacity:.4}
+.rt .lb{font-size:10.5px;color:var(--muted-fg);text-align:center;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rt .dot{position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:var(--new)}
+.rt .grip{position:absolute;top:2px;left:4px;color:#a1a1aa;font-size:10px}
+.tool{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap;background:#fff}
+.tool .sep{width:1px;height:20px;background:var(--border);margin:0 4px}
+.tool .pn{font-size:12.5px;color:var(--muted-fg);white-space:nowrap}
+.tool .pn b{color:var(--foreground);font-weight:500;border:1px solid var(--border);border-radius:5px;padding:1px 7px;margin-right:3px}
+.stack{background:var(--viewer);overflow-y:auto;padding:18px 18px 40px;display:flex;flex-direction:column;align-items:center;gap:20px}
+.pw{width:100%;max-width:900px}
+.pmeta{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;color:var(--muted-fg);flex-wrap:wrap}
+.pmeta .acts{display:flex;gap:6px;flex-wrap:wrap}
+.pmeta b{color:var(--foreground);font-weight:500}
+/* spec pages (16:9), same drawing as the PS-SPEC-SHEET mock */
+.pg{width:100%;aspect-ratio:16/9;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.14);position:relative;overflow:hidden;font-family:'Helvetica Neue',Arial,sans-serif;color:#111;container-type:inline-size}
+.pg.off{opacity:.45}
+.pg .abs{position:absolute}
+.offband{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3}
+.offband span{background:#fff;border:1px solid var(--border);border-radius:8px;padding:6px 12px;font:500 13px Inter,system-ui,sans-serif;color:var(--bad)}
+.ph-img{background:repeating-linear-gradient(45deg,#f4f4f5,#f4f4f5 8px,#ececee 8px,#ececee 16px);border-radius:3px;display:flex;align-items:center;justify-content:center;color:#71717a;font-size:1.2cqw}
+.drw{background:#fff;border:1px dashed #a1a1aa;display:flex;align-items:center;justify-content:center;color:#71717a;font-size:1.2cqw}
+.logo{border:1px dashed #a1a1aa;color:#71717a;font-size:1.1cqw;display:flex;align-items:center;justify-content:center;font-weight:700;letter-spacing:.1em}
+.tb{border:1.5px solid var(--green);display:flex;flex-direction:column;font-size:.85cqw;line-height:1.35}
+.tb>div{border-bottom:1px solid var(--green);padding:.4cqw .6cqw}
+.tb>div:last-child{border-bottom:0;flex:1}
+.tb .desc{flex:none;height:50%;color:#333;overflow:hidden}
+.tb b{font-weight:700}
+.txt{font-size:1.25cqw;line-height:1.4}
+.txt .c{font-weight:700}.txt .n{font-weight:700;text-transform:uppercase}.txt .m{color:#d32f2f;font-weight:700}
+.acc{display:flex;gap:1cqw;align-items:flex-start;font-size:1.05cqw;line-height:1.35}
+.acc .t{width:5.5cqw;height:5.5cqw;flex:none}
+.note{background:#fff7d6;border:1px solid #e9c46a;font-size:1.1cqw;padding:.6cqw;line-height:1.35}
+.cover-coll{display:grid;grid-template-columns:2fr 1fr 1fr;grid-template-rows:1fr 1fr;gap:.6cqw}
+.cover-coll div:first-child{grid-row:span 2}
+/* designer (TagCanvasEditor) */
+.ed{display:grid;grid-template-columns:200px minmax(0,1fr) 240px;border-top:1px solid var(--border)}
+.ed .col{padding:12px;border-right:1px solid var(--border);font-size:12.5px;min-width:0}
+.ed .col:last-child{border-right:0}
+.ed h5{margin:0 0 8px;font-size:11.5px;color:var(--muted-fg);font-weight:500;text-transform:uppercase;letter-spacing:.05em}
+.li{padding:5px 8px;border-radius:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.li.on{background:var(--primary-soft)}
+.li .new{color:var(--new);font-size:10.5px;margin-left:4px}
+.canvasbg{background:var(--viewer);padding:14px}
+.sel-box{outline:2px solid var(--primary);outline-offset:1px}
+.banner{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;background:var(--primary-soft);border-bottom:1px solid #dbeafe;padding:8px 16px;font-size:12.5px;color:#1e3a8a}
+.ip{border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:12.5px;margin:3px 0 8px}
+/* map */
+.map td,.map th{white-space:normal;font-size:12px;vertical-align:top}
+.opt{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.opt .o{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 16px;font-size:12.5px}
+.opt .o h4{margin:0 0 6px;font-size:13px}
+.opt .o.rec{border-color:#a78bfa}
+/* phone frames */
+.phone{width:375px;max-width:100%;border:1px solid var(--border);border-radius:16px;background:#fff;overflow:hidden;flex:none}
+.phone .tool{gap:4px;padding:6px 8px}
+.mcard{border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;display:flex;justify-content:space-between;gap:8px}
+@media (max-width:1000px){.ed{grid-template-columns:1fr}.ed .col{border-right:0;border-bottom:1px solid var(--border)}.opt{grid-template-columns:1fr}}
+@media (max-width:700px){.reader{grid-template-columns:1fr;height:auto}.rail{display:none}.stack{max-height:640px}}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Spec sheets on a quotation <span class="newtag">MOCK v1</span></h1>
+<p class="intro">SPEC-SHEET-V2 (PR #2124). The owner's feedback on #2103 (3 Nov 11:35): the four pickers are replaced by a list of saved spec sheets, a
+Create dialog, a PDF-style reader and per-page editing in the tag designer. The case is PRJQ-2026-0027 on PRJ-000002 (the #2103 hand-test
+quotation: WC set SRTWC6405, basin SRTWB1413-GY, bottle trap SRTKSBT001, floor trap SRTFT205). Project title, names and phones are masked.
+Behaviour card: <code>documentation/plans/project-sales/CARD-spec-sheet-v2-03nov.md</code>.</p>
+<div class="nav"><a href="#list">A. Spec sheet tab (list)</a><a href="#empty">B. Empty states</a><a href="#create">C. Create spec sheet</a><a href="#reader">D. View (PDF-style)</a><a href="#edit">E. Edit page (designer)</a><a href="#delete">F. Delete</a><a href="#phone">G. 375px</a><a href="#map">H. Component map</a><a href="#ask">I. Questions</a></div>
+
+<!-- ============================================================ A -->
+<section id="list">
+<h2>A. Spec sheet tab = a list of the spec sheets made on this quotation <span class="newtag">NEW</span></h2>
+<p class="why">Card rule 1. Same list pattern as every other panel on the project (PanelDataGrid). One CTA, top right of the tab. A row opens the spec sheet (rowHref). The four pickers are gone: templates are picked once, in the Create dialog, and shown here.</p>
+<div class="card">
+  <div class="hdr"><div><h3>Quotation PRJQ-2026-0027-R2</h3><div class="meta">PRJ-000002 &middot; &lt;project title, masked&gt; &middot; R2 issued 03 Nov 2026</div></div><div style="display:flex;gap:8px"><span class="btn">Send</span><span class="btn">&hellip;</span></div></div>
+  <div class="tabs"><span>Header</span><span>Lines</span><span>Cover letter</span><span>Terms</span><span>Signatures</span><span class="on">Spec sheet</span></div>
+  <div class="body">
+    <div class="tabbar"><h4>Spec sheets</h4><span class="btn pri">+ Create spec sheet</span></div>
+    <div class="grid" style="position:relative">
+      <table style="min-width:900px">
+        <colgroup><col style="width:9%"><col style="width:18%"><col style="width:27%"><col style="width:8%"><col style="width:16%"><col style="width:16%"><col style="width:6%"></colgroup>
+        <thead><tr><th>No.</th><th>Revision</th><th>Templates</th><th>Pages</th><th>Created</th><th>Last edited</th><th></th></tr></thead>
+        <tbody>
+          <tr class="link"><td class="num">SS2</td><td>PRJQ-2026-0027-R2<span class="sub">issued 03 Nov 2026</span></td><td title="Catalogue cover / Item with accessories / Single item">Catalogue cover<span class="sub">Item with accessories &middot; Single item</span></td><td>4 <span class="badge warn" title="1 page edited in the designer">1 edited</span></td><td>&lt;sales A&gt;<span class="sub">03 Nov 2026, 14:20</span></td><td>03 Nov 2026, 14:41<span class="sub">PDF 03 Nov, 14:42</span></td><td><span class="kebab">&middot;&middot;&middot;</span></td></tr>
+          <tr class="link"><td class="num">SS1</td><td>PRJQ-2026-0027-R1<span class="sub">issued 02 Nov 2026</span></td><td>Catalogue cover<span class="sub">Item with accessories &middot; Single item</span></td><td>4</td><td>&lt;sales A&gt;<span class="sub">02 Nov 2026, 16:05</span></td><td>02 Nov 2026, 16:30<span class="sub">PDF 02 Nov, 16:31</span></td><td><span class="kebab">&middot;&middot;&middot;</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="display:flex;justify-content:flex-end"><div class="menu" style="position:static" title="Row menu of SS2, opened"><div class="on">View</div><div>Export PDF</div><div class="del">Delete</div></div></div>
+    <div class="cap">Columns: <b>No.</b> SS1, SS2 ... per quotation (never a UUID). <b>Revision</b> as printed on the quotation (proposal revisions read <code>-A</code>, <code>-B</code>). <b>Pages</b> = printed pages, cover included, left-out pages not counted; "1 edited" = pages changed in the designer. <b>Last edited</b> + the latest PDF export. Row click = View.</div>
+  </div>
+</div>
+</section>
+
+<!-- ============================================================ B -->
+<section id="empty">
+<h2>B. Empty states</h2>
+<p class="why">Heading + hint, no button (DESIGN-LANGUAGE section 6). The header CTA is the one way in. With no issued revision the CTA is disabled and its tooltip says why.</p>
+<div class="row">
+  <div class="card" style="flex:1 1 420px">
+    <div class="body">
+      <div class="tabbar"><h4>Spec sheets</h4><span class="btn pri">+ Create spec sheet</span></div>
+      <div class="empty"><h4>No spec sheets yet</h4><p>A spec sheet prints a cover and one page per item of an issued revision.</p></div>
+    </div>
+    <div class="cap" style="padding:0 18px 12px">PRJQ-2026-0007 today, if its #2103 pickers were never filled. If they were, it opens with SS1 already in the list (Q5).</div>
+  </div>
+  <div class="card" style="flex:1 1 420px">
+    <div class="body">
+      <div class="tabbar"><h4>Spec sheets</h4><span class="btn pri dis" title="Issue a revision first.">+ Create spec sheet</span></div>
+      <div class="empty"><h4>No issued revision yet</h4><p>Sign and issue the quotation; the customer does not need to sign back.</p></div>
+    </div>
+    <div class="cap" style="padding:0 18px 12px">A draft quotation (never issued). Hovering the disabled button: "Issue a revision first."</div>
+  </div>
+</div>
+</section>
+
+<!-- ============================================================ C -->
+<section id="create">
+<h2>C. Create spec sheet (dialog) <span class="newtag">NEW</span></h2>
+<p class="why">Card rule 2. FormDialogScaffold with four SearchableSelects. Revision lists every ISSUED revision, newest first; no customer signature needed (Q1). Templates default to the ones this user used last; Single item is clearable (blank = use the page template). Page settings (AREA, COMMENT, markers, order, Leave out, accessories) carry over from SS1 (Q4); the dialog says so in one line under the revision.</p>
+<div class="row">
+  <div class="scrim" style="flex:1 1 560px">
+    <div class="dlg">
+      <div class="dh">Create spec sheet <span style="color:var(--muted-fg);font-weight:400">&times;</span></div>
+      <div class="db">
+        <div class="fld"><label>Revision</label><div class="sel"><span>PRJQ-2026-0027-R2 &middot; issued 03 Nov 2026</span></div>
+          <div class="pop"><div class="s">Search</div><div class="o on"><span>PRJQ-2026-0027-R2</span><small>issued 03 Nov 2026</small></div><div class="o"><span>PRJQ-2026-0027-R1</span><small>issued 02 Nov 2026 &middot; signed back</small></div></div>
+          <div class="help">Page settings carry over from SS1 (R1). Items new in R2 are added at the end.</div></div>
+        <div class="fld"><label>Cover template</label><div class="sel"><span>Catalogue cover &middot; 338.7 x 190.5 mm</span></div></div>
+        <div class="fld"><label>Page template</label><div class="sel"><span>Item with accessories &middot; 338.7 x 190.5 mm</span></div></div>
+        <div class="fld"><label>Single item template</label><div class="sel"><span>Single item &middot; 338.7 x 190.5 mm</span><span class="x">&times;</span></div><div class="help">For pages with no accessories. Leave blank to use the page template.</div></div>
+      </div>
+      <div class="df"><span class="btn">Cancel</span><span class="btn pri">Create</span></div>
+    </div>
+  </div>
+  <div style="flex:1 1 300px;font-size:12.5px;max-width:420px">
+    <p><b>On Create</b>: the spec sheet is saved as SS3 and its View opens (section D). The list gets the row.</p>
+    <p><b>Refused in the dialog</b> (inline under the field, Create stays enabled):</p>
+    <ul style="padding-left:18px;margin:0">
+      <li>"Page templates must be the same size as the cover." (any size mismatch, #2103 rule)</li>
+      <li>"Pick a cover template and a page template."</li>
+    </ul>
+    <p>Template options list only published Spec sheet cover / Spec sheet page templates with their size, so a wrong-size pick shows before Create.</p>
+  </div>
+</div>
+</section>
+
+<!-- ============================================================ D -->
+<section id="reader">
+<h2>D. View = continuous scroll like a PDF <span class="newtag">NEW</span></h2>
+<p class="why">Card rules 5-6. Every page stacked top to bottom at the template size, on the grey viewer background, with the same toolbar as the app's PDF viewer (page N of M, zoom out / in, fit width) and a thumbnail rail (click to jump; drag the grip to reorder, as in #2103). The pages are drawn by TagSheetRenderer, the same renderer the PDF prints with, so what scrolls here is the PDF. Each page carries its actions above it: <b>Edit page</b> (the designer, section E), <b>Leave out / Put back</b>, <b>Add accessory</b>. AREA, COMMENT and the marker are still clicked and typed on the page (#2103).</p>
+<div class="card">
+  <div class="hdr"><div><h3>SS2 &middot; PRJQ-2026-0027-R2</h3><div class="meta">Catalogue cover / Item with accessories / Single item &middot; 4 pages &middot; edited 03 Nov 2026, 14:41 by &lt;sales A&gt;</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><span class="btn">&larr; Spec sheets</span><span class="btn">&lsaquo; SS1</span><span class="btn pri">Export PDF</span></div></div>
+  <div class="tool">
+    <span class="btn ic" title="Previous page">&#8963;</span><span class="btn ic" title="Next page">&#8964;</span>
+    <span class="pn"><b>3</b> of 4</span><span class="sep"></span>
+    <span class="btn ic" title="Zoom out">&minus;</span><span class="pn">100%</span><span class="btn ic" title="Zoom in">+</span><span class="btn sm" title="Fit width">Fit width</span>
+  </div>
+  <div class="reader">
+    <div class="rail">
+      <div class="rt"><div class="pv">cover</div><div class="lb">1 Cover</div></div>
+      <div class="rt"><span class="grip">&#8942;&#8942;</span><div class="pv">WC</div><div class="lb">2 SRTWCX6405</div></div>
+      <div class="rt on"><span class="grip">&#8942;&#8942;</span><span class="dot" title="Edited"></span><div class="pv">basin</div><div class="lb">3 SRTWB1413-GY</div></div>
+      <div class="rt"><span class="grip">&#8942;&#8942;</span><div class="pv">mirror</div><div class="lb">4 SRTMR0601</div></div>
+      <div class="rt off"><span class="grip">&#8942;&#8942;</span><div class="pv">floor trap</div><div class="lb">- SRTFT205</div></div>
+    </div>
+    <div class="stack" id="ss2stack">
+      <!-- page 1 cover -->
+      <div class="pw"><div class="pmeta"><span><b>1</b> Cover &middot; Catalogue cover</span><span class="acts"><span class="btn sm">Edit page</span></span></div>
+        <div class="pg"><div class="abs cover-coll" style="left:2%;top:4%;width:96%;height:80%"><div class="ph-img">photo collage</div><div class="ph-img"></div><div class="ph-img"></div><div class="ph-img"></div><div class="ph-img"></div></div><div class="abs logo" style="left:40%;top:87%;width:20%;height:9%">SORENTO</div></div></div>
+      <!-- page 2 WC -->
+      <div class="pw"><div class="pmeta"><span><b>2</b> SRTWCX6405 &middot; Item with accessories</span><span class="acts"><span class="btn sm">Edit page</span><span class="btn sm">Add accessory</span><span class="btn sm">Leave out</span></span></div>
+        <div class="pg">
+          <div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%">photo</div>
+          <div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">drawing</div>
+          <div class="abs txt" style="left:7%;top:65%;width:30%"><div class="c">SORENTO SRTWCX6405 <span class="m">*</span></div><div class="n">Close coupled WC pan</div><div>- RIMLESS, SOFT CLOSE SEAT</div></div>
+          <div class="abs acc" style="left:38%;top:65%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTWCY6405</b><br>CISTERN TANK</div></div>
+          <div class="abs acc" style="left:38%;top:78%;width:36%"><div class="ph-img t"></div><div><b>SORENTO SRTWC6405-SC</b><br>SEAT COVER</div></div>
+          <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title, masked&gt;</div><div><b>REF :</b> PRJQ-2026-0027-R2</div><div><b>AREA :</b> UNIT &amp; PODIUM FACILITIES</div><div><b>PREPARED BY :</b> &lt;sales A&gt;</div><div><b>DATE :</b> 03 NOV 2026</div><div><b>COMMENT :</b> Soft close seat</div></div>
+          <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+        </div></div>
+      <!-- page 3 basin, edited -->
+      <div class="pw" id="p3"><div class="pmeta"><span><b>3</b> SRTWB1413-GY &middot; Item with accessories <span class="badge warn">Edited</span></span><span class="acts"><span class="btn sm">Edit page</span><span class="btn sm">Reset to template</span><span class="btn sm">Add accessory</span><span class="btn sm">Leave out</span></span></div>
+        <div class="pg">
+          <div class="abs ph-img" style="left:3%;top:6%;width:42%;height:60%">photo (enlarged on this page)</div>
+          <div class="abs drw" style="left:47%;top:2%;width:28%;height:52%">drawing</div>
+          <div class="abs note" style="left:47%;top:56%;width:28%">Grey finish to match the vanity top. Sample at site office.</div>
+          <div class="abs txt" style="left:7%;top:70%;width:36%"><div class="c">SORENTO SRTWB1413-GY</div><div class="n">Counter top basin, grey</div><div>- (L)410 X (W)410 X (H)130 MM</div></div>
+          <div class="abs acc" style="left:47%;top:72%;width:28%"><div class="ph-img t"></div><div><b>SORENTO SRTKSBT001</b><br>BOTTLE TRAP</div></div>
+          <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title, masked&gt;</div><div><b>REF :</b> PRJQ-2026-0027-R2</div><div><b>AREA :</b> UNIT</div><div><b>PREPARED BY :</b> &lt;sales A&gt;</div><div><b>DATE :</b> 03 NOV 2026</div><div><b>COMMENT :</b></div></div>
+          <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+        </div></div>
+      <!-- page 4 new in R2 -->
+      <div class="pw"><div class="pmeta"><span><b>4</b> SRTMR0601 &middot; Single item <span class="badge blue">New in R2</span></span><span class="acts"><span class="btn sm">Edit page</span><span class="btn sm">Add accessory</span><span class="btn sm">Leave out</span></span></div>
+        <div class="pg">
+          <div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%">photo</div>
+          <div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">drawing</div>
+          <div class="abs txt" style="left:7%;top:65%;width:60%"><div class="c">SORENTO SRTMR0601</div><div class="n">LED mirror 600</div><div>- (W)600 X (H)800 MM</div></div>
+          <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title, masked&gt;</div><div><b>REF :</b> PRJQ-2026-0027-R2</div><div><b>AREA :</b> UNIT</div><div><b>PREPARED BY :</b> &lt;sales A&gt;</div><div><b>DATE :</b> 03 NOV 2026</div><div><b>COMMENT :</b></div></div>
+          <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+        </div></div>
+      <!-- left out -->
+      <div class="pw"><div class="pmeta"><span><b>-</b> SRTFT205 &middot; left out, not printed</span><span class="acts"><span class="btn sm">Put back</span></span></div>
+        <div class="pg off"><div class="offband"><span>Left out of the spec sheet</span></div>
+          <div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%">photo</div><div class="abs drw" style="left:38%;top:2%;width:36%;height:60%">drawing</div>
+          <div class="abs txt" style="left:7%;top:65%;width:60%"><div class="c">SORENTO SRTFT205</div><div class="n">Floor trap</div></div></div></div>
+    </div>
+  </div>
+</div>
+<div class="cap"><span class="hint">Shown:</span> SS2 scrolled to page 3 (the rail highlights it, the toolbar says 3 of 4). Page 3 was edited in the designer (orange dot in the rail, "Edited" badge, Reset to template). Page 4 is the item new in R2 (SRTMR0601 is an illustrative code), appended last with the Single item template (no accessories). The floor trap stays left out from SS1. The header's &lsaquo; SS1 / SS3 &rsaquo; is the record navigation between spec sheets of this quotation (RecordNavigation).</div>
+</section>
+
+<!-- ============================================================ E -->
+<section id="edit">
+<h2>E. Edit page = the tag designer on this one page <span class="newtag">NEW</span></h2>
+<p class="why">Card rule 7. "Edit page" opens the existing TagCanvasEditor full screen (the price tag request designer's mode: bound to this page's data, own Save). Layers, Insert field, slots, fonts, Show only when: all as in Dealer Kit &gt; Tag Templates. Save stores the page's layers on SS2 only; the template and SS1 do not change (Q3). "Open template" goes to the template for a change meant for every spec sheet.</p>
+<div class="card">
+  <div class="hdr"><div><h3>Edit page 3 &middot; SRTWB1413-GY</h3><div class="meta">SS2 &middot; PRJQ-2026-0027-R2 &middot; from template Item with accessories (v4)</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><span class="btn">Open template</span><span class="btn">Cancel</span><span class="btn pri">Save page</span></div></div>
+  <div class="banner"><span>Changes apply to page 3 of SS2 only. The template and other spec sheets stay as they are.</span><span class="btn sm">Reset to template</span></div>
+  <div class="ed">
+    <div class="col">
+      <h5>Layers</h5>
+      <div class="li">Title block</div><div class="li">Logo</div><div class="li">Accessory 1 code</div><div class="li">Product text</div>
+      <div class="li on">Product Image</div><div class="li">Drawing</div><div class="li">Note <span class="new">added</span></div>
+      <h5 style="margin-top:14px">Insert</h5>
+      <div class="li">Text</div><div class="li">Image</div><div class="li">Shape</div><div class="li">Badge</div>
+    </div>
+    <div class="col canvasbg">
+      <div class="pg">
+        <div class="abs ph-img sel-box" style="left:3%;top:6%;width:42%;height:60%">Product Image</div>
+        <div class="abs drw" style="left:47%;top:2%;width:28%;height:52%">Drawing</div>
+        <div class="abs note" style="left:47%;top:56%;width:28%">Grey finish to match the vanity top. Sample at site office.</div>
+        <div class="abs txt" style="left:7%;top:70%;width:36%"><div class="c">SORENTO SRTWB1413-GY</div><div class="n">Counter top basin, grey</div></div>
+        <div class="abs acc" style="left:47%;top:72%;width:28%"><div class="ph-img t"></div><div><b>SORENTO SRTKSBT001</b><br>BOTTLE TRAP</div></div>
+        <div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc">&lt;project title, masked&gt;</div><div><b>REF :</b> PRJQ-2026-0027-R2</div><div><b>AREA :</b> UNIT</div><div><b>PREPARED BY :</b> &lt;sales A&gt;</div><div><b>DATE :</b> 03 NOV 2026</div><div><b>COMMENT :</b></div></div>
+        <div class="abs logo" style="left:77%;top:90%;width:22%;height:8%">SORENTO</div>
+      </div>
+      <div class="cap">Canvas draws the real data of this page (basin, its bottle trap, R2 ref) as it prints.</div>
+    </div>
+    <div class="col">
+      <h5>Inspector &middot; Product Image</h5>
+      <div>Slot binding</div><div class="ip">Product Image</div>
+      <div>Product</div><div class="ip">Main item</div>
+      <div>Position (mm)</div><div class="ip">X 10.2 &nbsp; Y 11.4 &nbsp; W 142.3 &nbsp; H 114.3</div>
+      <div>Fit</div><div class="ip">Contain</div>
+      <div>Show only when</div><div class="ip" style="color:#a1a1aa">Always</div>
+    </div>
+  </div>
+</div>
+<div class="cap">After Save: back to the reader at page 3; the page re-renders with the change and carries "Edited". Export PDF prints it. Reset to template drops the override (5 s deferred, reversible: section F's countdown).</div>
+</section>
+
+<!-- ============================================================ F -->
+<section id="delete">
+<h2>F. Delete (deferred, no confirm)</h2>
+<p class="why">Card rule 9. Delete in the row menu (or the reader's header menu) becomes the 10 s countdown with Cancel (DeferredActionButton); the server deletes when it lapses. PDFs already in My Downloads stay. Reset to template uses the same pattern with the 5 s reversible window.</p>
+<div class="card"><div class="body"><div class="grid"><table style="min-width:700px"><colgroup><col style="width:9%"><col style="width:22%"><col style="width:31%"><col style="width:10%"><col style="width:28%"></colgroup>
+  <tbody><tr><td class="num">SS1</td><td>PRJQ-2026-0027-R1</td><td>Catalogue cover &middot; Item with accessories</td><td>4</td><td><span class="count">Deleting in 7 s <u>Cancel</u></span></td></tr></tbody></table></div></div></div>
+</section>
+
+<!-- ============================================================ G -->
+<section id="phone">
+<h2>G. 375px</h2>
+<p class="why">List: the grid scrolls sideways inside its frame (PanelDataGrid), page does not. Reader: fit width, the rail folds into a "Pages" button, page actions wrap under the page title. Edit page needs a desktop-width screen (same as Tag Templates today); at 375 the button says so in its tooltip and is disabled.</p>
+<div class="row">
+  <div class="phone">
+    <div class="tabs" style="padding:0 10px"><span>Signatures</span><span class="on">Spec sheet</span></div>
+    <div class="body" style="padding:12px">
+      <div class="tabbar"><h4>Spec sheets</h4><span class="btn pri sm">+ Create spec sheet</span></div>
+      <div class="grid"><table style="min-width:560px"><colgroup><col style="width:14%"><col style="width:36%"><col style="width:14%"><col style="width:36%"></colgroup>
+        <thead><tr><th>No.</th><th>Revision</th><th>Pages</th><th>Last edited</th></tr></thead>
+        <tbody><tr><td class="num">SS2</td><td>PRJQ-2026-0027-R2</td><td>4</td><td>03 Nov, 14:41</td></tr><tr><td class="num">SS1</td><td>PRJQ-2026-0027-R1</td><td>4</td><td>02 Nov, 16:30</td></tr></tbody></table></div>
+    </div>
+  </div>
+  <div class="phone">
+    <div class="hdr" style="padding:10px 12px"><div><h3 style="font-size:15px">SS2 &middot; PRJQ-2026-0027-R2</h3><div class="meta">4 pages</div></div><span class="btn pri sm">Export PDF</span></div>
+    <div class="tool"><span class="btn sm">Pages</span><span class="pn"><b>2</b> of 4</span><span class="btn ic">&minus;</span><span class="btn ic">+</span></div>
+    <div class="stack" style="padding:10px;gap:14px;max-height:430px">
+      <div class="pw"><div class="pmeta"><span><b>2</b> SRTWCX6405</span><span class="acts"><span class="btn sm">Add accessory</span><span class="btn sm">Leave out</span></span></div>
+        <div class="pg"><div class="abs ph-img" style="left:3%;top:10%;width:33%;height:52%"></div><div class="abs drw" style="left:38%;top:2%;width:36%;height:60%"></div><div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc"></div><div><b>AREA :</b> UNIT</div><div></div></div></div></div>
+      <div class="pw"><div class="pmeta"><span><b>3</b> SRTWB1413-GY <span class="badge warn">Edited</span></span></div>
+        <div class="pg"><div class="abs ph-img" style="left:3%;top:6%;width:42%;height:60%"></div><div class="abs drw" style="left:47%;top:2%;width:28%;height:52%"></div><div class="abs tb" style="left:77%;top:1%;width:22%;height:85%"><div class="desc"></div><div></div></div></div></div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ============================================================ H -->
+<section id="map">
+<h2>H. What each part reuses (FE = sorento_crm_frontend)</h2>
+<table class="map card">
+<colgroup><col style="width:24%"><col style="width:40%"><col style="width:36%"></colgroup>
+<thead><tr><th>Element</th><th>Reused component (repo path)</th><th>New / changed</th></tr></thead>
+<tbody>
+<tr><td>Tab + list</td><td><code>FE/components/common/PanelDataGrid.tsx</code> (as <code>.../[projectId]/components/SalesOrdersPanel.tsx</code>), <code>Badge</code> <code>FE/components/ui/badge.tsx</code>, row menu <code>FE/components/ui/dropdown-menu.tsx</code>, tab route <code>.../[documentId]/(view)/spec-sheet/page.tsx</code></td><td><code>QuotationSpecSheetTab.tsx</code> becomes the list; fixed layout, resizable columns, explicit sizes (DataGrid rule)</td></tr>
+<tr><td>Create dialog</td><td><code>FE/components/common/FormDialogScaffold.tsx</code>, <code>FE/components/common/SearchableSelect.tsx</code> (clearable on Single item)</td><td><code>CreateSpecSheetDialog.tsx</code></td></tr>
+<tr><td>Reader pages</td><td><code>FE/components/dealer-kit/ScaledSheet.tsx</code> + <code>TagSheetRenderer</code> (<code>FE/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer.tsx</code>), fed by #2103's preview payload</td><td>one sheet per page, stacked; route <code>.../spec-sheet/[sheetId]</code></td></tr>
+<tr><td>Reader toolbar (page N of M, zoom, fit width)</td><td>look and zoom math of <code>FE/components/common/pdf-viewer/PdfViewerImpl.tsx</code> + <code>pdf-viewer/zoom.ts</code></td><td>the toolbar markup is shared, the page source is the renderer (no pdf.js: pages must stay clickable to edit)</td></tr>
+<tr><td>Rail drag</td><td><code>FE/components/ui/sortable.tsx</code> (the #2103 strip fix: pages are direct children)</td><td>vertical instead of horizontal</td></tr>
+<tr><td>AREA / COMMENT / marker typing, Leave out, Add accessory</td><td>#2103's on-page controls in <code>QuotationSpecSheetTab.tsx</code></td><td>moved into each page's bar; save to the spec sheet, not the document</td></tr>
+<tr><td>Edit page</td><td><code>FE/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor.tsx</code> with <code>boundData</code>, <code>onLayersChange</code>, <code>hideSaveBar</code>, <code>specSheet</code> (the request designer already hosts it this way)</td><td>host page saving a per-page override</td></tr>
+<tr><td>Delete / Reset to template</td><td><code>FE/components/common/DeferredActionButton.tsx</code></td><td>-</td></tr>
+<tr><td>Prev / next spec sheet</td><td><code>FE/components/common/RecordNavigation</code></td><td>-</td></tr>
+<tr><td>Export PDF</td><td>#2103 worker <code>generate_spec_sheet_pdf</code>, print page, My Downloads</td><td>download source = the spec sheet (prints overrides)</td></tr>
+<tr><td>Data</td><td>#2103 <code>project_spec_sheet_service.pages / build_print_payload</code></td><td>table <code>projects.quotation_spec_sheets</code>; the payload reads the record instead of the document column</td></tr>
+</tbody></table>
+</section>
+
+<!-- ============================================================ I -->
+<section id="ask">
+<h2>I. Questions (from the behaviour card; the mock follows the recommendations)</h2>
+<div class="opt">
+  <div class="o rec"><h4>Q1. Which revisions can be picked?</h4>(a) Any issued revision; issuing needs our signature only, never the customer's. (b) Also the unissued draft.<br><b>Recommend (a)</b>: the sheet then matches the exact R the customer holds. Flow: Sign, Issue, Create spec sheet, send both.</div>
+  <div class="o rec"><h4>Q2. Template re-published later?</h4>(a) The sheet keeps the version it was made with. (b) It follows the latest.<br><b>Recommend (a)</b>: what was sent stays as sent; a "Use latest templates" action refreshes on purpose.</div>
+  <div class="o rec"><h4>Q3. Edit page changes what?</h4>(a) This page of this sheet only. (b) The template.<br><b>Recommend (a)</b>: templates stay in Tag Templates; "Open template" is beside Save page.</div>
+  <div class="o rec"><h4>Q4. A new sheet starts from?</h4>(a) The newest sheet's page settings (not its page edits). (b) Clean.<br><b>Recommend (a)</b>: SS2 on R2 is mostly SS1 again (section D page 2 kept its AREA and COMMENT).</div>
+  <div class="o rec"><h4>Q5. Settings already made with #2103?</h4>(a) Become SS1. (b) Dropped.<br><b>Recommend (a)</b>: PRJQ-2026-0007 keeps its work.</div>
+</div>
+</section>
+</div>
+<script>
+// Show the reader scrolled to page 3, as the caption describes.
+window.addEventListener('load',function(){setTimeout(function(){var s=document.getElementById('ss2stack'),p=document.getElementById('p3');if(s&&p&&getComputedStyle(s).overflowY!=='visible'){s.scrollTop+=p.getBoundingClientRect().top-s.getBoundingClientRect().top-12;}},50);});
+</script>
+</body>
+</html>

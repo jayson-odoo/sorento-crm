@@ -1,6 +1,7 @@
 # PLAN: Spec sheet tab v2, saved spec sheets list + PDF-style viewer (SPEC-SHEET-V2)
 
-**Status:** Plan stage: behaviour card in progress (owner feedback 3 Nov 11:35 on PRJQ-2026-0007).
+**Status:** Plan stage: behaviour card asked; mock v1 asked (`documentation/mockups/SPEC-SHEET-V2/index.html`), build waits for the owner's OK.
+Card: `CARD-spec-sheet-v2-03nov.md`.
 Track: L (new table migration, new routes). Builds on #2103 (`PLAN-ps-spec-sheet-02nov.md`).
 UAC: `spec-sheet-v2-03nov-acceptance-criteria.md` (after the mock is approved).
 
