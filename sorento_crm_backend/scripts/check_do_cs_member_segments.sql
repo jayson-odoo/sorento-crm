@@ -4,7 +4,7 @@
 -- are ones the viewer serves. A viewer's tags are the UNION over every team they are a
 -- member of; no tag on any membership = serves everything. So an untagged project CS
 -- still sees retail tasks until they are tagged. Run this, then fix tags in
--- User Management > AI Agents > (agent) > team member row (market segments / brands).
+-- Users & Access > Access > AI Agents > (agent) > team member row (market segments / brands).
 --
 -- Read-only:
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'BEGIN READ ONLY' \
