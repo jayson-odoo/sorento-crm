@@ -237,6 +237,8 @@ export function ConfirmGuideDialog({
     page && !page.psoId && !preparing ? prepareErrors?.get(page.salesOrderId) ?? null : null;
   const prepareFailed = Boolean(prepareError);
   const readFailed = Boolean(splitRead?.isError);
+  // CONFIRM-SPEED-PR2: the dry run's own refusal of the page on screen (Confirm stays open).
+  const refusal = (page?.psoId && wordsErrors?.get(page.psoId)) || null;
   // OI-SPLIT-CONFIRM-POLISH (owner, SO426939): the ONE SO date every sheet on the page prints:
   // the order's split read, else the board's (an order nobody adopted has no read at all).
   const soDate = splitRead?.data?.so_date ?? page?.soDate ?? null;
@@ -607,15 +609,13 @@ export function ConfirmGuideDialog({
               Save or undo your split changes first
             </p>
           ) : null}
-          {wordsFailed && !wordsLoading && !stale ? (
+          {(wordsFailed || refusal) && !wordsLoading && !stale ? (
             <div
               data-testid="confirm-guide-words-failed"
               className="flex w-full flex-wrap items-center gap-2 text-xs"
             >
               <span role="alert" className="break-words">
-                {(page?.psoId && wordsErrors?.get(page.psoId)) ||
-                  [...(wordsErrors?.values() ?? [])][0] ||
-                  'The email preview could not be prepared.'}
+                {wordsFailed || !refusal ? 'The email preview could not be prepared.' : refusal}
               </span>
               {onRetryWords ? (
                 <Button type="button" variant="outline" size="sm" onClick={onRetryWords}>

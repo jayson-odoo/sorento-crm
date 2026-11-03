@@ -2548,7 +2548,9 @@ export function FulfilmentBoardPanel({
   }, [bumpEmailEpochs]);
   const retryFailedEmail = React.useCallback(() => {
     bumpEmailEpochs(
-      [...guideEmailRef.current].filter(([, entry]) => entry.status === 'failed').map(([id]) => id),
+      [...guideEmailRef.current].filter(
+        ([, entry]) => entry.status === 'failed' || entry.status === 'refused',
+      ).map(([id]) => id),
     );
   }, [bumpEmailEpochs]);
   /**
@@ -2602,11 +2604,12 @@ export function FulfilmentBoardPanel({
             }
           } else {
             // CONFIRM-SPEED-PR2 (owner: the email = the preview = the attachment): a refused
-            // page keeps the dry run's own sentence, prints no words and holds Confirm.
-            refused = entry?.error ?? '';
+            // page keeps the dry run's own sentence and prints no words; Confirm stays open and the
+            // press itself lists the refusal on the result card.
+            refused = entry?.error || 'The email preview could not be prepared.';
           }
         }
-        if (refused !== null) settle({ key, status: 'failed', words: null, error: refused });
+        if (refused !== null) settle({ key, status: 'refused', words: null, error: refused });
         else settle({ key, status: 'ready', words, emailLines });
       } catch {
         // Replaced (its page's key moved) or the guide closed: not a failed read.
@@ -2710,7 +2713,7 @@ export function FulfilmentBoardPanel({
     const out = new Map<string, string>();
     for (const psoId of guidePsoIds) {
       const entry = guideEmail.get(psoId);
-      if (entry?.status === 'failed' && entry.error) out.set(psoId, entry.error);
+      if (entry?.status === 'refused' && entry.error) out.set(psoId, entry.error);
     }
     return out as ReadonlyMap<string, string>;
   }, [guidePsoIds, guideEmail]);
@@ -4202,7 +4205,7 @@ export function FulfilmentBoardPanel({
 /** CONFIRM-DIALOG-SPEED: one guide page's email words, and the dry-run key they were read for. */
 interface GuideEmailEntry {
   key: string;
-  status: 'loading' | 'ready' | 'failed';
+  status: 'loading' | 'ready' | 'failed' | 'refused';
   words: ReadonlyMap<string, string> | null;
   /** CONFIRM-SPEED-PR2: a refused dry run's own error text ('' when it named none). */
   error?: string;
