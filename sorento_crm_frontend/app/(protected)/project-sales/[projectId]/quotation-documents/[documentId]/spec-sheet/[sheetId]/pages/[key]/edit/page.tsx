@@ -14,6 +14,14 @@ export default async function EditProjectQuotationSpecSheetPage({
   params: Promise<{ projectId: string; documentId: string; sheetId: string; key: string }>;
 }) {
   const { projectId, documentId, sheetId, key } = await params;
+  // The reader links with encodeURIComponent(page.key) and a server page receives the segment
+  // still encoded; decode it once so the service's own encoding does not double it.
+  let pageKey = key;
+  try {
+    pageKey = decodeURIComponent(key);
+  } catch {
+    // A malformed escape is left as is; the API answers it with a 404.
+  }
   return (
     <RequireAccess permission="projects.projects.edit">
       <Container className="pb-24">
@@ -21,7 +29,7 @@ export default async function EditProjectQuotationSpecSheetPage({
           projectId={projectId}
           documentId={documentId}
           sheetId={sheetId}
-          pageKey={key}
+          pageKey={pageKey}
         />
       </Container>
     </RequireAccess>
