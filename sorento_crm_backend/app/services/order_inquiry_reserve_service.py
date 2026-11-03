@@ -320,14 +320,16 @@ def _status_of(rr: OrderInquiryReserveRequestRow) -> tuple:
     return f"Partial {_qty_str(got)} of {_qty_str(asked)}", "partial"
 
 
-def _row_context(db: Session, row: OrderInquiryRow, rr: OrderInquiryReserveRequestRow) -> Dict[str, Any]:
+def _row_context(
+    db: Session, row: OrderInquiryRow, rr: OrderInquiryReserveRequestRow, dates: Any = None
+) -> Dict[str, Any]:
     """One `reserve.rows[]` entry, read fresh off the row/request-row at dispatch time -
     the same field set both the request and the reserved template read (3.6): `remaining`
     doubles as the request mail's REMAINING and the reserved mail's BALANCE, since the two
     templates print it at different MOMENTS (before the request changes nothing, after the
     reserve link has already landed) rather than under two different keys."""
     status, status_kind = _status_of(rr)
-    needed_by = resolve_oi_date(db, [row])[str(row.id)].date
+    needed_by = (dates or resolve_oi_date(db, [row]))[str(row.id)].date
     return {
         "item_code": row.item_code,
         "delivery_date": _fmt_date(needed_by),
@@ -369,7 +371,8 @@ def _build_context(
         facts = ProjectOrderInquiryService(db)._handover_order_facts(
             inquiry.project_sales_order_id
         )
-    rows_ctx = [_row_context(db, row, rr) for rr, row in pairs]
+    dates = resolve_oi_date(db, [row for _rr, row in pairs])
+    rows_ctx = [_row_context(db, row, rr, dates) for rr, row in pairs]
     link = f"{build_order_inquiry_link(request.order_inquiry_id)}?reserve={request.id}"
     reserve = {
         "inquiry_no": inquiry.inquiry_no if inquiry is not None else None,
@@ -455,12 +458,13 @@ def _build_commit_context(
                 released_by_rr.setdefault(str(rr_id), []).append(document)
 
     rows_ctx = []
+    dates = resolve_oi_date(db, [item["row"] for item in touched])
     for item in touched:
         rr = item["rr"]
         row = item["row"]
         balance = _qty_str(_remaining(db, row))
         status, status_kind = _status_of(rr)
-        needed_by = resolve_oi_date(db, [row])[str(row.id)].date
+        needed_by = dates[str(row.id)].date
         rows_ctx.append(
             {
                 "item_code": row.item_code,

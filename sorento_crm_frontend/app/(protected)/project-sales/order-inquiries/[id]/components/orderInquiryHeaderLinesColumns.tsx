@@ -310,7 +310,7 @@ const SPLIT_COLUMNS = (itemCode: string | null | undefined): ColumnDef<OrderInqu
     accessorKey: 'delivery_date',
     header: 'Date',
     // dd/mm/yyyy, then "planned dd/mm/yyyy" beside it; truncates with a title.
-    size: 200,
+    size: 240,
     meta: { headerTitle: 'Date' },
     cell: ({ row }) => <SplitDateCell split={row.original} />,
   },
@@ -759,7 +759,7 @@ export function useOrderInquiryHeaderLinesColumns({
       {
         accessorKey: 'delivery_date',
         header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
-        size: 140,
+        size: 180,
         meta: { headerTitle: 'Delivery date', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => <DeliveryDateCell row={row.original} />,
       },
@@ -774,7 +774,7 @@ export function useOrderInquiryHeaderLinesColumns({
         id: 'po_number',
         accessorFn: (row) => lineDocumentsOf(lineOf(row), 'po')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
-        size: 200,
+        size: 240,
         meta: { headerTitle: 'PO' },
         cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="po" />,
       },
@@ -804,7 +804,7 @@ export function useOrderInquiryHeaderLinesColumns({
       {
         accessorKey: 'verb',
         header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
-        size: 200,
+        size: 240,
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
         // G5: the line's most urgent instruction (CANCEL_BALANCE > CHANGE_SO > DELAY >
         // ADVANCE > the primary row's own verb). The pill only, never the shared cell's

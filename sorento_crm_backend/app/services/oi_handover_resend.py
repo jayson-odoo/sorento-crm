@@ -129,6 +129,7 @@ class OrderInquiryHandoverResend:
         # `actor` stays the OI's raiser (`handover_item`'s own fallback), so "Raised by" in
         # the email is true and the raiser is on Cc as on the automatic email; the presser
         # is recorded as `sent_by`.
+        service.prime_oi_dates(rows)
         items = [
             service.handover_item(
                 row,

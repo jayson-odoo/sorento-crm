@@ -1186,7 +1186,7 @@ export function useOrderInquiryWorklistColumns({
         header: ({ column }) => (
           <DataGridColumnHeader title="Delivery date" column={column} />
         ),
-        size: 140,
+        size: 180,
         meta: { headerTitle: 'Delivery date', skeleton: <Skeleton className="h-4 w-20" /> },
         cell: ({ row }) => <DeliveryDateCell row={row.original} />,
       },

@@ -1613,6 +1613,9 @@ class ProjectOrderInquiryService:
         # attachments key on - off the SAME `ProjectSalesOrderLine` read, so this stays
         # one round trip rather than two.
         self._handover_line_no_cache: Dict[str, tuple[Optional[int], Optional[str]]] = {}
+        #: OI-ONE-DELIVERY-DATE: row id -> resolved date, filled by `prime_oi_dates` for a
+        #: caller about to build many lines; a row not primed is resolved on its own.
+        self._oi_date_cache: Dict[str, Any] = {}
         #: SO-LINE-DESC: core line id -> (description, company id), and (company id, code) -> tick.
         self._line_description_cache: Dict[str, tuple[str, Optional[str]]] = {}
         self._description_tick_cache: Dict[tuple[Optional[str], str], bool] = {}
@@ -2964,7 +2967,7 @@ class ProjectOrderInquiryService:
                     so_line_id=row.so_line_id, item_code=item_code,
                     stock_location=row.stock_location, verb=row.verb,
                     cited_document=row.cited_document, note=row.note,
-                    qty=to_qty, delivery_date=to_date or row.delivery_date,
+                    qty=to_qty, delivery_date=to_date or self._oi_date_of(row).date,
                 )
                 self._record_handover(
                     stand_in, kind="settled", was=line_was, actor_user_id=actor_user_id
@@ -4567,6 +4570,7 @@ class ProjectOrderInquiryService:
             so_number = (
                 (order.autocount_doc_no or order.provisional_ref) if order else None
             )
+            shown = resolve_oi_date(self.db, [row])[str(row.id)]
             ctx = {
                 "order_inquiry_row": {
                     "id": str(row.id),
@@ -4582,13 +4586,12 @@ class ProjectOrderInquiryService:
                     "previous_qty": (
                         str(row.previous_qty) if row.previous_qty is not None else None
                     ),
+                    # OI-ONE-DELIVERY-DATE: the SO line's date and the Was beside it.
                     "delivery_date": (
-                        row.delivery_date.isoformat() if row.delivery_date else None
+                        shown.date.isoformat() if shown.date else None
                     ),
                     "previous_delivery_date": (
-                        row.previous_delivery_date.isoformat()
-                        if row.previous_delivery_date
-                        else None
+                        shown.was.isoformat() if shown.was else None
                     ),
                     "link": build_order_inquiry_link(inquiry.id),
                 },
@@ -4687,6 +4690,13 @@ class ProjectOrderInquiryService:
             line["was"] = {**was, "item_code": decorated}
         if wrapped:
             line["item_wrap"] = True
+
+    def prime_oi_dates(self, rows: Sequence[OrderInquiryRow]) -> None:
+        """Resolve the SO line date of all `rows` in one read, for `handover_item`."""
+        self._oi_date_cache.update(resolve_oi_date(self.db, rows))
+
+    def _oi_date_of(self, row: OrderInquiryRow) -> Any:
+        return self._oi_date_cache.get(str(row.id)) or resolve_oi_date(self.db, [row])[str(row.id)]
 
     def handover_item(
         self,
@@ -4798,7 +4808,7 @@ class ProjectOrderInquiryService:
             "delivery_date": _handover_fmt_date(
                 row.delivery_date
                 if isinstance(row, SimpleNamespace)
-                else resolve_oi_date(self.db, [row])[str(row.id)].date
+                else self._oi_date_of(row).date
             ),
             # AC-1: "very, very important" to the owner - blank, never the word "None",
             # when the row carries no stock location (`_build_handover_context`'s own
