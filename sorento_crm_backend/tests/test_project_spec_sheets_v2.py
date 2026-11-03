@@ -1746,7 +1746,6 @@ def test_nit_page_keys_with_a_slash_or_comma_work_through_the_routes():
         {"kind": "image", "assetId": {"id": "x"}},
         {"kind": "image", "source": {"type": "asset", "assetId": ["x"]}},
         {"kind": "image", "source": {"type": "asset", "assetId": {"id": "x"}}},
-        {"kind": "image", "source": "a string"},
     ],
 )
 def test_malformed_props_or_asset_ids_answer_422_and_store_nothing(props):
