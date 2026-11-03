@@ -3037,6 +3037,62 @@ describe('CONFIRM-SPEED-PR2 refused dry run', () => {
     fireEvent.click(within(holder).getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(emailDryRuns()).toHaveLength(2));
   });
+
+  describe('review round: each page shows its own refusal', () => {
+    const refusalFor = (psoId: string) => ({
+      pso_id: psoId,
+      ok: false,
+      preview: true,
+      error: REFUSAL,
+      email_lines: [],
+      lines_confirmed: [],
+      lines_carried: 0,
+      lines_held_back: [],
+      lines_fulfilled_skipped: 0,
+      inquiry_rows: [],
+      transfers: [],
+    });
+
+    function pageOneRefusedPageTwo(page2: () => Promise<unknown>) {
+      previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) => {
+        const psoId = body.orders[0].pso_id;
+        return psoId === 'pso-so-1'
+          ? Promise.resolve({ results: [refusalFor('pso-so-1')] })
+          : page2();
+      });
+    }
+
+    it('P6 RED (a): page 1 shows its refusal with Retry while page 2 is still preparing', async () => {
+      serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+      pageOneRefusedPageTwo(() => new Promise(() => {}));
+      await mountWith(coveredBoard());
+      const guide = await openConfirmGuide();
+      await waitFor(() => expect(emailDryRuns().length).toBeGreaterThanOrEqual(2));
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001');
+      const alert = await within(guide).findByRole('alert');
+      expect(alert).toHaveTextContent(REFUSAL);
+      const holder = (alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!) as HTMLElement;
+      expect(within(holder).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+
+    it('P6 RED (b): page 2 failing does not replace page 1\'s own refusal; page 2 shows the generic sentence with Retry', async () => {
+      serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+      pageOneRefusedPageTwo(() => Promise.reject(new Error('Gateway timeout')));
+      await mountWith(coveredBoard());
+      const guide = await openConfirmGuide();
+      await waitFor(() => expect(emailDryRuns().length).toBeGreaterThanOrEqual(2));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001');
+      expect(await within(guide).findByRole('alert')).toHaveTextContent(REFUSAL);
+      await clickNext();
+      await waitFor(() =>
+        expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
+      );
+      const failed = await screen.findByTestId('confirm-guide-words-failed');
+      expect(within(failed).getByRole('alert')).toHaveTextContent('The email preview could not be prepared.');
+      expect(within(failed).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -3143,5 +3199,69 @@ describe('CONFIRM-SPEED-PR2 every email line on Review split', () => {
     expect(row).toHaveTextContent('5');
     expect(row.querySelectorAll('input, textarea')).toHaveLength(0);
     expect(within(page).getByTestId('split-line-3')).toHaveTextContent('USE BRW');
+  });
+
+  describe('review round: one email line told twice', () => {
+    const TWICE = demand({ project_line_id: 'pl-1-2', line_no: 2, item_code: 'CKSW015', qty: '9' });
+    const readOf = () => ({
+      ...bothLinesRead(),
+      lines: [
+        wireLine(2, 'CKSW015', 9, '2026-09-20', {
+          line_id: 'pl-1-2',
+          now_qty: 9,
+          split_state: 'applied',
+          split_view: { status: 'confirmed' },
+          splits: [],
+        }),
+        bothLinesRead().lines[1],
+      ],
+    });
+    const twiceBoard = () =>
+      withDraft(boardOf([TWICE, SO1_L3]), ['pl-1-3'], { 'pl-1-3': 'USE BRW 522 & ORDER 294' });
+
+    it('P7 RED: one row for the line, both words joined with " / " in email order, the board\'s qty, no duplicate key', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      emailAnswers([
+        { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
+        { so_line_id: 'pl-1-2', item_code: 'CKSW015', qty: '5', remark: 'ORDER BACK MWH-BB' },
+        { so_line_id: 'pl-1-2', item_code: 'CKSW015', qty: '3', remark: 'ORDER BACK BRW-BB' },
+      ]);
+      serveSplits({ 'pso-so-1': readOf() });
+      await mountWith(twiceBoard(), ['SO000001']);
+      await openConfirmGuide();
+      const page = await screen.findByTestId('confirm-guide-split-page');
+      await within(page).findByTestId('split-line-3');
+      const block = await within(page).findByTestId('split-line-2');
+      expect(within(page).getAllByTestId('split-line-2')).toHaveLength(1);
+      expect(block).toHaveTextContent('ORDER BACK MWH-BB / ORDER BACK BRW-BB');
+      expect(block).toHaveTextContent(/\b9\b/);
+      expect(block).not.toHaveTextContent(/\b8\b/);
+      expect(block.querySelectorAll('input, textarea')).toHaveLength(0);
+      const duplicate = errors.mock.calls.filter((call) => /same key|unique "key"/i.test(String(call[0])));
+      errors.mockRestore();
+      expect(duplicate).toEqual([]);
+    });
+
+    it('P7 RED: an orphan line told twice is one row, qty summed (5 + 3 = 8), both words shown', async () => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      emailAnswers([
+        { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
+        { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-9', qty: '5', remark: 'ORDER BACK MWH-BB' },
+        { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-9', qty: '3', remark: 'ORDER BACK BRW-BB' },
+      ]);
+      const page = await openPage();
+      const words = await within(page).findByText(/ORDER BACK MWH-BB/);
+      const row = words.closest('tr') as HTMLElement;
+      expect(row).toHaveTextContent('ZZT-ORPHAN-9');
+      expect(row).toHaveTextContent(/\b8\b/);
+      expect(row).toHaveTextContent('ORDER BACK BRW-BB');
+      const orphanRows = Array.from(page.querySelectorAll('tr')).filter((tr) =>
+        tr.textContent?.includes('ZZT-ORPHAN-9'),
+      );
+      expect(orphanRows).toHaveLength(1);
+      const duplicate = errors.mock.calls.filter((call) => /same key|unique "key"/i.test(String(call[0])));
+      errors.mockRestore();
+      expect(duplicate).toEqual([]);
+    });
   });
 });

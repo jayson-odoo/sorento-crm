@@ -183,11 +183,17 @@ def test_oi_placements_returns_the_same_rows_as_the_one_join_statement(api):
         (ref, p.id, c1, "ZZT-SPO-HIT-A", "4", 3),
         (ref, p.id, c1, "ZZT-SPO-HIT-B", "2", 9),
     ])
-    for company in (None, c1, c2):
-        old = _key(_oracle_oi_placements(db, [ref], [p.id], company_id=company))
-        new = _key(service._oi_placements([ref], [p.id], company_id=company))
-        assert new == old, (company, new, old)
-        assert old == (expected if company in (None, c1) else []), (company, old)
+    # Under the fixture's own scope {c1} the scope filter on spo_allocations drops the c2 SPO
+    # row by itself; UNSCOPED, only the statement's own company pairing excludes it, so the
+    # review-round check (delete the pairing and this goes red) runs there.
+    for scope in (frozenset({c1}), None):
+        with company_scope(db, scope):
+            for company in (None, c1, c2):
+                old = _key(_oracle_oi_placements(db, [ref], [p.id], company_id=company))
+                new = _key(service._oi_placements([ref], [p.id], company_id=company))
+                assert new == old, (scope, company, new, old)
+                assert old == (expected if company in (None, c1) else []), (scope, company, old)
+                assert all("NEG-COMPANY" not in row[3] for row in new), (scope, company, new)
     assert hit_a is not None and hit_b is not None
 
 
@@ -446,3 +452,77 @@ def test_a_placement_pass_reads_line_identity_once_per_line_and_inquiry_once_P4_
     # The identity reads: once per project line (+2 slack), once per inquiry (+1 slack).
     assert seen["line_by_id"] <= len(lines) + 2, seen
     assert seen["inquiry_by_id"] <= len(inquiries) + 1, seen
+
+
+def test_each_claim_a_pass_writes_carries_its_own_orders_so_number_P4_CLAIMS(api):
+    """Review round: a so_number memo keyed wrongly (every row given the first inquiry's
+    number) must fail. One pass writes claims for rows of three inquiries on three
+    different sales orders; each claim's so_number is its own order's."""
+    from app.models.scm import OrderLinkClaim
+
+    client, world = api
+    db = world.db
+    product = world.product
+    today = date.today()
+    orders = []
+    for n in range(3):
+        order = _project_so(db, world.project)
+        order.autocount_doc_no = f"ZZT-AC-{_suffix()}"
+        core_so = _core_so(db, world.company_id)
+        core = _core_line(db, core_so, product, world.own_wh, qty_ordered="5")
+        pline = _project_line(db, order, line_no=10, product=product, core_line=core)
+        inquiry = OrderInquiry(id=_uid(), company_id=world.company_id,
+                               project_sales_order_id=order.id)
+        db.add(inquiry)
+        db.flush()
+        for k in range(2):
+            db.add(OrderInquiryRow(
+                id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+                so_line_id=pline.id, item_code=product.product_code, qty=Decimal("2"),
+                verb="ORDER", state="raised", ack_state="acknowledged",
+                delivery_date=today + timedelta(days=30 + k),
+            ))
+        orders.append(order)
+    for qty, days in ((12, 20),):
+        db.add(SPOAllocation(
+            id=_uid(), spo_number=f"ZZT-SPO-{_suffix()}", spo_line_number=1,
+            product_id=product.id, warehouse_id=world.pool_wh.id,
+            allocated_quantity=qty, quantity_received=0, receipt_status="pending",
+            line_status="open", expected_date=today + timedelta(days=days),
+            company_id=world.company_id,
+        ))
+    db.commit()
+    # A pass's own real links come only from the PO book step (needs ingested book rows), so
+    # the claim writer is driven the way a pass drives it: `_write_link` on rows of several
+    # inquiries while the pass's identity memo is live (`auto_place_for_products` sets it).
+    service = ProjectOrderInquiryService(db)
+    service._line_identity_memo = {}
+    try:
+        rows = (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.item_code == product.product_code)
+            .order_by(OrderInquiryRow.created_at, OrderInquiryRow.id)
+            .all()
+        )
+        assert len({r.order_inquiry_id for r in rows}) == 3
+        for row in rows:
+            candidates = service._candidates_for_row(row)
+            assert candidates, "the seeded SPO row is not a candidate"
+            service._write_link(row, candidates[0], Decimal("2"), actor_user_id=None,
+                                auto_trigger="test-pr2-claims")
+    finally:
+        service._line_identity_memo = None
+    db.flush()
+    expected = {order.autocount_doc_no for order in orders}
+    claims = (
+        db.query(OrderLinkClaim)
+        .filter(OrderLinkClaim.item_code == product.product_code)
+        .all()
+    )
+    assert {c.so_number for c in claims} == expected, (
+        sorted(c.so_number for c in claims), sorted(expected))
+    # Each claim sits on its own order's core line, not the first inquiry's.
+    by_line = {}
+    for claim in claims:
+        by_line.setdefault(str(claim.so_line_id), set()).add(claim.so_number)
+    assert all(len(numbers) == 1 for numbers in by_line.values()), by_line
