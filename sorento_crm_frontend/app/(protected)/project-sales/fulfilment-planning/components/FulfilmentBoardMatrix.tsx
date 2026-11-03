@@ -248,6 +248,15 @@ export function FulfilmentBoardMatrix({
                 >
                   {product.label}
                 </span>
+                {/* OI-UX-FILTER-SNAPSHOT: a sales-order row names its customer / project. */}
+                {product.party ? (
+                  <span
+                    className="block truncate text-xs font-normal text-muted-foreground"
+                    title={product.party}
+                  >
+                    {product.party}
+                  </span>
+                ) : null}
               </th>
 
               {dateBuckets.map((bucket) => {

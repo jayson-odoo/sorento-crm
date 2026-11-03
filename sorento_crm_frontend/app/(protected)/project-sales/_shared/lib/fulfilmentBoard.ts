@@ -42,6 +42,7 @@ import { formatDateTimeInMalaysia, parseDateTimeAsUTC, timeAgo } from '@/lib/hel
 import { SHORT_MONTHS } from './boardChangeAnnotations';
 import { fromMinor, toMinor } from './supplyComposition';
 import { unpostableNotices } from './unpostableNotices';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 
 /**
  * A column header with the week-commencing abbreviation taken off.
@@ -1656,9 +1657,14 @@ function sumMinor(rows: { qty: string }[]): number {
 function axisKeyOf(
   contribution: BoardContribution,
   axis: BoardRowAxis,
-): { key: string; label: string } {
+): { key: string; label: string; party?: string | null } {
   if (axis === 'sales_order') {
-    return { key: contribution.sales_order_id, label: contribution.so_number };
+    // OI-UX-FILTER-SNAPSHOT (owner, 3 Nov): an order names its CUSTOMER / project.
+    return {
+      key: contribution.sales_order_id,
+      label: contribution.so_number,
+      party: soCustomerProjectLabel(contribution.customer_name, contribution.project_label),
+    };
   }
   if (axis === 'customer') {
     const label = contribution.customer_name || 'Customer not recorded';
@@ -1697,8 +1703,8 @@ export function boardAxis(
 
   for (const cell of cells) {
     for (const contribution of cell.contributions) {
-      const { key, label } = axisKeyOf(contribution, axis);
-      if (!rows.has(key)) rows.set(key, { key, label });
+      const { key, label, party } = axisKeyOf(contribution, axis);
+      if (!rows.has(key)) rows.set(key, party ? { key, label, party } : { key, label });
       const cellKey = `${key}|${cell.bucket_key}`;
       const existing = grouped.get(cellKey);
       if (existing) existing.lines.push(contribution);

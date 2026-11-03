@@ -2483,6 +2483,19 @@ describe('boardAxis: pivoting the rows', () => {
     ]);
   });
 
+  it('OI-UX-FILTER-SNAPSHOT: a sales-order row names its CUSTOMER / project under the number', () => {
+    const named = contributionsOf().map((cell) => ({
+      ...cell,
+      contributions: cell.contributions.map((entry) => ({
+        ...entry,
+        customer_name: 'ACME SDN BHD',
+        project_label: entry.sales_order_id === 'so-a' ? 'TAMAN JAYA' : null,
+      })),
+    }));
+    const { rows } = boardAxis('sales_order', named);
+    expect(rows.map((row) => row.party)).toEqual(['ACME SDN BHD / TAMAN JAYA', 'ACME SDN BHD']);
+  });
+
   it('groups a sales-order row by ORDER, across every product it owes', () => {
     const { rows, cells } = boardAxis('sales_order', contributionsOf());
 

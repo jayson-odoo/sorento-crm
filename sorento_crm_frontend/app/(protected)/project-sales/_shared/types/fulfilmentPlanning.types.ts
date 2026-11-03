@@ -1920,6 +1920,8 @@ export interface BoardAxisRow {
   label: string;
   /** Secondary text for the row header, e.g. a product's name under its code. */
   description?: string | null;
+  /** OI-UX-FILTER-SNAPSHOT: a sales-order row's `CUSTOMER / project`, printed under it. */
+  party?: string | null;
 }
 
 /**
