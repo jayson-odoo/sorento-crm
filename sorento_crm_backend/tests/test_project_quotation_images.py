@@ -28,6 +28,7 @@ from app.models.user import User
 from app.services import project_seed_service
 
 from ._pg_fixture import blank_session
+from ._quote_fixture_prices import UNDISCOUNTED_LIST_PRICE
 
 MARKER = "zzt-qimg"
 SIGNATURE_DATA_URI = "data:image/png;base64,zzt"
@@ -140,7 +141,7 @@ def _product(db, env) -> Product:
         description=f"{MARKER} close-coupled WC, white",
         category_id=env["category"].id,
         base_uom_id=env["uom"].id,
-        list_price=Decimal("300.00"),
+        list_price=Decimal(UNDISCOUNTED_LIST_PRICE),
     )
     db.add(row)
     db.flush()

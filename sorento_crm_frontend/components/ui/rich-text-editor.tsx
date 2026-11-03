@@ -70,6 +70,9 @@ export type RichTextEditorProps = {
    * at the current cursor position.
    */
   onEditorReady?: (editor: Editor) => void;
+  /** Put on the editable element, so a visible label can name it. */
+  id?: string;
+  'aria-labelledby'?: string;
 };
 
 const ToolbarButton = ({
@@ -417,6 +420,8 @@ export function RichTextEditor({
   editable = true,
   mentionUsersFetcher,
   onEditorReady,
+  id,
+  'aria-labelledby': labelledBy,
 }: RichTextEditorProps) {
   // Stash the fetcher in a ref so the Mention extension's closure can read
   // the latest version without re-creating the editor when the prop changes.
@@ -530,6 +535,8 @@ export function RichTextEditor({
     editable,
     editorProps: {
       attributes: {
+        ...(id ? { id } : {}),
+        ...(labelledBy ? { 'aria-labelledby': labelledBy } : {}),
         class: cn(
           'prose prose-sm dark:prose-invert max-w-none px-3 py-2 focus:outline-none',
           '[&_p]:my-2 [&_ul]:my-2 [&_ol]:my-2 [&_h1]:mt-3 [&_h2]:mt-3 [&_h3]:mt-3',
