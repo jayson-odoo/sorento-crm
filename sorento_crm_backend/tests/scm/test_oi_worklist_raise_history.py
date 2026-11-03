@@ -266,7 +266,10 @@ def test_the_worklist_row_schema_declares_raise_history():
 
 
 def test_the_export_carries_no_raise_history_column(raise_history_api):
-    """The header list the list export prints, pinned: no raise-history column among them."""
+    """Reversal (review round 4 Blocking 1): AC-LT-39/G9
+    (`PLAN-oi-links-autocount-truth-24sep.md` 3.5) appends a SUGGESTED column after
+    REMAINING - the cascade's own guess, beside PO and SPO on every other surface, while
+    PO NO above stays real-links only. The header list this test pins gains it too."""
     client, _db, _company_id, _seeded = raise_history_api
     import io
 
@@ -278,15 +281,31 @@ def test_the_export_carries_no_raise_history_column(raise_history_api):
     sheet = book[book.sheetnames[0]]
     headings = [cell.value for cell in sheet[1] if cell.value]
     assert not any("history" in str(value).lower() for value in headings)
-    # OI-EXPORT-SHARED (owner, 3 Nov 2026): row 1 is the header and the default export is
-    # the owner's eight columns; the reserve, buying and split change columns are gone.
+    # OI-EXPORT-SHARED: row 1 is the header (no title row); the list export keeps its layout.
     assert headings == [
         "SO DATE",
         "S/O NO",
         "ITEM CODE",
         "QTY",
+        # OI-RESERVE-PILL-QTY round 2 (owner, 21 Oct 2026): the reserve figures beside QTY.
+        "REQUESTED RESERVE",
+        "RESERVED",
+        "TOTAL QTY",
         "DELIVERY DATE",
         "PROJECT/CUSTOMER",
+        "SUPPLIER",
+        "PO NO ",
         "LOCATION",
+        "ACKNOWLEDGED",
+        # AC-D15 parity (22 Sep fix round): the row-level Taken/Remaining the grid has
+        # shown since S3, appended after ACKNOWLEDGED.
+        "TAKEN",
+        "REMAINING",
+        "SUGGESTED",
+        # OI-LINE-SPLIT round 3 (UAC AC-G7 / AC-G9): a split line's own change per row,
+        # appended before REMARK; no existing column moves.
+        "CHANGE QUANTITY",
+        "CHANGE DATE",
+        # OI-LINE-SPLIT (UAC D2): appended last.
         "REMARK",
     ]

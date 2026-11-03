@@ -366,10 +366,7 @@ def test_ac_rf_02_reserved_table_columns_in_order_reason_only_when_needed(sn, mo
 def test_ac_rf_03_headings_follow_the_export_column_order(sn, monkeypatch):
     from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
 
-    # The email's columns are the OI export's, in its order, plus the reserve figures the
-    # export no longer prints (OI-EXPORT-SHARED), which sit right after QTY.
-    at = EXPORT_HEADINGS.index("QTY") + 1
-    reference = EXPORT_HEADINGS[:at] + ("REQUESTED RESERVE", "RESERVED") + EXPORT_HEADINGS[at:]
+    reference = EXPORT_HEADINGS
     client, world, _calls = _setup(sn, monkeypatch)
     one = _raiser(world, "CS One")
     _parked(client, world, one)
@@ -1258,10 +1255,16 @@ def test_ac_rf_60_105_line_reserved_email_stays_under_the_gmail_clip(sn, monkeyp
     assert len(mails[0]["body_html"].encode()) <= 102 * 1024, len(mails[0]["body_html"].encode())
 
 
-def test_ac_rf_70_export_headings_are_the_owners_eight():
+def test_ac_rf_70_export_headings_are_the_list_layout_and_the_shared_eight():
+    from app.services import order_inquiry_export
     from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
 
     assert EXPORT_HEADINGS == (
+        "SO DATE", "S/O NO", "ITEM CODE", "QTY", "REQUESTED RESERVE", "RESERVED", "TOTAL QTY",
+        "DELIVERY DATE", "PROJECT/CUSTOMER", "SUPPLIER", "PO NO ", "LOCATION", "ACKNOWLEDGED",
+        "TAKEN", "REMAINING", "SUGGESTED", "CHANGE QUANTITY", "CHANGE DATE", "REMARK",
+    )
+    assert order_inquiry_export.HEADINGS == (
         "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "PROJECT/CUSTOMER",
         "LOCATION", "REMARK",
     )

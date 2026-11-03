@@ -7,7 +7,7 @@ through the SAME writer the OI worklist list page already uses -
   `run_scope_oi_rows`, tested separately in `test_oi_worksheet_row_scope.py`). An empty
   list produces the headings-only one-sheet workbook (AC-C5).
 * `columns` - the heading tuple to print, defaulting to today's full `EXPORT_HEADINGS` so
-  the list-page export is unchanged; the worksheet passes a 9-column slice that stops at
+  the list-page export is unchanged; the worksheet passes a 10-column slice that stops at
   LOCATION (AC-C3: "no ACKNOWLEDGED column").
 
 Neither kwarg exists on `export_xlsx`/`_base` today - `export_xlsx(self, **filters)`
@@ -28,8 +28,8 @@ import openpyxl
 
 from app.services.order_inquiry_worklist_service import (
     EXPORT_HEADINGS,
-    # AC-C3's own 9-column list ("SO DATE ... LOCATION", no reserve figures, ACKNOWLEDGED /
-    # TAKEN / REMAINING, no TOTAL QTY), the real constant the task prints, not a slice of the full list.
+    # AC-C3's own 10-column list ("SO DATE ... LOCATION", no reserve figures, ACKNOWLEDGED /
+    # TAKEN / REMAINING), the real constant the task prints, not a slice of the full list.
     WORKSHEET_HEADINGS,
     OrderInquiryWorklistService,
 )
@@ -95,13 +95,13 @@ def test_c3_columns_kwarg_prints_the_worksheets_own_headings_no_acknowledged(db,
     headings = [c.value for c in sheet[1]]
     assert headings == list(WORKSHEET_HEADINGS), headings
     assert "ACKNOWLEDGED" not in headings, headings
-    assert len(headings) == 9, headings
-    assert "TOTAL QTY" not in headings, headings
+    assert len(headings) == 10, headings
 
 
 def test_c3_default_columns_still_carries_every_heading_for_the_list_page_export(db, chain):
     """The list-page export (no `columns` kwarg) still prints every
-    heading `EXPORT_HEADINGS` carries: the owner's eight columns, header row first."""
+    heading `EXPORT_HEADINGS` carries (19: the original ten plus ACKNOWLEDGED, TAKEN, REMAINING,
+    SUGGESTED, the split change columns and REMARK), header row first, no title row."""
     f = chain
     leg = _scope_row(db, product=f["product"], qty=3, delivery=date(2026, 10, 1))
     db.flush()
@@ -113,7 +113,7 @@ def test_c3_default_columns_still_carries_every_heading_for_the_list_page_export
     sheet = workbook.worksheets[0]
     headings = [c.value for c in sheet[1]]
     assert headings == list(EXPORT_HEADINGS), headings
-    assert len(headings) == 8, headings
+    assert len(headings) == 19, headings
 
 
 def test_c3_row_ids_scoped_undated_row_stays_on_the_one_sheet(db, chain):
@@ -155,6 +155,9 @@ def test_the_oi_worksheet_is_one_sheet_across_delivery_months(db, chain):
     assert workbook.sheetnames == ["ORDER INQUIRY"], workbook.sheetnames
     rows = _data_rows(workbook)
     assert [row[3] for row in rows] == [7.0, 9.0, 5.0, 2.0], rows  # QTY, by S/O NO
+    # TOTAL QTY: one supplier + item run, so one total on its last row, summing every row
+    # (crew ruling 16 Oct 2026, not a total per month).
+    assert [row[4] for row in rows] == [None, None, None, 23.0], rows
 
 
 def test_fr1_a_row_ids_match_under_a_different_companys_scope_yields_nothing(db, chain):

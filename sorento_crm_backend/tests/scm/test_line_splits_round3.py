@@ -530,20 +530,10 @@ def _num(value):
         return value
 
 
-#: The list export prints the owner's eight columns; the split change columns are still filled
-#: by the writer when a caller names them, which is how these tests read the plan rows.
-WIDE = (
-    "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "PROJECT/CUSTOMER", "LOCATION",
-    "CHANGE QUANTITY", "CHANGE DATE", "REMARK",
-)
-
-
 def _excel_rows(s):
     from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 
-    _name, data = OrderInquiryWorklistService(s.db).export_xlsx(
-        query=s.core_so.so_number, columns=WIDE
-    )
+    _name, data = OrderInquiryWorklistService(s.db).export_xlsx(query=s.core_so.so_number)
     book = openpyxl.load_workbook(io.BytesIO(data))
     rows = list(book.worksheets[0].iter_rows(values_only=True))
     heads = list(rows[0])
@@ -984,20 +974,38 @@ def test_review_kept_split_rows_keep_their_links(api, emails):
 
 
 def _sheet(s, columns=None):
-    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+    from app.services.order_inquiry_worklist_service import (
+        EXPORT_HEADINGS,
+        OrderInquiryWorklistService,
+    )
 
     _name, data = OrderInquiryWorklistService(s.db).export_xlsx(
-        query=s.core_so.so_number, columns=columns or WIDE
+        query=s.core_so.so_number, columns=columns or EXPORT_HEADINGS
     )
     rows = list(openpyxl.load_workbook(io.BytesIO(data)).worksheets[0].iter_rows(values_only=True))
     heads = list(rows[0])
     return heads, [r for r in rows[1:] if any(v not in (None, "") for v in r)]
 
 
-def test_review_the_worksheet_prints_every_split_rows_qty(api, emails):
-    """The reorder-run OI worksheet (`export_tasks.generate_oi_worksheet`, no CHANGE QUANTITY):
-    every row prints its own qty in QTY (no blank QTY row), and its QTY cells add up to the
-    live qty (1295 for the owner plan: AutoCount 14 + 632 + 649). A split whose
+def test_review_excel_total_qty_is_the_live_qty(api, emails):
+    """Excel TOTAL QTY adds up what the rows ask for now, not the base QTY cells: SO417636
+    after the owner's plan, 1295 = AutoCount 14 + 632 + 649 (it read 1113 = 417 + 192 + 504).
+    OI-EXPORT-SHARED: it prints on the last row of each contiguous SUPPLIER + ITEM CODE run in
+    the printed order (S/O, then delivery date); the plan's rows are one run, one total."""
+    s = _seed(api)
+    _save(s, _owner_plan())
+    _confirm_batch(s, emails)
+    heads, rows = _sheet(s)
+    at = heads.index("TOTAL QTY")
+    totals = [r[at] for r in rows if r[at] not in (None, "")]
+    assert totals == [1295.0], ("one run, TOTAL QTY = the live qty", totals)
+    assert rows[-1][at] == 1295.0, "on the run's last row"
+
+
+def test_review_the_ten_column_worksheet_prints_every_split_rows_qty(api, emails):
+    """The reorder-run OI worksheet (`export_tasks.generate_oi_worksheet`, the ten columns,
+    no CHANGE QUANTITY): every row prints its own qty in QTY (no blank QTY row), and its QTY
+    cells add up to the worklist export's TOTAL QTY (1295 for the owner plan). A split whose
     qty already sits inside another line (236 / 167 from 480 and 37 from 752, inside 608's
     632) is not printed again in this slice (re-check: the QTY cells summed 1735)."""
     from app.services.order_inquiry_worklist_service import WORKSHEET_HEADINGS
@@ -1005,14 +1013,18 @@ def test_review_the_worksheet_prints_every_split_rows_qty(api, emails):
     s = _seed(api)
     _save(s, _owner_plan())
     _confirm_batch(s, emails)
+    full_heads, full_rows = _sheet(s)
+    at_total = full_heads.index("TOTAL QTY")
+    totals = [r[at_total] for r in full_rows if r[at_total] not in (None, "")]
+    assert totals == [1295.0], ("premise: the worklist export's TOTAL QTY", totals)
     heads, rows = _sheet(s, WORKSHEET_HEADINGS)
-    assert len(heads) == 9 and "TOTAL QTY" not in heads, heads
+    assert len(heads) == 10, heads
     at = heads.index("QTY")
     qtys = [r[at] for r in rows]
     assert None not in qtys and "" not in qtys, ("no blank QTY row", qtys)
     for want in (14, 632, 467, 182):
         assert float(want) in qtys, (f"the {want} row prints its qty", qtys)
-    assert sum(qtys) == 1295.0, ("QTY cells add up to the live qty: nothing printed twice", qtys)
+    assert sum(qtys) == totals[0], ("QTY cells add up to TOTAL QTY: nothing printed twice", qtys)
     for moved in (236, 167, 37):
         assert float(moved) not in qtys, (f"{moved} sits inside 608's 632, not printed again", qtys)
 
