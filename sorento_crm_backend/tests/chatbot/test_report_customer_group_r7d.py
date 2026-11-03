@@ -359,3 +359,30 @@ def test_d6c_control_a_topic_reset_after_the_re_ask_closes_the_question(request,
                sales_basis="invoiced", **OCTF)
     text, calls = b.say(reset, "start over, sales oct invoiced")
     assert text.strip() != first.strip(), f"control: the reset was answered with the old which-one: {text!r}"
+
+
+@pytest.mark.parametrize("flag_on", [True, False], ids=["flag-on", "flag-off"])
+@pytest.mark.parametrize("shape", ["my-sales", "global", "all-customers"])
+def test_d6e_a_reply_that_widens_the_customer_exits_the_which_one_open(request, flag_on, shape) -> None:
+    """R3 (crew (a)): while the which-one is open, a reply whose parse WIDENS the customer is an exit, not another slot answer:
+    (a) self_reference ('my sales'), (b) ranking_drill global ('overall'), (c) broaden_axis customer + broaden_to all (a guard).
+    The reply runs (no re-ask) with no customer_ids (and `mine` for (a)); the other held slots (channel, basis, period) stay."""
+    b = request.getfixturevalue("rbot" if flag_on else "bot")
+    _seed(b)
+    first = _which_one_open(b, flag_on)
+    over = {
+        "my-sales": dict(self_reference=True),
+        "global": dict(ranking_drill="global"),
+        "all-customers": dict(broaden_axis="customer", broaden_to="all"),
+    }[shape]
+    ra = _ra(channel="dealer", basis="invoiced", customers=[], **OCT) if flag_on else None
+    v = _v("sales_report", ra, basis="invoiced", sales_basis="invoiced", entity_op="reuse", continuation=True, **over)
+    text, calls = b.say(v, "for all customers")
+    ran = _ran(calls)
+    assert ran, f"R3 ({shape}): a widened customer must run, not be re-asked; the bot said {text.strip()!r}"
+    args = ran[0]
+    assert not args.get("customer_ids"), f"R3 ({shape}): the widened ask kept a customer: {args.get('customer_ids')}"
+    if shape == "my-sales":
+        assert args.get("mine") is True, f"R3 (a): 'my sales' did not run as mine: {args}"
+    assert args.get("basis") == "invoiced" and args.get("date_from") == "2026-10-01", f"R3 ({shape}) lost a held slot: {args}"
+    assert args.get("channel") == "dealer", f"R3 ({shape}) lost the held dealer channel: {args}"
