@@ -8,6 +8,7 @@ at the schema as well. One case per area asserts nulls for an order nobody could
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import date
 
 from app.models.order import SalesOrder
@@ -173,6 +174,63 @@ def test_plan_exception_candidate_so_carries_customer_and_project():
         assert relink["customer_name"] == DEBTOR
         assert relink["project_label"] == PROJECT
         assert hold["customer_name"] is None
+
+
+def test_po_dedicated_rows_carry_customer_and_project(scm_app):
+    from fastapi.testclient import TestClient
+
+    from app.services.scm import order_link_service
+    from tests.scm import test_po_detail_dedication_route as d
+    from tests.scm.test_channel_read_model import _core_so_line
+    from tests.scm.test_m3_run import _mk_product
+
+    app, db, _ = d._as(scm_app, "purchasing")
+    bin_id = d._project_bin(db)
+    pid = _mk_product(db, f"{d.MARKER}-{uuid.uuid4().hex[:6].upper()}")
+    po_id, line_id, number = d._active_po(db, product_id=pid, warehouse_id=bin_id, qty=114)
+    claiming, claiming_line = _core_so_line(
+        db, product_id=pid, warehouse_id=bin_id, qty=114, demand_class="project",
+    )
+    _name_order(claiming)
+    order_link_service.claim_placed_on_po(
+        db, company_id=None, so_number=claiming.so_number, po_number=number,
+        item_code=None, so_line_id=str(claiming_line.id), po_line_id=line_id,
+        source=order_link_service.SOURCE_PO_UPLOAD,
+    )
+    db.flush()
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/purchase-orders/{po_id}")
+    assert res.status_code == 200, res.text
+    block = next(b for b in res.json()["allocations"] if b["line_id"] == line_id)
+    [dedicated] = block["dedicated_to"]
+    assert dedicated["customer_name"] == DEBTOR
+    assert dedicated["project_label"] == PROJECT
+
+
+def test_po_line_book_so_carries_customer_and_project():
+    from app.services.scm.purchase_order_service import PurchaseOrderService
+
+    with pg_session() as db:
+        w = World(db)
+        wh = w.warehouse("WH")
+        _line, so = _retail_demand(db, w, "P", wh, qty=3, required=date(2026, 9, 1))
+        _name_order(so)
+        doc = f"AED_TEST:{uuid.uuid4().hex[:10]}"
+        so.source_ref = doc
+        po = w.po("BK", w.supplier(), [("P", 5, 0), ("P", 1, 0)])
+        linked, unlinked = po.lines
+        linked.from_so_line_ref = f"{doc}:7"
+        db.flush()
+        svc_po = PurchaseOrderService(db)
+        out = svc_po.serialize(po, None, book_so_by_ref=svc_po._book_so_for(po.lines))
+        by_id = {ln["id"]: ln for ln in out["lines"]}
+        hit = by_id[str(linked.id)]
+        assert hit["book_so_number"] == so.so_number
+        assert hit["book_so_customer_name"] == DEBTOR
+        assert hit["book_so_project_label"] == PROJECT
+        miss = by_id[str(unlinked.id)]
+        assert miss["book_so_customer_name"] is None
+        assert miss["book_so_project_label"] is None
 
 
 def test_trend_customer_orders_carry_customer_and_project(db_world):

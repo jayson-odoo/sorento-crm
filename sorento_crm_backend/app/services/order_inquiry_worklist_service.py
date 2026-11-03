@@ -83,6 +83,7 @@ from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
+from app.services.scm.so_party import so_parties
 from app.utils.multi_value import multi_text, multi_values
 from app.services.product_companion_service import (
     bundled_with_item_codes_map,
@@ -2803,6 +2804,7 @@ class OrderInquiryWorklistService:
         book_so_by_ref = order_link_service.book_so_numbers_by_ref(
             self.db, [ref for ref in shown_ref.values() if ref]
         )
+        book_so_parties = so_parties(self.db, numbers=book_so_by_ref.values())
         # Issue #1215 point 2: which LINE an order inquiry's placement sits on, not only
         # which document - a PO with two lines of the same item made the "Allocated to"
         # panel's Item column ambiguous. Summed here (never per-row in the loop below) so
@@ -2855,7 +2857,7 @@ class OrderInquiryWorklistService:
                     # (`order_link_service.book_so_fields`, review of PR #764, F5) rather
                     # than a second copy of the derivation.
                     **order_link_service.book_so_fields(
-                        shown_ref[str(line_id)], book_so_by_ref
+                        shown_ref[str(line_id)], book_so_by_ref, book_so_parties
                     ),
                     "spo_numbers": spo_numbers_by_line.get(str(line_id), []),
                     "spos": spos_by_line.get(str(line_id), []),

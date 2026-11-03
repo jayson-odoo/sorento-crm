@@ -1362,6 +1362,8 @@ class OrderInquiryPoDetailLine(BaseModel):
     #: linkage does not depend on which screen it is read from. `response_model` silently
     #: drops an undeclared field, which is exactly why both of these are declared.
     book_so_number: Optional[str] = None
+    book_so_customer_name: Optional[str] = None
+    book_so_project_label: Optional[str] = None
     #: True when the book named a sales order this CRM does not hold. Three states, not
     #: two - see `PurchaseOrderLine` in `app/schemas/scm_orders.py` for the full note.
     #:
