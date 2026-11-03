@@ -1238,9 +1238,11 @@ def _follows_up(verdict: dict[str, Any], frame: dict[str, Any], replaced: dict[s
     2026 (CHATBOT-FOLLOWUP-CARRY): a follow-up over a held customer keeps it unless a new customer is named, and the parser
     reads the same words as `modify` on some runs and `replace_combine` on others (its own table: "a new product keeps the
     held customer"), so those count too when they name no customer. `replace_combine` needs a customer held: over anything
-    else it stays what R8 ruled, a message naming its own value."""
+    else it stays what R8 ruled, a message naming its own value. Owner O-R3 (3 Nov): a `replace` that names no subject of
+    its own (`_binds_subject`) replaces nothing, so it is a follow-up as `reuse` is; one naming a subject is a restated
+    ask and drops what it does not name (17 Sep)."""
     entity_op = verdict.get("entity_op")
-    if entity_op == "reuse":
+    if entity_op == "reuse" or (entity_op == "replace" and not _binds_subject(verdict)):
         return True
     if entity_op not in ("modify", "replace_combine") or "customer" in _current_kinds(verdict):
         return False
@@ -1698,8 +1700,8 @@ def _kind_ask(
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The held answer of the word question: the words as printed, the spellings a repeat may carry, and for each choice
     the route params it sets. `args` holds what THIS message settled for the same params; the answer REPLACES any
-    held value of them. `companies` (the object path, crew C6-1): when every asked word is one of the contact's
-    companies (its name or code, from data) other than the one the ask names, that company is a third choice."""
+    held value of them. `companies` (the object path, crew C6-1, SC-19): when every asked word is one of the contact's
+    companies (its name or code, from data), that company is a third choice."""
     brand_words = [a["word"] for a in plan["ask"]]
     found, line = _word_filters(
         db, {**parse_output, "report_ask_words": {"brand": brand_words}}, (("brand", "brand_ids"),), scope=scope
@@ -1719,7 +1721,7 @@ def _kind_ask(
         for a in plan["ask"]
     ]
     one = per_word[0] if per_word and len(per_word[0]) == 1 and all(p == per_word[0] for p in per_word) else set()
-    if one and next(iter(one))[0] != jsc.js_string((scope or {}).get("company") or "").strip():
+    if one:
         asked["company"] = list(next(iter(one)))
     return asked, None
 
@@ -2504,11 +2506,12 @@ def _customer_stays(parse_output: dict[str, Any], axis: str | None) -> bool:
 
 def _widened(parse_output: dict[str, Any]) -> str | None:
     """The one held axis the parser widened to "all" this turn (`broaden_axis` with `broaden_to`
-    "all", template R-P3-09): the hold drops it and keeps the rest. Parser fields only."""
+    "all", template R-P3-09): the hold drops it and keeps the rest (the company: every company, the semantic carry,
+    `_carry`). Parser fields only."""
     if parse_output.get("broaden_to") != "all":
         return None
     axis = jsc.js_string(parse_output.get("broaden_axis") or "").strip().lower()
-    return axis if axis in ("channel", "product", "customer") else None
+    return axis if axis in ("channel", "product", "customer", "company") else None
 
 
 def _refine(
@@ -3343,15 +3346,20 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
 def _carry(ask: dict[str, Any], held_ask: dict[str, Any], verdict: dict[str, Any], axis_slot: str | None) -> None:
     """Crew C6-2 (round 6), over the model's own outputs only: per kind (`_CARRY_KINDS`), a kind this message's entities
     name nothing of and the object holds none of keeps the held report's SETTLED value (never an open question's asked
-    word, `brand_or_account_type`); a kind they name, or the object holds, is the object's. The axis's own slot is not
-    carried: a breakdown ranks across it (`_AXIS_FILTERS`)."""
+    word, `brand_or_account_type`); a kind they name, or the object holds, is the object's. A kind the parse itself
+    widens is not carried, by the readers the flag-off path drops it on: `_widened` ("all customers", "every
+    company", every product), and for the customer a global drill or "my ..." (`_customer_stays`). The axis's own slot
+    is not carried: a breakdown ranks across it (`_AXIS_FILTERS`)."""
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
         for e in jsc.array(verdict.get("entities"))
         if isinstance(e, dict) and e.get("current_message") is not False
     }
+    widened = {_widened(verdict)}
+    if verdict.get("ranking_drill") == "global" or verdict.get("self_reference") is True:
+        widened.add("customer")
     for keys, hints in _CARRY_KINDS:
-        if named & hints or any(ask.get(k) for k in keys):
+        if named & hints or hints & widened or any(ask.get(k) for k in keys):
             continue
         for key in keys:
             if key not in ("brand_or_account_type", axis_slot) and held_ask.get(key):

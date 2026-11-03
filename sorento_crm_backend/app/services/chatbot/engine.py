@@ -366,6 +366,30 @@ def _without_the_drill_pick_words(parse_output: dict[str, Any], pending: Any, tr
     return {**parse_output, "entities": kept}
 
 
+def _as_the_kind_picked(parse_output: dict[str, Any], pending: Any, trace: Any, domains: Any) -> dict[str, Any]:
+    """The resolver's input on a turn that answered a customer-or-supplier kind pick with the customer.
+
+    Round 7b S1 (reviewer, 3 Nov 2026): the picked position chose a KIND, never a row, so the resolver reads the picked
+    word exactly as that word typed as a customer in the ask's domain: no position (the gate takes one as a row already
+    picked, `gate.py` `pick_applied`), the word as this message's own (a carried customer word is a pick already made),
+    and the plan's one domain when the bare pick names none (the gate scopes its customer pick by it). Several customers
+    answering to the word then get the gate's own which-one pick and never run merged; one customer's rows (its ledgers
+    joined by an explicit customer group) pass as one, as they do for the typed word.
+    """
+    if getattr(pending, "kind", None) != "kind_pick" or "customer" not in (getattr(trace, "picked_kinds", None) or []):
+        return parse_output
+    entities = [
+        {**e, "current_message": True}
+        if isinstance(e, dict) and e.get("hint") == "customer" and not e.get("uuid") else e
+        for e in parse_output.get("entities") or []
+    ]
+    out = {**parse_output, "entities": entities, "reference_positions": []}
+    domains = [d for d in (domains or []) if isinstance(d, str) and d]
+    if not out.get("domain_hint") and len(domains) == 1:
+        out["domain_hint"] = domains[0]
+    return out
+
+
 def _without_carried_domain_on_a_roster_pick(
     parse_output: dict[str, Any], rules_fired: list[str]
 ) -> dict[str, Any]:
@@ -7306,6 +7330,9 @@ def _run_stages_body(  # noqa: PLR0915
             )
             resolver_parse_output = _without_the_drill_pick_words(
                 resolver_parse_output, state_in.pending, plan.trace
+            )
+            resolver_parse_output = _as_the_kind_picked(
+                resolver_parse_output, state_in.pending, plan.trace, plan.domains
             )
             # REPORT-ENGINE 1b fix round F1: a dealer's sales ranking never has a location
             # word looked up (the resolver's miss line would probe warehouse codes); the
