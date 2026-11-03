@@ -152,6 +152,9 @@ class AllocationClaimRow(BaseModel):
     so_line_id: Optional[str] = None
     sales_order_id: Optional[str] = None
     sales_order_ref: Optional[str] = None
+    #: That order's customer (debtor name, else customer master) and project label.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     line_no: Optional[int] = None
     delivery_date: Optional[date] = None
     requested_by_name: Optional[str] = None

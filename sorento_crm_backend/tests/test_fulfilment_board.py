@@ -6378,7 +6378,8 @@ def test_a_donor_line_says_what_was_lent_off_it_and_to_which_order():
             if contribution["so_number"] == "ZZT-SO-DONOR"
         ]
         assert on_the_wire and on_the_wire[0]["lent_to"] == [
-            {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no}
+            {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no,
+             "customer_name": None, "project_label": None}
         ]
 
 
