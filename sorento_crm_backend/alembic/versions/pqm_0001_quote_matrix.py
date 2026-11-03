@@ -12,12 +12,12 @@ Plan: documentation/plans/project-sales/PLAN-ps-quote-matrix-02nov.md. Additive 
 a re-run, or a dev DB built by create_all, is harmless.
 
 Revision ID: pqm_0001_quote_matrix
-Revises: ppq_0001_proposal_quotation
+Revises: sask_0002_span_supplier
 """
 from alembic import op
 
 revision = "pqm_0001_quote_matrix"
-down_revision = "ppq_0001_proposal_quotation"
+down_revision = "sask_0002_span_supplier"
 branch_labels = None
 depends_on = None
 
