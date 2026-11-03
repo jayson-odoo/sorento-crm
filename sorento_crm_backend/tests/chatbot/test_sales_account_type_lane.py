@@ -575,25 +575,13 @@ def test_at34_group_by_account_type_lists_one_row_per_type(bot, seeded) -> None:
 # --------------------------------------------------------------------------------------------- AT-35 (two companies)
 
 
-def test_at35_a_contact_in_two_companies_naming_only_an_account_type_is_asked_the_company(bot, seeded) -> None:
+def test_at35_a_contact_in_two_companies_naming_only_an_account_type_runs_over_every_company(bot, seeded) -> None:
+    """O-R2 (was: asked the company): no company named -> runs with no `company` arg."""
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_sales(_word("ceramic", "account_type", None, True)), "ceramic account sales in Jan")
-    assert calls == [], calls
-    assert f"{sorento} or {mocha}?" in text, text
-
-
-def test_at35_the_answer_runs_the_held_filter_for_that_company(bot, seeded) -> None:
-    sorento, mocha = _two_companies(bot)
-    bot.say(_sales(_word("ceramic", "account_type", None, True)), "ceramic account sales in Jan")
-    text, calls = bot.say(
-        _reply(
-            message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
-            open_question_answer={"mode": "pick", "picked": [2], "items": [], "qty_for_all": None},
-        ),
-        mocha,
-    )
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company was asked: {text!r}"
     args = _only_report_ask(calls)
-    assert args["company"] == MOCHA_ID and args["account_types"] == ["CERAMIC"], args
+    assert "company" not in args and args["account_types"] == ["CERAMIC"], f"O-R2: {args}"
 
 
 def test_at35_a_contact_naming_the_company_is_not_asked(bot, seeded) -> None:
@@ -883,15 +871,15 @@ def test_at35_books_that_disagree_keep_the_brand(bot, seeded) -> None:
     assert args.get("brand_ids"), args
 
 
-def test_at35_a_word_that_asks_is_asked_the_company_first(bot, seeded) -> None:
+def test_at35_a_word_that_asks_is_asked_brand_or_account_type_never_the_company(bot, seeded) -> None:
+    """O-R2 (was: asked the company first): the first question is the word's own, and the run has no company arg."""
     sorento, mocha, _ = _disagreeing_books(bot)
     text, calls = bot.say(_sales(_word()), "sales for cabana in Jan")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    text, calls = bot.say(_pick(2), mocha)
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company was asked: {text!r}"
     assert calls == [] and text.strip() == QUESTION, (text, calls)
     text, calls = bot.say(_pick(2), "account type")
     args = _only_report_ask(calls)
-    assert args["company"] == MOCHA_ID and args["account_types"] == ["CABANA"], args
+    assert "company" not in args and args["account_types"] == ["CABANA"], f"O-R2: {args}"
 
 
 # --------------------------------------------------------------------------------------------- scoped drill (report_ask.py ~2280)
@@ -1055,16 +1043,16 @@ def test_at20_an_agent_pick_survives_an_owed_basis(span_bot) -> None:
     assert args["account_types"] == ["CABANA"] and args["basis"] == "delivered", args
 
 
-def test_at35_an_agent_pick_survives_the_company_question(span_bot) -> None:
+def test_at35_an_agent_pick_survives_with_no_company_question(span_bot) -> None:
     _seed(span_bot, ledgers=BOOK)
     sorento, mocha = _two_companies(span_bot)
     args, asked = _drive(
         span_bot, _status("sales_report", _ent("yu", "sales_agent"), _word(), basis="delivered", **JAN),
         "sales agent yu cabana sales in Jan",
     )
-    assert asked[-1] == QUESTION and any(f"{sorento} or {mocha}?" in a for a in asked), asked
+    assert asked[-1] == QUESTION and not any(f"{sorento} or {mocha}?" in a for a in asked), f"O-R2: the company was asked: {asked}"
     assert args["sales_agent_ids"] == [span_bot.ids["agents"]["ZZT-YU-3"]], (args, asked)
-    assert args["account_types"] == ["CABANA"] and args["company"] == MOCHA_ID, args
+    assert args["account_types"] == ["CABANA"] and "company" not in args, f"O-R2: {args}"
 
 
 def test_an_agent_pick_survives_an_owed_basis_with_no_word(span_bot) -> None:
@@ -1335,9 +1323,8 @@ def test_at37_a_linked_staff_contact_keeps_the_agent_list(span_bot) -> None:
 
 def test_at35_a_refine_on_a_held_default_company_reads_only_its_book(bot, seeded) -> None:
     sorento, mocha, _ = _disagreeing_books(bot)
-    text, calls = bot.say(_sales(_acct("4")), "account 4 sales in Jan")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    text, calls = bot.say(_pick(1), sorento)
+    text, calls = bot.say(_sales(_acct("4"), sales_company=sorento), "sorento account 4 sales in Jan")
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: {text!r}"
     assert _only_report_ask(calls)["company"] == DEFAULT_COMPANY_ID
     refine = _rank(_word(), _acct("4"), group_by=None, top_n=None, ranking_refine=True, **JAN)
     text, calls = bot.say(refine, "and cabana")
@@ -1533,11 +1520,11 @@ def test_at21_a_second_filter_of_the_first_message_survives_a_type_beside_the_br
     assert args.get("brand_ids") == [seeded["CABANA"]] and args["account_types"] == ["CERAMIC"], args
 
 
-def test_at35_a_company_picked_at_the_question_narrows_the_book(bot, seeded) -> None:
+def test_at35_a_company_named_in_the_ask_narrows_the_book(bot, seeded) -> None:
+    """O-R2 (was: picked at the question): the named company narrows; the question is never asked."""
     sorento, mocha, _ = _disagreeing_books(bot)
-    text, calls = bot.say(_sales(_acct("4")), "account 4 sales in Jan")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    text, calls = bot.say(_pick(1), sorento)
+    text, calls = bot.say(_sales(_acct("4"), sales_company=sorento), "sorento account 4 sales in Jan")
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: {text!r}"
     assert _only_report_ask(calls)["company"] == DEFAULT_COMPANY_ID
     refine = _rank(_word(), _acct("4"), group_by=None, top_n=None, ranking_refine=True, **JAN)
     text, calls = bot.say(refine, "and cabana")
@@ -1590,9 +1577,10 @@ def test_at35_c_refine_dropping_the_held_customer_with_a_covered_word_asks_no_co
     text, calls = bot.say(held, "top 3 products for the customer in Jan")
     args = _only_report_ask(calls)
     assert args.get("customer_ids") and not args.get("company"), args
-    # No covered word: dropping the customer on a two-company contact asks the company.
+    # No covered word: dropping the customer on a two-company contact runs over every company (O-R2).
     text, calls = bot.say(_refine_all_customers(), "how about all customers")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company was asked: {text!r}"
+    assert "company" not in _only_report_ask(calls), calls
     bot.say(held, "top 3 products for the customer in Jan")
     # Covered word: cabana with account 4, where every company reads 4 as CABANA, asks no company question.
     text, calls = bot.say(_refine_all_customers(_word(), _acct("4")), "all customers on cabana account 4")
@@ -1723,10 +1711,12 @@ def test_at21_account_type_kind_word_entity_as_the_answer_runs_the_account_filte
     assert args["sales_agent_ids"] == [bot.ids["agent"]], args
 
 
-def test_at35_e_followup_naming_a_type_word_only_the_other_company_stores_asks_the_company(bot) -> None:
-    """Only a NUMBER names no company; a type WORD may be a type in the other company, so the held company is not kept."""
+def test_at35_e_followup_naming_a_type_word_only_the_other_company_stores_never_asks_the_company(bot) -> None:
+    """O-R2 (was: asks the company): a type WORD may be a type in the other company, so the held company is not kept
+    and no company is asked either; it runs with no company arg."""
     sorento, mocha = _brand_here_type_there(bot)
     _held_default_total(bot, sorento)
     follow = _sales(_word("cabana", "account_type", None, "account"), ranking_refine=False, entity_op="reuse")
     text, calls = bot.say(follow, "and cabana account")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company was asked: {text!r}"
+    assert "company" not in _only_report_ask(calls), (text, calls)

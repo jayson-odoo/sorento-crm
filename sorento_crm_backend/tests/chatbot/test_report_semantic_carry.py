@@ -326,17 +326,6 @@ def test_sc4_an_open_count_question_is_named_in_the_held_line(rbot, world) -> No
     assert held["group_by"] == "customer" and held["top_n"] is None, held
 
 
-def test_sc4_an_open_company_question_is_named_in_the_held_line(rbot, world) -> None:
-    sorento, mocha = world
-    first = _v("sales_report", _ra(basis="invoiced", **Y), basis="invoiced", domain_in_message=True, date_filter_start="2026-01-01", date_filter_end="2026-12-31")
-    text, calls = rbot.say(first, "sales 2026 invoiced")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, f"setup: want the company question, got {text!r}"
-    rbot.say(_v("sales_report", _ra(basis="invoiced", company=sorento, **Y), continuation=True), "sorento")
-    prefix, held = _held_line(rbot.blocks[-1])
-    assert prefix == "Held report (open question: company): ", prefix
-    assert held["basis"] == "invoiced" and held["date_from"] == "2026-01-01", held
-
-
 def test_sc4_an_open_brand_or_account_type_question_is_named_in_the_held_line(rbot, world) -> None:
     sorento, _mocha = world
     first = _v("sales_report", _ra(basis="invoiced", sales_agents=[AGENT_1], brand_or_account_type=["cabana"], **Y), _e(AGENT_1, "sales_agent"), basis="invoiced", domain_in_message=True, date_filter_start="2026-01-01", date_filter_end="2026-12-31")
@@ -523,11 +512,13 @@ def test_sc10_an_object_company_the_contact_does_not_hold_is_the_forbidden_line(
     assert not _ran(calls) and text.strip() == report_ask.COMPANY_FORBIDDEN_LINE, (calls, text)
 
 
-def test_sc10_two_companies_and_nothing_naming_one_is_the_company_question(rbot, world) -> None:
+def test_sc10_two_companies_and_nothing_naming_one_runs_over_every_company(rbot, world) -> None:
+    """O-R2 (was: the company question): no company named -> runs with no `company` arg, never asks "<A> or <B>?"."""
     sorento, mocha = world
     v = _v("sales_report", _ra(basis="invoiced", **Y), basis="invoiced", domain_in_message=True, date_filter_start="2026-01-01", date_filter_end="2026-12-31")
     text, calls = rbot.say(v, "sales 2026 invoiced")
-    assert not _ran(calls) and f"{sorento} or {mocha}?" in text, (calls, text)
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company question was asked: {text!r}"
+    assert _ran(calls) and "company" not in _ran(calls)[0], f"O-R2: want a run with no company arg, got {calls} {text!r}"
 
 
 def test_sc10_an_outstanding_ask_never_asks_the_company(rbot, world) -> None:
@@ -995,16 +986,14 @@ def test_r2_3_without_the_sales_agents_permission_a_carried_agent_gives_the_args
     assert got == want, f"R2-3: carried agent gave {got!r}, the same agent typed fresh gave {want!r}"
 
 
-def test_r2_4a_the_declared_company_pick_runs_that_company_with_a_null_object_company(rbot, world) -> None:
+def test_r2_4a_two_companies_and_a_null_object_company_runs_with_no_company_arg(rbot, world) -> None:
+    """O-R2 (was: the declared company pick runs that company): the company is never asked, so there is no pick."""
     sorento, mocha = world
     t1 = _v("sales_report", _ra(basis="invoiced", **Y), basis="invoiced", domain_in_message=True, **YR)
     text, calls = rbot.say(t1, "sales 2026 invoiced")
-    assert not calls and f"{sorento} or {mocha}?" in text, f"setup: {text!r}"
-    t2 = _v("sales_report", _ra(basis="invoiced", **Y), entity_op="reuse", continuation=True, open_question_answer=_pick_of(1), reference_positions=[1])
-    text, calls = rbot.say(t2, "the first")
-    assert f"{sorento} or {mocha}?" not in text, "R2-4a: the company was asked again after the pick"
+    assert f"{sorento} or {mocha}?" not in text, f"O-R2: the company was asked: {text!r}"
     ran = _ran(calls)
-    assert ran and ran[0].get("company") == DEFAULT_COMPANY_ID, f"R2-4a: want Sorento, got {ran[0].get('company') if ran else text!r}"
+    assert ran and "company" not in ran[0], f"O-R2: want a run with no company arg, got {ran or text!r}"
 
 
 def test_r2_4b_the_measure_question_is_free_and_the_object_fills_it(rbot, world) -> None:

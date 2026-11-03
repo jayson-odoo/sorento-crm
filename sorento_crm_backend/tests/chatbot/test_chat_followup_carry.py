@@ -240,18 +240,18 @@ def test_g2_all_customers_drops_the_held_customer(chat, session_factory, entity_
     ids, services = _reported(chat, session_factory, f"g2-{entity_op}")
     parse = _ordered(entity_op=entity_op, broaden_axis="customer", broaden_to="all", **OCT_2026)
     result, captured = chat(parse, "how about all customers", f"ZZT-fc-g2-{entity_op}", resolve_services=services)
-    assert _report_calls(captured) == [], captured
-    assert _reply(result).strip() == COMPANY_QUESTION, _reply(result)
-    assert not _slot_args(chat).get("customer_ids"), _slot_args(chat)
+    assert _reply(result).strip() != COMPANY_QUESTION, f"O-R2: the company was asked: {_reply(result)!r}"
+    args = _ran_once(result, captured)
+    assert not args.get("customer_ids") and "company" not in args, f"O-R2: {args}"
 
 
-def test_g2b_all_customers_on_a_refine_asks_the_company_never_runs_it_unasked(chat, session_factory):
+def test_g2b_all_customers_on_a_refine_runs_over_every_company(chat, session_factory):
     ids, services = _reported(chat, session_factory, "g2b")
     parse = _ordered(ranking_refine=True, broaden_axis="customer", broaden_to="all", **OCT_2026)
     result, captured = chat(parse, "how about all customers", "ZZT-fc-g2b", resolve_services=services)
-    assert _report_calls(captured) == [], captured
-    assert _reply(result).strip() == COMPANY_QUESTION, _reply(result)
-    assert not _slot_args(chat).get("customer_ids"), _slot_args(chat)
+    assert _reply(result).strip() != COMPANY_QUESTION, f"O-R2: the company was asked: {_reply(result)!r}"
+    args = _ran_once(result, captured)
+    assert not args.get("customer_ids") and "company" not in args, f"O-R2: {args}"
 
 
 def test_g2c_all_customers_on_a_refine_naming_no_basis_asks_it(chat, session_factory):
@@ -264,13 +264,13 @@ def test_g2c_all_customers_on_a_refine_naming_no_basis_asks_it(chat, session_fac
 
 
 def test_g3_guard_a_topic_reset_drops_the_customer(chat, session_factory):
-    """Measured: "start over, total sales oct delivered" reads `entity_op` clear and `topic_reset` true, and asks the company."""
+    """Measured: "start over, total sales oct delivered" reads `entity_op` clear and `topic_reset` true, and (O-R2) runs with no company question."""
     ids, services = _reported(chat, session_factory, "g3")
     parse = _follow(entity_op="clear", topic_reset=True, sales_basis="delivered", basis="delivered", domain_in_message=True, **OCT_2026)
     result, captured = chat(parse, "start over, total sales oct delivered", "ZZT-fc-g3-1", resolve_services=services)
-    assert _report_calls(captured) == [], captured
-    assert _reply(result).strip() == COMPANY_QUESTION, _reply(result)
-    assert not _slot_args(chat).get("customer_ids"), _slot_args(chat)
+    assert _reply(result).strip() != COMPANY_QUESTION, f"O-R2: the company was asked: {_reply(result)!r}"
+    args = _ran_once(result, captured)
+    assert not args.get("customer_ids") and "company" not in args, f"O-R2: {args}"
 
 
 def test_g3b_guard_a_follow_up_after_a_reset_has_no_customer_or_period_to_keep(chat, session_factory):
@@ -512,10 +512,11 @@ def test_s6_the_company_answered_stays_and_is_not_asked_again():
     assert outcome.done and args.get("company") == COMPANY_A, (outcome.reply, args)
 
 
-def test_s6b_guard_a_total_with_no_subject_still_asks_the_company_it_never_answered():
+def test_s6b_a_total_with_no_subject_runs_with_no_company_never_asks_it():
+    """O-R2: the company it never answered is not asked; it runs over every company."""
     frame = {"sort": "desc", "basis": "delivered", "date_from": "2026-10-01", "date_to": "2026-10-31"}
     outcome, args = _settled({**_verdict("reuse"), "basis": "ordered"}, frame)
-    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+    assert outcome.done and not args.get("company"), f"O-R2: asked or sent a company: {outcome.reply!r} {args}"
 
 
 def test_s7_a_subject_of_its_own_is_not_narrowed_to_the_company_on_screen():
@@ -536,10 +537,10 @@ def test_s9_a_customer_named_on_a_refine_replaces_the_held_one():
     assert args.get("customer_ids") == [U3], args
 
 
-def test_s10_my_sales_on_a_refine_drops_the_held_customer_and_asks_the_company():
+def test_s10_my_sales_on_a_refine_drops_the_held_customer_and_runs_without_a_company_question():
     outcome, args = _settled({**_verdict("reuse"), "ranking_refine": True, "self_reference": True}, RANKING)
     assert not args.get("customer_ids") and args.get("mine") is True, args
-    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+    assert outcome.done and not args.get("company"), f"O-R2: the company was asked or sent: {outcome.reply!r} {args}"
 
 
 def test_s10c_my_sales_to_a_customer_named_on_a_refine_keeps_that_customer():
@@ -553,29 +554,29 @@ def test_s10b_my_sales_on_a_refine_takes_the_contact_s_own_accounts():
     assert args.get("customer_ids") == [U3], args
 
 
-def test_s11_all_customers_on_a_refine_over_a_ranking_keeps_its_axis_and_asks_the_company():
+def test_s11_all_customers_on_a_refine_over_a_ranking_keeps_its_axis_and_runs_without_the_company():
     verdict = {**_verdict("reuse"), "ranking_refine": True, "broaden_axis": "customer", "broaden_to": "all", "basis": "delivered", "measure": "amount"}
     outcome, args = _settled(verdict, RANKING)
     assert not args.get("customer_ids") and args.get("group_by") == "product", args
-    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+    assert outcome.done and not args.get("company"), f"O-R2: the company was asked or sent: {outcome.reply!r} {args}"
 
 
 ALL_CUSTOMERS = {"broaden_axis": "customer", "broaden_to": "all"}
 
 
-def test_s12_the_top_selling_label_with_all_customers_asks_the_company_never_runs_it_unasked():
+def test_s12_the_top_selling_label_with_all_customers_runs_without_a_company_question():
     """`bare_top_selling` makes it a refine inside `_settle`: every way into `_refine` owes the company once the customer goes."""
     verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "bare_top_selling": True, "capability_from": "top_selling", "group_by": "product"}
     outcome, args = _settled(verdict, RANKING)
     assert not args.get("customer_ids"), args
-    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+    assert outcome.done and not args.get("company"), f"O-R2: the company was asked or sent: {outcome.reply!r} {args}"
 
 
-def test_s13_a_channel_word_with_all_customers_asks_the_company_never_runs_it_unasked():
+def test_s13_a_channel_word_with_all_customers_runs_without_a_company_question():
     verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "group_by": "channel", "sales_channel": "dealer", "by_words": "dealer"}
     outcome, args = _settled(verdict, RANKING)
     assert not args.get("customer_ids") and args.get("channel") == "dealer", args
-    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+    assert outcome.done and not args.get("company"), f"O-R2: the company was asked or sent: {outcome.reply!r} {args}"
 
 
 def test_s14_all_customers_on_a_refine_keeps_everything_else_a_refine_keeps():
@@ -587,16 +588,16 @@ def test_s14_all_customers_on_a_refine_keeps_everything_else_a_refine_keeps():
     assert args["sort"] == "asc" and args["warehouse_codes"] == ["BB"] and args["compare_to"] == "previous_period", args
     assert args["group_by"] == "product" and args["basis"] == "delivered" and args["measure"] == "amount", args
     assert outcome.extras.get("top_n") == 5 or (outcome.slot or {}).get("extras", {}).get("top_n") == 5, outcome.extras
-    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+    assert outcome.done and not args.get("company"), f"O-R2: the company was asked or sent: {outcome.reply!r} {args}"
 
 
-def test_s15_all_customers_over_a_breakdown_owes_only_the_company():
+def test_s15_all_customers_over_a_breakdown_runs_without_a_company_question():
     """A breakdown shows both measures: "By quantity or by amount?" is not owed for it."""
     frame = {"sort": "desc", "basis": "delivered", "group_by": "product", "customer_ids": [U1, U2], "top_n": 100,
              "date_from": "2026-10-01", "date_to": "2026-10-31"}
     verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True, "basis": "ordered"}
     outcome, args = _settled(verdict, frame)
-    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+    assert outcome.done and not args.get("company"), f"O-R2: the company was asked or sent: {outcome.reply!r} {args}"
     assert "quantity" not in (outcome.reply or ""), outcome.reply
 
 
@@ -640,11 +641,11 @@ def test_s18_an_outstanding_ask_is_never_asked_the_company(over):
     assert not outcome.extras.get("company_options") and "company" not in {outcome.slot and outcome.slot.get("asking")}, outcome
 
 
-def test_s19_a_pick_that_lost_its_row_never_falls_back_to_the_held_customer():
+def test_s19_a_pick_that_lost_its_row_never_falls_back_to_the_held_customer_and_runs_without_a_company():
     """The pick reached the lane with no row (the parser repeats `top_selling`, found not fixed): it asks, and never runs X."""
     outcome, args = _settled({**_verdict("reuse"), "ranking_refine": True, "ranking_pick": True}, RANKING)
     assert not args.get("customer_ids"), args
-    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
+    assert outcome.done and not args.get("company"), f"O-R2: the company was asked or sent: {outcome.reply!r} {args}"
 
 
 def test_s20_a_company_the_contact_does_not_hold_is_said_on_a_refine_too():
@@ -665,20 +666,12 @@ def test_s20_a_company_the_contact_does_not_hold_is_said_on_a_refine_too():
     ],
     ids=["total", "ranking", "breakdown"],
 )
-def test_s21_the_company_question_a_refine_opens_answers_on_the_next_turn(frame):
-    """Over the session's JSON: the company picked is on the run, the customer stays gone, and nothing more is asked."""
+def test_s21_all_customers_on_a_refine_runs_at_once_with_no_company_question(frame):
+    """O-R2 (was: the company question a refine opens answers on the next turn): no question opens, the customer is gone."""
     verdict = {**_verdict("reuse"), **ALL_CUSTOMERS, "ranking_refine": True}
-    outcome, _args = _settled(verdict, frame)
-    assert not outcome.done and outcome.slot["asking"] == "company", outcome.reply
-    slot = json.loads(json.dumps(outcome.slot))
-    answer = {
-        "message_type": "business_query", "order_status": report_ask.ASK_NAME, "entities": [], "sales_ranking_frame": frame,
-        "required_ask": slot, "required_ask_answer": {"mode": "pick", "picked": [1], "items": [], "qty_for_all": None},
-    }
-    done, line = report_ask.settle(None, answer, [], companies=TWO_COMPANIES)
-    assert done is not None and done.done, (line, done)
-    args = report_ask.route_args(done)
-    assert args.get("company") == COMPANY_A and not args.get("customer_ids"), args
+    outcome, args = _settled(verdict, frame)
+    assert outcome.done, f"O-R2: the refine opened a question instead of running: {outcome.reply!r}"
+    assert not args.get("company") and not args.get("customer_ids"), args
     assert args["date_from"] == "2026-10-01" and args["basis"] == "delivered", args
 
 
