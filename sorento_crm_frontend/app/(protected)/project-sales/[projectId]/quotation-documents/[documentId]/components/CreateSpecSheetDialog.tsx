@@ -43,15 +43,22 @@ export function CreateSpecSheetDialog({
   onOpenChange,
   projectId,
   documentId,
+  sheet,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
   documentId: string;
+  /**
+   * Templates mode: pick the templates of an existing spec sheet again (one whose template was
+   * deleted). The Revision picker is hidden, the current picks prefill, Save re-pins the sheet
+   * and keeps its rows and page edits.
+   */
+  sheet?: { id: string; cover?: string | null; page?: string | null; single?: string | null };
 }) {
   const router = useRouter();
   const list = useSpecSheets(projectId, documentId);
-  const { create } = useSpecSheetMutations(projectId, documentId);
+  const { create, update } = useSpecSheetMutations(projectId, documentId);
   const [picked, setPicked] = React.useState<Picked>({});
   const [error, setError] = React.useState<string | null>(null);
 
@@ -66,9 +73,10 @@ export function CreateSpecSheetDialog({
   const defaults = data?.defaults;
   // A cleared Single item template is '' and must not fall back to the default.
   const source = picked.source ?? defaults?.source ?? '';
-  const cover = picked.cover ?? defaults?.cover_template_id ?? '';
-  const page = picked.page ?? defaults?.page_template_id ?? '';
-  const single = picked.single ?? defaults?.single_page_template_id ?? '';
+  // In templates mode the sheet's own templates prefill; a deleted one falls back to the defaults.
+  const cover = picked.cover ?? sheet?.cover ?? defaults?.cover_template_id ?? '';
+  const page = picked.page ?? sheet?.page ?? defaults?.page_template_id ?? '';
+  const single = picked.single ?? (sheet ? (sheet.single ?? '') : (defaults?.single_page_template_id ?? ''));
 
   const sourceOptions = React.useMemo<SearchableSelectOption[]>(
     () =>
@@ -91,6 +99,22 @@ export function CreateSpecSheetDialog({
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
+    if (sheet) {
+      if (!cover || !page) return setError('Pick a cover template and a page template.');
+      setError(null);
+      update.mutate(
+        {
+          sheetId: sheet.id,
+          body: {
+            cover_template_id: cover,
+            page_template_id: page,
+            single_page_template_id: single || null,
+          },
+        },
+        { onSuccess: () => onOpenChange(false), onError: (err: Error) => setError(err.message) },
+      );
+      return;
+    }
     if (!source) return setError('Pick a revision.');
     if (!cover || !page) return setError('Pick a cover template and a page template.');
     setError(null);
@@ -117,22 +141,24 @@ export function CreateSpecSheetDialog({
     <FormDialogScaffold
       open={open}
       onOpenChange={onOpenChange}
-      title="Create spec sheet"
-      submitLabel="Create"
-      isPending={create.isPending}
+      title={sheet ? 'Pick templates' : 'Create spec sheet'}
+      submitLabel={sheet ? 'Save' : 'Create'}
+      isPending={create.isPending || update.isPending}
       error={error}
       onSubmit={submit}
     >
-      <div className="flex flex-col gap-1">
-        <Label htmlFor={ids.source}>Revision</Label>
-        <SearchableSelect
-          id={ids.source}
-          value={source}
-          onChange={(value: string) => setPicked((p) => ({ ...p, source: value }))}
-          options={sourceOptions}
-          placeholder="Pick a revision"
-        />
-      </div>
+      {!sheet && (
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={ids.source}>Revision</Label>
+          <SearchableSelect
+            id={ids.source}
+            value={source}
+            onChange={(value: string) => setPicked((p) => ({ ...p, source: value }))}
+            options={sourceOptions}
+            placeholder="Pick a revision"
+          />
+        </div>
+      )}
       <div className="flex flex-col gap-1">
         <Label htmlFor={ids.cover}>Cover template</Label>
         <SearchableSelect

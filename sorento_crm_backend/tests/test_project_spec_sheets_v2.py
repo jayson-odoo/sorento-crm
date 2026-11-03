@@ -1762,3 +1762,135 @@ def test_malformed_props_or_asset_ids_answer_422_and_store_nothing(props):
             spec.save_page_edit(db, sheet, c["basin"].id, [{"id": "l1", "type": "image", "props": props}])
         assert (raised.value.status_code, raised.value.code) == (422, "spec_sheet_page_edit_invalid")
         assert sheet.page_edits == {}
+
+
+# ------------------------------------------------------------------ round 5: templates in use, dead sheets
+
+
+def test_r5_a_template_a_spec_sheet_uses_cannot_be_deleted_until_the_sheet_is_gone():
+    from app.models.base import company_scope
+    from app.models.dealer_kit import TagTemplate
+    from app.services.dealer_kit import tag_template_service
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        sheets = [_make(db, c, templates=t) for _ in range(3)]
+        db.commit()
+        with company_scope(db, frozenset({c["company_id"]})):
+            with pytest.raises(AppException) as raised:
+                tag_template_service.delete_template(db, t["page"].id)
+            assert raised.value.status_code == 409
+            assert raised.value.message == "This template is used by 3 spec sheets. Change their templates first."
+            assert db.get(TagTemplate, t["page"].id) is not None
+
+            # The bulk path refuses the same way, naming the template.
+            with pytest.raises(AppException) as raised:
+                tag_template_service.bulk_delete(db, [t["cover"].id, t["page"].id])
+            assert raised.value.status_code == 409 and t["cover"].name in raised.value.message
+
+            for sheet in sheets:
+                db.delete(sheet)
+            db.commit()
+            tag_template_service.delete_template(db, t["page"].id)
+            assert db.get(TagTemplate, t["page"].id) is None
+
+
+def test_r5_the_delete_is_refused_at_park_too():
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        _make(db, c, templates=t)
+        db.commit()
+        with company_scope(db, frozenset({c["company_id"]})):
+            client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS + ["dealer_kit.tag_templates.manage"])
+            try:
+                refused = client.post(
+                    PENDING,
+                    json={
+                        "action_key": "tag_template.delete",
+                        "entity_type": "tag_template",
+                        "entity_id": t["cover"].id,
+                        "payload": {},
+                    },
+                )
+                assert refused.status_code == 409, refused.text
+            finally:
+                _restore(originals)
+
+
+def _kill_template(db, sheet, role):
+    """What a delete did before it was blocked: the template and its versions are gone, so the
+    sheet's ids for it read NULL (ON DELETE SET NULL)."""
+    setattr(sheet, f"{role}_template_id", None)
+    setattr(sheet, "single_version_id" if role == "single_page" else f"{role}_version_id", None)
+    if role == "single_page":
+        sheet.single_page_template_id = None
+    db.flush()
+
+
+def test_r5_a_sheet_whose_template_was_deleted_still_opens_and_can_pick_templates_again():
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        sheet = _make(db, c, templates=t)
+        spec_rows = [{"key": c["basin"].id, "area": "Pantry"}]
+        from app.services import project_spec_sheet_service as spec
+
+        spec.update_sheet(db, sheet, {"rows": spec_rows})
+        spec.save_page_edit(db, sheet, c["basin"].id, [_layer("KEEP")])
+        _kill_template(db, sheet, "cover")
+        client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
+        try:
+            got = client.get(_base(c, f"/{sheet.id}"))
+            assert got.status_code == 200, got.text
+            body = got.json()
+            assert body["templates_missing"] == ["cover"]
+            assert body["templates"]["cover"] is None
+            assert [p["key"] for p in body["pages"]][0] == "cover"
+
+            for call in (
+                client.get(_base(c, f"/{sheet.id}/preview"), params={"key": "cover"}),
+                client.post(_base(c, f"/{sheet.id}/export")),
+            ):
+                assert call.status_code == 409, call.text
+                assert call.json()["code"] == "spec_sheet_template_missing"
+                assert "cover template of this spec sheet was deleted" in call.json()["message"]
+
+            fresh = _template(db, c["company_id"], "spec_cover")
+            patched = client.patch(_base(c, f"/{sheet.id}"), json={"cover_template_id": fresh.id})
+            assert patched.status_code == 200, patched.text
+            assert patched.json()["templates_missing"] == []
+            assert patched.json()["templates"]["cover"]["id"] == fresh.id
+            # Rows and page edits survive the re-pin.
+            page = next(p for p in patched.json()["pages"] if p["key"] == c["basin"].id)
+            assert page["area"] == "Pantry" and page["edited"] is True
+            ok = client.get(_base(c, f"/{sheet.id}/preview"), params={"key": "cover"})
+            assert ok.status_code == 200, ok.text
+
+            # The same checks as create: another family is refused.
+            bad = client.patch(_base(c, f"/{sheet.id}"), json={"cover_template_id": t["page"].id})
+            assert bad.status_code == 422
+        finally:
+            _restore(originals)
+
+
+def test_r5_a_missing_single_template_alone_falls_back_to_the_page_template():
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        sheet = _make(db, c, templates=t)
+        _kill_template(db, sheet, "single_page")
+        client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
+        try:
+            body = client.get(_base(c, f"/{sheet.id}")).json()
+            # Both ids read NULL, as for a sheet that never had a single template: nothing to flag.
+            assert body["templates_missing"] == []
+            ok = client.get(_base(c, f"/{sheet.id}/preview"), params=[("key", "cover"), ("key", c["basin"].id)])
+            assert ok.status_code == 200, ok.text
+            assert _tags(ok.json())[1]["template_id"] == t["page"].id
+        finally:
+            _restore(originals)

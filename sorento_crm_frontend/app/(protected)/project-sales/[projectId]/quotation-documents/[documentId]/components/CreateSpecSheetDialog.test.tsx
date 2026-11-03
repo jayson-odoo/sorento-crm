@@ -50,11 +50,12 @@ vi.mock('@/lib/toast', () => ({
 
 const listSpecSheets = vi.fn();
 const createSpecSheet = vi.fn();
+const updateSpecSheet = vi.fn();
 vi.mock('@/app/(protected)/project-sales/_shared/services/specSheetService', () => ({
   listSpecSheets: (...a: unknown[]) => listSpecSheets(...a),
   createSpecSheet: (...a: unknown[]) => createSpecSheet(...a),
   getSpecSheet: vi.fn(),
-  updateSpecSheet: vi.fn(),
+  updateSpecSheet: (...a: unknown[]) => updateSpecSheet(...a),
   getSpecSheetPreview: vi.fn(),
   getSpecSheetPageDesign: vi.fn(),
   saveSpecSheetPageEdit: vi.fn(),
@@ -142,6 +143,7 @@ beforeEach(() => {
   push.mockReset();
   listSpecSheets.mockReset().mockResolvedValue(LIST);
   createSpecSheet.mockReset().mockResolvedValue({ id: 'sheet-9', label: 'SS3' });
+  updateSpecSheet.mockReset().mockResolvedValue({ id: 'sheet-5', label: 'SS1' });
 });
 
 describe('CreateSpecSheetDialog', () => {
@@ -211,6 +213,41 @@ describe('CreateSpecSheetDialog', () => {
     expect(
       await screen.findByText('Page templates must be the same size as the cover.'),
     ).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('in templates mode hides the revision, prefills the sheet templates and saves them on that sheet', async () => {
+    const onOpenChange = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <CreateSpecSheetDialog
+          open
+          onOpenChange={onOpenChange}
+          projectId="p1"
+          documentId="d1"
+          sheet={{ id: 'sheet-5', cover: null, page: 'page-2', single: null }}
+        />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(options('spec-sheet-cover')).toEqual(['cover-1']));
+    expect(screen.queryByTestId('spec-sheet-source')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Pick templates' })).toBeInTheDocument();
+    // The deleted cover falls back to the default, the sheet's own page template stays.
+    await waitFor(() => expect(screen.getByTestId('spec-sheet-cover')).toHaveValue('cover-1'));
+    expect(screen.getByTestId('spec-sheet-page')).toHaveValue('page-2');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalledTimes(1));
+    expect(updateSpecSheet).toHaveBeenCalledWith('p1', 'd1', 'sheet-5', {
+      cover_template_id: 'cover-1',
+      page_template_id: 'page-2',
+      single_page_template_id: null,
+    });
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(createSpecSheet).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
   });
 });

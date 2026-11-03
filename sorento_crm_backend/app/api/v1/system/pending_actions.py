@@ -259,6 +259,14 @@ def _assert_entity_visible(
         from app.services.record_actions import assert_quotation_deletable
 
         assert_quotation_deletable(db, entity_id, actor_id)
+    elif action_key in ("tag_template.delete", "tag_template.bulk_delete"):
+        # Refused now, not ten seconds later: a template a spec sheet draws from stays.
+        from app.services.dealer_kit import tag_template_service
+
+        tag_template_service.assert_unused(
+            db,
+            [entity_id] if action_key == "tag_template.delete" else list((payload or {}).get("template_ids") or []),
+        )
     elif action_key == "quotation_spec_sheet.delete":
         from app.services.record_actions import assert_spec_sheet_editable
 

@@ -446,6 +446,12 @@ interface TagCanvasEditorProps {
   /** The host owns saving, so the built-in Save bar would be a second Save. */
   hideSaveBar?: boolean;
   /**
+   * assetId -> url the HOST wants drawn, over the library's. The library lists every asset with
+   * its original; a host that shows one page large (the spec sheet page editor) hands in
+   * renditions so the original is never loaded. Absent: the library's urls, as before.
+   */
+  assetUrls?: Record<string, string>;
+  /**
    * The template id (template editor) or the placed tag's id (request
    * designer), so the clipboard (S3) can tell a paste back onto the SAME
    * doc (offset by `CLONE_OFFSET_MM`, as before) from a paste onto a
@@ -533,6 +539,7 @@ export function TagCanvasEditor({
   onLayersChange,
   onUseTemplate,
   hideSaveBar,
+  assetUrls: hostAssetUrls,
   docId,
   toolbarTrailing,
   reviewPins,
@@ -623,6 +630,10 @@ export function TagCanvasEditor({
 
   const bindings = useTagBindings(promotionId);
   const library = useKitLibrary();
+  const assetUrls = useMemo(
+    () => (hostAssetUrls ? { ...library.assetUrls, ...hostAssetUrls } : library.assetUrls),
+    [library.assetUrls, hostAssetUrls],
+  );
 
   /**
    * The combo the designer is previewing (PRICETAG-COMBO AC-5.1): editor state only,
@@ -1810,7 +1821,7 @@ export function TagCanvasEditor({
   }, [cropEditingLayerId, layers]);
 
   const cropImageUrl = cropEditingLayer
-    ? layerDisplay(cropEditingLayer, dataOf(cropEditingLayer), library.assetUrls)?.imageUrl
+    ? layerDisplay(cropEditingLayer, dataOf(cropEditingLayer), assetUrls)?.imageUrl
     : null;
   const cropImage = useHtmlImage(cropImageUrl ?? null);
 
@@ -3918,7 +3929,7 @@ export function TagCanvasEditor({
                           key={`${layer.id}-ghost`}
                           layer={{ ...withPolygonPreview(layer), id: `${layer.id}-ghost` }}
                           scale={scale}
-                          display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
+                          display={layerDisplay(layer, dataOf(layer), assetUrls)}
                           draggable={!handMode}
                           listening={
                             !handMode &&
@@ -3958,7 +3969,7 @@ export function TagCanvasEditor({
                           key={layer.id}
                           layer={withPolygonPreview(layer)}
                           scale={scale}
-                          display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
+                          display={layerDisplay(layer, dataOf(layer), assetUrls)}
                           draggable={!handMode}
                           listening={
                             !handMode &&

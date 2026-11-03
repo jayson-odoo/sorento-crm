@@ -182,6 +182,9 @@ export function SpecSheetPageEditor({
               layers.current = next;
             }}
             boundData={bound}
+            // The page's medium renditions: the editor must not resolve library artwork to its
+            // original, which can be megabytes.
+            assetUrls={data.assets}
             hideSaveBar
             specSheet
             docId={`${sheetId}:${pageKey}`}

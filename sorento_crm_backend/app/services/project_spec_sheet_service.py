@@ -233,25 +233,60 @@ def _resolve_templates(
     return {"cover": cover, "page": page, "single": single, "size": sizes[0]}
 
 
+def _version_of(db: Session, version_id, template_id) -> Optional[TagTemplateVersion]:
+    """The pinned version, else (it is gone) its template's published one, else ``None``."""
+    version = db.get(TagTemplateVersion, version_id) if version_id else None
+    if version is None and template_id:
+        template = db.get(TagTemplate, template_id)
+        version = template.published_version if template is not None else None
+    return version
+
+
+def _pinned_parts(db: Session, sheet: ProjectQuotationSpecSheet) -> tuple:
+    """``(cover, page, single)`` version docs the sheet prints from, ``None`` for one that is
+    gone: the pinned versions, never today's published ones. A missing single falls back to the
+    page."""
+    cover = _version_of(db, sheet.cover_version_id, sheet.cover_template_id)
+    page = _version_of(db, sheet.page_version_id, sheet.page_template_id)
+    single = _version_of(db, sheet.single_version_id, sheet.single_page_template_id) or page
+    return cover, page, single
+
+
+def templates_missing(db: Session, sheet: ProjectQuotationSpecSheet) -> List[str]:
+    """Which of ``cover`` / ``page`` / ``single`` this sheet can no longer draw from (a template
+    deleted before the delete was blocked). A missing single alone is not an error: the page
+    template stands in for it."""
+    cover, page, _single = _pinned_parts(db, sheet)
+    missing = [name for name, version in (("cover", cover), ("page", page)) if version is None]
+    if (sheet.single_page_template_id or sheet.single_version_id) and _version_of(
+        db, sheet.single_version_id, sheet.single_page_template_id
+    ) is None:
+        missing.append("single")
+    return missing
+
+
+def missing_message(missing: Sequence[str]) -> str:
+    names = [m for m in missing if m in ("cover", "page")]
+    if not names:
+        return ""
+    plural = len(names) > 1
+    return (
+        f"The {' and '.join(names)} template{'s' if plural else ''} of this spec sheet "
+        f"{'were' if plural else 'was'} deleted. Pick new templates to show and export it."
+    )
+
+
 def _pinned(db: Session, sheet: ProjectQuotationSpecSheet) -> dict:
-    """The version docs the sheet prints from: the pinned versions, never today's published ones.
-    A pinned version that is gone falls back to its template's published version."""
-
-    def version_of(version_id, template_id) -> Optional[TagTemplateVersion]:
-        version = db.get(TagTemplateVersion, version_id) if version_id else None
-        if version is None and template_id:
-            template = db.get(TagTemplate, template_id)
-            version = template.published_version if template is not None else None
-        return version
-
-    cover = version_of(sheet.cover_version_id, sheet.cover_template_id)
-    page = version_of(sheet.page_version_id, sheet.page_template_id)
-    single = version_of(sheet.single_version_id, sheet.single_page_template_id) or page
+    """The version docs the sheet prints from, or 409 `spec_sheet_template_missing` when its cover
+    or page template is gone."""
+    cover, page, single = _pinned_parts(db, sheet)
     if cover is None or page is None:
         raise AppException(
-            status_code=422,
-            message="A template of this spec sheet is gone.",
-            code="spec_sheet_template_invalid",
+            status_code=409,
+            message=missing_message(
+                [n for n, v in (("cover", cover), ("page", page)) if v is None]
+            ),
+            code="spec_sheet_template_missing",
         )
     sizes = [_doc_size(f"v{v.version_no}", v.doc) for v in (cover, page, single)]
     _same_size(sizes)
@@ -1388,6 +1423,25 @@ def update_sheet(
         rows += [r for r in stored if r["key"] not in set(keys)]
         _check_rows(rows)
         sheet.rows = rows
+    pick = ("cover_template_id", "page_template_id", "single_page_template_id")
+    if any(k in payload for k in pick):
+        # Pick templates again (e.g. after one was deleted): the same checks as create, the rows
+        # and page edits stay.
+        templates = _resolve_templates(
+            db,
+            sheet.company_id,
+            payload.get("cover_template_id", sheet.cover_template_id),
+            payload.get("page_template_id", sheet.page_template_id),
+            payload.get("single_page_template_id", sheet.single_page_template_id),
+        )
+        sheet.cover_template_id = templates["cover"].id
+        sheet.page_template_id = templates["page"].id
+        sheet.single_page_template_id = templates["single"].id if templates["single"] is not None else None
+        sheet.cover_version_id = templates["cover"].published_version_id
+        sheet.page_version_id = templates["page"].published_version_id
+        sheet.single_version_id = (
+            templates["single"].published_version_id if templates["single"] is not None else None
+        )
     if payload.get("use_latest_templates"):
         templates = _resolve_templates(
             db, sheet.company_id, sheet.cover_template_id, sheet.page_template_id, sheet.single_page_template_id
@@ -1524,6 +1578,26 @@ def reset_page_edit(
     return sheet
 
 
+def _with_medium_urls(row: dict, medium: Dict[str, str]) -> dict:
+    """The page's resolved row with its pictures' urls swapped for the medium renditions: the
+    designer draws the bound row's own image dicts, not the payload's `images` map."""
+
+    def swap(image):
+        if isinstance(image, dict) and image.get("attachment_id") in medium:
+            return {**image, "url": medium[image["attachment_id"]]}
+        return image
+
+    out = dict(row)
+    out["images"] = [swap(i) for i in row.get("images") or []]
+    out["drawing"] = swap(row.get("drawing"))
+    out["parts"] = [
+        {**part, "images": [swap(i) for i in part.get("images") or []], "drawing": swap(part.get("drawing"))}
+        for part in row.get("parts") or []
+    ]
+    out["own_parts"] = out["parts"]
+    return out
+
+
 def design(db: Session, sheet: ProjectQuotationSpecSheet, key: str) -> dict:
     """What the page designer opens: the page's layers (its override, else the frozen template
     version's), bound to that page's data; thumbnails, with the open page at medium size."""
@@ -1533,9 +1607,10 @@ def design(db: Session, sheet: ProjectQuotationSpecSheet, key: str) -> dict:
     template = db.get(TagTemplate, tag["template_id"]) if tag.get("template_id") else None
     # The designer shows ONE page large: medium renditions over the thumbnails.
     sharp = page_images(db, sheet, key)
+    bound = _with_medium_urls(payload["resolvedData"][key], sharp["images"])
     return {
         "layers": tag["layers"],
-        "bound": payload["resolvedData"][key],
+        "bound": bound,
         "images": {**payload["images"], **sharp["images"]},
         "assets": {**payload["assets"], **sharp["assets"]},
         "fonts": payload["fonts"],
@@ -1677,8 +1752,21 @@ def list_view(db: Session, document: ProjectQuotationDocument, user_id: str) -> 
 def detail_view(
     db: Session, document: ProjectQuotationDocument, sheet: ProjectQuotationSpecSheet, *, can_edit: bool
 ) -> dict:
-    pinned = _pinned(db, sheet)
-    width, height = pinned["size"]
+    # A sheet whose template was deleted still opens: it says which one, and the reader asks for
+    # new templates instead of drawing.
+    missing = templates_missing(db, sheet)
+    blocked = any(m in ("cover", "page") for m in missing)
+    if blocked:
+        cover_v, page_v, single_v = _pinned_parts(db, sheet)
+        pinned = {"cover": cover_v, "page": page_v, "single": single_v}
+        known = next((v for v in (cover_v, page_v, single_v) if v is not None), None)
+        try:
+            width, height = _doc_size("", known.doc) if known is not None else (338.7, 190.5)
+        except AppException:
+            width, height = 338.7, 190.5
+    else:
+        pinned = _pinned(db, sheet)
+        width, height = pinned["size"]
     source_label, source_hint = source_text(db, document, sheet)
     edits = sheet.page_edits or {}
     page_rows = pages(db, sheet)
@@ -1739,6 +1827,7 @@ def detail_view(
             if sheet.single_page_template_id
             else None,
         },
+        "templates_missing": missing,
         "newer_templates": newer_templates(db, sheet),
         "page_size": {"width_mm": width, "height_mm": height},
         "pages": out_pages,

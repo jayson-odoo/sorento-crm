@@ -78,6 +78,8 @@ export interface SpecSheetDetail {
     page: SpecSheetTemplateRef | null;
     single: SpecSheetTemplateRef | null;
   };
+  /** Templates the sheet can no longer draw from (deleted before deleting was blocked). */
+  templates_missing?: ('cover' | 'page' | 'single')[];
   newer_templates: boolean;
   page_size: { width_mm: number; height_mm: number };
   /** Cover first. No images: the reader asks for those per window. */
@@ -142,6 +144,10 @@ export interface CreateSpecSheetBody {
 export interface UpdateSpecSheetBody {
   rows?: SpecSheetRow[];
   use_latest_templates?: boolean;
+  /** Pick the templates again; the rows and page edits stay. */
+  cover_template_id?: string;
+  page_template_id?: string;
+  single_page_template_id?: string | null;
 }
 
 /** One window of the print payload, thumbnails only, plus the pages the sheet leaves out. */

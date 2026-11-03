@@ -38,6 +38,7 @@ import type {
   SpecSheetPage,
   SpecSheetRow,
 } from '../../../../../../_shared/services/specSheetService';
+import { CreateSpecSheetDialog } from '../../../components/CreateSpecSheetDialog';
 import { PageRail } from './PageRail';
 import { COVER, ReaderPage } from './ReaderPage';
 
@@ -90,6 +91,12 @@ export function SpecSheetReader({
   const detailQuery = useSpecSheetDetail(projectId, documentId, sheetId);
   const { update, exportPdf } = useSpecSheetMutations(projectId, documentId);
   const detail = detailQuery.data;
+  // A cover or page template deleted before deleting was blocked: nothing can be drawn or exported
+  // until the templates are picked again.
+  const missing = detail?.templates_missing ?? [];
+  const blockedBy = missing.filter((m) => m === 'cover' || m === 'page');
+  const blocked = blockedBy.length > 0;
+  const [picking, setPicking] = React.useState(false);
 
   const listHref = `/project-sales/${projectId}/quotation-documents/${documentId}/spec-sheet`;
   const sheetHref = (id: string) => `${listHref}/${id}`;
@@ -163,7 +170,7 @@ export function SpecSheetReader({
     const observer = new ResizeObserver(measure);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [loaded]);
+  }, [loaded, blocked]);
 
   const naturalW = (detail?.page_size.width_mm ?? 0) * PX_PER_MM;
   const naturalH = (detail?.page_size.height_mm ?? 0) * PX_PER_MM;
@@ -209,7 +216,7 @@ export function SpecSheetReader({
       .querySelectorAll('[data-page-key]')
       .forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, [pageKeys, publishVisible]);
+  }, [pageKeys, publishVisible, blocked]);
 
   // The window: the chunks (fixed groups of CHUNK_SIZE pages in print order) holding any visible
   // page, normally one or two. One preview query per chunk.
@@ -305,8 +312,15 @@ export function SpecSheetReader({
     const timer = setTimeout(() => setSettledKey(activeKey), SETTLE_MS);
     return () => clearTimeout(timer);
   }, [activeKey]);
-  const sharp = useSpecSheetPageImages(projectId, documentId, sheetId, settledKey);
-  const sharpBase = settledKey ? (drawn.get(settledKey)?.payload ?? null) : null;
+  const sharp = useSpecSheetPageImages(
+    projectId,
+    documentId,
+    sheetId,
+    settledKey,
+  );
+  const sharpBase = settledKey
+    ? (drawn.get(settledKey)?.payload ?? null)
+    : null;
   const sharpData = sharp.data;
   const sharpPayload = React.useMemo(
     () =>
@@ -451,16 +465,23 @@ export function SpecSheetReader({
               }
               ariaLabel="spec sheet"
             />
-            {deletion.countdown ?? (
-              <Button
-                size="sm"
-                disabled={exportPdf.isPending}
-                onClick={() => exportPdf.mutate(sheetId)}
-              >
-                <FileDown className="size-4" aria-hidden />
-                Export PDF
-              </Button>
-            )}
+            {deletion.countdown ??
+              (blocked ? (
+                canEdit && (
+                  <Button size="sm" onClick={() => setPicking(true)}>
+                    Pick templates
+                  </Button>
+                )
+              ) : (
+                <Button
+                  size="sm"
+                  disabled={exportPdf.isPending}
+                  onClick={() => exportPdf.mutate(sheetId)}
+                >
+                  <FileDown className="size-4" aria-hidden />
+                  Export PDF
+                </Button>
+              ))}
             {menu.length > 0 && !deletion.countdown && (
               <DetailActionsMenu
                 actions={menu}
@@ -483,122 +504,157 @@ export function SpecSheetReader({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
-        {isMobile && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setRailOpen((open) => !open)}
-          >
-            Pages
-          </Button>
-        )}
-        <Button
-          size="icon"
-          variant="outline"
-          aria-label="Previous page"
-          onClick={() => step(-1)}
-        >
-          <ChevronUp className="size-4" />
-        </Button>
-        <Button
-          size="icon"
-          variant="outline"
-          aria-label="Next page"
-          onClick={() => step(1)}
-        >
-          <ChevronDown className="size-4" />
-        </Button>
-        <span className="text-sm tabular-nums" data-testid="spec-sheet-page-of">
-          <b>{activeNumber ?? '-'}</b> of {printedCount}
-        </span>
-        <span className="mx-1 h-5 w-px bg-border" aria-hidden />
-        <Button
-          size="icon"
-          variant="outline"
-          aria-label="Zoom out"
-          onClick={() => setZoom(clampZoom(scale / ZOOM_STEP))}
-        >
-          <Minus className="size-4" />
-        </Button>
-        <span className="min-w-[3rem] text-center text-sm tabular-nums">
-          {Math.round(scale * 100)}%
-        </span>
-        <Button
-          size="icon"
-          variant="outline"
-          aria-label="Zoom in"
-          onClick={() => setZoom(clampZoom(scale * ZOOM_STEP))}
-        >
-          <Plus className="size-4" />
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => setZoom(null)}>
-          Fit width
-        </Button>
-      </div>
-
-      <div className="relative flex min-w-0 gap-3">
-        {(!isMobile || railOpen) && (
-          <aside
-            className={`max-h-[calc(100dvh-16rem)] min-h-[20rem] shrink-0 overflow-y-auto ${
-              isMobile
-                ? 'absolute z-20 w-56 rounded-lg border border-border bg-background p-2 shadow-lg'
-                : 'w-56'
-            }`}
-          >
-            <PageRail
-              pages={pages}
-              numbers={numbers}
-              currentKey={activeKey}
-              canEdit={canEdit}
-              onSelect={scrollTo}
-              onReorder={(items) =>
-                commit([...pages.filter((p) => p.key === COVER), ...items])
-              }
-            />
-          </aside>
-        )}
+      {blocked ? (
         <div
-          ref={scroller}
-          onScroll={onScroll}
-          className="relative max-h-[calc(100dvh-16rem)] min-h-[20rem] min-w-0 flex-1 overflow-auto rounded-lg bg-muted"
-          data-testid="spec-sheet-stack"
+          className="rounded-lg border border-border px-4 py-10 text-center"
+          data-testid="spec-sheet-templates-missing"
         >
-          <div
-            className="flex min-w-fit flex-col items-center gap-6 py-4"
-            style={{ paddingLeft: STACK_PAD, paddingRight: STACK_PAD }}
-          >
-            {pages.map((page) => (
-              <ReaderPage
-                key={page.key}
-                page={page}
-                number={numbers.get(page.key) ?? null}
-                templateLabel={templateLabelOf(page)}
-                boxWidth={boxWidth}
-                boxHeight={boxHeight}
-                scale={scale}
-                payload={
-                  page.key === settledKey && sharpPayload
-                    ? sharpPayload
-                    : (drawn.get(page.key)?.payload ?? null)
-                }
-                sheetIndex={drawn.get(page.key)?.index}
-                canEdit={canEdit}
-                editDisabledReason={
-                  isMobile
-                    ? 'Open this on a desktop screen to edit a page.'
-                    : undefined
-                }
-                editHref={`${sheetHref(sheetId)}/pages/${encodeURIComponent(page.key)}/edit`}
-                pages={pages}
-                documentId={documentId}
-                sheetId={sheetId}
-                onPatch={patch}
-              />
-            ))}
-          </div>
+          <h3 className="text-sm font-semibold text-foreground">
+            {`The ${blockedBy.join(' and ')} template${blockedBy.length > 1 ? 's' : ''} of this spec sheet ${
+              blockedBy.length > 1 ? 'were' : 'was'
+            } deleted.`}
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Pick new templates to show and export it.
+          </p>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2">
+            {isMobile && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setRailOpen((open) => !open)}
+              >
+                Pages
+              </Button>
+            )}
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label="Previous page"
+              onClick={() => step(-1)}
+            >
+              <ChevronUp className="size-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label="Next page"
+              onClick={() => step(1)}
+            >
+              <ChevronDown className="size-4" />
+            </Button>
+            <span
+              className="text-sm tabular-nums"
+              data-testid="spec-sheet-page-of"
+            >
+              <b>{activeNumber ?? '-'}</b> of {printedCount}
+            </span>
+            <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label="Zoom out"
+              onClick={() => setZoom(clampZoom(scale / ZOOM_STEP))}
+            >
+              <Minus className="size-4" />
+            </Button>
+            <span className="min-w-[3rem] text-center text-sm tabular-nums">
+              {Math.round(scale * 100)}%
+            </span>
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label="Zoom in"
+              onClick={() => setZoom(clampZoom(scale * ZOOM_STEP))}
+            >
+              <Plus className="size-4" />
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setZoom(null)}>
+              Fit width
+            </Button>
+          </div>
+
+          <div className="relative flex min-w-0 gap-3">
+            {(!isMobile || railOpen) && (
+              <aside
+                className={`max-h-[calc(100dvh-16rem)] min-h-[20rem] shrink-0 overflow-y-auto ${
+                  isMobile
+                    ? 'absolute z-20 w-56 rounded-lg border border-border bg-background p-2 shadow-lg'
+                    : 'w-56'
+                }`}
+              >
+                <PageRail
+                  pages={pages}
+                  numbers={numbers}
+                  currentKey={activeKey}
+                  canEdit={canEdit}
+                  onSelect={scrollTo}
+                  onReorder={(items) =>
+                    commit([...pages.filter((p) => p.key === COVER), ...items])
+                  }
+                />
+              </aside>
+            )}
+            <div
+              ref={scroller}
+              onScroll={onScroll}
+              className="relative max-h-[calc(100dvh-16rem)] min-h-[20rem] min-w-0 flex-1 overflow-auto rounded-lg bg-muted"
+              data-testid="spec-sheet-stack"
+            >
+              <div
+                className="flex min-w-fit flex-col items-center gap-6 py-4"
+                style={{ paddingLeft: STACK_PAD, paddingRight: STACK_PAD }}
+              >
+                {pages.map((page) => (
+                  <ReaderPage
+                    key={page.key}
+                    page={page}
+                    number={numbers.get(page.key) ?? null}
+                    templateLabel={templateLabelOf(page)}
+                    boxWidth={boxWidth}
+                    boxHeight={boxHeight}
+                    scale={scale}
+                    payload={
+                      page.key === settledKey && sharpPayload
+                        ? sharpPayload
+                        : (drawn.get(page.key)?.payload ?? null)
+                    }
+                    sheetIndex={drawn.get(page.key)?.index}
+                    canEdit={canEdit}
+                    editDisabledReason={
+                      isMobile
+                        ? 'Open this on a desktop screen to edit a page.'
+                        : undefined
+                    }
+                    editHref={`${sheetHref(sheetId)}/pages/${encodeURIComponent(page.key)}/edit`}
+                    pages={pages}
+                    documentId={documentId}
+                    sheetId={sheetId}
+                    onPatch={patch}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+      {canEdit && picking && (
+        <CreateSpecSheetDialog
+          open={picking}
+          onOpenChange={setPicking}
+          projectId={projectId}
+          documentId={documentId}
+          sheet={{
+            id: sheetId,
+            cover: detail.templates.cover?.id ?? null,
+            page: detail.templates.page?.id ?? null,
+            single: detail.templates.single?.id ?? null,
+          }}
+        />
+      )}
     </div>
   );
 }

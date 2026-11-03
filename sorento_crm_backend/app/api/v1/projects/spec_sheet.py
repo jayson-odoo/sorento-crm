@@ -54,6 +54,10 @@ class SpecSheetPatchIn(BaseModel):
 
     rows: Optional[List[SpecSheetRowIn]] = Field(None, max_length=500)
     use_latest_templates: Optional[bool] = None
+    # Pick the templates again (keeps the rows and page edits).
+    cover_template_id: Optional[str] = None
+    page_template_id: Optional[str] = None
+    single_page_template_id: Optional[str] = None
 
 
 class SpecSheetLayersIn(BaseModel):

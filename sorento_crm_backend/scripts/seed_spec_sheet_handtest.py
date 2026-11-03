@@ -5,6 +5,9 @@ Two jobs, both read-only unless ``--apply`` is given:
 1. ``--find`` lists issued quotations whose newest revision has a photo on EVERY item (the frozen line
    photo, else the product's chosen photo), at least four items, with a product set first when there is
    one. The hand test needs a photo on every page to judge image quality.
+   ``--with-set`` lists instead the quotations whose newest revision has at least one product-set line,
+   whether or not every photo is present, with the photo coverage (items with a photo / items) so one
+   with a set can be picked even when some photos are missing.
 2. ``--company <id|code|name>`` (with ``--apply``) creates, in that company, the three published
    templates the hand test names, unless a published one with the same name and family is already
    there: ``Catalogue cover`` (Spec sheet cover), ``Item with accessories`` and ``Single item``
@@ -14,6 +17,7 @@ Two jobs, both read-only unless ``--apply`` is given:
 
 Usage (from sorento_crm_backend, with the target database's env loaded):
     venv/bin/python scripts/seed_spec_sheet_handtest.py --find
+    venv/bin/python scripts/seed_spec_sheet_handtest.py --with-set
     venv/bin/python scripts/seed_spec_sheet_handtest.py --company <company> [--apply]
 
 Idempotent: re-running creates nothing new. It never edits or deletes an existing template.
@@ -195,7 +199,7 @@ def seed(db, company, apply: bool) -> None:
             db.commit()
 
 
-def find(db, limit: int = 8) -> None:
+def find(db, limit: int = 8, with_set: bool = False) -> None:
     from app.models.base import company_scope
     from app.models.projects import Project, ProjectQuotationDocument, ProjectQuotationIssue
     from app.services import product_image_service as images
@@ -215,7 +219,7 @@ def find(db, limit: int = 8) -> None:
             if issue is None:
                 continue
             items = spec.snapshot_items(db, document, issue)
-            if len(items) < 4:
+            if len(items) < (1 if with_set else 4):
                 continue
             product_ids = [i.get("product_id") for i in items if i.get("product_id")]
             chosen = images.images_for(db, product_ids) if product_ids else {}
@@ -229,30 +233,51 @@ def find(db, limit: int = 8) -> None:
                     and chosen[str(i["product_id"])].state == images.CHOSEN
                 )
             ]
-            if missing:
+            sets = sum(1 for i in items if i.get("set_parts"))
+            if with_set:
+                if sets == 0:
+                    continue
+            elif missing:
                 continue
             project = db.query(Project).filter(Project.id == document.project_id).first()
-            sets = sum(1 for i in items if i.get("set_parts"))
-            found.append((sets > 0, len(items), document, issue, project, sets))
-    found.sort(key=lambda r: (not r[0], -r[1]))
+            with_photo = len(items) - len(missing)
+            found.append((sets > 0, len(items), document, issue, project, sets, with_photo))
+    if with_set:
+        found.sort(key=lambda r: (-(r[6] / r[1]), -r[1]))
+    else:
+        found.sort(key=lambda r: (not r[0], -r[1]))
     if not found:
-        print("No issued quotation has a photo on every item.")
+        print(
+            "No issued quotation has a product set line."
+            if with_set
+            else "No issued quotation has a photo on every item."
+        )
         return
-    print("Quotations with a photo on every item (sets first, then most items):")
-    for _has_set, count, document, issue, project, sets in found[:limit]:
+    print(
+        "Quotations with a product set (best photo coverage first):"
+        if with_set
+        else "Quotations with a photo on every item (sets first, then most items):"
+    )
+    for _has_set, count, document, issue, project, sets, with_photo in found[:limit]:
         number = quotation_no(document.document_no, issue.issue_no, issue.revision_label)
         project_no = getattr(project, "project_code", None) or (project.title if project else "")
-        print(f"  {number:<24} project {project_no:<14} items {count:<3} sets {sets}")
+        coverage = f"  photos {with_photo}/{count}" if with_set else ""
+        print(f"  {number:<24} project {project_no:<14} items {count:<3} sets {sets}{coverage}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--find", action="store_true", help="List quotations with a photo on every item.")
+    parser.add_argument(
+        "--with-set",
+        action="store_true",
+        help="List quotations with a product set line and their photo coverage (items with a photo / items).",
+    )
     parser.add_argument("--company", help="Company id, code or name to create the templates in.")
     parser.add_argument("--apply", action="store_true", help="Write the templates (default: report only).")
     args = parser.parse_args()
-    if not args.find and not args.company:
-        parser.error("give --find and/or --company")
+    if not args.find and not args.with_set and not args.company:
+        parser.error("give --find, --with-set and/or --company")
 
     from app.database import SessionLocal
 
@@ -262,6 +287,8 @@ def main() -> int:
             seed(db, _company(db, args.company), args.apply)
         if args.find:
             find(db)
+        if args.with_set:
+            find(db, with_set=True)
     finally:
         db.close()
     return 0

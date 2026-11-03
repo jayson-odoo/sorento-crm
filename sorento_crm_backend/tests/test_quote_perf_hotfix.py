@@ -929,3 +929,17 @@ def test_the_page_images_route_refuses_a_page_the_sheet_does_not_have_and_needs_
             assert client.get(_url(c, f"/{sheet.id}/page-images"), params={"key": "cover"}).status_code == 200
         finally:
             _restore(originals)
+
+
+def test_the_designer_binds_the_open_page_to_medium_pictures_not_thumbnails_or_originals(monkeypatch):
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c, sheet, photo, drawing, store, _signed = _open_page_env(db, monkeypatch, _big_jpeg())
+
+        design = spec.design(db, sheet, c["basin"].id)
+
+        bound = design["bound"]
+        assert ".medium.jpg" in bound["images"][0]["url"]
+        assert ".medium.jpg" in bound["drawing"]["url"]
+        assert bound["images"][0]["url"] != photo.file_path and bound["drawing"]["url"] != drawing.file_path

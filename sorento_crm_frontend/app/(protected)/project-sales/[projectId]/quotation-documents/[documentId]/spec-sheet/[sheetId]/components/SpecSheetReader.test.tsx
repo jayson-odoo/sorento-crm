@@ -414,4 +414,27 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     });
     expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1);
   });
+
+  it('says which template was deleted, offers Pick templates and draws and asks for nothing', async () => {
+    getSpecSheet.mockResolvedValue({ ...detail(), templates_missing: ['cover'], templates: { cover: null, page: { id: 'tp', name: 'Page', version_no: 1 }, single: null } });
+    renderReader();
+
+    expect(await screen.findByText('The cover template of this spec sheet was deleted.')).toBeInTheDocument();
+    expect(screen.getByText('Pick new templates to show and export it.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /export pdf/i })).toBeNull();
+    expect(document.querySelectorAll('[data-testid^="spec-page-"]')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pick templates' }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(getSpecSheetPreview).not.toHaveBeenCalled();
+    expect(getSpecSheetPageImages).not.toHaveBeenCalled();
+  });
+
+  it('a reader without the edit right sees the message and no Pick templates', async () => {
+    getSpecSheet.mockResolvedValue({ ...detail(), can_edit: false, templates_missing: ['page'] });
+    renderReader();
+
+    expect(await screen.findByText('The page template of this spec sheet was deleted.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pick templates' })).toBeNull();
+  });
 });
