@@ -25,7 +25,7 @@ set `Date` or `Message-ID` (`send_mime_email`, `send_notification_email_multi`,
 
 One helper `_stamp_date_and_message_id(msg, from_addr)` called by all three builders right
 before SMTP: `Date` = Malaysia time (+08:00) via `email.utils.format_datetime`; `Message-ID` =
-`email.utils.make_msgid(domain=<sender domain>)`, default domain when the sender has none. Never
+`email.utils.make_msgid(domain=<sender domain>)`; a sender with no `@` gets the default domain. Never
 overwrites a header already present. Body, subject, recipients and attachments untouched.
 
 ## Tests
@@ -34,5 +34,5 @@ overwrites a header already present. Body, subject, recipients and attachments u
 sender hands to smtplib and asserts one Date (+08:00, within the send window), one Message-ID
 (`@<sender domain>`, unique per send), and unchanged Subject/From/To/Cc/attachment.
 
-Evidence: `documentation/plans/email/evidence/email-date-header-sample.eml` (rendered by the real
+Evidence: `documentation/plans/_archive/email/evidence/email-date-header-sample.eml` (rendered by the real
 builder, no customer data).

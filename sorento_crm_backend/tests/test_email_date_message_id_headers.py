@@ -135,3 +135,13 @@ def test_message_id_falls_back_when_sender_has_no_domain(captured):
     assert ne.send_notification_email("a@example.test", "S", "b", smtp_config=cfg) is None
     mid = message_from_string(captured[0])["Message-ID"]
     assert mid.startswith("<") and mid.endswith(">") and "@" in mid
+    assert not mid.endswith("@noreply>")
+
+
+@pytest.mark.parametrize(
+    "from_addr", ["ai@sorento.example", " ai@sorento.example ", "Sorento <ai@sorento.example >"]
+)
+def test_message_id_domain_is_the_sender_domain(captured, from_addr):
+    cfg = dict(_SMTP_CONFIG, from_addr=from_addr)
+    assert ne.send_notification_email("a@example.test", "S", "b", smtp_config=cfg) is None
+    assert message_from_string(captured[0])["Message-ID"].endswith("@sorento.example>")

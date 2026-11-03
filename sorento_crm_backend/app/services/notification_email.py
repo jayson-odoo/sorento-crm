@@ -25,8 +25,9 @@ def _stamp_date_and_message_id(msg, from_addr: Optional[str]) -> None:
     if "Date" not in msg:
         msg["Date"] = format_datetime(datetime.now(_MALAYSIA_TZ))
     if "Message-ID" not in msg:
-        domain = (from_addr or "").rpartition("@")[2].strip().strip(">") or None
-        msg["Message-ID"] = make_msgid(domain=domain)
+        addr = (from_addr or "").strip()
+        domain = addr.rpartition("@")[2].strip().strip(">").strip() if "@" in addr else ""
+        msg["Message-ID"] = make_msgid(domain=domain or None)
 
 
 def _smtp_config_from_env() -> dict:
