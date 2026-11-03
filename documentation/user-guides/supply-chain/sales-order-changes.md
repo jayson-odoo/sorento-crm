@@ -84,6 +84,10 @@ will say, line for line:
 * A line delivered in full that AutoCount still changed (for example a new date) shows the old
   date under **Delivery date** and the new one under **New date**, the same Was and Now the email
   prints.
+* A line delivered in full still goes to purchasing on Confirm: the board plans it at its
+  ordered quantity, so its row shows your saved decision's words like any other saved line.
+  Only when the email holds nothing for it does the row say "Delivered in full: nothing goes to
+  purchasing".
 * A line you already saved a decision for keeps that decision, even when AutoCount's change
   would suggest something else. The page does not ask again; Confirm sends what you saved.
 

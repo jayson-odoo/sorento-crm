@@ -2373,6 +2373,7 @@ export function FulfilmentBoardPanel({
           covered: lines.map((line) => {
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
             const facts = remarkFactsOf(line);
+            const email = emailWordsFor(guideEmail.byOrder, order.project_sales_order_id, line);
             return {
               lineId: line.project_line_id ?? null,
               key: line.key,
@@ -2384,9 +2385,10 @@ export function FulfilmentBoardPanel({
               // The email's own words when the dry run previewed this order (round 3); none
               // when the email sends no line for it; the board's words only for an order the
               // dry run did not preview.
-              savedRemark: ((email) => (email === undefined ? facts.words : email))(
-                emailWordsFor(guideEmail.byOrder, order.project_sales_order_id, line),
-              ),
+              savedRemark: email === undefined ? facts.words : email,
+              // CONFIRM-ITEM4: the dry run says the email holds no line for it (null), so
+              // Confirm sends purchasing nothing for it; unknown (undefined) claims nothing.
+              purchasingSilent: email === null,
               ownRemark: facts.own,
               remarkEditable: facts.editable,
               isMockup: Boolean(line.is_mockup),

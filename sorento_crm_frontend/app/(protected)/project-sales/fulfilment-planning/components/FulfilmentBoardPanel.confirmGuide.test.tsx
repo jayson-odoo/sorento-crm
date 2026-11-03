@@ -1090,7 +1090,10 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     for (const [, decision] of putLineDraft.mock.calls) expect(decision.remark ?? '').toBe('');
   });
 
-  it('F28: a covered line delivered in full has a read-only Remark and says nothing goes to purchasing', async () => {
+  // CONFIRM-PREVIEW-STALE item 4 (crew ruling 2 Nov; owner rulings 14 Sep, 22 Sep, 12 Oct,
+  // 1 Nov): Confirm plans a delivered line at its ordered qty, so its saved decision DOES reach
+  // purchasing. The row prints that decision's words, read-only; no "nothing goes" note.
+  it('F28 (reworked): a covered line delivered in full prints its saved words read-only, no "nothing goes" note', async () => {
     const read = LINE3_READ();
     read.lines = [
       {
@@ -1109,8 +1112,66 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     await openConfirmGuide();
     const page = await screen.findByTestId('confirm-guide-split-page');
     const block = await within(page).findByTestId('split-line-3');
-    expect(block).toHaveTextContent('Delivered in full: nothing goes to purchasing');
+    expect(block).not.toHaveTextContent('nothing goes to purchasing');
+    expect(block).toHaveTextContent('USE BRW 522 & ORDER 294');
     expect(block.querySelectorAll('input')).toHaveLength(0);
+  });
+
+  // CONFIRM-ITEM4 (crew, #2122 check, 3 Nov): the note must never contradict what the Confirm
+  // sends. The guide's email dry run is the truth: the note reads only when the dry run
+  // previewed the order and the email holds no line for the delivered line.
+  const DELIVERED_LINE3_READ = () => {
+    const read = LINE3_READ();
+    read.lines = [
+      {
+        ...wireLine(3, 'ZZT-ITEM-1C', 10, '2026-09-20', {
+          line_id: 'pl-1-3',
+          delivered_qty: 10,
+          now_qty: 0,
+          split_state: 'applied',
+          split_view: { status: 'confirmed' },
+        }),
+        delivered_in_full: true,
+      } as never,
+    ];
+    return read;
+  };
+
+  it('CONFIRM-ITEM4: a delivered line the email tells (ORDER BACK) never says nothing goes to purchasing', async () => {
+    serveSplits({ 'pso-so-1': DELIVERED_LINE3_READ() });
+    dryRunAnswers({ 'pso-so-1': { email: [{ so_line_id: 'pl-1-3', remark: 'ORDER BACK 10' }] } });
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const block = await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(emailDryRuns().length).toBeGreaterThan(0));
+    await waitFor(() => expect(block).toHaveTextContent('ORDER BACK 10'));
+    expect(block).not.toHaveTextContent('nothing goes to purchasing');
+  });
+
+  it('CONFIRM-ITEM4: a delivered line the email holds no line for keeps the note (it is true)', async () => {
+    serveSplits({ 'pso-so-1': DELIVERED_LINE3_READ() });
+    dryRunAnswers({ 'pso-so-1': { email: [] } });
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const block = await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(emailDryRuns().length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(block).toHaveTextContent('Delivered in full: nothing goes to purchasing'),
+    );
+  });
+
+  it('CONFIRM-ITEM4: a delivered line on a failed email dry run makes no claim either way', async () => {
+    serveSplits({ 'pso-so-1': DELIVERED_LINE3_READ() });
+    dryRunAnswers({ 'pso-so-1': { error: 'boom' } });
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const block = await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(emailDryRuns().length).toBeGreaterThan(0));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(block).not.toHaveTextContent('nothing goes to purchasing');
   });
 
   /** The board after a draft remark was saved: the contribution carries the stored words. */
