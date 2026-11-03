@@ -1,7 +1,7 @@
 # PLAN: CONFIRM-DIALOG-SPEED
 
-Status: in review, PR 1 #2128 (frontend only). Track: small fix (no migration, no auth/RBAC
-change). PR 2 (`_oi_placements` and the confirm-all hot spots crew profiles) follows from main
+Status: in review, PR 1 #2128. Track: standard (the diff passes ~300 lines, mostly tests; no
+migration, no auth/RBAC change). PR 2 (`_oi_placements` and the confirm-all hot spots crew profiles) follows from main
 after PR 1 merges. UAC: `confirm-dialog-speed-3nov-acceptance-criteria.md`.
 
 Owner report (3 Nov 13:15): Fulfilment Planning -> Confirm SO423361 sits on the Review split

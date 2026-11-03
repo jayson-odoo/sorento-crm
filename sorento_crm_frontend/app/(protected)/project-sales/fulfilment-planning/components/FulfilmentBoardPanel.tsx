@@ -2284,6 +2284,8 @@ export function FulfilmentBoardPanel({
   }>({ status: 'idle', byOrder: new Map() });
   /** CONFIRM-REMARK-FIX: the planning record of the guide page on screen (`onPageChange`). */
   const [guidePagePso, setGuidePagePso] = React.useState<string | null>(null);
+  const guidePagePsoRef = React.useRef<string | null>(null);
+  guidePagePsoRef.current = guidePagePso;
   /** Per order: the dry run body its email words were read for (one dry run per body). */
   const emailWordsRead = React.useRef(new Map<string, string>());
   const closeGuide = React.useCallback(() => setGuideOpen(false), []);
@@ -2479,17 +2481,24 @@ export function FulfilmentBoardPanel({
    * CONFIRM-DIALOG-SPEED review B1/B2: bumped by every save made on a guide page (the split
    * editor's Save, a remark save) and by the email preview's own Retry. Part of the run key,
    * because the dry run body does not carry split rows (the server applies the stored ones),
-   * so a split save leaves the body as it was and would otherwise keep the old words.
+   * so a split save leaves the body as it was and would otherwise keep the old words. Per
+   * page (review N4): a save on one page never costs another page a fresh dry run.
    */
-  const [emailEpoch, setEmailEpoch] = React.useState(0);
-  const bumpEmailEpoch = React.useCallback(() => setEmailEpoch((current) => current + 1), []);
+  const [emailEpochs, setEmailEpochs] = React.useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  );
+  const bumpEmailEpoch = React.useCallback(() => {
+    const psoId = guidePagePsoRef.current;
+    if (!psoId) return;
+    setEmailEpochs((current) => new Map(current).set(psoId, (current.get(psoId) ?? 0) + 1));
+  }, []);
   /**
    * CONFIRM-DIALOG-SPEED (owner, 3 Nov 2026; prod: the dry run is 36-46 s, the board read
    * 6-20 s): the dry run starts the moment the guide opens, on the decisions this tab
    * holds, beside the board re-read rather than after it. Runs are keyed by the BODY they
    * send, not by the read: when the re-read lands and the order's body is the same, the run
    * already out (or done) stands; only a changed body (a decision saved elsewhere) or a save
-   * on a guide page (`emailEpoch`) cancels it and runs again, once per body, never once per
+   * on a guide page (`emailEpochs`) cancels it and runs again, once per body, never once per
    * read. The sheet itself still waits for the
    * re-read (`refreshing`), so no word is shown off a read older than the last save.
    */
@@ -2538,7 +2547,7 @@ export function FulfilmentBoardPanel({
           body = null;
         }
         if (!live) return;
-        const key = `${emailEpoch}|${body ? JSON.stringify(body) : ''}`;
+        const key = `${emailEpochs.get(psoId) ?? 0}|${body ? JSON.stringify(body) : ''}`;
         if (emailWordsRead.current.get(psoId) === key) {
           // This body was already read: its words stand.
           if (emailInFlight.current?.psoId !== psoId || emailInFlight.current.key !== key) {
@@ -2600,7 +2609,7 @@ export function FulfilmentBoardPanel({
     // `boardReadAt`, never `board.data` (rebuilt on renders, a render loop) nor
     // `rawBoard.dataUpdatedAt` (a save's cache patch moves it: two dry runs per save, F3).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [guideOpen, guideRefreshFailed, boardReadAt, guidePagePso, emailEpoch]);
+  }, [guideOpen, guideRefreshFailed, boardReadAt, guidePagePso, emailEpochs]);
 
   /**
    * OI-SPLIT-GUIDE (UAC F26): the board's own Split delivery gets the same Remark facts for
