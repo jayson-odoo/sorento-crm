@@ -28,7 +28,12 @@ Message: with the class clause gone the verdict only fires for a bin whose plann
 
 ## Unchanged on purpose
 
-Consignment rules, dealer-bin rules, planning-OFF and inactive project bins refused / not admitting, `adopt_for_migration` and the OI import project-only, an unfiltered list call returns project orders only.
+Consignment rules, dealer-bin rules, planning-OFF project bins refused and not admitting, inactive bins not admitting, `adopt_for_migration` and the OI import project-only, an unfiltered list call returns project orders only.
+
+## Changed on purpose, disclosed
+
+- A Dealer order line at an INACTIVE project bin (order admitted through another line) no longer reads "Outside fulfilment planning"; it reads exactly as a project line at that bin always has (the flag verdict never named a retired bin). Pinned by `test_an_inactive_project_bin_reads_the_same_for_every_class`.
+- Any active bin with planning ON admits a Dealer order, an HQ project reserve flagged ON included. That is the owner's Q3 (b). The prod-copy count of newly admitted orders was not measured (cloud sandbox, no prod copy).
 
 ## Tests
 
