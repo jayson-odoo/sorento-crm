@@ -950,7 +950,7 @@ def _already_raised(
 
 
 def _used_row_candidate(
-    mirror_rows: Sequence[Any], row: Any, claimed: set
+    mirror_rows: Sequence[Any], row: Any, claimed: set, line_date: Optional[date] = None
 ) -> Tuple[Optional[Any], bool]:
     """AC-RB-1/AC-RB-2 (R6): the LIVE `Replaces N used` sibling this sheet row is raised
     AS, or `(None, report)` when nothing exact fits.
@@ -988,12 +988,15 @@ def _used_row_candidate(
             continue
         if _dec(candidate.previous_qty) != sheet_qty:
             continue
-        if candidate.previous_delivery_date != row.delivery_date:
+        # OI-ONE-DELIVERY-DATE: the used row it replaced carried the SO line's date (or the
+        # sheet's, when the line had none), so the fresh row's Was is either.
+        sheet_dates = (row.delivery_date, line_date) if line_date else (row.delivery_date,)
+        if candidate.previous_delivery_date not in sheet_dates:
             continue
         already_used = any(
             other.redirected_to_pool
             and _dec(other.qty) == sheet_qty
-            and _on_sheet_date(other, row.delivery_date)
+            and any(_on_sheet_date(other, d) for d in sheet_dates)
             for other in mirror_rows
         )
         if already_used:
@@ -1171,7 +1174,8 @@ def _resolve_recovery_matches(
             continue
         if match.already_raised:
             candidate, report = _used_row_candidate(
-                rows_by_mirror.get(mirror_id, []), match.row, claimed
+                rows_by_mirror.get(mirror_id, []), match.row, claimed,
+                match.core_line.required_date,
             )
             if candidate is not None:
                 match.already_raised = False
