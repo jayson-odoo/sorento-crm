@@ -31,6 +31,17 @@ UAC: `pricetag-self-approval-acceptance-criteria.md` (same folder).
   (`:611`), which in the new flow would hand the request back to marketing.
 - The portal shows the design only from `proof_ready` (`PriceTagRequestForm.tsx:132`).
 
+## Owner ruling 3 Nov 14:10: one step from the create screen
+
+The form has no plain Submit. A new request or a reopened draft ends in **Approve** (the draft is
+submitted and approved in one call, `POST .../submit-approve {doc}`, the sheet built from its saved
+tags) or **Escalate to marketing** (`POST .../submit-escalate {note}`, the same escalation as R6).
+Everything that can refuse (completeness, the sheet, a missing template, an empty note) runs before
+the draft stops being a draft. Approve is off, with the reason beside it, when the live preview
+reports an item with no template. The two-click path (submit, then approve on the detail page) is
+what an EDIT leads to now: an edited request returns to Design Ready and is approved there. The plain
+`/submit` route stays for the API but the form no longer calls it.
+
 ## Design change after the card: no column, no migration
 
 "Marketing holds it" is DERIVED, not stored (`PriceTagRequestService.is_with_marketing`): a submitted

@@ -36,6 +36,12 @@ interface Props {
   lookupTagPreview: (priceMode: PriceMode, lines: TagPreviewLineInput[]) => Promise<TagPreviewResponse>;
   /** The lightbox title; never an id. */
   docNumber?: string;
+  /**
+   * PRICETAG-SELF-APPROVAL (owner ruling 3 Nov): the items the preview could not
+   * draw for want of a template, and whether a drawing exists at all. The form
+   * keeps Approve off while either says the tag is not ready.
+   */
+  onReadyChange?: (state: { missing: string[]; drawn: boolean; failed: boolean }) => void;
 }
 
 /** The lines worth drawing, in the shape the preview route reads. */
@@ -110,7 +116,13 @@ export function previewPayload(
   });
 }
 
-export function PriceTagLivePreview({ lines, priceMode, lookupTagPreview, docNumber }: Props) {
+export function PriceTagLivePreview({
+  lines,
+  priceMode,
+  lookupTagPreview,
+  docNumber,
+  onReadyChange,
+}: Props) {
   const sent = useMemo(() => previewLines(lines), [lines]);
   // Only what changes the drawing re-asks: a remark or a quantity does not.
   const signature = useMemo(() => JSON.stringify([priceMode, sent]), [priceMode, sent]);
@@ -158,6 +170,14 @@ export function PriceTagLivePreview({ lines, priceMode, lookupTagPreview, docNum
     // `signature` stands for `sent` + `priceMode`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, lookupTagPreview]);
+
+  const drawn = !failed && !loading && payload !== null;
+  const missingKey = missing.join('|');
+  useEffect(() => {
+    onReadyChange?.({ missing, drawn: sent.length > 0 && drawn, failed });
+    // `missingKey` stands for `missing`: a fresh array with the same codes is no change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missingKey, drawn, failed, sent.length, onReadyChange]);
 
   if (sent.length === 0) return null;
 

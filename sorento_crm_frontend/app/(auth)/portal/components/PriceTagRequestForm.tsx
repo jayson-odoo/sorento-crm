@@ -82,6 +82,8 @@ import { PriceTagDesignReview } from '@/components/dealer-kit/PriceTagDesignRevi
 import {
   EscalateNote,
   PriceTagSelfApproval,
+  buildSelfProof,
+  linesWithoutTemplate,
 } from '@/components/dealer-kit/PriceTagSelfApproval';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { PriceTagLinesTable } from '@/components/dealer-kit/PriceTagLinesTable';
@@ -294,6 +296,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Owner ruling 3 Nov: the draft form ends in Approve or Escalate to
+  // marketing, never a plain Submit. The live preview says whether the tag can
+  // be approved as it stands; the note box opens under the buttons.
+  const [previewState, setPreviewState] = useState<{
+    missing: string[];
+    drawn: boolean;
+    failed: boolean;
+  }>({ missing: [], drawn: false, failed: false });
+  const [draftEscalateOpen, setDraftEscalateOpen] = useState(false);
   const [request, setRequest] = useState<PriceTagRequestDetail | null>(null);
   // The id a create call answered with, held in STATE rather than trusted to
   // live only in the `requestId` prop (the route param) - a retry after
@@ -1180,7 +1191,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   }, [requestId, router, homePath, client]);
 
   // ---- Submit (D48b: the button is live, the click explains itself) ----
-  const handleSubmit = useCallback(async () => {
+  const handleFinish = useCallback(async (
+    action: { kind: 'approve' } | { kind: 'escalate'; note: string },
+  ) => {
     const { next, emptyRows } = collectProblems();
     // PRICETAG-TEMPLATE-PER-PRODUCT (AC-10): a product with several templates
     // needs the salesperson's pick; named on the row, like an empty one.
@@ -1229,8 +1242,23 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         : await service().createRequest(payload);
       if (!effectiveId) setCreatedRequestId(created.id);
       await flushPendingFiles(created.id);
-      await service().submitRequest(created.id);
-      toast.success('Request submitted');
+      if (action.kind === 'escalate') {
+        await service().submitAndEscalate(created.id, action.note);
+        toast.success('Sent to marketing');
+      } else {
+        // The sheet is built from the SAVED request's own tags, with the same
+        // builder and templates the preview drew, so what is approved is what
+        // was on screen; the server rebuilds each tag's content anyway.
+        const preview = await service().lookupTagPreviewForRequest(created.id);
+        const missing = linesWithoutTemplate(created.lines, preview);
+        if (missing.length > 0) {
+          throw new Error(`No tag template yet for ${missing.join(', ')}. Escalate it to marketing.`);
+        }
+        const built = buildSelfProof(created.lines, preview);
+        if (!built) throw new Error('The tag could not be drawn. Escalate it to marketing.');
+        await service().submitAndApprove(created.id, built.doc);
+        toast.success('Tag approved');
+      }
       router.push(homePath);
     } catch (e) {
       // A refusal that named a field or a row goes THERE, once: the summary then
@@ -1238,7 +1266,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       // sentence in two places reads as two problems. A refusal that named
       // nothing we recognise has nowhere to go but the summary and the toast,
       // which is where every other failure lands.
-      const message = e instanceof Error ? e.message : 'Failed to submit request';
+      const message =
+        e instanceof Error
+          ? e.message
+          : action.kind === 'approve'
+            ? 'Failed to approve request'
+            : 'Failed to send to marketing';
       const named = errorFields(e);
       const placed = named.length > 0 ? applyFieldErrors(named, message) : 0;
       if (placed > 0) {
@@ -1254,6 +1287,18 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [numbersInvalid, collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, homePath, client]);
+
+  /** Why Approve is off on the draft form, or null when the tag can be approved. */
+  const approveBlockedReason: string | null =
+    previewState.missing.length > 0
+      ? `No tag template yet for ${previewState.missing.join(', ')}. Escalate it to marketing.`
+      : previewState.failed
+        ? 'The tag preview could not be drawn. Escalate it to marketing.'
+        : !previewState.drawn
+          ? lines.some((l) => l.product_id || l.product_set_id)
+            ? 'Drawing the tag preview...'
+            : 'Add an item to see its tag before approving.'
+          : null;
 
   // ---- Approve proof ----
   // His own proof sends the sheet his screen built (PRICETAG-SELF-APPROVAL R3);
@@ -2010,6 +2055,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           priceMode={priceMode}
           lookupTagPreview={previewLookup}
           docNumber={request?.doc_number}
+          onReadyChange={setPreviewState}
         />
       </FormSection>
 
@@ -2132,7 +2178,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           here - see `showEditForm`) has its Cancel / Submit revision in the
           header above, same spot the read view's Revise gear item sat - not
           a second action row down here, and never Delete. Everything else
-          (a draft or a brand new form) keeps Save Draft / Submit. */}
+          (a draft or a brand new form) keeps Save Draft, then Escalate to marketing
+          and Approve (owner ruling 3 Nov: no plain Submit). */}
       {!reviseMode && (
         <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
           {/* Delete sits apart from Save and Submit, and asks first; on a CRM page it is parked
@@ -2165,12 +2212,43 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             {saving && <Loader2 className="size-4 mr-1 animate-spin" />}
             Save Draft
           </Button>
-          {/* Enabled whenever the form is idle (D48b): a disabled button with no
-              explanation is what sent the salesperson looking for the reason. */}
-          <Button onClick={handleSubmit} disabled={submitting || saving}>
-            {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
-            Submit
+          <Button
+            variant="outline"
+            aria-expanded={draftEscalateOpen}
+            onClick={() => setDraftEscalateOpen((open) => !open)}
+            disabled={submitting || saving}
+          >
+            <Send className="size-4 mr-1" />
+            Escalate to marketing
           </Button>
+          {/* A disabled button fires no hover, so the reason sits on its wrapper
+              AND beside it (owner ruling 3 Nov: next to the button, not 1,600 px
+              down under the preview). */}
+          <span title={approveBlockedReason ?? undefined} className="inline-flex">
+            <Button
+              onClick={() => void handleFinish({ kind: 'approve' })}
+              disabled={submitting || saving || approveBlockedReason !== null}
+            >
+              {submitting && <Loader2 className="size-4 mr-1 animate-spin" />}
+              <Check className="size-4 mr-1" />
+              Approve
+            </Button>
+          </span>
+        </div>
+      )}
+      {!reviseMode && (approveBlockedReason || draftEscalateOpen) && (
+        <div className="space-y-2 sm:text-right">
+          {approveBlockedReason && (
+            <p role="status" className="text-sm text-muted-foreground" data-testid="approve-blocked">
+              {approveBlockedReason}
+            </p>
+          )}
+          {draftEscalateOpen && (
+            <EscalateNote
+              onEscalate={(note) => handleFinish({ kind: 'escalate', note })}
+              onCancel={() => setDraftEscalateOpen(false)}
+            />
+          )}
         </div>
       )}
 

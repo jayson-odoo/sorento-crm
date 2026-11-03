@@ -795,6 +795,29 @@ export function makePriceTagRequestService(
     return unwrap<{ status: string }>(res, 'Failed to approve request');
   }
 
+  /**
+   * Owner ruling 3 Nov: the form has no plain Submit. A DRAFT is submitted and
+   * approved in one call, with the sheet built from its saved tags...
+   */
+  async function submitAndApprove(id: string, doc: TagSheetDoc): Promise<{ status: string }> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/submit-approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc }),
+    });
+    return unwrapNamingFields<{ status: string }>(res, 'Failed to approve request');
+  }
+
+  /** ... or submitted straight to marketing with a note. */
+  async function submitAndEscalate(id: string, note: string): Promise<{ status: string }> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/submit-escalate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    });
+    return unwrapNamingFields<{ status: string }>(res, 'Failed to send to marketing');
+  }
+
   /** Send the request to marketing with a note (PRICETAG-SELF-APPROVAL R6). */
   async function escalateRequest(id: string, note: string): Promise<{ status: string }> {
     const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/escalate`, {
@@ -936,6 +959,8 @@ export function makePriceTagRequestService(
     submitRequest,
     deleteRequest,
     approveRequest,
+    submitAndApprove,
+    submitAndEscalate,
     escalateRequest,
     lookupTagPreviewForRequest,
     requestChanges,
@@ -966,6 +991,8 @@ export const {
   submitRequest,
   deleteRequest,
   approveRequest,
+  submitAndApprove,
+  submitAndEscalate,
   escalateRequest,
   lookupTagPreviewForRequest,
   requestChanges,
