@@ -20,7 +20,10 @@ router = APIRouter()
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir):
+_HIDE = "Column ids the user hides (wh:<code>, incoming_pool, incoming_project); the totals add up the rest."
+
+
+def _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir, hide):
     return svc.stock_position(
         db,
         query=query,
@@ -29,6 +32,7 @@ def _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir):
         warehouse_ids=warehouse_id,
         sort=sort,
         direction=dir,
+        hide=hide,
     )
 
 
@@ -42,11 +46,12 @@ def get_stock_position(
     supplier_id: Optional[List[str]] = Query(None),
     brand_id: Optional[List[str]] = Query(None),
     warehouse_id: Optional[List[str]] = Query(None),
+    hide: Optional[List[str]] = Query(None, description=_HIDE),
     _user: dict = Depends(require_any_permission_with_api_key(READ_PERMISSIONS)),
     db: Session = Depends(get_db),
 ):
     """One page of items, every figure computed and sorted on the server."""
-    result = _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir)
+    result = _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir, hide)
     return svc.page(result, page, limit)
 
 
@@ -59,14 +64,15 @@ def export_stock_position(
     supplier_id: Optional[List[str]] = Query(None),
     brand_id: Optional[List[str]] = Query(None),
     warehouse_id: Optional[List[str]] = Query(None),
-    wh: Optional[List[str]] = Query(None, description="The warehouse columns shown, by code; all when absent."),
+    hide: Optional[List[str]] = Query(None, description=_HIDE),
     _user: dict = Depends(require_any_permission_with_api_key(READ_PERMISSIONS)),
     db: Session = Depends(get_db),
 ):
-    """Every row of the same filtered, sorted set, as an Excel workbook."""
-    result = _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir)
+    """Every row of the same filtered, sorted set, as an Excel workbook: the shown warehouse
+    columns, and the totals over the shown parts."""
+    result = _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir, hide)
     return Response(
-        content=svc.workbook(result, wh),
+        content=svc.workbook(result),
         media_type=_XLSX,
         headers={"Content-Disposition": 'attachment; filename="stock-position.xlsx"'},
     )
