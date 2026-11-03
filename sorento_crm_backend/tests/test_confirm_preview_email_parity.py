@@ -57,6 +57,7 @@ class _SentEmails:
 
     def __init__(self, monkeypatch):
         self.emails = []
+        self.mismatches = []
         real = oi_service.build_handover_email
 
         def capture(db, items, *, store_excel=True):
@@ -64,7 +65,9 @@ class _SentEmails:
             if built is not None:
                 ordered = sorted(items, key=oi_service._handover_sort_key)
                 lines = built[0]["handover"]["lines"]
-                assert len(ordered) == len(lines)
+                # Recorded, not asserted: the post-commit listener swallows an exception.
+                if len(ordered) != len(lines):
+                    self.mismatches.append((len(ordered), len(lines)))
                 self.emails.append(
                     [
                         {"so_line_id": str(item.get("so_line_id") or ""), **line}
@@ -76,6 +79,7 @@ class _SentEmails:
         monkeypatch.setattr(oi_service, "build_handover_email", capture)
 
     def lines(self):
+        assert self.mismatches == [], f"items vs email lines: {self.mismatches}"
         assert len(self.emails) == 1, f"one email for one order, got {len(self.emails)}"
         return [_printed(line) for line in self.emails[0]]
 
@@ -165,10 +169,9 @@ def test_planning_change_preview_email_lines_equal_the_press_email(api, monkeypa
     )
 
 
-def test_planning_change_press_after_a_dry_run_sends_what_the_press_alone_sends(
-    api, monkeypatch
-):
-    """A dry run leaves nothing behind for the press that follows it in the same session."""
+def test_planning_change_press_alone_sends_order_15_and_both_cancels(api, monkeypatch):
+    """The press with no dry run before it sends the very lines the press after a dry run
+    sends (the test above): a dry run leaves nothing behind (UAC A3, the two together)."""
     fixture, orders = _planning_change(api)
     sent = _SentEmails(monkeypatch)
 

@@ -9,4 +9,5 @@ Tests: `sorento_crm_backend/tests/test_confirm_preview_email_parity.py`.
   CANCEL ALL for each closed line.
 - A2. Ordinary confirm path, on a first confirm and on a re-confirm of a grown line: the same
   equality holds.
-- A3. A dry run followed by the press in the same session sends what the press alone sends.
+- A3. A dry run followed by the press in the same session sends what the press alone sends
+  (the first two planning-change tests together: both pin the same three lines).

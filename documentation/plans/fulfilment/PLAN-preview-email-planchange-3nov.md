@@ -1,6 +1,6 @@
 # PLAN: Confirm preview email equals the purchasing email on the planning-change path
 
-Status: implemented (small fix track: tests only, no migration, no auth change)
+Status: in review, merge-ready (small fix track: tests only, no migration, no auth change)
 
 Lane: PREVIEW-EMAIL-PLANCHANGE. Owner rule: email = preview = attachment, all three tally
 (see `PLAN-confirm-preview-stale-2nov.md`).
@@ -52,11 +52,21 @@ through `build_handover_email` (captured, never dispatched). Cases:
 - an ordinary first confirm;
 - an ordinary re-confirm of a grown line.
 
-All four are red without the registration.
+Without the registration the two planning-change tests show the stale fold. The two ordinary
+tests go red only because no email is built at all.
 
-No production code change: nothing in production diverges.
+No production code change: for a press of ONE order, nothing in production diverges.
 
 ## Trigger for more
+
+- A press of SEVERAL orders is not covered. The dry run rolls each order back before the next
+  (`ProjectSupplyService.confirm_many`), but the press commits each order in turn. Two orders
+  competing for the same pool PO line or the same borrow donor could therefore get a later
+  order's email that differs from its preview. This is a suspected risk, not reproduced. The
+  trigger is a two-order preview-vs-press test that goes red.
+- `worker.py` `register_worker_listeners` does not register the order-inquiry post-commit
+  listeners. No RQ job queues a handover item today. The first one that does needs that
+  registration, or it never sends and leaves a stale queue on its session.
 
 If a production path is ever found that starts a write on a non-empty handover queue (a session
 reused across writes without the listeners), `record_saved_lines` should fold only the current
