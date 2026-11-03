@@ -2351,6 +2351,9 @@ export interface StockDetailIncoming {
 export interface StockDetailHold {
   /** The order holding it. Null when its line has not been reconciled to a core order yet. */
   so_number?: string | null;
+  /** The holding order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  customer_name?: string | null;
+  project_label?: string | null;
   location?: string | null;
   /** The holder's own required date, which is where the hold sits in the walk. */
   required_date?: string | null;
@@ -2496,6 +2499,8 @@ export interface PileQueueLine {
   /** AutoCount's own line number (the SO line number), `line_no` when it has none. */
   so_line_no?: number | null;
   customer_name?: string | null;
+  /** The order's project label (OI-UX-FILTER-SNAPSHOT). */
+  project_label?: string | null;
   qty: string;
   required_date?: string | null;
   order_date?: string | null;
@@ -2588,6 +2593,8 @@ export interface PlanRow {
   project_id?: string | null;
   so_number?: string | null;
   customer_name?: string | null;
+  /** The order's project label (OI-UX-FILTER-SNAPSHOT). */
+  project_label?: string | null;
   agent_code?: string | null;
   agent_label?: string | null;
   revision_no: number;
@@ -2606,6 +2613,7 @@ export interface PlanRow {
 export const PLAN_SORT_FIELDS = [
   'so_number',
   'customer_name',
+  'project_label',
   'agent_code',
   'revision_no',
   'state',
