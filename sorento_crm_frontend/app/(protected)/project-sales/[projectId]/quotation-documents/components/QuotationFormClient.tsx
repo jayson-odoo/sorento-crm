@@ -18,15 +18,18 @@ import {
 } from '../../../_shared/hooks/useProjects';
 import {
   useQuotationDocument,
+  useQuotationCoverPreview,
   useQuotationDocumentMutations,
   useQuotationFeedback,
   useQuotationLetterTemplates,
 } from '../../../_shared/hooks/useQuotationDocuments';
-import type {
-  QuotationDocument,
-  QuotationDocumentBody,
-  QuotationFormScopeBody,
-  QuotationScope,
+import {
+  documentNoun,
+  type QuotationCoverPreviewBody,
+  type QuotationDocument,
+  type QuotationDocumentBody,
+  type QuotationFormScopeBody,
+  type QuotationScope,
 } from '../../../_shared/services/quotationDocumentService';
 import type {
   Project,
@@ -335,6 +338,7 @@ export function QuotationFormClient({
     if (isEdit || letterSeeded || !letterTemplates.isFetched) return;
     setLetter({
       cover_letter_html: letterTemplates.data?.cover_letter_html ?? '',
+      cover_closing_html: letterTemplates.data?.cover_closing_html ?? '',
       terms_html: letterTemplates.data?.terms_html ?? '',
     });
     setLetterSeeded(true);
@@ -398,6 +402,32 @@ export function QuotationFormClient({
     kind: saved.data?.kind,
   });
   const letterReady = isEdit || letterSeeded;
+
+  // What the Cover letter tab previews: the header and text as typed, saved or not. A saved
+  // quotation also names itself, so the server fills in what is not typed (its number).
+  const coverPreviewBody = React.useMemo<QuotationCoverPreviewBody>(() => {
+    const h = header ?? {};
+    return {
+      ...(documentId ? { document_id: documentId } : {}),
+      doc_date: h.doc_date || null,
+      attn_name: h.attn_name ?? null,
+      recipient_name_snapshot: h.recipient_name_snapshot ?? null,
+      recipient_address_snapshot: h.recipient_address_snapshot ?? null,
+      recipient_phone_snapshot: h.recipient_phone_snapshot ?? null,
+      recipient_email_snapshot: h.recipient_email_snapshot ?? null,
+      quotation_purpose: h.quotation_purpose ?? null,
+      payment_terms: h.payment_terms ?? null,
+      validity: h.validity ?? null,
+      terms_html: letter.terms_html ?? saved.data?.terms_html ?? null,
+      cover_letter_html: letter.cover_letter_html ?? saved.data?.cover_letter_html ?? null,
+      cover_closing_html: letter.cover_closing_html ?? saved.data?.cover_closing_html ?? null,
+    };
+  }, [documentId, header, letter, saved.data]);
+  const coverPreview = useQuotationCoverPreview(
+    projectId,
+    coverPreviewBody,
+    tab === 'cover-letter' && letterReady && header !== null,
+  );
 
   /** The scopes Save sends: an untouched new scope is not one (header-only save). */
   function scopesToSave(): FormScope[] {
@@ -468,6 +498,7 @@ export function QuotationFormClient({
   function createLetterBody(): QuotationDocumentBody {
     const body: QuotationDocumentBody = {};
     if ((letter.cover_letter_html ?? '').trim()) body.cover_letter_html = letter.cover_letter_html;
+    if ((letter.cover_closing_html ?? '').trim()) body.cover_closing_html = letter.cover_closing_html;
     if ((letter.terms_html ?? '').trim()) body.terms_html = letter.terms_html;
     return body;
   }
@@ -684,10 +715,19 @@ export function QuotationFormClient({
           <FormPanel open={tab === 'cover-letter'} label="Cover letter">
             {letterReady ? (
               <QuotationCoverLetterPanel
+                cover={coverPreview.data}
+                isLoading={coverPreview.isLoading}
+                noun={documentNoun(saved.data)}
+                error={coverPreview.error?.message}
                 html={letter.cover_letter_html ?? saved.data?.cover_letter_html ?? ''}
+                closingHtml={letter.cover_closing_html ?? saved.data?.cover_closing_html ?? ''}
                 onChange={(html) => {
                   setDirty(true);
                   setLetter((previous) => ({ ...previous, cover_letter_html: html }));
+                }}
+                onClosingChange={(html) => {
+                  setDirty(true);
+                  setLetter((previous) => ({ ...previous, cover_closing_html: html }));
                 }}
               />
             ) : (
@@ -756,6 +796,7 @@ function placeholderDocument(projectId: string): QuotationDocument {
     attn_name: null,
     subject_title: null,
     cover_letter_html: null,
+    cover_closing_html: null,
     terms_html: null,
     signatory_name: null,
     signatory_phone: null,

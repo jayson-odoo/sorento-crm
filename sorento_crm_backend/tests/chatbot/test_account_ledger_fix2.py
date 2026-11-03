@@ -133,19 +133,21 @@ def test_s4_staff_narrowing_keys_on_the_canonical_code_token(session_factory, mo
 # ------------------------------------------------------------------ S-3 the answer keeps the account once
 
 
-def _hanlim_staff_book(session_factory) -> dict[str, dict[str, Any]]:
-    """The three HANLIM ledgers, in one customer group: only a group makes them one customer
-    (CUSTOMER-GROUP-GATE, owner ruling 3 Nov 2026)."""
+def _hanlim_staff_book(session_factory, grouped: bool = False) -> dict[str, dict[str, Any]]:
+    """The three HANLIM ledgers; `grouped` puts them in one customer group (only a group makes them
+    one customer, CUSTOMER-GROUP-GATE, owner ruling 3 Nov 2026)."""
     from app.models.order import CustomerGroup
 
     db = session_factory()
-    group = CustomerGroup(name=H_BARE, company_id=DEFAULT_COMPANY_ID)
-    db.add(group)
-    db.flush()
+    group = CustomerGroup(name=H_BARE, company_id=DEFAULT_COMPANY_ID) if grouped else None
+    if group is not None:
+        db.add(group)
+        db.flush()
     rows: dict[str, dict[str, Any]] = {}
     for name, level in ((H_1, 1), (H_2, 2), (H_BARE, None)):
         row = seed_customer(db, company_id=DEFAULT_COMPANY_ID, name=name)
-        row.customer_group_id = group.id
+        if group is not None:
+            row.customer_group_id = group.id
         if level is not None:
             db.execute(text("UPDATE customers SET account_level = :n WHERE id = :i"), {"n": level, "i": str(row.id)})
         rows[name] = {"id": str(row.id), "code": row.customer_code, "level": level}
@@ -200,7 +202,7 @@ def test_s3_an_unrelated_turn_drops_the_account_so_the_next_is_not_narrowed(sess
     _seed_contact(session_factory, variables={})
     # V1-DOC-SCOPE: an unlinked contact reads any customer's orders only as staff.
     make_office_access_type(session_factory, CONTACT_ID)
-    rows = _hanlim_staff_book(session_factory)
+    rows = _hanlim_staff_book(session_factory, grouped=True)
     services = _services(rows, {"hanlim": [H_1, H_2, H_BARE]})
     _turn(
         session_factory, monkeypatch, _ask([_unnamed(2)]), "account 2 outstanding",

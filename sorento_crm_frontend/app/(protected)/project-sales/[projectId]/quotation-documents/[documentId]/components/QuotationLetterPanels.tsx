@@ -7,6 +7,8 @@ import { Label } from '@/components/ui/label';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { sanitizedHtml } from '@/lib/sanitize';
 import { TERMS_HTML_CLASS } from '@/lib/terms-html';
+import { CoverPagePreview } from '@/components/quotation/CoverPagePreview';
+import type { CoverPageData } from '@/lib/quotation-cover';
 
 /**
  * The prose half of the quotation: the letter the customer reads before the prices, and the
@@ -68,21 +70,74 @@ function LetterPanel({
   );
 }
 
+/**
+ * The Cover letter tab: page 1 as it will print (the active design with this quotation's values),
+ * and, in an edit session, the Intro text and Closing text printed above and below its rows.
+ */
 export function QuotationCoverLetterPanel({
+  cover,
+  isLoading = false,
+  noun,
+  error,
   html,
+  closingHtml,
   onChange,
+  onClosingChange,
 }: {
-  html: string | null;
+  cover: CoverPageData | undefined;
+  isLoading?: boolean;
+  /** "Proposal" or "Quotation", printed in the cover's "... from" line. */
+  noun?: string;
+  /** The preview call's failure message, shown as one line in place of the card. */
+  error?: string | null;
+  html?: string | null;
+  closingHtml?: string | null;
+  /** Set only in an edit session. Absent means this is a read: the preview alone. */
   onChange?: (html: string) => void;
+  onClosingChange?: (html: string) => void;
 }) {
   return (
-    <LetterPanel
-      title="Cover letter"
-      html={html}
-      onChange={onChange}
-      placeholder="The letter the customer reads before the prices"
-      emptyHint="No cover letter on this quotation yet."
-    />
+    <div className="space-y-4">
+      {error && !cover ? (
+        <EmptyLine>{`Could not show the cover page. ${error}`}</EmptyLine>
+      ) : (
+        <Card>
+          <CardContent className="min-w-0 py-5">
+            <CoverPagePreview cover={cover} isLoading={isLoading} noun={noun} />
+          </CardContent>
+        </Card>
+      )}
+      {onChange && onClosingChange && (
+        <Card>
+          <CardContent className="min-w-0 space-y-4 py-5">
+            <div className="min-w-0 space-y-1.5">
+              <Label id="cover-intro-label" htmlFor="cover-intro">
+                Intro text
+              </Label>
+              <RichTextEditor
+                id="cover-intro"
+                aria-labelledby="cover-intro-label"
+                value={html ?? ''}
+                onChange={onChange}
+                minHeight={140}
+              />
+            </div>
+            <div className="min-w-0 space-y-1.5">
+              <Label id="cover-closing-label" htmlFor="cover-closing">
+                Closing text
+              </Label>
+              <RichTextEditor
+                id="cover-closing"
+                aria-labelledby="cover-closing-label"
+                value={closingHtml ?? ''}
+                onChange={onClosingChange}
+                minHeight={140}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
   );
 }
 
