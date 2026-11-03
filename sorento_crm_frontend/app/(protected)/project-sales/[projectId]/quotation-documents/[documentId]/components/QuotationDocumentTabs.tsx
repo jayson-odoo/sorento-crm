@@ -3,7 +3,8 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BookImage, FileText, ListOrdered, Mail, PenLine, ScrollText } from 'lucide-react';
+import { BookImage, FileText, ListOrdered, Mail, MessageSquareText, PenLine, ScrollText } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 /**
@@ -36,6 +37,8 @@ export function quotationDocumentTabs(projectId: string, documentId: string): Ta
     { key: 'cover-letter', title: 'Cover letter', icon: Mail, path: `${base}/cover-letter` },
     { key: 'terms', title: 'Terms', icon: ScrollText, path: `${base}/terms` },
     { key: 'signatures', title: 'Signatures', icon: PenLine, path: `${base}/signatures` },
+    // PS-QUOTE-MATRIX R20: the customer's notes from the sign link, ticked off once handled.
+    { key: 'feedback', title: 'Customer feedback', icon: MessageSquareText, path: `${base}/feedback` },
     // PS-SPEC-SHEET: the project catalogue printed from an issued revision.
     { key: 'spec-sheet', title: 'Spec sheet', icon: BookImage, path: `${base}/spec-sheet` },
   ];
@@ -60,9 +63,12 @@ export function quotationSiblingHref(
 export function QuotationDocumentTabs({
   projectId,
   documentId,
+  openFeedback = 0,
 }: {
   projectId: string;
   documentId: string;
+  /** Open customer feedback notes: the Customer feedback tab's badge. */
+  openFeedback?: number;
 }) {
   const pathname = usePathname();
   const tabs = React.useMemo(
@@ -87,6 +93,17 @@ export function QuotationDocumentTabs({
               <Link href={path}>
                 <Icon className="size-4" aria-hidden />
                 <span>{title}</span>
+                {key === 'feedback' && openFeedback > 0 && (
+                  <Badge
+                    variant="warning"
+                    appearance="light"
+                    size="sm"
+                    aria-label={`${openFeedback} open`}
+                    data-testid="quotation-feedback-badge"
+                  >
+                    {openFeedback}
+                  </Badge>
+                )}
               </Link>
             </TabsTrigger>
           ))}

@@ -94,6 +94,7 @@ def purchase_orders_placed_rows(
     *,
     product_ids: Optional[list[str]] = None,
     warehouse_ids: Optional[list[str]] = None,
+    supplier_ids: Optional[list[str]] = None,
     expected_date_from=None,
     expected_date_to=None,
     sort: str = "expected_date",
@@ -121,6 +122,9 @@ def purchase_orders_placed_rows(
         q = q.filter(PurchaseOrderLine.product_id.in_(product_ids))
     if warehouse_ids:
         q = q.filter(PurchaseOrderLine.warehouse_id.in_(warehouse_ids))
+    # SUPPLIER-ASK: "outstanding for supplier X" is that supplier's open lines.
+    if supplier_ids:
+        q = q.filter(PurchaseOrder.supplier_id.in_(supplier_ids))
     # Line `expected_date` else header's - COALESCE, not a Python fallback, so
     # the date filter, the sort and the SUMMARY all see the same effective value.
     effective_date = _effective_expected_date()
@@ -170,7 +174,9 @@ def purchase_orders_placed_rows(
         )
 
     # Item 5: the unshipped SPO allocations, same scope and window, same shape.
-    spo_q = _unshipped_spo_query(db, product_ids=product_ids, warehouse_ids=warehouse_ids)
+    spo_q = _unshipped_spo_query(
+        db, product_ids=product_ids, warehouse_ids=warehouse_ids, supplier_ids=supplier_ids
+    )
     spo_q = _apply_spo_expected_date_window(spo_q, expected_date_from, expected_date_to)
     spo_delta = _spo_delta()
     spo_sort_col = {
@@ -256,6 +262,7 @@ def _unshipped_spo_query(
     *,
     product_ids: Optional[list[str]],
     warehouse_ids: Optional[list[str]] = None,
+    supplier_ids: Optional[list[str]] = None,
 ):
     """`(SPOAllocation, Product, Supplier)` for every allocation still on order from the
     supplier: pending, not yet on a shipment, quantity unreceived (see the module
@@ -284,6 +291,8 @@ def _unshipped_spo_query(
         q = q.filter(SPOAllocation.product_id.in_(product_ids))
     if warehouse_ids:
         q = q.filter(spo_warehouse_predicate(warehouse_ids, warehouse_codes_for(db, warehouse_ids)))
+    if supplier_ids:
+        q = q.filter(SPOAllocation.supplier_id.in_(supplier_ids))
     return q
 
 
@@ -323,6 +332,7 @@ def purchase_orders_placed_summary(
     *,
     product_ids: Optional[list[str]] = None,
     warehouse_ids: Optional[list[str]] = None,
+    supplier_ids: Optional[list[str]] = None,
     expected_date_from: Optional[str] = None,
     expected_date_to: Optional[str] = None,
 ) -> dict:
@@ -362,13 +372,15 @@ def purchase_orders_placed_summary(
     q = q.filter(*product_in_scope_clauses(db, PurchaseOrderLine.product_id))
     if warehouse_ids:
         q = q.filter(PurchaseOrderLine.warehouse_id.in_(warehouse_ids))
+    if supplier_ids:
+        q = q.filter(PurchaseOrder.supplier_id.in_(supplier_ids))
     q = _apply_expected_date_window(q, expected_date_from, expected_date_to)
     qty, count = q.one()
     # Item 5: the unshipped SPO allocations count too, under the same scope and window the
     # rows take - a summary that counts fewer rows than the list under it is the one
     # failure mode a summary has.
     spo_q = _unshipped_spo_query(
-        db, product_ids=product_ids, warehouse_ids=warehouse_ids
+        db, product_ids=product_ids, warehouse_ids=warehouse_ids, supplier_ids=supplier_ids
     ).with_entities(
         func.sum(_spo_delta()), func.count(SPOAllocation.id)
     )

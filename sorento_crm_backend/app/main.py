@@ -69,10 +69,15 @@ logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-# Verbose auth-dependency logging only in debug - at DEBUG it logs token length +
-# first chars, which must never run in production (security audit 2026-06-29).
+# Verbose auth-dependency logging only in debug (security audit 2026-06-29). It logs the
+# token length only, never its bytes (SIGN-TOKEN-LOG-REDACT).
 if settings.debug:
     logging.getLogger('app.dependencies').setLevel(logging.DEBUG)
+
+# SIGN-TOKEN-LOG-REDACT: a customer link token in the access log is link access for anyone who
+# can read the log; uvicorn's access logger gets the redaction filter before any request runs.
+from app.utils.log_redaction import install_access_log_filter, redact_url
+install_access_log_filter()
 
 # DEV-LOGIN-BYPASS: crash at import (never just warn) when DEV_AUTO_LOGIN is on anywhere but
 # a local uvicorn run, and log a loud banner when it is legitimately active.
@@ -172,7 +177,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     import traceback
     error_traceback = traceback.format_exc()
     error_logger.error(f"Unhandled exception: {type(exc).__name__}: {str(exc)}")
-    error_logger.error(f"Request URL: {request.url}")
+    error_logger.error(f"Request URL: {redact_url(str(request.url))}")
     error_logger.error(f"Request method: {request.method}")
     error_logger.error(f"Traceback:\n{error_traceback}")
     
@@ -225,7 +230,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     # hold a secret such as an AI provider key, so it never reaches the log.
     logged_errors = [{k: v for k, v in e.items() if k != "input"} for e in exc.errors()]
     validation_logger.error(f"Validation error: {logged_errors}")
-    validation_logger.error(f"Request URL: {request.url}")
+    validation_logger.error(f"Request URL: {redact_url(str(request.url))}")
     validation_logger.error(f"Request method: {request.method}")
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

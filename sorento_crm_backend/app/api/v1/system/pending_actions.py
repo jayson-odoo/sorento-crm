@@ -62,6 +62,7 @@ from app.models.product import Brand, ItemClass, Product, ProductCategory, UnitO
 from app.models.product_companion import ProductCompanionRule
 from app.models.product_set import ProductSet
 from app.models.project_so import OrderInquiryReserveRequest, OrderInquiryRow, ProjectSalesOrder
+from app.models.projects import ProjectPartyContact
 from app.models.resources import Attachment, AttachmentDirectory
 from app.models.sales import SalesOpportunity, SalesTarget, SalesTeam, SetApartCustomer
 from app.models.saved_view import SavedView
@@ -338,6 +339,8 @@ _PARK_SCOPED_MODELS: dict = {
     "product_supplier_cost.delete": ProductSupplierCost,
     "proforma_invoice.delete": ProformaInvoice,
     "proforma_invoice_packing_line.dismiss": ProformaInvoicePackingLine,
+    # PS-REGISTRATION-V3: a party contact is company scoped (uuid id), read like any record.
+    "project_party_contact.delete": ProjectPartyContact,
     "project_sales_order.undo_confirm": ProjectSalesOrder,
     "promotion_group.delete": PromotionGroup,
     "promotion_product.unlink": PromotionProduct,

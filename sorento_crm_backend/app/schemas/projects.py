@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
@@ -1305,6 +1305,7 @@ class ProjectQuotationVersionResponse(BaseModel):
     issued_on: Optional[date] = None
     total_amount: Decimal = Decimal("0")
     notes: Optional[str] = None
+    matrix_columns: List[Dict[str, Any]] = Field(default_factory=list)
     created_at: Optional[datetime] = None
 
 
@@ -1324,6 +1325,9 @@ class ProjectQuotationLineBase(BaseModel):
     )
     unit_price: Decimal = Decimal("0")
     quantity: Decimal = Decimal("1")
+    # PS-QUOTE-MATRIX: {leaf_key: number}; checked and summed by the service, which then owns
+    # `quantity` on a scope that has columns.
+    qty_cells: Optional[Dict[str, Any]] = None
     uom: Optional[str] = None
     unit_type: Optional[str] = Field(
         None, description="house_unit | bathroom | facility | common_area"
@@ -1379,6 +1383,7 @@ class ProjectQuotationLineUpdate(BaseModel):
     description_snapshot: Optional[str] = None
     unit_price: Optional[Decimal] = None
     quantity: Optional[Decimal] = None
+    qty_cells: Optional[Dict[str, Any]] = None
     uom: Optional[str] = None
     unit_type: Optional[str] = None
     sort_order: Optional[int] = None
@@ -1566,6 +1571,18 @@ class ProjectQuotationLineResponse(BaseModel):
 
     sort_order: int = 0
     notes: Optional[str] = None
+    qty_cells: Dict[str, Any] = Field(default_factory=dict)
+
+
+class QuotationColumnsWrite(BaseModel):
+    """The scope's whole column layout; the engine validates the shape (422 with its own code)."""
+
+    columns: Any = Field(default_factory=list)
+
+
+class QuotationColumnsResponse(BaseModel):
+    version: ProjectQuotationVersionResponse
+    lines: List[ProjectQuotationLineResponse] = Field(default_factory=list)
 
 
 class ProjectQuotationOutcomeRequest(BaseModel):
@@ -1975,6 +1992,11 @@ class ProjectQuotationFormScopeCreate(BaseModel):
     )
     series_id: Optional[str] = None
     notes: Optional[str] = None
+    matrix_columns: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="PS-QUOTE-MATRIX: the new scope's column headers, applied before its lines "
+        "in the same transaction so each line's quantity is the sum of its qty_cells.",
+    )
     lines: List["ProjectQuotationLineBulkItem"] = Field(
         default_factory=list,
         description="The scope's lines in display order. Empty means an empty scope, never a "
@@ -1996,6 +2018,11 @@ class ProjectQuotationFormScopeUpdate(BaseModel):
     scope_label: Optional[str] = Field(default=None, max_length=150)
     series_id: Optional[str] = None
     notes: Optional[str] = None
+    matrix_columns: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="PS-QUOTE-MATRIX: a NEW scope's (no id) column headers. A saved scope's change "
+        "through PUT .../quotation-versions/{id}/columns, and is refused here with 422.",
+    )
     lines: Optional[List["ProjectQuotationLineBulkItem"]] = None
 
 
@@ -2324,82 +2351,77 @@ class QuotationSignChangesRequest(BaseModel):
     requester_name: Optional[str] = Field(None, max_length=200)
 
 
-class QuotationAmendmentLineChange(BaseModel):
-    """One line the customer changed. Quantity and price are STRINGS so a bad value is refused by
-    the service with the lane's own code, not by pydantic. There is deliberately no field for a
-    description, code, brand or spec: the server cannot be asked to write one, and any such key
-    a client sends is ignored."""
+class QuotationFeedbackItem(BaseModel):
+    """One note from the customer: on a whole item, or on one cell (``cell_key``).
+
+    ``value`` and ``model`` are loose here and checked by the service with the lane's own codes.
+    Nothing a client sends here can change a line; the rows only wait for the salesperson.
+    """
 
     line_id: str = Field(max_length=64)
-    quantity: Optional[str] = Field(None, max_length=32)
-    unit_price: Optional[str] = Field(None, max_length=32)
-    remove: bool = False
+    cell_key: Optional[str] = Field(None, max_length=40)
+    kind: str = Field(max_length=16)
+    value: Optional[Union[str, int, Decimal]] = None
+    model: Optional[str] = Field(None, max_length=200)
+    note: Optional[str] = Field(None, max_length=1000)
 
 
 class QuotationAmendmentSubmitRequest(BaseModel):
     requester_name: Optional[str] = Field(None, max_length=200)
     note: Optional[str] = Field(None, max_length=4000)
-    lines: List[QuotationAmendmentLineChange] = Field(default_factory=list, max_length=500)
+    items: List[QuotationFeedbackItem] = Field(default_factory=list, max_length=500)
 
 
-class QuotationAmendmentDecideRequest(BaseModel):
-    # Checked by the service (accepted | rejected | pending, reason <= 500), so the rule is
-    # stated once.
-    decision: str = Field(max_length=16)
-    reason: Optional[str] = Field(None, max_length=2000)
+class QuotationFeedbackHandleRequest(BaseModel):
+    handled: bool
 
 
 class QuotationAmendmentRowResponse(BaseModel):
+    """What the customer's page reads of a note already sent: where it points."""
+
     id: str
     line_id: str
+    cell_key: Optional[str] = None
     field: str
-    value_from: Optional[Decimal] = None
-    value_to: Optional[Decimal] = None
-    decision: str = "pending"
-    decision_reason: Optional[str] = None
-
-
-class QuotationAmendmentStaffRowResponse(QuotationAmendmentRowResponse):
-    # Staff only: a floor is internal pricing, so the customer's page has no such keys.
-    below_floor: bool = False
-    floor_value: Optional[Decimal] = None
 
 
 class QuotationAmendmentResponse(BaseModel):
-    """What the customer's page shows of their own request."""
-
     id: str
-    status: str
     submitted_at: Optional[datetime] = None
     requester_name: Optional[str] = None
     note: Optional[str] = None
-    applied_at: Optional[datetime] = None
     rows: List[QuotationAmendmentRowResponse] = Field(default_factory=list)
 
 
-class QuotationAmendmentBlockedScope(BaseModel):
-    quotation_id: str
-    scope_label: str
-    # The issued version the rows name, where the review is still decided.
-    version_id: str
-    # An accepted row sits on this scope, so Apply refuses until it is rejected or the draft issued.
-    has_accepted: bool = False
+class QuotationFeedbackRowResponse(BaseModel):
+    id: str
+    line_id: str
+    scope_id: Optional[str] = None
+    scope_label: Optional[str] = None
+    line_description: Optional[str] = None
+    cell_key: Optional[str] = None
+    cell_label: Optional[str] = None
+    kind: str
+    value_from: Optional[Decimal] = None
+    value_to: Optional[Decimal] = None
+    model: Optional[str] = None
+    note: Optional[str] = None
+    handled_at: Optional[datetime] = None
+    handled_by_name: Optional[str] = None
 
 
-class QuotationAmendmentStaffResponse(QuotationAmendmentResponse):
-    rows: List[QuotationAmendmentStaffRowResponse] = Field(default_factory=list)
-    # Scopes a suggestion touches that already carry a hand-made draft: Apply would refuse.
-    blocked_scopes: List[QuotationAmendmentBlockedScope] = Field(default_factory=list)
-    # Apply drafted a revision (only then does an applied request keep blocking the issue).
-    revised: bool = False
-    # The issue's total, and the total with the ACCEPTED rows applied (the summary row).
-    total_issued: Decimal = Decimal("0")
-    total_after: Decimal = Decimal("0")
+class QuotationFeedbackRequestResponse(BaseModel):
+    id: str
+    issue_label: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    requester_name: Optional[str] = None
+    note: Optional[str] = None
+    rows: List[QuotationFeedbackRowResponse] = Field(default_factory=list)
 
 
-class QuotationAmendmentApplyResponse(BaseModel):
-    request: QuotationAmendmentStaffResponse
-    version_ids: List[str] = Field(default_factory=list)
+class QuotationFeedbackResponse(BaseModel):
+    open_count: int = 0
+    requests: List[QuotationFeedbackRequestResponse] = Field(default_factory=list)
 
 
 class QuotationSignatureResponse(BaseModel):
@@ -2454,6 +2476,7 @@ class QuotationSignScopeLine(BaseModel):
     band_label: Optional[str] = None
     is_rate_only: bool = False
     amount: Optional[Decimal] = None
+    qty_cells: Dict[str, Any] = Field(default_factory=dict)
 
 
 class QuotationSignColumn(BaseModel):
@@ -2464,6 +2487,7 @@ class QuotationSignColumn(BaseModel):
 class QuotationSignScope(BaseModel):
     scope_label: str
     scope_total: Decimal = Decimal("0")
+    matrix_columns: List[Dict[str, Any]] = Field(default_factory=list)
     # The quotation's own column set for this scope (`app.services.quotation_columns`).
     columns: List[QuotationSignColumn] = Field(default_factory=list)
     lines: List[QuotationSignScopeLine] = Field(default_factory=list)
@@ -2515,7 +2539,7 @@ class QuotationSignPageResponse(BaseModel):
     amendment_request: Optional[QuotationAmendmentResponse] = None
     superseded_by_ref: Optional[str] = None
     can_sign: bool = True
-    # accepted | superseded | amendment_open | amendment_applied, or null when signable.
+    # accepted | superseded, or null when signable.
     sign_blocked_reason: Optional[str] = None
 
 

@@ -416,6 +416,11 @@ export interface CoveredSheetLine {
   date: string | null;
   /** The purchasing email's words for what Confirm sends (server `saved_remark`). */
   savedRemark: string | null;
+  /**
+   * CONFIRM-ITEM4: the guide's email dry run previewed the order and its email holds no line
+   * for this one, so Confirm sends purchasing nothing for it. Unset = not known.
+   */
+  purchasingSilent?: boolean;
 }
 
 /**
@@ -435,13 +440,22 @@ export function coveredSheetLines(
   const words = new Map(
     covered.flatMap((line) => (line.lineId ? [[line.lineId, line.savedRemark] as const] : [])),
   );
+  const silent = new Set(
+    covered.flatMap((line) => (line.lineId && line.purchasingSilent ? [line.lineId] : [])),
+  );
   const splitIds = new Set(
     covered.flatMap((line) =>
       line.lineId && (byId.get(line.lineId)?.splits.length ?? 0) > 0 ? [line.lineId] : [],
     ),
   );
   const fromRead = linesWithLanding(read, splitIds).map((line) =>
-    words.has(line.lineId) ? { ...line, savedRemark: words.get(line.lineId) ?? null } : line,
+    words.has(line.lineId)
+      ? {
+          ...line,
+          savedRemark: words.get(line.lineId) ?? null,
+          purchasingSilent: silent.has(line.lineId),
+        }
+      : line,
   );
   const shown = new Set(fromRead.map((line) => line.lineId));
   const built: SplitLine[] = covered
@@ -460,6 +474,7 @@ export function coveredSheetLines(
       pendingChange: false,
       splits: [],
       savedRemark: line.savedRemark,
+      purchasingSilent: Boolean(line.purchasingSilent),
       // A swapped line's REMARK is the read's own words (the email's NEW ITEM CODE), muted
       // under none saved; every other line keeps only what the board says it sends.
       remarkGenerated:

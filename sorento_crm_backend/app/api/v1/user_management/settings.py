@@ -285,6 +285,9 @@ class AppConfigResponse(BaseModel):
     #: SR-CORE: a salesperson's sample request form must know whether to require a
     #: registered project, and holds no `user_management.settings.view`.
     sample_request_require_project: bool = False
+    #: Seconds a destructive action waits before it commits; the quotation column-removal
+    #: countdown reads it. Not sensitive.
+    deferred_delete_seconds: Optional[int] = None
 
 
 def _quotation_approver_fields(db: Session, settings) -> dict:
@@ -611,6 +614,8 @@ def get_app_config(
             sample_request_require_project=bool(
                 getattr(settings, "sample_request_require_project", False)
             ),
+            # Same value and fallback as the admin GET above.
+            deferred_delete_seconds=getattr(settings, "deferred_delete_seconds", 10) or 10,
         )
     except Exception as e:
         raise handle_internal_error(str(e))
