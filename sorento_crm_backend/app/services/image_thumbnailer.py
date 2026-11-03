@@ -68,6 +68,9 @@ def generate_thumbnail(
         from PIL import Image, ImageOps
 
         with Image.open(io.BytesIO(content)) as opened:
+            # Let a big JPEG decode at reduced size (never below the thumbnail): the transpose
+            # below copies the image, which would otherwise force a full-size decode.
+            opened.draft("RGB", (max_edge, max_edge))
             # Upright first: a JPEG re-encode drops the EXIF orientation a browser honours on
             # the original, so a phone photo's thumbnail came out on its side.
             im = ImageOps.exif_transpose(opened) or opened
