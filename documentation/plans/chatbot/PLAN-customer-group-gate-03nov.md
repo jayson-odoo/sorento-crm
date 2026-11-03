@@ -1,6 +1,6 @@
 # PLAN: chatbot which-one lists apply the office's explicit customer groups (CUSTOMER-GROUP-GATE)
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: in review (opened as small fix track; the 3 Nov ruling grew the diff to ~600 lines, still no migration, no auth/RBAC change, no new ingest surface)
 
 ## Bug
 
@@ -50,3 +50,16 @@ and ungrouped, and one group name in two companies.
 Name-rule ledgers after the lookup fix on the 20 Oct copy: 3,713 of 6,854 (MCH 1,148, SRT
 2,565); 1,136 rows over 227 trading names share a name with a grouped ledger. Crew offers the
 owner a reviewed grouping list for those, separately.
+
+## Crew answers recorded
+
+- An UNGROUPED ledger whose full name is IDENTICAL in both company books stays ONE entry
+  ("NAME (SRT, MCH)"): the owner's 3 Nov R2 on #2105 forbids asking "Sorento or Mocha?" for the
+  same account. A near-identical name (another marker, punctuation) is another customer.
+- `customer_groups_auto.py` (staff-run group PROPOSALS) keeps the trading-name key: it proposes
+  explicit groups for review, it does not join anything itself.
+
+## Left as is (not which-one lists)
+
+- `ledger_family.group_names` / `family_words` (DO / SO-status header text) still print one
+  marker-stripped name per trading name. It is header copy, not a list or a figure.
