@@ -29,8 +29,9 @@ export interface StockPositionResponse {
   pagination: { page: number; limit: number; total: number; total_pages: number };
 }
 
+/** Each filter takes several ids, OR-ed; empty or absent is no filter (FILTER-MULTISELECT). */
 export interface StockPositionFilters {
-  supplierId?: string;
-  brandId?: string;
-  warehouseId?: string;
+  supplierIds?: string[];
+  brandIds?: string[];
+  warehouseIds?: string[];
 }

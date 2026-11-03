@@ -1,7 +1,8 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -19,10 +20,13 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect, type SearchableMultiSelectOption } from '@/components/common/SearchableMultiSelect';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { toast } from '@/lib/toast';
+import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { buildDetailSearch } from '@/lib/listNavQuery';
+import { idFilterLabels, joinMulti, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
 import { getSuppliersSelect } from '@/services/supplierSelectService';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import { useStockPosition } from '../hooks/useStockPosition';
@@ -55,34 +59,81 @@ export const FIGURE_COLUMNS: { id: keyof StockPositionRow; title: string; size: 
 /** A row opens Stock status for its item, with its documents behind every figure. */
 const stockStatusHref = (row: StockPositionRow) => `/inventory-management/stock-status?product_id=${row.product_id}`;
 
+const DEFAULT_SORTING: SortingState = [{ id: 'item_code', desc: false }];
+
+/** A multi-select filter's trigger: the first two names and a count, never an id. */
+function filterTrigger(chosen: SearchableMultiSelectOption[], none: string) {
+  return chosen.length ? (
+    <span className="block truncate">{multiValueSummary(idFilterLabels(chosen))}</span>
+  ) : (
+    <span className="text-muted-foreground">{none}</span>
+  );
+}
+
 function numberCell(value: number) {
   return <span className={`block text-right tabular-nums ${value < 0 ? 'text-destructive' : ''}`}>{formatQty(value)}</span>;
 }
 
 export default function StockPositionGrid() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'item_code', desc: false }]);
+  const [sorting, setSorting] = useState<SortingState>(DEFAULT_SORTING);
   const {
     value: searchInput,
     setValue: setSearchInput,
     debouncedValue: searchQuery,
     isSettling: searchSettling,
+    reset: resetSearch,
   } = useDebouncedSearch();
-  const [supplier, setSupplier] = useState<{ value: string; label: string } | null>(null);
-  const [brandId, setBrandId] = useState('');
-  const [warehouseId, setWarehouseId] = useState('');
+  // FILTER-MULTISELECT: each filter holds several ids, comma-joined (the URL's and the API's shape).
+  const [supplierIds, setSupplierIds] = useState('');
+  const [brandIds, setBrandIds] = useState('');
+  const [warehouseIds, setWarehouseIds] = useState('');
   const [exporting, setExporting] = useState(false);
+  // Supplier names by id, for the chosen chips: the picker's own pages and the rows on screen.
+  const supplierNames = useRef<Record<string, string>>({});
 
   const { data: brands } = useBrandSelectQuery();
 
-  const filters = {
-    supplierId: supplier?.value,
-    brandId: brandId || undefined,
-    warehouseId: warehouseId || undefined,
-  };
+  // The list state rides the page URL, so Back from Stock status lands on the same view.
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const writtenSearch = useRef<string | null>(null);
+  useListStateFromUrl((state) => {
+    if (searchParams.toString() === writtenSearch.current) return; // this list's own write
+    setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
+    setSorting(state.sorting.length ? state.sorting : DEFAULT_SORTING);
+    resetSearch(state.searchQuery);
+    setSupplierIds(joinMulti(splitMulti(state.filters.supplier_id)));
+    setBrandIds(joinMulti(splitMulti(state.filters.brand_id)));
+    setWarehouseIds(joinMulti(splitMulti(state.filters.warehouse_id)));
+  });
+
+  const filters = useMemo(
+    () => ({
+      supplierIds: splitMulti(supplierIds),
+      brandIds: splitMulti(brandIds),
+      warehouseIds: splitMulti(warehouseIds),
+    }),
+    [supplierIds, brandIds, warehouseIds],
+  );
   const params = { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery };
   const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useStockPosition(params, filters);
   const rows = data?.data ?? [];
+  for (const r of rows) if (r.supplier_id && r.supplier_name) supplierNames.current[r.supplier_id] = r.supplier_name;
+
+  const urlSearch = buildDetailSearch(params, {
+    supplier_id: supplierIds,
+    brand_id: brandIds,
+    warehouse_id: warehouseIds,
+  });
+  useEffect(() => {
+    if (urlSearch === searchParams.toString()) return;
+    writtenSearch.current = urlSearch;
+    router.replace(`${pathname}?${urlSearch}`, { scroll: false });
+    // Written when the list state changes; the URL itself is read by useListStateFromUrl.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlSearch]);
   const total = data?.pagination.total ?? 0;
   const warehouseCodes = useMemo(() => (data?.warehouses ?? []).map((w) => w.code), [data?.warehouses]);
 
@@ -173,7 +224,13 @@ export default function StockPositionGrid() {
   });
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
-  const activeCount = (supplier ? 1 : 0) + (brandId ? 1 : 0) + (warehouseId ? 1 : 0);
+  // The badge counts filters, not values (FILTER-MULTISELECT).
+  const activeCount = (supplierIds ? 1 : 0) + (brandIds ? 1 : 0) + (warehouseIds ? 1 : 0);
+  const fetchSuppliers = async (q: string, pageIndex: number) => {
+    const options = await getSuppliersSelect(q, pageIndex);
+    for (const o of options) supplierNames.current[o.value] = o.label;
+    return options;
+  };
 
   const onExport = async () => {
     setExporting(true);
@@ -257,15 +314,18 @@ export default function StockPositionGrid() {
                 <div className="space-y-4">
                   <div>
                     <Label>Supplier</Label>
-                    <SearchableSelect
-                      value={supplier?.value ?? ''}
-                      selectedOption={supplier ?? undefined}
-                      fetchOptions={(q, pageIndex) => getSuppliersSelect(q, pageIndex)}
+                    <SearchableMultiSelect
+                      value={filters.supplierIds}
                       onChange={(v) => {
-                        if (!v) setSupplier(null);
+                        setSupplierIds(joinMulti(v));
                         resetPage();
                       }}
-                      onOptionChange={(option) => setSupplier(option ? { value: option.value, label: option.label } : null)}
+                      fetchOptions={fetchSuppliers}
+                      selectedOptions={filters.supplierIds.map((id) => ({
+                        value: id,
+                        label: supplierNames.current[id] ?? 'Selected supplier',
+                      }))}
+                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'All suppliers')}
                       placeholder="All suppliers"
                       clearable
                       triggerClassName="mt-1"
@@ -273,13 +333,14 @@ export default function StockPositionGrid() {
                   </div>
                   <div>
                     <Label>Brand</Label>
-                    <SearchableSelect
-                      value={brandId}
+                    <SearchableMultiSelect
+                      value={filters.brandIds}
                       onChange={(v) => {
-                        setBrandId(v);
+                        setBrandIds(joinMulti(v));
                         resetPage();
                       }}
                       options={(brands ?? []).map((b) => ({ value: b.id, label: b.brand_name }))}
+                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'All brands')}
                       placeholder="All brands"
                       clearable
                       triggerClassName="mt-1"
@@ -287,14 +348,15 @@ export default function StockPositionGrid() {
                   </div>
                   <div>
                     <Label>Warehouse</Label>
-                    <SearchableSelect
-                      value={warehouseId}
+                    <SearchableMultiSelect
+                      value={filters.warehouseIds}
                       onChange={(v) => {
-                        setWarehouseId(v);
+                        setWarehouseIds(joinMulti(v));
                         resetPage();
                       }}
                       // The report's own warehouse columns: any other location could never match.
                       options={(data?.warehouses ?? []).map((w) => ({ value: w.id, label: w.code }))}
+                      renderTriggerLabel={(chosen) => filterTrigger(chosen, 'All warehouses')}
                       placeholder="All warehouses"
                       clearable
                       triggerClassName="mt-1"
@@ -306,9 +368,9 @@ export default function StockPositionGrid() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          setSupplier(null);
-                          setBrandId('');
-                          setWarehouseId('');
+                          setSupplierIds('');
+                          setBrandIds('');
+                          setWarehouseIds('');
                           resetPage();
                         }}
                       >

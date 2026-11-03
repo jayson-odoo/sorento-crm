@@ -134,6 +134,7 @@ describe('Stock position: Supplier, Brand, Warehouse are multi-select', () => {
     renderGrid();
     await openFilters(user);
     await user.selectOptions(await screen.findByRole('listbox', { name: 'All brands' }), ['b-1', 'b-3']);
+    await user.keyboard('{Escape}'); // close the Filters popover
     await user.click(screen.getByText('Export to Excel'));
     await waitFor(() => expect(exporter.exportStockPosition).toHaveBeenCalled());
     const calls = exporter.exportStockPosition.mock.calls as unknown as [unknown, { brandIds?: string[] }][];
@@ -154,7 +155,8 @@ describe('Stock position: Supplier, Brand, Warehouse are multi-select', () => {
   it('restores the selection, sort and page from the URL', () => {
     nav.search = 'page=2&limit=50&sort=total_stock&dir=desc&brand_id=b-1,b-2&supplier_id=s-1&warehouse_id=w-2';
     renderGrid();
-    const first = hook.useStockPosition.mock.calls[0];
+    // The restore applies during the first render, so the committed render reads it (no request for defaults).
+    const first = hook.useStockPosition.mock.calls.at(-1)!;
     expect(first[1]).toMatchObject({ brandIds: ['b-1', 'b-2'], supplierIds: ['s-1'], warehouseIds: ['w-2'] });
     expect(first[0]).toMatchObject({ pageIndex: 1, sorting: [{ id: 'total_stock', desc: true }] });
   });

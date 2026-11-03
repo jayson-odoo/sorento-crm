@@ -1,15 +1,17 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError, type DataGridParamsInput } from '@/lib/api-client';
+import { joinMulti } from '@/lib/list-filters/multiValue';
 import { saveBlobAs } from '@/lib/save-blob';
 import type { StockPositionFilters, StockPositionResponse } from './stockPosition.types';
 
 const BASE = '/api/v1/inventory/stock-position';
 
+/** Ids comma-joined in one param per filter; an empty selection leaves the param out. */
 function filterParams(filters: StockPositionFilters) {
   return {
-    supplier_id: filters.supplierId,
-    brand_id: filters.brandId,
-    warehouse_id: filters.warehouseId,
+    supplier_id: joinMulti(filters.supplierIds ?? []) || undefined,
+    brand_id: joinMulti(filters.brandIds ?? []) || undefined,
+    warehouse_id: joinMulti(filters.warehouseIds ?? []) || undefined,
   };
 }
 
