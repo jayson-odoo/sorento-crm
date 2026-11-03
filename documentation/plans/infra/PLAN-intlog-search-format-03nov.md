@@ -1,8 +1,8 @@
 # PLAN: Integration Log search box + pager number format (INTLOG-SEARCH)
 
-Status: built, awaiting #2129 merge then PR from main (small fix track: no migration, no auth/RBAC change)
+Status: built, in review (small fix track: no migration, no auth/RBAC change)
 
-Follow-up to INTLOG-SPEED (`PLAN-intlog-speed-03nov.md`, PR #2129), found by crew's browser pass.
+Follow-up to INTLOG-SPEED (`_archive/infra/PLAN-intlog-speed-03nov.md`, PR #2129, merged), found by crew's browser pass.
 
 ## Problems
 1. The Integration Log search box did nothing. The list sends `query`
