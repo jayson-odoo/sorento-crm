@@ -23,12 +23,13 @@ import {
   useQuotationFeedback,
   useQuotationLetterTemplates,
 } from '../../../_shared/hooks/useQuotationDocuments';
-import type {
-  QuotationCoverPreviewBody,
-  QuotationDocument,
-  QuotationDocumentBody,
-  QuotationFormScopeBody,
-  QuotationScope,
+import {
+  documentNoun,
+  type QuotationCoverPreviewBody,
+  type QuotationDocument,
+  type QuotationDocumentBody,
+  type QuotationFormScopeBody,
+  type QuotationScope,
 } from '../../../_shared/services/quotationDocumentService';
 import type {
   Project,
@@ -716,6 +717,7 @@ export function QuotationFormClient({
               <QuotationCoverLetterPanel
                 cover={coverPreview.data}
                 isLoading={coverPreview.isLoading}
+                noun={documentNoun(saved.data)}
                 error={coverPreview.error?.message}
                 html={letter.cover_letter_html ?? saved.data?.cover_letter_html ?? ''}
                 closingHtml={letter.cover_closing_html ?? saved.data?.cover_closing_html ?? ''}

@@ -77,6 +77,7 @@ function LetterPanel({
 export function QuotationCoverLetterPanel({
   cover,
   isLoading = false,
+  noun,
   error,
   html,
   closingHtml,
@@ -85,6 +86,8 @@ export function QuotationCoverLetterPanel({
 }: {
   cover: CoverPageData | undefined;
   isLoading?: boolean;
+  /** "Proposal" or "Quotation", printed in the cover's "... from" line. */
+  noun?: string;
   /** The preview call's failure message, shown as one line in place of the card. */
   error?: string | null;
   html?: string | null;
@@ -100,7 +103,7 @@ export function QuotationCoverLetterPanel({
       ) : (
         <Card>
           <CardContent className="min-w-0 py-5">
-            <CoverPagePreview cover={cover} isLoading={isLoading} />
+            <CoverPagePreview cover={cover} isLoading={isLoading} noun={noun} />
           </CardContent>
         </Card>
       )}

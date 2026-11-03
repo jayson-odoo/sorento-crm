@@ -17,9 +17,11 @@ const PAGE_HEIGHT = 1123;
 export function CoverPagePreview({
   cover,
   isLoading = false,
+  noun,
 }: {
   cover: CoverPageData | undefined;
   isLoading?: boolean;
+  noun?: string;
 }) {
   const box = React.useRef<HTMLDivElement>(null);
   const [scale, setScale] = React.useState(1);
@@ -46,7 +48,7 @@ export function CoverPagePreview({
           className="bg-white p-[57px] text-black shadow-sm ring-1 ring-border"
           style={{ width: PAGE_WIDTH, minHeight: PAGE_HEIGHT, zoom: scale }}
         >
-          <CoverPageCard cover={cover} testId="cover-page-preview" wide />
+          <CoverPageCard cover={cover} testId="cover-page-preview" noun={noun} wide />
         </div>
       ) : (
         isLoading && <Skeleton className="h-64 w-full" />

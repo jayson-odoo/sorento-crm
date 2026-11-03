@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { documentNoun } from '../../../../_shared/services/quotationDocumentService';
 import { QuotationCoverLetterPanel, QuotationTermsPanel } from './QuotationLetterPanels';
 import { QuotationDocumentHeader, useQuotationHeaderDetails } from './QuotationDocumentHeader';
 import { QuotationSignatureBlock } from './QuotationSignatureBlock';
@@ -34,6 +35,7 @@ export function QuotationCoverLetterTab() {
     <QuotationCoverLetterPanel
       cover={preview.data}
       isLoading={preview.isLoading}
+      noun={documentNoun(document)}
       error={preview.error?.message}
     />
   );
