@@ -74,6 +74,12 @@ if args[0] == "compose":
             print(rd("db_cid", "cid-db").strip())
         else:
             print("cid-" + svc)
+    elif cmd == "run" and "heads" in rest:
+        # `alembic heads` inside the NEW backend image (DEPLOY-SKIP-SNAPSHOT).
+        if os.path.exists(os.path.join(d, "heads_fail")):
+            sys.stderr.write("Error response from daemon: no such image\n")
+            sys.exit(1)
+        sys.stdout.write(rd("image_heads"))
     elif cmd == "up":
         if "--no-deps" in rest and "--force-recreate" not in rest:
             fire("up")
@@ -113,7 +119,12 @@ if args[0] == "compose":
             if os.path.exists(os.path.join(d, "psql_fail")):
                 sys.stderr.write('psql: error: database "x" does not exist\n')
                 sys.exit(2)
-            print(rd("alembic_rows", "1").strip())
+            if "version_num" in joined:
+                if os.path.exists(os.path.join(d, "versions_fail")):
+                    sys.exit(2)
+                sys.stdout.write(rd("db_versions"))
+            else:
+                print(rd("alembic_rows", "1").strip())
     sys.exit(0)
 if args[0] == "inspect":
     fmt = args[1]
@@ -930,3 +941,114 @@ def test_h4b_a_lock_file_the_deploy_creates_is_owner_only(box):
     r = _run(box)
     assert r.returncode == 0, r.stdout + r.stderr
     assert stat.S_IMODE(box["lock"].stat().st_mode) == 0o600, oct(box["lock"].stat().st_mode)
+
+
+# --- DEPLOY-SKIP-SNAPSHOT: no pending migration, no snapshot (owner, 3 Nov) --------------
+# The stub's defaults (no image heads, no db versions) make the check inconclusive, so every
+# test above still takes the snapshot: the fail-safe path is the default.
+
+HEAD = "f00dfeed1234 (head)\n"
+
+
+def _migrations(box, *, heads: str | None, db: str | None):
+    if heads is not None:
+        (box["stub"] / "image_heads").write_text(heads)
+    if db is not None:
+        (box["stub"] / "db_versions").write_text(db)
+
+
+def _dumps(box):
+    snap = box["root"] / "backups" / "pre-migrate"
+    return list(snap.glob("pre-migrate-*.dump")) if snap.exists() else []
+
+
+def test_no_pending_migration_skips_the_snapshot(box):
+    _migrations(box, heads=HEAD, db="f00dfeed1234\n")
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "no pending migrations: snapshot skipped" in r.stdout, r.stdout
+    calls = _calls(box)
+    assert _index(calls, "pg_dump") == -1, calls
+    assert _dumps(box) == []
+    # The heads come from the NEW colour's image, read without start.sh (no upgrade, no db wait).
+    heads = next(l for l in calls if " run " in f" {l} " and "heads" in l)
+    assert "--entrypoint alembic backend_green heads" in heads and "--no-deps" in heads, heads
+    # Every other guard still runs: memory twice, Postgres check, the full deploy.
+    assert r.stdout.count("memory guard:") == 2, r.stdout
+    assert "Deploy complete" in r.stdout
+    assert _swapped(calls)
+
+
+def test_the_check_runs_after_the_pull_and_before_the_new_colour(box):
+    _migrations(box, heads=HEAD, db="f00dfeed1234\n")
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    calls = _calls(box)
+    pull = _index(calls, "pull backend_green")
+    heads = _index(calls, "--entrypoint alembic")
+    up = _index(calls, "up -d --no-deps backend_")
+    assert -1 < pull < heads < up, calls
+
+
+@pytest.mark.parametrize(
+    "heads,db",
+    [
+        (HEAD, "0ld0ld0ld000\n"),                                # one migration pending
+        ("aaa (head)\nbbb (head)\n", "aaa\n"),                    # a second head pending
+        (HEAD, "f00dfeed1234\nother\n"),                         # db stamped with extra rows
+    ],
+    ids=["behind", "two-heads", "db-extra-row"],
+)
+def test_a_pending_migration_takes_the_snapshot(box, heads, db):
+    _migrations(box, heads=heads, db=db)
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "migrations pending" in r.stdout, r.stdout
+    assert "snapshot skipped" not in r.stdout
+    calls = _calls(box)
+    dump, up = _index(calls, "pg_dump"), _index(calls, "up -d --no-deps backend_")
+    assert -1 < dump < up, calls
+    assert len(_dumps(box)) == 1
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        lambda b: ((b["stub"] / "heads_fail").write_text("1"), _migrations(b, heads=None, db="f00dfeed1234\n")),
+        lambda b: _migrations(b, heads="", db="f00dfeed1234\n"),
+        lambda b: _migrations(b, heads="Traceback (most recent call last):\n", db="f00dfeed1234\n"),
+        lambda b: ((b["stub"] / "versions_fail").write_text("1"), _migrations(b, heads=HEAD, db=None)),
+        lambda b: _migrations(b, heads=HEAD, db=""),
+        lambda b: _migrations(b, heads=HEAD, db="psql: warning\n"),
+    ],
+    ids=["heads-cmd-fails", "heads-empty", "heads-garbage",
+         "db-query-fails", "db-empty", "db-garbage"],
+)
+def test_a_failed_or_ambiguous_check_takes_the_snapshot(box, setup):
+    setup(box)
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "snapshot skipped" not in r.stdout, r.stdout
+    calls = _calls(box)
+    dump, up = _index(calls, "pg_dump"), _index(calls, "up -d --no-deps backend_")
+    assert -1 < dump < up, calls
+    assert len(_dumps(box)) == 1
+
+
+def test_a_failed_snapshot_still_stops_the_deploy_when_migrations_are_pending(box):
+    _migrations(box, heads=HEAD, db="0ld0ld0ld000\n")
+    (box["stub"] / "snapshot_fail").write_text("1")
+    r = _run(box)
+    assert r.returncode != 0
+    assert "snapshot failed" in r.stdout, r.stdout
+    assert not _started_new_colour(_calls(box))
+
+
+def test_ha_mode_reads_the_db_revision_as_the_postgres_user(box):
+    _ha_box(box)
+    _migrations(box, heads=HEAD, db="f00dfeed1234\n")
+    r = _run(box, IMAGE_TAG=SHA)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "snapshot skipped" in r.stdout, r.stdout
+    line = next(l for l in _calls(box) if "version_num" in l)
+    assert "exec -T -u postgres" in line and "-U postgres" in line, line
