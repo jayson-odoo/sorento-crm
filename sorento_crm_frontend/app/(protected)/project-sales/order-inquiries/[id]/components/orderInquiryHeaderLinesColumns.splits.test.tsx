@@ -25,7 +25,7 @@ vi.mock('@/app/(protected)/project-sales/_shared/components/SoLineAttachmentsBut
   SoLineAttachmentsButton: () => null,
 }));
 
-import { useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
+import { SplitDateCell, useOrderInquiryHeaderLinesColumns } from './orderInquiryHeaderLinesColumns';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 
 const SPLIT_VIEW = {
@@ -104,6 +104,30 @@ function expandedFor(row: OrderInquiryWorklistRow) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('SplitDateCell (AC-D2)', () => {
+  const base = { id: 's', qty: '4', is_cancel: false, change: 'DELAY', remark: '' };
+
+  it('sits on a line with the same date: that date, no planned note', () => {
+    render(<SplitDateCell split={{ ...base, delivery_date: '2027-01-07', sits_on_line_id: 'l1', sits_on_line_no: 1, sits_on_line_date: '2027-01-07' }} />);
+    expect(document.body.textContent).toBe('07/01/2027');
+  });
+
+  it('sits on a line with a different date: the line date, then muted planned own date', () => {
+    render(<SplitDateCell split={{ ...base, delivery_date: '2026-12-01', sits_on_line_id: 'l1', sits_on_line_no: 1, sits_on_line_date: '2027-01-07' }} />);
+    expect(document.body.textContent).toBe('07/01/2027planned 01/12/2026');
+  });
+
+  it('on a new line: its own date marked planned', () => {
+    render(<SplitDateCell split={{ ...base, delivery_date: '2026-12-01', sits_on_line_id: null, sits_on_line_no: null }} />);
+    expect(document.body.textContent).toBe('01/12/2026planned');
+  });
+
+  it('a cancel part prints no planned note', () => {
+    render(<SplitDateCell split={{ ...base, delivery_date: null, is_cancel: true, sits_on_line_id: 'l1', sits_on_line_no: 1 }} />);
+    expect(document.body.textContent).toBe('');
+  });
 });
 
 describe('OI Lines tab: splits (UAC D3)', () => {

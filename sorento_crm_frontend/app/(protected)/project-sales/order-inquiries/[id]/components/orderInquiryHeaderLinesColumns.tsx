@@ -274,6 +274,28 @@ function sitsOnText(split: OrderInquiryLineSplit, itemCode: string | null | unde
   return itemCode ? `line ${itemCode}` : 'line';
 }
 
+/**
+ * AC-D2: a part sitting on an SO line prints that line's date, with the part's own planned
+ * date muted beside it when they differ; a part with no AutoCount line yet prints its planned
+ * date marked "planned". A cancel part prints as it always did.
+ */
+export function SplitDateCell({ split }: { split: OrderInquiryLineSplit }) {
+  const own = splitDateText(split.delivery_date);
+  const onLine = split.sits_on_line_id ? splitDateText(split.sits_on_line_date) : '';
+  const shown = onLine || own;
+  const planned =
+    !split.is_cancel && own && (!split.sits_on_line_id || (onLine && onLine !== own))
+      ? `planned${split.sits_on_line_id ? ` ${own}` : ''}`
+      : '';
+  const title = planned ? `${shown} ${planned}` : shown;
+  return (
+    <span className="block truncate tabular-nums" title={title}>
+      {shown}
+      {planned ? <span className="ms-1 text-muted-foreground">{planned}</span> : null}
+    </span>
+  );
+}
+
 const SPLIT_COLUMNS = (itemCode: string | null | undefined): ColumnDef<OrderInquiryLineSplit>[] => [
   {
     accessorKey: 'qty',
@@ -287,10 +309,10 @@ const SPLIT_COLUMNS = (itemCode: string | null | undefined): ColumnDef<OrderInqu
   {
     accessorKey: 'delivery_date',
     header: 'Date',
-    // dd/mm/yyyy plus the header's own grip and padding, unclipped at 1280.
-    size: 130,
+    // dd/mm/yyyy, then "planned dd/mm/yyyy" beside it; truncates with a title.
+    size: 200,
     meta: { headerTitle: 'Date' },
-    cell: ({ row }) => splitDateText(row.original.delivery_date),
+    cell: ({ row }) => <SplitDateCell split={row.original} />,
   },
   {
     accessorKey: 'change',
