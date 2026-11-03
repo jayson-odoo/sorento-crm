@@ -51,3 +51,18 @@ export interface IntegrationLogResponse {
   processed_at?: Date | string | null;
   updated_at: Date | string;
 }
+
+/**
+ * One page of the list. `total_capped` (INTLOG-SPEED): the backend stopped counting at
+ * `total` (offset + 10,000), so the pager reads "10,000+" and more pages exist.
+ */
+export interface IntegrationLogsPage {
+  data: IntegrationLog[];
+  empty: boolean;
+  pagination: {
+    total: number;
+    page: number;
+    limit?: number;
+    total_capped?: boolean;
+  };
+}

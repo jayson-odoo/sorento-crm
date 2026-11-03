@@ -18,6 +18,11 @@ interface DataGridPaginationProps {
   info?: string;
   infoSkeleton?: ReactNode;
   className?: string;
+  /**
+   * The backend stopped counting at `recordCount` (the Integration Log counts at most the
+   * page's offset + 10,000 rows): the total reads "10,000+" and more pages exist past it.
+   */
+  recordCountCapped?: boolean;
 }
 
 /**
@@ -66,13 +71,17 @@ function DataGridPagination(props: DataGridPaginationProps) {
   const to = Math.min((pageIndex + 1) * pageSize, recordCount);
   const pageCount = table.getPageCount();
 
+  const countLabel = mergedProps.recordCountCapped
+    ? `${recordCount.toLocaleString('en-US')}+`
+    : recordCount.toString();
+
   // Replace placeholders in paginationInfo
   const paginationInfo = mergedProps?.info
     ? mergedProps.info
         .replace('{from}', from.toString())
         .replace('{to}', to.toString())
-        .replace('{count}', recordCount.toString())
-    : `${from} - ${to} of ${recordCount}`;
+        .replace('{count}', countLabel)
+    : `${from} - ${to} of ${countLabel}`;
 
   // Pagination limit logic
   const paginationMoreLimit = mergedProps?.moreLimit || 5;
