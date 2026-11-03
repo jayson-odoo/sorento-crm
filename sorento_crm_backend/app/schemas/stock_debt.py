@@ -164,6 +164,9 @@ class StockDebtAssignedFromOnHand(BaseModel):
     #: ("On hand BRW-BB (from SO381065)"). `None` on free stock at the same bin, which is
     #: then a separate entry.
     lent_from_so_number: Optional[str] = None
+    #: OI-UX-FILTER-SNAPSHOT: the lender's customer and project (None on a free take).
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 class StockDebtAssignedFromLent(BaseModel):
@@ -177,6 +180,9 @@ class StockDebtAssignedFromLent(BaseModel):
     qty: float
     so_number: str
     sales_order_id: Optional[str] = None
+    #: OI-UX-FILTER-SNAPSHOT: the receiver's customer and project.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 class StockDebtAssignedFromDocument(BaseModel):

@@ -101,6 +101,27 @@ describe('demand grid columns', () => {
   });
 });
 
+describe('Covered by names the orders it points at', () => {
+  it('a "Lent to" receiver and an on-hand lender print CUSTOMER / project', () => {
+    render(
+      <Grid
+        rows={[
+          demandLine({
+            assigned_from: [
+              { kind: 'lent', ref: 'Lent to SO2 (32)', qty: 32, so_number: 'SO2', sales_order_id: 'so-2', customer_name: 'NEAR CO', project_label: 'NEAR SITE' },
+              { kind: 'on_hand', ref: 'On hand BRW-BB (from SO3)', qty: 5, spo_number: null, spo_line_number: null, lent_from_so_number: 'SO3', customer_name: 'FAR CO', project_label: 'FAR SITE' },
+            ],
+          } as Partial<StockDebtDemandLine>),
+        ]}
+      />,
+    );
+    const cell = document.querySelector('td[data-col="covered_by"]') as HTMLElement;
+    expect(cell.textContent).toContain('Lent to SO2 (32)');
+    expect(cell.textContent).toContain('NEAR CO / NEAR SITE');
+    expect(cell.textContent).toContain('FAR CO / FAR SITE');
+  });
+});
+
 describe('<AssignedToList> (supply grid "Assigned to")', () => {
   it('names each receiving order with its customer / project', () => {
     render(

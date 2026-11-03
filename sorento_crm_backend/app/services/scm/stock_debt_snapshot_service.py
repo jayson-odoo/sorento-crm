@@ -30,7 +30,6 @@ from app.models.project_so import (
 )
 from app.models.stock_debt_snapshot import StockDebtSnapshot, StockDebtSnapshotRow
 from app.models.user import User
-from app.services.scm.so_party import so_parties, with_party
 from app.services.audit_service import log_audit
 from app.services.error_handler import AppException, handle_not_found
 from app.services.order_inquiry_reserve_service import (
@@ -42,7 +41,7 @@ from app.services.order_inquiry_reserve_service import (
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm.demand import demand_qty
 from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
-from app.services.scm.stock_debt_service import StockDebtService
+from app.services.scm.stock_debt_service import StockDebtService, annotate_so_parties
 from app.services.scm.supply_assignment import month_key
 from app.services.user_service import UserPermissionService
 from app.utils.multi_value import multi_values
@@ -431,9 +430,7 @@ class StockDebtSnapshotService:
         core_ids = sorted({l["sales_order_line_id"] for l in lines})
         # OI-UX-FILTER-SNAPSHOT: customer and project, read off the order now, so a snapshot
         # stored before the lines carried them names them too.
-        parties = so_parties(self.db, ids=[l.get("sales_order_id") for l in lines])
-        for line in lines:
-            with_party(line, parties, line.get("sales_order_id"))
+        annotate_so_parties(self.db, lines)
 
         now = self._line_now(core_ids)
         # Security L1: without `projects.projects.view` no order inquiry row is served,

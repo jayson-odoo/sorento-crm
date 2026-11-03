@@ -71,32 +71,47 @@ export function PoLineLink({
   );
 }
 
+/** STOCK-DEBT-LENDABLE: "Lent to SO396071 (32)", linked to the receiving order. */
+function LentReceiver({ entry }: { entry: Extract<StockDebtAssignedFrom, { kind: 'lent' }> }) {
+  return entry.sales_order_id ? (
+    <Link
+      href={`/scm/sales-orders/${entry.sales_order_id}`}
+      target="_blank"
+      rel="noreferrer"
+      className="truncate text-muted-foreground hover:underline"
+      title={entry.ref}
+    >
+      {entry.ref}
+    </Link>
+  ) : (
+    <span className="truncate text-muted-foreground" title={entry.ref}>
+      {entry.ref}
+    </span>
+  );
+}
+
 function CoveredByEntry({ entry }: { entry: StockDebtAssignedFrom }) {
   if (entry.kind === 'on_hand') {
     // STOCK-DEBT-LENDABLE: the server's own wording carries the lender's name when the
     // take was lent ("On hand BRW-BB (from SO381065)"); a free take stays plain.
+    // OI-UX-FILTER-SNAPSHOT: a lent take also names the lender's customer / project.
     return (
-      <span className="truncate text-muted-foreground" title={entry.ref}>
-        {entry.ref}
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate text-muted-foreground" title={entry.ref}>
+          {entry.ref}
+        </span>
+        <SoCustomerProject customer={entry.customer_name} project={entry.project_label} />
       </span>
     );
   }
   if (entry.kind === 'lent') {
     // STOCK-DEBT-LENDABLE: a line that lent its landed goods names each receiver,
     // linked to the receiving order the way the Sales order cell links its own.
-    return entry.sales_order_id ? (
-      <Link
-        href={`/scm/sales-orders/${entry.sales_order_id}`}
-        target="_blank"
-        rel="noreferrer"
-        className="truncate text-muted-foreground hover:underline"
-        title={entry.ref}
-      >
-        {entry.ref}
-      </Link>
-    ) : (
-      <span className="truncate text-muted-foreground" title={entry.ref}>
-        {entry.ref}
+    // OI-UX-FILTER-SNAPSHOT: with the receiver's customer / project under it.
+    return (
+      <span className="flex min-w-0 flex-col">
+        <LentReceiver entry={entry} />
+        <SoCustomerProject customer={entry.customer_name} project={entry.project_label} />
       </span>
     );
   }

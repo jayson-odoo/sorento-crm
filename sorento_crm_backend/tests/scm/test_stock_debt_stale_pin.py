@@ -125,7 +125,7 @@ def _on_hand_entry(warehouse, qty):
     return {
         "kind": "on_hand", "ref": f"On hand {warehouse.warehouse_code}",
         "spo_number": None, "spo_line_number": None, "qty": qty,
-        "lent_from_so_number": None,
+        "lent_from_so_number": None, "customer_name": None, "project_label": None,
     }
 
 

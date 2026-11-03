@@ -107,3 +107,33 @@ def test_a_snapshot_stored_without_the_fields_still_names_them(scm_app):
     near = by_so[f"{marker}-SO-near"]
     assert near["customer_name"] == "ZZT ACME SDN BHD (PROJECT)"
     assert near["project_label"] == "TAMAN ZZT"
+
+
+def test_lent_receivers_and_lenders_name_customer_and_project(scm_app):
+    """STOCK-DEBT-LENDABLE entries name an order too: the far line's "Lent to SO..." entry
+    carries the RECEIVER's customer / project; the near line's on-hand take "(from SO...)"
+    carries the LENDER's. A free on-hand take names no order."""
+    from datetime import timedelta
+
+    from tests.scm.test_stock_debt_lendable_routes import (
+        DEFAULT_WINDOW, TODAY, VIEW, _by_so, _cell, _owner_case,
+    )
+    from tests.scm.test_stock_debt_lendable_routes import _client as _lend_client
+
+    app, db, _uid = _lend_client(scm_app, VIEW)
+    far_due = DEFAULT_WINDOW + timedelta(days=60)
+    world = _owner_case(db, far_due=far_due)
+    near_order, far_order = world["near"][0], world["far"][0]
+    near_order.debtor_name, near_order.project_label = "ZZT NEAR CO", "NEAR SITE"
+    far_order.debtor_name, far_order.project_label = "ZZT FAR CO", "FAR SITE"
+    db.flush()
+
+    with TestClient(app) as c:
+        near = _by_so(_cell(c, world["product"], month_key(TODAY + timedelta(days=20))), "SO396071")
+        far = _by_so(_cell(c, world["product"], month_key(far_due)), "SO381065")
+
+    [taken] = near["assigned_from"]
+    assert (taken["customer_name"], taken["project_label"]) == ("ZZT FAR CO", "FAR SITE")
+    kinds = {entry["kind"]: entry for entry in far["assigned_from"]}
+    assert (kinds["lent"]["customer_name"], kinds["lent"]["project_label"]) == ("ZZT NEAR CO", "NEAR SITE")
+    assert kinds["on_hand"].get("customer_name") is None

@@ -1758,7 +1758,7 @@ def _assert_pinned_on_the_bin(c, *, marker, warehouse, product, due):
         {
             "kind": "on_hand", "ref": f"On hand {warehouse.warehouse_code}",
             "spo_number": None, "spo_line_number": None, "qty": 50,
-            "lent_from_so_number": None,
+            "lent_from_so_number": None, "customer_name": None, "project_label": None,
         }
     ]
     so2 = by_so[f"{marker}-SO2"]

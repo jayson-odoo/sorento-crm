@@ -208,6 +208,9 @@ export interface StockDebtAssignedFromOnHand {
   /** STOCK-DEBT-LENDABLE: the sales order whose landed goods this take was LENT from
    *  ("On hand BRW-BB (from SO381065)"). Null on free stock at the same bin. */
   lent_from_so_number?: string | null;
+  /** OI-UX-FILTER-SNAPSHOT: the lender's customer and project (only on a lent take). */
+  customer_name?: string | null;
+  project_label?: string | null;
 }
 
 /**
@@ -221,6 +224,9 @@ export interface StockDebtAssignedFromLent {
   qty: number;
   so_number: string;
   sales_order_id: string | null;
+  /** OI-UX-FILTER-SNAPSHOT: the receiver's customer and project. */
+  customer_name?: string | null;
+  project_label?: string | null;
 }
 
 export interface StockDebtAssignedFromDocument {
