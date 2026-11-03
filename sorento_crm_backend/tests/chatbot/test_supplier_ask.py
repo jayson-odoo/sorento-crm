@@ -2109,3 +2109,178 @@ def test_crews_kim_pak_chuan_turn_with_nothing_near_never_lists_that_supplier(se
     )
     assert not [a for n, a in captured if n == PO_TOOL and kh in (a.get("supplier_ids") or [])], (reply, captured)
     assert not [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS and not a.get("supplier_ids")], (reply, captured)
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling, 3 Nov 2026 (prod, after #2066 went live): "it keeps asking me to choose fullshun customer or supplier,
+# it is so clear that sales is talking about customer". The question's own words decide a both-sides name: a sales
+# word is the customer, a purchase word the supplier, an explicit party word always; only a message with neither asks.
+# --------------------------------------------------------------------------- #
+
+FULLSHUN = "ZZT FULLSHUN HARDWARE SDN BHD"
+
+
+@pytest.mark.parametrize("message,side", [
+    ("delivery for hanlim", "customer"),
+    ("dealer fullshun oct sale", "customer"),
+    ("fullshun only", None),
+    ("customer fullshun only", "customer"),
+    ("Outstanding order for orionis", "customer"),
+    ("invoiced for fullshun last month", "customer"),
+    ("quotation for fullshun", "customer"),
+    ("outstanding SO for fullshun", "customer"),
+    ("PO for fullshun", "supplier"),
+    ("purchase order for fullshun", "supplier"),
+    ("incoming from fullshun", "supplier"),
+    ("PO placed with fullshun", "supplier"),
+    ("supplier fullshun outstanding", "supplier"),
+    ("supplier fullshun sales", "supplier"),
+    ("Outstandinf for orionis", None),
+    ("fullshun", None),
+    ("customer or supplier fullshun", None),
+    ("fullshun 的销售", "customer"),
+    ("fullshun 采购单", "supplier"),
+])
+def test_the_messages_own_words_name_the_side(message, side):
+    from app.services.chatbot import engine as engine_mod
+
+    assert engine_mod._party_side(message) == side
+
+
+@pytest.mark.parametrize("side,expect", [("customer", "customer"), ("supplier", "supplier")])
+def test_a_side_keeps_only_that_party_kind_of_a_both_sides_word(side, expect):
+    from app.services.chatbot.turn.reconcile import apply_reconciliation
+
+    entities = [{"raw": "fullshun", "hint": "supplier", "canonical_code": "sup-id", "current_message": True}]
+    hits = {"fullshun": {"customer": 1, "supplier": 1}}
+    asked = apply_reconciliation(entities, hits, exact={"fullshun": {}})
+    assert asked.kind_pick_options and {o["entity_type"] for o in asked.kind_pick_options} == {"customer", "supplier"}
+    sided = apply_reconciliation(entities, hits, exact={"fullshun": {}}, side=side)
+    assert sided.kind_pick_options is None, sided.kind_pick_options
+    assert sided.entities[0]["hint"] == expect
+    if expect == "customer":
+        assert sided.entities[0]["canonical_code"] is None, "a supplier's row id never binds the customer"
+
+
+def _fullshun_world(session_factory) -> dict[str, Any]:
+    ids = _office_world(session_factory)
+    ids["fs_customer"] = _seed_customer(session_factory, FULLSHUN)
+    ids["fs_supplier"] = _seed_named(session_factory, FULLSHUN, "ZZTSUP-FS01")
+    return ids
+
+
+def _fullshun_turn(session_factory, monkeypatch, text: str, hint: str, canonical: str | None, **parse):
+    qf = _parser_output(
+        entities=[{"raw": "fullshun", "hint": hint, "canonical_code": canonical, "current_message": True, "confident": True}],
+        **parse,
+    )
+    return _span_turn(
+        session_factory, monkeypatch, text, list_resolver.Span("fullshun", hint), {"fullshun", FULLSHUN.casefold()},
+        qf=qf, attributes=OWNER_GRANTS,
+    )
+
+
+_SALES_ASKS = {
+    "delivery for fullshun": dict(domain_hint="order", intent_hint="check_order", order_status=None, document=["DO"]),
+    "dealer fullshun oct sale": dict(
+        domain_hint="sales", intent_hint="sales_report", status="sales_report", order_status=None, date_mode="range", date_filter_start="2026-10-01", date_filter_end="2026-10-31",
+    ),
+    "customer fullshun only": dict(domain_hint="sales", intent_hint="sales_report", status="sales_report", order_status=None),
+    "Outstanding order for fullshun": dict(
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+    ),
+}
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+@pytest.mark.parametrize("text", sorted(_SALES_ASKS))
+def test_owners_prod_sales_asks_over_a_both_sides_name_are_the_customer_never_asked(
+    session_factory, monkeypatch, text, hint
+):
+    """Prod 3 Nov: "delivery for hanlim", "dealer fullshun oct sale", "customer fullshun only" were each asked
+    "fullshun (customer) / fullshun (supplier)". A sales question is the customer's: no question, no PO list."""
+    ids = _fullshun_world(session_factory)
+    canonical = ids["fs_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _fullshun_turn(session_factory, monkeypatch, text, hint, canonical, **_SALES_ASKS[text])
+    assert "(supplier)" not in reply and "Which one do you mean?" not in reply, reply
+    assert not _po_calls(captured), (reply, captured)
+    party = [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS]
+    assert all(ids["fs_supplier"] not in (a.get("supplier_ids") or []) for a in party), (reply, captured)
+    assert all(a.get("customer_ids") == [ids["fs_customer"]] for a in party if n_party(a)), (reply, captured)
+
+
+def n_party(args: dict[str, Any]) -> bool:
+    return bool(args.get("customer_ids") or args.get("supplier_ids"))
+
+
+_PURCHASE_ASKS = {
+    "PO for fullshun": dict(domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"]),
+    "outstanding PO for fullshun": dict(
+        domain_hint="purchase_order", intent_hint="check_po", order_status=None, status="outstanding", document=["PO"],
+    ),
+    "supplier fullshun outstanding": dict(
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+    ),
+}
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+@pytest.mark.parametrize("text", sorted(_PURCHASE_ASKS))
+def test_a_purchase_ask_over_a_both_sides_name_is_the_supplier_never_asked(session_factory, monkeypatch, text, hint):
+    ids = _fullshun_world(session_factory)
+    canonical = ids["fs_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _fullshun_turn(session_factory, monkeypatch, text, hint, canonical, **_PURCHASE_ASKS[text])
+    assert "(customer)" not in reply and "Which one do you mean?" not in reply, reply
+    calls = _po_calls(captured)
+    assert calls and calls[0].get("supplier_ids") == [ids["fs_supplier"]], (reply, captured)
+    assert not calls[0].get("customer_ids"), calls
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_a_both_sides_name_with_no_side_word_is_still_asked(session_factory, monkeypatch, hint):
+    """The #2066 rule stands where the message names no side ("Outstandinf for orionis"): asked, nothing listed."""
+    ids = _fullshun_world(session_factory)
+    canonical = ids["fs_supplier"] if hint == "supplier" else None
+    reply, captured, _seen = _fullshun_turn(
+        session_factory, monkeypatch, "Outstandinf for fullshun", hint, canonical,
+        domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+    )
+    assert "(customer)" in reply and "(supplier)" in reply, reply
+    assert not _fetch_calls(captured), (reply, captured)
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_an_outstanding_order_ask_over_a_both_sides_name_reports_that_customer(session_factory, monkeypatch, hint):
+    """End to end: "Outstanding order for fullshun" asks the sales side's kind question (never customer or supplier),
+    and "Pending delivery" is the customer's DO report, filtered by that customer's id."""
+    ids = _fullshun_world(session_factory)
+    canonical = ids["fs_supplier"] if hint == "supplier" else None
+    reply, captured, _s = _fullshun_turn(
+        session_factory, monkeypatch, "Outstanding order for fullshun", hint, canonical,
+        **_SALES_ASKS["Outstanding order for fullshun"],
+    )
+    assert "Undelivered orders or pending delivery?" in reply, reply
+    pend_qf = _parser_output(
+        message_type="business_query", intent_hint="check_order", domain_hint="order", entity_op="reuse",
+        reference_positions=[2], open_question_answer={"mode": "pick", "items": [], "picked": [2], "qty_for_all": None},
+        reference_target="dym", domain_in_message=True, **_PEND_EMISSIONS["empty-DO"],
+    )
+    reply, captured, _s = _span_turn(
+        session_factory, monkeypatch, "Pending delivery", list_resolver.Span("Pending delivery"), set(), qf=pend_qf,
+        attributes=OWNER_GRANTS,
+    )
+    asks = [a for n, a in captured if n in ORDER_TOOLS]
+    assert asks and asks[0].get("customer_ids") == [ids["fs_customer"]], (reply, captured)
+    assert not _po_calls(captured), captured
+
+
+@pytest.mark.parametrize("hint", ["customer", "supplier"])
+def test_a_delivery_ask_over_a_both_sides_name_names_the_customer(session_factory, monkeypatch, hint):
+    """Prod "delivery for hanlim": the sales side's period question names the customer, never "couldn't find a
+    supplier" (the round-9 guard counted the span model's supplier type as the subject)."""
+    ids = _fullshun_world(session_factory)
+    canonical = ids["fs_supplier"] if hint == "supplier" else None
+    reply, _c, _s = _fullshun_turn(
+        session_factory, monkeypatch, "delivery for fullshun", hint, canonical, **_SALES_ASKS["delivery for fullshun"],
+    )
+    assert FULLSHUN in reply and "couldn't find" not in reply, reply

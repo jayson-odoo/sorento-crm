@@ -544,7 +544,9 @@ def _supplier_scope(
         if isinstance(e, dict) and e.get("current_message") is True and jsc.lower_or_empty(e.get("hint")) == "supplier"
     ]
     # The span model typed a supplier in this message (crew turn 4ff1d7b8: "zzqqxx", no parser entity at all).
-    named += [t for t in (getattr(prep, "supplier_typed", None) or []) if t not in named]
+    # Owner ruling 3 Nov: on a sales question the span model's supplier type is not the side (a both-sides name).
+    if verdict.get("party_side") != "customer":
+        named += [t for t in (getattr(prep, "supplier_typed", None) or []) if t not in named]
     pending = getattr(state_in, "pending", None)
     asked = pending is not None and getattr(pending, "kind", None) == "supplier_pick" and bool(pending.options)
     focus = getattr(state_out, "focus", None)
@@ -1803,6 +1805,45 @@ def _typed_here(raw: Any, prep: Any) -> bool:
     return bool(word) and f" {word} " in f" {lookup_lists._fold(message)} "
 
 
+#: Owner ruling, 3 Nov 2026 (prod, after #2066: "it keeps asking me to choose fullshun customer or supplier, it is so
+#: clear that sales is talking about customer"): the question's own words decide the side of a name that is both a
+#: customer and a supplier. An explicit party word decides first; then a purchase word (supplier) over a sales word
+#: (customer: "purchase order" is a purchase). Only a message with neither is asked "customer or supplier?".
+_CUSTOMER_PARTY_WORDS = frozenset({"customer", "customers", "dealer", "dealers", "pelanggan", "客户"})
+_SUPPLIER_PARTY_WORDS = frozenset({"supplier", "suppliers", "vendor", "vendors", "pembekal", "供应商"})
+_SALES_SIDE_WORDS = frozenset({
+    "sale", "sales", "sold", "sell", "invoice", "invoices", "invoiced", "deliver", "delivery", "deliveries",
+    "delivered", "order", "orders", "ordered", "so", "do", "quotation", "quotations", "quote", "quotes", "jualan",
+    "销售", "发货", "订单", "报价",
+})
+_PURCHASE_SIDE_WORDS = frozenset({
+    "po", "pos", "purchase", "purchases", "purchased", "purchasing", "incoming", "placed", "spo", "procurement",
+    "grn", "belian", "采购", "进货",
+})
+
+
+def _has_word(words: frozenset[str], folded: str, tokens: set[str]) -> bool:
+    """A Latin word as a whole word of the message; a word in another script anywhere in it (it has no spaces)."""
+    return any((w in tokens) if w.isascii() else (w in folded) for w in words)
+
+
+def _party_side(message: Any) -> str | None:
+    """"customer", "supplier", or None (the message names no side: a both-sides name is asked)."""
+    folded = lookup_lists._fold(str(message or ""))
+    tokens = set(folded.split())
+    customer = _has_word(_CUSTOMER_PARTY_WORDS, folded, tokens)
+    supplier = _has_word(_SUPPLIER_PARTY_WORDS, folded, tokens)
+    if customer != supplier:
+        return "customer" if customer else "supplier"
+    if customer:
+        return None
+    if _has_word(_PURCHASE_SIDE_WORDS, folded, tokens):
+        return "supplier"
+    if _has_word(_SALES_SIDE_WORDS, folded, tokens):
+        return "customer"
+    return None
+
+
 def _both_side_words(verdict: dict[str, Any], prep: Any) -> dict[str, Any]:
     """Fix round 6: a party word on both sides (`party_suppliers`), hinted customer or supplier, is bound as its best
     supplier id unless it already carries a grouped supplier id, so `resolve_gate.bind_span_suppliers` binds it with
@@ -1823,8 +1864,15 @@ def _both_side_words(verdict: dict[str, Any], prep: Any) -> dict[str, Any]:
             # Either hint (review S1: "kimlan" hinted customer, also a supplier): bound as the supplier with the same
             # name's customers beside it, so the kind pick asks. A supplier already carrying a grouped id keeps it.
             held = jsc.nullish_str(e.get("canonical_code")).strip()
+            if verdict.get("party_side") == "customer":
+                # Owner ruling 3 Nov: a sales question's both-sides name is the customer, never asked.
+                out.append({**e, "hint": "customer", "canonical_code": held if e.get("hint") == "customer" else None})
+                changed = True
+                continue
             bound = held if e.get("hint") == "supplier" and held in groups else key
             customers = [c for c, _n in ((getattr(prep, "supplier_customers", None) or {}).get(bound) or [])]
+            if verdict.get("party_side") == "supplier":
+                customers = []  # a purchase question's both-sides name is the supplier, never asked
             suppliers = [s for s, _n in (groups.get(bound) or [])] or [bound]
             # The word's own customers AND suppliers ride on it, so each kind pick option binds THIS word's rows
             # (review B2 and its supplier side: never every row the turn matched, never one of several suppliers).
@@ -6611,6 +6659,7 @@ def _run_stages_body(  # noqa: PLR0915
                 db, remembered_before.get("_contact_pk"), contact_respond_id, default_space_id(db)
             )
         )
+        party_side: str | None = None
         if asker_sees_suppliers:
             from app.services.chatbot.lanes.business.resolve_gate import supplier_ask_reads_purchase_orders
 
@@ -6618,6 +6667,10 @@ def _run_stages_body(  # noqa: PLR0915
             if picked_side is not verdict:
                 turn_trace.add("party_pick_side", {"domain": picked_side.get("domain_hint")})
                 verdict = picked_side
+            party_side = _party_side(user_turn.own_text)
+            if party_side is not None:
+                verdict = {**verdict, "party_side": party_side}
+                turn_trace.add("party_side", {"side": party_side})
             _with_party_readings(verdict, span_prep)
             with_spans = _with_span_suppliers(verdict, span_prep)
             if with_spans is not verdict:
@@ -7362,7 +7415,9 @@ def _run_stages_body(  # noqa: PLR0915
                 # SUPPLIER-ASK: the span pass's supplier groups; a parser-picked supplier id binds to its group.
                 "span_suppliers": dict(span_prep.supplier_groups) if span_prep is not None else {},
                 # Fix round 6: the customers a supplier's span also named (a name on both sides is asked).
-                "span_supplier_customers": dict(span_prep.supplier_customers) if span_prep is not None else {},
+                "span_supplier_customers": (
+                    dict(span_prep.supplier_customers) if span_prep is not None and party_side != "supplier" else {}
+                ),
             }
             resolve_outcome = (
                 turn_runtime.resolve_kinds(

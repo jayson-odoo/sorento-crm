@@ -1584,7 +1584,7 @@ def _reconcile_step(
     typed: str | None = None,
     candidates: dict[str, list[dict[str, Any]]] | None = None,
 ):
-    result = apply_reconciliation(entities, resolved, exact=exact, typed=typed)
+    result = apply_reconciliation(entities, resolved, exact=exact, typed=typed, side=verdict.get("party_side"))
     trace.reconciled = result.reconciled
 
     if result.kind_pick_options is not None and _named_teams(verdict):

@@ -97,6 +97,9 @@ class ReconcileResult:
         self.queued_kind_picks: list[list[dict[str, Any]]] = []
 
 
+_PARTY_KINDS = ("customer", "supplier")
+
+
 def _is_row_id(value: Any) -> bool:
     """A row id (a uuid), never a code or a printed label."""
     import uuid
@@ -128,13 +131,15 @@ def apply_reconciliation(
     resolved: dict[str, dict[str, int]] | None,
     exact: dict[str, dict[str, int]] | None = None,
     typed: str | None = None,
+    side: str | None = None,
 ) -> ReconcileResult:
     """`exact` is the same map counting only the resolver's EXACT whole-token hits (the token
     IS that row's code or name, `turn_runtime.resolve_kinds`); None treats every hit as one (a
     hand-built map). The hint narrowing and the single-kind retype need such a hit: "basin"
     inside the code ZZBASINWC1 is never a product (review M2). A hint naming a kind that is the only
     kind with an exact hit keeps that kind, never asked. `typed` (the folded own text of the message; None =
-    no limit) arms a kind pick only for a token the asker typed."""
+    no limit) arms a kind pick only for a token the asker typed. `side` ("customer" or "supplier", the side the
+    message's own words name, `engine._party_side`) keeps only that party kind of a word that is both: never asked."""
     result = ReconcileResult()
     if not resolved:
         result.entities = list(entities)
@@ -165,6 +170,10 @@ def apply_reconciliation(
             inside = [k for k in matched if k in narrow and whole.get(k)]
             if inside:
                 matched = sorted(inside, key=lambda k: (k != hint_kind, -hits[k], k))
+        # Owner ruling 3 Nov 2026 (prod, "fullshun"): a sales or purchase question decides a both-sides name.
+        sided = side in _PARTY_KINDS and set(_PARTY_KINDS) <= set(matched)
+        if sided:
+            matched = [k for k in matched if k not in _PARTY_KINDS or k == side]
         # Any hinted kind with an exact whole-token hit wins outright (owner run 1020 class b).
         if (
             len(matched) > 1
@@ -178,10 +187,12 @@ def apply_reconciliation(
         elif len(matched) == 1:
             new_kind = matched[0]
             old_kind = e.get("hint")
-            if new_kind != old_kind and whole.get(new_kind):
+            if new_kind != old_kind and (whole.get(new_kind) or sided):
                 result.reconciled.append((raw, old_kind, new_kind))
                 rewritten = dict(e)
                 rewritten["hint"] = new_kind
+                if sided:
+                    rewritten["canonical_code"] = None  # the other side's row id is not this side's
                 result.entities.append(rewritten)
             else:
                 result.entities.append(e)
