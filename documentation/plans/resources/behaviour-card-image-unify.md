@@ -16,7 +16,7 @@ box. This is what #2126 did for the spec sheet, made the rule for every screen.
 
 | Who | Where | Today | After | Phase |
 | --- | --- | --- | --- | --- |
-| Staff | Price Tag designer / preview | Loads every original (3000-4500 px, often 2-8 MB each); a template with many photos can freeze the tab like the spec sheet did | Loads the 1024 px medium; opens fast. On a 4K screen zoomed past 200 % a photo looks slightly softer | P2 |
+| Staff | Price Tag designer / preview | Loads every product photo's original (product photos run up to 29 MB; 96 stored images are 5 MB or more); a few big ones can freeze the tab like the spec sheet did | Loads the 1024 px medium; opens fast. On a 4K screen zoomed past 200 % a photo looks slightly softer | P2 |
 | Dealers | Printed price tags (PDF) | Chromium prints originals, uncapped | Prints a copy capped by Q1. At the recommended cap nobody can see a difference on paper | P2 |
 | Staff | Attachment preview (Files) | Opens the original | Opens the medium; "Open original" / zoom / download still get the original (Q3) | P3 |
 | Customers | Quotation sign page | 240 px pictures inlined, first 60 only; cells past 60 blank | Same 320 px thumbnails, all of them, loaded as the customer scrolls (Q5) | P3 |
@@ -24,42 +24,67 @@ box. This is what #2126 did for the spec sheet, made the rule for every screen.
 | Customers | WhatsApp / chatbot photos | Originals | Unchanged under the recommendation (Q2) | P4 |
 | Nobody | Storage | Thumbs only, made at upload; old rows via a manual script | Thumb + medium at upload; a throttled, resumable backfill for old files; long cache headers on renditions | P1 |
 
-## Worked examples (the arithmetic; real dev-data numbers pending, see below)
+## Real examples (prod clone `sorento_prod_1020`: prod copy of 20 Oct plus dev uploads since; crew ran the queries read-only, 3 Nov)
 
-- Print cap formula (from #2126, `project_spec_sheet_service.py:679`): long edge in mm / 25.4 x DPI.
-  - Spec sheet, A4 page at 200 DPI (today): 297 / 25.4 x 200 = **2339 px**.
-  - A4 page at 300 DPI: **3508 px**. Most phone photos are 3000-4500 px, so this cap barely
-    shrinks anything.
-  - A price tag measured by the TAG, not the A4 sheet, at 300 DPI: a 100 x 60 mm tag gives
-    **1182 px**; a 150 x 100 mm tag gives **1772 px**; an A5 tag gives **2481 px**. A photo slot is
-    smaller than its tag, so these never cut visible detail.
-- Decoded memory (what froze the browser): a 4000 x 3000 photo decodes to ~48 MB of bitmap; the
-  1024 px medium (1024 x 768) to ~3 MB. A designer page with 20 photos: ~960 MB vs ~63 MB.
-- #2126's case: 165 MB of originals for one spec sheet tab.
+**Stored images today.** 6343 live images, 3404 MB of originals. Median 62 kB, largest 29 MB,
+96 images are 5 MB or more. 859 have no thumbnail (754 of them under 0.5 MB, 5 over 10 MB).
+(1670 deleted images, 1446 MB, are left out of every number here and of the backfill. 1026 of the
+6343 are dev uploads made after 20 Oct.)
 
-Real examples from the dev copy: this sandbox cannot reach the dev database or storage (crew
-contract: no shared DB). Crew, please run these on the prod-clone copy and paste the result as a
-`crew-note` on PR #2133; I fold them into this card:
+**Product photos, where the freeze risk actually is.** 4378 product photos, 3193 MB, 312 without a
+thumbnail. The biggest: SRTBF11833 _2.png 29 MB (linked to 5 products), SRTBF31416-02.png 20 MB
+(no thumbnail), SRTBT1872.jpg 18 MB, MWC7632-SH-UF-MKH-S10.jpg 17 MB. Any screen that pulls
+originals for a handful of these (the Price Tag designer and preview do, `dealer_kit/product_images.py:182`)
+downloads 80+ MB and decodes several hundred MB, which is the #2126 freeze.
+
+**Photos inside tag designs are not the problem.** 9 templates carry image layers, 1-2 pictures
+each, all under 0.9 MB, all with thumbnails. Only 2 products are linked to a template today
+(SRTKS7061 with 5 photos, 9.3 MB; CB1178A-DIY with none). So the risk grows with use: every
+product linked to a template brings its own product photos into the designer and preview.
+
+**Tag sizes in use (13 templates), and the Q1 print cap at 300 DPI measured on the tag:**
+
+| Tag size | Templates | Cap at 300 DPI |
+| --- | --- | --- |
+| 95 x 44.5 mm | 4 | **1122 px** |
+| 98 x 140 / 140 x 98 mm | 7 between these two rows (split not reported) | **1654 px** |
+| A5 148 x 210 mm | (in the 7 above) | **2480 px** |
+
+(2 more templates named "Crew perf 2126", 338.7 x 190.5 mm, are crew test data and ignored.)
+Against the A4 sheet the cap would be 2339 px at 200 DPI or 3508 px at 300 DPI; most product
+photos are 3000-4500 px wide, so a sheet-based cap barely shrinks them. The 29 MB photo printed on
+a 95 x 44.5 mm tag goes into a copy at most 1122 px wide.
+
+**Decoded memory** (what froze the browser): a 4000 x 3000 photo is ~48 MB of bitmap; its 1024 px
+medium (1024 x 768) is ~3 MB. #2126's spec sheet tab pulled 165 MB of originals.
+
+**Backfill size for Q4:** a medium for all 6343 live images plus the 859 missing thumbnails, from
+3404 MB of originals. Most are small (median 62 kB), so most of the run time is the 96 files of
+5 MB or more; the dev-copy run in P1 reports the actual minutes.
+
+Queries (read-only, for re-running after P1):
 
 ```sql
--- image attachments, how many lack a thumbnail (backfill size)
+-- live image attachments, how many lack a thumbnail (backfill size)
 SELECT count(*) AS images,
        count(*) FILTER (WHERE thumbnail_path IS NULL) AS no_thumb,
        pg_size_pretty(sum(file_size_bytes)) AS original_bytes
 FROM attachments WHERE is_deleted IS FALSE AND mime_type ILIKE 'image/%';
 -- price tag templates by print size (Q1)
 SELECT print_size, count(*) FROM dealer_kit.tag_template GROUP BY 1 ORDER BY 2 DESC LIMIT 10;
--- biggest product photos linked to price tags (designer load)
-SELECT a.original_filename, a.file_size_bytes FROM attachments a
-JOIN product_attachments pa ON pa.attachment_id = a.id
-WHERE a.mime_type ILIKE 'image/%' ORDER BY a.file_size_bytes DESC NULLS LAST LIMIT 10;
+-- biggest live PRODUCT photos (all product photos, not only tag-linked), each file once
+SELECT a.original_filename, a.file_size_bytes, (a.thumbnail_path IS NULL) AS no_thumb,
+       count(pa.product_id) AS products
+FROM attachments a JOIN product_attachments pa ON pa.attachment_id = a.id
+WHERE a.is_deleted IS FALSE AND a.mime_type ILIKE 'image/%'
+GROUP BY a.id ORDER BY a.file_size_bytes DESC NULLS LAST LIMIT 10;
 ```
 
 
 ## Questions for the owner (at most 5)
 
 **Q1. Printed price tag sharpness: how big may a printed photo be?**
-(a) 300 DPI measured on the TAG's own size (100 x 60 mm tag -> 1182 px copy);
+(a) 300 DPI measured on the TAG's own size (the 95 x 44.5 mm tag, 4 templates, -> 1122 px copy; A5 -> 2480 px);
 (b) 200 DPI on the A4 sheet, the same number as the spec sheet (2339 px);
 (c) keep printing originals.
 **Recommendation: (a).** Tags are read up close on a shelf, so 300 DPI is the print-shop standard;

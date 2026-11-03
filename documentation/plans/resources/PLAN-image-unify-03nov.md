@@ -1,6 +1,6 @@
 # PLAN: IMAGE-UNIFY - one image rendition service, one image component
 
-Status: P0 (plan + behaviour card) written, waiting on owner answers (Q1-Q5 in
+Status: P0 written; prod-clone numbers folded in (3 Nov); P1 design settled; waiting on owner answers (Q1-Q5 in
 `behaviour-card-image-unify.md`). Track: LEAD, phased. P1 starts after #2126 merges. P2 after
 #2101 (PRICETAG-SELF-APPROVAL) merges.
 
@@ -118,6 +118,34 @@ print_copy(raw, unit_mm, dpi) -> RenderedImage | None # cap = ceil(long edge mm 
   owner decides the prod run (Q4).
 - Guard (BE): a test that greps `app/` for `Image.open(` outside `image_thumbnailer.py` (allow-list:
   PDF/flyer readers that need full pixels, named in the test with a reason each).
+
+### P1 design decisions driven by the prod-clone numbers (crew, 3 Nov; card "Real examples")
+
+6343 live images (3404 MB), median 62 kB, max 29 MB, 96 at 5 MB or more; 859 without a thumb;
+4378 are product photos (3193 MB). Photos inside tag designs are all under 0.9 MB: the freeze risk
+is product photos pulled into the designer/preview, so P2 targets `dealer_kit/product_images.py`
+first and `asset_service.py` second.
+
+- **One decode per upload.** `store_renditions` decodes the original once (JPEG `draft` at the
+  medium box), makes the 1024 px medium, then the 320 px thumb FROM the medium. The thumb no longer
+  costs a second full decode; the upload path pays one decode where it paid one before.
+- **Always write a medium, even for small originals.** Most originals are tiny (median 62 kB), and a
+  "medium may be the original" branch would need a column or a second existence check to know
+  which. A re-encode of a small file costs milliseconds and keeps one rule: `<key>.medium.jpg`
+  exists for every image. A PNG with transparency comes out white-backed, the same as its thumb today.
+- **Pixel ceiling stays `_downscale`'s 40 MP** (`product_image_service.py:82`, `MAX_IMAGE_PIXELS`)
+  for upload and backfill. PNGs cannot draft-decode, so a large PNG decodes in full; 40 MP RGBA is
+  ~160 MB in one worker. Anything over the ceiling gets no rendition, is logged by attachment id,
+  and is counted in the backfill summary as `over_ceiling`; screens fall back to the thumb, then to
+  a placeholder, never to the original. Pixel sizes are not in the DB, so the dev-copy backfill
+  run is what reports how many exist (trigger to revisit the ceiling: more than a handful).
+- **Backfill is a script run by hand in the worker container, never the API container**
+  (`scripts/backfill_attachment_renditions.py`, throttled with `--sleep`). Order: keyset by id (resumable). `--only product` processes the
+  4378 product photos first so P2 can ship before the full run finishes. Deleted rows (1670, 1446
+  MB) are skipped. The old `backfill_attachment_thumbnails.py` is deleted in the same PR.
+- **The 240 px document copy** (`product_image_service.render`, `PRINT_BOX = 240`, used by the
+  quotation PDF) stays a size the rendition service makes on demand from the thumb, through the
+  same `downscale`. It is not stored (it is inlined in the PDF), so it is not a fourth rendition.
 
 ### Frontend (P3, shared component lands with P2 since the designer needs it)
 
