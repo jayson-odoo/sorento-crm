@@ -394,9 +394,12 @@ class TestFinding2CustomerRosterCarriesHasDoStamps:
         }, stamped
 
     def test_two_ledgers_of_one_family_share_the_same_stamp(self) -> None:
-        """The has/no-DO stamp is keyed by FAMILY BASE (`pickers.customer_base` strips
-        the `[A/C n]` suffix), same as finding 1's own grouping rule - a DO on ledger I
-        is a DO for the family, and ledger II (no order of its own) reads it too."""
+        """The has/no-DO stamp is keyed by FAMILY BASE (`pickers.customer_base`), the same
+        rule finding 1's grouping uses. Re-pinned 3 Nov 2026 (CUSTOMER-GROUP-GATE): a family
+        is a customer GROUP, so ledger II reads ledger I's DO only when the office grouped
+        them; ungrouped, ledger II (no order of its own) reads "no DO"."""
+        from app.services.ledger_family import customer_groups
+
         from app.services.chatbot.lanes.business import pickers
         from app.services.chatbot.turn_runtime import candidates_by_kind
 
@@ -431,8 +434,14 @@ class TestFinding2CustomerRosterCarriesHasDoStamps:
         stamped = {c.get("name"): c.get("stamp") for c in grouped.get("customer", [])}
         assert stamped == {
             "HANLIM TRADING SDN BHD [A/C I]": "has DO",
-            "HANLIM TRADING SDN BHD [A/C II]": "has DO",
+            "HANLIM TRADING SDN BHD [A/C II]": "no DO",
         }, stamped
+        names = ["HANLIM TRADING SDN BHD [A/C I]", "HANLIM TRADING SDN BHD [A/C II]"]
+        with customer_groups({n: "HANLIM TRADING SDN BHD" for n in names}):
+            customer_bases = pickers.customer_bases_with_do({"answers": probe_rows})
+            grouped = candidates_by_kind(gate, compatible, customer_bases)
+        stamped = {c.get("name"): c.get("stamp") for c in grouped.get("customer", [])}
+        assert stamped == {n: "has DO" for n in names}, stamped
 
     def test_the_stamp_arrives_only_through_customer_bases_with_do(
         self,

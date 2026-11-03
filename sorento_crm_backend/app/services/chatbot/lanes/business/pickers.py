@@ -291,6 +291,11 @@ def product_codes_in(probe: Any) -> set[str] | None:
     return codes
 
 
+def ledger_bases(bases: set[str]) -> set[str]:
+    """`bases` without its search-side (typed word) entries: one entry per customer line."""
+    return {b for b in bases if not b.startswith(_TYPED)}
+
+
 def customer_base(value: Any) -> str:
     """The family base of one customer name - `_customer_base` for callers outside."""
     return _customer_base(value)

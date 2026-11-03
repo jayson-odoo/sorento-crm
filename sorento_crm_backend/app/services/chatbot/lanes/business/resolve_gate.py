@@ -1173,7 +1173,8 @@ def measure_customer_picker(
     out["customer_probe_window_days"] = CUSTOMER_PROBE_DEFAULT_WINDOW_DAYS if probe_windowed else None
     bases = pickers.customer_bases_with_do(probe)
     out["customer_bases_with_do"] = sorted(bases) if bases is not None else None
-    out["customer_probe_hits"] = len(bases) if bases is not None else None
+    # Customers with a DO, counted once each (a set also carries each one's search-side entry).
+    out["customer_probe_hits"] = len(pickers.ledger_bases(bases)) if bases is not None else None
     if bases is not None:
         out["customer_probe_skip_reason"] = None
     elif pickers.probe_rows(probe) is None:
