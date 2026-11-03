@@ -148,6 +148,8 @@ describe('PoLinePlacementsBody', () => {
               inquiry_no: 'OI-000001',
               so_number: 'SO416191',
               customer: 'YOTU BUILDER SDN BHD',
+              customer_name: 'YOTU BUILDER SDN BHD',
+              project_label: null,
               agent: 'CONTACT N',
               qty: 6,
               needed_at: 'BRW',
@@ -163,5 +165,34 @@ describe('PoLinePlacementsBody', () => {
     expect(screen.getByText('YOTU BUILDER SDN BHD')).toBeInTheDocument();
     expect(screen.getByText('Location differs')).toBeInTheDocument();
     expect(screen.queryByText(/line-1/)).toBeNull();
+  });
+
+  it('never prints an inquiry\'s project title as its customer (OI-UX-FILTER-SNAPSHOT)', () => {
+    // No issuing-party customer and no synced sales order: the combined `customer` label is
+    // the project title alone, which already sits under Project.
+    renderWithClient(
+      <PoLinePlacementsBody
+        allocation={{
+          ...LINE,
+          dedicated_to: [],
+          placements: [
+            {
+              inquiry_no: 'OI-000002',
+              so_number: 'ZZT-PSO-1',
+              customer: 'ZZT TOWER',
+              customer_name: null,
+              project_label: 'ZZT TOWER',
+              agent: null,
+              qty: 4,
+              needed_at: null,
+              location_differs: false,
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('OI-000002')).toBeInTheDocument();
+    expect(screen.getAllByText('ZZT TOWER')).toHaveLength(1);
   });
 });
