@@ -187,3 +187,16 @@ fixed (red-first):
 2. A DO in the agent's own words above the block read "(not verified)": numbers in a code-built proposal summary
    now back the answer (`loop.verify_answer`).
 3. Console: the photo add / remove confirm now carries "Test turn: nothing was sent." (`note_in_reply`).
+
+### Crew pass on 1b1a6244 (3 Nov), round 3
+
+Steps 5 and 16/17 passed. Fixed before the owner hand test, each red-first:
+
+1. Step 14 hedge line: a write's own "not found" refusal (`Delivery order X not found.`) now backs the model's
+   not-found (`loop._not_found_backed`, the refusal message kept in the turn ledger), so no "I could not confirm
+   that nothing exists" line.
+2. Doubled confirm block / team line: before code appends the proposal block or a confirm note, the model's own
+   copy of it is cut from its text (`loop._drop_copies`); each shows exactly once.
+3. Minor: `crm_my_chat_photos` offers only photos sent after the contact's newest live claim write (filed,
+   withdrawn, photos added), so an earlier claim's photo does not re-attach; the claim tool's text says to attach
+   a photo that could not be read too.

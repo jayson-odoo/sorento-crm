@@ -663,12 +663,44 @@ def _sent_at(stamp: datetime | None) -> str:
     return f"{local.day} {local.strftime('%b %H:%M')}"
 
 
+def _last_claim_action_at(db, contact_id: str) -> datetime | None:
+    """When the contact's newest LIVE claim write ran (a claim filed or withdrawn, photos added), naive UTC. Photos
+    sent before it belong to that earlier claim and are not offered again (crew pass, 3 Nov: step 1's photo
+    re-attached to a later claim)."""
+    from app.models.access import RespondContact
+    from app.models.chatbot_agent import AgentAction
+
+    respond_id = db.query(RespondContact.respond_io_id).filter(RespondContact.id == str(contact_id)).scalar()
+    if not respond_id:
+        return None
+    claim_tools = {CP_CREATE, CP_WITHDRAW, CP_PHOTOS_ADD}
+    rows = (
+        db.query(AgentAction.finished_at, AgentAction.steps)
+        .filter(AgentAction.contact_respond_id == respond_id, AgentAction.user_id == "",
+                AgentAction.status.in_(("executed", "partial")), AgentAction.finished_at.isnot(None))
+        .order_by(AgentAction.finished_at.desc())
+        .limit(25)
+        .all()
+    )
+    for finished, steps in rows:
+        if any(
+            s.get("tool") in claim_tools and s.get("status") == "done" and not (s.get("args") or {}).get("_is_test")
+            for s in steps or [] if isinstance(s, dict)
+        ):
+            return finished.astimezone(timezone.utc).replace(tzinfo=None) if finished.tzinfo else finished
+    return None
+
+
 def _chat_photo_query(db, contact_id: str):
-    """The contact's own photos the media lane stored from its chat (`media_tasks._store_media_bytes`), last day."""
+    """The contact's own photos the media lane stored from its chat (`media_tasks._store_media_bytes`), last day,
+    sent after its newest live claim write."""
     from app.models.entity_attachment import EntityAttachmentLink
     from app.models.resources import Attachment, AttachmentType
 
     since = datetime.utcnow() - timedelta(hours=PHOTO_WINDOW_HOURS)
+    last = _last_claim_action_at(db, contact_id)
+    if last is not None and last > since:
+        since = last
     return (
         db.query(Attachment)
         .join(EntityAttachmentLink, EntityAttachmentLink.attachment_id == Attachment.id)
@@ -1526,7 +1558,8 @@ PORTAL_WRITES: dict[str, WriteDef] = {
                     "same order when given), defect_description in the customer's own words, and within_warranty "
                     "as the customer said it (never guess it; ask). complaint_type, defects_discovered, "
                     "customer_type, contact_person / contact_number (only a site contact the customer names), "
-                    "customer_address and project_title only when given. photo_ids come from crm_my_chat_photos."
+                    "customer_address and project_title only when given. photo_ids come from crm_my_chat_photos: every "
+                    "photo the customer sent for this claim, including one that could not be read."
                 ),
                 "parameters": {
                     "type": "object",

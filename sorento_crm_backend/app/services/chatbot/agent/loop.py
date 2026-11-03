@@ -510,6 +510,13 @@ def _not_found_backed(what: str, call_id: Any, ledger: dict[str, dict], found: s
     if entry["status"] == "empty":
         ids = [str(v).lower() for values in _id_args(entry["args"]).values() for v in values]
         return bool(ids) and all(i in found for i in ids)
+    if entry["status"] in ("denied", "invalid") and "not found" in _fold_text(str(entry.get("message") or "")):
+        # A write's own refusal ("Delivery order X not found.") backs a not-found that names what it named: a
+        # token with a digit when there is one (the number), else a long word (crew pass, 3 Nov).
+        said = _fold_text(str(entry.get("message") or ""))
+        tokens = re.findall(r"[a-z0-9][a-z0-9/_.-]*[a-z0-9]", low)
+        key = [t for t in tokens if re.search(r"\d", t)] or [t for t in tokens if len(t) >= 5]
+        return any(t in said for t in key)
     return False
 
 
@@ -663,9 +670,37 @@ def waiting_reference(action) -> str:
     return "Waiting change, for reference only: " + "; ".join(lines)
 
 
+PROPOSAL_HEAD = "I will make these changes when you confirm:"
+PROPOSAL_TAIL = "Reply yes to go ahead, or tell me what to change."
+
+
+def _drop_copies(reply: str, *, cut_at: list[str] = (), line_starts: list[str] = ()) -> str:
+    """`reply` without the model's own copy of text code appends after it (crew pass, 3 Nov: a confirm block or a
+    "with the team" line copied from history showed twice). A line starting with one of `line_starts` (after a
+    list number) goes; a line holding one of `cut_at` is cut there (the copy runs to the end of its line)."""
+    out: list[str] = []
+    for line in reply.split("\n"):
+        body = re.sub(r"^\s*\d+[.)]\s*", "", line)
+        if any(body.startswith(s) for s in line_starts if s):
+            continue
+        for key in cut_at:
+            at = line.find(key) if key else -1
+            if at >= 0:
+                line = line[:at].rstrip()
+        if not line.strip() and (not out or not out[-1].strip()):
+            continue
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+def _first_sentence(note: str) -> str:
+    head = note.split(". ", 1)[0]
+    return head if len(head) >= 12 else note
+
+
 def proposal_block(lines: list[str]) -> str:
     numbered = "\n".join(f"{n}. {line}" for n, line in enumerate(lines, 1))
-    return f"I will make these changes when you confirm:\n{numbered}\nReply yes to go ahead, or tell me what to change."
+    return f"{PROPOSAL_HEAD}\n{numbered}\n{PROPOSAL_TAIL}"
 
 
 def _propose(
@@ -1459,7 +1494,7 @@ def _run(
                 run.any_tool_result = True
                 ledger[call_id] = {
                     "name": name, "status": out.status,
-                    "args": args if isinstance(args, dict) else {}, "data": out.data,
+                    "args": args if isinstance(args, dict) else {}, "data": out.data, "message": out.message,
                 }
                 if out.status in ("denied", "invalid", "error", "timeout"):
                     run.unchecked.append(TOOL_LABELS.get(name, "another lookup"))
@@ -1604,6 +1639,7 @@ def _run(
     if confirm_notes:
         # After verification, like the proposal block: built by code from the stored steps, so a link is whole.
         # Whatever the status: a confirm that ran made the idea even if the model then failed.
+        reply = _drop_copies(reply, cut_at=[_first_sentence(n) for n in confirm_notes])
         reply = f"{reply}\n\n" + "\n".join(confirm_notes)
     pending = None
     if status != "failed" and steps:
@@ -1614,7 +1650,10 @@ def _run(
             )
             lines = actions.proposal_lines(stored)
             pending = actions.pending_dict(stored)
-            reply = f"{reply}\n\n{proposal_block(lines)}"
+            reply = _drop_copies(
+                reply, cut_at=[PROPOSAL_HEAD, PROPOSAL_TAIL], line_starts=[line[:30] for line in lines if len(line) >= 30]
+            )
+            reply = f"{reply}\n\n{proposal_block(lines)}".strip()
         except Exception:  # noqa: BLE001 - the turn still closes
             logger.warning("agent: storing the proposal failed", exc_info=True)
             db.rollback()

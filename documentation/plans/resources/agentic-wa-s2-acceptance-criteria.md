@@ -14,8 +14,9 @@ Complaint form is visible. Linked staff contacts are unchanged.
 
 - C-3 `crm_my_chat_photos` returns the contact's OWN photos stored from this WhatsApp chat (`chatbot_turn`
   attachments, image mime only) of the last 24 hours, newest first, at most 10; each with its id, the time it was
-  sent and what it shows (the bot's stored read), or "could not be read". Voice notes, other contacts' photos and
-  older photos never appear.
+  sent and what it shows (the bot's stored read), or "could not be read". Voice notes, other contacts' photos,
+  older photos, and photos sent before the contact's newest live claim write (filed, withdrawn, photos added)
+  never appear.
 
 ## Claim (propose)
 
@@ -65,3 +66,10 @@ Complaint form is visible. Linked staff contacts are unchanged.
 - C-18 When the media read fails after the photo was fetched (provider error, unparseable answer), the job is
   still `failed` and metered as today, but the fetched image is stored as the turn's `chatbot_media` attachment,
   so the claim can carry it ("could not be read").
+
+## Reply text (crew pass, 3 Nov)
+
+- C-19 A write's own "not found" refusal backs the agent's not-found: no "I could not confirm that nothing exists"
+  line.
+- C-20 The confirm block and a confirm note ("Complaint <no> is with the team ...") appear exactly once in a reply,
+  even when the model copies them into its own text.
