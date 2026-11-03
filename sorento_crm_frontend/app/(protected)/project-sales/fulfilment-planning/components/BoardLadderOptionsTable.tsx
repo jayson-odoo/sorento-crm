@@ -1,5 +1,6 @@
 'use client';
 
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { statusPillClass } from '@/lib/status-pill';
 import { Badge } from '@/components/ui/badge';
@@ -175,7 +176,9 @@ function debtText(option: BoardLadderOption): string {
   if (!option.debt_so_number && !option.debt_month) return '-';
   const month = option.debt_month ? debtMonthLabel(option.debt_month) : null;
   if (!option.debt_so_number) return month ?? '-';
-  return month ? `${option.debt_so_number} · ${month}` : option.debt_so_number;
+  const party = soCustomerProjectLabel(option.debt_customer_name, option.debt_project_label);
+  const head = month ? `${option.debt_so_number} · ${month}` : option.debt_so_number;
+  return party ? `${head} · ${party}` : head;
 }
 
 const MONTH_NAMES = [

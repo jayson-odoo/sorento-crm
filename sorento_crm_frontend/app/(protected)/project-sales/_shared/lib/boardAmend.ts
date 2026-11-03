@@ -351,6 +351,9 @@ export function borrowCandidatesOf(contribution: BoardContribution): BorrowCandi
       // agent. No cap verdict since v7.1 (R5): any ownership group may donate.
       rung: candidate.rung ?? null,
       donor_so_number: candidate.donor_so_number ?? null,
+      // Display only (OI-UX-FILTER-SNAPSHOT): the donor order's customer and project.
+      donor_customer_name: candidate.donor_customer_name ?? null,
+      donor_project_label: candidate.donor_project_label ?? null,
       donor_line_no: candidate.donor_line_no ?? null,
       donor_agent_code: candidate.donor_agent_code ?? null,
       donor_core_line_id: candidate.donor_core_line_id ?? null,

@@ -1,5 +1,6 @@
 'use client';
 
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import * as React from 'react';
 import { Check, Undo2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -367,7 +368,10 @@ function BoardCellButton({
   // "71 lent to SO415472", one phrase per borrow, across every line in the cell.
   const lent = cell.contributions
     .flatMap((entry) => entry.lent_to ?? [])
-    .map((row) => `${row.qty} lent to ${row.so_number ?? 'another order'}`)
+    .map((row) => {
+      const party = soCustomerProjectLabel(row.customer_name, row.project_label);
+      return `${row.qty} lent to ${row.so_number ?? 'another order'}${party ? ` (${party})` : ''}`;
+    })
     .join(' · ');
   // What purchasing REFUSED, on the line it came back to (AC-H6). PR 1622 (owner, mock v3):
   // the refusal is the ORDER INQUIRY's status, so the cell names the inquiry with the same

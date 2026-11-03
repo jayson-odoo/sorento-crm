@@ -296,6 +296,9 @@ export interface SupplyComponent {
   rung?: string | null;
   /** The donor sales order for a `group_borrow` component (section E.4). */
   donor_so_number?: string | null;
+  /** The donor order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   /** The donor shares this line's own sales agent (section 8). */
@@ -384,6 +387,9 @@ export interface BorrowCandidate {
   rung?: string | null;
   /** The donor sales-order line this row names, for `group_borrow` (section E.4). */
   donor_so_number?: string | null;
+  /** The donor order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
@@ -993,6 +999,9 @@ export interface BoardLadderOption {
    * Debt view. Both absent on `use` and `buy`, which owe nobody.
    */
   debt_so_number?: string | null;
+  /** The debt order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  debt_customer_name?: string | null;
+  debt_project_label?: string | null;
   debt_month?: string | null;
   /** The option the engine proposed. Exactly one option carries it, or none when nothing covers. */
   chosen: boolean;
@@ -1106,6 +1115,9 @@ export interface BoardDecisionBorrow {
   /** Ladder v2 (section E.4): the donor sales-order line this Borrow named. */
   rung?: string | null;
   donor_so_number?: string | null;
+  /** The donor order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   same_agent?: boolean;
@@ -1525,6 +1537,9 @@ export interface BoardLineLending {
   so_number?: string | null;
   /** Its line on that order, so two lines of one order are told apart. */
   line_no?: number | null;
+  /** That order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  customer_name?: string | null;
+  project_label?: string | null;
 }
 
 /** The order inquiry a board row belongs to, in the two words a person reads it by. */
@@ -1652,6 +1667,9 @@ export interface BoardSource {
   /** Ladder v2 (section E): which rung produced this source. */
   rung?: string | null;
   donor_so_number?: string | null;
+  /** The donor order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   same_agent?: boolean;
@@ -1712,6 +1730,9 @@ export interface BoardBorrowCandidate {
    */
   rung?: string | null;
   donor_so_number?: string | null;
+  /** The donor order's customer and project (OI-UX-FILTER-SNAPSHOT). */
+  donor_customer_name?: string | null;
+  donor_project_label?: string | null;
   donor_line_no?: number | null;
   donor_agent_code?: string | null;
   /** Addressing only, never rendered: re-identifies the donor's own line at confirm. */
@@ -2840,6 +2861,9 @@ export interface PlanningHistoryEvent {
   actor: string | null;
   pso_id: string;
   so_no: string;
+  /** The order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
   lines: PlanningHistoryLine[];
   preview?: boolean;
   revision_no?: number;
