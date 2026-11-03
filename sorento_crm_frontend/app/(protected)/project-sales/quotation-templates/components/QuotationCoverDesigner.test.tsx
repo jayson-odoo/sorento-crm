@@ -294,6 +294,21 @@ describe('Cover page design editor (A3, A4)', () => {
     }
   });
 
+  it('B1: while a row is dragged its overlay copy renders outside the dialog', async () => {
+    renderPage();
+    await openAddDesign();
+    const handle = screen.getByRole('button', { name: 'Drag Validity to reorder' });
+    handle.focus();
+    fireEvent.keyDown(handle, { key: ' ', code: 'Space' });
+    await new Promise((r) => setTimeout(r, 50));
+    const copies = await screen.findAllByLabelText('Drag Validity to reorder');
+    expect(copies).toHaveLength(2);
+    const original = copies.find((c) => c.closest('[data-slot="sortable"]'))!;
+    const overlay = copies.find((c) => !c.closest('[data-slot="sortable"]'))!;
+    expect(original.closest('[role="dialog"]')).not.toBeNull();
+    expect(overlay.closest('[role="dialog"]')).toBeNull();
+  });
+
   it('save sends the design and the intro as body_html, and needs a name', async () => {
     renderPage();
     await openAddDesign();

@@ -1432,6 +1432,15 @@ describe('QuotationFormClient cover page preview and editors', () => {
     expect((coverPreview.mock.calls[0][1] as RequestInit).method).toBe('POST');
   });
 
+  it('M1: a new proposal prints PROPOSAL FROM on the cover letter tab, not QUOTATION FROM', async () => {
+    renderForm();
+    await openTab('Cover letter');
+
+    expect(await screen.findByText('OFFER SHEET')).toBeInTheDocument();
+    expect(screen.getByText('Proposal from')).toBeInTheDocument();
+    expect(screen.queryByText('Quotation from')).toBeNull();
+  });
+
   it('has Intro text and Closing text editors, the intro prefilled from the template', async () => {
     renderForm();
     await openTab('Cover letter');

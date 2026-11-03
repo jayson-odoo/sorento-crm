@@ -338,6 +338,24 @@ describe('what each quotation document tab renders', () => {
     await expectIdentityOnScreen();
   });
 
+  it('M1: a proposal prints PROPOSAL FROM on the cover letter tab, not QUOTATION FROM', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ kind: 'proposal' }));
+    renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
+
+    expect(await screen.findByText('Sorento Sdn Bhd')).toBeInTheDocument();
+    expect(screen.getByText('Proposal from')).toBeInTheDocument();
+    expect(screen.queryByText('Quotation from')).toBeNull();
+  });
+
+  it('M1: a quotation prints QUOTATION FROM on the cover letter tab', async () => {
+    getQuotationDocument.mockResolvedValue(quotationDocument({ kind: 'quotation' }));
+    renderTab(`${BASE}/cover-letter`, <QuotationCoverLetterTab />);
+
+    expect(await screen.findByText('Sorento Sdn Bhd')).toBeInTheDocument();
+    expect(screen.getByText('Quotation from')).toBeInTheDocument();
+    expect(screen.queryByText('Proposal from')).toBeNull();
+  });
+
   it('renders the terms tab, and the identity above it', async () => {
     getQuotationDocument.mockResolvedValue(quotationDocument({ terms_html: '<p>30 days</p>' }));
     renderTab(`${BASE}/terms`, <QuotationTermsTab />);
