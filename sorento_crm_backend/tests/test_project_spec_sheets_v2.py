@@ -1624,10 +1624,11 @@ def test_sf3_hints_show_malaysia_time():
         assert hint == "lines taken 03 Nov 2026 01:00"
 
 
-def test_sf7_the_list_costs_the_same_number_of_queries_for_one_sheet_and_five():
+def test_sf7_the_list_costs_the_same_number_of_queries_for_one_sheet_and_for_many_issues():
     from sqlalchemy import event
 
-    from app.database import engine  # noqa: F401
+    from app.models.projects import ProjectQuotation
+    from app.services import project_quotation_service as quotes
     from app.services import project_spec_sheet_service as spec
 
     def count(db, c):
@@ -1648,12 +1649,23 @@ def test_sf7_the_list_costs_the_same_number_of_queries_for_one_sheet_and_five():
     with blank_session() as db:
         c = _chain(db)
         t = _templates(db, c)
-        _make(db, c, templates=t)
+        _make(db, c, templates=t)  # SS1 on issue 1
         one = count(db, c)
-        for _ in range(4):
-            _make(db, c, templates=t)
-        five = count(db, c)
-        assert five == one, (one, five)
+
+        def next_issue():
+            quotes.revise(db, quotation=db.get(ProjectQuotation, c["scope"].id), actor_user_id=c["owner"])
+            return _issue(db, c["document"], c["owner"])
+
+        _make(db, c, templates=t)  # SS2, issue 1
+        _make(db, c, templates=t, source="draft")  # draft based on issue 1
+        issue2 = next_issue()
+        _make(db, c, templates=t, source=issue2.id)  # issue 2
+        _make(db, c, templates=t, source=issue2.id)
+        _make(db, c, templates=t, source="draft")  # draft based on issue 2
+        issue3 = next_issue()
+        _make(db, c, templates=t, source=issue3.id)  # issue 3
+        many = count(db, c)
+        assert many == one, (one, many)
 
 
 def test_nit_a_quotation_with_only_heading_lines_cannot_create():
