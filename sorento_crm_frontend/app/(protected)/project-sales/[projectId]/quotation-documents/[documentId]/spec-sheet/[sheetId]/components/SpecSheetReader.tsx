@@ -174,6 +174,20 @@ export function SpecSheetReader({
     [],
   );
   const { report } = editing;
+  // Phone: picking a layer leaves the canvas free to drag; the inspector sheet opens on demand and
+  // the layer's page is brought to the top so the sheet never covers it.
+  const [sheetOpen, setSheetOpen] = React.useState(false);
+  const selectedPageKey = selection?.pageKey ?? null;
+  React.useEffect(() => {
+    if (!selection) setSheetOpen(false);
+  }, [selection]);
+  const openSheet = () => {
+    setSheetOpen(true);
+    if (selectedPageKey)
+      document
+        .querySelector(`[data-page-wrap="${selectedPageKey}"]`)
+        ?.scrollIntoView?.({ block: 'start' });
+  };
 
   // The local copy stays until the LAST write in flight settles; clearing it on the first would
   // flash the older server copy between two quick edits.
@@ -835,10 +849,10 @@ export function SpecSheetReader({
           {canEdit && isMobile && (
             <Drawer
               modal={false}
-              open={Boolean(selectedLayer)}
-              onOpenChange={(open) => !open && setSelection(null)}
+              open={sheetOpen && Boolean(selectedLayer)}
+              onOpenChange={(open) => !open && setSheetOpen(false)}
             >
-              <DrawerContent className="max-h-[60dvh]">
+              <DrawerContent className="max-h-[45dvh]">
                 <DrawerHeader className="sr-only">
                   <DrawerTitle>Selected layer</DrawerTitle>
                   <DrawerDescription>
@@ -846,22 +860,32 @@ export function SpecSheetReader({
                   </DrawerDescription>
                 </DrawerHeader>
                 {selectedLayer && (
-                  <ReaderInspector
-                    pageKey={selection?.pageKey ?? null}
-                    layer={selectedLayer}
-                    layers={selectedLayers}
-                    controller={
-                      selection
-                        ? controllerRefFor(selection.pageKey).current
-                        : null
-                    }
-                    mode={applyMode}
-                    onModeChange={setApplyMode}
-                    onApplyAll={sendToEveryPage}
-                  />
+                  <div className="min-h-0 overflow-y-auto">
+                    <ReaderInspector
+                      pageKey={selection?.pageKey ?? null}
+                      layer={selectedLayer}
+                      layers={selectedLayers}
+                      controller={
+                        selection
+                          ? controllerRefFor(selection.pageKey).current
+                          : null
+                      }
+                      mode={applyMode}
+                      onModeChange={setApplyMode}
+                      onApplyAll={sendToEveryPage}
+                    />
+                  </div>
                 )}
               </DrawerContent>
             </Drawer>
+          )}
+          {canEdit && isMobile && selectedLayer && !sheetOpen && (
+            <Button
+              className="fixed inset-x-0 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-40 mx-auto w-fit shadow-lg"
+              onClick={openSheet}
+            >
+              Properties
+            </Button>
           )}
         </>
       )}
