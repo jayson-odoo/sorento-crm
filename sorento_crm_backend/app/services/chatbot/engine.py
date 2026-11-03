@@ -5667,6 +5667,12 @@ def _run_stages_body(  # noqa: PLR0915
         known_phone = turn_runtime.contact_phone(db, contact_respond_id)
         turn_no = turn_runtime.turn_number(db, contact_respond_id)
         state_in = turn_runtime.load_state(session_block, profile=profile, turn_no=turn_no)
+        from app.services.chatbot.lanes.business import report_ask as _report_ask_retired
+
+        if _report_ask_retired.asks_the_retired_company(state_in.focus.required_ask):
+            # Owner O-R2 (3 Nov): the report ask never asks the company. A live session still holding that question
+            # (written before the release) is read as no open question, never answered or asked again.
+            state_in.focus.required_ask = None
         remembered_before = session_state.five_keys(session_block)
         state_in, quoted_turn_facts = _quoted_context(
             db,
@@ -6672,7 +6678,7 @@ def _run_stages_body(  # noqa: PLR0915
         # when the parser declared one; a fresh low stock ask keeps only the entities that
         # scope the run. Read before every other seam below.
         from app.services.chatbot import required_fields
-        from app.services.chatbot.lanes.business import chat_report, low_stock_ask, report_ask, sales_company_ask
+        from app.services.chatbot.lanes.business import chat_report, low_stock_ask, report_ask
 
         _message_text = jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         # Security S1: these keys are the ENGINE's own; one the parser emitted (the
@@ -6727,26 +6733,13 @@ def _run_stages_body(  # noqa: PLR0915
         semantic_ask = isinstance(verdict.get(report_ask.OBJECT_KEY), dict)
         if semantic_ask and (open_ask or {}).get("ask") == report_ask.ASK_NAME:
             replaced_ask, open_ask = open_ask, None
-        _company_pick = False
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "company":
-            # The company question's pick from the parser's own output (`sales_company`, `reference_positions`) is the
-            # answer, whatever stray axis the reply also carried: only when the reply types no axis of its own
-            # (`by_words` null or absent, so its `group_by` is a guess) and no count, direction or ranked measure.
-            _candidate = sales_company_ask.as_answer(verdict, open_ask)
-            _typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
-                verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
-            )
-            _declared = _candidate.get("open_question_answer")
-            if not _typed and (_candidate is not verdict or (isinstance(_declared, dict) and _declared.get("mode") == "pick")):
-                # An untyped `group_by` on the answering turn is a guess (R6): the held ask's axis stands.
-                verdict, _company_pick = {**_candidate, "group_by": None}, _candidate is not verdict
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "basis":
             verdict = report_ask.as_basis_answer(verdict, open_ask)  # reference_positions pick an offered option
         _kind_pick = False
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "kind":
             # SALES-ACCOUNT-TYPE PR 2: the word repeated with the parser's `kind_said` is the kind question's pick.
             verdict, _kind_pick = report_ask.as_kind_answer(verdict, open_ask)
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and not _kind_pick and report_ask.names_its_own_ask(
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _kind_pick and report_ask.names_its_own_ask(
             verdict, open_ask, parser_ops=parser_ops
         ):
             replaced_ask, open_ask = open_ask, None  # a new sales ranking ask, not the answer to the open question
@@ -6756,9 +6749,6 @@ def _run_stages_body(  # noqa: PLR0915
             verdict = {**verdict, "chat_report_reading": chat_report.read_reply(db, open_ask, _message_text) or {}}
         if (open_ask or {}).get("ask") == chat_report.ASK_NAME and chat_report.names_its_own_ask(verdict, open_ask):
             open_ask = None  # a new chat report, not the answer to the open question
-        # SALES-COMPANY: a reply naming an offered company ("Sorento" as the parser's company,
-        # its escalation company pick, or a brand word) is that company's pick.
-        verdict = sales_company_ask.as_answer(verdict, open_ask)
         verdict, required_rule = required_fields.reply_verdict(verdict, open_ask, _message_text)
         if required_rule:
             turn_trace.add("required_ask", {"verdict_rule": required_rule, "ask": (open_ask or {}).get("ask")})
@@ -9110,15 +9100,6 @@ def _run_stages_body(  # noqa: PLR0915
                     (e["required_ask"] for e in envelopes or [] if isinstance(e, dict) and isinstance(e.get("required_ask"), dict)),
                     None,
                 )
-                if (
-                    (state_out.focus.required_ask or {}).get("ask") == sales_company_ask.ASK_NAME
-                    and state_out.pending is not None
-                ):
-                    # SALES-COMPANY: the company question is the newest one on the table, so
-                    # an offer still stored from an earlier turn (a sales report's drill offer)
-                    # closes; left open, the reply "Sorento" would answer it. Only this ask:
-                    # every other required ask keeps the stored question as before.
-                    state_out = dataclasses_replace(state_out, pending=None)
                 # The frame lives only through sales ranking turns (one that ran replaces it,
                 # one that asked a required field keeps it); any other ask clears it.
                 state_out.focus.sales_ranking_frame = next(
