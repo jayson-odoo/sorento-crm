@@ -171,9 +171,17 @@ side question belongs to SUPPLIER-ASK-L and is not touched here.
   - MCP presenter (`_report_ask`): one line per company before the Total line, printed only when 2+ companies remain.
   Release: backend and MCP ship in the same release; the old presenter ignores the new key.
 - O-R3 (owner 3 Nov): a held customer is never dropped by a follow-up that does not name a customer. Both paths.
-  Drop point and rule: see "R3 diagnosis" below.
+  Diagnosis (synthetic v71-shaped turns, real ones pending): the customer is lost on the "customer" ANSWER to the
+  customer-or-supplier kind pick (#2066), not later. The pick's options carry no rows (turn/reconcile.py
+  `_option_rows` :110-123) and `turn_runtime._entities_for` `answers_the_plan` (:5972-5986) drops the resolver's
+  customer row because its code is not the typed word, so `customer_ids` is empty; that is why the company question
+  was asked at all, and the answer "sorento" then ran as a brand. Rules: (A, flag off) the picked option answers with
+  the rows of its kind the resolver returned (SUPPLIER-ASK-L still owns whether a sales ask asks it); (B, both paths)
+  a follow-up whose own entities name no customer keeps the held customer (flag on: part of C6-2).
 - O-R4 (owner 3 Nov): "<customer> only" / "customer <customer> only" after a report runs the current report narrowed
-  to that customer, no question, no menu.
+  to that customer, no question, no menu. Flag on: runs today (diagnosis, three verdict shapes), kept as guards. Flag
+  off: re-asks period / basis when v71 does not mark a refine; not fixed there (a coded follow-up rule is what PR B
+  deletes); production gets it with the label move.
 - C6-1 (crew, round 6): a both-table word that is also one of the contact's companies (name or code, data) is asked
   "<WORD>: brand, account type or company?"; an object whose `company` is that word (the model read "company") settles
   it to the company with no question.
