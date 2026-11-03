@@ -200,3 +200,10 @@ Steps 5 and 16/17 passed. Fixed before the owner hand test, each red-first:
 3. Minor: `crm_my_chat_photos` offers only photos sent after the contact's newest live claim write (filed,
    withdrawn, photos added), so an earlier claim's photo does not re-attach; the claim tool's text says to attach
    a photo that could not be read too.
+
+### Crew re-check on d1078b5d (3 Nov), round 4
+
+Fixes 1-3 passed. Step 14 wording: when the agent asks about the warranty first, the DO reaches the create call from an
+earlier message, so on the answer turn the number was redacted. A number a tool states in its own refusal now backs the
+answer (`loop.verify_answer`). Hand-test step 3 aligned with C-7 ("want to claim warranty" may read as within warranty
+Yes).

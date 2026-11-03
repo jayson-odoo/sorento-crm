@@ -533,6 +533,10 @@ def verify_answer(args: Any, ledger: dict[str, dict], user_text: str) -> tuple[l
             # A proposal's summary is built by code from checked values (a DO number, a quantity), so the
             # answer may repeat them (crew console pass, 2 Nov: "(not verified)" on a claim's DO).
             backed |= _number_leaves({"summary": entry["data"].get("summary")})
+        elif entry["status"] in ("denied", "invalid") and entry.get("message"):
+            # A tool's own refusal ("Delivery order 88123-4471 not found.") states what it refused, so the answer
+            # may repeat it (crew re-check, 3 Nov: a DO given turns earlier was redacted in the not-found reply).
+            backed |= _number_leaves({"message": entry["message"]})
     user_forms = _supported_forms([user_text])
     bad_numbers: list[str] = []
     for _, _, written, forms in _figures(text, _data_text_blank(ledger, text)):
