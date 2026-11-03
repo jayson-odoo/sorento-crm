@@ -327,3 +327,229 @@ def test_generic_upload_key_is_unchanged():
     assert new_upload_storage_key("product", "product", "E1", "A1", "x.png") == "product/A1/x.png"
     # No entity id: a promotion upload falls through to the generic shape, as before.
     assert new_upload_storage_key("promotion", "promotion", None, "A1", "x.png") == "promotion/A1/x.png"
+
+
+# --------------------------------------------------------------------------- one resize routine (AC-1)
+
+#: Every Image.open outside the rendition service, and why it is not a resize of a stored image.
+#: A new entry needs a reason as good as these; a new resize goes through `downscale` instead.
+_IMAGE_OPEN_ALLOWED = {
+    "app/services/image_normalizer.py": "CMYK detection / RGB conversion at upload; no resize",
+    "app/services/dealer_kit/catalog_photos.py": "crops artwork out of a catalogue PDF; dhash",
+    "app/services/dealer_kit/flyer_extraction.py": "crops artwork out of a flyer PDF; no resize",
+    "app/services/project_spec_sheet_service.py": "reads a picture's size to decide its print copy",
+}
+
+
+def test_image_open_lives_only_in_the_rendition_service():
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    offenders = []
+    for path in sorted((root / "app").rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        if rel == "app/services/image_thumbnailer.py" or rel in _IMAGE_OPEN_ALLOWED:
+            continue
+        if re.search(r"\bImage\.open\(", path.read_text(encoding="utf-8")):
+            offenders.append(rel)
+    assert offenders == [], (
+        f"{offenders}: resize a stored image with image_thumbnailer.downscale, or add the module "
+        "to _IMAGE_OPEN_ALLOWED with the reason it is not a resize"
+    )
+
+
+def test_every_upload_path_writes_both_renditions():
+    """The upload paths call `store_thumbnail`, which IS `store_renditions` (thumb + medium)."""
+    import pathlib
+
+    assert rt.store_thumbnail is rt.store_renditions
+    root = pathlib.Path(__file__).resolve().parent.parent
+    sites = [
+        "app/api/v1/resources/attachments.py",
+        "app/services/entity_attachment_service.py",
+        "app/services/catalogue_photo_service.py",
+        "app/services/form_comment_service.py",
+        "app/services/dealer_kit/asset_service.py",
+        "app/tasks/import_tasks.py",
+        "app/api/v1/public/portal.py",
+        "app/services/product_image_service.py",
+    ]
+    for rel in sites:
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "store_thumbnail" in text or "store_renditions" in text, rel
+        assert "image_thumbnailer import" in text, rel
+
+
+# --------------------------------------------------------------------------- store_renditions (AC-2, AC-3)
+
+
+class Bucket:
+    def __init__(self, fail_on=None):
+        self.objects = {}
+        self.headers = {}
+        self.downloads = []
+        self.exists_calls = 0
+        self.fail_on = fail_on
+
+    def upload_file(self, file_content, file_path, content_type=None, cache_control=None, **_kw):
+        if self.fail_on and file_path.endswith(self.fail_on):
+            raise RuntimeError("storage down")
+        self.objects[file_path] = file_content
+        self.headers[file_path] = (content_type, cache_control)
+        return file_path, file_path
+
+    def download_file(self, key):
+        self.downloads.append(key)
+        return self.objects[key]
+
+    def file_exists(self, key):
+        self.exists_calls += 1
+        return key in self.objects
+
+
+def _photo(size=(3000, 2000), mode="RGB", fmt="JPEG"):
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new(mode, size, (10, 120, 200) if mode == "RGB" else (10, 120, 200, 0)).save(buffer, format=fmt)
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def cdn(monkeypatch):
+    from app.services import storage_router
+
+    monkeypatch.setattr(storage_router, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}")
+
+
+def test_store_renditions_writes_thumb_and_medium_from_one_decode(cdn, monkeypatch):
+    import io
+
+    from PIL import Image
+
+    original = _photo()
+    decoded = []
+    real = rt.downscale
+
+    def spy(raw, *a, **k):
+        decoded.append(raw is original)
+        return real(raw, *a, **k)
+
+    monkeypatch.setattr(rt, "downscale", spy)
+    bucket = Bucket()
+    url = rt.store_renditions(bucket, "r2", "p/a.jpg", original, "image/jpeg")
+
+    assert url == "https://cdn.test/p/a.jpg.thumb.jpg"
+    assert decoded.count(True) == 1  # the original is decoded once; the thumb comes from the medium
+    for key, edge in (("p/a.jpg.thumb.jpg", 320), ("p/a.jpg.medium.jpg", 1024)):
+        assert bucket.headers[key] == ("image/jpeg", "public, max-age=31536000, immutable")
+        with Image.open(io.BytesIO(bucket.objects[key])) as im:
+            assert max(im.size) == edge
+
+
+def test_store_renditions_flattens_transparency_onto_white(cdn):
+    import io
+
+    from PIL import Image
+
+    bucket = Bucket()
+    rt.store_renditions(bucket, "r2", "p/cut.png", _photo((800, 800), "RGBA", "PNG"), "image/png")
+    with Image.open(io.BytesIO(bucket.objects["p/cut.png.medium.jpg"])) as im:
+        assert im.convert("RGB").getpixel((5, 5)) == (255, 255, 255)
+
+
+def test_store_renditions_never_fails_the_upload(cdn):
+    assert rt.store_renditions(Bucket(), "r2", "p/a.pdf", b"%PDF-1.4", "application/pdf") is None
+    assert rt.store_renditions(Bucket(), "r2", "p/b.jpg", b"not an image", "image/jpeg") is None
+    # A failed medium upload still leaves the thumb.
+    bucket = Bucket(fail_on=".medium.jpg")
+    assert rt.store_renditions(bucket, "r2", "p/c.jpg", _photo(), "image/jpeg")
+    assert "p/c.jpg.thumb.jpg" in bucket.objects and "p/c.jpg.medium.jpg" not in bucket.objects
+
+
+# --------------------------------------------------------------------------- rendition_urls (AC-4, AC-7, AC-8)
+
+
+class _Row:
+    def __init__(self, id, file_path, thumbnail_path=None, mime="image/jpeg"):
+        self.id = id
+        self.file_path = file_path
+        self.thumbnail_path = thumbnail_path
+        self.storage_provider = "r2"
+        self.mime_type = mime
+
+
+class _Query:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def filter(self, *_a):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class _Db:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def query(self, _model):
+        return _Query(self.rows)
+
+
+@pytest.fixture
+def storage(monkeypatch):
+    from app.services import storage_router
+
+    bucket = Bucket()
+    signed = []
+
+    def sign(key, *, provider=None, expires_in=3600, strict=False):
+        signed.append(key)
+        return f"https://signed.test/{key}"
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: bucket)
+    monkeypatch.setattr(storage_router, "resolve_signed_url", sign)
+    monkeypatch.setattr(rt, "_default_redis", lambda: None)
+    return bucket, signed
+
+
+def test_a_missing_medium_is_made_once_then_served_without_touching_storage(storage):
+    bucket, signed = storage
+    bucket.objects["p/a.jpg"] = _photo()
+    db = _Db([_Row("A", "https://cdn.test/p/a.jpg")])
+    released = []
+
+    out = rt.rendition_urls(db, ["A"], "medium", release=lambda: released.append(1))
+    assert out == {"A": "https://signed.test/p/a.jpg.medium.jpg"}
+    assert released == [1]
+    assert bucket.downloads == ["p/a.jpg"]
+    assert "p/a.jpg.thumb.jpg" in bucket.objects  # both made from the one download
+
+    bucket.downloads.clear()
+    calls = bucket.exists_calls
+    again = rt.rendition_urls(db, ["A"], "medium")
+    assert again == out
+    assert bucket.downloads == [] and bucket.exists_calls == calls
+    # Never the original.
+    assert "p/a.jpg" not in signed
+
+
+def test_a_stored_thumbnail_is_signed_as_is_and_an_unreadable_file_is_left_out(storage):
+    bucket, signed = storage
+    bucket.objects["p/bad.jpg"] = b"not an image"
+    db = _Db([
+        _Row("T", "https://cdn.test/p/t.jpg", thumbnail_path="https://cdn.test/p/t.jpg.thumb.jpg"),
+        _Row("B", "https://cdn.test/p/bad.jpg"),
+    ])
+    out = rt.rendition_urls(db, ["T", "B"], "thumb")
+    assert out == {"T": "https://signed.test/p/t.jpg.thumb.jpg"}
+    assert bucket.downloads == ["p/bad.jpg"]
+    # The failure is remembered: asking again does not read the original again.
+    rt.rendition_urls(db, ["B"], "thumb")
+    assert bucket.downloads == ["p/bad.jpg"]
+    assert "p/bad.jpg" not in signed and "p/t.jpg" not in signed
