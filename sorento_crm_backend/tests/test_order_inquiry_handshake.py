@@ -37,6 +37,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import engine
+from app.models.order import SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
@@ -47,6 +48,7 @@ from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiryRow,
+    ProjectSalesOrderLine,
 )
 from app.services import project_seed_service
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
@@ -1441,6 +1443,15 @@ AUTO_PLACE = f"{LIST}/auto-place"
 SUMMARY = f"{LIST}/summary"
 
 
+def _date_the_line(db, row, when):
+    """OI-ONE-DELIVERY-DATE: a row is due when its SO LINE is, so a test that says "due 2030"
+    dates the row's mirror and core lines too."""
+    mirror = db.get(ProjectSalesOrderLine, row.so_line_id)
+    mirror.delivery_date = when
+    if mirror.core_sales_order_line_id:
+        db.get(SalesOrderLine, mirror.core_sales_order_line_id).required_date = when
+
+
 def _due(world, row, when):
     """The row's delivery date, stated rather than inherited: the horizon is read off it
     and the fixture's own required date says nothing about 2030.
@@ -1458,6 +1469,7 @@ def _due(world, row, when):
     date - `_drop_suggested_links` is the same helper the row's own state writers call.
     """
     row.delivery_date = when
+    _date_the_line(world.db, row, when)
     world.db.flush()
     service = ProjectOrderInquiryService(world.db)
     if service._links_of(str(row.id)):

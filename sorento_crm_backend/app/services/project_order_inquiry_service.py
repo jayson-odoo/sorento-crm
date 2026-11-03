@@ -118,6 +118,10 @@ from app.models.projects import (
     ProjectTask,
 )
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import (
+    line_date_sql as oi_line_date_sql,
+    resolve as resolve_oi_date,
+)
 from app.services.oi_auto_confirm_backfill import (
     cancelled_line_stmt,
     compute_done,
@@ -4787,7 +4791,14 @@ class ProjectOrderInquiryService:
             "project": facts.get("project"),
             "item_code": row.item_code,
             "qty": qty_str,
-            "delivery_date": _handover_fmt_date(row.delivery_date),
+            # OI-ONE-DELIVERY-DATE: the SO line's date, the one source of the email, the
+            # preview and the Excel attachment. `was` below stays the told date.
+            # A stand-in (a split part, a settle's new values) prints the date it carries.
+            "delivery_date": _handover_fmt_date(
+                row.delivery_date
+                if isinstance(row, SimpleNamespace)
+                else resolve_oi_date(self.db, [row])[str(row.id)].date
+            ),
             # AC-1: "very, very important" to the owner - blank, never the word "None",
             # when the row carries no stock location (`_build_handover_context`'s own
             # subject-scope reduction already treats a blank the same way).
@@ -8384,14 +8395,14 @@ class ProjectOrderInquiryService:
         total = base.with_entities(func.count(OrderInquiryRow.id)).scalar() or 0
 
         sortable = {
-            "delivery_date": OrderInquiryRow.delivery_date,
+            "delivery_date": oi_line_date_sql(OrderInquiryRow),
             "item_code": OrderInquiryRow.item_code,
             "qty": OrderInquiryRow.qty,
             "verb": OrderInquiryRow.verb,
             "state": OrderInquiryRow.state,
             "created_at": OrderInquiryRow.created_at,
         }
-        column = sortable.get(sort, OrderInquiryRow.delivery_date)
+        column = sortable.get(sort, sortable["delivery_date"])
         ordering = column.desc() if str(direction).lower() == "desc" else column.asc()
         rows = (
             base.order_by(ordering, OrderInquiryRow.item_code.asc())
@@ -8514,6 +8525,7 @@ class ProjectOrderInquiryService:
                 )
             )
         out: List[Dict[str, Any]] = []
+        one_date = resolve_oi_date(self.db, rows)
         for row in rows:
             meta = context.get(row.order_inquiry_id, {})
             trace = traces.get(row.id, {})
@@ -8541,7 +8553,7 @@ class ProjectOrderInquiryService:
                     "is_amendment": meta.get("is_amendment", False),
                     "item_code": row.item_code,
                     "qty": _qty_str(_dec(row.qty)),
-                    "delivery_date": row.delivery_date,
+                    "delivery_date": one_date[str(row.id)].date,
                     "stock_location": row.stock_location,
                     "verb": row.verb,
                     "remark": self._remark(row),
@@ -8607,7 +8619,7 @@ class ProjectOrderInquiryService:
                         if row.previous_qty is not None
                         else None
                     ),
-                    "previous_delivery_date": row.previous_delivery_date,
+                    "previous_delivery_date": one_date[str(row.id)].was,
                     "previous_item_code": row.previous_item_code,
                     "splits": splits_by_line.get(str(row.so_line_id), [])
                     if row.so_line_id
@@ -8690,7 +8702,7 @@ class ProjectOrderInquiryService:
             self.db.query(
                 OrderInquiryLink,
                 OrderInquiryRow.stock_location,
-                OrderInquiryRow.delivery_date,
+                oi_line_date_sql(OrderInquiryRow),
                 PurchaseOrder.id,
                 PurchaseOrder.po_number,
                 PurchaseOrder.issue_date,
@@ -9071,7 +9083,7 @@ class ProjectOrderInquiryService:
         rows = (
             self.db.query(
                 OrderInquirySuggestedLink,
-                OrderInquiryRow.delivery_date,
+                oi_line_date_sql(OrderInquiryRow),
                 PurchaseOrder.id,
                 PurchaseOrderLine.expected_date,
                 Warehouse.warehouse_code,
@@ -9809,13 +9821,14 @@ class ProjectOrderInquiryService:
                 (row.rejected_at for row in inquiry_rows if row.rejected_at),
                 default=None,
             ) or datetime.utcnow()
+            one_date = resolve_oi_date(self.db, inquiry_rows)
             lines = [
                 {
                     "item_code": row.item_code,
                     "qty": _qty_str(row.qty),
                     "delivery_date": (
-                        row.delivery_date.strftime("%d/%m/%Y")
-                        if row.delivery_date
+                        one_date[str(row.id)].date.strftime("%d/%m/%Y")
+                        if one_date[str(row.id)].date
                         else None
                     ),
                 }
@@ -11997,9 +12010,12 @@ class ProjectOrderInquiryService:
                 still -= take
         return takes
 
-    @staticmethod
     def _within_window(
-        row: OrderInquiryRow, candidates: Sequence[Dict[str, Any]], lead_days: int
+        self,
+        row: OrderInquiryRow,
+        candidates: Sequence[Dict[str, Any]],
+        lead_days: int,
+        needed_by: Optional[date] = None,
     ) -> List[Dict[str, Any]]:
         """The candidates this row may be linked to AUTOMATICALLY
         (`PLAN-oi-cascade-skip-early-arrival.md` S2/S4) - the ONE filter both
@@ -12020,13 +12036,15 @@ class ProjectOrderInquiryService:
         still listed in the Link dialog (`po_candidates_for_row` runs this same filter
         only for `recommended`/`default_take`, never to drop a row from what it shows).
         """
+        if needed_by is None:
+            needed_by = resolve_oi_date(self.db, [row])[str(row.id)].date
         return [
             candidate
             for candidate in candidates
             if candidate.get("own_so_claim")
             or candidate.get("cited")
             or not arrives_outside_window(
-                candidate.get("expected_date"), row.delivery_date, lead_days
+                candidate.get("expected_date"), needed_by, lead_days
             )
         ]
 
@@ -12500,7 +12518,7 @@ class ProjectOrderInquiryService:
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquirySuggestedLink.row_id)
             .filter(column == target_id, *self._open_for_buying_clauses())
             .order_by(
-                OrderInquiryRow.delivery_date.desc().nullslast(),
+                oi_line_date_sql(OrderInquiryRow).desc().nullslast(),
                 OrderInquirySuggestedLink.suggested_at.desc(),
             )
             .all()
@@ -13365,18 +13383,14 @@ class ProjectOrderInquiryService:
         return LINK_HORIZON_NONE if link_up_to is None else LINK_HORIZON_DATE
 
     @staticmethod
-    def _after_horizon(row: OrderInquiryRow, link_up_to: Optional[date]) -> bool:
+    def _after_horizon(needed_by: Optional[date], link_up_to: Optional[date]) -> bool:
         """Is this row due beyond the horizon, and therefore not this pass's to link?
 
         A row with NO delivery date is INSIDE it (AC-LH4): the quantity is still owed,
         nobody has said when, and refusing it a document would leave it unbought for a date
         that was never stated.
         """
-        return (
-            link_up_to is not None
-            and row.delivery_date is not None
-            and row.delivery_date > link_up_to
-        )
+        return link_up_to is not None and needed_by is not None and needed_by > link_up_to
 
     def auto_place_for_products(self, product_ids: Optional[Sequence[str]], **kwargs: Any) -> Dict[str, Any]:
         """`_auto_place_for_products` with the per-pass document memo held (CONFIRM-DIALOG-
@@ -13645,6 +13659,8 @@ class ProjectOrderInquiryService:
         # quadratic as the table grows. Updated in memory as the loop writes each
         # row's own answer (see `_release_own_contribution` below), never re-queried.
         suggested_totals_by_target = self._suggested_totals_by_target()
+        # OI-ONE-DELIVERY-DATE: the SO line's date is when the row is needed, one read.
+        needed_by_row = resolve_oi_date(self.db, rows)
         for row in rows:
             product_id = product_id_by_row.get(row.id)
             if not product_id:
@@ -13686,7 +13702,7 @@ class ProjectOrderInquiryService:
             # `continue`s without ever reading it, so fetching it earlier cost one
             # `_suggested_of_row` query per after-horizon row for nothing; this branch
             # never drops a suggestion, so it never needed the fetch in the first place.
-            if self._after_horizon(row, link_up_to):
+            if self._after_horizon(needed_by_row[str(row.id)].date, link_up_to):
                 after_horizon += 1
                 continue
             # AC-LT-14/G2, Should fix 4 (review round 2): this row's OWN current
@@ -13738,7 +13754,9 @@ class ProjectOrderInquiryService:
             lead_days = lead_times.get(product_id)
             if lead_days is None:
                 lead_days = DEFAULT_LEAD_TIME_DAYS
-            candidates = self._within_window(row, candidates, lead_days)
+            candidates = self._within_window(
+                row, candidates, lead_days, needed_by_row[str(row.id)].date
+            )
             if not candidates:
                 # Same reasoning as the empty-candidates branch above: nothing left
                 # inside the lead-time window is nothing to keep suggesting.
@@ -13974,6 +13992,7 @@ class ProjectOrderInquiryService:
         # ordered by each product's first appearance - `auto_place_for_products` still
         # processes products in the same order it always has.
         product_by_row = self._resolve_product_ids_bulk(rows)
+        needed_by = resolve_oi_date(self.db, rows)
         groups: Dict[Optional[str], List[OrderInquiryRow]] = {}
         group_order: List[Optional[str]] = []
         for row in rows:
@@ -13988,7 +14007,7 @@ class ProjectOrderInquiryService:
         def _sort_key(row: OrderInquiryRow, scores: Dict[str, float]) -> Tuple[float, date, datetime]:
             return (
                 -scores.get(row.id, 0.0),
-                row.delivery_date or date.max,
+                needed_by[str(row.id)].date or date.max,
                 row.created_at or datetime.max,
             )
 
@@ -14010,7 +14029,7 @@ class ProjectOrderInquiryService:
                 demand_rows.append(
                     {
                         "row_key": row.id,
-                        "required_date": row.delivery_date,
+                        "required_date": needed_by[str(row.id)].date,
                         "order_date": order_dates.get(row.order_inquiry_id),
                         "payment_terms_days": (
                             terms_by_customer.get(customer_id) if customer_id else None

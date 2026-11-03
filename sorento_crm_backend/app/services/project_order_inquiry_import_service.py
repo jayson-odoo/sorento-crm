@@ -598,6 +598,15 @@ def _line_pick_key(candidate: tuple) -> tuple:
     )
 
 
+def _on_sheet_date(existing: Any, sheet_date: Optional[date]) -> bool:
+    """Does this existing row state the sheet's date? OI-ONE-DELIVERY-DATE: a row raised from
+    a sheet carries the SO line's date and keeps the sheet's own as its Was
+    (`previous_delivery_date`), so either side answers to the sheet row that raised it."""
+    return existing.delivery_date == sheet_date or (
+        sheet_date is not None and existing.previous_delivery_date == sheet_date
+    )
+
+
 def _restated_existing(
     order_lines: List[tuple],
     mirror_by_core: Dict[str, str],
@@ -636,7 +645,7 @@ def _restated_existing(
                 existing.verb in _LINE_OWN_ROW_VERBS
                 and (existing.item_code or "").strip() == item
                 and _dec(existing.qty) == qty
-                and existing.delivery_date == row.delivery_date
+                and _on_sheet_date(existing, row.delivery_date)
             ):
                 return candidate
     for candidate in order_lines:
@@ -984,7 +993,7 @@ def _used_row_candidate(
         already_used = any(
             other.redirected_to_pool
             and _dec(other.qty) == sheet_qty
-            and other.delivery_date == row.delivery_date
+            and _on_sheet_date(other, row.delivery_date)
             for other in mirror_rows
         )
         if already_used:
@@ -1054,7 +1063,7 @@ def _top_up_matches_sheet_row(mirror_rows: Sequence[Any], row: Any) -> bool:
     """
     sheet_qty = _dec(row.qty)
     for sibling in _line_own_rows(mirror_rows):
-        if _dec(sibling.qty) == sheet_qty and sibling.delivery_date == row.delivery_date:
+        if _dec(sibling.qty) == sheet_qty and _on_sheet_date(sibling, row.delivery_date):
             return True
         if (
             sibling.previous_qty is not None
@@ -1482,6 +1491,13 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
     are loaded in ONE query (S3), selecting only the columns either resolver (or the
     S8-style comparison) reads (S10) rather than hydrating full rows.
     """
+    # OI-ONE-DELIVERY-DATE (3 Nov 2026): RETIRED. An OI row's date is its SO line's, so a
+    # re-upload no longer restates a migrated row's date to the sheet's (the 18 Sep ruling
+    # this machinery served is reversed, card Q2). Nothing is decided here, so no match
+    # carries a `repair_row_id`, `rows_delivery_date_updated` reads 0 and `apply` takes the
+    # ALREADY_RAISED branch. The shape A/B/C resolvers below are dead code kept for a
+    # follow-up removal.
+    return
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
 
     # Every already-raised line's mirror id and its own required_date (S8), keyed by
@@ -2814,17 +2830,23 @@ class _Raiser:
             so_line_id=mirror_id,
             item_code=row.item_code,
             qty=_dec(row.qty),
-            # The SHEET's own date, and the sales order line's only when the sheet states
-            # none (18 Sep 2026, reversing 7.4: "we should have followed the sheet's date").
-            # SO314593's open AutoCount lines are 220 @ 01/03/2027 while the sheet said
-            # 182 @ 1.9.2026, and 7.4 wrote the LINE's date onto every migrated row, so the
-            # worklist read 01/03/2027 for a delivery purchasing was working to on
-            # 1.9.2026, and the Was/Now (i) printed the same wrong date twice. An ORDER
-            # BACK row still takes the line's date - the words in the date cell are never a
-            # date, and `verb` is what says the quantity is owed against something already
-            # ordered. The sheet's date still decides which line a row matches and whether
-            # two rows restate one instruction; that reading is unchanged.
-            delivery_date=row.delivery_date or match.core_line.required_date,
+            # The SALES ORDER LINE's date, one date everywhere (3 Nov 2026, OI-ONE-DELIVERY-
+            # DATE; owner: "we only need one delivery date, which is the SO line delivery
+            # date"; card Q2). This REVERSES the 18 Sep 2026 ruling that wrote the SHEET's
+            # date (SO314593: sheet 1.9.2026, line 01/03/2027), which left the OI and Stock
+            # Debt printing two dates for one delivery. The sheet's date is kept as the Was
+            # (`previous_delivery_date`) when it differs, so the worklist still shows what
+            # purchasing was working to. A line with no date at all keeps the sheet's own.
+            # The sheet's date still decides which line a row matches and whether two rows
+            # restate one instruction; that reading is unchanged.
+            delivery_date=match.core_line.required_date or row.delivery_date,
+            previous_delivery_date=(
+                row.delivery_date
+                if match.core_line.required_date
+                and row.delivery_date
+                and row.delivery_date != match.core_line.required_date
+                else None
+            ),
             stock_location=location or match.line_location,
             verb=IV_ORDER_BACK if row.order_back else IV_ORDER,
             # Never a citation any more (section 8): the remark neither picks the line nor
@@ -2877,7 +2899,9 @@ def _apply_settle_recovery(entry: Any, match: _Match, now: datetime) -> None:
     from app.services.project_order_inquiry_service import _qty_str
 
     previous_qty = entry.qty
-    previous_date = entry.delivery_date
+    # The sheet's own date: the row was just raised with the SO line's date and kept the
+    # sheet's as its Was (OI-ONE-DELIVERY-DATE), so that Was is what this settle restates.
+    previous_date = entry.previous_delivery_date or entry.delivery_date
     entry.qty = match.settle_buy_qty
     if match.settle_required_date is not None:
         entry.delivery_date = match.settle_required_date

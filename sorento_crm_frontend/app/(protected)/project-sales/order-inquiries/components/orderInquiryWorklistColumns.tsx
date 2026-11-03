@@ -26,6 +26,8 @@ import {
   movedNoteOf,
   previousValueOf,
 } from '../../_shared/lib/orderInquiryAck';
+import { BoardChangeTable } from '../../fulfilment-planning/components/BoardChangeTable';
+import { orderInquiryDateChange } from '../../_shared/lib/orderInquiryDateChange';
 import { DecisionTrailButton } from '../../_shared/components/DecisionTrailButton';
 import { OrderInquiryVerbPill, ReservePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
@@ -819,9 +821,11 @@ export function QtyCell({ row }: { row: OrderInquiryWorklistRow }) {
 export function DeliveryDateCell({ row }: { row: OrderInquiryWorklistRow }) {
   const changed = ackStateOf(row) === 'changed';
   if (!row.delivery_date) return <Muted>No date</Muted>;
+  const dateChange = orderInquiryDateChange(row);
   return (
     <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
       {formatDateInMalaysia(row.delivery_date)}
+      {dateChange ? <BoardChangeTable annotation={dateChange} compact /> : null}
       {changed ? <WorklistPill testId={`delivery-date-changed-${row.id}`}>Changed</WorklistPill> : null}
     </span>
   );

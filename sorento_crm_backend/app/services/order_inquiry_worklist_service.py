@@ -35,6 +35,7 @@ import logging
 from datetime import date, datetime
 from decimal import Decimal
 from itertools import groupby
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import Date, String, and_, case, cast, func, or_, select, text
@@ -44,6 +45,12 @@ from sqlalchemy.orm import Session, aliased
 from app.models.base import get_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.services.oi_delivery_date import (
+    line_date_expr as oi_line_date_expr,
+    line_date_sql as oi_line_date_sql,
+    resolve as oi_resolve,
+    was_expr as oi_was_expr,
+)
 from app.models.procurement import (
     InboundShipment,
     PurchaseOrder,
@@ -825,6 +832,12 @@ _RAISE_HISTORY_COLUMN = _RAISE_HISTORY.label("raise_history")
 # confirmed themselves. Blank only when the row traces to no line at all.
 _LOCATION = func.coalesce(OrderInquiryRow.stock_location, Warehouse.warehouse_code)
 
+#: OI-ONE-DELIVERY-DATE: the row's delivery date is its SO line's, off the two line joins
+#: this query already makes (`app.services.oi_delivery_date` owns the rule), and the Was
+#: half of the Was / Now table beside it.
+_LINE_DATE = oi_line_date_expr(OrderInquiryRow, ProjectSalesOrderLine, SalesOrderLine)
+_LINE_WAS = oi_was_expr(OrderInquiryRow, _LINE_DATE)
+
 #: WHO acknowledged the row and who rejected it, by name. Two aliases of `users`, because
 #: the same query already joins that table once for the person who RAISED the row and the
 #: three answers are different people. Both OUTER and both on a primary key, so a row
@@ -841,7 +854,7 @@ _SORT_EXPRESSIONS = {
     "item_code": OrderInquiryRow.item_code,
     "product_name": Product.product_name,
     "qty": OrderInquiryRow.qty,
-    "delivery_date": OrderInquiryRow.delivery_date,
+    "delivery_date": _LINE_DATE,
     "project_customer": _PROJECT_CUSTOMER,
     "customer_name": _CUSTOMER_NAME,
     "project_title": _PROJECT_TITLE,
@@ -871,7 +884,7 @@ _COLUMNS = (
     OrderInquiryRow.so_line_id.label("so_line_id"),
     OrderInquiryRow.item_code.label("item_code"),
     OrderInquiryRow.qty.label("qty"),
-    OrderInquiryRow.delivery_date.label("delivery_date"),
+    _LINE_DATE.label("delivery_date"),
     OrderInquiryRow.state.label("state"),
     OrderInquiryRow.verb.label("verb"),
     OrderInquiryRow.note.label("note"),
@@ -932,7 +945,7 @@ _COLUMNS = (
     # The Was half of a CHANGED row's Was / Now table, as figures. The row's note carries
     # the same fact as a sentence for a person; nothing parses that sentence.
     OrderInquiryRow.previous_qty.label("previous_qty"),
-    OrderInquiryRow.previous_delivery_date.label("previous_delivery_date"),
+    _LINE_WAS.label("previous_delivery_date"),
     OrderInquiryRow.previous_item_code.label("previous_item_code"),
     # AC-RL-16 (`PLAN-oi-replan-received-links.md` S3): reaches the wire so the Qty
     # cell's `redirected` mark can read it.
@@ -1471,8 +1484,8 @@ class OrderInquiryWorklistService:
         if delivery_month:
             first, following = _month_bounds(delivery_month)
             base = base.filter(
-                OrderInquiryRow.delivery_date >= first,
-                OrderInquiryRow.delivery_date < following,
+                _LINE_DATE >= first,
+                _LINE_DATE < following,
             )
         if raised_date:
             base = base.filter(_RAISED_DAY == _as_day(raised_date))
@@ -1685,12 +1698,12 @@ class OrderInquiryWorklistService:
             )
         if delivery_from:
             base = base.filter(
-                OrderInquiryRow.delivery_date
+                _LINE_DATE
                 >= _as_day(delivery_from, code="invalid_delivery_from")
             )
         if delivery_to:
             base = base.filter(
-                OrderInquiryRow.delivery_date
+                _LINE_DATE
                 <= _as_day(delivery_to, code="invalid_delivery_to")
             )
         if axis and axis_key:
@@ -2109,7 +2122,7 @@ class OrderInquiryWorklistService:
             self.db.query(
                 OrderInquiryRow.id,
                 OrderInquiryRow.so_line_id,
-                OrderInquiryRow.delivery_date,
+                oi_line_date_sql(OrderInquiryRow).label("delivery_date"),
                 OrderInquiryRow.item_code,
                 ProjectSalesOrderLine.product_id,
                 OrderInquiry.inquiry_no,
@@ -2336,6 +2349,7 @@ class OrderInquiryWorklistService:
                 self.db.query(
                     OrderInquiryRow.id,
                     OrderInquiryRow.order_inquiry_id,
+                    OrderInquiryRow.so_line_id,
                     OrderInquiryRow.item_code,
                     OrderInquiryRow.qty,
                     OrderInquiryRow.delivery_date,
@@ -2353,10 +2367,17 @@ class OrderInquiryWorklistService:
                 .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
                 .all()
             )
+            one_date = oi_resolve(self.db, extra_rows)
             for candidate in extra_rows:
                 key = (candidate.order_inquiry_id, candidate.item_code)
                 if key in missing and key not in values_by_key:
-                    values_by_key[key] = candidate
+                    shown = one_date[str(candidate.id)]
+                    values_by_key[key] = SimpleNamespace(
+                        qty=candidate.qty,
+                        delivery_date=shown.date,
+                        previous_qty=candidate.previous_qty,
+                        previous_delivery_date=shown.was,
+                    )
 
         result: Dict[str, List[Dict[str, Any]]] = {}
         for row_id, (order_inquiry_id, codes) in hosts_by_row.items():
@@ -3363,7 +3384,7 @@ class OrderInquiryWorklistService:
         }
 
     def _by_month(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-        month = func.to_char(OrderInquiryRow.delivery_date, "YYYY-MM")
+        month = func.to_char(_LINE_DATE, "YYYY-MM")
         rows = (
             self._base(**filters)
             .with_entities(
@@ -3371,7 +3392,7 @@ class OrderInquiryWorklistService:
                 func.count(OrderInquiryRow.id),
                 func.coalesce(func.sum(OrderInquiryRow.qty), 0),
             )
-            .filter(OrderInquiryRow.delivery_date.isnot(None))
+            .filter(_LINE_DATE.isnot(None))
             .group_by(month)
             .order_by(month.asc())
             .all()
@@ -3559,7 +3580,7 @@ class OrderInquiryWorklistService:
         """
         axis_key, axis_label = self._matrix_axis(axis)
         period = cast(
-            func.date_trunc(self._matrix_trunc(by), OrderInquiryRow.delivery_date), Date
+            func.date_trunc(self._matrix_trunc(by), _LINE_DATE), Date
         )
         stages = self._stage_rows(
             filters,
@@ -3569,7 +3590,7 @@ class OrderInquiryWorklistService:
                 period.label("period"),
             ),
             extra_filters=(
-                OrderInquiryRow.delivery_date.isnot(None),
+                _LINE_DATE.isnot(None),
                 axis_key.isnot(None),
                 # AC-X5: cancelled is out, actioned stays - narrower than
                 # `_NOT_OWED_STATES` (which `_kinds`/`kind=` drop both by).
@@ -3749,7 +3770,7 @@ class OrderInquiryWorklistService:
             self._base(**filters)
             .with_entities(*_EXPORT_COLUMNS)
             .order_by(
-                OrderInquiryRow.delivery_date.asc().nulls_last(),
+                _LINE_DATE.asc().nulls_last(),
                 Supplier.supplier_name.asc().nulls_last(),
                 OrderInquiryRow.item_code.asc().nulls_last(),
                 # Raised order, then the bigger row, before the random id: the same rows

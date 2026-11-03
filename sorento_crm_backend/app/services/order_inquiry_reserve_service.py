@@ -60,6 +60,7 @@ from app.models.project_so import (
 )
 from app.services.certificate_service import today_malaysia
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import resolve as resolve_oi_date
 
 logger = logging.getLogger(__name__)
 
@@ -326,10 +327,11 @@ def _row_context(db: Session, row: OrderInquiryRow, rr: OrderInquiryReserveReque
     templates print it at different MOMENTS (before the request changes nothing, after the
     reserve link has already landed) rather than under two different keys."""
     status, status_kind = _status_of(rr)
+    needed_by = resolve_oi_date(db, [row])[str(row.id)].date
     return {
         "item_code": row.item_code,
-        "delivery_date": _fmt_date(row.delivery_date),
-        "delivery_iso": row.delivery_date.isoformat() if row.delivery_date else None,
+        "delivery_date": _fmt_date(needed_by),
+        "delivery_iso": needed_by.isoformat() if needed_by else None,
         "qty": _qty_str(row.qty),
         "remaining": _qty_str(_remaining(db, row)),
         "qty_requested": _qty_str(rr.qty_requested),
@@ -458,11 +460,12 @@ def _build_commit_context(
         row = item["row"]
         balance = _qty_str(_remaining(db, row))
         status, status_kind = _status_of(rr)
+        needed_by = resolve_oi_date(db, [row])[str(row.id)].date
         rows_ctx.append(
             {
                 "item_code": row.item_code,
-                "delivery_date": _fmt_date(row.delivery_date),
-                "delivery_iso": row.delivery_date.isoformat() if row.delivery_date else None,
+                "delivery_date": _fmt_date(needed_by),
+                "delivery_iso": needed_by.isoformat() if needed_by else None,
                 "qty": _qty_str(row.qty),
                 "qty_requested": _qty_str(rr.qty_requested),
                 "location": _warehouse_code(db, rr.warehouse_id),

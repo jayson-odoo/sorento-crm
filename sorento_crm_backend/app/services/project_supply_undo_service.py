@@ -59,6 +59,7 @@ from app.services.audit_service import (
     log_audit,
 )
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import resolve as resolve_oi_date
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
     _dec as _oi_dec,
@@ -969,6 +970,8 @@ def _undo_email_lines(
         .all()
     }
 
+    # OI-ONE-DELIVERY-DATE (AC-A6): the date an OI line prints is its SO line's.
+    one_date = resolve_oi_date(db, list(rows_by_pk.values()))
     lines: List[Dict[str, Any]] = []
     for entry in journal:
         if entry["table"] != oi_table or entry["op"] not in ("insert", "update"):
@@ -981,7 +984,7 @@ def _undo_email_lines(
                 {
                     "item_code": row.item_code,
                     "qty": _qty_str(row.qty),
-                    "delivery_date": _handover_fmt_date(row.delivery_date),
+                    "delivery_date": _handover_fmt_date(one_date[str(row.id)].date),
                     "outcome": "removed",
                 }
             )
@@ -991,6 +994,7 @@ def _undo_email_lines(
         delivery_date = old.get("delivery_date", row.delivery_date)
         if isinstance(delivery_date, str):
             delivery_date = date.fromisoformat(delivery_date)
+        delivery_date = one_date[str(row.id)].date or delivery_date
         qty_str = _qty_str(qty)
         date_str = _handover_fmt_date(delivery_date)
         lines.append(

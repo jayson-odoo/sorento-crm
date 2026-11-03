@@ -101,6 +101,10 @@ from app.models.projects import Project
 from app.models.scm import ItemClassification
 from app.models.user import User
 from app.services.error_handler import AppException
+from app.services.oi_delivery_date import (
+    line_date_sql as oi_line_date_sql,
+    resolve as resolve_oi_date,
+)
 from app.services.project_line_split_service import display_line_nos
 from app.services.scm import order_link_service
 from app.services.scm.front_planning_engine import (
@@ -1629,7 +1633,7 @@ def _placed_links(db: Session, project_line_id: Optional[str]) -> dict:
     if not arrivals:
         # Nothing on the document says when: the purchase was placed to meet the date the
         # row asked for, so that is the honest expectation.
-        arrivals = [r.delivery_date for r in rows if r.delivery_date]
+        arrivals = [d.date for d in resolve_oi_date(db, rows).values() if d.date]
     return {
         "qty": qty_text(total),
         "po_qty": qty_text(po_qty),
@@ -1683,9 +1687,9 @@ def _waiting_rows(
     if skip:
         query = query.filter(OrderInquiryRow.so_line_id.notin_(skip))
     if due_before is not None:
-        query = query.filter(OrderInquiryRow.delivery_date < due_before)
+        query = query.filter(oi_line_date_sql(OrderInquiryRow) < due_before)
     candidates = query.order_by(
-        OrderInquiryRow.delivery_date.asc().nullslast(),
+        oi_line_date_sql(OrderInquiryRow).asc().nullslast(),
         OrderInquiryRow.created_at.asc(),
     ).all()
     if not candidates:
@@ -4148,7 +4152,7 @@ def _shift_links_off_retired_lines(
             # so a survivor carrying one has headroom a shifted placement can fill.
             OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK, IV_RESERVE_AND_ORDER)),
         )
-        .order_by(OrderInquiryRow.delivery_date.asc().nullslast(),
+        .order_by(oi_line_date_sql(OrderInquiryRow).asc().nullslast(),
                   OrderInquiryRow.created_at.asc())
         .all()
     )
