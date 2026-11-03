@@ -262,3 +262,28 @@ def test_groups_whose_names_differ_only_by_punctuation_or_legal_form_are_separat
         )
     assert sorted(sorted(f) for f in out["picker_families"].values()) == sorted([[a], [b], [c]]), out["picker_families"]
     assert sorted(o["uuids"] for o in options) == sorted([[a], [b], [c]]), options
+
+
+# ============================================================ review 2: the "has DO" stamp follows the list rule
+
+
+def _do_row(customer: str, delivered: bool) -> dict[str, Any]:
+    return {"customer_name": customer, "actual_delivery_date": "2026-10-01" if delivered else None}
+
+
+def test_an_ungrouped_ledger_with_no_do_never_reads_has_do_because_a_sibling_has_one():
+    """Reviewer round 2: the picker's DO stamp keyed rows by the trading-name rule, so with ungrouped ledgers now
+    separate lines, "- [A/C III]" (no DO) read "has DO" because "- [A/C I]" had one. Grouped, the group's line
+    reads "has DO" when any of its ledgers has one."""
+    from app.services.chatbot.lanes.business import pickers
+
+    rows = [_do_row(G1, True), _do_row(U1, False)]
+    bases = pickers._bases_with_do(rows)
+    assert pickers.customer_stamp(G1, bases) == "has DO"
+    assert pickers.customer_stamp(U1, bases) == "no DO"
+    assert pickers.customer_stamp(U2, bases) == "no DO"
+
+    with lf.customer_groups({G1: NAME, G2: NAME}):
+        bases = pickers._bases_with_do([_do_row(G2, True), _do_row(U1, False)])
+        assert pickers.customer_stamp(G1, bases) == "has DO"  # its group's other ledger has one
+        assert pickers.customer_stamp(U1, bases) == "no DO"

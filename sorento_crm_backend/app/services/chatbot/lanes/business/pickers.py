@@ -22,6 +22,11 @@ import re
 from typing import Any
 
 from app.services.chatbot import jsc
+from app.services.ledger_family import ledger_family_key, trading_name_key
+
+#: Prefixes a search-side entry in a `customer_bases_with_do` set: the trading name of a row
+#: with a DO, for a roster line that is a typed WORD rather than a ledger.
+_TYPED = "~"
 
 # JS `\d` is ASCII-only; Python's matches every Unicode decimal, so `[0-9]` it is. `$`
 # becomes `\Z` because Python's `$` also matches before a trailing newline.
@@ -33,9 +38,6 @@ _CUSTOMER_LABEL = re.compile(r"^\s*customer\s*\Z", re.IGNORECASE)
 # this label on every row. It is what says a DO exists: an order row on its own says only
 # that an order exists, which is a different question and the one the picker used to answer.
 _ACTUAL_DELIVERY_LABEL = re.compile(r"^\s*actual\s*delivery\s*date\s*\Z", re.IGNORECASE)
-_BRACKET_OR_PAREN = re.compile(r"\[[^\]]*\]|\([^)]*\)")
-_LEGAL_FORM = re.compile(r"\bSDN\.?\s*BHD\.?\b|\bSDN\b|\bBHD\b")
-_NON_ALNUM_UPPER = re.compile(r"[^A-Z0-9]+")
 
 # `dym-annotate`'s `_PAGE_SATURATION`, retuned to the WINDOWED page (2026-08-25). Nothing
 # in the envelope reports truncation, so a page that comes back AT the server's hard limit
@@ -177,14 +179,12 @@ def annotate_incoming(gate: dict[str, Any] | None, *, probe: Any) -> dict[str, A
 
 
 def _customer_base(value: Any) -> str:
-    """`base` - the same base-name rule the picker groups by, so an order row's
-    "MASTILE KLANG SDN BHD [A/C I]" matches the "MASTILE KLANG SDN BHD" line it came from.
+    """`base` - the key the customer lists group by (`ledger_family_key`): an order row's
+    ledger matches the line of the customer GROUP it sits in, else the line of that one
+    ledger. Never the trading-name rule (CUSTOMER-GROUP-GATE, owner ruling 3 Nov 2026): an
+    ungrouped ledger with no DO must not read "has DO" because a sibling ledger has one.
     """
-    s = jsc.nullish_str(value).upper()
-    s = _BRACKET_OR_PAREN.sub(" ", s)
-    s = _LEGAL_FORM.sub(" ", s)
-    s = _NON_ALNUM_UPPER.sub(" ", s)
-    return s.strip()
+    return ledger_family_key(jsc.nullish_str(value).strip())
 
 
 def _row_field(a: Any, label_re: "re.Pattern[str]") -> Any:
@@ -234,9 +234,13 @@ def _bases_with_do(rows: list[Any]) -> set[str]:
     for row in rows:
         if not _row_has_do(row):
             continue
-        base = _customer_base(_customer_of_row(row))
+        name = _customer_of_row(row)
+        base = _customer_base(name)
         if base:
             with_do.add(base)
+        typed = trading_name_key(jsc.nullish_str(name))
+        if typed:
+            with_do.add(_TYPED + typed)
     return with_do
 
 
@@ -292,7 +296,7 @@ def customer_base(value: Any) -> str:
     return _customer_base(value)
 
 
-def customer_stamp(name: Any, bases_with_do: set[str] | None) -> str | None:
+def customer_stamp(name: Any, bases_with_do: set[str] | None, *, typed: bool = False) -> str | None:
     """The ONE stamp a customer picker line carries (PICKER-ONE, owner 13 Oct 2026).
 
     "has DO" / "no DO" by the line's family base against `customer_bases_with_do`'s
@@ -301,7 +305,12 @@ def customer_stamp(name: Any, bases_with_do: set[str] | None) -> str | None:
     the owner's (console pass 3, 6 Sep 2026): a plain hyphen before it, never an em-dash,
     and no window hedge ("recent") in the line. Every customer roster is stamped here,
     whichever path built it, so one customer reads the same in every picker.
+
+    `typed` is a line that is the contact's own typed WORD, not a ledger: it is matched the way
+    search matches a word (its trading name). A ledger line is matched by the list rule, so an
+    ungrouped ledger never reads "has DO" from a sibling (CUSTOMER-GROUP-GATE).
     """
     if bases_with_do is None:
         return None
-    return "has DO" if _customer_base(name) in bases_with_do else "no DO"
+    key = _TYPED + trading_name_key(jsc.nullish_str(name)) if typed else _customer_base(name)
+    return "has DO" if key in bases_with_do else "no DO"

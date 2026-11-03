@@ -77,3 +77,9 @@ owner a reviewed grouping list for those, separately.
 - Known and accepted: `session_state._legacy_option` (pre-rearch session shape) and the gate's
   pinned-pick lookup key by label alone; the engine path carries each option's `uuids`, so no
   figure changes (pinned by `test_chat_pick_carry.py::test_p3_*`).
+
+## Review round 2
+
+- The "has DO" / "no DO" line stamp (`pickers._customer_base`) keyed rows by the trading-name rule, so an
+  ungrouped ledger with no DO read "has DO" from a sibling. A ledger line now matches by the list rule
+  (`ledger_family_key`); a typed-word line (no row behind it) matches by `trading_name_key`, as search does.
