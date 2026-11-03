@@ -37,7 +37,7 @@ def contact(db, name: str) -> str:
 
 
 def agent(db, contact_id, code: str) -> SalesAgent:
-    row = SalesAgent(id=uid(), sales_agent=f"ZZT{code}{uid()[:4]}", contact_id=contact_id, company_id=SORENTO)
+    row = SalesAgent(id=uid(), sales_agent=f"ZZT{code}{uid()[:8]}", contact_id=contact_id, company_id=SORENTO)
     db.add(row)
     db.flush()
     return row
