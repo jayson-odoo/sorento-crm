@@ -2410,7 +2410,7 @@ describe('CONFIRM-REMARK-FIX: one email dry run per read, for the order on scree
     await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
   });
 
-  it('a superseded email dry run is cancelled: at most one in flight', async () => {
+  it('a superseded email dry run is cancelled: at most one in flight; the same body is not re-run', async () => {
     serveSplits({ 'pso-so-1': LINE3_READ() });
     await mountWith(savedBoard(), ['SO000001']);
     await openConfirmGuide();
@@ -2431,7 +2431,30 @@ describe('CONFIRM-REMARK-FIX: one email dry run per read, for the order on scree
     const heldSignal = held?.[1] as AbortSignal | undefined;
     expect(heldSignal).toBeDefined();
     expect(heldSignal?.aborted).toBe(false);
-    // Another board read lands while it is still out (the board re-read after another save).
+    // CONFIRM-DIALOG-SPEED: another board read carrying the SAME body leaves the run out
+    // standing (no second 40 s dry run for nothing).
+    await act(async () => {
+      await lastClient?.refetchQueries({ type: 'active' });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(emailDryRuns()).toHaveLength(2);
+    expect(heldSignal?.aborted).toBe(false);
+    // A read whose decision moved (a newer save elsewhere) cancels it and runs again.
+    getPlanningBoard.mockResolvedValue(
+      mapContributions(boardOf([SO1_L3]), (entry) =>
+        entry.project_line_id === 'pl-1-3'
+          ? {
+              ...entry,
+              saved_remark: 'ORDER',
+              draft: {
+                decision: { verdict: 'approved', remark: 'ELSEWHERE' },
+                saved_by: 'Another Planner',
+                saved_at: '2026-11-02T05:00:00Z',
+              },
+            }
+          : entry,
+      ),
+    );
     await act(async () => {
       await lastClient?.refetchQueries({ type: 'active' });
     });
@@ -2580,6 +2603,51 @@ describe('CONFIRM-DIALOG-SPEED: the Review split never waits on the email dry ru
     await waitFor(() => expect(confirm).toBeEnabled());
     expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument();
     expect(pressDryRuns()).toHaveLength(0);
+  });
+
+  it('the email dry run starts as the guide opens, beside the board re-read, and stands when that read changes nothing', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(savedBoard(), ['SO000001']);
+    const board = savedBoard();
+    let release: () => void = () => {};
+    getPlanningBoard.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(board);
+        }),
+    );
+    let answer: (value: unknown) => void = () => {};
+    previewConfirmMany.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    await openConfirmGuide();
+    // The board re-read is still out, and the dry run is already running.
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    const heldSignal = emailDryRuns()[0][1] as AbortSignal | undefined;
+    // The sheet still waits for the re-read.
+    expect(screen.queryByTestId('split-line-3')).not.toBeInTheDocument();
+    await act(async () => release());
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Same body after the read: the run out stands, no second one.
+    expect(emailDryRuns()).toHaveLength(1);
+    expect(heldSignal?.aborted).toBe(false);
+    expect(screen.getByTestId('confirm-guide-words-loading')).toHaveTextContent(
+      'Preparing email preview...',
+    );
+    await act(async () => {
+      answer({
+        results: [
+          { pso_id: 'pso-so-1', ok: true, preview: true, email_lines: [{ so_line_id: 'pl-1-3', remark: 'DELAY' }] },
+        ],
+      });
+    });
+    await waitFor(() => expect(within(page).getByTestId('split-line-3')).toHaveTextContent('DELAY'));
+    expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument();
   });
 
   it('opening Confirm while the board is already reading joins that read, never a second one', async () => {

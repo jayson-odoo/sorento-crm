@@ -579,7 +579,7 @@ export function ConfirmGuideDialog({
               role="status"
               className="w-full text-xs text-muted-foreground"
             >
-              Reading the purchasing email
+              Preparing email preview...
             </p>
           ) : null}
           <Button

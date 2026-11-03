@@ -2284,8 +2284,8 @@ export function FulfilmentBoardPanel({
   }>({ status: 'idle', byOrder: new Map() });
   /** CONFIRM-REMARK-FIX: the planning record of the guide page on screen (`onPageChange`). */
   const [guidePagePso, setGuidePagePso] = React.useState<string | null>(null);
-  /** Per order: the board read its email words were dry-run for (one dry run per read). */
-  const emailWordsRead = React.useRef(new Map<string, number>());
+  /** Per order: the dry run body its email words were read for (one dry run per body). */
+  const emailWordsRead = React.useRef(new Map<string, string>());
   const closeGuide = React.useCallback(() => setGuideOpen(false), []);
   /**
    * OI-SPLIT-CONFIRM-POLISH (owner, SO426939): Review split is ALWAYS the editable sheet. An
@@ -2475,33 +2475,80 @@ export function FulfilmentBoardPanel({
    * replaces. The Confirm step runs none; the press runs its own.
    */
   const emailRun = React.useRef(0);
+  /**
+   * CONFIRM-DIALOG-SPEED (owner, 3 Nov 2026; prod: the dry run is 36-46 s, the board read
+   * 6-20 s): the dry run starts the moment the guide opens, on the decisions this tab
+   * holds, beside the board re-read rather than after it. Runs are keyed by the BODY they
+   * send, not by the read: when the re-read lands and the order's body is the same, the run
+   * already out (or done) stands; only a changed body (a decision saved elsewhere, a remark
+   * saved on the page) cancels it and runs again. The sheet itself still waits for the
+   * re-read (`refreshing`), so no word is shown off a read older than the last save.
+   */
+  const emailInFlight = React.useRef<{ psoId: string; key: string; abort: AbortController } | null>(
+    null,
+  );
   const buildConfirmOrdersRef = React.useRef(buildConfirmOrders);
   buildConfirmOrdersRef.current = buildConfirmOrders;
   const previewConfirmManyRef = React.useRef(previewConfirmMany);
   previewConfirmManyRef.current = previewConfirmMany;
+  const cancelEmailRun = React.useCallback(() => {
+    emailInFlight.current?.abort.abort();
+    emailInFlight.current = null;
+    emailRun.current += 1;
+  }, []);
   React.useEffect(() => {
     if (!guideOpen) {
+      cancelEmailRun();
       emailWordsRead.current = new Map();
       return undefined;
     }
-    if (guideRefreshing || guideRefreshFailed || !rawBoard.data) return undefined;
+    if (guideRefreshFailed) {
+      cancelEmailRun();
+      return undefined;
+    }
+    if (!rawBoard.data) return undefined;
     const psoId = guidePagePso;
-    const readAt = boardReadAt;
-    if (!psoId || emailWordsRead.current.get(psoId) === readAt) {
+    if (!psoId) {
       // Nothing to read for this page: whatever was loading was superseded.
+      cancelEmailRun();
       setGuideEmail((current) =>
         current.status === 'loading' ? { ...current, status: 'ready' } : current,
       );
       return undefined;
     }
-    const run = ++emailRun.current;
-    const abort = new AbortController();
-    setGuideEmail((current) => ({ ...current, status: 'loading' }));
+    let live = true;
+    // A moment after the render, so the decisions a read brought in (the seeding effect)
+    // are in the body.
     const timer = window.setTimeout(() => {
       void (async () => {
+        let body: ReturnType<typeof emailPreviewBody> = null;
         try {
           const built = await buildConfirmOrdersRef.current(new Set(), { adopt: 'defer' });
-          const body = emailPreviewBody(built?.body, psoId);
+          body = emailPreviewBody(built?.body, psoId);
+        } catch {
+          body = null;
+        }
+        if (!live) return;
+        const key = body ? JSON.stringify(body) : '';
+        if (emailWordsRead.current.get(psoId) === key) {
+          // This body was already read: its words stand.
+          if (emailInFlight.current?.psoId !== psoId || emailInFlight.current.key !== key) {
+            cancelEmailRun();
+          }
+          setGuideEmail((current) =>
+            current.status === 'loading' ? { ...current, status: 'ready' } : current,
+          );
+          return;
+        }
+        const out = emailInFlight.current;
+        // The same body is already out: it stands, whatever read prompted this pass.
+        if (out && out.psoId === psoId && out.key === key) return;
+        cancelEmailRun();
+        const run = emailRun.current;
+        const abort = new AbortController();
+        emailInFlight.current = { psoId, key, abort };
+        setGuideEmail((current) => ({ ...current, status: 'loading' }));
+        try {
           let words: ReadonlyMap<string, string> | null = null;
           if (body) {
             const dry = await previewConfirmManyRef.current.mutateAsync({
@@ -2512,7 +2559,8 @@ export function FulfilmentBoardPanel({
             if (entry?.ok && entry.email_lines) words = emailWordsByLine(entry.email_lines);
           }
           if (run !== emailRun.current) return;
-          emailWordsRead.current.set(psoId, readAt);
+          emailInFlight.current = null;
+          emailWordsRead.current.set(psoId, key);
           setGuideEmail((current) => {
             const byOrder = new Map(current.byOrder);
             if (words) byOrder.set(psoId, words);
@@ -2520,22 +2568,23 @@ export function FulfilmentBoardPanel({
             return { status: 'ready', byOrder };
           });
         } catch {
-          // Cancelled because the page or the read moved on: not a failed read. Whatever
+          // Cancelled because the page or the body moved on: not a failed read. Whatever
           // replaced it (a new run, or a page already read) owns the status now.
-          if (abort.signal.aborted) return;
-          if (run === emailRun.current)
-            setGuideEmail((current) => ({ ...current, status: 'failed' }));
+          if (abort.signal.aborted || run !== emailRun.current) return;
+          emailInFlight.current = null;
+          setGuideEmail((current) => ({ ...current, status: 'failed' }));
         }
       })();
     }, 0);
     return () => {
+      // A newer pass decides whether the run out still stands; it is never cancelled here.
+      live = false;
       window.clearTimeout(timer);
-      abort.abort();
     };
     // `boardReadAt`, never `board.data` (rebuilt on renders, a render loop) nor
     // `rawBoard.dataUpdatedAt` (a save's cache patch moves it: two dry runs per save, F3).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [guideOpen, guideRefreshing, guideRefreshFailed, boardReadAt, guidePagePso]);
+  }, [guideOpen, guideRefreshFailed, boardReadAt, guidePagePso]);
 
   /**
    * OI-SPLIT-GUIDE (UAC F26): the board's own Split delivery gets the same Remark facts for
