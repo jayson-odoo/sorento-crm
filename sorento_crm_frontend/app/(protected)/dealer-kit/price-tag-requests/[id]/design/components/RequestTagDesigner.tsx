@@ -204,6 +204,19 @@ function fallBackOutOfRangeSubjects(
   return { tags: next, affected };
 }
 
+/**
+ * Whether the server will take a design write for this request: mirrors
+ * `PriceTagRequestService.validate_designable` (a claimed `new`, `designing`,
+ * `changes_requested`, or a `proof_ready` marketing holds).
+ */
+export function isDesignableRequest(
+  request: Pick<PriceTagRequestDetail, 'status' | 'assigned_to_id'>,
+): boolean {
+  const status = (request.status ?? '').toLowerCase();
+  if (status === 'designing' || status === 'changes_requested') return true;
+  return (status === 'new' || status === 'proof_ready') && !!request.assigned_to_id;
+}
+
 interface Props {
   request: PriceTagRequestDetail;
   initialDoc: TagSheetDoc | null;
@@ -961,9 +974,19 @@ export function RequestTagDesigner({
   // the teardown request is sent `keepalive` (a keepalive body is capped at
   // 64KB, which a busy tag sheet exceeds - see the service).
   const teardownRef = useRef(false);
+  // The server takes a draft only while the request is in design (the same
+  // rule as `validate_designable`); once it is approved or handed over, a
+  // stray autosave answers 409 and the indicator read "Save failed" after a
+  // perfectly good Mark ready for collection. Read through a ref so a status
+  // change lands in the very next save, pending ones included.
+  const designableRef = useRef(isDesignableRequest(request));
+  designableRef.current = isDesignableRequest(request);
   const { status, savedAt, schedule, flush, retry } = useAutosave<TagSheetDoc>(
     useCallback(
-      (next: TagSheetDoc) => onAutosave(next, { keepalive: teardownRef.current }),
+      (next: TagSheetDoc) =>
+        designableRef.current
+          ? onAutosave(next, { keepalive: teardownRef.current })
+          : Promise.resolve(),
       [onAutosave],
     ),
   );
@@ -997,7 +1020,7 @@ export function RequestTagDesigner({
     const isAutoClone = autoCloneRef.current;
     autoCloneRef.current = false;
     lastSeenDocRef.current = doc;
-    if (isInitial || isAutoClone) return;
+    if (isInitial || isAutoClone || !designableRef.current) return;
     schedule(doc);
   }, [doc, schedule]);
 

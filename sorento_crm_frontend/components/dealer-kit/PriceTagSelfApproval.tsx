@@ -192,7 +192,6 @@ export function PriceTagSelfApproval({
 
   const footer = (
     <div className="space-y-2">
-      {missingText && built && <p className="text-sm text-muted-foreground">{missingText}</p>}
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={onEdit}>
           <PencilLine className="size-4 mr-1" />
@@ -214,28 +213,46 @@ export function PriceTagSelfApproval({
     </div>
   );
 
+  // Why Approve is off, said where the button is (crew pass: the reason used to
+  // sit under the sheet, below the fold at 1280).
+  const approveBlockedReason = missingText ?? (failed ? 'The tag could not be drawn.' : null);
+
   return (
-    <DesignViewer
-      docNumber={request.doc_number ?? 'Design'}
-      payload={failed ? null : (built?.payload ?? null)}
-      loading={loading}
-      emptyMessage={failed ? 'Tag unavailable' : 'No tag template yet'}
-      emptyHint={
-        failed
-          ? 'The tag could not be drawn. Escalate it to marketing.'
-          : (missingText ?? 'Escalate it to marketing.')
-      }
-      footer={footer}
-      headerActions={
-        <Button size="sm" onClick={() => void approve()} disabled={!built || missing.length > 0 || approving}>
-          {approving ? (
-            <Loader2 className="size-4 mr-1 animate-spin" />
-          ) : (
-            <Check className="size-4 mr-1" />
-          )}
-          Approve
-        </Button>
-      }
-    />
+    <div className="space-y-2">
+      {missingText && built && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {missingText}
+        </p>
+      )}
+      <DesignViewer
+        docNumber={request.doc_number ?? 'Design'}
+        payload={failed ? null : (built?.payload ?? null)}
+        loading={loading}
+        emptyMessage={failed ? 'Tag unavailable' : 'No tag template yet'}
+        emptyHint={
+          failed
+            ? 'The tag could not be drawn. Escalate it to marketing.'
+            : (missingText ?? 'Escalate it to marketing.')
+        }
+        footer={footer}
+        headerActions={
+          // A disabled button fires no hover, so the reason sits on its wrapper.
+          <span title={approveBlockedReason ?? undefined} className="inline-flex">
+            <Button
+              size="sm"
+              onClick={() => void approve()}
+              disabled={!built || missing.length > 0 || approving}
+            >
+              {approving ? (
+                <Loader2 className="size-4 mr-1 animate-spin" />
+              ) : (
+                <Check className="size-4 mr-1" />
+              )}
+              Approve
+            </Button>
+          </span>
+        }
+      />
+    </div>
   );
 }

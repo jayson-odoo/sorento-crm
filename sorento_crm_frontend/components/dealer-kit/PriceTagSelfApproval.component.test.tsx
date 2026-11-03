@@ -128,5 +128,12 @@ describe('PriceTagSelfApproval with a line that has no template', () => {
       ).toBeInTheDocument(),
     );
     expect(screen.getByRole('button', { name: /approve/i })).toBeDisabled();
+    // Said above the sheet, before the drawing, and as the button's tooltip.
+    const reason = screen.getByRole('status');
+    expect(reason).toHaveTextContent('No tag template yet for C-2.');
+    expect(screen.getByRole('button', { name: /approve/i }).parentElement).toHaveAttribute(
+      'title',
+      'No tag template yet for C-2. Escalate it to marketing.',
+    );
   });
 });
