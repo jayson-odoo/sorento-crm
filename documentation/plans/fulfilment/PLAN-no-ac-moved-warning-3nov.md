@@ -1,6 +1,6 @@
 # PLAN: NO-AC-MOVED-WARNING
 
-Status: in progress. Track: small fix track (frontend only, no migration, no auth/RBAC change).
+Status: in review, PR #2123. Track: small fix track (frontend only, no migration, no auth/RBAC change).
 UAC: `no-ac-moved-warning-3nov-acceptance-criteria.md`.
 
 ## Why
@@ -35,6 +35,7 @@ dry run per change, Was -> Now / NEW DATE on pending changes, order remark in th
 
 - `FulfilmentBoardPanel.confirmGuide.test.tsx`: a saved Borrow on a line a pending change suggests
   something else for: the Review split shows no "AutoCount moved this line", no Keep, no Take
-  suggestion, Next is on, and Confirm posts the saved decision. Red on main.
+  suggestion and Next is on (red on main); Confirm posts the saved decision (a regression guard:
+  the warning never blocked Confirm, so this one is green on main too).
 - `ConfirmGuideDialog.moved.test.tsx`: the warning tests go; the fresh-read test stays.
 - `confirmPreviewFresh.test.ts`: the `suggestionMovedOf` tests go with the function.

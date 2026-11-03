@@ -2113,7 +2113,7 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('saved again'));
   });
 
-  it('a failed re-read on open writes nothing from the stale view: no Next, no warning buttons, a Retry', async () => {
+  it('a failed re-read on open writes nothing from the stale view: no Next, a Retry', async () => {
     serveSplits({ 'pso-so-1': LINE3_READ() });
     await mountWith(
       boardWithRemark('ORDER BACK', { verdict: 'approved' }, '2026-11-02T01:00:00Z'),
@@ -2128,8 +2128,6 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     expect(failed).toHaveTextContent('could not be read again');
     expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
     expect(screen.queryByTestId('split-line-3')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Take suggestion' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Keep' })).not.toBeInTheDocument();
     // Retry reads again; once it answers the page is usable.
     getPlanningBoard.mockResolvedValue(
       boardWithRemark('ORDER 3', { verdict: 'approved' }, '2026-11-02T01:00:00Z'),
