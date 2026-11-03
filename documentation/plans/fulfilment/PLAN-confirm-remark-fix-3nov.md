@@ -31,6 +31,12 @@ Cause: a batch Confirm rebuilds each line from the batch row's stored compositio
 line had no own remark and the email printed the generated words. Fix: both carry it. A plain
 Confirm was already right.
 
+F2-dates (crew re-check at 70e528d7, SO418869 CB771): with the planner's words the line is
+rebuilt from the decision snapshots alone, so a revision that had already frozen AutoCount's new
+date (while purchasing's row still held the old one) printed DELIVERY 15/11 and a blank NEW DATE
+against the popup's 01/10 -> 15/11. The rebuilt line now keeps the Was the line's rows told
+(`_keep_rows_was`); the snapshot's own Was wins where it has one.
+
 ### F3: two email dry runs per change
 
 Cause: the guide's email dry run was keyed on `rawBoard.dataUpdatedAt`, which the save's cache
@@ -65,6 +71,8 @@ is not `manual`).
 
 ## Open
 
+- 375 px: the line Remark "edited" tag reads clipped (crew, cosmetic); not reproduced here
+  without a browser, left for a follow-up.
 - `cs_note` (the planner's "CS: ..." note on a Buy) is dropped by the same two functions as F2.
   Not in this lane; asked on the PR.
 - Hand test: `laneboard/scripts/2116.md`.
