@@ -184,6 +184,11 @@ function DataGridTableBase({ children }: { children: ReactNode }) {
   // tracks a column the user has resized, or one restored from their saved
   // listing preferences.
   const minWidth = table.getTotalSize();
+  // Column GROUPS only: a fixed layout reads its widths from <col>, else from the FIRST row,
+  // where a group header spans its columns and splits its width evenly among them - so each
+  // column's own size was lost (the quotation grid's 120px name boxes rendered ~85px). One <col>
+  // per visible leaf hands the browser every width. A flat grid keeps today's markup.
+  const grouped = props.tableLayout?.width === 'fixed' && table.getHeaderGroups().length > 1;
 
   return (
     <table
@@ -197,6 +202,13 @@ function DataGridTableBase({ children }: { children: ReactNode }) {
         props.tableClassNames?.base,
       )}
     >
+      {grouped && (
+        <colgroup>
+          {table.getVisibleLeafColumns().map((column) => (
+            <col key={column.id} data-column-id={column.id} style={{ width: `${column.getSize()}px` }} />
+          ))}
+        </colgroup>
+      )}
       {children}
     </table>
   );

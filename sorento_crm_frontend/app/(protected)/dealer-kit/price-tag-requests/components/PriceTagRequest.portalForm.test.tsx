@@ -137,6 +137,7 @@ const apiFetch = vi.fn(async (url: string, init?: RequestInit) => {
   if (/\/submissions\/price_tag_request\/[^/]+\/design$/.test(path)) return state.design ? json(state.design) : json({ detail: 'none' }, 404);
   if (path.endsWith('/download')) return new Response(new Blob(['%PDF']), { status: 200, headers: { 'content-type': 'application/pdf' } });
   if (path.endsWith('/submit')) return json({ ...state.detail, status: 'new', portal_draft_at: null });
+  if (path.endsWith('/submit-escalate')) return json({ ...state.detail, status: 'designing', portal_draft_at: null });
   if (path.endsWith('/approve')) return json({ status: 'approved' });
   if (path.endsWith('/collect')) return json({ status: 'collected' });
   if (path.endsWith('/export')) return json({ status: 'pending' });
@@ -219,10 +220,12 @@ async function placePin(text: string) {
   fireEvent.click(within(editor).getByRole('button', { name: 'Add' }));
 }
 
-/** The portal form, not OwnPriceTagRequest: Save Draft / Submit buttons and the portal's Debtor picker. */
+/** The portal form, not OwnPriceTagRequest: Save Draft / Escalate / Approve and the portal's Debtor picker. */
 async function expectPortalEditForm() {
   expect(await screen.findByRole('button', { name: 'Save Draft' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Submit' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /escalate to marketing/i })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /^approve$/i })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull();
   expect(screen.getByLabelText('Debtor')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Save as draft' })).toBeNull();
   expect(screen.queryByText(/^Printing:/)).toBeNull();
@@ -241,7 +244,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('limited user, New Price Tag Request renders the portal form', () => {
-  it('is the portal form (Save Draft / Submit / Debtor), reading its lookups through my-requests only', async () => {
+  it('is the portal form (Save Draft / Escalate / Approve / Debtor), reading its lookups through my-requests only', async () => {
     mountNew();
     await expectPortalEditForm();
     await waitFor(() => expect(where((c) => c.url.startsWith('/api/v1/my-requests/lookups/debtors-for-agent')).length).toBeGreaterThan(0));
@@ -302,10 +305,10 @@ describe('limited user, edit of a draft', () => {
     expect(portalCalls()).toHaveLength(0);
   });
 
-  it('Submit PUTs then POSTs .../<id>/submit and pushes the CRM list (never /portal)', async () => {
+  it('Escalate PUTs then POSTs .../<id>/submit-escalate and pushes the CRM list (never /portal)', async () => {
     mountPage(LIMITED);
-    fireEvent.click(await screen.findByRole('button', { name: 'Submit' }));
-    await waitFor(() => expect(posted('submit')).toHaveLength(1));
+    await sendToMarketing();
+    await waitFor(() => expect(posted('submit-escalate')).toHaveLength(1));
     await waitFor(() => expect(pushed().some((p) => p.startsWith(LIST))).toBe(true));
     expect(pushed().every((p) => !p.startsWith('/portal'))).toBe(true);
     expect(staffApi()).toHaveLength(0);
@@ -468,3 +471,13 @@ describe('limited user, Price Tag Request shows exactly one Back (the CRM header
     expectNoOwnBack();
   });
 });
+
+
+/** Owner ruling 3 Nov: no plain Submit; the draft goes out through Escalate (or Approve). */
+async function sendToMarketing() {
+  fireEvent.click(await screen.findByRole('button', { name: /escalate to marketing/i }));
+  fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
+    target: { value: 'Please check' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /send to marketing/i }));
+}

@@ -517,6 +517,14 @@ def apply_form_scopes(
             )
             continue
         scope = get_scope_or_404(db, document, str(scope_id))
+        if item.get("matrix_columns") is not None:
+            # A saved scope's columns move its quantities (set_columns); the form is not a
+            # second way in that would skip that move.
+            raise AppException(
+                status_code=422,
+                message="Change a saved scope's columns in its table header.",
+                code="quotation_columns_invalid",
+            )
         fields = {key: item[key] for key in _SCOPE_FIELDS if key in item}
         if fields:
             scope_service.update_quotation(db, quotation=scope, payload=fields)
@@ -547,6 +555,15 @@ def _add_form_scope(
         actor_user_id=actor_user_id,
         payload={key: item[key] for key in ("series_id", "notes") if key in item},
     )
+    # PS-QUOTE-MATRIX: a scope added on the form brings its column headers. Set before the lines
+    # (it has none yet, so nothing moves), so each line's cells are validated against them and
+    # its quantity derived from them, all in this one transaction.
+    if item.get("matrix_columns"):
+        scope_service.set_columns(
+            db,
+            version=scope_service.current_version(db, scope.id),
+            columns=item["matrix_columns"],
+        )
     if not lines:
         return []
     return scope_service.replace_lines(
@@ -669,11 +686,6 @@ def issue(
         )
     record.grand_total = grand
     db.flush()
-    # A request still open on an older revision can no longer be answered there: the customer
-    # now holds this one, with its own link (QUOTE-CUSTOMER-AMEND AC-QCA-25).
-    from app.services import quotation_amendment_service as amendments
-
-    amendments.close_open_requests_superseded_by(db, document, record)
     # Issuing SPENDS an approval: a manager approved those prices, so the document moves off
     # `approved` and the next revision that dips below the floor has to be approved on its own
     # merits. A no-op on a quotation that was never on the graph.
@@ -910,12 +922,18 @@ def make_quotation(
         )
         db.add(copy)
         db.flush()
+        source_version = (
+            db.query(ProjectQuotationVersion)
+            .filter(ProjectQuotationVersion.id == pair.version_id)
+            .first()
+        )
         version = ProjectQuotationVersion(
             company_id=quotation.company_id,
             quotation_id=copy.id,
             version_no=1,
             issued_by=actor_user_id,
             total_amount=ZERO,
+            matrix_columns=source_version.matrix_columns if source_version else None,
         )
         db.add(version)
         db.flush()
@@ -1568,27 +1586,6 @@ def accept_issue(
     if record.accepted_at is not None:
         return record
     assert_not_superseded(db, record)
-    # Owner decision Q1 (a), 30 Oct 2026: no signature while suggested changes are unanswered,
-    # and none on a revision whose suggestions drafted a new one, since that one follows.
-    from app.services import quotation_amendment_service as amendments
-
-    asked = amendments.request_for_issue(db, record.id)
-    blocked = amendments.blocks_issue(asked)
-    if blocked == "amendment_open":
-        raise AppException(
-            status_code=409,
-            message="You can sign once Sorento has answered your suggestions.",
-            code="quotation_amendment_open",
-        )
-    if blocked == "amendment_applied":
-        raise AppException(
-            status_code=409,
-            message=(
-                "Sorento has answered your suggestions. "
-                "Your salesperson will send the revised quotation."
-            ),
-            code="quotation_amendment_applied",
-        )
     if (record.terms_rendered or "").strip() and terms_accepted is not True:
         raise AppException(
             status_code=422,
@@ -1682,9 +1679,8 @@ def request_changes(
     The read is taken ``FOR UPDATE`` so two submissions from the same thumb serialise instead of
     racing: without the lock both see a null note and both notify.
 
-    The reverse order is ALLOWED for this free-text request: somebody who asked for changes can
-    still decide to sign. A suggested-changes request (``quotation_amendment_service``) is the
-    exception, by owner decision Q1 (a): while one is open, ``accept_issue`` refuses.
+    The reverse order is ALLOWED: somebody who asked for changes can still decide to sign, and
+    feedback notes (``quotation_amendment_service``) never block signing either.
     """
     text_note = (note or "").strip()
     if not text_note:
@@ -1947,6 +1943,12 @@ def serialize_sign_page(
         .all()
     )
 
+    version_columns = {
+        str(v.id): v.matrix_columns
+        for v in db.query(ProjectQuotationVersion)
+        .filter(ProjectQuotationVersion.id.in_([p.version_id for p in pairs]))
+        .all()
+    } if pairs else {}
     from app.services import quotation_columns
 
     # Pictures are collected in page order and filled in at the very end (see `_sign_pictures`).
@@ -2011,6 +2013,7 @@ def serialize_sign_page(
                 "is_rate_only": bool(line.is_rate_only),
                 # None, not zero: the page prints "rate only" and a zero would read as free.
                 "amount": None if line.is_rate_only else Decimal(line.line_total or 0),
+                "qty_cells": dict(line.qty_cells or {}),
             }
             # Inline only what the page draws: the photo sits in PRODUCT IMAGE, the drawing in
             # TECHNICAL SPEC.
@@ -2023,6 +2026,7 @@ def serialize_sign_page(
                 # does not change what was priced, and a stale label helps nobody.
                 "scope_label": scope.scope_label if scope else "",
                 "scope_total": Decimal(pair.scope_total or 0),
+                "matrix_columns": list(version_columns.get(str(pair.version_id)) or []),
                 # The PDF's column set for this scope, from the one shared definition
                 # (QUOTE-SIGN-COLUMNS): the page renders these, it keeps no list of its own.
                 "columns": [{"key": key, "label": label} for key, label in columns],
@@ -2058,7 +2062,6 @@ def serialize_sign_page(
 
     from app.services import quotation_amendment_service as amendments
 
-    asked = amendments.request_for_issue(db, record.id)
     newer = later_issue(db, record)
     # One reason, the first that applies, so the page never prints two.
     if record.accepted_at is not None:
@@ -2066,7 +2069,7 @@ def serialize_sign_page(
     elif newer is not None:
         blocked = "superseded"
     else:
-        blocked = amendments.blocks_issue(asked)
+        blocked = None
 
     cover = None
     our_ref = (
@@ -2110,8 +2113,7 @@ def serialize_sign_page(
         "changes_requested_note": record.changes_requested_note,
         "changes_requested_by_name": record.changes_requested_by_name,
         "is_changes_requested": record.changes_requested_at is not None,
-        # Floors are internal pricing, so the customer's copy of the request carries none.
-        "amendment_request": amendments.serialize_request(db, asked, staff=False),
+        "amendment_request": amendments.sign_page_feedback(db, record.id),
         "superseded_by_ref": newer.our_ref_text if newer is not None else None,
         "can_sign": blocked is None,
         "sign_blocked_reason": blocked,

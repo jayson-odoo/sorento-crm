@@ -86,6 +86,7 @@
  */
 
 import { extractApiError } from '@/lib/api-client';
+import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { filenameFromContentDisposition, saveBlobAs } from '@/lib/save-blob';
 import type { PrintBy } from '@/lib/dealer-kit/print-collection';
 import type { LineTagData, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
@@ -296,6 +297,10 @@ export interface PriceTagRequestDetail extends PriceTagRequestSummary {
   revision?: PortalRevisionPolicy | null;
   /** The in-progress revise composer, if any - rides along the same way. */
   revision_draft?: PortalRevisionDraft | null;
+  /** PRICETAG-SELF-APPROVAL: his own proof - approve the generated tag, edit, escalate. */
+  self_review?: boolean;
+  /** PRICETAG-SELF-APPROVAL: his own proof or an approved request may go to marketing. */
+  can_escalate?: boolean;
 }
 
 export interface DebtorOption {
@@ -771,12 +776,66 @@ export function makePriceTagRequestService(
     throw new Error(await extractApiError(res, 'Failed to delete draft'));
   }
 
-  async function approveRequest(id: string): Promise<{ status: string }> {
+  /**
+   * Approve a proof. His own proof (PRICETAG-SELF-APPROVAL) sends `doc`, the tag
+   * sheet his screen built, which becomes the design the PDF prints; a proof
+   * marketing drew sends nothing.
+   */
+  async function approveRequest(id: string, doc?: TagSheetDoc): Promise<{ status: string }> {
     const res = await fetcher(
       `${BASE}/${encodeURIComponent(id)}/approve`,
-      { method: 'POST' },
+      doc
+        ? {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ doc }),
+          }
+        : { method: 'POST' },
     );
     return unwrap<{ status: string }>(res, 'Failed to approve request');
+  }
+
+  /**
+   * Owner ruling 3 Nov: the form has no plain Submit. A DRAFT is submitted and
+   * approved in one call, with the sheet built from its saved tags...
+   */
+  async function submitAndApprove(id: string, doc: TagSheetDoc): Promise<{ status: string }> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/submit-approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc }),
+    });
+    return unwrapNamingFields<{ status: string }>(res, 'Failed to approve request');
+  }
+
+  /** ... or submitted straight to marketing with a note. */
+  async function submitAndEscalate(id: string, note: string): Promise<{ status: string }> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/submit-escalate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    });
+    return unwrapNamingFields<{ status: string }>(res, 'Failed to send to marketing');
+  }
+
+  /** Send the request to marketing with a note (PRICETAG-SELF-APPROVAL R6). */
+  async function escalateRequest(id: string, note: string): Promise<{ status: string }> {
+    const res = await fetcher(`${BASE}/${encodeURIComponent(id)}/escalate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }),
+    });
+    return unwrap<{ status: string }>(res, 'Failed to escalate request');
+  }
+
+  /** The saved request's tags, drawn data and templates, for his own proof. */
+  async function lookupTagPreviewForRequest(requestId: string): Promise<TagPreviewResponse> {
+    const res = await fetcher(`${LOOKUPS}/tag-preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_id: requestId }),
+    });
+    return unwrap<TagPreviewResponse>(res, 'Failed to draw the tag');
   }
 
   /**
@@ -900,6 +959,10 @@ export function makePriceTagRequestService(
     submitRequest,
     deleteRequest,
     approveRequest,
+    submitAndApprove,
+    submitAndEscalate,
+    escalateRequest,
+    lookupTagPreviewForRequest,
     requestChanges,
     listReviewComments,
     downloadPriceTagPdf,
@@ -928,6 +991,10 @@ export const {
   submitRequest,
   deleteRequest,
   approveRequest,
+  submitAndApprove,
+  submitAndEscalate,
+  escalateRequest,
+  lookupTagPreviewForRequest,
   requestChanges,
   listReviewComments,
   downloadPriceTagPdf,

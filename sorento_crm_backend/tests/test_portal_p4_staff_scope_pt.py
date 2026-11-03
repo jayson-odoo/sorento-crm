@@ -15,6 +15,7 @@ from tests._portal_p4_pt_support import (  # noqa: F401
     create,
     pt_row,
     scene,
+    escalated,
     submitted,
     world,
 )
@@ -90,7 +91,7 @@ def test_p4_pt_staff_designer_and_process_routes_refuse_a_salesperson(world):
 
 def test_p4_pt_staff_process_is_unchanged_for_a_process_holder(world):
     w = world
-    rid = submitted(w.rep.portal, w)
+    rid = escalated(w.rep.portal, w)  # PRICETAG-SELF-APPROVAL: marketing gets it by escalation
     staff = s.make_user(w.sc.db, perms=[PT_VIEW, PT_PROCESS], name="ZZT Marketer")
     r = w.staff(staff, "POST", f"{STAFF}/{rid}/claim")
     assert r.status_code == 200, r.text

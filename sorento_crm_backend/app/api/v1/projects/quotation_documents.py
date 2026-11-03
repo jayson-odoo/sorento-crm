@@ -27,9 +27,9 @@ from app.schemas.common import ListResponse
 from app.schemas.projects import (
     MakeQuotationRequest,
     ProjectQuotationDocumentCreate,
-    QuotationAmendmentApplyResponse,
-    QuotationAmendmentDecideRequest,
-    QuotationAmendmentStaffResponse,
+    QuotationFeedbackHandleRequest,
+    QuotationFeedbackResponse,
+    QuotationFeedbackRowResponse,
     QuotationApprovalMoveRequest,
     QuotationRejectRequest,
     QuotationReviseRequest,
@@ -759,102 +759,66 @@ def create_quotation_sign_link(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
-# ------------------------------------------------- customer suggested changes
+# ------------------------------------------------- customer feedback
 
 
 @router.get(
-    "/projects/{project_id}/quotation-documents/{document_id}/amendment-request",
-    response_model=QuotationAmendmentStaffResponse | None,
+    "/projects/{project_id}/quotation-documents/{document_id}/feedback",
+    response_model=QuotationFeedbackResponse,
 )
-def read_quotation_amendment_request(
+def read_quotation_feedback(
     project_id: str,
     document_id: str,
     current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
-    """The open (or latest) suggestion request on the document's latest issue, or null.
-
-    Behind the edit right as well as the read right: the request is only shown to be decided.
-    """
+    """Every note the customer left on the document's issues, newest request first."""
     try:
         validate_uuid_path(document_id, resource="Quotation")
         _editable_project(db, project_id, current_user, write=False)
         document = svc.get_document_or_404(db, project_id, document_id)
-        return amendments.serialize_request(
-            db, amendments.latest_request_for_document(db, document)
-        )
+        return amendments.feedback_for_document(db, document)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
-@router.put(
-    "/projects/{project_id}/quotation-documents/{document_id}"
-    "/amendment-requests/{request_id}/rows/{row_id}",
-    response_model=QuotationAmendmentStaffResponse,
+@router.patch(
+    "/projects/{project_id}/quotation-documents/{document_id}/feedback/{row_id}",
+    response_model=QuotationFeedbackRowResponse,
 )
-def decide_quotation_amendment_row(
+def handle_quotation_feedback_row(
     project_id: str,
     document_id: str,
-    request_id: str,
     row_id: str,
-    payload: QuotationAmendmentDecideRequest,
+    payload: QuotationFeedbackHandleRequest,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
-    """Accept, reject (with a reason) or put one suggestion back to pending."""
+    """Tick a note handled, or reopen it. Changes no line."""
     try:
         validate_uuid_path(document_id, resource="Quotation")
-        validate_uuid_path(request_id, resource="Request")
-        validate_uuid_path(row_id, resource="Suggestion")
+        validate_uuid_path(row_id, resource="Note")
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
-        request = amendments.get_request_for_document_or_404(db, document, request_id)
-        amendments.decide_row(
+        row = amendments.set_handled(
             db,
-            request=request,
+            document=document,
             row_id=row_id,
-            decision=payload.decision,
-            reason=payload.reason,
+            handled=payload.handled,
             actor_user_id=current_user["id"],
         )
         db.commit()
-        return amendments.serialize_request(db, request)
-    except Exception as exc:
-        db.rollback()
-        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
-
-
-@router.post(
-    "/projects/{project_id}/quotation-documents/{document_id}"
-    "/amendment-requests/{request_id}/apply",
-    response_model=QuotationAmendmentApplyResponse,
-)
-def apply_quotation_amendment_request(
-    project_id: str,
-    document_id: str,
-    request_id: str,
-    current_user: dict = Depends(require_permission(EDIT)),
-    db: Session = Depends(get_db),
-):
-    """Draft the next revision of every scope with an accepted suggestion. Nothing is issued."""
-    try:
-        validate_uuid_path(document_id, resource="Quotation")
-        validate_uuid_path(request_id, resource="Request")
-        _editable_project(db, project_id, current_user)
-        document = svc.get_document_or_404(db, project_id, document_id)
-        request = amendments.get_request_for_document_or_404(db, document, request_id)
-        written: list = []
-        drafts = amendments.apply_request(
-            db, request=request, actor_user_id=current_user["id"], written=written
+        # Read back through the row's OWN request: the document list is capped to the latest
+        # requests, and an older note must still answer with itself rather than a 500.
+        feedback = amendments.feedback_for_document(
+            db, document, request_id=str(row.request_id)
         )
-        # An accepted price below its floor alerts management exactly as a hand edit does.
-        for line in written:
-            _notify_breaches(db, line, current_user["id"])
-        db.commit()
-        return {
-            "request": amendments.serialize_request(db, request),
-            "version_ids": [str(draft.id) for draft in drafts],
-        }
+        return next(
+            item
+            for request in feedback["requests"]
+            for item in request["rows"]
+            if item["id"] == str(row.id)
+        )
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
