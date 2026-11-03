@@ -146,6 +146,11 @@ _NESTED: Dict[str, frozenset] = {
             # fill_project_party_phone: project_party_contact_service.fill_party_phone 404s a
             # party that is not on this project (PS-REGISTRATION-V3).
             "party_id",
+            # SPEC-SHEET-V2: every spec sheet route loads the sheet under its document under this
+            # project (`_sheet(db, document, sheet_id)` 404s a sheet of another document), and
+            # `key` is a page key checked against that sheet's own pages (404 / 422 otherwise).
+            "sheet_id",
+            "key",
         }
     ),
     "quotation-versions": frozenset({"line_id"}),
