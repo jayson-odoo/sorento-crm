@@ -186,6 +186,7 @@ export function ContainerRequestScheduleMatrix({
                   <tr className="border-b">
                     <Th>Sales order</Th>
                     <Th>Customer</Th>
+                    <Th>Project</Th>
                     <Th>Class</Th>
                     <Th right>Ordered</Th>
                     <Th right>Balance</Th>
@@ -194,7 +195,7 @@ export function ContainerRequestScheduleMatrix({
                 </thead>
                 <tbody>
                   {openCell.lines.length === 0 ? (
-                    <EmptyRow colSpan={6}>No lines here.</EmptyRow>
+                    <EmptyRow colSpan={7}>No lines here.</EmptyRow>
                   ) : (
                     openCell.lines.map((l, i) => (
                       <tr
@@ -205,6 +206,12 @@ export function ContainerRequestScheduleMatrix({
                         <Td title={l.customer_label ?? undefined}>
                           <span className="block max-w-56 truncate">
                             {l.customer_label ?? EM_DASH}
+                          </span>
+                        </Td>
+                        {/* OI-UX-FILTER-SNAPSHOT: the SO list's Project beside Customer. */}
+                        <Td title={l.project_title ?? undefined}>
+                          <span className="block max-w-56 truncate">
+                            {l.project_title ?? EM_DASH}
                           </span>
                         </Td>
                         <Td>{classLabel(l.demand_class)}</Td>

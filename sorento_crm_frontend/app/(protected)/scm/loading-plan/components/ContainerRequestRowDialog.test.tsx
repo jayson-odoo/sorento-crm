@@ -226,6 +226,9 @@ describe('ContainerRequestRowDialog', () => {
     const lines = screen.getByTestId('row-so-lines');
     expect(within(lines).getByText('SO381895')).toBeInTheDocument();
     expect(within(lines).getByText('L4 TUJU RESIDENCE')).toBeInTheDocument();
+    // OI-UX-FILTER-SNAPSHOT: the SO list's Project beside Customer.
+    expect(within(lines).getByRole('columnheader', { name: 'Project' })).toBeInTheDocument();
+    expect(within(lines).getByText('Tuju Residence')).toBeInTheDocument();
     expect(within(lines).getByText('120')).toBeInTheDocument();
   });
 });
