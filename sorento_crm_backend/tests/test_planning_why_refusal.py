@@ -537,3 +537,20 @@ def test_a_failing_explanation_still_answers_422_on_single_confirm(
 
     assert response.status_code == 422, response.text
     assert response.json()["message"] == ERROR
+
+
+@pytest.mark.parametrize("role", ["admin", "user"])
+def test_the_guides_quiet_email_preview_records_no_refusal(
+    api, monkeypatch, role, _cleanup_refusal_audit_rows
+):
+    """CONFIRM-PREVIEW-STALE review round 3 (S3): the guided Confirm runs a dry run on open and
+    on each save to print the email's words (`quiet: true`). It must not write a refusal row
+    each time; the press's own dry run (not quiet) still does."""
+    _as_role(monkeypatch, role)
+    fx = _order_with_change(api, seen=_cleanup_refusal_audit_rows)
+    entry = {"pso_id": str(fx["order"].id), "lines": [], "batch_id": str(fx["batch"].id)}
+    response = fx["client"].post(
+        CONFIRM_ALL, json={"orders": [entry], "preview": True, "quiet": True}
+    )
+    assert _result(response)["ok"] is False
+    assert _audit_rows(fx) == []

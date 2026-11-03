@@ -463,7 +463,7 @@ export default function IntegrationLogsList() {
           <DataGridTable />
         </CardTable>
         <CardFooter>
-          <DataGridPagination />
+          <DataGridPagination recordCountCapped={data?.pagination.total_capped} />
         </CardFooter>
       </Card>
     </DataGrid>

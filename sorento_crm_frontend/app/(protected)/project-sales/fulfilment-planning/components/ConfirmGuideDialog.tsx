@@ -105,6 +105,11 @@ export function ConfirmGuideDialog({
   runConfirm,
   saveRemarks,
   preparing = false,
+  refreshing = false,
+  refreshFailed = false,
+  wordsLoading = false,
+  onRetryRefresh,
+  onPageChange,
   prepareErrors,
   onRetryPrepare,
   onClose,
@@ -129,6 +134,27 @@ export function ConfirmGuideDialog({
    * record one (so their page is the editable sheet, never the read-only one), or that failed.
    */
   preparing?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): the board is re-reading the server as the guide
+   * opens; the review waits for it, so it never prints the decision as it was before a Save.
+   */
+  refreshing?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE round 2 (crew browser pass): that re-read failed, so what the guide
+   * holds may be older than the server. Nothing is written from it until a Retry succeeds.
+   */
+  refreshFailed?: boolean;
+  /**
+   * CONFIRM-PREVIEW-STALE review round 3 (S1): the email's words are being read again after a
+   * save. The sheet stays up with the last words; only Next and Confirm wait.
+   */
+  wordsLoading?: boolean;
+  onRetryRefresh?: () => void;
+  /**
+   * CONFIRM-REMARK-FIX: the planning record of the order on screen (null on the Confirm step,
+   * or a page with no planning record), so the email dry run covers that order alone.
+   */
+  onPageChange?: (psoId: string | null) => void;
   /** Per core sales order id: why it could not be made ready (the server's sentence). */
   prepareErrors?: ReadonlyMap<string, string>;
   onRetryPrepare?: () => void;
@@ -149,15 +175,33 @@ export function ConfirmGuideDialog({
   const editorRef = React.useRef<LineSplitEditorHandle | null>(null);
 
   const page = step.kind === 'review' ? pages[step.index] : undefined;
+  const pagePsoId = page?.psoId ?? null;
+  React.useEffect(() => {
+    onPageChange?.(pagePsoId);
+  }, [pagePsoId, onPageChange]);
   // Every page's split read, kept while the guide is open; the current page reads its own.
-  const reads = useLineSplitsReads(pages.map((entry) => entry.psoId));
+  // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): each read is taken again as the guide opens,
+  // and a page reads as loading until the read answered after that moment: a cached sheet
+  // from before a Save is never what the review prints.
+  const [openedAt] = React.useState(() => Date.now());
+  const reads = useLineSplitsReads(
+    pages.map((entry) => entry.psoId),
+    { fresh: true },
+  );
   const splitRead = step.kind === 'review' && page ? reads[step.index] : undefined;
-  const reading = Boolean(page?.psoId) && Boolean(splitRead?.isPending);
+  const reading =
+    Boolean(page?.psoId) &&
+    Boolean(
+      splitRead?.isPending ||
+        (splitRead && !splitRead.isError && splitRead.dataUpdatedAt < openedAt),
+    );
+  // CONFIRM-PREVIEW-STALE round 2: the re-read as the guide opened failed.
+  const stale = refreshFailed && !refreshing;
   // A page with no planning record waits for the board's adopt, never shown read-only while it
   // runs. Only a FAILED adopt leaves its lines read-only, under the error and its Retry, and
   // the guide can still move on: the press names that order in its results, and one order
   // that cannot be planned never holds up the others.
-  const unready = Boolean(page && !page.psoId && preparing);
+  const unready = Boolean(page && ((!page.psoId && preparing) || refreshing));
   const prepareError =
     page && !page.psoId && !preparing ? prepareErrors?.get(page.salesOrderId) ?? null : null;
   const prepareFailed = Boolean(prepareError);
@@ -191,12 +235,20 @@ export function ConfirmGuideDialog({
             ? [
                 [
                   line.lineId,
-                  { words: line.savedRemark, own: line.ownRemark, editable: line.remarkEditable },
+                  {
+                    words: line.savedRemark,
+                    own: line.ownRemark,
+                    editable: line.remarkEditable,
+                    silent: Boolean(line.purchasingSilent),
+                  },
                 ] as const,
               ]
             : [],
         ),
-      ) as ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>,
+      ) as ReadonlyMap<
+        string,
+        { words: string | null; own: string | null; editable: boolean; silent?: boolean }
+      >,
       keyOf: new Map(
         page.covered.flatMap((line) => (line.lineId ? [[line.lineId, line.key] as const] : [])),
       ) as ReadonlyMap<string, string>,
@@ -254,7 +306,7 @@ export function ConfirmGuideDialog({
     }
   };
   const pressConfirm = async () => {
-    if (posting) return;
+    if (posting || refreshing || stale || wordsLoading) return;
     setPosting(true);
     if (await runConfirm(new Map(pages.map((entry) => [entry.salesOrderId, remarkOf(entry)])))) {
       onClose();
@@ -273,7 +325,14 @@ export function ConfirmGuideDialog({
       : null;
   // UAC F14: a page is never "seen" before its split read has loaded.
   const nextEnabled =
-    step.kind === 'review' && Boolean(page) && !reading && !readFailed && !unready && !dirty;
+    step.kind === 'review' &&
+    Boolean(page) &&
+    !reading &&
+    !readFailed &&
+    !unready &&
+    !stale &&
+    !wordsLoading &&
+    !dirty;
 
   return (
     <Dialog
@@ -305,6 +364,7 @@ export function ConfirmGuideDialog({
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4">
+          {!page && stale ? <RefreshFailed onRetry={onRetryRefresh} /> : null}
           {page ? (
             <MockupLinesContext.Provider value={pageFacts?.labelled ?? NO_MOCKUP_LINES}>
             <section
@@ -378,7 +438,9 @@ export function ConfirmGuideDialog({
                   </Button>
                 </div>
               ) : null}
-              {unready ? (
+              {stale ? (
+                <RefreshFailed onRetry={onRetryRefresh} />
+              ) : unready ? (
                 <SectionSkeleton rows={4} />
               ) : readFailed ? (
                 <div
@@ -540,7 +602,7 @@ export function ConfirmGuideDialog({
             <Button
               type="button"
               data-testid="confirm-guide-confirm"
-              disabled={posting}
+              disabled={posting || refreshing || stale || wordsLoading}
               onClick={() => void pressConfirm()}
             >
               {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
@@ -549,5 +611,22 @@ export function ConfirmGuideDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** CONFIRM-PREVIEW-STALE round 2: the board could not be read again as the guide opened. */
+function RefreshFailed({ onRetry }: { onRetry?: () => void }) {
+  return (
+    <div data-testid="confirm-guide-refresh-failed" className="flex flex-col items-start gap-2 py-4 text-sm">
+      <span role="alert" className="break-words">
+        The board could not be read again, so this may not show the latest saved decisions.
+        Retry before you confirm.
+      </span>
+      {onRetry ? (
+        <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+          Retry
+        </Button>
+      ) : null}
+    </div>
   );
 }

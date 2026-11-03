@@ -673,35 +673,32 @@ const LineBlock = React.memo(function LineBlock({
   // decision (only the guide sets them), and the planner's own remark over them.
   const savedRemark = line.savedRemark || null;
   const ownRemark = line.ownRemark || '';
+  // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026, "popup = email = Excel"; item 4): Confirm plans
+  // a delivered line at its ordered qty (`plan_qty_of`, owner ruling 14 Sep), so its saved
+  // decision DOES reach purchasing and the row prints that decision's words like any saved
+  // line. A delivered line a pending change names reads its NEW cells and words as well.
+  const deliveredQuiet = delivered && !line.pendingChange;
+  // CONFIRM-ITEM4 (crew, 3 Nov; every order class): "nothing goes to purchasing" only where
+  // it is true, i.e. the guide's email dry run holds no line for this one. Never on a guess.
+  const silentNote =
+    delivered && line.purchasingSilent ? (
+      <span className="text-2xs text-muted-foreground">
+        Delivered in full: nothing goes to purchasing
+      </span>
+    ) : null;
   let body: React.ReactNode;
-  if (delivered && line.remarkInDraft) {
-    // UAC F28: Confirm drops a line delivered in full, so nothing of it reaches purchasing:
-    // its remark stays read-only and the row says why.
+  if (deliveredQuiet && !savedRemark && !line.remarkInDraft) {
+    // No decision of its own to print: say what AutoCount delivered.
     body = (
       <TableRow className="border-0 hover:bg-transparent">
         {emptyGrip}
         {baseCells}
         <TableCell colSpan={2} className={cn(changeCell, 'ps-2 text-start')}>
-          <span className="text-2xs text-muted-foreground">
-            Delivered in full: nothing goes to purchasing
-          </span>
-        </TableCell>
-        <TableCell className={changeCell}>
-          <RemarkText value={ownRemark} generated={savedRemark ?? ''} />
-        </TableCell>
-        {balance}
-        {emptyRemove}
-      </TableRow>
-    );
-  } else if (delivered && !savedRemark) {
-    body = (
-      <TableRow className="border-0 hover:bg-transparent">
-        {emptyGrip}
-        {baseCells}
-        <TableCell colSpan={2} className={cn(changeCell, 'ps-2 text-start')}>
-          <span className="text-2xs text-muted-foreground">
-            {`Delivered ${line.deliveredQty ?? 0}`}
-          </span>
+          {silentNote ?? (
+            <span className="text-2xs text-muted-foreground">
+              {`Delivered ${line.deliveredQty ?? 0}`}
+            </span>
+          )}
         </TableCell>
         <TableCell className={changeCell} />
         {balance}
@@ -713,7 +710,9 @@ const LineBlock = React.memo(function LineBlock({
       <TableRow className="border-0 hover:bg-transparent">
         {emptyGrip}
         {baseCells}
-        <TableCell colSpan={2} className={changeCell} />
+        <TableCell colSpan={2} className={cn(changeCell, silentNote && 'ps-2 text-start')}>
+          {silentNote}
+        </TableCell>
         <TableCell className={changeCell}>
           {added && !sheetReadOnly && line.remarkInDraft && handlers.lineRemark ? (
             // A line AutoCount added (nothing of its own to split) still takes a remark when
@@ -728,6 +727,8 @@ const LineBlock = React.memo(function LineBlock({
             />
           ) : savedRemark || ownRemark ? (
             <RemarkText value={ownRemark || savedRemark || ''} generated="" />
+          ) : delivered && line.remarkGenerated ? (
+            <RemarkText value={line.remarkGenerated} generated="" />
           ) : null}
         </TableCell>
         {balance}

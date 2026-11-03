@@ -475,6 +475,57 @@ describe('fulfilmentPlanningService: saved decisions (S4)', () => {
     );
   });
 
+  // CONFIRM-PREVIEW-STALE: the "saved again elsewhere" refusal is told apart by its CODE.
+  const conflict = (code: string) =>
+    ({
+      ok: false,
+      status: 409,
+      headers: { get: () => 'application/json' },
+      clone() {
+        return { json: async () => ({ code, message: 'This line was saved again by A at B.' }) };
+      },
+      json: async () => ({ code, message: 'This line was saved again by A at B.' }),
+    }) as unknown as Response;
+
+  it('a 409 board_line_draft_newer on save is a LineDraftNewerError; another 409 is not', async () => {
+    const { putLineDraft } = await loadService();
+    const { LineDraftNewerError } = await import('../lib/confirmPreviewFresh');
+    apiFetch.mockResolvedValueOnce(conflict('board_line_draft_newer'));
+    await expect(putLineDraft(KEY, { verdict: 'approved' }, undefined, 'T1')).rejects.toBeInstanceOf(
+      LineDraftNewerError,
+    );
+    apiFetch.mockResolvedValueOnce(conflict('board_line_already_confirmed'));
+    const other = putLineDraft(KEY, { verdict: 'approved' });
+    await expect(other).rejects.toThrow();
+    await expect(other).rejects.not.toBeInstanceOf(LineDraftNewerError);
+  });
+
+  it('a save says which draft it stands on; null when it holds none', async () => {
+    apiFetch.mockResolvedValue({ ok: true, json: async () => ({}) } as Response);
+    const { putLineDraft } = await loadService();
+    await putLineDraft(KEY, { verdict: 'approved' }, undefined, '2026-11-02T01:00:00');
+    await putLineDraft(KEY, { verdict: 'approved' }, undefined, null);
+    const bodies = apiFetch.mock.calls.map((call) => JSON.parse((call[1] as RequestInit).body as string));
+    expect(bodies[0].based_on_saved_at).toBe('2026-11-02T01:00:00');
+    expect(bodies[1]).toHaveProperty('based_on_saved_at', null);
+  });
+
+  it('an Undo says which draft it stands on, or none; a 409 there is a LineDraftNewerError', async () => {
+    apiFetch.mockResolvedValue({ ok: true, status: 204 } as Response);
+    const { deleteLineDraft } = await loadService();
+    const { LineDraftNewerError } = await import('../lib/confirmPreviewFresh');
+    await deleteLineDraft(KEY, '2026-11-02T01:00:00');
+    await deleteLineDraft(KEY, null);
+    expect(apiFetch.mock.calls[0][0]).toBe(`${ENCODED}?based_on_saved_at=2026-11-02T01%3A00%3A00`);
+    expect(apiFetch.mock.calls[1][0]).toBe(`${ENCODED}?based_on_saved_at=none`);
+    apiFetch.mockResolvedValueOnce(conflict('board_line_draft_newer'));
+    await expect(deleteLineDraft(KEY, 'T1')).rejects.toBeInstanceOf(LineDraftNewerError);
+    apiFetch.mockResolvedValueOnce(conflict('board_contribution_line_ambiguous'));
+    const other = deleteLineDraft(KEY, 'T1');
+    await expect(other).rejects.toThrow();
+    await expect(other).rejects.not.toBeInstanceOf(LineDraftNewerError);
+  });
+
   it('undoes through the documented DELETE on the same encoded path', async () => {
     apiFetch.mockResolvedValue({ ok: true, status: 204 } as Response);
     const { deleteLineDraft } = await loadService();

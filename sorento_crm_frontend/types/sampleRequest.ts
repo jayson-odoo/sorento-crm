@@ -72,11 +72,46 @@ export interface SampleRequestLine {
   remark: string | null;
 }
 
-export interface SampleRequestDetail extends SampleRequestWrite {
+/** PS-SAMPLE-TRACKING: the two stages; Draft and Cancelled sit outside both (null). */
+export type SampleRequestStage = 'processing' | 'delivery';
+
+/** The sample team's answer to the requested delivery date (Stage 1). */
+export interface SampleRequestDateAnswer {
+  date_feasible: boolean | null;
+  proposed_delivery_date: string | null;
+}
+
+/** A linked consignment; `status` is `cancelled` once AutoCount voids it. */
+export interface SampleRequestConsignment {
+  id: string;
+  so_number: string;
+  order_date: string | null;
+  status: string;
+  /** The delivered date and where it came from: Overall Tracking, else the CG's own date. */
+  delivered_on: string | null;
+  delivered_source: 'tracking' | 'consignment' | null;
+}
+
+/** One pick in the Link consignment search. */
+export interface SampleRequestConsignmentHit {
+  id: string;
+  so_number: string;
+  debtor_code: string | null;
+  debtor_name: string | null;
+  order_date: string | null;
+}
+
+export interface SampleRequestDetail extends SampleRequestWrite, SampleRequestDateAnswer {
   id: string;
   request_no: string;
   status: SampleRequestStatus;
   status_label: string;
+  stage: SampleRequestStage | null;
+  /** The AutoCount consignment the sample team linked as the delivery (Stage 2). */
+  consignment: SampleRequestConsignment | null;
+  date_note: string | null;
+  date_answered_at: string | null;
+  date_answered_by_name: string | null;
   source: 'staff' | 'portal';
   salesperson_id: string | null;
   salesperson_name: string | null;
@@ -100,11 +135,12 @@ export interface SampleRequestDetail extends SampleRequestWrite {
 }
 
 /** A list row. Never carries the site contact phone or the ship-to address. */
-export interface SampleRequestRow {
+export interface SampleRequestRow extends SampleRequestDateAnswer {
   id: string;
   request_no: string;
   status: SampleRequestStatus;
   status_label: string;
+  stage: SampleRequestStage | null;
   request_date: string | null;
   submitted_at: string | null;
   delivery_date: string | null;

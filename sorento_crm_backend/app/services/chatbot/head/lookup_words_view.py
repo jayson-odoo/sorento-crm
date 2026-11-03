@@ -21,13 +21,13 @@ LIST_NAMES = (
 LIST_SOURCES = {
     "category": "Categories", "spec": "Spec registry", "file_type": "Attachment types", "brand": "Brands",
     "promotion_kind": "Promotion types", "location": "Warehouses", "salesperson": "Sales agents",
-    "customer": "Customers", "sales_channel": "Sales channels",
+    "customer": "Customers", "sales_channel": "Sales channels", "supplier": "Suppliers",
 }
 TRY_LIMIT = 8
 
 
 def _rows(db: Session) -> list[ll.LookupRow]:
-    return ll.load_rows(db, include_salespeople=True, include_customers=True, customer_ids=None)
+    return ll.load_rows(db, include_salespeople=True, include_customers=True, customer_ids=None, include_suppliers=True)
 
 
 def _stored_texts(db: Session, model: str) -> set[str]:

@@ -128,6 +128,10 @@ export interface PortalSubmissionSummary {
   /** Price tag request: the date the tags are wanted for. The card shows it,
    *  because a deadline is the one thing a salesperson scans this list for. */
   needed_by_date?: string | null;
+  /** Sample request (PS-SAMPLE-TRACKING): the date shown, which is the sample team's proposed
+   *  date when it cannot meet the requested one (`delivery_date_is_new`). */
+  delivery_date?: string | null;
+  delivery_date_is_new?: boolean;
   /** Sales opportunity (fix lane round 2, F1): the stage's own label, so a card never shows
    *  a stage key, and the figures the card carries. */
   status_label?: string | null;

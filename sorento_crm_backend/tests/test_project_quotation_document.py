@@ -837,7 +837,8 @@ def test_the_original_per_scope_endpoint_still_works_and_gets_its_own_document()
 
 
 def test_a_new_issue_stores_the_dashed_our_ref_and_the_draft_view_matches():
-    """AC2.4: `<document_no>-R<issue_no>` on the stored text and on the draft view."""
+    """AC2.4: `<document_no>-<label>` on the stored text and on the draft view; a new
+    proposal is labelled A then B (card Q1 a)."""
     from app.services import project_quotation_document_service as qdocs
 
     with blank_session() as db:
@@ -853,10 +854,10 @@ def test_a_new_issue_stores_the_dashed_our_ref_and_the_draft_view_matches():
 
         _sign(db, document, owner)
         r1 = qdocs.issue(db, document=document, actor_user_id=owner)
-        assert r1.our_ref_text == f"{document.document_no}-R1"
-        assert qdocs.serialize_document(db, document)["our_ref"] == f"{document.document_no}-R1"
+        assert r1.our_ref_text == f"{document.document_no}-A"
+        assert qdocs.serialize_document(db, document)["our_ref"] == f"{document.document_no}-A"
 
         _sign(db, document, owner)
         r2 = qdocs.issue(db, document=document, actor_user_id=owner)
-        assert r2.our_ref_text == f"{document.document_no}-R2"
-        assert qdocs.serialize_document(db, document)["our_ref"] == f"{document.document_no}-R2"
+        assert r2.our_ref_text == f"{document.document_no}-B"
+        assert qdocs.serialize_document(db, document)["our_ref"] == f"{document.document_no}-B"

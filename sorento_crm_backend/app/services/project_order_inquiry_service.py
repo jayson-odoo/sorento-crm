@@ -4912,6 +4912,7 @@ class ProjectOrderInquiryService:
                         if key in _PURCHASING_KEYS
                     ],
                 )
+                self._keep_rows_was(queue, str(line.id), row_lines)
                 continue
             if unchanged and _borrow_donors(before) != _borrow_donors(now):
                 # Only a Borrow's donor moved (owner, 13 Oct 2026, re-confirmed 14 Oct): a
@@ -4992,6 +4993,37 @@ class ProjectOrderInquiryService:
         self._tell_splits(
             pso_id, [line for line, _now, _before in saved], actor_user_id=actor_user_id
         )
+
+    @staticmethod
+    def _keep_rows_was(
+        queue: List[Dict[str, Any]], so_line_id: str, row_lines: Sequence[Mapping[str, Any]]
+    ) -> None:
+        """CONFIRM-REMARK-FIX F2-dates (crew, SO418869 CB771): the planner's words replace
+        the REMARK only. What the line's rows told purchasing moved (a pending AutoCount date
+        or quantity, Was -> Now) stays on the line, as the popup and the generated words show
+        it: a revision that already froze the new date has no Was of its own to tell. The
+        saved line's own Was wins where it has one."""
+        told: Dict[str, Any] = {}
+        for item in row_lines:
+            for key, value in (((item.get("line") or {}).get("was")) or {}).items():
+                if value and key not in told:
+                    told[key] = value
+        if not told:
+            return
+        target = next(
+            (item for item in reversed(queue) if item.get("row_id") == f"saved:{so_line_id}"),
+            None,
+        )
+        if target is None:
+            return
+        entry = target["line"]
+        entry["was"] = {**told, **(entry.get("was") or {})}
+        keys = list(target.get("verb_keys") or [])
+        for item in row_lines:
+            for key in item.get("verb_keys") or ():
+                if key in (IV_DELAY, IV_ADVANCE) and key not in keys:
+                    keys.append(key)
+        target["verb_keys"] = keys
 
     def stamp_so_remark(self, pso_id: str, so_remark: Optional[str]) -> None:
         """FULFIL-SO-REMARK (AC-10, AC-11): the planner's own SO remark for this Confirm
@@ -15178,6 +15210,16 @@ def _build_undo_context(
 _POST_COMMIT_DISPATCH_REGISTERED = False
 
 
+def queue_purchasing_notification(session, item: dict) -> None:
+    """Queue an in-app purchasing notice on this session, sent on a fresh session once the
+    write commits (`_fire_pending_purchasing_notifications`), dropped if the transaction it was
+    queued under rolls back. `item` carries `user_ids`, `title`, `body`, `data` and the
+    notification's `source_entity_type` / `source_entity_id` / `dedup_key`."""
+    session.info.setdefault(_PURCHASING_NOTIFY_PENDING_KEY, []).append(
+        {**item, "tx_chain": _transaction_chain(session)}
+    )
+
+
 def register_order_inquiry_post_commit_dispatch() -> None:
     """Fire every `order_inquiry_changed_with_links` a settle queued, once this session's
     write actually commits (S5, review of PR #471).
@@ -15249,6 +15291,12 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         """
         if session.info.get("confirm_preview"):
             return
+        if session.get_nested_transaction() is not None:
+            # A savepoint's own commit (a batch apply gives each order one): the write has not
+            # landed, and a later rollback can still remove it (CONFIRM-REMARK-FIX review S1).
+            # The queue waits for the root commit; `after_soft_rollback` drops what a rollback
+            # took with it.
+            return
         pending = session.info.pop(_PURCHASING_NOTIFY_PENDING_KEY, None)
         if not pending:
             return
@@ -15266,9 +15314,14 @@ def register_order_inquiry_post_commit_dispatch() -> None:
                             title=item["title"],
                             body=item["body"],
                             data=item["data"],
-                            source_entity_type="order_inquiry",
-                            source_entity_id=item["inquiry_id"],
-                            dedup_key=f"{item['inquiry_id']}:order_inquiry_raised",
+                            source_entity_type=item.get(
+                                "source_entity_type", "order_inquiry"
+                            ),
+                            source_entity_id=item.get(
+                                "source_entity_id", item.get("inquiry_id")
+                            ),
+                            dedup_key=item.get("dedup_key")
+                            or f"{item['inquiry_id']}:order_inquiry_raised",
                             event_type="project_order_inquiry_raised",
                             send_in_app=True,
                             # Deliberately not email. AC-I4 is that this stops being an
@@ -15279,8 +15332,8 @@ def register_order_inquiry_post_commit_dispatch() -> None:
                     except Exception:  # noqa: BLE001 - post-commit work never raises
                         fresh.rollback()
                         logger.exception(
-                            "order inquiry %s raised, but purchasing was not notified",
-                            item.get("inquiry_id"),
+                            "%s: purchasing was not notified",
+                            item.get("dedup_key") or item.get("inquiry_id"),
                         )
         finally:
             fresh.close()
