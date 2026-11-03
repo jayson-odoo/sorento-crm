@@ -29,6 +29,7 @@ from app.models.sample_request import SampleRequest, SampleRequestLine
 from app.models.status import Status, StatusTransition
 from app.models.user import SystemSetting, User
 from app.services.error_handler import AppException, handle_not_found
+from app.services.scm.so_party import so_parties, with_party
 from app.utils.multi_value import multi_values
 from app.services.pdf_render import today_in_malaysia
 
@@ -846,14 +847,20 @@ def search_consignments(
         .limit(limit)
         .all()
     )
+    # OI-UX-FILTER-SNAPSHOT: each consignment names its customer and project.
+    parties = so_parties(db, ids=[r.id for r in rows])
     return [
-        {
-            "id": r.id,
-            "so_number": r.so_number,
-            "debtor_code": r.debtor_code,
-            "debtor_name": r.debtor_name,
-            "order_date": r.order_date,
-        }
+        with_party(
+            {
+                "id": r.id,
+                "so_number": r.so_number,
+                "debtor_code": r.debtor_code,
+                "debtor_name": r.debtor_name,
+                "order_date": r.order_date,
+            },
+            parties,
+            r.id,
+        )
         for r in rows
     ]
 
@@ -1451,6 +1458,7 @@ def _consignment_block(db: Session, req: SampleRequest) -> Optional[Dict[str, An
     return {
         "id": cg.id,
         "so_number": cg.so_number,
+        **with_party({}, so_parties(db, ids=[cg.id]), cg.id),
         "order_date": cg.order_date,
         "status": cg.status,
         "delivered_on": delivery[0] if delivery else None,
