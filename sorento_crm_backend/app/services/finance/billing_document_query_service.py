@@ -232,7 +232,15 @@ def get_document_or_404(db: Session, document_id: str) -> BillingDocument:
 
 def document_detail(db: Session, doc: BillingDocument, user_id: str) -> dict[str, Any]:
     lines = list(doc.lines)  # ordered by line_no
-    line_ids = [line.sales_order_line_id for line in lines if line.sales_order_line_id]
+    # DOC-RELATIONS: sales orders follow the SO view slug, on the lines as in the header list
+    # below (security review, OI-UX-FILTER-SNAPSHOT): a finance-only viewer gets no order id,
+    # customer or project from a line either.
+    can_view_orders = relations.can_view(db, user_id, relations.SALES_ORDER)
+    line_ids = (
+        [line.sales_order_line_id for line in lines if line.sales_order_line_id]
+        if can_view_orders
+        else []
+    )
     orders_by_line: dict[str, dict[str, str]] = {}
     if line_ids:
         for line_id, order_id, so_number in (
@@ -267,7 +275,7 @@ def document_detail(db: Session, doc: BillingDocument, user_id: str) -> dict[str
     linked = relations.relations_for_billing_document(db, doc)
     sales_orders = (
         [{"id": o["id"], "doc_no": o["doc_no"]} for o in linked["sales_orders"]]
-        if relations.can_view(db, user_id, relations.SALES_ORDER)
+        if can_view_orders
         else []
     )
     header_parties = so_parties(db, ids=[o["id"] for o in sales_orders])

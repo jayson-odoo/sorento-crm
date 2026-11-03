@@ -57,8 +57,16 @@ def so_parties(
                     "project_label": _blank_to_none(project_label),
                 }
                 out[str(order_id)] = party
-                if so_number:
-                    out.setdefault(so_number, party)
+                if not so_number:
+                    continue
+                seen = out.get(so_number)
+                if seen is None:
+                    out[so_number] = party
+                elif seen != party:
+                    # An so_number is unique per company only. An all-company read (an API key
+                    # with no contact) that finds one number naming two different parties cannot
+                    # tell which order was meant: it names nobody rather than the first row back.
+                    out[so_number] = dict(EMPTY_PARTY)
 
     if id_list:
         _read(SalesOrder.id, id_list)
