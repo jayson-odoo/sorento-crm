@@ -1986,6 +1986,11 @@ class ProjectQuotationFormScopeCreate(BaseModel):
     )
     series_id: Optional[str] = None
     notes: Optional[str] = None
+    matrix_columns: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="PS-QUOTE-MATRIX: the new scope's column headers, applied before its lines "
+        "in the same transaction so each line's quantity is the sum of its qty_cells.",
+    )
     lines: List["ProjectQuotationLineBulkItem"] = Field(
         default_factory=list,
         description="The scope's lines in display order. Empty means an empty scope, never a "
@@ -2007,6 +2012,11 @@ class ProjectQuotationFormScopeUpdate(BaseModel):
     scope_label: Optional[str] = Field(default=None, max_length=150)
     series_id: Optional[str] = None
     notes: Optional[str] = None
+    matrix_columns: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="PS-QUOTE-MATRIX: a NEW scope's (no id) column headers. A saved scope's change "
+        "through PUT .../quotation-versions/{id}/columns, and is refused here with 422.",
+    )
     lines: Optional[List["ProjectQuotationLineBulkItem"]] = None
 
 

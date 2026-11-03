@@ -516,6 +516,14 @@ def apply_form_scopes(
             )
             continue
         scope = get_scope_or_404(db, document, str(scope_id))
+        if item.get("matrix_columns") is not None:
+            # A saved scope's columns move its quantities (set_columns); the form is not a
+            # second way in that would skip that move.
+            raise AppException(
+                status_code=422,
+                message="Change a saved scope's columns in its table header.",
+                code="quotation_columns_invalid",
+            )
         fields = {key: item[key] for key in _SCOPE_FIELDS if key in item}
         if fields:
             scope_service.update_quotation(db, quotation=scope, payload=fields)
@@ -546,6 +554,15 @@ def _add_form_scope(
         actor_user_id=actor_user_id,
         payload={key: item[key] for key in ("series_id", "notes") if key in item},
     )
+    # PS-QUOTE-MATRIX: a scope added on the form brings its column headers. Set before the lines
+    # (it has none yet, so nothing moves), so each line's cells are validated against them and
+    # its quantity derived from them, all in this one transaction.
+    if item.get("matrix_columns"):
+        scope_service.set_columns(
+            db,
+            version=scope_service.current_version(db, scope.id),
+            columns=item["matrix_columns"],
+        )
     if not lines:
         return []
     return scope_service.replace_lines(

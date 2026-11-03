@@ -36,6 +36,7 @@ import type {
 } from '../../../_shared/types/project.types';
 import { OutcomePill } from '../../../_shared/components/OutcomePill';
 import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
+import type { MatrixHeader } from '../../../_shared/lib/quotationMatrix';
 import { QuotationDialog, soleActiveSeriesId } from '../../components/QuotationDialog';
 import {
   QuotationVersionEditor,
@@ -71,6 +72,11 @@ type FormScope = {
   series_id: string;
   /** Undefined until the Edit scope dialog sets it, so an untouched saved note is not sent. */
   notes?: string | null;
+  /**
+   * PS-QUOTE-MATRIX: a NEW scope's column headers, set in its table header like a saved one's and
+   * sent with its lines on Save. A saved scope's columns are its version's, written at once.
+   */
+  matrix_columns?: MatrixHeader[];
 };
 
 type FormTab = 'header' | 'lines' | 'cover-letter' | 'terms';
@@ -122,7 +128,12 @@ function newScope(): FormScope {
  * Edit scope dialog, the one place a series is picked, always writes a name with it.
  */
 function isUntouchedNewScope(scope: FormScope, lines: StagedQuotationLine[]): boolean {
-  return !scope.id && !scope.scope_label.trim() && lines.length === 0;
+  return (
+    !scope.id &&
+    !scope.scope_label.trim() &&
+    lines.length === 0 &&
+    !(scope.matrix_columns?.length ?? 0)
+  );
 }
 
 /** Staged lines whose quantity or unit price is typed but is not a number: the server would 422. */
@@ -446,6 +457,8 @@ export function QuotationFormClient({
       // they moved, the rule the quotation page's Save kept: the write replaces the WHOLE set, and
       // a scope the customer holds is never staged, so it is never sent.
       if (!scope.id) item.lines = stagedLinesToBody(stagedLinesOf(scope.key));
+      // A new scope's column headers ride with its lines; the server sets them first.
+      if (!scope.id && scope.matrix_columns?.length) item.matrix_columns = scope.matrix_columns;
       else if (changed.has(scope.key)) item.lines = stagedLinesToBody(stagedLinesOf(scope.key));
       return item;
     });
@@ -595,6 +608,7 @@ export function QuotationFormClient({
                 onSelect={setActiveKey}
                 scopeTotal={scopeTotal}
                 edit={edit}
+                onColumns={(key, next) => updateScope(key, { matrix_columns: next })}
                 onColumnsBusy={setColumnsBusy}
                 feedback={openFeedback}
                 canRemoveSaved={canRemoveSaved}
@@ -772,6 +786,7 @@ function FormLines({
   onSelect,
   scopeTotal,
   edit,
+  onColumns,
   onColumnsBusy,
   feedback,
   canRemoveSaved,
@@ -787,6 +802,8 @@ function FormLines({
   onSelect: (key: string) => void;
   scopeTotal: (scope: FormScope) => string;
   edit: ReturnType<typeof useQuotationEditSession>;
+  /** A new scope's column headers, held here until Save (PS-QUOTE-MATRIX). */
+  onColumns: (key: string, next: MatrixHeader[]) => void;
   onColumnsBusy: (busy: boolean) => void;
   /** Open customer feedback on this document: marked on the draft being edited (R20). */
   feedback: QuotationFeedbackRow[];
@@ -809,6 +826,7 @@ function FormLines({
   /** The open scope's edit handles, bound to its key, exactly as the quotation page bound them. */
   const { scopes: stagedScopes, seedScope, stageScope, toggleRemoved } = edit;
   const activeKeyForEdit = active?.key ?? null;
+  const activeColumns = active?.matrix_columns;
   const scopeEditing = React.useMemo<QuotationScopeEditing | null>(() => {
     if (!activeKeyForEdit) return null;
     const key = activeKeyForEdit;
@@ -818,8 +836,20 @@ function FormLines({
       stage: (lines) => stageScope(key, lines),
       toggleRemoved: (lineKey) => toggleRemoved(key, lineKey),
       setColumnsBusy: onColumnsBusy,
+      // Read by the editor only while the scope has no saved version (the same header controls).
+      columns: activeColumns ?? [],
+      setColumns: (next) => onColumns(key, next),
     };
-  }, [activeKeyForEdit, onColumnsBusy, seedScope, stageScope, stagedScopes, toggleRemoved]);
+  }, [
+    activeColumns,
+    activeKeyForEdit,
+    onColumns,
+    onColumnsBusy,
+    seedScope,
+    stageScope,
+    stagedScopes,
+    toggleRemoved,
+  ]);
 
   if (!active) {
     return (

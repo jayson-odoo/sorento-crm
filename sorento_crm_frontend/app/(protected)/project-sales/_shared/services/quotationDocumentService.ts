@@ -1,6 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { QuotationFeedback, QuotationLineBulkItem } from '../types/project.types';
+import type { MatrixHeader } from '../lib/quotationMatrix';
 import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 
 /**
@@ -281,6 +282,8 @@ export type QuotationLetterTemplates = {
  */
 export type QuotationFormScopeBody = {
   id?: string;
+  /** PS-QUOTE-MATRIX: a NEW scope's column headers (no id), set before its lines. */
+  matrix_columns?: MatrixHeader[];
   scope_label?: string;
   series_id?: string | null;
   notes?: string | null;

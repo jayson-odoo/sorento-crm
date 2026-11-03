@@ -19,6 +19,7 @@ import {
   screen,
   waitFor,
   within,
+  cleanup,
 } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotationDocument } from '../../../_shared/services/quotationDocumentService';
@@ -1423,5 +1424,91 @@ describe('QuotationFormClient: open feedback on the revision-2 draft (PS-QUOTE-M
 
     expect(await screen.findByTestId('line-feedback-dot')).toBeInTheDocument();
     expect(getQuotationFeedback).toHaveBeenCalledWith('p1', 'd1');
+  });
+});
+
+/**
+ * Owner, hand test (3 Nov): the create view must behave like the edit view. Rule of 28 Oct: create,
+ * edit and view of a form are identical and use the same component. So New proposal has the grid
+ * editor Edit proposal has, column headers included, and Save carries the new scope's columns.
+ */
+describe('QuotationFormClient: New and Edit proposal are one editor (PS-QUOTE-MATRIX)', () => {
+  /** What the open scope's grid offers: the controls and the header/footer it draws. */
+  function gridShape(card: HTMLElement) {
+    const table = within(card).getByRole('table');
+    return {
+      headerInputs: within(table)
+        .queryAllByRole('textbox')
+        .map((input) => input.getAttribute('aria-label'))
+        .filter((label) => label?.startsWith('Column header')),
+      columnHeaders: within(table)
+        .getAllByRole('columnheader')
+        .map((th) => (th.textContent ?? '').trim())
+        .filter(Boolean),
+      footer: (table.querySelector('tfoot')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    };
+  }
+
+  it('offers + Column header on a new scope exactly as on a saved one', async () => {
+    renderForm();
+    const created = await openLines();
+    expect(within(created).getByRole('button', { name: 'Column header' })).toBeInTheDocument();
+    cleanup();
+
+    renderForm('d1');
+    const edited = await openLines('Townhouse');
+    expect(within(edited).getByRole('button', { name: 'Column header' })).toBeInTheDocument();
+  });
+
+  it('draws the same header and footer for a scope with columns, new or saved', async () => {
+    // Create: a new scope gets its first column header from the same control.
+    renderForm();
+    const created = await openLines();
+    await addLine(created, 1);
+    fireEvent.click(within(created).getByRole('button', { name: 'Column header' }));
+    await within(created).findByRole('textbox', { name: 'Column header Header 1' });
+    const createShape = gridShape(created);
+    cleanup();
+
+    // Edit: a saved scope whose version holds that same header.
+    listQuotationVersions.mockResolvedValue([
+      version({ matrix_columns: [{ key: 'h1', label: 'Header 1', cols: [] }] }),
+    ]);
+    listQuotationLines.mockResolvedValue([{ ...LINE, qty_cells: { h1: '10.00' } }]);
+    renderForm('d1');
+    const edited = await openLines('Townhouse');
+    await within(edited).findByRole('textbox', { name: 'Column header Header 1' });
+    const editShape = gridShape(edited);
+
+    expect(createShape.headerInputs).toEqual(['Column header Header 1']);
+    expect(createShape.headerInputs).toEqual(editShape.headerInputs);
+    expect(createShape.columnHeaders).toEqual(editShape.columnHeaders);
+    expect(createShape.columnHeaders).toContain('Total qty');
+    expect(createShape.columnHeaders).not.toContain('Qty');
+    expect(createShape.footer).toMatch(/Total qty.*Total \(RM\)/);
+    expect(editShape.footer).toMatch(/Total qty.*Total \(RM\)/);
+  });
+
+  it('Save on create sends the new scope\'s columns and each line\'s cells in the one request', async () => {
+    renderForm();
+    await nameScope(await openLines(), 'Townhouse');
+    const card = scopeCard('Townhouse');
+    await addLine(card, 1);
+    await pickProduct(card, 1);
+    fireEvent.click(within(card).getByRole('button', { name: 'Column header' }));
+    await within(card).findByRole('textbox', { name: 'Column header Header 1' });
+    fireEvent.change(within(card).getByRole('textbox', { name: /^Qty on SRT-BASIN-02, Header 1/ }), {
+      target: { value: '995' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    const [, body] = createQuotationDocument.mock.calls[0];
+    const [scope] = body.scopes;
+    expect(scope.matrix_columns).toEqual([{ key: expect.any(String), label: 'Header 1', cols: [] }]);
+    const key = scope.matrix_columns[0].key;
+    expect(scope.lines).toEqual([
+      expect.objectContaining({ product_id: 'p9', qty_cells: { [key]: '995' }, quantity: '995.00' }),
+    ]);
   });
 });

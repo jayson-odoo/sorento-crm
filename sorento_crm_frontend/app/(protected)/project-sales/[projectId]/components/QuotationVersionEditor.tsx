@@ -104,6 +104,13 @@ export type QuotationScopeEditing = {
    * The page's Save waits: a line write racing a column write 422s on cells under a removed key.
    */
   setColumnsBusy?: (busy: boolean) => void;
+  /**
+   * PS-QUOTE-MATRIX: a scope with no saved version yet (added on the form) holds its column
+   * headers here, edited through the same header controls, and Save sends them with its lines.
+   * Ignored for a saved scope, whose columns are its version's (written at once).
+   */
+  columns?: MatrixHeader[];
+  setColumns?: (next: MatrixHeader[]) => void;
 };
 
 /**
@@ -164,10 +171,12 @@ export function QuotationVersionEditor({
   );
   const current = rows.find((version) => version.is_current) ?? null;
   const selected = rows.find((version) => version.id === selectedId) ?? current;
-  // The version's column headers (PS-QUOTE-MATRIX); `[]` is today's single Qty column.
+  // The version's column headers (PS-QUOTE-MATRIX); `[]` is today's single Qty column. A scope
+  // added on the form has no version yet: its headers are the form's, until Save.
+  const formColumns = isUnsaved ? edit?.columns : undefined;
   const matrixColumns = React.useMemo<MatrixHeader[]>(
-    () => selected?.matrix_columns ?? [],
-    [selected?.matrix_columns],
+    () => (isUnsaved ? (formColumns ?? []) : (selected?.matrix_columns ?? [])),
+    [formColumns, isUnsaved, selected?.matrix_columns],
   );
   const withCells = hasColumns(matrixColumns);
 
@@ -471,8 +480,13 @@ export function QuotationVersionEditor({
   stagedRef.current = staged;
   const stageForColumns = edit?.stage;
   const versionForColumns = selected?.id ?? null;
+  // One editor for create and edit (owner, 28 Oct): a scope not saved yet edits its header too,
+  // held by the form; a saved one needs its version to be editable.
+  const setFormColumns = edit?.setColumns;
   const canEditColumns =
-    gridEditing && !isUnsaved && Boolean(selected?.is_editable) && project.can_edit;
+    gridEditing &&
+    project.can_edit &&
+    (isUnsaved ? Boolean(setFormColumns) : Boolean(selected?.is_editable));
   const siblingVersions = useProjectQuotationVersions(canEditColumns ? siblingScopes : undefined);
   const copySources = React.useMemo(
     () =>
@@ -485,30 +499,37 @@ export function QuotationVersionEditor({
       })),
     [canEditColumns, siblingScopes, siblingVersions.rows],
   );
+  /** The staged lines carried across a header change, by the server's own rule (R12). */
+  const reshapeStaged = React.useCallback(
+    (before: MatrixHeader[], after: MatrixHeader[]) => {
+      const held = stagedRef.current;
+      if (!held || !stageForColumns) return;
+      stageForColumns(
+        held.map((line) => {
+          const reshaped = reshapeCells(before, after, draftCells(line.draft), line.draft.quantity ?? '');
+          return { ...line, draft: { ...line.draft, ...cellsPatch(reshaped.cells, reshaped.quantity) } };
+        }),
+      );
+    },
+    [stageForColumns],
+  );
   const changeColumns = React.useCallback(
     async (next: MatrixHeader[]): Promise<boolean> => {
-      if (!versionForColumns) return false;
       const before = matrixColumns;
+      if (isUnsaved) {
+        // Nothing to write yet: the form holds the header and sends it with the lines on Save.
+        if (!setFormColumns) return false;
+        setFormColumns(next);
+        reshapeStaged(before, next);
+        return true;
+      }
+      if (!versionForColumns) return false;
       try {
         const result = await columnsMutation.mutateAsync({
           versionId: versionForColumns,
           columns: next,
         });
-        const after = result.version.matrix_columns ?? next;
-        const held = stagedRef.current;
-        if (held && stageForColumns) {
-          stageForColumns(
-            held.map((line) => {
-              const reshaped = reshapeCells(
-                before,
-                after,
-                draftCells(line.draft),
-                line.draft.quantity ?? '',
-              );
-              return { ...line, draft: { ...line.draft, ...cellsPatch(reshaped.cells, reshaped.quantity) } };
-            }),
-          );
-        }
+        reshapeStaged(before, result.version.matrix_columns ?? next);
         return true;
       } catch {
         // The mutation already toasted the reason; the grid puts the header back as the
@@ -516,7 +537,7 @@ export function QuotationVersionEditor({
         return false;
       }
     },
-    [columnsMutation, matrixColumns, stageForColumns, versionForColumns],
+    [columnsMutation, isUnsaved, matrixColumns, reshapeStaged, setFormColumns, versionForColumns],
   );
   /**
    * The notes as marks on the version on screen (R20, E6). They name the ISSUED version's lines;
