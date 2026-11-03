@@ -33,7 +33,7 @@ export function LineSplitDialog({
    * OI-SPLIT-GUIDE (UAC F26): per line with a saved decision, its Remark facts
    * (`LineSplitEditor.lineRemarks`); such a line's remark is kept in its draft.
    */
-  lineRemarks?: ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean; consignment?: boolean }>;
+  lineRemarks?: ReadonlyMap<string, { words: string | null; own: string | null; editable: boolean }>;
   /** Saves those lines' edited remarks to their drafts (`LineSplitEditor.onSaveRemarks`). */
   onSaveRemarks?: (changes: ReadonlyMap<string, string>) => Promise<void>;
   onOpenChange: (open: boolean) => void;

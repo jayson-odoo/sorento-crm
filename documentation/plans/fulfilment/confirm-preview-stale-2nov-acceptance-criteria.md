@@ -24,5 +24,9 @@ never refuses an order.
 - U8. A saved decision whose composition differs from the change's suggestion is flagged "AutoCount
   moved this line: suggestion X, you keep Y" with Keep / Take suggestion; the same composition
   (whatever places one side names) is not flagged; a pre-mark is never flagged; Next stays on.
-- U9. (Follow-up PR, item 4) Plain Confirm: a delivered line whose saved decision is a Borrow tells
-  purchasing its order back; a Buy on a delivered line keeps the skip; nothing refuses the order.
+- U9. (Stacked PR #2107, item 4) Plain Confirm: a delivered line's saved decision reaches
+  purchasing (Confirm plans it at its ordered qty, owner ruling 14 Sep): a Buy raises its row, a
+  Borrow raises its order back; only a plan qty of 0 (cancelled, returned, `qty_required` 0) is
+  skipped (#1362). Nothing refuses the order. The Review split prints the saved decision's words,
+  and says "Delivered in full: nothing goes to purchasing" only when the guide's email dry run
+  holds no line for it (any order class); never beside an ORDER BACK or Buy row, never unchecked.

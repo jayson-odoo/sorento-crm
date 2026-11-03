@@ -96,6 +96,72 @@ def test_a_delivered_line_autocount_closed_reads_its_change_word_not_cancel_all(
     assert "DELAY" in (l10["remark_generated"] or ""), l10["remark_generated"]
 
 
+def test_a_delivered_line_s_saved_buy_on_a_plain_confirm_reaches_purchasing(api):
+    """Item 4 (crew, 2 Nov): plain Confirm (nothing pending) on a line delivered in full. The
+    board plans a line at its ordered qty (`plan_qty_of`, owner ruling 14 Sep: "a delivered
+    line ... a Buy raises the order-back inquiry"), so Confirm does NOT skip it: the #1362 skip
+    is only for a line whose PLAN qty is 0 (cancelled, returned, qty_required 0). Pins the
+    premise the sheet's words rest on: something does go to purchasing."""
+    from app.models.project_so import OrderInquiryRow
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    core, line = _mirror(db, order, core_so, world.product, world.own_wh, line_no=30, qty=3, when=WAS)
+    core.qty_delivered = Decimal("3")
+    db.commit()
+    resp = _confirm(client, order.id, [_line_payload(line.id, buy_qty="3")])
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("lines_fulfilled_skipped", 0) == 0, body
+    rows = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.state != "cancelled")
+        .all()
+    )
+    assert sum((Decimal(str(r.qty)) for r in rows), Decimal("0")) == Decimal("3"), [
+        (r.verb, r.qty, r.state) for r in rows
+    ]
+
+
+def test_a_delivered_line_s_saved_borrow_on_a_plain_confirm_raises_its_order_back(api):
+    """Item 4, the Borrow half (review): a delivered line that borrowed 3 from its own bin
+    tells purchasing its order back on a plain Confirm ("Borrow from another order" OFF, the
+    default: `_location_order_backs` owes a borrow back on the borrowing line, own location
+    included)."""
+    from app.models.project_so import OrderInquiryRow
+    from tests.test_so_supply_confirmation import _stock
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    core, line = _mirror(db, order, core_so, world.product, world.own_wh, line_no=40, qty=3, when=WAS)
+    core.qty_delivered = Decimal("3")
+    _stock(db, world.product, world.own_wh, on_hand=10)
+    db.commit()
+    resp = _confirm(client, order.id, [_line_payload(line.id, borrow=[{
+        "source": "other_location",
+        "warehouse_id": str(world.own_wh.id),
+        "qty": "3",
+        "reason": "Borrowed from its own bin.",
+    }])])
+    assert resp.status_code == 200, resp.text
+    assert resp.json().get("lines_fulfilled_skipped", 0) == 0, resp.json()
+    backs = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.verb == "ORDER_BACK",
+            OrderInquiryRow.state != "cancelled",
+        )
+        .all()
+    )
+    assert [Decimal(str(r.qty)) for r in backs] == [Decimal("3")], [
+        (r.verb, r.qty, r.state, r.note) for r in backs
+    ]
+
 # --------------------------------------------------------------------------------------------
 # Round 3 (crew final pass, 2 Nov): popup REMARK = email REMARK, one source. The guided
 # Confirm's dry run (`confirm-all` with `preview: true`) answers, per order, the purchasing

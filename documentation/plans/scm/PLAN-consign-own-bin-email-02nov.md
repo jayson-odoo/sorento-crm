@@ -51,13 +51,12 @@ assert the ORDER_BACK row.
 
 Kill test: put the exemption back, the consignment tests fail again.
 
-## Browser-pass fix (crew, 2 Nov 2026)
+## Browser-pass fix (crew, 2 Nov 2026), superseded 3 Nov by #2107
 
 The guided Confirm review said "Delivered in full: nothing goes to purchasing" beside REMARK
-ORDER BACK on a consignment line (`LineSplitSheet.tsx`, UAC F28). A consignment is always
-delivered in full, but Confirm keeps it (its open qty is ordered less returned), so the line now
-reads "Consignment: goes to purchasing" (or "Consignment: nothing goes to purchasing" when its
-saved words are empty). Sales order lines keep the F28 words; `deliveredInFull` (which also locks
-splitting) is unchanged. The consignment fact is the board's `so_doc_type`, read through one
-predicate (`isConsignment`, `scm/lib/docType.tsx`). Tests F28b, F28c in
-`FulfilmentBoardPanel.confirmGuide.test.tsx`, red first.
+ORDER BACK on a consignment line. This lane first fixed it for consignments only (db57c92116).
+Main's #2107 (CONFIRM-PREVIEW-STALE item 4) then fixed it for every order class: the note shows
+only when the guide's email dry run holds no line for the delivered line, and a delivered
+line's saved decision prints its words. With this lane's backend change a consignment's
+own-bin Borrow has its ORDER BACK email line, so #2107 already reads it right; the lane's
+frontend changes were dropped in the 3 Nov merge of main (frontend now identical to main).

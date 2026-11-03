@@ -59,13 +59,17 @@ export interface SplitLine {
    */
   savedRemark?: string | null;
   /**
+   * CONFIRM-ITEM4: set only by the guided Confirm, when its email dry run shows Confirm sends
+   * purchasing nothing for this line. The only case the sheet may say "nothing goes to
+   * purchasing"; unset (not previewed, or a failed dry run) makes no claim.
+   */
+  purchasingSilent?: boolean;
+  /**
    * OI-SPLIT-GUIDE (UAC F25, F26): set only by the guided Confirm's editor on a saved line
    * whose REMARK lives in its saved decision draft (never a one-row split): the planner's own
    * remark (`ownRemark`, '' = the default words) and that it is edited there.
    */
   remarkInDraft?: boolean;
-  /** Set with `remarkInDraft`: the line's order is a consignment. */
-  consignment?: boolean;
   ownRemark?: string | null;
   /** The line carried a stored split remark when loaded (not the live draft). */
   remarkStored?: boolean;
