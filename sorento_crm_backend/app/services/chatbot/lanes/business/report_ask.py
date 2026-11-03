@@ -3411,18 +3411,18 @@ def _carry(ask: dict[str, Any], held_ask: dict[str, Any], verdict: dict[str, Any
     """Crew C6-2 (round 6), over the model's own outputs only: per kind (`_CARRY_KINDS`), a kind this message's entities
     name nothing of and the object holds none of keeps the held report's SETTLED value (never an open question's asked
     word, `brand_or_account_type`); a kind they name, or the object holds, is the object's. A kind the parse itself
-    widens is not carried: `broaden_axis` with `broaden_to` "all" naming one of the kind's hints (the same vocabulary its
-    entities are read by), and for the customer a global drill or "my ..." (`_customer_stays`). The axis's own slot is
-    not carried: a breakdown ranks across it (`_AXIS_FILTERS`)."""
+    widens is not carried (`turn.decide.widened_kinds`, the reader the open which-one customer pick shares: `broaden_axis`
+    with `broaden_to` "all" naming one of the kind's hints, and for the customer a global drill or "my ..."). The axis's
+    own slot is not carried: a breakdown ranks across it (`_AXIS_FILTERS`)."""
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
         for e in jsc.array(verdict.get("entities"))
         if isinstance(e, dict) and e.get("current_message") is not False
     }
-    # R-P3-09: the axis the parse widens to "all", read as a kind's own hint (brand and account type clear together).
-    widened = {jsc.js_string(verdict.get("broaden_axis") or "").strip().lower()} if verdict.get("broaden_to") == "all" else set()
-    if verdict.get("ranking_drill") == "global" or verdict.get("self_reference") is True:
-        widened.add("customer")
+    from app.services.chatbot.turn.decide import widened_kinds
+
+    # R-P3-09: the kinds the parse widens, read as each kind's own hint (brand and account type clear together).
+    widened = widened_kinds(verdict)
     for keys, hints in _CARRY_KINDS:
         if named & hints or hints & widened or any(ask.get(k) for k in keys):
             continue

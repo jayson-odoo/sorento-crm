@@ -222,7 +222,8 @@ def broadens_the_roster(verdict: dict[str, Any], pending: Pending) -> bool:
     own rule, unchanged. A NAMED axis does it when the roster is about that kind and the
     message asked for any widening at all, at EITHER level: a roster IS the family, so
     "all variants of 286" and "for all products" both come to the same thing over it
-    (hand pass 2 item 10). "for all products" over a CUSTOMER picker answers nothing.
+    (hand pass 2 item 10). "for all products" over a CUSTOMER picker answers nothing. A kind the parse widens by its
+    other readings (`widened_kinds`: "my ...", "overall" widen the customer) widens that kind's roster too (round 7f).
     """
     if verdict.get("broaden_axis") == EVERYTHING:
         return True
@@ -231,7 +232,7 @@ def broadens_the_roster(verdict: dict[str, Any], pending: Pending) -> bool:
         axis is not None
         and broaden_level(verdict) is not None
         and pending.kind == f"{axis}_pick"
-    )
+    ) or any(pending.kind == f"{kind}_pick" for kind in widened_kinds(verdict))
 
 
 def picked_positions(pending: Pending, verdict: dict[str, Any]) -> tuple[list[int], str] | None:
@@ -431,6 +432,19 @@ def domain_in_message(verdict: dict[str, Any]) -> bool | None:
     """
     value = verdict.get("domain_in_message")
     return value if isinstance(value, bool) else None
+
+
+def widened_kinds(verdict: dict[str, Any]) -> set[str]:
+    """The entity kinds THIS parse widens to every row (R-P3-09 and its customer readings): `broaden_axis` with
+    `broaden_to` "all" (as the kind's own hint), and the customer on a global drill ("overall") or a "my ..." ask
+    (`self_reference`). The ONE reader both the report ask's carry (`report_ask._carry`) and the open which-one customer
+    pick (`apply._which_one_keeps_its_ask`) use. Parser fields only."""
+    out: set[str] = set()
+    if verdict.get("broaden_to") == "all":
+        out = {str(verdict.get("broaden_axis") or "").strip().lower()} - {""}
+    if verdict.get("ranking_drill") == "global" or verdict.get("self_reference") is True:
+        out.add("customer")
+    return out
 
 
 def names_its_own_domain(verdict: dict[str, Any]) -> bool:
