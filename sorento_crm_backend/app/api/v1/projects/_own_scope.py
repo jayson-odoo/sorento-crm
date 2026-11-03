@@ -148,9 +148,9 @@ _NESTED: Dict[str, frozenset] = {
             "party_id",
             # SPEC-SHEET-V2: every spec sheet route loads the sheet under its document under this
             # project (`_sheet(db, document, sheet_id)` 404s a sheet of another document), and
-            # `key` is a page key checked against that sheet's own pages (404 / 422 otherwise).
+            # `page_key` is a page key checked against that sheet's own pages (404 / 422 otherwise).
             "sheet_id",
-            "key",
+            "page_key",
         }
     ),
     "quotation-versions": frozenset({"line_id"}),

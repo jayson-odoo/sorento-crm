@@ -90,7 +90,7 @@ GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/p
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}
-GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/pages/{key}/design
+GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/pages/{page_key}/design
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/preview
 GET /projects/{project_id}/quotation-documents/{document_id}/views
 GET /projects/{project_id}/quotations
@@ -268,7 +268,7 @@ PUT /leads/{lead_id}
 PUT /planning-changes/{batch_id}/rows/{row_id}
 PUT /projects/{project_id}
 PUT /projects/{project_id}/quotation-documents/{document_id}/amendment-requests/{request_id}/rows/{row_id}
-PUT /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/pages/{key}/edit
+PUT /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/pages/{page_key}/edit
 PUT /projects/{project_id}/stakeholders/{stakeholder_id}
 PUT /projects/{project_id}/tasks/{task_id}
 PUT /purchase-order-versions/{po_version_id}

@@ -31,7 +31,7 @@ def upgrade() -> None:
     op.create_table(
         _TABLE,
         sa.Column("id", uuid_t, primary_key=True),
-        sa.Column("company_id", uuid_t, sa.ForeignKey("companies.id"), nullable=True),
+        sa.Column("company_id", uuid_t, sa.ForeignKey("companies.id"), nullable=False),
         sa.Column(
             "document_id",
             uuid_t,
@@ -133,7 +133,9 @@ _SHEETS = _t(
     "page_edits",
     "page_count",
 )
-_TEMPLATES = _t("tag_template", "id", "published_version_id", schema="dealer_kit")
+_TEMPLATES = _t(
+    "tag_template", "id", "published_version_id", "company_id", "family", schema="dealer_kit"
+)
 _PRODUCTS = _t("products", "id", "brand_id", schema=None)
 _BRANDS = _t("brands", "id", "brand_name", schema=None)
 
@@ -241,6 +243,8 @@ def backfill(connection) -> None:
     ).mappings().all()
     for doc in docs:
         settings = doc["spec_sheet"] or {}
+        if not doc["company_id"]:
+            continue
         cover, page = settings.get("cover_template_id"), settings.get("page_template_id")
         if not cover or not page:
             continue
@@ -263,14 +267,25 @@ def backfill(connection) -> None:
             continue
         single = settings.get("single_page_template_id") or None
         versions = {}
-        for name, template_id in (("cover", cover), ("page", page), ("single", single)):
+        for name, template_id, family in (
+            ("cover", cover, "spec_cover"),
+            ("page", page, "spec_page"),
+            ("single", single, "spec_page"),
+        ):
+            # Same company as the document and the right family, else the template does not count.
             versions[name] = (
                 connection.execute(
-                    sa.select(_TEMPLATES.c.published_version_id).where(_TEMPLATES.c.id == template_id)
+                    sa.select(_TEMPLATES.c.published_version_id).where(
+                        _TEMPLATES.c.id == template_id,
+                        _TEMPLATES.c.company_id == doc["company_id"],
+                        _TEMPLATES.c.family == family,
+                    )
                 ).scalar()
                 if template_id
                 else None
             )
+        if single and versions["single"] is None:
+            continue
         if versions["cover"] is None or versions["page"] is None:
             continue
         items = _items(connection, issue_id)

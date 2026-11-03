@@ -220,6 +220,7 @@ def _assert_entity_visible(
     entity_id: str,
     actor_id: Optional[str] = None,
     entity_type: Optional[str] = None,
+    payload: Optional[dict] = None,
 ) -> None:
     """Park-time existence check for every record action on a company-owned record.
 
@@ -258,10 +259,14 @@ def _assert_entity_visible(
         from app.services.record_actions import assert_quotation_deletable
 
         assert_quotation_deletable(db, entity_id, actor_id)
-    elif action_key in ("quotation_spec_sheet.delete", "quotation_spec_sheet.reset_page"):
+    elif action_key == "quotation_spec_sheet.delete":
         from app.services.record_actions import assert_spec_sheet_editable
 
         assert_spec_sheet_editable(db, entity_id, actor_id)
+    elif action_key == "quotation_spec_sheet.reset_page":
+        from app.services.record_actions import assert_spec_sheet_page_resettable
+
+        assert_spec_sheet_page_resettable(db, entity_id, (payload or {}).get("page_key"), actor_id)
     elif action_key == "form_comment.delete":
         from app.services.form_comment_service import FormCommentService
 
@@ -763,7 +768,9 @@ def create_pending_action(
         else nullcontext()
     )
     with scope:
-        _assert_entity_visible(db, body.action_key, body.entity_id, actor_id, body.entity_type)
+        _assert_entity_visible(
+            db, body.action_key, body.entity_id, actor_id, body.entity_type, body.payload
+        )
         _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 
         try:

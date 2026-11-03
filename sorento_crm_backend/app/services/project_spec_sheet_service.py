@@ -21,6 +21,7 @@ A template that places no price prints none (the owner's sample has none).
 """
 from __future__ import annotations
 
+import json
 import math
 import uuid
 from datetime import datetime
@@ -63,6 +64,16 @@ MARKER_MAX = 10
 PREVIEW_KEYS_MAX = 12
 #: Layers one page edit may carry.
 LAYERS_MAX = 300
+#: Serialized size of one page's layers, and of every page edit of a sheet together.
+PAGE_EDIT_MAX = 512_000
+PAGE_EDITS_TOTAL_MAX = 4_000_000
+#: Layer types the designer produces (FE `TagLayerType`). The strict `TagLayerDoc` schema is not
+#: used: it lacks `barcode` and demands fields a layer may legitimately omit.
+LAYER_TYPES = frozenset(
+    {"image", "text", "shape", "product_slot", "price_badge", "badge", "barcode", "group"}
+)
+LAYER_DEPTH_MAX = 8
+LAYER_STRING_MAX = 5000
 
 #: A template page outside this range (or not a finite number) is refused before Chromium sees
 #: it: zero or negative sizes fail obscurely in the worker, and a huge one ties up the shared
@@ -123,7 +134,10 @@ def _is_uuid(value: Any) -> bool:
 # ----------------------------------------------------------------------------- templates
 
 
-def _published_template(db: Session, template_id: str, family: str) -> TagTemplate:
+def _published_template(
+    db: Session, template_id: str, family: str, company_id: Optional[str]
+) -> TagTemplate:
+    """A published template of ``family`` that belongs to the document's own company."""
     template = (
         db.query(TagTemplate).filter(TagTemplate.id == str(template_id)).first()
         if _is_uuid(template_id)
@@ -132,6 +146,8 @@ def _published_template(db: Session, template_id: str, family: str) -> TagTempla
     if (
         template is None
         or template.family != family
+        or not company_id
+        or template.company_id != company_id
         or template.published_version_id is None
         or template.published_version is None
     ):
@@ -173,6 +189,7 @@ def _same_size(sizes: Sequence[tuple]) -> None:
 
 def _resolve_templates(
     db: Session,
+    company_id: Optional[str],
     cover_id: Optional[str],
     page_id: Optional[str],
     single_id: Optional[str],
@@ -184,9 +201,9 @@ def _resolve_templates(
             message="Pick a cover template and a page template first.",
             code="spec_sheet_templates_missing",
         )
-    cover = _published_template(db, cover_id, COVER_FAMILY)
-    page = _published_template(db, page_id, PAGE_FAMILY)
-    single = _published_template(db, single_id, PAGE_FAMILY) if single_id else None
+    cover = _published_template(db, cover_id, COVER_FAMILY, company_id)
+    page = _published_template(db, page_id, PAGE_FAMILY, company_id)
+    single = _published_template(db, single_id, PAGE_FAMILY, company_id) if single_id else None
     used = [cover, page] + ([single] if single is not None else [])
     sizes = [_doc_size(t.name, t.published_version.doc) for t in used]
     _same_size(sizes)
@@ -660,6 +677,15 @@ def _sheet(key: str, version: TagTemplateVersion, width: float, height: float, l
     }
 
 
+def _version_asset_ids(pinned: dict) -> set:
+    from app.services.dealer_kit import asset_service
+
+    ids: set = set()
+    for version in {v.id: v for v in (pinned["cover"], pinned["page"], pinned["single"])}.values():
+        ids |= asset_service.tag_sheet_asset_ids(version.doc or {})
+    return ids
+
+
 def _invalid_keys() -> AppException:
     return AppException(
         status_code=422,
@@ -802,7 +828,11 @@ def build_print_payload(
     return {
         "doc": doc,
         "resolvedData": resolved,
-        "assets": asset_service.urls_for(db, asset_service.tag_sheet_asset_ids(doc)),
+        # Only artwork the pinned template versions name is signed: a page edit comes from the
+        # client, and a layer naming any other library asset draws nothing.
+        "assets": asset_service.urls_for(
+            db, asset_service.tag_sheet_asset_ids(doc) & _version_asset_ids(pinned)
+        ),
         "images": urls,
         "fonts": asset_service.font_assets(db),
         "requestDocNumber": doc_fields["quotation_no"],
@@ -919,7 +949,7 @@ def create_sheet(
                 message="That revision is not on this quotation.",
                 code="spec_sheet_issue_invalid",
             )
-    templates = _resolve_templates(db, cover_template_id, page_template_id, single_page_template_id)
+    templates = _resolve_templates(db, document.company_id, cover_template_id, page_template_id, single_page_template_id)
     items = snapshot_items(db, document, issue)
     if not items:
         raise AppException(status_code=422, message=NO_LINES_REASON, code="spec_sheet_no_lines")
@@ -981,7 +1011,7 @@ def update_sheet(
         sheet.rows = rows
     if payload.get("use_latest_templates"):
         templates = _resolve_templates(
-            db, sheet.cover_template_id, sheet.page_template_id, sheet.single_page_template_id
+            db, sheet.company_id, sheet.cover_template_id, sheet.page_template_id, sheet.single_page_template_id
         )
         sheet.cover_version_id = templates["cover"].published_version_id
         sheet.page_version_id = templates["page"].published_version_id
@@ -1006,6 +1036,33 @@ def ensure_key(db: Session, sheet: ProjectQuotationSpecSheet, key: str) -> None:
         raise AppException(status_code=404, message="Page not found.", code="spec_sheet_page_missing")
 
 
+def _invalid_layer(message: str) -> AppException:
+    return AppException(status_code=422, message=message, code="spec_sheet_page_edit_invalid")
+
+
+def _check_value(value: Any, depth: int) -> None:
+    if depth > LAYER_DEPTH_MAX:
+        raise _invalid_layer("A layer is nested too deeply.")
+    if isinstance(value, str):
+        if len(value) > LAYER_STRING_MAX:
+            raise _invalid_layer("A layer holds text that is too long.")
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            if not isinstance(k, str) or len(k) > 200:
+                raise _invalid_layer("A layer has an invalid property name.")
+            _check_value(v, depth + 1)
+    elif isinstance(value, list):
+        for v in value:
+            _check_value(v, depth + 1)
+
+
+def _check_layer(layer: Any) -> None:
+    """A bound check, not a schema: a dict with a known designer `type`, bounded depth and text."""
+    if not isinstance(layer, dict) or layer.get("type") not in LAYER_TYPES:
+        raise _invalid_layer("A layer is not one the designer produces.")
+    _check_value(layer, 1)
+
+
 def save_page_edit(
     db: Session,
     sheet: ProjectQuotationSpecSheet,
@@ -1015,13 +1072,25 @@ def save_page_edit(
 ) -> ProjectQuotationSpecSheet:
     """Store ``layers`` as this page's override. The template and its versions are untouched."""
     ensure_key(db, sheet, key)
-    if not isinstance(layers, list) or len(layers) > LAYERS_MAX or not all(
-        isinstance(layer, dict) for layer in layers
-    ):
+    if not isinstance(layers, list) or len(layers) > LAYERS_MAX:
         raise AppException(
             status_code=422,
             message=f"A page holds at most {LAYERS_MAX} layers.",
             code="spec_sheet_layers_invalid",
+        )
+    for layer in layers:
+        _check_layer(layer)
+    size = len(json.dumps(layers, default=str))
+    others = sum(
+        len(json.dumps(v.get("layers"), default=str))
+        for k, v in (sheet.page_edits or {}).items()
+        if k != key and isinstance(v, dict)
+    )
+    if size > PAGE_EDIT_MAX or others + size > PAGE_EDITS_TOTAL_MAX:
+        raise AppException(
+            status_code=422,
+            message="That page edit is too large to keep.",
+            code="spec_sheet_page_edit_too_large",
         )
     sheet.page_edits = {**(sheet.page_edits or {}), key: {"layers": layers}}
     _stamp(sheet, user_id)

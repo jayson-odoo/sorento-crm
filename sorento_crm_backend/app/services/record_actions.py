@@ -2780,6 +2780,20 @@ def assert_spec_sheet_editable(db: Session, sheet_id: str, user_id):
     return sheet
 
 
+def assert_spec_sheet_page_resettable(db: Session, sheet_id: str, page_key, user_id) -> None:
+    """Park-time check for `quotation_spec_sheet.reset_page`: the sheet is editable and the page
+    key is `cover` or one of its pages (422 otherwise)."""
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    sheet = assert_spec_sheet_editable(db, sheet_id, user_id)
+    key = str(page_key or "")
+    if len(key) > 120 or key not in {spec.COVER_KEY} | {p["key"] for p in spec.pages(db, sheet)}:
+        raise AppException(
+            status_code=422, message="That page is not on this spec sheet.", code="spec_sheet_keys_invalid"
+        )
+
+
 def _delete_quotation_spec_sheet(db: Session, payload: dict):
     sheet = assert_spec_sheet_editable(db, _entity_id(payload), payload.get("requested_by_id"))
     db.delete(sheet)
@@ -2790,6 +2804,9 @@ def _delete_quotation_spec_sheet(db: Session, payload: dict):
 def _reset_quotation_spec_sheet_page(db: Session, payload: dict):
     from app.services import project_spec_sheet_service as spec
 
+    assert_spec_sheet_page_resettable(
+        db, _entity_id(payload), payload.get("page_key"), payload.get("requested_by_id")
+    )
     sheet = assert_spec_sheet_editable(db, _entity_id(payload), payload.get("requested_by_id"))
     spec.reset_page_edit(
         db, sheet, str(payload.get("page_key") or ""), user_id=payload.get("requested_by_id")

@@ -203,29 +203,31 @@ def preview_spec_sheet(
         raise _fail(exc)
 
 
-@router.get(f"{BASE}/{{sheet_id}}/pages/{{key}}/design")
+@router.get(f"{BASE}/{{sheet_id}}/pages/{{page_key}}/design")
 def design_spec_sheet_page(
     project_id: str,
     document_id: str,
     sheet_id: str,
-    key: str,
-    _user: dict = Depends(require_permission(EDIT)),
+    page_key: str,
+    current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
     try:
+        # The designer is the edit surface: edit right on this project, though nothing is written.
+        _editable_project(db, project_id, current_user, write=False)
         document = _document(db, project_id, document_id)
         sheet = _sheet(db, document, sheet_id)
-        return spec.design(db, sheet, key)
+        return spec.design(db, sheet, page_key)
     except Exception as exc:
         raise _fail(exc)
 
 
-@router.put(f"{BASE}/{{sheet_id}}/pages/{{key}}/edit")
+@router.put(f"{BASE}/{{sheet_id}}/pages/{{page_key}}/edit")
 def save_spec_sheet_page(
     project_id: str,
     document_id: str,
     sheet_id: str,
-    key: str,
+    page_key: str,
     payload: SpecSheetLayersIn,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -234,7 +236,7 @@ def save_spec_sheet_page(
         _editable_project(db, project_id, current_user)
         document = _document(db, project_id, document_id)
         sheet = _sheet(db, document, sheet_id)
-        spec.save_page_edit(db, sheet, key, payload.layers, user_id=str(current_user["id"]))
+        spec.save_page_edit(db, sheet, page_key, payload.layers, user_id=str(current_user["id"]))
         db.commit()
         db.refresh(sheet)
         return spec.detail_view(db, document, sheet, can_edit=True)

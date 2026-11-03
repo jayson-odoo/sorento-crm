@@ -1228,3 +1228,221 @@ def test_14_create_is_disabled_when_the_quotation_has_no_line():
             assert body["create_disabled_reason"] == "Add a line to the quotation first."
         finally:
             _restore(originals)
+
+
+# ------------------------------------------------------------------ security review round (fix round 2)
+
+
+def _big_layers(count, size=4900):
+    out = []
+    for i in range(count):
+        layer = _layer("x")
+        layer["props"]["text"] = "a" * size
+        layer["id"] = f"big-{i}"
+        out.append(layer)
+    return out
+
+
+def _other_company_template(db, family="spec_page"):
+    from app.models.company import Company
+
+    from ._pg_fixture import unique_code
+
+    other = Company(id=_uid(), name="ZZT Other", code=unique_code("OTH")[:20])
+    db.add(other)
+    db.flush()
+    return _template(db, other.id, family)
+
+
+def test_s1_a_page_edit_is_bounded_per_page_and_per_sheet(monkeypatch):
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c)
+        set_key = f"set:{c['set'].id}"
+        # ~1.4 MB serialized: over the 512 000 page cap.
+        with pytest.raises(AppException) as raised:
+            spec.save_page_edit(db, sheet, set_key, _big_layers(300))
+        assert (raised.value.status_code, raised.value.code) == (422, "spec_sheet_page_edit_too_large")
+
+        # Each page fits, the sheet's whole set of edits does not.
+        monkeypatch.setattr(spec, "PAGE_EDITS_TOTAL_MAX", 300_000)
+        spec.save_page_edit(db, sheet, set_key, _big_layers(40))  # ~200 KB
+        with pytest.raises(AppException) as raised:
+            spec.save_page_edit(db, sheet, c["basin"].id, _big_layers(40))
+        assert (raised.value.status_code, raised.value.code) == (422, "spec_sheet_page_edit_too_large")
+        # Replacing the page that already holds an edit is measured without its old copy.
+        spec.save_page_edit(db, sheet, set_key, _big_layers(41))
+
+
+def _nested(depth):
+    node = {"k": "v"}
+    for _ in range(depth):
+        node = {"child": node}
+    return node
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "not-a-dict",
+        {"id": "l1"},
+        {"id": "l1", "type": "nonsense"},
+        {"id": "l1", "type": "text", "props": {"kind": "text", "text": "a" * 5001}},
+        {"id": "l1", "type": "text", "props": _nested(9)},
+    ],
+)
+def test_s1_a_page_edit_layer_must_look_like_a_designer_layer(bad):
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c)
+        with pytest.raises(AppException) as raised:
+            spec.save_page_edit(db, sheet, c["basin"].id, [bad])
+        assert (raised.value.status_code, raised.value.code) == (422, "spec_sheet_page_edit_invalid")
+
+
+def test_s1_every_layer_type_the_designer_produces_is_accepted():
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c)
+        layers = [
+            {
+                "id": f"l-{kind}",
+                "type": kind,
+                "x_mm": 1,
+                "y_mm": 1,
+                "width_mm": 10,
+                "height_mm": 10,
+                "rotation_deg": 0,
+                "z_index": 0,
+                "locked": False,
+                "visible": True,
+                "slot_binding": None,
+                "text_override": None,
+                "props": {"kind": kind, "subjectPart": 1, "children": []},
+                "show_when": {"spec": "is_rimless", "part": 1},
+            }
+            for kind in ("image", "text", "shape", "product_slot", "price_badge", "badge", "barcode", "group")
+        ]
+        spec.save_page_edit(db, sheet, c["basin"].id, layers)
+        assert len(sheet.page_edits[c["basin"].id]["layers"]) == 8
+
+
+def test_s2_a_template_of_another_company_is_refused_on_create_and_use_latest():
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        foreign = _other_company_template(db, "spec_page")
+        for field in ("page_template_id", "single_page_template_id"):
+            with pytest.raises(AppException) as raised:
+                spec.create_sheet(
+                    db,
+                    c["document"],
+                    source=c["issue"].id,
+                    cover_template_id=t["cover"].id,
+                    **{"page_template_id": t["page"].id, field: foreign.id},
+                    user_id=c["owner"],
+                )
+            assert (raised.value.status_code, raised.value.code) == (422, "spec_sheet_template_invalid")
+
+        sheet = _make(db, c, templates=t)
+        sheet.page_template_id = foreign.id  # e.g. a template reassigned after the sheet was made
+        db.flush()
+        with pytest.raises(AppException) as raised:
+            spec.update_sheet(db, sheet, {"use_latest_templates": True})
+        assert raised.value.code == "spec_sheet_template_invalid"
+
+
+def test_s2_backfill_skips_a_cross_company_or_wrong_family_template():
+    from app.models.projects import ProjectQuotationSpecSheet
+
+    migration = _migration()
+    with blank_session() as db:
+        env = _setup(db)
+        t = _templates(db, env)
+        foreign = _other_company_template(db, "spec_page")
+        doc_a, _s, _p, issue_a = _issued_doc(db, env)
+        doc_a.spec_sheet = {"cover_template_id": t["cover"].id, "page_template_id": foreign.id, "rows": []}
+        doc_b, _s2, _p2, issue_b = _issued_doc(db, env)
+        # Right company, wrong family (a page template used as the cover).
+        doc_b.spec_sheet = {"cover_template_id": t["page"].id, "page_template_id": t["page"].id, "rows": []}
+        db.flush()
+        migration.backfill(db.connection())
+        db.expire_all()
+        for doc in (doc_a, doc_b):
+            assert (
+                db.query(ProjectQuotationSpecSheet).filter(ProjectQuotationSpecSheet.document_id == doc.id).count()
+                == 0
+            )
+
+
+def test_n1_only_assets_of_the_pinned_template_versions_are_signed(monkeypatch):
+    from app.services import project_spec_sheet_service as spec
+    from app.services.dealer_kit import asset_service
+
+    asked = []
+    monkeypatch.setattr(
+        asset_service, "urls_for", lambda db, ids: asked.append(set(ids)) or {i: f"https://x/{i}" for i in ids}
+    )
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        own = _template(db, c["company_id"], "spec_page", layers=[
+            {"id": "a", "type": "image", "props": {"kind": "image", "source": {"type": "asset", "assetId": "asset-own"}}}
+        ])
+        t["page"], t["single"] = own, own
+        sheet = _make(db, c, templates=t)
+        edit = {"id": "e", "type": "image", "props": {"kind": "image", "source": {"type": "asset", "assetId": "asset-foreign"}}}
+        spec.save_page_edit(db, sheet, c["basin"].id, [edit])
+        spec.build_print_payload(db, sheet)
+        assert asked and asked[-1] == {"asset-own"}
+
+
+def test_n2_n3_the_page_routes_use_page_key_and_the_design_route_needs_a_writable_project():
+    from app.main import app
+
+    paths = {getattr(r, "path", "") for r in app.routes}
+    assert any("/spec-sheets/{sheet_id}/pages/{page_key}/design" in p for p in paths)
+    assert any("/spec-sheets/{sheet_id}/pages/{page_key}/edit" in p for p in paths)
+    assert not any("/pages/{key}/" in p for p in paths)
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c)
+        stranger = _uid()
+        client, originals = _client(db, stranger, slugs=EDIT_SLUGS[:2])  # view + edit, no manage, not the owner
+        try:
+            got = client.get(_base(c, f"/{sheet.id}/pages/{c['basin'].id}/design"))
+            assert got.status_code == 403, got.text
+        finally:
+            _restore(originals)
+
+
+def test_n4_reset_page_refuses_a_page_key_the_sheet_does_not_have():
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c)
+        sheet_id = sheet.id
+        db.commit()
+        with company_scope(db, frozenset({c["company_id"]})):
+            client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
+            try:
+                for bad in ("set:not-a-page", "x" * 121):
+                    refused = _park(client, "quotation_spec_sheet.reset_page", sheet_id, {"page_key": bad})
+                    assert refused.status_code == 422, refused.text
+                ok = _park(client, "quotation_spec_sheet.reset_page", sheet_id, {"page_key": "cover"})
+                assert ok.status_code == 202, ok.text
+            finally:
+                _restore(originals)
