@@ -204,3 +204,136 @@ def test_cmyk_fix_script_writes_a_new_key_and_fresh_renditions(monkeypatch):
         assert im.mode == "RGB"
     assert _key(row.thumbnail_path) == new_key + ".thumb.jpg"
     assert new_key + ".medium.jpg" in store.objects
+
+
+# --------------------------------------------------------------------------- cleanup (crew ruling (a))
+# After a Replace commits, the old key's original + thumb + medium are deleted by the existing
+# delete_storage_files worker job (never in the request); a hard delete removes every rendition
+# key too. A failing delete is retried and logged and never blocks the Replace.
+
+
+@pytest.fixture
+def inline_jobs(monkeypatch):
+    """enqueue_job runs the job at once and records it, as the worker would."""
+    from app.services import queue_service
+
+    jobs = []
+
+    def run(func, *args, **kwargs):
+        jobs.append((func.__name__, args))
+        return func(*args)
+
+    monkeypatch.setattr(queue_service, "enqueue_job", run)
+    return jobs
+
+
+def test_replace_deletes_the_old_original_and_its_renditions_in_the_worker(env, inline_jobs):
+    client, store = env
+    old = _upload(client, _png((200, 0, 0))).json()
+    old_key = _key(old["file_path"])
+    assert inline_jobs == []  # a first upload deletes nothing
+
+    new = _upload(client, _png((0, 0, 200)), on_conflict="replace").json()
+    new_key = _key(new["file_path"])
+
+    assert [name for name, _ in inline_jobs] == ["delete_storage_files"]
+    for suffix in ("", ".thumb.jpg", ".medium.jpg"):
+        assert old_key + suffix not in store.objects
+        assert new_key + suffix in store.objects
+
+
+def test_replacing_with_the_same_bytes_deletes_nothing_it_still_points_at(env, inline_jobs):
+    client, store = env
+    content = _png((0, 150, 0))
+    _upload(client, _png((9, 9, 9)))
+    first = _upload(client, content, on_conflict="replace").json()
+    inline_jobs.clear()
+    again = _upload(client, content, on_conflict="replace").json()
+    key = _key(again["file_path"])
+    assert key == _key(first["file_path"])
+    assert inline_jobs == []
+    for suffix in ("", ".thumb.jpg", ".medium.jpg"):
+        assert key + suffix in store.objects
+
+
+def test_a_cleanup_that_cannot_be_queued_never_blocks_the_replace(env, monkeypatch, caplog):
+    from app.services import queue_service
+
+    def refuse(*_a, **_k):
+        raise ConnectionError("redis down")
+
+    monkeypatch.setattr(queue_service, "enqueue_job", refuse)
+    client, store = env
+    old_key = _key(_upload(client, _png((1, 2, 3))).json()["file_path"])
+    with caplog.at_level("WARNING"):
+        replaced = _upload(client, _png((3, 2, 1)), on_conflict="replace")
+    assert replaced.status_code == 201, replaced.text
+    assert old_key in store.objects  # left for later, and said so
+    assert any(old_key in record.getMessage() for record in caplog.records)
+
+
+def test_delete_storage_files_removes_every_rendition_of_an_original(monkeypatch):
+    from app.services import storage_router
+    from app.tasks.s3_tasks import delete_storage_files
+
+    store = MemoryStore()
+    for key in ("p/a.png", "p/a.png.thumb.jpg", "p/a.png.medium.jpg", "p/b.png.thumb.jpg"):
+        store.objects[key] = b"x"
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: store)
+
+    delete_storage_files([("r2", "https://cdn.test/p/a.png"), ("r2", "p/b.png.thumb.jpg")])
+    assert store.objects == {}
+
+
+def test_a_failing_delete_is_retried_then_logged_and_the_rest_still_go(monkeypatch, caplog):
+    from app.services import storage_router
+    from app.tasks import s3_tasks
+
+    class Flaky(MemoryStore):
+        def __init__(self):
+            super().__init__()
+            self.attempts = {}
+
+        def delete_file(self, key):
+            self.attempts[key] = self.attempts.get(key, 0) + 1
+            if key.startswith("p/stuck") or (key == "p/flaky.png" and self.attempts[key] < 3):
+                raise RuntimeError("bucket busy")
+            return super().delete_file(key)
+
+    store = Flaky()
+    for key in ("p/flaky.png", "p/stuck.png", "p/ok.png"):
+        store.objects[key] = b"x"
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: store)
+    monkeypatch.setattr(s3_tasks, "_RETRY_SLEEP_SECONDS", 0)
+
+    with caplog.at_level("WARNING"):
+        result = s3_tasks.delete_storage_files([("r2", "p/flaky.png"), ("r2", "p/stuck.png"), ("r2", "p/ok.png")])
+
+    assert "p/flaky.png" not in store.objects and "p/ok.png" not in store.objects  # retried, deleted
+    assert store.attempts["p/stuck.png"] == s3_tasks._DELETE_ATTEMPTS
+    assert result["failed"] >= 1
+    assert any("p/stuck.png" in record.getMessage() for record in caplog.records)
+
+
+def test_hard_delete_of_an_attachment_removes_its_renditions(monkeypatch, inline_jobs):
+    import uuid
+
+    from app.models.resources import Attachment
+    from app.services import storage_router
+    from app.services.resources_service import AttachmentService
+
+    store = MemoryStore()
+    key = f"general/{uuid.uuid4()}/zz.png"
+    for suffix in ("", ".thumb.jpg", ".medium.jpg"):
+        store.objects[key + suffix] = b"x"
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: store)
+    with blank_session() as db:
+        row = Attachment(
+            id=str(uuid.uuid4()), original_filename="zz.png", stored_filename="zz.png",
+            file_path=f"https://cdn.test/{key}", thumbnail_path=f"https://cdn.test/{key}.thumb.jpg",
+            mime_type="image/png", storage_provider="r2",
+        )
+        db.add(row)
+        db.commit()
+        AttachmentService(db).delete_attachment(row.id, deleted_by=None)
+    assert store.objects == {}
