@@ -22,6 +22,12 @@ export function useQuotationSignPage(token: string) {
     queryFn: () => getQuotationSignPage(token),
     enabled: Boolean(token),
     /**
+     * Not read again when the customer comes back to the tab (QUOTE-PERF-HOTFIX): every read
+     * inlines the quotation's pictures server side, and nothing on the page changes by itself.
+     * Each answer the customer gives writes the new page into the cache.
+     */
+    refetchOnWindowFocus: false,
+    /**
      * A dead link is a final answer, not a blip: retrying it three times makes the customer
      * stare at a spinner before reading the one sentence that helps them. Anything else (a
      * flaky connection on a phone) is still worth one retry.

@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SpecSheetView } from '../../../../_shared/services/specSheetService';
@@ -456,5 +456,50 @@ describe('Spec sheet tab (review round)', () => {
 
     expect(await screen.findByText('Pick a cover and a page template')).toBeInTheDocument();
     expect(getSpecSheetPreview).not.toHaveBeenCalled();
+  });
+});
+
+describe('Spec sheet strip draws only the pages in view (QUOTE-PERF-HOTFIX)', () => {
+  it('draws no thumbnail until it scrolls into view, then draws that one', async () => {
+    const seen: Array<{ cb: IntersectionObserverCallback; el: Element }> = [];
+    const original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class {
+      cb: IntersectionObserverCallback;
+      constructor(cb: IntersectionObserverCallback) {
+        this.cb = cb;
+      }
+      observe(el: Element) {
+        seen.push({ cb: this.cb, el });
+      }
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    } as unknown as typeof IntersectionObserver;
+    try {
+      getSpecSheet.mockResolvedValue(view());
+      renderTab();
+      await screen.findByTestId('spec-sheet-strip');
+      await screen.findByTestId('spec-sheet-open-page');
+
+      // The open page (the cover) is drawn once, in the big view; no strip thumbnail yet.
+      await waitFor(() => expect(screen.getAllByTestId('sheet-0')).toHaveLength(1));
+      expect(screen.queryByTestId('sheet-2')).toBeNull();
+      expect(seen.length).toBeGreaterThanOrEqual(4);
+
+      // The third page scrolls into view: its thumbnail, and only its, is drawn.
+      const third = seen[2];
+      act(() => {
+        third.cb(
+          [{ isIntersecting: true, target: third.el } as unknown as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+      expect(await screen.findByTestId('sheet-2')).toBeInTheDocument();
+      expect(screen.queryByTestId('sheet-3')).toBeNull();
+    } finally {
+      globalThis.IntersectionObserver = original;
+    }
   });
 });
