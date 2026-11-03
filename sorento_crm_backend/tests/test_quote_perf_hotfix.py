@@ -393,7 +393,10 @@ def test_a_picture_with_no_thumbnail_reads_its_original_once_and_saves_a_thumbna
         first = qdocs.serialize_sign_page(db, issued)
         assert first["scopes"][0]["lines"][0]["image_url"].startswith("data:image/jpeg;base64,")
         assert store.keys and not any("thumb" in k for k in store.keys)
-        assert len(store.uploads) == 2
+        # IMAGE-UNIFY: the missing thumbnail is made with its medium (one decode), per original.
+        assert len(store.uploads) == 4
+        assert sum(k.endswith(".thumb.jpg") for k in store.uploads) == 2
+        assert sum(k.endswith(".medium.jpg") for k in store.uploads) == 2
 
         line = first["scopes"][0]["lines"][0]
         assert line["drawing_url"]
@@ -652,7 +655,11 @@ def _open_page_env(db, monkeypatch, original: bytes):
             extract_key(drawing.file_path): _photo_bytes(800, 600, seed=1),
         }
     )
+    from app.services import image_thumbnailer, storage_router
+
+    # IMAGE-UNIFY: renditions are made and signed by the rendition service through storage_router.
     monkeypatch.setattr(images, "get_backend", lambda provider: store)
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: store)
     signed = []
 
     def fake_sign(source, *, provider=None, expires_in=3600, strict=False):
@@ -660,7 +667,8 @@ def _open_page_env(db, monkeypatch, original: bytes):
         return f"https://signed.zzt.test/{source}"
 
     monkeypatch.setattr(images, "resolve_signed_url", fake_sign)
-    images._medium_cache.clear()
+    monkeypatch.setattr(storage_router, "resolve_signed_url", fake_sign)
+    image_thumbnailer.reset_rendition_memo()
     return c, photo, drawing, store, signed
 
 
@@ -678,12 +686,14 @@ def test_the_open_page_gets_a_1024_px_rendition_never_the_original(monkeypatch):
         assert set(out) == {photo.id, drawing.id}
         assert all(".medium.jpg" in url for url in out.values())
         assert not any(s in (photo.file_path, drawing.file_path) for s in signed)
-        medium = next(k for k in store.uploads if k.startswith("products/") and "basin.png" in k)
+        medium = next(k for k in store.uploads if k.endswith("basin.png.medium.jpg"))
         with Image.open(io.BytesIO(store.uploads[medium])) as im:
             assert max(im.size) == images.MEDIUM_BOX == 1024
 
         # Made once: a later open signs the stored rendition without reading the original.
-        images._medium_cache.clear()
+        from app.services import image_thumbnailer
+
+        image_thumbnailer.reset_rendition_memo()
         store.downloads.clear()
         spec.page_images(db, c["document"], c["issue"], c["basin"].id)
         assert store.downloads == []

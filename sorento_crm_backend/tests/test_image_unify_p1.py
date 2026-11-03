@@ -84,9 +84,14 @@ class FakeStore:
 
 
 class FakeLock:
-    def __init__(self, owner, held_by_other):
+    """Behaves like redis-py's Lock: with ``thread_local`` (its default) the token lives in the
+    acquiring thread, and a release from any other thread raises LockNotOwnedError."""
+
+    def __init__(self, owner, held_by_other, thread_local=True):
         self.owner = owner
         self.held_by_other = held_by_other
+        self.thread_local = thread_local
+        self.acquired_in = None
         self.released = False
 
     def acquire(self, blocking=False):
@@ -95,9 +100,12 @@ class FakeLock:
         if self.owner.held_by_other:
             return False
         self.owner.taken += 1
+        self.acquired_in = threading.get_ident()
         return True
 
     def release(self):
+        if self.thread_local and threading.get_ident() != self.acquired_in:
+            raise RuntimeError("LockNotOwnedError: token is thread-local")
         self.released = True
         self.owner.released += 1
 
@@ -110,9 +118,9 @@ class FakeRedis:
         self.released = 0
         self.names = []
 
-    def lock(self, name, timeout=None, blocking=False):
+    def lock(self, name, timeout=None, blocking=False, thread_local=True):
         self.names.append(name)
-        return FakeLock(self, self.held_by_other)
+        return FakeLock(self, self.held_by_other, thread_local=thread_local)
 
     def exists(self, name):
         if self.down:

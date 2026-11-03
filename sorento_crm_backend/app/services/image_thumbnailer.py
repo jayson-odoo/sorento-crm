@@ -1,41 +1,73 @@
-"""Generate small raster thumbnails for the Files grid view.
+"""The rendition service: every resized copy of a stored image is made here (IMAGE-UNIFY).
 
-Product photos are stored at full resolution (routinely 3000 - 4500 px on the
-long edge - 10 - 20 MP). The Drive grid renders them into a ~114 px box, so the
-browser downloads and decodes multi-megapixel bitmaps only to paint them at
-thumbnail size. A single 4500×4500 image decodes to ~81 MB of raw bitmap in
-RAM plus a large GPU texture; a page of 90+ such cards drowns the compositor on
-normal hardware and makes scrolling stutter.
+Owner ruling, 3 Nov 2026: ONE way to store, size, deliver and render images, so the spec-sheet
+freeze (#2126, 165 MB of originals in one tab) cannot come back on another screen.
+Plan: documentation/plans/resources/PLAN-image-unify-03nov.md.
 
-We produce a ~320 px JPEG thumbnail at the upload boundary (and via a backfill
-for existing rows), stored as its own object next to the original, so the grid
-paints a tiny image instead. Best-effort and idempotent: a non-image or a
-decode failure yields ``None`` and the caller falls back to the original.
+Every stored image has two renditions beside it, under derived keys:
+
+* ``<key>.thumb.jpg``  - 320 px: grids, table cells, lists (also kept in ``attachments.thumbnail_path``),
+* ``<key>.medium.jpg`` - 1024 px: a screen that shows one picture big (designer, previews).
+
+Both are made at upload (``store_renditions``, one decode) and, for files uploaded before that,
+on demand the first time a screen asks (``rendition_urls``, one generation per file however many
+ask at once). There is no backfill (owner Q4). A printed copy is sized per export to the image
+layer's designed box (``print_box_px`` / ``print_scale``, owner Q1) and is not stored here.
+
+``downscale`` is the ONLY resize routine in the backend; a guard test fails on a new ``Image.open``
+anywhere else that is not on its reasoned allow-list (``tests/test_image_unify_p1.py``).
 """
 from __future__ import annotations
 
 import io
 import logging
-from typing import Optional
+import math
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Longest-edge target. 114 px card × 2 (retina dpr) ≈ 228 px, so 320 stays sharp.
-_MAX_EDGE = 320
-_JPEG_QUALITY = 80
+# ----------------------------------------------------------------------------- sizes
 
-# Only bytes that decode as a raster image get a thumbnail. Mirrors the set the
-# normalizer inspects; anything else (PDF, xlsx, ...) returns None.
+#: Longest edge of each stored rendition. thumb: a 114 px card at 2x dpr is 228 px, so 320 stays
+#: sharp. medium: at least twice the ~420 px picture box of the biggest on-screen page, so a
+#: drawing's measurements read on a Retina screen (crew, 3 Nov).
+RENDITIONS: Dict[str, int] = {"thumb": 320, "medium": 1024}
+_QUALITY: Dict[str, int] = {"thumb": 80, "medium": 82}
+_MAX_EDGE = RENDITIONS["thumb"]
+_JPEG_QUALITY = _QUALITY["thumb"]
+
+#: A rendition's bytes never change under its key: an original is never overwritten in place
+#: (Files "Replace" writes a NEW key, crew ruling (b) on #2133), so a cache may keep it a year.
+RENDITION_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+#: Only these formats are decoded for a document embed; what comes out is always Pillow's own JPEG
+#: re-encode. An SVG (whatever its stored mime) is markup a renderer would follow links out of.
+EMBEDDABLE_FORMATS = ("PNG", "JPEG", "WEBP")
+#: Refused before decoding (checked after a JPEG draft): a tiny palette PNG can claim hundreds of
+#: millions of pixels, and a 40 MP RGBA decode is ~160 MB already.
+MAX_IMAGE_PIXELS = 40_000_000
+
+# Only bytes that decode as a raster image get a rendition. Anything else (PDF, xlsx, ...) is None.
 _RASTER_MIMES = {"image/jpeg", "image/jpg", "image/pjpeg", "image/png", "image/webp"}
 _SNIFFABLE_MIMES = {"", "application/octet-stream", "binary/octet-stream"}
 
-# Thumbnails are stored at "{original_key}.thumb.jpg".
-_THUMB_SUFFIX = ".thumb.jpg"
+_SUFFIX = {"thumb": ".thumb.jpg", "medium": ".medium.jpg"}
+_THUMB_SUFFIX = _SUFFIX["thumb"]
+
+
+def rendition_key(original_key: str, size: str) -> str:
+    """Deterministic object key of ``size`` ("thumb" | "medium") for ``original_key``."""
+    return f"{original_key}{_SUFFIX[size]}"
 
 
 def thumbnail_key_for(original_key: str) -> str:
     """Deterministic object key for the thumbnail of ``original_key``."""
-    return f"{original_key}{_THUMB_SUFFIX}"
+    return rendition_key(original_key, "thumb")
 
 
 def _looks_like_image(mime: Optional[str]) -> bool:
@@ -47,6 +79,79 @@ def _looks_like_image(mime: Optional[str]) -> bool:
     return lower in _RASTER_MIMES or lower.startswith("image/")
 
 
+# ----------------------------------------------------------------------------- the one resize
+
+
+@dataclass(frozen=True)
+class RenderedImage:
+    """A JPEG made by ``downscale``."""
+
+    data: bytes
+    mime_type: str
+    width: int
+    height: int
+
+
+def downscale(
+    raw: bytes,
+    box: int,
+    quality: int = _JPEG_QUALITY,
+    *,
+    formats: Optional[Sequence[str]] = None,
+    upright: bool = True,
+    draft: bool = True,
+    max_pixels: Optional[int] = None,
+    label: Any = None,
+) -> Optional[RenderedImage]:
+    """Pillow's own JPEG re-encode of ``raw`` inside ``box`` px; ``None`` when it cannot be.
+
+    Only ever shrinks, aspect kept. ``upright`` applies the EXIF orientation first (the re-encode
+    drops that tag and a browser honours it on the original). ``draft`` lets a JPEG decode at 1/2,
+    1/4 or 1/8 scale (never below ``box``), so a 48 MP photograph is never decoded at full size;
+    ``max_pixels`` is then checked on what will actually be decoded. Alpha and palette images are
+    flattened onto WHITE (a plain convert puts black behind a cut-out product); CMYK goes to RGB
+    (re-saved as-is it renders inverted). ``formats`` limits what is decoded at all.
+    """
+    try:
+        from PIL import Image, ImageOps
+
+        open_kwargs = {"formats": tuple(formats)} if formats else {}
+        with Image.open(io.BytesIO(raw), **open_kwargs) as opened:
+            if draft:
+                opened.draft("RGB", (box, box))
+            ceiling = MAX_IMAGE_PIXELS if max_pixels is None else max_pixels
+            if opened.width * opened.height > ceiling:
+                logger.warning(
+                    "image: %s is %dx%d, over the pixel ceiling, no copy made",
+                    label,
+                    opened.width,
+                    opened.height,
+                )
+                return None
+            opened.load()
+            image = ImageOps.exif_transpose(opened) or opened if upright else opened
+            if image.mode in ("RGBA", "LA", "P", "PA"):
+                rgba = image.convert("RGBA")
+                canvas = Image.new("RGB", rgba.size, (255, 255, 255))
+                canvas.paste(rgba, mask=rgba.split()[-1])
+                image = canvas
+            else:
+                image = image.convert("RGB")
+            image.thumbnail((box, box), Image.Resampling.LANCZOS)
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=quality, optimize=True)
+            return RenderedImage(
+                data=buffer.getvalue(),
+                mime_type="image/jpeg",
+                width=image.width,
+                height=image.height,
+            )
+    except Exception as exc:  # noqa: BLE001 - not a decodable image / encode failed
+        # Never the raw bytes: what leaves here is only ever Pillow's own re-encode.
+        logger.warning("image: no copy of %s (%d bytes): %s", label, len(raw or b""), exc)
+        return None
+
+
 def generate_thumbnail(
     content: bytes,
     mime: Optional[str] = None,
@@ -54,81 +159,70 @@ def generate_thumbnail(
     max_edge: int = _MAX_EDGE,
     quality: int = _JPEG_QUALITY,
 ) -> Optional[bytes]:
-    """Return a small RGB JPEG thumbnail of ``content``, or ``None``.
-
-    ``None`` is returned for non-images and for any decode/encode failure - the
-    caller must treat that as "no thumbnail" and serve the original. Aspect
-    ratio is preserved (``Image.thumbnail`` only ever downscales), so the grid's
-    ``object-cover`` crop never distorts.
-    """
+    """A small RGB JPEG thumbnail of ``content``, or ``None`` (non-image, decode failure)."""
     if not content or not _looks_like_image(mime):
         return None
-
-    try:
-        from PIL import Image, ImageOps
-
-        with Image.open(io.BytesIO(content)) as opened:
-            # Let a big JPEG decode at reduced size (never below the thumbnail): the transpose
-            # below copies the image, which would otherwise force a full-size decode.
-            opened.draft("RGB", (max_edge, max_edge))
-            # Upright first: a JPEG re-encode drops the EXIF orientation a browser honours on
-            # the original, so a phone photo's thumbnail came out on its side.
-            im = ImageOps.exif_transpose(opened) or opened
-            # Flatten alpha / palette onto WHITE (a plain convert puts black behind a cut-out
-            # product), CMYK straight to RGB, so the JPEG is valid and WhatsApp-safe.
-            if im.mode in ("RGBA", "LA", "P", "PA"):
-                rgba = im.convert("RGBA")
-                canvas = Image.new("RGB", rgba.size, (255, 255, 255))
-                canvas.paste(rgba, mask=rgba.split()[-1])
-                im = canvas
-            elif im.mode not in ("RGB", "L"):
-                im = im.convert("RGB")
-            im.thumbnail((max_edge, max_edge), Image.LANCZOS)
-            out = io.BytesIO()
-            im.save(out, format="JPEG", quality=quality, optimize=True)
-            return out.getvalue()
-    except Exception as exc:  # noqa: BLE001 - not a decodable image / encode failed
-        logger.warning("Thumbnail generation skipped (mime=%s): %s", mime, exc)
-        return None
+    made = downscale(content, max_edge, quality, label=mime)
+    return made.data if made is not None else None
 
 
-def store_thumbnail(backend, provider, original_key: str, content: bytes, mime) -> Optional[str]:
-    """Generate + upload a grid thumbnail for an image; return its CDN base URL.
+# ----------------------------------------------------------------------------- writing
 
-    Shared by every upload path (single-file route + bulk-import task). Best-effort:
-    a non-image, or any generate/upload failure, returns None so the grid falls back
-    to the original - a failed thumbnail must NEVER fail the upload.
+
+def _write_renditions(backend, original_key: str, content: bytes, mime) -> Dict[str, bool]:
+    """Make and upload both renditions from ONE decode of ``content``.
+
+    The medium is made from the original; the thumb from the medium, so the original is decoded
+    once. Each upload is on its own: a failed medium never costs the thumb.
     """
-    from app.services.storage_router import cdn_base_url
+    written = {"thumb": False, "medium": False}
+    if not content or not _looks_like_image(mime):
+        return written
+    medium = downscale(content, RENDITIONS["medium"], _QUALITY["medium"], label=original_key[:80])
+    if medium is None:
+        return written
+    thumb = downscale(medium.data, RENDITIONS["thumb"], _QUALITY["thumb"], label=original_key[:80])
+    for size, made in (("thumb", thumb), ("medium", medium)):
+        if made is None:
+            continue
+        try:
+            backend.upload_file(
+                file_content=made.data,
+                file_path=rendition_key(original_key, size),
+                content_type="image/jpeg",
+                cache_control=RENDITION_CACHE_CONTROL,
+            )
+            written[size] = True
+        except Exception as exc:  # noqa: BLE001 - a rendition is optional, never blocks
+            logger.warning("rendition %s skipped for key=%s: %s", size, original_key[:80], exc)
+    return written
+
+
+def store_renditions(backend, provider, original_key: str, content: bytes, mime) -> Optional[str]:
+    """Make and upload the thumb and medium of an image; return the thumb's CDN base URL.
+
+    Shared by every upload path, including a Replace that overwrote the original under the same
+    key (both renditions are remade, and this process forgets what it knew about them).
+    Best-effort: a non-image or any failure returns None; a rendition must NEVER fail an upload.
+    """
+    from app.services.storage_router import cdn_base_url, normalize_provider
 
     try:
-        thumb = generate_thumbnail(content, mime)
-        if not thumb:
+        written = _write_renditions(backend, original_key, content, mime)
+        prov = normalize_provider(provider)
+        for size in RENDITIONS:
+            forget_rendition(_token(prov, rendition_key(original_key, size)))
+        if not written["thumb"]:
             return None
-        thumb_key = thumbnail_key_for(original_key)
-        backend.upload_file(
-            file_content=thumb, file_path=thumb_key, content_type="image/jpeg"
-        )
-        return cdn_base_url(provider, thumb_key)
-    except Exception as exc:  # noqa: BLE001 - thumbnail is optional, never block upload
-        logger.warning("Thumbnail store skipped for key=%s: %s", (original_key or "")[:80], exc)
+        return cdn_base_url(provider, thumbnail_key_for(original_key))
+    except Exception as exc:  # noqa: BLE001 - never block the upload
+        logger.warning("renditions skipped for key=%s: %s", (original_key or "")[:80], exc)
         return None
 
 
-# =============================================================================
-# IMAGE-UNIFY: the rendition service (documentation/plans/resources/PLAN-image-unify-03nov.md)
-# =============================================================================
+#: The name every upload path has called since the grid thumbnails; it now writes both renditions.
+store_thumbnail = store_renditions
 
-import math
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FuturesTimeout
-from typing import Any, Callable, Dict, Mapping, Optional as _Opt, Tuple
-
-#: Renditions live beside their original under a derived key and are only ever replaced by a
-#: regeneration from the same original, so a cache may keep them for a year.
-RENDITION_CACHE_CONTROL = "public, max-age=31536000, immutable"
 
 # ----------------------------------------------------------------------------- print copy (Q1)
 
@@ -146,7 +240,7 @@ def print_box_px(width_mm: float, height_mm: float, dpi: int = PRINT_DPI) -> Tup
     )
 
 
-def _crop_fraction(crop: _Opt[Mapping[str, Any]], axis: str) -> float:
+def _crop_fraction(crop: Optional[Mapping[str, Any]], axis: str) -> float:
     try:
         value = float((crop or {}).get(axis, 1) or 0)
     except (TypeError, ValueError):
@@ -158,8 +252,8 @@ def print_scale(
     src_w: int,
     src_h: int,
     box_px: Tuple[int, int],
-    fit: _Opt[str],
-    crop: _Opt[Mapping[str, Any]] = None,
+    fit: Optional[str],
+    crop: Optional[Mapping[str, Any]] = None,
 ) -> float:
     """How far the original can shrink and still fill its layer box at full print resolution.
 
@@ -302,7 +396,12 @@ def single_flight(
         name = f"image-rendition:{token}"
         if client is not None:
             try:
-                candidate = client.lock(name, timeout=_LOCK_SECONDS, blocking=False)
+                # thread_local=False: the lock is taken here and released by the generation thread,
+                # and redis-py otherwise keeps its token per thread, so that release would fail
+                # and leave the file locked for _LOCK_SECONDS.
+                candidate = client.lock(
+                    name, timeout=_LOCK_SECONDS, blocking=False, thread_local=False
+                )
                 if candidate.acquire(blocking=False):
                     lock = candidate
                 else:
@@ -349,3 +448,98 @@ def _wait_for_other_process(token, exists, client, name, deadline) -> bool:
     except Exception:  # noqa: BLE001
         pass
     return False
+
+
+# ----------------------------------------------------------------------------- reading (Q4)
+
+#: Signed URL lifetime handed to a screen. ``storage_router`` caches each signature for a sixth of
+#: this, so a URL a reader receives always has most of its hour left.
+URL_EXPIRES_IN = 60 * 60
+#: Callers waiting on single-flight generations for one request run side by side, so a page of
+#: twenty uncached photos uses both generation threads; generation itself stays at 2 (``_pool``).
+_waiters = ThreadPoolExecutor(max_workers=16, thread_name_prefix="rendition-wait")
+
+
+def _token(provider: str, key: str) -> str:
+    return f"{provider}:{key}"
+
+
+def rendition_urls(
+    db,
+    attachment_ids: Iterable[Optional[str]],
+    size: str,
+    *,
+    release: Optional[Callable[[], None]] = None,
+    wait_seconds: float = RENDITION_WAIT_SECONDS,
+    expires_in: int = URL_EXPIRES_IN,
+) -> Dict[str, str]:
+    """Signed URLs of the ``size`` rendition of each attachment; never the original.
+
+    Where each file lives is read first and ``release`` then hands the DB connection back before
+    any byte moves. A rendition that does not exist yet is made from the original (both sizes at
+    once), at most once however many requests ask (``single_flight``). An attachment whose
+    rendition is not ready within ``wait_seconds`` (whole call), or cannot be made, is LEFT OUT:
+    the caller shows the next size down. Its generation carries on and the next ask gets it.
+    """
+    from app.models.resources import Attachment
+    from app.services.storage_router import (
+        extract_key,
+        get_backend,
+        normalize_provider,
+        resolve_signed_url,
+    )
+
+    if size not in RENDITIONS:
+        raise ValueError(f"unknown rendition size {size!r}")
+    wanted = list(dict.fromkeys(str(a) for a in attachment_ids if a))
+    rows = (
+        [
+            (str(r.id), r.file_path, r.thumbnail_path, r.storage_provider, r.mime_type)
+            for r in db.query(Attachment).filter(Attachment.id.in_(wanted)).all()
+        ]
+        if wanted
+        else []
+    )
+    if release is not None:
+        release()
+    deadline = time.monotonic() + wait_seconds
+
+    def one(row) -> Optional[str]:
+        attachment_id, file_path, thumbnail_path, provider_name, mime = row
+        try:
+            original = extract_key(file_path) if file_path else None
+            if not original:
+                return None
+            provider = normalize_provider(provider_name)
+            backend = get_backend(provider)
+            stored_thumb = extract_key(thumbnail_path) if thumbnail_path else None
+            target = stored_thumb if size == "thumb" and stored_thumb else rendition_key(original, size)
+            if not (size == "thumb" and stored_thumb):
+
+                def make() -> bool:
+                    raw = backend.download_file(original)
+                    return _write_renditions(backend, original, raw, mime)[size]
+
+                ready = single_flight(
+                    _token(provider, target),
+                    lambda: bool(backend.file_exists(target)),
+                    make,
+                    deadline=deadline,
+                )
+                if not ready:
+                    return None
+            return resolve_signed_url(target, provider=provider, expires_in=expires_in, strict=True)
+        except Exception:  # noqa: BLE001 - the next size down stays on screen
+            logger.warning("rendition: no %s for %s", size, attachment_id, exc_info=True)
+            return None
+
+    out: Dict[str, str] = {}
+    futures = {row[0]: _waiters.submit(one, row) for row in rows}
+    for attachment_id, future in futures.items():
+        try:
+            url = future.result(timeout=max(0.0, deadline - time.monotonic()) + 1.0)
+        except Exception:  # noqa: BLE001 - out of time: left out, generation carries on
+            url = None
+        if url:
+            out[attachment_id] = url
+    return out
