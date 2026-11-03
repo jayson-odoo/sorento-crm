@@ -1035,8 +1035,10 @@ def test_document_line_carries_po_and_so_covered_ac_j2(scm_app):
         {
             "document": pso.autocount_doc_no or pso.provisional_ref,
             "customer": project.title,
+            # OI-UX-FILTER-SNAPSHOT verify round: no sales order to read yet, so the row's
+            # project is the inquiry's own project (never two dashes).
             "customer_name": None,
-            "project_label": None,
+            "project_label": project.title,
             "demand_class": "project",
             "qty": 10.0,
             "via_po": None,

@@ -1407,6 +1407,42 @@ describe('SoCoveragePicker', () => {
     expect(screen.getByText('OI-0042')).toBeTruthy();
   });
 
+  // OI-UX-FILTER-SNAPSHOT verify round: a project row's title moved from Customer to Project,
+  // so the search and the Filters must read Project too, or typing the project finds nothing.
+  const coverageWithProjectLabel = [
+    { ...coverage[0], customer_name: null, project_label: 'ZZT TOWER PROJECT' },
+    { ...coverage[0], key: 'project:9', document: 'OI-0099', customer_name: null, project_label: 'ZZT OTHER PROJECT' },
+    ...coverageWithThird.slice(1),
+  ];
+
+  it('finds a project row by its project when searched', () => {
+    renderWithClient(
+      <SoCoveragePicker coverage={coverageWithProjectLabel} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
+    );
+
+    const search = screen.getByPlaceholderText('Search sales orders');
+    fireEvent.change(search, { target: { value: 'tower project' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(screen.getByText('OI-0042')).toBeTruthy();
+    expect(screen.queryByText('OI-0099')).toBeNull();
+  });
+
+  it('offers Project as a filter field and narrows to it', () => {
+    renderWithClient(
+      <SoCoveragePicker coverage={coverageWithProjectLabel} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), { button: 0 });
+    fireEvent.click(screen.getByRole('button', { name: /add condition/i }));
+    fireEvent.change(screen.getByLabelText('Filter field'), { target: { value: 'project_label' } });
+    pickFilterValue('ZZT TOWER PROJECT');
+    fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
+
+    expect(screen.getByText('OI-0042')).toBeTruthy();
+    expect(screen.queryByText('OI-0099')).toBeNull();
+  });
+
   it('filters by a condition, shows the active count, and Clear filters restores every row (S3, AC-C4)', () => {
     const { container } = renderWithClient(
       <SoCoveragePicker coverage={coverageWithThird} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
