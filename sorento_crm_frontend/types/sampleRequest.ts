@@ -101,6 +101,8 @@ export interface SampleRequestConsignmentHit {
   so_number: string;
   debtor_code: string | null;
   debtor_name: string | null;
+  customer_name?: string | null;
+  project_label?: string | null;
   order_date: string | null;
 }
 
