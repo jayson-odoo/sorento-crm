@@ -3718,7 +3718,18 @@ def _apply(
         for spec in plan.fetch:
             spec.filters["outstanding"] = dict(trace.outstanding)
 
-    if (
+    kept = (
+        _which_one_keeps_its_ask(new_state.pending, verdict)
+        if plan.fetch and plan.ask is None and not trace.picked_kinds else None
+    )
+    if kept is not None:
+        # Crew ruling (a), owner R3 (round 7d): the reply answered another slot of the ask the open which-one customer
+        # pick interrupts ("invoiced"), named no subject and picked nothing: the slot is kept on the question, the same
+        # question is asked again (once), and the ask never runs without the customer it asked for.
+        new_state.pending = kept
+        plan = replace(plan, fetch=[], ask=kept)
+        trace.rules_fired.append("which_one_keeps_its_ask")
+    elif (
         (decision.kind == NEW_ASK or domain_in_message(verdict) is True)
         and plan.fetch
         and plan.ask is None
@@ -3752,6 +3763,40 @@ def _apply(
     _spend_stock_pick(state.pending, verdict, plan, new_state, trace)
 
     return new_state, plan
+
+
+#: The entity hints that name a subject of the message's own: a reply naming one is a new ask, never another slot's
+#: answer.
+_SUBJECT_HINTS = frozenset(
+    {
+        "customer", "product", "brand", "category", "sales_agent", "account_type", "warehouse", "specification",
+        "supplier",
+    }
+)
+
+
+def _which_one_keeps_its_ask(pending: Pending | None, verdict: dict[str, Any]) -> Pending | None:
+    """Crew ruling (a), owner R3 (round 7d): the open, still unanswered which-one CUSTOMER pick of an asked report
+    (`asked_report` on its payload) with the slot this reply fills held on it (`ranking_ask`, the reply's own values
+    winning), when the reply names no subject and no domain of its own, resets no topic, and the question has not
+    already been kept this way once. None otherwise: a real new ask closes the roster as before. Parser fields only."""
+    if pending is None or pending.kind != "customer_pick" or not pending.payload.get("status"):
+        return None
+    if pending.answered_positions:
+        return None  # the which-one was answered already: its customer is chosen
+    if pending.payload.get("slot_kept") or verdict.get("topic_reset") is True or domain_in_message(verdict) is True:
+        return None  # kept once already, a reset, or the whole ask typed again (its own domain): a new ask
+    if any(
+        isinstance(e, dict) and e.get("current_message") is not False
+        and str(e.get("hint") or "").strip().lower() in _SUBJECT_HINTS
+        for e in verdict.get("entities") or []
+    ):
+        return None
+    reply = asked_report(verdict).get("ranking_ask")
+    if not reply:
+        return None
+    held = pending.payload.get("ranking_ask") if isinstance(pending.payload.get("ranking_ask"), dict) else {}
+    return replace(pending, payload={**pending.payload, "ranking_ask": {**held, **reply}, "slot_kept": True})
 
 
 def _fully_answered_roster(pending: Pending) -> bool:

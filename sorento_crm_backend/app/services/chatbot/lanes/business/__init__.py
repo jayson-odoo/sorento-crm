@@ -2290,7 +2290,9 @@ def run_fetch(
         if not settled.done:
             _asked = report_ask.with_names(db, settled.slot, _own_companies) if _named else settled.slot
             return _fixed_reply(_with_so_line(settled.reply or ""), required_ask=_asked)
-        semantic_input["report_ask_args"] = report_ask.route_args(settled)
+        semantic_input["report_ask_args"] = report_ask.with_customer_groups(
+            db, report_ask.route_args(settled), customer_scope.get("ids") if customer_scope.get("enforced") else None
+        )
         listed = None if customer_scope.get("enforced") else report_ask.document_list_args(
             semantic_input["report_ask_args"], settled
         )

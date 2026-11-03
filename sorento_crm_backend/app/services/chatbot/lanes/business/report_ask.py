@@ -2853,6 +2853,34 @@ def document_list_args(args: dict[str, Any], outcome: rf.Outcome) -> dict[str, A
     return {**args, "group_by": LIST_GROUPS[args["basis"]], "top_n": BREAKDOWN_TOP_N}
 
 
+def with_customer_groups(db: Any, args: dict[str, Any], linked: Any = None) -> dict[str, Any]:
+    """Owner R3 (round 7d): the ONE point the report ask's customer ids are final for the route (both paths pass it,
+    after `route_args`). A customer the office grouped is one customer: each id widens to every ledger of its explicit
+    `customer_group_id` in the same company (read from `customers` on the turn's company-scoped session, never a name
+    rule). `linked` (a dealer's own customers): a widened ledger outside them is left out (the route's own cap stays
+    behind it). Args without customer ids, or ids in no group, are returned as they are."""
+    ids = [str(i) for i in jsc.array(args.get("customer_ids")) if i]
+    if not ids or db is None:
+        return args
+    from sqlalchemy import and_, or_
+
+    from app.models.order import Customer
+
+    groups = {
+        (str(g), str(c))
+        for g, c in db.query(Customer.customer_group_id, Customer.company_id).filter(Customer.id.in_(ids)).all()
+        if g
+    }
+    if not groups:
+        return args
+    rows = db.query(Customer.id).filter(
+        or_(*[and_(Customer.customer_group_id == g, Customer.company_id == c) for g, c in sorted(groups)])
+    ).all()
+    own = None if linked is None else {str(i) for i in jsc.array(linked)}
+    added = [str(r[0]) for r in rows if str(r[0]) not in ids and (own is None or str(r[0]) in own)]
+    return {**args, "customer_ids": [*ids, *sorted(added)]} if added else args
+
+
 #: SALES-UNIFIED (contract section 7): a billing line has no warehouse, so the route answers an
 #: invoiced ask by location (axis or filter) with 422 `location_needs_order_basis`. Said here
 #: before anything runs.
@@ -2974,7 +3002,8 @@ def arg_names(db: Any, args: Any, companies: Any = (), words: Any = None) -> dic
     the held rows in the ask's company: a sales agent by the one word it was typed as (`words`: word -> the ids it
     resolved to) when that word resolves back to exactly those rows, else by its code (unique per company); a brand or
     category by its name when the name resolves to exactly those rows, else by its code; a customer by its name (the
-    held ids ride beside it, `_fresh_args`); a product by its code."""
+    held ids ride beside it, `_fresh_args`), and every ledger of a customer group held whole by the group's one name, so
+    that name maps back to exactly those ids (round 7d, `_group_names`); a product by its code."""
     from app.models.order import Customer
     from app.models.product import Brand, Product, ProductCategory
     from app.models.sales_agent import SalesAgent
@@ -3003,6 +3032,8 @@ def arg_names(db: Any, args: Any, companies: Any = (), words: Any = None) -> dic
                 word = next(n for n in named.values() if n.casefold() == shown)
                 if set(_in_company(db, hint, _fresh_ids(db, hint, word), company or None)) != held:
                     named.update({i: codes[i] or named[i] for i in held})  # the name would widen or miss: the code
+        if param == "customer_ids":
+            named.update(_group_names(db, ids))
         if param == "sales_agent_ids":
             for word, typed in _dict(words).items():
                 typed = {str(i) for i in jsc.array(typed) if str(i) in named}
@@ -3012,6 +3043,33 @@ def arg_names(db: Any, args: Any, companies: Any = (), words: Any = None) -> dic
     shown = next((str(c[1]) for c in _own_companies(companies) if company and company == str(c[0])), None)
     if shown:
         out["company"] = {company: shown}
+    return out
+
+
+def _group_names(db: Any, ids: list[str]) -> dict[str, str]:
+    """Round 7d: the held customer ids that make up a whole explicit customer group (every ledger of it, in its company),
+    each by the group's one name: the Held report line shows the group once, and that name maps back (`_held_ids`) to
+    exactly those ids. A group held only in part keeps each ledger's own name."""
+    from app.models.order import Customer, CustomerGroup
+
+    held = set(ids)
+    members: dict[tuple[str, str, str], set[str]] = {}
+    for i, group, company, name in (
+        db.query(Customer.id, Customer.customer_group_id, Customer.company_id, CustomerGroup.name)
+        .join(CustomerGroup, CustomerGroup.id == Customer.customer_group_id)
+        .filter(Customer.id.in_(ids))
+        .all()
+    ):
+        if str(name or "").strip():
+            members.setdefault((str(group), str(company), str(name).strip()), set()).add(str(i))
+    out: dict[str, str] = {}
+    for (group, company, name), found in members.items():
+        whole = {
+            str(r[0])
+            for r in db.query(Customer.id).filter(Customer.customer_group_id == group, Customer.company_id == company).all()
+        }
+        if whole <= held:
+            out.update({i: name for i in found})
     return out
 
 
