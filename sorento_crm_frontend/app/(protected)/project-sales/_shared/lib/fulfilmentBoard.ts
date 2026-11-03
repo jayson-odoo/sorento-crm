@@ -1978,3 +1978,38 @@ export function confirmNoticeLines(result: {
   const short = (result.stock_short_notices ?? []).map((line) => failingLineText(line));
   return [...held, ...landed, ...short];
 }
+
+/**
+ * OI-UX-FILTER-SNAPSHOT (owner, 3 Nov): each board order's `CUSTOMER / project`, keyed by
+ * `sales_order_id`. The customer is the order's own (`BoardOrderStanding.customer_name`), else
+ * its first line's; the project is its first line's that names one. An order neither names is
+ * left out, so a caller prints nothing rather than a placeholder.
+ */
+export function orderPartyLabels(
+  orders: Array<{ sales_order_id: string; customer_name?: string | null }>,
+  contributions: Array<{
+    sales_order_id: string;
+    customer_name?: string | null;
+    project_label?: string | null;
+  }>,
+): Map<string, string> {
+  const lineCustomer = new Map<string, string>();
+  const lineProject = new Map<string, string>();
+  for (const line of contributions) {
+    if (line.customer_name && !lineCustomer.has(line.sales_order_id)) {
+      lineCustomer.set(line.sales_order_id, line.customer_name);
+    }
+    if (line.project_label && !lineProject.has(line.sales_order_id)) {
+      lineProject.set(line.sales_order_id, line.project_label);
+    }
+  }
+  const out = new Map<string, string>();
+  for (const order of orders) {
+    const label = soCustomerProjectLabel(
+      order.customer_name || lineCustomer.get(order.sales_order_id),
+      lineProject.get(order.sales_order_id),
+    );
+    if (label) out.set(order.sales_order_id, label);
+  }
+  return out;
+}

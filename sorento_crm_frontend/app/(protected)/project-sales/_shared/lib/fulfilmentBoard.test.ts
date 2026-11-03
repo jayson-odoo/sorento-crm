@@ -3213,3 +3213,23 @@ describe('pressPostsContribution: Saved is exactly what Confirm posts', () => {
     expect(pressPostsContribution(contribution, decision, { batchBlocked: true })).toBe(false);
   });
 });
+
+describe('orderPartyLabels (OI-UX-FILTER-SNAPSHOT)', () => {
+  it('names each board order CUSTOMER / project, from the order then its lines', async () => {
+    const { orderPartyLabels } = await import('./fulfilmentBoard');
+    const labels = orderPartyLabels(
+      [
+        { sales_order_id: 'so-a', customer_name: 'ACME SDN BHD' },
+        { sales_order_id: 'so-b', customer_name: null },
+        { sales_order_id: 'so-c', customer_name: null },
+      ],
+      [
+        { sales_order_id: 'so-a', customer_name: 'IGNORED', project_label: 'TAMAN JAYA' },
+        { sales_order_id: 'so-b', customer_name: 'BETA', project_label: null },
+      ],
+    );
+    expect(labels.get('so-a')).toBe('ACME SDN BHD / TAMAN JAYA');
+    expect(labels.get('so-b')).toBe('BETA');
+    expect(labels.has('so-c')).toBe(false);
+  });
+});

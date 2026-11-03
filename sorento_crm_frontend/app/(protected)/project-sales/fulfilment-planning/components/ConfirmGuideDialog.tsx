@@ -24,6 +24,7 @@ import { LineSplitEditor, type LineSplitEditorHandle } from './LineSplitEditor';
 import { formatSplitDate } from '../lib/lineSplitModel';
 import { defaultSoRemark, shouldLabelMockupLines } from '../../_shared/lib/soRemark';
 import { MockupLinesContext, RemarkWordsPendingContext } from './LineSplitSheet';
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 
 /** One line this Confirm covers, as the board states it, with its editable remark (UAC F25). */
 export type ConfirmGuideLine = CoveredSheetLine & {
@@ -42,6 +43,9 @@ export interface ConfirmGuidePage {
   /** The core sales order: what the board adopts when the page has no planning record yet. */
   salesOrderId: string;
   soNumber: string;
+  /** OI-UX-FILTER-SNAPSHOT: the order's customer and project, printed under the number. */
+  customerName?: string | null;
+  projectLabel?: string | null;
   /** The board's SO date for the order (`YYYY-MM-DD`); null when the board has none. */
   soDate?: string | null;
   /** FULFIL-SO-REMARK: `Sponsorship` / `Purchase Request` from the order's Shipping Info. */
@@ -416,6 +420,12 @@ export function ConfirmGuideDialog({
                   {plural(sheet ? sheet.lines.length : page.covered.length, 'line')}
                 </span>
               </div>
+              {/* OI-UX-FILTER-SNAPSHOT: the order's customer / project. */}
+              <SoCustomerProject
+                customer={page.customerName}
+                project={page.projectLabel}
+                className="text-sm"
+              />
               {/* FULFIL-SO-REMARK (AC-8): the REMARK the purchasing email prints beside this SO. */}
               <div className="max-w-md">
                 <Label htmlFor={`confirm-guide-remark-${page.salesOrderId}`} className="mb-1 block text-xs">
