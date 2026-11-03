@@ -183,7 +183,7 @@ def preview_spec_sheet(
     project_id: str,
     document_id: str,
     sheet_id: str,
-    keys: str = Query("", description="Comma separated page keys, at most 12"),
+    keys: List[str] = Query([], alias="key", description="A page key; repeat up to 12 times"),
     _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
@@ -191,7 +191,7 @@ def preview_spec_sheet(
     try:
         document = _document(db, project_id, document_id)
         sheet = _sheet(db, document, sheet_id)
-        wanted = list(dict.fromkeys(k.strip() for k in keys.split(",") if k.strip()))
+        wanted = list(dict.fromkeys(k for k in keys if k))
         if not wanted or len(wanted) > spec.PREVIEW_KEYS_MAX:
             raise AppException(
                 status_code=422,
@@ -203,7 +203,7 @@ def preview_spec_sheet(
         raise _fail(exc)
 
 
-@router.get(f"{BASE}/{{sheet_id}}/pages/{{page_key}}/design")
+@router.get(f"{BASE}/{{sheet_id}}/pages/{{page_key:path}}/design")
 def design_spec_sheet_page(
     project_id: str,
     document_id: str,
@@ -222,7 +222,7 @@ def design_spec_sheet_page(
         raise _fail(exc)
 
 
-@router.put(f"{BASE}/{{sheet_id}}/pages/{{page_key}}/edit")
+@router.put(f"{BASE}/{{sheet_id}}/pages/{{page_key:path}}/edit")
 def save_spec_sheet_page(
     project_id: str,
     document_id: str,

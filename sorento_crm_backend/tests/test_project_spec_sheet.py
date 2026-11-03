@@ -795,7 +795,7 @@ def test_routes_list_create_patch_preview_and_export(monkeypatch):
             assert patched.status_code == 200, patched.text
             assert patched.json()["pages"][1]["area"] == "Pantry"
 
-            preview = client.get(_url(c, f"/{sheet_id}/preview"), params={"keys": "cover"})
+            preview = client.get(_url(c, f"/{sheet_id}/preview"), params={"key": "cover"})
             assert preview.status_code == 200, preview.text
             assert len(preview.json()["doc"]["sheets"]) == 1
 

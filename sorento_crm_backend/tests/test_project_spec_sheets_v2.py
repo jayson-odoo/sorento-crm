@@ -660,9 +660,30 @@ def test_08_a_republished_template_keeps_the_old_version_until_use_latest_templa
         t["page"].published_version_id = v2.id
         db.flush()
 
-        payload = spec.build_print_payload(db, sheet)
-        tags = {tag["request_tag_id"]: tag for tag in _tags(payload)}
-        assert tags[c["basin"].id]["layers"] in (old_layers, t["single"].published_version.doc["layers"])
+        # Re-publish the single-item template (the basin page, no override) and the cover too.
+        single_v1 = t["single"].published_version
+        cover_v1 = t["cover"].published_version
+        for template, v1_version in ((t["single"], single_v1), (t["cover"], cover_v1)):
+            fresh = TagTemplateVersion(
+                id=_uid(),
+                template_id=template.id,
+                version_no=2,
+                doc={**v1_version.doc, "layers": [_layer("REPUBLISHED")]},
+                print_size=template.print_size,
+            )
+            db.add(fresh)
+            db.flush()
+            template.published_version_id = fresh.id
+            db.flush()
+
+        # The sheet still draws the VERSIONS it pinned, in the window and in the export.
+        for payload in (
+            spec.build_print_payload(db, sheet, keys=[c["basin"].id, "cover"]),
+            spec.build_print_payload(db, sheet, full=True),
+        ):
+            tags = {tag["request_tag_id"]: tag for tag in _tags(payload)}
+            assert tags[c["basin"].id]["layers"] == single_v1.doc["layers"]
+            assert tags["cover"]["layers"] == cover_v1.doc["layers"]
         assert sheet.page_version_id == v1.id
 
         client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
@@ -760,7 +781,7 @@ def test_09_export_payload_prints_the_visible_pages_only_the_preview_route_flags
 
         client, originals = _client(db, c["owner"], slugs=VIEW_ONLY)
         try:
-            ok = client.get(_base(c, f"/{sheet.id}/preview"), params={"keys": f"cover,{basin}"})
+            ok = client.get(_base(c, f"/{sheet.id}/preview"), params=[("key", "cover"), ("key", basin)])
             assert ok.status_code == 200, ok.text
             body = ok.json()
             assert [t["request_tag_id"] for t in _tags(body)] == ["cover", basin]
@@ -768,8 +789,8 @@ def test_09_export_payload_prints_the_visible_pages_only_the_preview_route_flags
             assert body["page_size"] == {"width_mm": W, "height_mm": H}
 
             many = ",".join(["cover"] + [_uid() for _ in range(12)])
-            assert client.get(_base(c, f"/{sheet.id}/preview"), params={"keys": many}).status_code == 422
-            unknown = client.get(_base(c, f"/{sheet.id}/preview"), params={"keys": "set:nope"})
+            assert client.get(_base(c, f"/{sheet.id}/preview"), params=[("key", k) for k in many.split(",")]).status_code == 422
+            unknown = client.get(_base(c, f"/{sheet.id}/preview"), params={"key": "set:nope"})
             assert unknown.status_code == 422
         finally:
             _restore(originals)
@@ -1024,7 +1045,7 @@ def test_11_a_sheet_of_another_document_is_404_on_every_route():
             calls = [
                 client.get(_base(c, f"/{sid}", other)),
                 client.patch(_base(c, f"/{sid}", other), json={"rows": []}),
-                client.get(_base(c, f"/{sid}/preview", other), params={"keys": "cover"}),
+                client.get(_base(c, f"/{sid}/preview", other), params={"key": "cover"}),
                 client.get(_base(c, f"/{sid}/pages/{key}/design", other)),
                 client.put(_base(c, f"/{sid}/pages/{key}/edit", other), json={"layers": []}),
                 client.post(_base(c, f"/{sid}/export", other)),
@@ -1052,7 +1073,7 @@ def test_12_a_read_only_user_reads_and_exports_but_cannot_write(monkeypatch):
             detail = client.get(_base(c, f"/{sheet.id}"))
             assert detail.status_code == 200
             assert detail.json()["can_edit"] is False
-            assert client.get(_base(c, f"/{sheet.id}/preview"), params={"keys": "cover"}).status_code == 200
+            assert client.get(_base(c, f"/{sheet.id}/preview"), params={"key": "cover"}).status_code == 200
             assert client.post(_base(c, f"/{sheet.id}/export")).status_code == 200
 
             create = client.post(
@@ -1386,7 +1407,28 @@ def test_s2_backfill_skips_a_cross_company_or_wrong_family_template():
             )
 
 
-def test_n1_only_assets_of_the_pinned_template_versions_are_signed(monkeypatch):
+def _asset(db, company_id):
+    from app.models.dealer_kit import Asset
+    from ._pg_fixture import unique_code
+
+    from .test_project_quotation_pdf import _attachment
+
+    att = _attachment(db, company_id, "logo.png")
+    row = Asset(id=_uid(), company_id=company_id, name=unique_code("LOGO"), kind="logo", attachment_id=att.id)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _asset_layer(asset_id):
+    return {
+        "id": f"a-{asset_id[:6]}",
+        "type": "image",
+        "props": {"kind": "image", "source": {"type": "asset", "assetId": asset_id}},
+    }
+
+
+def test_sf8_a_page_edit_may_name_a_template_or_same_company_asset_and_it_is_signed(monkeypatch):
     from app.services import project_spec_sheet_service as spec
     from app.services.dealer_kit import asset_service
 
@@ -1396,25 +1438,42 @@ def test_n1_only_assets_of_the_pinned_template_versions_are_signed(monkeypatch):
     )
     with blank_session() as db:
         c = _chain(db)
+        own = _template(db, c["company_id"], "spec_page", layers=[_asset_layer("asset-in-template")])
         t = _templates(db, c)
-        own = _template(db, c["company_id"], "spec_page", layers=[
-            {"id": "a", "type": "image", "props": {"kind": "image", "source": {"type": "asset", "assetId": "asset-own"}}}
-        ])
         t["page"], t["single"] = own, own
         sheet = _make(db, c, templates=t)
-        edit = {"id": "e", "type": "image", "props": {"kind": "image", "source": {"type": "asset", "assetId": "asset-foreign"}}}
-        spec.save_page_edit(db, sheet, c["basin"].id, [edit])
+        logo = _asset(db, c["company_id"])
+        spec.save_page_edit(db, sheet, c["basin"].id, [_asset_layer(logo.id), _asset_layer("asset-in-template")])
         spec.build_print_payload(db, sheet)
-        assert asked and asked[-1] == {"asset-own"}
+        assert asked[-1] == {"asset-in-template", logo.id}
+
+
+def test_sf8_another_companys_asset_is_refused_at_save():
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+    from app.models.company import Company
+    from ._pg_fixture import unique_code
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c)
+        other = Company(id=_uid(), name="ZZT Other", code=unique_code("OTH")[:20])
+        db.add(other)
+        db.flush()
+        foreign = _asset(db, other.id)
+        for asset_id in (foreign.id, "asset-nobody-has"):
+            with pytest.raises(AppException) as raised:
+                spec.save_page_edit(db, sheet, c["basin"].id, [_asset_layer(asset_id)])
+            assert (raised.value.status_code, raised.value.code) == (422, "spec_sheet_page_edit_invalid")
 
 
 def test_n2_n3_the_page_routes_use_page_key_and_the_design_route_needs_a_writable_project():
     from app.main import app
 
     paths = {getattr(r, "path", "") for r in app.routes}
-    assert any("/spec-sheets/{sheet_id}/pages/{page_key}/design" in p for p in paths)
-    assert any("/spec-sheets/{sheet_id}/pages/{page_key}/edit" in p for p in paths)
-    assert not any("/pages/{key}/" in p for p in paths)
+    assert any("/spec-sheets/{sheet_id}/pages/{page_key" in p and p.endswith("/design") for p in paths)
+    assert any("/spec-sheets/{sheet_id}/pages/{page_key" in p and p.endswith("/edit") for p in paths)
+    assert not any("/pages/{key" in p for p in paths)
 
     with blank_session() as db:
         c = _chain(db)
@@ -1446,3 +1505,221 @@ def test_n4_reset_page_refuses_a_page_key_the_sheet_does_not_have():
                 assert ok.status_code == 202, ok.text
             finally:
                 _restore(originals)
+
+
+# ------------------------------------------------------------------ code review round (fix round 3)
+
+
+def test_b2_a_main_page_without_a_frozen_photo_prints_the_products_chosen_files(monkeypatch):
+    from app.services import project_spec_sheet_service as spec
+
+    from .test_project_quotation_pdf import _attachment
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c)
+        photo = _attachment(db, c["company_id"], "chosen.png")
+        drawing = _attachment(db, c["company_id"], "first-drawing.png")
+        # A backfilled sheet froze no media on its items.
+        sheet.items = [{**i, "image_attachment_id": None, "drawing_attachment_id": None} for i in sheet.items]
+        db.flush()
+        monkeypatch.setattr(
+            spec, "_files", lambda db, ids: {str(i): {"photo": photo.id, "drawing": drawing.id} for i in ids}
+        )
+        monkeypatch.setattr(
+            spec, "_sign", lambda db, ids, full=False: {i: f"https://signed.zzt.test/{i}" for i in ids if i}
+        )
+        row = spec.build_print_payload(db, sheet)["resolvedData"][c["basin"].id]
+        assert row["images"][0]["attachment_id"] == photo.id
+        assert row["drawing"]["attachment_id"] == drawing.id
+
+
+def test_b3_backfill_drops_an_unusable_single_template_and_keeps_the_sheet():
+    from app.models.projects import ProjectQuotationSpecSheet
+
+    migration = _migration()
+    with blank_session() as db:
+        env = _setup(db)
+        t = _templates(db, env)
+        foreign = _other_company_template(db, "spec_page")
+        unpublished = _template(db, env["company_id"], "spec_page", published=False)
+        wrong_family = _template(db, env["company_id"], "wc")
+        docs = []
+        for single_id in (foreign.id, unpublished.id, wrong_family.id, _uid()):
+            doc, _s, _p, _i = _issued_doc(db, env)
+            doc.spec_sheet = {
+                "cover_template_id": t["cover"].id,
+                "page_template_id": t["page"].id,
+                "single_page_template_id": single_id,
+                "rows": [],
+            }
+            docs.append(doc)
+        db.flush()
+        migration.backfill(db.connection())
+        db.expire_all()
+        for doc in docs:
+            (sheet,) = (
+                db.query(ProjectQuotationSpecSheet).filter(ProjectQuotationSpecSheet.document_id == doc.id).all()
+            )
+            assert sheet.single_page_template_id is None and sheet.single_version_id is None
+            assert sheet.cover_version_id == t["cover"].published_version_id
+
+
+def test_sf1_a_create_that_collides_on_the_sheet_number_retries_with_a_fresh_number(monkeypatch):
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        _make(db, c, templates=t)  # SS1
+        real = spec._next_sheet_no
+        calls = []
+
+        def stale_first(db_, document):
+            calls.append(1)
+            return 1 if len(calls) == 1 else real(db_, document)
+
+        monkeypatch.setattr(spec, "_next_sheet_no", stale_first)
+        second = _make(db, c, templates=t)
+        assert second.sheet_no == 2 and len(calls) == 2
+
+
+def test_sf2_an_editor_without_write_access_to_the_project_is_refused_everywhere():
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        sheet = _make(db, c, templates=t)
+        key = c["basin"].id
+        sheet_id = sheet.id
+        db.commit()
+        with company_scope(db, frozenset({c["company_id"]})):
+            client, originals = _client(db, _uid(), slugs=EDIT_SLUGS[:2])  # edit right, not owner/collaborator
+            try:
+                body = {"source": c["issue"].id, "cover_template_id": t["cover"].id, "page_template_id": t["page"].id}
+                assert client.post(_base(c), json=body).status_code == 403
+                assert client.patch(_base(c, f"/{sheet_id}"), json={"rows": []}).status_code == 403
+                assert client.put(_base(c, f"/{sheet_id}/pages/{key}/edit"), json={"layers": []}).status_code == 403
+                parked = _park(client, "quotation_spec_sheet.delete", sheet_id)
+                assert parked.status_code == 403, parked.text
+            finally:
+                _restore(originals)
+
+
+def test_sf3_hints_show_malaysia_time():
+    from datetime import datetime
+
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c = _chain(db)
+        # 17:00 UTC on 2 Nov is 01:00 on 3 Nov in Malaysia.
+        c["issue"].issued_at = datetime(2026, 11, 2, 17, 0)
+        sheet = _make(db, c, source="draft")
+        sheet.items_taken_at = datetime(2026, 11, 2, 17, 0)
+        db.flush()
+        assert spec.sources(db, c["document"])[-1]["hint"] == "issued 03 Nov 2026"
+        label, hint = spec.source_text(db, c["document"], sheet)
+        assert hint == "lines taken 03 Nov 2026 01:00"
+
+
+def test_sf7_the_list_costs_the_same_number_of_queries_for_one_sheet_and_five():
+    from sqlalchemy import event
+
+    from app.database import engine  # noqa: F401
+    from app.services import project_spec_sheet_service as spec
+
+    def count(db, c):
+        seen = []
+        bind = db.get_bind()
+
+        def hook(conn, cursor, statement, *a):
+            seen.append(statement)
+
+        event.listen(bind, "before_cursor_execute", hook)
+        try:
+            db.expire_all()
+            spec.list_view(db, c["document"], c["owner"])
+        finally:
+            event.remove(bind, "before_cursor_execute", hook)
+        return len(seen)
+
+    with blank_session() as db:
+        c = _chain(db)
+        t = _templates(db, c)
+        _make(db, c, templates=t)
+        one = count(db, c)
+        for _ in range(4):
+            _make(db, c, templates=t)
+        five = count(db, c)
+        assert five == one, (one, five)
+
+
+def test_nit_a_quotation_with_only_heading_lines_cannot_create():
+    from app.models.projects import ProjectQuotationLine
+
+    with blank_session() as db:
+        env = _setup(db)
+        document = _document(db, env)
+        scope = _scope(db, env, document)
+        product = _product(db, env["category"].id, env["uom"], description=f"{MARKER} to blank")
+        line = _line(db, env, scope, {"product_id": product.id})
+        row = db.get(ProjectQuotationLine, line.id)
+        row.product_id = None
+        row.product_code_snapshot = None
+        row.band_label = "UNIT"
+        db.flush()
+        client, originals = _client(db, env["owner"], slugs=EDIT_SLUGS)
+        try:
+            c = {**env, "document": document}
+            body = client.get(_base(c)).json()
+            assert body["create_disabled_reason"] == "Add a line to the quotation first."
+        finally:
+            _restore(originals)
+
+
+def test_nit_the_draft_is_offered_when_a_scope_of_the_newest_issue_is_gone(monkeypatch):
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c = _chain(db)
+        assert spec.sources(db, c["document"])[0]["value"] == c["issue"].id
+        monkeypatch.setattr(qdocs, "list_scopes", lambda db_, document: [])
+        assert spec.sources(db, c["document"])[0]["value"] == "draft"
+
+
+def test_nit_page_keys_with_a_slash_or_comma_work_through_the_routes():
+    from app.models.projects import ProjectQuotationLine
+
+    with blank_session() as db:
+        env = _setup(db)
+        document = _document(db, env)
+        scope = _scope(db, env, document)
+        product = _product(db, env["category"].id, env["uom"], description=f"{MARKER} odd code")
+        line = _line(db, env, scope, {"product_id": product.id})
+        row = db.get(ProjectQuotationLine, line.id)
+        row.product_id = None
+        row.product_code_snapshot = "AB/12,X"
+        row.description_snapshot = "Odd code"
+        db.flush()
+        issue = _issue(db, document, env["owner"])
+        c = {**env, "document": document, "issue": issue}
+        sheet = _make(db, c)
+        key = "code:AB/12,X"
+        assert [i["key"] for i in sheet.items] == [key]
+        client, originals = _client(db, env["owner"], slugs=EDIT_SLUGS)
+        try:
+            ok = client.get(_base(c, f"/{sheet.id}/preview"), params=[("key", "cover"), ("key", key)])
+            assert ok.status_code == 200, ok.text
+            assert [t["request_tag_id"] for t in _tags(ok.json())] == ["cover", key]
+            from urllib.parse import quote
+
+            quoted = quote(key, safe="")
+            design = client.get(_base(c, f"/{sheet.id}/pages/{quoted}/design"))
+            assert design.status_code == 200, design.text
+            put = client.put(_base(c, f"/{sheet.id}/pages/{quoted}/edit"), json={"layers": []})
+            assert put.status_code == 200, put.text
+        finally:
+            _restore(originals)

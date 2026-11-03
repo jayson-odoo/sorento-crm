@@ -11,7 +11,7 @@ import type { QueuedDownload } from './quotationDocumentService';
  *   POST  .../spec-sheets                                                  -> SpecSheetDetail (201)
  *   GET   .../spec-sheets/{sheetId}                                        -> SpecSheetDetail
  *   PATCH .../spec-sheets/{sheetId}                                        -> SpecSheetDetail
- *   GET   .../spec-sheets/{sheetId}/preview?keys=a,b                       -> one window of pages
+ *   GET   .../spec-sheets/{sheetId}/preview?key=a&key=b                       -> one window of pages
  *   GET   .../spec-sheets/{sheetId}/pages/{key}/design                     -> the page designer's input
  *   PUT   .../spec-sheets/{sheetId}/pages/{key}/edit                       -> SpecSheetDetail
  *   POST  .../spec-sheets/{sheetId}/export                                 -> the queued download
@@ -224,7 +224,8 @@ export async function getSpecSheetPreview(
   sheetId: string,
   keys: string[],
 ): Promise<SpecSheetPreview> {
-  const query = `?keys=${encodeURIComponent(keys.join(','))}`;
+  // One `key` per page: a key may itself hold a slash or a comma (a `code:AB/12` item).
+  const query = `?${keys.map((key) => `key=${encodeURIComponent(key)}`).join('&')}`;
   return read(
     await apiFetch(url(projectId, documentId, `/${sheetId}/preview${query}`)),
     'Could not draw the spec sheet pages',

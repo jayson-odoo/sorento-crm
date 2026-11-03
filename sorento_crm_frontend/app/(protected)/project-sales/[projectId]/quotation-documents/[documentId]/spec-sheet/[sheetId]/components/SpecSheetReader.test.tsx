@@ -263,7 +263,8 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
 
     await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(1));
     expect(getSpecSheetPreview.mock.calls[0].slice(0, 3)).toEqual(['p1', 'd1', 'sheet-1']);
-    expect(sortedKeysOf(0)).toEqual(['cover', 'k1', 'k2'].sort());
+    // The window snaps to the 6-page chunk holding the visible pages.
+    expect(sortedKeysOf(0)).toEqual(['cover', 'k1', 'k2', 'k3', 'k4', 'k5'].sort());
 
     await waitFor(() => expect(document.querySelectorAll('[data-renderer="1"]').length).toBeGreaterThan(0));
     expect(document.querySelectorAll('[data-renderer="1"]').length).toBeLessThanOrEqual(4);
@@ -281,13 +282,41 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     report(['k9', 'k10', 'k11']);
 
     await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(2));
-    expect(sortedKeysOf(1)).toEqual(['k10', 'k11', 'k9']);
+    expect(sortedKeysOf(1)).toEqual(['k10', 'k11', 'k6', 'k7', 'k8', 'k9']);
     await waitFor(() => expect(screen.queryByTestId('tag-sheet-renderer-k10')).not.toBeNull());
     for (const gone of ['cover', 'k1', 'k2']) {
       expect(screen.queryByTestId(`tag-sheet-renderer-${gone}`)).toBeNull();
     }
     expect(document.querySelectorAll('[data-renderer="1"]').length).toBeLessThanOrEqual(4);
     expect(peak).toBeLessThanOrEqual(4);
+  });
+
+  it('moving between pages of one chunk, and back, makes no further request', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['cover', 'k1', 'k2']);
+    await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(1));
+
+    report(['k1', 'k2', 'k3']);
+    report(['cover', 'k1', 'k2']);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    });
+
+    expect(getSpecSheetPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it('scrolling back to a chunk already fetched is a cache hit', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['cover', 'k1', 'k2']);
+    await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(1));
+    report(['k9', 'k10', 'k11']);
+    await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(2));
+
+    report(['cover', 'k1', 'k2']);
+    await waitFor(() => expect(screen.queryByTestId('tag-sheet-renderer-k1')).not.toBeNull());
+    expect(getSpecSheetPreview).toHaveBeenCalledTimes(2);
   });
 
   it('does not refetch in a loop once the window is settled', async () => {

@@ -29,7 +29,7 @@ import {
   specSheetListKey,
   useSpecSheetDetail,
   useSpecSheetMutations,
-  useSpecSheetPreview,
+  useSpecSheetPreviews,
 } from '../../../../../../_shared/hooks/useSpecSheet';
 import type {
   SpecSheetPage,
@@ -38,8 +38,11 @@ import type {
 import { PageRail } from './PageRail';
 import { COVER, ReaderPage } from './ReaderPage';
 
-/** The most pages one preview call may ask for (the server refuses more). */
-const WINDOW_MAX = 12;
+/** Pages per preview call. The window snaps to these chunks, so a scroll that stays inside one
+ *  costs nothing and a scroll back is a cache hit. Well under the server's 12-key limit. */
+const CHUNK_SIZE = 6;
+/** The most pages drawn at once, however far the viewport is zoomed out. */
+const DRAWN_MAX = 12;
 /** The window starts one viewport above and below what is on screen. */
 const WINDOW_MARGIN = '100% 0px';
 /** Side padding of the stack, px. */
@@ -100,12 +103,19 @@ export function SpecSheetReader({
   }, [pages]);
   const printedCount = numbers.size;
 
+  // The local copy stays until the LAST write in flight settles; clearing it on the first would
+  // flash the older server copy between two quick edits.
+  const inflight = React.useRef(0);
   const commit = (next: SpecSheetPage[]) => {
     setOverride(next);
-    update.mutate(
-      { sheetId, body: { rows: next.filter((p) => p.key !== COVER).map(rowOf) } },
-      { onSettled: () => setOverride(null) },
-    );
+    inflight.current += 1;
+    update
+      .mutateAsync({ sheetId, body: { rows: next.filter((p) => p.key !== COVER).map(rowOf) } })
+      .catch(() => undefined)
+      .finally(() => {
+        inflight.current -= 1;
+        if (inflight.current === 0) setOverride(null);
+      });
   };
   const patch = (key: string, change: Partial<SpecSheetPage>) =>
     commit(pages.map((page) => (page.key === key ? { ...page, ...change } : page)));
@@ -138,19 +148,15 @@ export function SpecSheetReader({
   const boxWidth = Math.round(naturalW * scale);
   const boxHeight = Math.round(naturalH * scale);
 
-  const [windowKeys, setWindowKeys] = React.useState<string[]>([]);
+  // Pages near the viewport (the observer's margin included), in a state that only changes when
+  // the set does.
+  const [visible, setVisible] = React.useState<ReadonlySet<string>>(new Set());
   const visibleRef = React.useRef<Set<string>>(new Set());
-  const pagesRef = React.useRef<SpecSheetPage[]>(pages);
-  pagesRef.current = pages;
 
-  const recomputeWindow = React.useCallback(() => {
-    // Page order, left-out pages never drawn, never more than the preview accepts.
-    const next = pagesRef.current
-      .filter((p) => !p.hidden && visibleRef.current.has(p.key))
-      .map((p) => p.key)
-      .slice(0, WINDOW_MAX);
-    setWindowKeys((prev) =>
-      prev.length === next.length && prev.every((k, i) => k === next[i]) ? prev : next,
+  const publishVisible = React.useCallback(() => {
+    const next = visibleRef.current;
+    setVisible((prev) =>
+      prev.size === next.size && [...next].every((k) => prev.has(k)) ? prev : new Set(next),
     );
   }, []);
 
@@ -160,44 +166,59 @@ export function SpecSheetReader({
     if (!root || typeof IntersectionObserver === 'undefined') return;
     const observer = new IntersectionObserver(
       (entries) => {
-        const next = new Set(visibleRef.current);
         for (const entry of entries) {
           const key = entry.target.getAttribute('data-page-key');
           if (!key) continue;
-          if (entry.isIntersecting) next.add(key);
-          else next.delete(key);
+          if (entry.isIntersecting) visibleRef.current.add(key);
+          else visibleRef.current.delete(key);
         }
-        visibleRef.current = next;
-        recomputeWindow();
+        publishVisible();
       },
       { root, rootMargin: WINDOW_MARGIN },
     );
     root.querySelectorAll('[data-page-key]').forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, [pageKeys, recomputeWindow]);
+  }, [pageKeys, publishVisible]);
 
-  // A page left out (or put back) changes what the window may draw without any scrolling.
-  React.useEffect(() => {
-    recomputeWindow();
-  }, [pages, recomputeWindow]);
-
-  const preview = useSpecSheetPreview(projectId, documentId, sheetId, windowKeys, windowKeys.length > 0);
-  const payload = React.useMemo(
-    () =>
-      preview.data
-        ? ({ ...preview.data, page_id: '', source: 'version' } as TagSheetDesignPayload)
-        : null,
-    [preview.data],
+  // The window: the chunks (fixed groups of CHUNK_SIZE pages in print order) holding any visible
+  // page, normally one or two. One preview query per chunk.
+  const chunks = React.useMemo(() => {
+    const all: string[][] = [];
+    for (let at = 0; at < pages.length; at += CHUNK_SIZE) {
+      all.push(pages.slice(at, at + CHUNK_SIZE).map((p) => p.key));
+    }
+    return all;
+  }, [pages]);
+  const windowChunks = React.useMemo(
+    () => chunks.filter((keys) => keys.some((k) => visible.has(k))),
+    [chunks, visible],
   );
-  const sheetIndex = React.useMemo(() => {
-    const map = new Map<string, number>();
-    (preview.data?.doc?.sheets ?? []).forEach((sheet, index) => {
-      const key = sheet.tags[0]?.request_tag_id;
-      if (key) map.set(key, index);
-    });
+  const previews = useSpecSheetPreviews(projectId, documentId, sheetId, windowChunks);
+
+  // key -> the payload that holds its sheet, for the pages that are near AND already fetched.
+  // One payload object per fetched answer, so a page's props stay the same between renders.
+  const payloads = React.useRef(new WeakMap<object, TagSheetDesignPayload>());
+  const drawn = (() => {
+    const map = new Map<string, { payload: TagSheetDesignPayload; index: number }>();
+    const hidden = new Set(pages.filter((p) => p.hidden).map((p) => p.key));
+    for (const result of previews) {
+      const data = result.data;
+      if (!data) continue;
+      let payload = payloads.current.get(data);
+      if (!payload) {
+        payload = { ...data, page_id: '', source: 'version' } as TagSheetDesignPayload;
+        payloads.current.set(data, payload);
+      }
+      const shared = payload;
+      (data.doc?.sheets ?? []).forEach((sheet, index) => {
+        const key = sheet.tags[0]?.request_tag_id;
+        if (key && visible.has(key) && !hidden.has(key) && map.size < DRAWN_MAX) {
+          map.set(key, { payload: shared, index });
+        }
+      });
+    }
     return map;
-  }, [preview.data]);
-  const inWindow = React.useMemo(() => new Set(windowKeys), [windowKeys]);
+  })();
 
   // ---- current page (page N of M) -----------------------------------------------------------
 
@@ -432,8 +453,8 @@ export function SpecSheetReader({
                 boxWidth={boxWidth}
                 boxHeight={boxHeight}
                 scale={scale}
-                payload={inWindow.has(page.key) ? payload : null}
-                sheetIndex={inWindow.has(page.key) ? sheetIndex.get(page.key) : undefined}
+                payload={drawn.get(page.key)?.payload ?? null}
+                sheetIndex={drawn.get(page.key)?.index}
                 canEdit={canEdit}
                 editDisabledReason={isMobile ? 'Open this on a desktop screen to edit a page.' : undefined}
                 editHref={`${sheetHref(sheetId)}/pages/${encodeURIComponent(page.key)}/edit`}

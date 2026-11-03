@@ -1,6 +1,6 @@
 'use client';
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import {
@@ -28,6 +28,8 @@ import {
  * previews; a tab switch that refetched them all is the bottleneck the owner asked not to
  * repeat. Data changes only through the mutations below, which invalidate exactly what they touch.
  */
+/** A fetched preview chunk is good until a write invalidates it. */
+const PREVIEW_STALE_MS = 5 * 60_000;
 const LIST_KEY = 'project-spec-sheets';
 const DETAIL_KEY = 'project-spec-sheet';
 const PREVIEW_KEY = 'project-spec-sheet-preview';
@@ -75,7 +77,7 @@ export function useSpecSheetPreview(
 ) {
   const sorted = [...keys].sort();
   return useQuery({
-    queryKey: [...specSheetPreviewPrefix(documentId, sheetId), sorted.join(',')],
+    queryKey: [...specSheetPreviewPrefix(documentId, sheetId), sorted],
     queryFn: () => getSpecSheetPreview(projectId, documentId, sheetId, sorted),
     enabled: enabled && sorted.length > 0,
     refetchOnWindowFocus: false,
@@ -83,6 +85,33 @@ export function useSpecSheetPreview(
     // Scrolling to a new window keeps the pages both windows share on screen while the next
     // preview loads, instead of blanking them.
     placeholderData: keepPreviousData,
+    staleTime: PREVIEW_STALE_MS,
+  });
+}
+
+/**
+ * One preview query per chunk of pages. A chunk's key is its own sorted keys, so scrolling back to
+ * a chunk already fetched is a cache hit and a fast scroll costs one call per chunk, not per page.
+ */
+export function useSpecSheetPreviews(
+  projectId: string,
+  documentId: string,
+  sheetId: string,
+  chunks: string[][],
+) {
+  return useQueries({
+    queries: chunks.map((keys) => {
+      const sorted = [...keys].sort();
+      return {
+        queryKey: [...specSheetPreviewPrefix(documentId, sheetId), sorted],
+        queryFn: () => getSpecSheetPreview(projectId, documentId, sheetId, sorted),
+        enabled: sorted.length > 0,
+        refetchOnWindowFocus: false,
+        retry: false,
+        // Scrolling back to a chunk is a cache hit; writes invalidate the previews explicitly.
+        staleTime: PREVIEW_STALE_MS,
+      };
+    }),
   });
 }
 
@@ -105,10 +134,11 @@ export function useSpecSheetMutations(projectId: string, documentId: string) {
   const queryClient = useQueryClient();
 
   const refreshSheet = (sheetId: string, detail?: SpecSheetDetail) => {
-    // The answer of a write IS the sheet's new detail: show it now, then confirm with a read.
+    // The answer of a write IS the sheet's new detail: keep it, no second read. Without one the
+    // detail is read again.
     if (detail) queryClient.setQueryData(specSheetDetailKey(documentId, sheetId), detail);
+    else queryClient.invalidateQueries({ queryKey: specSheetDetailKey(documentId, sheetId) });
     queryClient.invalidateQueries({ queryKey: specSheetListKey(documentId) });
-    queryClient.invalidateQueries({ queryKey: specSheetDetailKey(documentId, sheetId) });
     queryClient.invalidateQueries({ queryKey: specSheetPreviewPrefix(documentId, sheetId) });
     queryClient.invalidateQueries({ queryKey: [DESIGN_KEY, documentId, sheetId] });
   };

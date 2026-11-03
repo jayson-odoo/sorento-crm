@@ -195,10 +195,9 @@ describe('useSpecSheetMutations', () => {
     });
 
     expect(updateSpecSheet).toHaveBeenCalledWith('p1', 'd1', 'sheet-1', { use_latest_templates: true });
-    await waitFor(() => {
-      expect(listSpecSheets.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(getSpecSheet.mock.calls.length).toBeGreaterThanOrEqual(2);
-    });
+    await waitFor(() => expect(listSpecSheets.mock.calls.length).toBeGreaterThanOrEqual(2));
+    // The write answered with the sheet: it is kept, not read again.
+    expect(getSpecSheet).toHaveBeenCalledTimes(1);
   });
 
   it('saving a page edit refreshes that sheet', async () => {
@@ -214,7 +213,10 @@ describe('useSpecSheetMutations', () => {
     });
 
     expect(saveSpecSheetPageEdit).toHaveBeenCalledWith('p1', 'd1', 'sheet-1', 'k1', []);
-    await waitFor(() => expect(getSpecSheet.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(getSpecSheet).toHaveBeenCalledTimes(1);
   });
 
   it('export queues the sheet', async () => {

@@ -21,7 +21,7 @@ export default async function EditProjectQuotationSpecSheetPage({
           projectId={projectId}
           documentId={documentId}
           sheetId={sheetId}
-          pageKey={decodeURIComponent(key)}
+          pageKey={key}
         />
       </Container>
     </RequireAccess>
