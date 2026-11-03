@@ -303,3 +303,59 @@ def test_d7c_guard_a_dealer_linked_to_one_ledger_never_sees_the_other(console) -
     assert ran, f"d7c: the dealer's ask did not run; the bot said {text.strip()!r}"
     assert ran[0].get("customer_ids") == [one], f"d7c: want only the linked ledger {one}, got {ran[0].get('customer_ids')}"
     assert two not in (ran[0].get("customer_ids") or []), f"d7c: the unlinked ledger ran for a dealer: {ran[0].get('customer_ids')}"
+
+
+# ------------------------------------------------------------------------------------------ d6b / d6c: the which-one stays open across several other-slot replies
+
+
+def _by_product(flag_on: bool) -> dict[str, Any]:
+    """'by product' while the which-one is open: an axis, no customer entity, no pick."""
+    ra = _ra(channel="dealer", basis="invoiced", group_by="product", customers=[], **OCT) if flag_on else None
+    return _v("sales_analysis", ra, group_by="product", by_words="by product", sales_basis="invoiced", basis="invoiced",
+              entity_op="reuse", continuation=True)
+
+
+@pytest.mark.parametrize("flag_on", [True, False], ids=["flag-on", "flag-off"])
+def test_d6b_every_other_slot_reply_keeps_the_which_one_open_until_the_pick(request, flag_on) -> None:
+    """R3 (crew (a)): which-one open -> 'invoiced' (re-asked) -> 'by product' (re-asked again, NO run) -> the group pick (by
+    label) runs basis invoiced + group_by product + the group's ledgers. Today the keep fires once only."""
+    b = request.getfixturevalue("rbot" if flag_on else "bot")
+    ids, _bath = _seed(b)
+    first = _which_one_open(b, flag_on)
+    text, calls = b.say(_answer_basis(flag_on), "invoiced")
+    assert not _ran(calls) and text.strip() == first.strip(), f"setup: 'invoiced' must be re-asked: {text!r} {_ran(calls)}"
+    text, calls = b.say(_by_product(flag_on), "by product")
+    assert not _ran(calls), f"R3: 'by product' ran with no customer: group_by {[a.get('group_by') for a in _ran(calls)]} ids {[a.get('customer_ids') for a in _ran(calls)]}"
+    assert text.strip() == first.strip(), f"R3: want the which-one asked again, got {text!r}"
+    text, calls = b.say(_pick_one(_group_position(text)), "1")
+    ran = _ran(calls)
+    assert ran, f"R3: the pick did not run; the bot said {text.strip()!r}"
+    args = ran[0]
+    assert args.get("basis") == "invoiced" and args.get("group_by") == "product", f"R3: want invoiced by product, got {args}"
+    assert _is_the_group(args.get("customer_ids"), ids), f"R3: want the group's ledgers, got {args.get('customer_ids')}"
+
+
+@pytest.mark.parametrize("flag_on", [True, False], ids=["flag-on", "flag-off"])
+def test_d6c_control_another_customer_after_the_re_ask_closes_the_question(request, flag_on) -> None:
+    """Control: after the re-ask, a reply naming ANOTHER customer is a new ask that closes the which-one, as today."""
+    b = request.getfixturevalue("rbot" if flag_on else "bot")
+    _ids, bath = _seed(b)
+    first = _which_one_open(b, flag_on)
+    b.say(_answer_basis(flag_on), "invoiced")
+    text, calls = b.say(_ask([BATH], _ent(BATH, "customer"), flag_on=flag_on), "dealer zzdealer bath concept oct sale invoiced")
+    ran = _ran(calls)
+    assert ran and ran[0].get("customer_ids") == [bath], f"control: want only {bath}, got {ran or text!r}"
+
+
+@pytest.mark.parametrize("flag_on", [True, False], ids=["flag-on", "flag-off"])
+def test_d6c_control_a_topic_reset_after_the_re_ask_closes_the_question(request, flag_on) -> None:
+    """Control: after the re-ask, a topic reset starts a new ask; the which-one is not asked again."""
+    b = request.getfixturevalue("rbot" if flag_on else "bot")
+    _seed(b)
+    first = _which_one_open(b, flag_on)
+    b.say(_answer_basis(flag_on), "invoiced")
+    ra = _ra(basis="invoiced", **OCT) if flag_on else None
+    reset = _v("sales_report", ra, topic_reset=True, entity_op="clear", domain_in_message=True, basis="invoiced",
+               sales_basis="invoiced", **OCTF)
+    text, calls = b.say(reset, "start over, sales oct invoiced")
+    assert text.strip() != first.strip(), f"control: the reset was answered with the old which-one: {text!r}"
