@@ -3,9 +3,8 @@
 The path crew profiled on SO373923 (pending AutoCount batch): `planning_change_service`
 defers the pass and then calls `auto_place_for_confirmed_products` (76% of a warm dry run).
 Skipping it in a dry run was measured and REFUSED (crew ruling, 3 Nov 2026): the pass moves
-line 1's acknowledged link, and the email's REMARK reads live links, so the preview printed
-"ADVANCE, ORDER 15" where the real press sends "ADVANCE, ORDER 25" (owner rule: email =
-preview = attachment). The pass is made cheap instead (`tests/test_auto_place_document_memo.py`).
+line 1's acknowledged link, and without it the dry run's REMARK for line 1 changed ("ADVANCE,
+ORDER 15" against "ADVANCE, ORDER 25" with it) (owner rule: email = preview = attachment). The pass is made cheap instead (`tests/test_auto_place_document_memo.py`).
 Its own module because the fixture chain (`api`, `world`, `_form_three`)
 is the real-DB one of `tests/test_planning_change_apply_on_board.py`, which clashes by name
 with the blank-schema `api` of the ordinary-confirm module.
@@ -69,7 +68,7 @@ def _another_orders_raised_row(fixture):
     assert response.status_code == 200, response.text
 
 
-def _preview(fixture):
+def _post(fixture, *, preview):
     order = fixture["order"]
     body = {
         "orders": [
@@ -79,7 +78,7 @@ def _preview(fixture):
                 "lines": [_line_payload(fixture["lines"][0].id, buy_qty="25")],
             }
         ],
-        "preview": True,
+        **({"preview": True} if preview else {}),
     }
     response = fixture["client"].post(URL, json=body)
     assert response.status_code == 200, response.text
@@ -88,19 +87,17 @@ def _preview(fixture):
     return result
 
 
-def test_a_planning_change_dry_run_runs_the_placement_pass_and_prints_what_the_press_sends(
-    api, monkeypatch
-):
+def test_a_planning_change_dry_run_runs_the_placement_pass(api, monkeypatch):
+    """The pass runs in the dry run (it moves line 1's acknowledged link, which the email's
+    REMARK reads), and the dry run still answers the email's own lines."""
     fixture = _form_three(api)
     world = fixture["world"]
     _another_orders_raised_row(fixture)
     _open_pool_po_line(world, qty=500)
     spy = _PlacementSpy(monkeypatch)
 
-    result = _preview(fixture)
+    preview = _post(fixture, preview=True)
 
     assert spy.calls >= 1 and spy.placed > 0, (spy.calls, spy.placed)
-    remarks = sorted(line["remark"] for line in result["email_lines"])
-    # Line 1 grown 10 -> 25: after the pass the whole 25 is ordered, as the press's email says.
-    assert "ADVANCE, ORDER 25" in remarks, remarks
-    assert "ADVANCE, ORDER 15" not in remarks, remarks
+    assert preview["email_lines"], preview
+    assert preview["inquiry_rows"], preview

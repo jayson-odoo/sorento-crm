@@ -2868,6 +2868,15 @@ describe('CONFIRM-DIALOG-SPEED: the Review split never waits on the email dry ru
     expect(confirm).toBeDisabled();
   });
 
+  it('review N10: a split row\'s own remark stays editable while the page waits for its words', async () => {
+    previewConfirmMany.mockImplementation(() => new Promise(() => {}));
+    await openEditablePage();
+    await editLine3();
+    // The page's words are still out, yet the split row's own remark takes typing.
+    expect(screen.getByTestId('confirm-guide-words-loading')).toBeInTheDocument();
+    expect(screen.getByLabelText('Remark, line 3 split 2')).toBeEnabled();
+  });
+
   it('opening Confirm while the board is already reading joins that read, never a second one', async () => {
     serveSplits({ 'pso-so-1': LINE3_READ() });
     await mountWith(savedBoard(), ['SO000001']);
