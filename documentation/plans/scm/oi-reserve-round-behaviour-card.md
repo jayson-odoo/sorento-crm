@@ -1,6 +1,6 @@
 # Behaviour card v2: the reserve email's button opens that email's lines (OI-RESERVE-ROUND, 3 Nov)
 
-Status: Plan. Card v2 after the owner's scope cut (3 Nov ~23:05). Size S, small fix track: no
+Status: built (PR #2147, reviewer READY). Card v2 after the owner's scope cut (3 Nov ~23:05). Size S, small fix track: no
 migration, no auth/RBAC change, expected diff well under 300 lines. Plan:
 `PLAN-oi-reserve-round.md`, UAC: `oi-reserve-round-acceptance-criteria.md`.
 
