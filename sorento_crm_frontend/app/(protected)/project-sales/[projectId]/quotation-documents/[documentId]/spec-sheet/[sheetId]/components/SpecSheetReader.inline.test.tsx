@@ -208,6 +208,7 @@ type FakeProps = {
   };
 };
 const liveSeen = new Set<string>();
+let lastDocLayers: Record<string, unknown>[] = [];
 let livePeak = 0;
 let liveNow = 0;
 vi.mock(
@@ -812,5 +813,28 @@ describe('every page, pending saves, save status and the unload guard', () => {
     );
     add.mockRestore();
     remove.mockRestore();
+  });
+});
+
+describe('layers as the PDF reads them', () => {
+  it('hands the designer layers with visible, rotation and z-index filled in (a missing visible is shown)', async () => {
+    const bare = { ...LOGO } as Record<string, unknown>;
+    delete bare.visible;
+    delete bare.rotation_deg;
+    delete bare.z_index;
+    getSpecSheetPreview.mockImplementation(async (_p: string, _d: string, _s: string, keys: string[]) => {
+      const preview = previewFor(keys);
+      preview.doc.sheets.forEach((sheet) => {
+        sheet.tags[0].layers = [bare] as never;
+      });
+      return preview;
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+
+    expect(lastDocLayers).toHaveLength(1);
+    expect(lastDocLayers[0]).toMatchObject({ id: 'logo', visible: true, locked: false, rotation_deg: 0, z_index: 0 });
   });
 });
