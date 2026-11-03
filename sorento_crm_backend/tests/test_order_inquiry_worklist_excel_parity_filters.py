@@ -589,43 +589,55 @@ def test_export_honours_the_location_filter(api):
     item_codes = {
         cell[2].value
         for sheet in book.worksheets
-        for cell in sheet.iter_rows(min_row=3)
+        for cell in sheet.iter_rows(min_row=2)
     }
     assert seeded["row_agent_x_loc_a"].item_code in item_codes
     assert seeded["row_agent_y_loc_b"].item_code not in item_codes
 
 
+def _figures_sheet(db, item_code):
+    """`(headers, row)` of the item's line in the export with the buying figures named: the
+    default export is the owner's eight columns (OI-EXPORT-SHARED), so the TAKEN / REMAINING
+    logic is read through `columns=`."""
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+    columns = ("SO DATE", "S/O NO", "ITEM CODE", "QTY", "ACKNOWLEDGED", "TAKEN", "REMAINING")
+    _name, content = OrderInquiryWorklistService(db).export_xlsx(columns=columns)
+    sheet = openpyxl.load_workbook(io.BytesIO(content)).worksheets[0]
+    headers = [cell.value for cell in sheet[1]]
+    assert headers == list(columns), "row 1 is the header"
+    for values in sheet.iter_rows(min_row=2, values_only=True):
+        if values[2] == item_code:
+            return headers, values
+    return headers, None
+
+
+def test_the_default_export_is_the_owners_eight_columns_without_taken_and_remaining(api):
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(EXPORT)
+    sheet = openpyxl.load_workbook(io.BytesIO(response.content)).worksheets[0]
+
+    headers = [cell.value for cell in sheet[1]]
+    assert headers == [
+        "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "PROJECT/CUSTOMER",
+        "LOCATION", "REMARK",
+    ]
+    for gone in ("TAKEN", "REMAINING", "ACKNOWLEDGED", "SUGGESTED", "TOTAL QTY"):
+        assert gone not in headers
+
+
 def test_export_carries_row_level_taken_and_remaining_matching_the_grid(api):
-    """Fix round (22 Sep, `PLAN-board-oi-mechanical-22sep.md`, AC-D15 parity): the export
+    """Fix round (22 Sep, `PLAN-board-oi-mechanical-22sep.md`, AC-D15 parity): the writer
     prints the SAME row-level Taken/Remaining the grid has shown since S3
     (`inquiryRowTaken`/`inquiryRowRemaining`), never the retired line-scoped
     `taken_from_po`/`remaining_open` pair. `row_po_match` (S1 seed above) is a plain
     `ORDER` row, qty 10, with one PO link for the full 10 - fully taken, nothing left."""
-    client, _db, _company_id, seeded = api
+    _client, db, _company_id, seeded = api
 
-    response = client.get(EXPORT)
-    book = openpyxl.load_workbook(io.BytesIO(response.content))
+    headers, target_row = _figures_sheet(db, seeded["row_po_match"].item_code)
 
-    headers = None
-    target_row = None
-    for sheet in book.worksheets:
-        sheet_headers = next(
-            sheet.iter_rows(min_row=2, max_row=2, values_only=True), None
-        )
-        if sheet_headers is None:
-            continue
-        for values in sheet.iter_rows(min_row=3, values_only=True):
-            if values[2] == seeded["row_po_match"].item_code:
-                headers = sheet_headers
-                target_row = values
-                break
-        if target_row is not None:
-            break
-
-    assert target_row is not None, "row_po_match not found in any export sheet"
-    # Review round (22 Sep): APPENDED after ACKNOWLEDGED. OI-RESERVE-PILL-QTY round 2 (owner,
-    # 21 Oct 2026) put REQUESTED RESERVE / RESERVED beside QTY, so the three are read by
-    # heading; their order relative to each other is unchanged.
+    assert target_row is not None, "row_po_match not found in the export"
     at = headers.index("ACKNOWLEDGED")
     assert list(headers[at : at + 3]) == ["ACKNOWLEDGED", "TAKEN", "REMAINING"], headers
     assert target_row[headers.index("TAKEN")] == "10", target_row
@@ -639,7 +651,7 @@ def test_export_taken_and_remaining_include_reserved_qty(api):
     linked to a document. qty 139, a PO link for 40, a reserve link for 50 -> TAKEN 90,
     REMAINING 49 - the same figures `orderInquiryWorklist.test.ts`'s own B1 case pins on
     the FE side."""
-    client, db, company_id, seeded = api
+    _client, db, company_id, seeded = api
 
     inquiry_id = db.get(OrderInquiryRow, seeded["row_po_match"].id).order_inquiry_id
     inquiry = db.get(OrderInquiry, inquiry_id)
@@ -651,20 +663,9 @@ def test_export_taken_and_remaining_include_reserved_qty(api):
     _reserve_link(db, company_id, row_reserved, qty="50")
     db.commit()
 
-    response = client.get(EXPORT)
-    book = openpyxl.load_workbook(io.BytesIO(response.content))
+    headers, target_row = _figures_sheet(db, row_reserved.item_code)
 
-    target_row = None
-    for sheet in book.worksheets:
-        headers = [cell.value for cell in sheet[2]]
-        for values in sheet.iter_rows(min_row=3, values_only=True):
-            if values[2] == row_reserved.item_code:
-                target_row = values
-                break
-        if target_row is not None:
-            break
-
-    assert target_row is not None, "row_reserved not found in any export sheet"
+    assert target_row is not None, "row_reserved not found in the export"
     assert target_row[headers.index("TAKEN")] == "90", target_row
     assert target_row[headers.index("REMAINING")] == "49", target_row
 

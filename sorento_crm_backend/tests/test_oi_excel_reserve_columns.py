@@ -1,9 +1,11 @@
 """OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026, "we just need more visibility"):
-the OI Excel - the list export and the file the handover email attaches, both printed by
-`OrderInquiryWorklistService.export_xlsx` - carries REQUESTED RESERVE and RESERVED right
+`OrderInquiryWorklistService.export_xlsx` can print REQUESTED RESERVE and RESERVED right
 after QTY, so a 170 line with a 70 reserve request reads as two numbers side by side
-(real case: OI-2609-0165, CB315 qty 170, request 70). The planning-board worksheet keeps
-its own ten columns, unchanged.
+(real case: OI-2609-0165, CB315 qty 170, request 70).
+
+OI-EXPORT-SHARED (owner, 3 Nov 2026): the default OI Excel is now the owner's eight columns
+without the reserve figures, so these tests name the reserve columns (`columns=`) to keep
+the value logic covered. The planning-board worksheet keeps its own nine columns.
 
 Postgres only (`tests/_pg_fixture.py`), seeded through the reserve suite's own fixtures.
 """
@@ -22,27 +24,36 @@ from app.services.order_inquiry_worklist_service import (
 from .test_order_inquiry_reserve import _open_row, _service, api  # noqa: F401  (fixture)
 
 
-def _sheet(world, columns=EXPORT_HEADINGS):
+#: The columns the reserve figures are read through: QTY, then the two reserve figures.
+RESERVE_COLUMNS = (
+    "SO DATE", "S/O NO", "ITEM CODE", "QTY", "REQUESTED RESERVE", "RESERVED",
+    "DELIVERY DATE", "PROJECT/CUSTOMER", "LOCATION", "REMARK",
+)
+
+
+def _sheet(world, columns=RESERVE_COLUMNS):
     _name, data = OrderInquiryWorklistService(world.db).export_xlsx(
         inquiry_id=world.inquiry.id, columns=columns
     )
     sheet = openpyxl.load_workbook(io.BytesIO(data)).active
     values = [list(r) for r in sheet.iter_rows(values_only=True)]
-    heads = values[1]
-    return heads, {r[heads.index("ITEM CODE")]: r for r in values[2:]}
+    heads = values[0]
+    assert tuple(heads) == tuple(columns), "row 1 is the header, no title row above it"
+    return heads, {r[heads.index("ITEM CODE")]: r for r in values[1:]}
 
 
-def test_requested_reserve_and_reserved_sit_right_after_qty():
-    at = EXPORT_HEADINGS.index("QTY")
-    assert EXPORT_HEADINGS[at : at + 3] == ("QTY", "REQUESTED RESERVE", "RESERVED")
-    # Nothing else moved relative to each other, and REMARK stays last.
+def test_the_default_export_has_no_reserve_figures_and_the_columns_can_be_named():
+    assert "REQUESTED RESERVE" not in EXPORT_HEADINGS
+    assert "RESERVED" not in EXPORT_HEADINGS
+    assert "TOTAL QTY" not in EXPORT_HEADINGS
     assert EXPORT_HEADINGS[-1] == "REMARK"
-    assert "TOTAL QTY" in EXPORT_HEADINGS
+    at = RESERVE_COLUMNS.index("QTY")
+    assert RESERVE_COLUMNS[at : at + 3] == ("QTY", "REQUESTED RESERVE", "RESERVED")
 
 
-def test_worksheet_keeps_its_own_ten_columns():
+def test_worksheet_keeps_its_own_nine_columns():
     assert WORKSHEET_HEADINGS == (
-        "SO DATE", "S/O NO", "ITEM CODE", "QTY", "TOTAL QTY", "DELIVERY DATE",
+        "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE",
         "PROJECT/CUSTOMER", "SUPPLIER", "PO NO ", "LOCATION",
     )
 

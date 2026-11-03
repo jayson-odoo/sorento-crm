@@ -1396,18 +1396,31 @@ def test_every_new_field_reaches_the_list_the_row_and_the_export(api):
     assert export.status_code == 200
     import openpyxl
 
-    book = openpyxl.load_workbook(io.BytesIO(export.content))
+    # OI-EXPORT-SHARED (owner, 3 Nov 2026): the route's default workbook is the owner's eight
+    # columns, with no ACKNOWLEDGED among them ...
+    default = openpyxl.load_workbook(io.BytesIO(export.content)).worksheets[0]
+    assert [cell.value for cell in default[1]] == [
+        "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "PROJECT/CUSTOMER",
+        "LOCATION", "REMARK",
+    ]
+    # ... so the acknowledgement text is read through the writer with the column named.
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+    _name, content = OrderInquiryWorklistService(world.db).export_xlsx(
+        ack="rejected", columns=("S/O NO", "ITEM CODE", "ACKNOWLEDGED")
+    )
+    book = openpyxl.load_workbook(io.BytesIO(content))
     # EVERY row of EVERY sheet. The workbook is one sheet now (owner, 16 Oct 2026), but this
     # suite can run on a database carrying real rejected rows of its own, so the test reads
     # the whole file for its own row rather than a position somebody else's data decides.
     printed = []
     for name in book.sheetnames:
         sheet = book[name]
-        headings = [cell.value for cell in sheet[2]]
+        headings = [cell.value for cell in sheet[1]]
         assert "ACKNOWLEDGED" in headings
         printed.extend(
             row_values[headings.index("ACKNOWLEDGED")]
-            for row_values in sheet.iter_rows(min_row=3, values_only=True)
+            for row_values in sheet.iter_rows(min_row=2, values_only=True)
         )
     assert any("Factory closed" in (value or "") for value in printed)
 

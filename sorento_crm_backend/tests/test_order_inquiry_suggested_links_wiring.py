@@ -686,10 +686,17 @@ class TestACLT39ExcelExportGetsASuggestedColumn:
         )
         db.commit()
 
-        _filename, content = OrderInquiryWorklistService(db).export_xlsx()
+        # The default export is the owner's eight columns (OI-EXPORT-SHARED); the PO and
+        # SUGGESTED document columns are still written when a caller names them.
+        from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
+
+        assert "SUGGESTED" not in EXPORT_HEADINGS and "PO NO " not in EXPORT_HEADINGS
+        _filename, content = OrderInquiryWorklistService(db).export_xlsx(
+            columns=EXPORT_HEADINGS + ("PO NO ", "SUGGESTED")
+        )
         workbook = openpyxl.load_workbook(io.BytesIO(content))
         sheet = workbook[workbook.sheetnames[0]]
-        header_row = sheet[2]
+        header_row = sheet[1]
         headings = [str(cell.value).strip().upper() for cell in header_row if cell.value]
 
         assert "SUGGESTED" in headings, headings
@@ -704,7 +711,7 @@ class TestACLT39ExcelExportGetsASuggestedColumn:
             cell.column for cell in header_row
             if str(cell.value).strip().upper() == "SUGGESTED"
         )
-        data_row = sheet[3]
+        data_row = sheet[2]
         po_cell = str(data_row[po_col - 1].value or "")
         suggested_cell = str(data_row[suggested_col - 1].value or "")
 

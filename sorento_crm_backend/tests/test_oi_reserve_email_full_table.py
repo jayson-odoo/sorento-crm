@@ -363,9 +363,13 @@ def test_ac_rf_02_reserved_table_columns_in_order_reason_only_when_needed(sn, mo
     assert _table(mail["body_html"])["headings"] == RESERVED_HEADINGS, "no reason, no REASON column"
 
 
-def test_ac_rf_03_headings_follow_export_headings(sn, monkeypatch):
+def test_ac_rf_03_headings_follow_the_export_column_order(sn, monkeypatch):
     from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
 
+    # The email's columns are the OI export's, in its order, plus the reserve figures the
+    # export no longer prints (OI-EXPORT-SHARED), which sit right after QTY.
+    at = EXPORT_HEADINGS.index("QTY") + 1
+    reference = EXPORT_HEADINGS[:at] + ("REQUESTED RESERVE", "RESERVED") + EXPORT_HEADINGS[at:]
     client, world, _calls = _setup(sn, monkeypatch)
     one = _raiser(world, "CS One")
     _parked(client, world, one)
@@ -373,8 +377,8 @@ def test_ac_rf_03_headings_follow_export_headings(sn, monkeypatch):
     for mail in (_req_mails(client)[0], _note_mails(world)[0]):
         headings = _table(mail["body_html"])["headings"]
         mapped = ["RESERVED" if h == "STATUS" else h for h in headings if h not in ("OI NO", "REASON")]
-        assert all(h in EXPORT_HEADINGS for h in mapped), (headings, EXPORT_HEADINGS)
-        positions = [EXPORT_HEADINGS.index(h) for h in mapped]
+        assert all(h in reference for h in mapped), (headings, reference)
+        positions = [reference.index(h) for h in mapped]
         assert positions == sorted(positions), f"order drifted from the export: {headings}"
 
 
@@ -406,21 +410,22 @@ def test_ac_rf_05_no_cap_seven_ois_all_lines_print(sn, monkeypatch):
     assert not re.search(r"\band \d+ more\b", _visible(mail["body_html"]))
 
 
-def test_ac_rf_06_rows_sort_item_then_real_date_then_oi_no(sn, monkeypatch):
+def test_ac_rf_06_rows_sort_so_then_real_date_then_item_then_oi_no(sn, monkeypatch):
     client, world, _calls = _setup(sn, monkeypatch)
     one = _raiser(world, "CS One")
     d_jan, d_mar = date(2027, 1, 25), date(2027, 3, 2)
-    oi1, _r1, _ = _parked(client, world, one, [_line("B", delivery=d_jan), _line("A", delivery=d_mar)])
-    oi2, _r2, _ = _parked(client, world, one, [_line("A", delivery=d_jan), _line("A", delivery=None)])
-    oi3, _r3, _ = _parked(client, world, one, [_line("A", delivery=d_jan)])
-    expect = sorted(
-        [
-            ("A", d_mar, oi1.inquiry_no), ("B", d_jan, oi1.inquiry_no),
-            ("A", d_jan, oi2.inquiry_no), ("A", None, oi2.inquiry_no),
-            ("A", d_jan, oi3.inquiry_no),
-        ],
-        key=lambda t: (t[0], t[1] or date.max, t[2]),
-    )
+    # OI-EXPORT-SHARED: S/O first (oi2's S/O sorts first, then oi3's, then oi1's), then the
+    # real delivery date with a blank last, then the item code and the OI no.
+    oi1, _r1, _ = _parked(client, world, one, [_line("B", delivery=d_jan), _line("A", delivery=d_mar)],
+                          so_no="SO-RF-0603")
+    oi2, _r2, _ = _parked(client, world, one, [_line("A", delivery=d_jan), _line("A", delivery=None)],
+                          so_no="SO-RF-0601")
+    oi3, _r3, _ = _parked(client, world, one, [_line("A", delivery=d_jan)], so_no="SO-RF-0602")
+    expect = [
+        ("A", d_jan, oi2.inquiry_no), ("A", None, oi2.inquiry_no),
+        ("A", d_jan, oi3.inquiry_no),
+        ("B", d_jan, oi1.inquiry_no), ("A", d_mar, oi1.inquiry_no),
+    ]
     table = _table(_req_mails(client)[0]["body_html"])
     idx = {h: i for i, h in enumerate(table["headings"])}
     got = [(r[idx["ITEM CODE"]], r[idx["DELIVERY DATE"]], r[idx["OI NO"]]) for r in table["rows"]]
@@ -1253,13 +1258,12 @@ def test_ac_rf_60_105_line_reserved_email_stays_under_the_gmail_clip(sn, monkeyp
     assert len(mails[0]["body_html"].encode()) <= 102 * 1024, len(mails[0]["body_html"].encode())
 
 
-def test_ac_rf_70_export_headings_unchanged():
+def test_ac_rf_70_export_headings_are_the_owners_eight():
     from app.services.order_inquiry_worklist_service import EXPORT_HEADINGS
 
     assert EXPORT_HEADINGS == (
-        "SO DATE", "S/O NO", "ITEM CODE", "QTY", "REQUESTED RESERVE", "RESERVED", "TOTAL QTY",
-        "DELIVERY DATE", "PROJECT/CUSTOMER", "SUPPLIER", "PO NO ", "LOCATION", "ACKNOWLEDGED",
-        "TAKEN", "REMAINING", "SUGGESTED", "CHANGE QUANTITY", "CHANGE DATE", "REMARK",
+        "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "PROJECT/CUSTOMER",
+        "LOCATION", "REMARK",
     )
 
 

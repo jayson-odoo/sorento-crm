@@ -7,7 +7,7 @@ through the SAME writer the OI worklist list page already uses -
   `run_scope_oi_rows`, tested separately in `test_oi_worksheet_row_scope.py`). An empty
   list produces the headings-only one-sheet workbook (AC-C5).
 * `columns` - the heading tuple to print, defaulting to today's full `EXPORT_HEADINGS` so
-  the list-page export is unchanged; the worksheet passes a 10-column slice that stops at
+  the list-page export is unchanged; the worksheet passes a 9-column slice that stops at
   LOCATION (AC-C3: "no ACKNOWLEDGED column").
 
 Neither kwarg exists on `export_xlsx`/`_base` today - `export_xlsx(self, **filters)`
@@ -28,9 +28,8 @@ import openpyxl
 
 from app.services.order_inquiry_worklist_service import (
     EXPORT_HEADINGS,
-    EXPORT_TITLE,
-    # AC-C3's own 10-column list ("SO DATE ... LOCATION", no reserve figures, ACKNOWLEDGED /
-    # TAKEN / REMAINING), the real constant the task prints, not a slice of the full list.
+    # AC-C3's own 9-column list ("SO DATE ... LOCATION", no reserve figures, ACKNOWLEDGED /
+    # TAKEN / REMAINING, no TOTAL QTY), the real constant the task prints, not a slice of the full list.
     WORKSHEET_HEADINGS,
     OrderInquiryWorklistService,
 )
@@ -46,7 +45,7 @@ def _data_rows(workbook):
     """Every non-header cell-row across every sheet, as a flat list of row tuples."""
     out = []
     for sheet in workbook.worksheets:
-        for row in sheet.iter_rows(min_row=3):
+        for row in sheet.iter_rows(min_row=2):
             values = [c.value for c in row]
             if any(v is not None for v in values):
                 out.append(values)
@@ -78,8 +77,7 @@ def test_c5_empty_row_ids_produces_a_headings_only_one_sheet_workbook():
         workbook = openpyxl.load_workbook(io.BytesIO(content))
         assert len(workbook.worksheets) == 1, workbook.sheetnames
         sheet = workbook.worksheets[0]
-        assert sheet.cell(row=1, column=1).value == EXPORT_TITLE
-        headings = [c.value for c in sheet[2]]
+        headings = [c.value for c in sheet[1]]
         assert headings == list(EXPORT_HEADINGS), headings
         assert _data_rows(workbook) == []
 
@@ -94,17 +92,16 @@ def test_c3_columns_kwarg_prints_the_worksheets_own_headings_no_acknowledged(db,
 
     workbook = openpyxl.load_workbook(io.BytesIO(content))
     sheet = workbook.worksheets[0]
-    assert sheet.cell(row=1, column=1).value == EXPORT_TITLE
-    headings = [c.value for c in sheet[2]]
+    headings = [c.value for c in sheet[1]]
     assert headings == list(WORKSHEET_HEADINGS), headings
     assert "ACKNOWLEDGED" not in headings, headings
-    assert len(headings) == 10, headings
+    assert len(headings) == 9, headings
+    assert "TOTAL QTY" not in headings, headings
 
 
 def test_c3_default_columns_still_carries_every_heading_for_the_list_page_export(db, chain):
-    """The list-page export (no `columns` kwarg) is UNCHANGED - it still prints every
-    heading `EXPORT_HEADINGS` carries today (13: the original ten plus ACKNOWLEDGED,
-    TAKEN, REMAINING), so a caller that never passes `columns` sees no regression."""
+    """The list-page export (no `columns` kwarg) still prints every
+    heading `EXPORT_HEADINGS` carries: the owner's eight columns, header row first."""
     f = chain
     leg = _scope_row(db, product=f["product"], qty=3, delivery=date(2026, 10, 1))
     db.flush()
@@ -114,9 +111,9 @@ def test_c3_default_columns_still_carries_every_heading_for_the_list_page_export
 
     workbook = openpyxl.load_workbook(io.BytesIO(content))
     sheet = workbook.worksheets[0]
-    headings = [c.value for c in sheet[2]]
+    headings = [c.value for c in sheet[1]]
     assert headings == list(EXPORT_HEADINGS), headings
-    assert len(headings) == len(EXPORT_HEADINGS), headings
+    assert len(headings) == 8, headings
 
 
 def test_c3_row_ids_scoped_undated_row_stays_on_the_one_sheet(db, chain):
@@ -128,7 +125,7 @@ def test_c3_row_ids_scoped_undated_row_stays_on_the_one_sheet(db, chain):
     _filename, content = svc.export_xlsx(row_ids=[leg["row"].id])
 
     workbook = openpyxl.load_workbook(io.BytesIO(content))
-    assert workbook.sheetnames == [EXPORT_TITLE], workbook.sheetnames
+    assert workbook.sheetnames == ["ORDER INQUIRY"], workbook.sheetnames
     assert len(_data_rows(workbook)) == 1
 
 
@@ -136,12 +133,16 @@ def test_the_oi_worksheet_is_one_sheet_across_delivery_months(db, chain):
     """Owner, 16 Oct 2026: "our OI excel cannot split by month, this applies to all places
     where OI excel is printed". This is the reorder run's OI worksheet call
     (`columns=WORKSHEET_HEADINGS`, `app/tasks/export_tasks.py`); three months and an
-    undated row print on ONE sheet, dated rows in date order and the undated one last."""
+    undated row print on ONE sheet, ordered by S/O NO (a date only orders rows of one S/O)."""
     f = chain
+    # The rows sort by S/O NO first (OI-EXPORT-SHARED), so the S/O numbers are given out
+    # against the delivery order: the sheet must follow the S/O, not the date, across them.
     october = _scope_row(db, product=f["product"], qty=5, delivery=date(2026, 10, 1))
     december = _scope_row(db, product=f["product"], qty=7, delivery=date(2026, 12, 20))
     january = _scope_row(db, product=f["product"], qty=9, delivery=date(2027, 1, 2))
     undated = _scope_row(db, product=f["product"], qty=2, delivery=None)
+    for leg, ref in ((december, "A"), (january, "B"), (october, "C"), (undated, "D")):
+        leg["pso"].provisional_ref = f"{MARKER}-{ref}"
     db.flush()
 
     svc = OrderInquiryWorklistService(db)
@@ -151,12 +152,9 @@ def test_the_oi_worksheet_is_one_sheet_across_delivery_months(db, chain):
     )
 
     workbook = openpyxl.load_workbook(io.BytesIO(content))
-    assert workbook.sheetnames == [EXPORT_TITLE], workbook.sheetnames
+    assert workbook.sheetnames == ["ORDER INQUIRY"], workbook.sheetnames
     rows = _data_rows(workbook)
-    assert [row[3] for row in rows] == [5.0, 7.0, 9.0, 2.0], rows  # QTY, by date
-    # TOTAL QTY: one supplier + item run, so one total on its last row, summing every date
-    # (crew ruling 16 Oct 2026, not a total per month).
-    assert [row[4] for row in rows] == [None, None, None, 23.0], rows
+    assert [row[3] for row in rows] == [7.0, 9.0, 5.0, 2.0], rows  # QTY, by S/O NO
 
 
 def test_fr1_a_row_ids_match_under_a_different_companys_scope_yields_nothing(db, chain):
@@ -189,7 +187,7 @@ def test_fr1_a_row_ids_match_under_a_different_companys_scope_yields_nothing(db,
     workbook = openpyxl.load_workbook(io.BytesIO(content))
     rows = []
     for sheet in workbook.worksheets:
-        for row in sheet.iter_rows(min_row=3):
+        for row in sheet.iter_rows(min_row=2):
             values = [c.value for c in row]
             if any(v is not None for v in values):
                 rows.append(values)
