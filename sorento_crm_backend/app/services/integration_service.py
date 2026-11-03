@@ -44,6 +44,7 @@ INTEGRATION_LOG_SORT_COLUMNS = (
     "created_at",
     "processed_at",
 )
+INTEGRATION_LOG_NULLABLE_SORT_COLUMNS = frozenset({"processed_at"})
 
 # Header names whose VALUE is a credential. `dict(request.headers)` is serialised
 # whole into `integration_logs.request_headers`, which is written once per
@@ -962,11 +963,11 @@ class IntegrationLogService:
             column_name = sort if sort in INTEGRATION_LOG_SORT_COLUMNS else "created_at"
             descending = (sort_dir or "").lower() != "asc" if sort in INTEGRATION_LOG_SORT_COLUMNS else True
             column = getattr(IntegrationLog, column_name)
-            ordered = column.desc().nulls_last() if descending else column.asc().nulls_last()
-            if column_name == "created_at":
-                # created_at is NOT NULL, so a bare DESC keeps the plan on the index (a NULLS
-                # LAST clause would not match its NULLS FIRST order and force a full sort).
-                ordered = column.desc() if descending else column.asc()
+            ordered = column.desc() if descending else column.asc()
+            if column_name in INTEGRATION_LOG_NULLABLE_SORT_COLUMNS:
+                ordered = ordered.nulls_last()
+            # NOT NULL columns get no NULLS clause: DESC NULLS LAST would not match an index's
+            # order read backward, and created_at/status/integration_channel must stay on theirs.
             tiebreak = IntegrationLog.id.desc() if descending else IntegrationLog.id.asc()
             logs = q.order_by(ordered, tiebreak).offset(offset).limit(limit).all()
             
@@ -1028,10 +1029,10 @@ class IntegrationLogService:
         subquery so the scan stops at the window. The window moves with the offset, so the
         page being read is always inside it and Next stays live while the total is capped.
         """
-        from sqlalchemy import func, literal, select
+        from sqlalchemy import func, select
 
         window = offset + INTEGRATION_LOG_COUNT_CAP
-        bounded = q.order_by(None).with_entities(literal(1)).limit(window + 1).subquery()
+        bounded = q.order_by(None).with_entities(IntegrationLog.id).limit(window + 1).subquery()
         seen = q.session.execute(select(func.count()).select_from(bounded)).scalar_one()
         if seen > window:
             return window, True

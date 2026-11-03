@@ -249,3 +249,51 @@ def test_explain_helper_sees_the_index_in_the_blank_schema(db):
         text("SELECT 1 FROM pg_indexes WHERE indexname = 'ix_integration_log_created_at'")
     ).first()
     assert found is not None
+
+
+# --- ties: paging a sort group with equal values neither repeats nor skips a row ------------
+
+
+@pytest.mark.parametrize("column", ["status", "created_at"])
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_ties_page_without_repeats_or_gaps(client, db, column, direction):
+    channel = unique_code("tie")
+    rows = []
+    for _ in range(5):
+        row = _log(db, 0, channel=channel, status="success")  # same status AND created_at
+        rows.append(row)
+    seen = []
+    for page in range(1, 6):
+        body = _page(client, integration_channel=channel, sort=column, dir=direction,
+                     page=page, limit=1)
+        seen.extend(r["id"] for r in body["data"])
+    assert sorted(seen) == sorted(r.id for r in rows)
+    want = sorted((r.id for r in rows), reverse=direction == "desc")
+    assert seen == want
+
+
+def test_status_desc_has_no_nulls_clause(db):
+    """A NOT NULL column sorted DESC must not carry NULLS LAST, or Postgres cannot read its
+    ascending index backward and sorts the whole table instead."""
+    seen: list[str] = []
+
+    def _capture(_conn, _cursor, statement, _params, _context, _many):
+        seen.append(statement)
+
+    bind = db.connection()
+    event.listen(bind, "before_cursor_execute", _capture)
+    try:
+        IntegrationLogService(db).list_integration_logs(sort="status", sort_dir="desc")
+        IntegrationLogService(db).list_integration_logs(sort="processed_at", sort_dir="desc")
+    finally:
+        event.remove(bind, "before_cursor_execute", _capture)
+    pages = [s.upper() for s in seen if "ORDER BY" in s.upper()]
+    assert "NULLS LAST" not in pages[0]
+    assert "NULLS LAST" in pages[1]
+
+
+def test_capped_count_without_any_filter_counts_rows(db, seven):
+    """With no WHERE at all the count still reads FROM the table (it once compiled to a bare
+    SELECT 1, which always counts one)."""
+    total, capped = IntegrationLogService._capped_count(db.query(IntegrationLog), 0)
+    assert (total, capped) == (7, False)

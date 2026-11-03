@@ -1,6 +1,6 @@
 # PLAN: Integration Log page speed (INTLOG-SPEED)
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, the only UI change is the total label)
+Status: built, reviewer findings fixed, awaiting crew prod-clone measurement + browser pass (small fix track: no migration, no auth/RBAC change, the only UI change is the total label)
 
 ## Problem (measured by crew, 3 Nov 2026, on the 20 Oct prod clone: 1.2M rows, 1.5 GB)
 
@@ -49,3 +49,23 @@ No migration: `ix_integration_log_created_at` is already in `il_0001_integration
   falls back to created_at desc, count SQL has no ORDER BY, EXPLAIN of the default page query
   uses `ix_integration_log_created_at`.
 - FE: pagination renders `10,000+` and keeps Next enabled when capped; the list forwards the flag.
+
+## Measured in the sandbox (synthetic 1.7M rows, 1.8 GB, warm cache)
+
+| Query | Time |
+| --- | --- |
+| old exact count, ORDER BY attached | 832-3,845 ms |
+| new capped count, no filter / status=failed / no match | 1.4 / 11.8 / 0.3 ms |
+| page, `created_at desc` (default) | 0.5-1.4 ms |
+| page, sorted on status / channel / business_table / business_id / retry_count / processed_at | 220-310 ms each |
+
+A non-default sort reads every matching row before it can return the top 50 (status and
+channel too: the `id` tiebreak forces an incremental sort over a group of ~1M equal values).
+Warm, that is a quarter of a second; on a cold prod cache it is a full-table read, the same I/O
+class as the old count, but only when someone clicks a header, not on every page load. Owner
+rule says every column sorts server-side, so this is accepted rather than gated. Trigger to
+revisit: the clone measurement shows a header sort over a few seconds; then the choice is a
+`statement_timeout` on this route or composite `(col, id)` indexes, decided with that number.
+
+Not changed: the detail page's record counter (`hooks/useListPager.ts`) reads a capped total as
+exact ("3 / 10000"); its Prev/Next still work because the window moves with the offset.
