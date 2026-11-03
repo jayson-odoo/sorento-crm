@@ -71,17 +71,22 @@ function DataGridPagination(props: DataGridPaginationProps) {
   const to = Math.min((pageIndex + 1) * pageSize, recordCount);
   const pageCount = table.getPageCount();
 
+  // One thousands format for all three numbers, on every grid ("9,951 - 10,000 of 19,950+").
+  // Fixed to en-US so the label does not change with the viewer's browser locale.
+  const formatCount = (n: number) => n.toLocaleString('en-US');
+  const fromLabel = formatCount(from);
+  const toLabel = formatCount(to);
   const countLabel = mergedProps.recordCountCapped
-    ? `${recordCount.toLocaleString('en-US')}+`
-    : recordCount.toString();
+    ? `${formatCount(recordCount)}+`
+    : formatCount(recordCount);
 
   // Replace placeholders in paginationInfo
   const paginationInfo = mergedProps?.info
     ? mergedProps.info
-        .replace('{from}', from.toString())
-        .replace('{to}', to.toString())
+        .replace('{from}', fromLabel)
+        .replace('{to}', toLabel)
         .replace('{count}', countLabel)
-    : `${from} - ${to} of ${countLabel}`;
+    : `${fromLabel} - ${toLabel} of ${countLabel}`;
 
   // Pagination limit logic
   const paginationMoreLimit = mergedProps?.moreLimit || 5;

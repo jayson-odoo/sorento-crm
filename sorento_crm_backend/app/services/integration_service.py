@@ -897,6 +897,7 @@ class IntegrationLogService:
         limit: int = 50,
         sort: Optional[str] = None,
         sort_dir: Optional[str] = None,
+        search: Optional[str] = None,
         status: Optional[list[str] | str] = None,
         integration_channel: Optional[list[str] | str] = None,
         business_table: Optional[list[str] | str] = None,
@@ -956,6 +957,8 @@ class IntegrationLogService:
                     q = q.filter(
                         IntegrationLog.error_message.ilike(f"%{term}%", escape="\\")
                     )
+
+            q = self._apply_search(q, search)
 
             offset = (page - 1) * limit
             total, total_capped = self._capped_count(q, offset)
@@ -1021,6 +1024,48 @@ class IntegrationLogService:
             logger.error(f"Error in list_integration_logs: {str(e)}", exc_info=True)
             raise
     
+    @staticmethod
+    def _apply_search(q, search: Optional[str]):
+        """The list's search box (INTLOG-SEARCH).
+
+        A full UUID matches ``id``, ``business_id`` or ``correlation_id`` exactly (the id is the
+        PK; the rest are what a support person pastes from another screen). Anything else is a
+        case-insensitive substring of the columns the grid shows or a person reads off a failure:
+        channel, business table, business id (the grid shows its first 8 characters), endpoint,
+        external reference, error message. LIKE wildcards in the term are literal.
+        """
+        import uuid as _uuid
+
+        from sqlalchemy import String, cast, or_
+
+        term = (search or "").strip()
+        if not term:
+            return q
+        try:
+            exact = str(_uuid.UUID(term))
+        except ValueError:
+            exact = None
+        if exact is not None:
+            return q.filter(
+                or_(
+                    IntegrationLog.id == exact,
+                    IntegrationLog.business_id == exact,
+                    IntegrationLog.correlation_id == exact,
+                )
+            )
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        return q.filter(
+            or_(
+                IntegrationLog.integration_channel.ilike(pattern, escape="\\"),
+                IntegrationLog.business_table.ilike(pattern, escape="\\"),
+                cast(IntegrationLog.business_id, String).ilike(pattern, escape="\\"),
+                IntegrationLog.endpoint.ilike(pattern, escape="\\"),
+                IntegrationLog.external_reference.ilike(pattern, escape="\\"),
+                IntegrationLog.error_message.ilike(pattern, escape="\\"),
+            )
+        )
+
     @staticmethod
     def _capped_count(q, offset: int) -> tuple[int, bool]:
         """Count the filtered rows, but never more than ``offset + INTEGRATION_LOG_COUNT_CAP``.

@@ -52,8 +52,20 @@ describe('DataGridPagination with a capped total (INTLOG-SPEED)', () => {
     expect(screen.getByText('101 - 150 of 10,100+')).toBeInTheDocument();
   });
 
-  it('an exact total keeps the old label', () => {
+  it('an exact total under a thousand reads plainly', () => {
     render(<Harness total={120} />);
     expect(screen.getByText('1 - 50 of 120')).toBeInTheDocument();
+  });
+});
+
+describe('DataGridPagination number format (one thousands format for from, to and count)', () => {
+  it('formats an exact total: "1 - 50 of 1,304"', () => {
+    render(<Harness total={1304} />);
+    expect(screen.getByText('1 - 50 of 1,304')).toBeInTheDocument();
+  });
+
+  it('formats all three numbers on a deep capped page: "9,951 - 10,000 of 19,950+"', () => {
+    render(<Harness total={19950} capped pageIndex={199} />);
+    expect(screen.getByText('9,951 - 10,000 of 19,950+')).toBeInTheDocument();
   });
 });
