@@ -107,6 +107,17 @@ describe('AC-6 / AC-7 a request id in ?reserve= opens that request\'s lines', ()
   });
 });
 
+describe('the Request filter is clearable', () => {
+  it('offers Clear selection while ticked, and pressing it shows every line', async () => {
+    searchParamsValue = 'reserve=req-1';
+    renderTab();
+    await screen.findByText('ZZT-FULL');
+    fireEvent.pointerDown(screen.getByLabelText('Clear selection'));
+    await waitFor(() => expect(shown('ZZT-PLAIN')).toBeInTheDocument());
+    expect(shown('ZZT-OPEN')).toBeInTheDocument();
+  });
+});
+
 describe('AC-8 list statuses and unknown ids', () => {
   it.each(['needs_reserve', 'parked'])('%s still preselects Request to reserve', async (value) => {
     searchParamsValue = `reserve=${value}`;

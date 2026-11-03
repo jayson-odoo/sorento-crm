@@ -776,10 +776,22 @@ def test_ac_rf_20_batch_button_lists_exactly_this_emails_ois_sorted(sn, monkeypa
     assert label == "View these 3 order inquiries"
     assert href.startswith(f"{_link_base()}?display=lines&inquiry_no=" + ",".join(sorted(i.inquiry_no for i in made)) + "&reserve_request=")
 
-    _answered(client, world, one, [("50", "50", None)])
-    _answered(client, world, one, [("50", "50", None)])
+    first, _ = _answered(client, world, one, [("50", "50", None)])
+    second, _ = _answered(client, world, one, [("50", "50", None)])
     href, label = _button(_note_mails(world)[0]["body_html"])
-    assert label == "View these 2 order inquiries" and "?display=lines&inquiry_no=" in href
+    assert label == "View these 2 order inquiries"
+    from app.models.project_so import OrderInquiryReserveRequest
+
+    ordered = sorted([first, second], key=lambda i: i.inquiry_no)
+    ids = [
+        str(world.db.query(OrderInquiryReserveRequest.id)
+            .filter(OrderInquiryReserveRequest.order_inquiry_id == i.id).scalar())
+        for i in ordered
+    ]
+    assert href == (
+        f"{_link_base()}?display=lines&inquiry_no=" + ",".join(i.inquiry_no for i in ordered)
+        + "&reserve_request=" + ",".join(ids)
+    )
 
 
 def test_ac_rf_21_one_oi_button_goes_to_the_oi(sn, monkeypatch):
