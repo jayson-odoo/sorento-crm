@@ -668,17 +668,24 @@ describe('thumbnail rail', () => {
 });
 
 describe('phone', () => {
-  it('opens the inspector in a bottom sheet and keeps the live canvas editable', async () => {
+  it('selecting leaves the canvas free; Properties opens a compact sheet on demand', async () => {
     mobile = true;
     renderReader();
     await screen.findByTestId('spec-page-k29');
     report(['k1', 'k2']);
     const canvas = await screen.findByTestId('live-canvas-k1');
     expect(canvas).toHaveAttribute('data-readonly', 'no');
+    expect(screen.queryByRole('button', { name: 'Properties' })).toBeNull();
 
     fireEvent.click(within(canvas).getByText('select k1'));
 
+    // The sheet stays shut, so it cannot cover the layer just picked.
+    const button = await screen.findByRole('button', { name: 'Properties' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+
+    fireEvent.click(button);
     const dialog = await screen.findByRole('dialog');
+    expect(dialog.className).toContain('max-h-[45dvh]');
     expect(within(dialog).getByTestId('inspector')).toHaveAttribute(
       'data-layer',
       'logo',
