@@ -221,7 +221,9 @@ def test_ac18_a_product_used_only_on_an_issued_version_is_still_refused(api):
     from .test_project_quotation_document_routes import _sign
 
     client, db, _company_id, _user_id, project, _party = api
-    product = _seed_product(db)
+    # Priced at the product's default (the line is 250.00): PS-QUOTE-RULES (#2096) routes any
+    # line below default to a manager's approval, which would refuse the issue step below.
+    product = _seed_product(db, price="250.00")
     document = _quoted(client, db, project.id, product_id=product.id)
     root = f"{BASE}/projects/{project.id}/quotation-documents"
     _sign(client, root, document["id"])

@@ -219,6 +219,11 @@ def api(monkeypatch):
     from app.services.company_scope_resolver import apply_company_scope
 
     with blank_session() as db:
+        # Prod's audit_logs_action_check: attach() writes the product file LINK / UNLINK
+        # audit rows, which 500'd in prod as action 'LINK' (HOTFIX-ATTACH-AUDIT, 3 Nov).
+        from tests.support.cost_price_env import install_audit_action_check
+
+        install_audit_action_check(db)
         _seed_roles(db)
         storage = patch_storage(monkeypatch)
 
@@ -819,14 +824,18 @@ class TestAttach:
 
         photo_a = self._photo(api, reading_id, CODE_A)
         trail = sorted(
-            (r.action, (r.old_values or r.new_values)["attachment_id"])
+            (r.action, r.event, (r.old_values or r.new_values)["attachment_id"])
             for r in api.db.query(AuditLog).filter(
                 AuditLog.root_entity_type == "product",
                 AuditLog.root_entity_id == str(products[CODE_A].id),
-                AuditLog.action.in_(["LINK", "UNLINK"]),
+                AuditLog.event.in_(["file_linked", "file_unlinked"]),
             )
         )
-        assert trail == [("LINK", str(photo_a.attachment_id)), ("UNLINK", str(lookalike.id))]
+        # Stored as CREATE / DELETE: prod's audit_logs_action_check refuses LINK / UNLINK.
+        assert trail == [
+            ("CREATE", "file_linked", str(photo_a.attachment_id)),
+            ("DELETE", "file_unlinked", str(lookalike.id)),
+        ]
 
     def test_keep_both_keeps_the_old_link_and_adds_the_new(self, api) -> None:
         _photo_type(api.db)
