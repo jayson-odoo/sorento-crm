@@ -39,15 +39,17 @@ may be planned AT and what the engine reads as planning supply are two questions
 **Which ORDERS are admitted at all (DEALER-PLANNING PR 2, owner 1 Nov 2026).** Project class as
 ever (open or closed, the 14 Sep ruling), or an order that weighs as retail
 (`demand_class.planning_class`, so `other` too) that is OPEN or CLOSED with at least one line at
-an active dealer-segment bin, or that ALREADY HAS a planning record. The same rule as a project
+an active dealer-segment bin or at a bin IN fulfilment planning (DEALER-AT-PROJECT-BIN, owner
+3 Nov 2026: a dealer order delivered from a project bin such as BRW-BB must be reachable to order
+back), or that ALREADY HAS a planning record. The same rule as a project
 order, no filter and no date window (owner ruling, 1 Nov 2026): a fully delivered order is
 admitted and its delivered quantity stays plannable. Cancelled stays out unless it has a
 planning record: the status test is what keeps a cancelled order from reading plannable. One
 predicate, `admitted_to_planning`, so the
 board, line drafts, adoption and the worklist cannot disagree about it. It is a HEADER test: every
 line of an admitted order is on the board, so its line numbers stay the ones a draft key names,
-and a retail line at a project bin is on screen with the verdict rather than missing
-(`outside_fulfilment_planning`). `adopt_for_migration` and the OI import stay project only, on
+and a retail line at a project bin that is OFF is on screen with the verdict rather than
+missing (`outside_fulfilment_planning`). `adopt_for_migration` and the OI import stay project only, on
 purpose: their population is history measured and accepted as project.
 
 **Site pools are OFF, and that is not a bug.** A pool is reached through
@@ -60,7 +62,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS, OTHER, PROJECT, planning_class
+from app.services.scm.demand_class import DEFAULT_DEMAND_CLASS, OTHER, PROJECT
 from app.services.scm.pool_predicate import is_site_pool, site_pool_clause
 
 #: The verdict a line at a flagged-off bin carries, on the board and at confirm
@@ -124,8 +126,10 @@ def outside_fulfilment_planning(
 
     A line whose `doc_type` is in `PLANNED_AT_OWN_BIN_DOC_TYPES` never earns it, and neither
     does a line at a dealer-segment bin (see the module docstring). What is left is a project
-    bin somebody flagged off, and a RETAIL order's line at any project bin, flag or no flag:
-    retail is admitted for its dealer locations, and a project bin holds a project's stock.
+    bin somebody flagged off, for every order class alike. A dealer order's line at a project
+    bin that is IN planning is planned like any other line there (DEALER-AT-PROJECT-BIN, owner
+    3 Nov 2026), so the verdict only ever names a bin whose switch is off, which is what its
+    sentence says. `demand_class` is kept in the signature for the callers that pass it.
 
     Deliberately not `not in_fulfilment_planning(...)`. An INACTIVE warehouse was already
     outside everything the ladder reads before this flag existed, and it keeps the verdict
@@ -136,8 +140,6 @@ def outside_fulfilment_planning(
         return False
     if is_site_pool(getattr(warehouse, "segment", None)):
         return False
-    if planning_class(demand_class) == DEFAULT_DEMAND_CLASS:
-        return True
     return bool(getattr(warehouse, "is_active", False)) and not bool(
         getattr(warehouse, "fulfilment_planning", False)
     )
@@ -163,13 +165,13 @@ def admitted_to_planning():
     line = aliased(SalesOrderLine)
     mirror = aliased(ProjectSalesOrder)
     location = aliased(Warehouse)
-    at_dealer_location = (
+    at_planned_location = (
         exists()
         .where(
             line.sales_order_id == SalesOrder.id,
             location.id == line.warehouse_id,
             location.is_active.is_(True),
-            site_pool_clause(location),
+            or_(site_pool_clause(location), location.fulfilment_planning.is_(True)),
         )
         .correlate(SalesOrder)
     )
@@ -178,7 +180,7 @@ def admitted_to_planning():
         SalesOrder.demand_class == PROJECT,
         and_(
             SalesOrder.demand_class.in_((DEFAULT_DEMAND_CLASS, OTHER)),
-            or_(and_(SalesOrder.status.in_(("open", "closed")), at_dealer_location), planned),
+            or_(and_(SalesOrder.status.in_(("open", "closed")), at_planned_location), planned),
         ),
     )
 
@@ -195,8 +197,8 @@ def why_not_admitted(
             f"Sales order {so_number} is {status or 'in no state'}, so there is nothing to plan."
         )
     return (
-        f"Sales order {so_number} is a dealer order with no line at an active dealer location, so "
-        "it is not planned here."
+        f"Sales order {so_number} is a dealer order with no line at an active dealer location or "
+        "at a location in fulfilment planning, so it is not planned here."
     )
 
 

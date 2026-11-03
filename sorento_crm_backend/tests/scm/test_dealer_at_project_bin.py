@@ -32,7 +32,14 @@ from ..test_so_supply_confirmation import (  # noqa: F401  (`api` is a fixture)
     _warehouse,
     api,
 )
-from .test_retail_fulfilment_planning import SOON, _adopt, _retail_order, _uid
+from .test_retail_fulfilment_planning import (
+    SOON,
+    _adopt,
+    _board_of,
+    _retail_order,
+    _settle,
+    _uid,
+)
 
 
 # --------------------------------------------------------------------------- the predicate
@@ -277,15 +284,25 @@ def test_a_dealer_order_with_only_a_planning_on_project_bin_line_is_admitted(api
     assert [line["unplannable_reason"] for line in _sheet(client, order_id)] == [None]
 
 
-def test_a_closed_fully_delivered_dealer_order_at_a_project_bin_is_admitted(api):
-    """No date window and no status filter beyond open/closed: the owner's case was delivered."""
+def test_a_closed_fully_delivered_dealer_order_at_a_project_bin_plans_and_confirms(api):
+    """The SO428978 shape end to end: delivered from the project bin, line and header closed, no
+    line at a dealer bin, stock back at the bin. Adopted, on the board, and confirmable."""
     client, world = api
-    core, made = _retail_order(world, lines=(("project", "10"),))
-    made[0].qty_delivered = Decimal("10")
-    core.status = "closed"
-    world.db.commit()
+    core, made = _retail_order(world, lines=(("project", "1"),))
+    _stock(world.db, world.product, world.own_wh, on_hand=5)
+    _settle(world, core, made)
 
-    assert core.so_number in _listed(client, demand_class="retail")
+    order_id = _adopt(client, core)["project_sales_order_id"]
+    board = _board_of(client, core)
+    mine = [r for r in board["contributions"] if r["so_number"] == core.so_number]
+    assert len(mine) == 1, board.get("unplanned_orders")
+    line = _at(_sheet(client, order_id), world.own_wh)
+    assert line["unplannable_reason"] is None
+    response = client.post(
+        f"{BASE}/sales-orders/{order_id}/confirm",
+        json={"lines": [_line_payload(line["project_line_id"], buy_qty="1")]},
+    )
+    assert response.status_code == 200, response.text
 
 
 def test_a_dealer_order_with_only_a_planning_on_project_bin_line_opens_on_the_board(api):

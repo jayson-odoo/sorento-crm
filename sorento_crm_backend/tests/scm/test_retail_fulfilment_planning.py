@@ -896,9 +896,18 @@ def test_r9_a_closed_retail_line_holds_no_share_and_a_closed_project_line_does()
 # --------------------------------------------------------------------------- R1, the true reason
 
 
+def _planning_off(world):
+    """The project bin switched OUT of fulfilment planning: since DEALER-AT-PROJECT-BIN (owner,
+    3 Nov 2026) a planning-ON project bin admits a retail order, so a retail order with no way
+    in is one whose only line sits at a project bin that is off."""
+    world.own_wh.fulfilment_planning = False
+    world.db.commit()
+
+
 def test_r1_a_closed_retail_order_with_no_dealer_line_stays_out_for_that_reason(api):
     client, world = api
     core, _lines = _retail_order(world, lines=(("project", "10"),))
+    _planning_off(world)
     _closed(world, core)
 
     with pytest.raises(AppException) as refused:
@@ -917,6 +926,7 @@ def test_r1_a_closed_retail_order_with_no_dealer_line_stays_out_for_that_reason(
 def test_r3_an_open_retail_order_never_reads_as_closed(api):
     client, world = api
     core, _lines = _retail_order(world, lines=(("project", "10"),))
+    _planning_off(world)
 
     with pytest.raises(AppException) as refused:
         ProjectSOAdoptionService(world.db).adopt(str(core.id))
