@@ -23,12 +23,22 @@ Status: in progress (small fix track: no migration, no auth/RBAC change, the onl
    count ~1M rows, so the cap applies to it too.
    Deviation from the brief ("with filters keep an exact count"): the capped count is exact for
    every result under the cap and bounded for every result over it, with one code path.
-2. `pagination.total_capped` (optional, default false) on `PaginationResponse`.
+2. `pagination.total_capped` (default false) on a lane-local `IntegrationLogPagination` /
+   `IntegrationLogListResponse` (`app/schemas/integration.py`). Not on the shared
+   `PaginationResponse`: other lists' tests assert its exact shape and they do not cap.
 3. Server-side sort on every visible column (`sort`, `dir`), whitelisted, `id` as tiebreaker;
    default `created_at desc`, which uses `ix_integration_log_created_at` backward
    (EXPLAIN asserted in `tests/test_integration_logs_list_speed.py`).
 4. FE: `DataGridPagination` takes `recordCountCapped`; the list passes it from the reply and the
    info reads `1 - 50 of 10,000+`.
+5. FE cancellation (owner, 3 Nov): the list's `queryFn` hands React Query's AbortSignal to
+   `apiFetch`, so a filter, page or sort change aborts the superseded request instead of stacking.
+   The browser itself aborts on a full reload. A cancelled HTTP request does not stop a running
+   Postgres statement in a sync FastAPI route, which is why the count itself had to be bounded.
+
+Owner's prod numbers, 3 Nov: all five indexes VALID; page query = Index Scan Backward using
+`ix_integration_log_created_at` (cost 0.43..9.98); table est. 1,738,190 rows; the endpoint took
+275 s / 148 s / 80 s on three reloads. All of it was the exact count.
 
 No migration: `ix_integration_log_created_at` is already in `il_0001_integration_log_indexes`.
 
