@@ -137,6 +137,8 @@ _AXIS_FILTERS = {
     "location": ("warehouse_codes",),
     "channel": ("channel",),
     "account_type": ("account_types",),
+    # Not an axis: what "every company" widens (`_widened`, owner O-R2), so the refine drops the held company too.
+    "company": ("company",),
 }
 #: The frame keys that are not route params (`names`: the id -> name map of the semantic carry, `arg_names`).
 _FRAME_ONLY = ("date_from", "date_to", "top_n", "shown", "stale", "names")
@@ -2350,8 +2352,12 @@ def _settle(
     own_book = {"channel"}
     if args.get("account_types") and all(_asked_number(str(v).strip().upper()) is not None for v in args["account_types"]):
         own_book.add("account_types")  # an account number names no company; a type word may be in the other one
-    if holding and source.get("company") and not set(args) - _NON_FILTER_ARGS - own_book:
-        # The company it ran in stays, unless this message has a subject of its own: that may be in the other company.
+    if (
+        holding and source.get("company") and _widened(parse_output) != "company"
+        and not set(args) - _NON_FILTER_ARGS - own_book
+    ):
+        # The company it ran in stays, unless this message has a subject of its own (that may be in the other company)
+        # or widens to every company.
         args["company"] = source["company"]
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
@@ -3347,15 +3353,16 @@ def _carry(ask: dict[str, Any], held_ask: dict[str, Any], verdict: dict[str, Any
     """Crew C6-2 (round 6), over the model's own outputs only: per kind (`_CARRY_KINDS`), a kind this message's entities
     name nothing of and the object holds none of keeps the held report's SETTLED value (never an open question's asked
     word, `brand_or_account_type`); a kind they name, or the object holds, is the object's. A kind the parse itself
-    widens is not carried, by the readers the flag-off path drops it on: `_widened` ("all customers", "every
-    company", every product), and for the customer a global drill or "my ..." (`_customer_stays`). The axis's own slot
-    is not carried: a breakdown ranks across it (`_AXIS_FILTERS`)."""
+    widens is not carried: `broaden_axis` with `broaden_to` "all" naming one of the kind's hints (the same vocabulary its
+    entities are read by), and for the customer a global drill or "my ..." (`_customer_stays`). The axis's own slot is
+    not carried: a breakdown ranks across it (`_AXIS_FILTERS`)."""
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
         for e in jsc.array(verdict.get("entities"))
         if isinstance(e, dict) and e.get("current_message") is not False
     }
-    widened = {_widened(verdict)}
+    # R-P3-09: the axis the parse widens to "all", read as a kind's own hint (brand and account type clear together).
+    widened = {jsc.js_string(verdict.get("broaden_axis") or "").strip().lower()} if verdict.get("broaden_to") == "all" else set()
     if verdict.get("ranking_drill") == "global" or verdict.get("self_reference") is True:
         widened.add("customer")
     for keys, hints in _CARRY_KINDS:
