@@ -698,10 +698,18 @@ export function SpecSheetReader({
                 >
                   <Redo2 className="size-4" />
                 </Button>
-                {selectedLayer?.props.kind === 'text' && (
+                {selectedLayer?.props.kind === 'text' ? (
                   <FormatBar
                     layer={selectedLayer}
                     onProps={changeSelectedProps}
+                  />
+                ) : (
+                  // Holds the format bar's room, so picking a text layer never re-wraps the
+                  // toolbar and slides the pages out from under the pointer mid-click.
+                  <div
+                    className="invisible h-[34px] w-[25rem] max-w-full"
+                    aria-hidden
+                    data-testid="spec-sheet-format-slot"
                   />
                 )}
                 <span
