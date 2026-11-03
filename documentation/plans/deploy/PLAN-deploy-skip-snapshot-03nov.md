@@ -1,6 +1,6 @@
 # PLAN: skip the pre-migration snapshot when nothing migrates (DEPLOY-SKIP-SNAPSHOT)
 
-Status: implemented on the lane branch, PR open; small fix track (no migration, no auth, under 300 lines).
+Status: in review (PR #2127); small fix track (no migration, no auth, under 300 lines).
 
 ## Why
 

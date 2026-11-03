@@ -192,11 +192,18 @@ db_revisions() {
 # Heads the NEW backend image ships, sorted, one per line. `alembic heads` reads the image's
 # migration scripts only: it loads no env.py and opens no database connection. --entrypoint
 # skips start.sh (which would wait for the db and could run `alembic upgrade head`).
+# Assumes every migration lives under alembic.ini's script_location: env.py's extra
+# app/modules/*/migrations version_locations are not seen here (none exist on 3 Nov).
+# A head line is `<rev> (head)` or, for a branch-labelled head, `<rev> (<label>) (head)`.
+# A failure's last output line goes to stderr (this function's stdout is captured).
 image_heads() {
   local out heads
-  out=$(docker compose --profile "$NEW" run --rm --no-deps -T --entrypoint alembic \
-          "backend_${NEW}" heads 2>/dev/null) || return 1
-  heads=$(awk '$2 == "(head)" { print $1 }' <<< "$out")
+  if ! out=$(docker compose --profile "$NEW" run --rm --no-deps -T --entrypoint alembic \
+               "backend_${NEW}" heads 2>&1); then
+    echo "    migration check: alembic heads failed: $(tail -n 1 <<< "$out" | cut -c1-200)" >&2
+    return 1
+  fi
+  heads=$(awk '$NF == "(head)" { print $1 }' <<< "$out")
   if [ -z "$heads" ] || grep -Eqv '^[0-9A-Za-z_]+$' <<< "$heads"; then return 1; fi
   sort -u <<< "$heads"
 }

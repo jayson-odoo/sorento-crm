@@ -996,8 +996,9 @@ def test_the_check_runs_after_the_pull_and_before_the_new_colour(box):
         (HEAD, "0ld0ld0ld000\n"),                                # one migration pending
         ("aaa (head)\nbbb (head)\n", "aaa\n"),                    # a second head pending
         (HEAD, "f00dfeed1234\nother\n"),                         # db stamped with extra rows
+        ("aaa (head)\nbbb (modbranch) (head)\n", "aaa\n"),      # a labelled second head pending
     ],
-    ids=["behind", "two-heads", "db-extra-row"],
+    ids=["behind", "two-heads", "db-extra-row", "labelled-second-head"],
 )
 def test_a_pending_migration_takes_the_snapshot(box, heads, db):
     _migrations(box, heads=heads, db=db)
@@ -1052,3 +1053,18 @@ def test_ha_mode_reads_the_db_revision_as_the_postgres_user(box):
     assert "snapshot skipped" in r.stdout, r.stdout
     line = next(l for l in _calls(box) if "version_num" in l)
     assert "exec -T -u postgres" in line and "-U postgres" in line, line
+
+
+def test_a_branch_labelled_head_at_the_db_revision_skips(box):
+    _migrations(box, heads="f00dfeed1234 (modbranch) (head)\n", db="f00dfeed1234\n")
+    r = _run(box)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "snapshot skipped" in r.stdout, r.stdout
+
+
+def test_a_failed_heads_read_logs_why(box):
+    _migrations(box, heads=None, db="f00dfeed1234\n")
+    (box["stub"] / "heads_fail").write_text("1")
+    r = _run(box)
+    assert "no such image" in r.stderr, r.stderr
+    assert _index(_calls(box), "pg_dump") != -1
