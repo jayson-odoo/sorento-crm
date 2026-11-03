@@ -1374,3 +1374,26 @@ def test_t3_the_claim_tool_says_to_attach_unread_photos_too():
 
     text = portal_writes.PORTAL_WRITES[CP_CREATE].schema["function"]["description"]
     assert "could not be read" in text
+
+
+def test_t4_warranty_asked_first_the_refused_do_number_is_not_redacted(db, store):
+    """Crew re-check on d1078b5d, step 14: the DO number reaches the create call from an earlier message (the
+    agent asked about the warranty first), so on the answer turn only the tool's own refusal holds it."""
+    from app.services.chatbot.agent.loop import NOT_VERIFIED, run_agent_turn
+
+    contact = _dealer(db)
+    foreign = _order(db, None, debtor="ZZT Rival Sdn Bhd", number="88123-4471")
+    first = _scripted(_answer("Is it still within warranty?"))
+    run_agent_turn(db, contact_respond_id=contact["respond_id"], text=f"{foreign} ELP3754 cracked, please claim",
+                   provider=first, mcp_call=_forbidden, catalog={}, is_test=False)
+
+    second = _scripted(
+        _asks({"id": "p1", "name": CP_CREATE, "arguments": _claim(foreign)}),
+        _answer(f"Delivery order {foreign} not found.", [{"what": f"Delivery order {foreign}", "call_id": "p1"}]),
+    )
+    turn = run_agent_turn(db, contact_respond_id=contact["respond_id"], text="yes, still under warranty",
+                          provider=second, mcp_call=_forbidden, catalog={}, is_test=False)
+
+    assert f"Delivery order {foreign} not found." in turn.reply_text, turn.reply_text
+    assert NOT_VERIFIED not in turn.reply_text and "could not confirm" not in turn.reply_text
+    assert "Rival" not in turn.reply_text
