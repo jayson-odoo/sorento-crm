@@ -34,3 +34,24 @@ backend process started before round 3 and got 422 on every preview, which is wh
 ## Step 10: 375px
 
 - 31-page reader at 375 x 800: `document.scrollingElement.scrollWidth` = 375 (no sideways scroll), 4 pages mounted. `10-30page-375.png`.
+
+## Steps 5-8 (Playwright library script on PRJQ-2026-0027, after the fixes)
+
+SS1 was created from issued revision A through the API (the dialog itself is shown in steps 2 and 6).
+
+- **Step 6, PASS.** Create spec sheet with the dialog's defaults (`06a-create-dialog-defaults-1280.png`):
+  - The Revision picker lists `Current draft / changed after A · not issued`, then `PRJQ-2026-0027-A / issued 03 Nov 2026`.
+  - Create opens the reader on `SS2 · Draft after A`, sub line `lines taken 03 Nov 2026 15:01` (07:01 UTC shown in MYT), 6 pages (`06b-draft-sheet-reader-1280.png`).
+  - It starts clean: 0 left out, 0 edited, AREA = the Section heading `UNIT`.
+- **Step 5, FAIL then fixed.**
+  - Edit page on the WC set page first opened "The page could not open / Page not found". The design call asked for `pages/set%253A.../design` because the key was encoded twice.
+  - Fixed in the edit route (decode the segment once, with a red-first vitest).
+  - After the fix the designer opens with `Changes apply to page 2 of SS1 only. The template and other spec sheets stay as they are.` (`05a-edit-page-designer-1280.png`).
+  - Save page returns to the reader, and the API lists `SRTWCX6405` as edited (`05b-after-save-edited-badge-1280.png`).
+- **Step 7, PASS up to Chromium.** Export PDF shows the toast `Preparing the spec sheet. It will appear in My Downloads.` (`07-export-toast-1280.png`).
+  - The worker picked the job up and marked the download failed: `Executable doesn't exist at /opt/pw-browsers/chromium_headless_shell-1248/...`. This sandbox's Python Playwright expects a Chromium build that is not installed, the same limit #2103 recorded.
+  - The print payload route for a sheet download is covered by `test_10_*` in `tests/test_project_spec_sheets_v2.py`.
+- **Step 8, PASS.** List with SS1 and SS2 (`08a-list-two-sheets-1280.png`).
+  - Row menu > Delete on SS2 turns into the toast countdown `Deleting in 9s / Cancel / SS2` (`08b-delete-countdown-1280.png`). No dialog.
+  - After the window the list holds only SS1 (`08c-after-delete-1280.png`).
+- No API request answered 4xx/5xx during steps 5-8 after the fix.
