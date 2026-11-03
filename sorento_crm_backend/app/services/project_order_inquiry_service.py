@@ -15259,6 +15259,12 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         """
         if session.info.get("confirm_preview"):
             return
+        if session.get_nested_transaction() is not None:
+            # A savepoint's own commit (a batch apply gives each order one): the write has not
+            # landed, and a later rollback can still remove it (CONFIRM-REMARK-FIX review S1).
+            # The queue waits for the root commit; `after_soft_rollback` drops what a rollback
+            # took with it.
+            return
         pending = session.info.pop(_PURCHASING_NOTIFY_PENDING_KEY, None)
         if not pending:
             return

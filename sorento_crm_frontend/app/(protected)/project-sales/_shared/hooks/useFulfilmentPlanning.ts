@@ -529,7 +529,7 @@ export function usePreviewConfirmManyMutation() {
     // CONFIRM-REMARK-FIX: the guide's email dry run passes a `signal` so a superseded one is
     // cancelled; it is never part of the body.
     mutationFn: ({ signal, ...body }: ConfirmManyBody & { signal?: AbortSignal }) =>
-      signal ? previewConfirmMany(body, signal) : previewConfirmMany(body),
+      previewConfirmMany(body, signal),
     onError: (error: Error) => {
       // A dry run this screen cancelled (a newer one replaced it) is not a failure.
       if (error.name === 'AbortError') return;

@@ -2528,6 +2528,9 @@ export function FulfilmentBoardPanel({
             return { status: 'ready', byOrder };
           });
         } catch {
+          // Cancelled because the page or the read moved on: not a failed read. Whatever
+          // replaced it (a new run, or a page already read) owns the status now.
+          if (abort.signal.aborted) return;
           if (run === emailRun.current)
             setGuideEmail((current) => ({ ...current, status: 'failed' }));
         }

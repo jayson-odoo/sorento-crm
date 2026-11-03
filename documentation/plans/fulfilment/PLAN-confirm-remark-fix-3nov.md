@@ -19,7 +19,10 @@ printed it.
 
 Fix: the batch notify is queued (`queue_purchasing_notification`, the order inquiry service's own
 post-commit purchasing queue) and sent on a fresh session once the write commits; a rollback of
-the transaction it was queued under drops it. The Confirm no longer commits mid-write.
+the transaction it was queued under drops it. The Confirm no longer commits mid-write. Review S1:
+that listener also fired on a savepoint's own commit (a batch apply gives each order one), so a
+notice could go out before a later rollback removed its write; it now waits for the root commit,
+which also holds for the existing "order inquiry raised" notices.
 
 ### F2: the planner's own line remark printed in the popup, not in the email or Excel
 
@@ -41,7 +44,9 @@ is not `manual`).
   `emailPreviewBody(body, psoId)`), once per board read per order; the Confirm step runs none (the
   press runs its own). Next on a later page now waits for that page's own dry run.
 - At most one in flight: the run a newer one replaces is aborted (`AbortSignal` through the hook,
-  the service and `apiFetch`); an abort toasts nothing.
+  the service and `apiFetch`); an abort toasts nothing and is never read as a failed read (review
+  B1: Back during a page's dry run showed the Retry). The abort frees the browser only: the server
+  still finishes the superseded dry run (rolled back, about 3 s), bounded by the lock timeout below.
 - The preview (`confirm_many` with `preview`) takes `SET LOCAL lock_timeout = '5s'`, the bound
   Simulate takes; a lock wait answers "Another change to this order is being saved right now. Try
   again in a moment." Simulate itself is untouched (lane SIMULATE-CONFIRM-SPEED, #2115).
@@ -49,13 +54,14 @@ is not `manual`).
 ## Tests
 
 - Backend, red first: `tests/scm/test_confirm_remark_fix.py` (F1 with an active `purchasing*`
-  user, one email per press, F2 email = dry run = planner's words and frozen remark, preview lock
-  timeout set and not on the real press, lock-wait message). The purchasing-notify suites now read
+  user, F2 email = dry run = planner's words and frozen remark, preview lock
+  timeout set and not on the real press, set again after a hold-back's rollback, lock-wait message,
+  a queued purchasing notice waits for the root commit). The purchasing-notify suites now read
   the send through a spy that commits its session as the real one does
   (`test_planning_change_apply_notifies_purchasing.py`, `..._notify_survives_a_failed_sibling.py`).
 - Vitest: `FulfilmentBoardPanel.confirmGuide.test.tsx` "CONFIRM-REMARK-FIX" (one dry run per save
-  with a slow re-read, order on screen only and no re-run on Back, superseded run aborted); all
-  three fail on main's sources.
+  with a slow re-read, order on screen only and no re-run on Back, superseded run aborted, Back
+  during a dry run is no failed read).
 
 ## Open
 

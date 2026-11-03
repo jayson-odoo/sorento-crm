@@ -2311,6 +2311,32 @@ describe('CONFIRM-REMARK-FIX: one email dry run per read, for the order on scree
     expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]);
   });
 
+  it('Back while a page\'s dry run is out cancels it quietly: no "could not be read", Next works', async () => {
+    serveSplits({ 'pso-so-1': SO1_READ(), 'pso-so-2': SO2_READ() });
+    await mountWith(coveredBoard());
+    await openConfirmGuide();
+    await screen.findByTestId('confirm-guide-split-page');
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    // Page 2's dry run is held open and rejects on abort, as `fetch` does.
+    previewConfirmMany.mockImplementationOnce(
+      (_body: unknown, signal?: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('The operation was aborted.', 'AbortError')),
+          );
+        }),
+    );
+    click('confirm-guide-next');
+    await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]));
+    click('confirm-guide-back');
+    await waitFor(() =>
+      expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001'),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(screen.queryByTestId('confirm-guide-refresh-failed')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+  });
+
   it('a superseded email dry run is cancelled: at most one in flight', async () => {
     serveSplits({ 'pso-so-1': LINE3_READ() });
     await mountWith(savedBoard(), ['SO000001']);

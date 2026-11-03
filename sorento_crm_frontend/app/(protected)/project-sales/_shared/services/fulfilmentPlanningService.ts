@@ -632,7 +632,7 @@ export async function previewConfirmMany(
   body: ConfirmManyBody,
   signal?: AbortSignal,
 ): Promise<ConfirmManyResult> {
-  return signal ? confirmMany({ ...body, preview: true }, signal) : confirmMany({ ...body, preview: true });
+  return confirmMany({ ...body, preview: true }, signal);
 }
 
 /**
