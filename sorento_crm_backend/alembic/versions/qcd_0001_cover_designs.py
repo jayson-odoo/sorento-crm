@@ -9,12 +9,12 @@ Plan: documentation/plans/projects/PLAN-quote-cover-design-02nov.md. Additive an
 re-run, or a dev DB built by create_all, is harmless.
 
 Revision ID: qcd_0001_cover_designs
-Revises: pqm_0001_quote_matrix
+Revises: pqr_0001_quote_rules_routing
 """
 from alembic import op
 
 revision = "qcd_0001_cover_designs"
-down_revision = "pqm_0001_quote_matrix"
+down_revision = "pqr_0001_quote_rules_routing"
 branch_labels = None
 depends_on = None
 
