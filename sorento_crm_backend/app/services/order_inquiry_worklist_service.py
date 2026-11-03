@@ -30,11 +30,9 @@ screen.
 """
 from __future__ import annotations
 
-import io
 import logging
 from datetime import date, datetime
 from decimal import Decimal
-from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import Date, String, and_, case, cast, func, or_, select, text
@@ -83,6 +81,7 @@ from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
+from app.services import order_inquiry_export
 from app.utils.multi_value import multi_text, multi_values
 from app.services.product_companion_service import (
     bundled_with_item_codes_map,
@@ -190,63 +189,21 @@ MONTH_WORD = (
     "DEC",
 )
 
-EXPORT_TITLE = "ORDER INQUIRY"
-#: Read off `JAN - DEC 2026 ORDER.xlsx` row 2, trailing space and all. Retyping it
-#: tidier is how a column their filters no longer find gets introduced.
-EXPORT_HEADINGS = (
-    "SO DATE",
-    "S/O NO",
-    "ITEM CODE",
-    "QTY",
-    # OI-RESERVE-PILL-QTY round 2 (owner ruling 21 Oct 2026, "we just need more
-    # visibility"): the reserve figures right beside QTY, so a 170 line with a 70 reserve
-    # request never reads as one number. Inserted, not appended, on that ruling; the
-    # planning-board worksheet keeps its own ten columns (`WORKSHEET_HEADINGS`). Checked
-    # first: nothing in this repo reads the sheet back by position - the importer finds
-    # every column by its heading (`project_order_inquiry_reader.py` `_header_map`).
-    "REQUESTED RESERVE",
-    "RESERVED",
-    "TOTAL QTY",
-    "DELIVERY DATE",
-    "PROJECT/CUSTOMER",
-    "SUPPLIER",
-    "PO NO ",
-    "LOCATION",
-    # APPENDED after LOCATION (`PLAN-scm-oi-handshake.md` section 4): their own filters
-    # and habits are keyed on the columns above. The one exception is the owner's own
-    # ruling above (REQUESTED RESERVE / RESERVED beside QTY, 21 Oct 2026); any other new
-    # column still goes after these, never between them.
-    "ACKNOWLEDGED",
-    # Fix round (22 Sep): parity with the grid's own S3 columns (AC-D15) - the SAME
-    # row-level Taken/Remaining the grid has shown since S3, never the retired
-    # LINE-scoped `taken_from_po`/`remaining_open` pair. APPENDED for the same reason
-    # ACKNOWLEDGED was (review round, 22 Sep): they first landed BETWEEN Location and
-    # Acknowledged, which pushed a column purchasing's own filters already point at one
-    # place to the right.
-    "TAKEN",
-    "REMAINING",
-    # AC-LT-39 (G9, `PLAN-oi-links-autocount-truth-24sep.md` 3.5): the cascade's own
-    # guess, beside PO and SPO on every other surface - PO NO above stays real-links
-    # only. APPENDED for the same reason ACKNOWLEDGED/TAKEN/REMAINING were: their own
-    # filters are keyed on the columns before it being where they have always been.
-    "SUGGESTED",
-    # OI-LINE-SPLIT round 3 (UAC AC-G7, mock section 6): a split line's rows, the owner's
-    # own Excel: QTY / DELIVERY DATE the line's (first row only), CHANGE QUANTITY / CHANGE
-    # DATE each row's. APPENDED before REMARK; no existing column moves or is renamed.
-    "CHANGE QUANTITY",
-    "CHANGE DATE",
-    # OI-LINE-SPLIT (UAC D2, AC-G7): the sheet's remark for the row, else the generated one.
-    "REMARK",
-)
+#: OI-EXPORT-SHARED (owner, 3 Nov 2026): every OI export prints the owner's eight columns
+#: (`order_inquiry_export.HEADINGS`), header row first, no title row. The reserve figures,
+#: SUPPLIER / PO NO, ACKNOWLEDGED, TAKEN / REMAINING / SUGGESTED and the split change
+#: columns the list export used to append are gone from it; `_records` still fills them so a
+#: caller may name them in `columns`.
+EXPORT_HEADINGS = order_inquiry_export.HEADINGS
 
-#: The planning-board OI worksheet's columns (Lane C, AC-C3): the sheet's first ten as they
-#: stood before the reserve figures went in, no ACKNOWLEDGED / TAKEN / REMAINING.
+#: The planning-board OI worksheet's columns (Lane C, AC-C3): the buyer's SUPPLIER and PO NO
+#: beside the owner's columns. No TOTAL QTY (OI-EXPORT-SHARED): it totalled a supplier and
+#: item code run, and under the S/O-then-date order such a run is no longer one block.
 WORKSHEET_HEADINGS = (
     "SO DATE",
     "S/O NO",
     "ITEM CODE",
     "QTY",
-    "TOTAL QTY",
     "DELIVERY DATE",
     "PROJECT/CUSTOMER",
     "SUPPLIER",
@@ -3683,60 +3640,32 @@ class OrderInquiryWorklistService:
     def export_xlsx(
         self, *, columns: Sequence[str] = EXPORT_HEADINGS, **filters
     ) -> Tuple[str, bytes]:
-        """The filtered set as their own workbook, on ONE sheet.
+        """The filtered set as their own workbook, on ONE sheet, written by the shared OI
+        exporter (`order_inquiry_export`, OI-EXPORT-SHARED): the header row first, then the
+        rows by S/O and delivery date within each S/O.
 
         Owner, 16 Oct 2026: "our OI excel cannot split by month, this applies to all
         places where OI excel is printed" - the list export and the export tasks print
-        through here, so every delivery month and the undated rows share one sheet. The
-        handover attachment is one sheet too, written from the email's own lines instead
-        (`handover_xlsx`, OI-EMAIL-PURCHASING-FOCUS).
+        through here, so every delivery month and the undated rows share one sheet.
         A row with no date is still an instruction and is never dropped from the file.
 
-        Within the sheet the rows go SUPPLIER then ITEM CODE then delivery date, which is
-        the order their own sheets are in and the order a buyer places in - one purchase
-        order per factory.
-        TOTAL QTY prints on the last row of each supplier-and-item-code run and totals
-        that run, which is the one thing on their sheet that is arithmetic rather than
-        typing. The run is the pair, not the item code alone: the same item bought from
-        two factories is two purchase orders, and a total across both is a quantity
-        nobody places.
+        Generated per request rather than stored: a stored file goes stale the moment
+        supply is reconfirmed, and a stale instruction is the thing this replaces.
 
-        Generated per request rather than stored, exactly as the per-project export is: a
-        stored file goes stale the moment supply is reconfirmed, and a stale instruction
-        is the thing this replaces.
-
-        `columns` (Lane C, AC-C3): the heading tuple to print, defaulting to the full
-        `EXPORT_HEADINGS` so the list page's own export is unchanged. The OI worksheet
-        passes `WORKSHEET_HEADINGS` (no reserve figures, ACKNOWLEDGED / TAKEN /
-        REMAINING); `_write_sheet` prints each row by heading.
+        `columns` (Lane C, AC-C3): the heading tuple to print, defaulting to the owner's
+        `EXPORT_HEADINGS`. The OI worksheet passes `WORKSHEET_HEADINGS`.
         """
-        import openpyxl
-
-        rows = self._all_rows(**filters)
-
-        workbook = openpyxl.Workbook()
-        # A new workbook opens with one blank sheet called "Sheet"; the one sheet here is
-        # written by `_write_sheet` under the file's own title instead. An empty result
-        # is still that sheet with its headings, rather than a file a spreadsheet refuses.
-        default_sheet = workbook.active
-        if default_sheet is not None:
-            workbook.remove(default_sheet)
-        self._write_sheet(workbook, EXPORT_TITLE, rows, columns=columns)
-
-        buffer = io.BytesIO()
-        workbook.save(buffer)
+        records = self._records(self._all_rows(**filters), columns=columns)
         filename = f"order-inquiry-{date.today().isoformat()}.xlsx"
-        return filename, buffer.getvalue()
+        return filename, order_inquiry_export.xlsx(records, columns)
 
     def export_pdf(self, **filters) -> Tuple[str, bytes]:
         """`export_xlsx`'s sheet as a PDF (OI-DOWNLOAD, owner: "the pdf needs to be like Excel
-        la, just in pdf format ... 1 table"): the same title, header row and rows, from the same
-        `_sheet_values`, in the house style (`app/services/order_inquiry_pdf.py`)."""
-        from app.services import order_inquiry_pdf
-
+        la, just in pdf format ... 1 table"): the same header row and rows, from the same
+        shared exporter, in the house style (`app/services/order_inquiry_pdf.py`)."""
         filename = f"order-inquiry-{date.today().isoformat()}.pdf"
-        values = self._sheet_values(self._all_rows(**filters))
-        return filename, order_inquiry_pdf.render_pdf(EXPORT_HEADINGS, values)
+        records = self._records(self._all_rows(**filters))
+        return filename, order_inquiry_export.pdf(records, EXPORT_HEADINGS)
 
     def _all_rows(self, **filters) -> List[Dict[str, Any]]:
         """The same set the list serves, unpaged, in the workbook's own order.
@@ -3909,82 +3838,41 @@ class OrderInquiryWorklistService:
                 )
         return out
 
-    def _write_sheet(
-        self,
-        workbook,
-        title: str,
-        rows: Sequence[Dict[str, Any]],
-        *,
-        columns: Sequence[str] = EXPORT_HEADINGS,
-    ) -> None:
-        sheet = workbook.create_sheet(title=title[:31])
-        sheet.append([EXPORT_TITLE])
-        sheet.append(list(columns))
-        for values in self._sheet_values(rows, columns=columns):
-            sheet.append(values)
-        _style_sheet(sheet, columns)
-
-    def _sheet_values(
+    def _records(
         self, rows: Sequence[Dict[str, Any]], *, columns: Sequence[str] = EXPORT_HEADINGS
-    ) -> List[List[Any]]:
-        """The sheet's data rows under `columns`, in the sheet's order - the ONE source the
-        workbook (`_write_sheet`) and the PDF (`export_pdf`, OI-DOWNLOAD owner ruling: "the pdf
-        needs to be like Excel la") both print."""
-        out: List[List[Any]] = []
-        # Without CHANGE QUANTITY (the 10-column worksheet) a split line's rows print each
-        # row's own qty and date (AC-G13), never a blank QTY.
+    ) -> List[Dict[str, Any]]:
+        """The sheet's rows as records (heading -> value) for the shared exporter
+        (`order_inquiry_export`), which owns the header row and the order (S/O, then
+        DELIVERY DATE). The ONE source the workbook and the PDF both print."""
+        out: List[Dict[str, Any]] = []
+        # Without CHANGE QUANTITY a split line's rows print each row's own qty and date
+        # (AC-G13), never a blank QTY ...
         own_figures = "CHANGE QUANTITY" not in columns
         if own_figures:
-            # ... and a split already inside another line's qty is not printed again: the QTY
-            # cells add up to TOTAL QTY.
+            # ... and a split already inside another line's qty is not printed again.
             rows = [row for row in rows if not row.get("inside")]
-        # `￿` sorts after every real string, so a missing supplier or item code
-        # lands at the end rather than at the top where a buyer would read it first.
-        ordered = sorted(
-            rows,
-            key=lambda row: (
-                (row.get("supplier") or "￿"),
-                (row.get("item_code") or "￿"),
-                # A split line's rows sort by the line's date and stay together (AC-G7).
-                row["plan_key"] if "plan_key" in row
-                else (row.get("delivery_date") or date.max, "", 0),
-            ),
-        )
-        runs = groupby(
-            ordered, key=lambda row: (row.get("supplier"), row.get("item_code"))
-        )
-        for (_supplier, code), members in runs:
-            run = list(members)
-            total = sum(
-                (_dec(row["live_qty"] if "live_qty" in row else row.get("qty")) for row in run),
-                _ZERO,
+        for row in rows:
+            taken, remaining, suggested = (
+                row["split_figures"]
+                if "split_figures" in row
+                else (_export_taken(row), _export_remaining(row), _export_suggested(row))
             )
-            for index, row in enumerate(run):
-                last_of_run = index == len(run) - 1
-                # Only where it says something the QTY column does not: a single-row
-                # run has its own quantity as its total, and printing it twice is noise.
-                run_total = float(total) if last_of_run and len(run) > 1 else None
-                taken, remaining, suggested = (
-                    row["split_figures"]
-                    if "split_figures" in row
-                    else (_export_taken(row), _export_remaining(row), _export_suggested(row))
-                )
-                values = {
+            plan_key = row.get("plan_key")
+            out.append(
+                {
                     "SO DATE": row.get("so_date"),
                     "S/O NO": row.get("so_number") or "",
-                    "ITEM CODE": code or "",
+                    "ITEM CODE": row.get("item_code") or "",
                     "QTY": float(_dec(row["row_qty"]))
                     if own_figures and "row_qty" in row
                     else float(_dec(row.get("qty"))) if row.get("qty") not in (None, "") else None,
                     "REQUESTED RESERVE": _export_reserve_qty(row.get("asked_reserve_qty")),
                     "RESERVED": _export_reserve_qty(row.get("reserved_qty")),
-                    "TOTAL QTY": run_total,
                     "DELIVERY DATE": row["row_date"]
                     if own_figures and "row_qty" in row
                     else row.get("delivery_date"),
                     "PROJECT/CUSTOMER": row.get("project_customer") or "",
-                    # Blank means nobody has placed it, exactly as it does on their
-                    # sheet.
+                    # Blank means nobody has placed it, exactly as it does on their sheet.
                     "SUPPLIER": row.get("supplier") or "",
                     "PO NO ": row.get("po_number") or "",
                     "LOCATION": row.get("location") or "",
@@ -3997,10 +3885,13 @@ class OrderInquiryWorklistService:
                     else None,
                     "CHANGE DATE": row.get("change_date"),
                     "REMARK": row.get("split_remark") or "",
+                    # A split line printed on one QTY / DELIVERY DATE (first row only) keeps
+                    # its later rows under that first row.
+                    order_inquiry_export.CONTINUED: not own_figures
+                    and plan_key is not None
+                    and plan_key[2] > 0,
                 }
-                # Keyed by heading, so `columns` may name any of them in any order (the
-                # planning-board worksheet prints `WORKSHEET_HEADINGS` only).
-                out.append([values[heading] for heading in columns])
+            )
         return out
 
 
@@ -4046,9 +3937,9 @@ def handover_xlsx(lines: Sequence[Dict[str, Any]]) -> bytes:
     """The OI Excel a handover email attaches, written from that email's OWN lines
     (`handover.lines`, `_build_handover_context`), so its rows are the email's rows: the same
     lines, in the same order, with the same values (owner, 26 Oct 2026: "the rows in OI must be
-    truthful to the rows in the email"). One sheet, the house style."""
-    import openpyxl
-
+    truthful to the rows in the email"). Written by the shared OI exporter
+    (`order_inquiry_export`, OI-EXPORT-SHARED): header row first, rows by S/O then delivery
+    date - the order `_build_handover_context` already put the email's lines in."""
     from app.services.project_order_inquiry_service import project_customer_label
 
     def was(line: Dict[str, Any], key: str) -> Any:
@@ -4060,11 +3951,7 @@ def handover_xlsx(lines: Sequence[Dict[str, Any]]) -> bytes:
         if heading not in _HANDOVER_CHANGE_KEYS
         or any(was(line, _HANDOVER_CHANGE_KEYS[heading]) for line in lines)
     ]
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-    sheet.title = EXPORT_TITLE
-    sheet.append([EXPORT_TITLE])
-    sheet.append(columns)
+    records: List[Dict[str, Any]] = []
     for line in lines:
         # As the email prints a changed line: the old value, then the new one beside it.
         values = {
@@ -4088,11 +3975,9 @@ def handover_xlsx(lines: Sequence[Dict[str, Any]]) -> bytes:
             # LOCATION, ITEM CODE, QTY and DELIVERY on the line's first row only.
             for heading in ("LOCATION", "ITEM CODE", "QTY", "DELIVERY DATE"):
                 values[heading] = None
-        sheet.append([values[heading] for heading in columns])
-    _style_sheet(sheet, columns)
-    buffer = io.BytesIO()
-    workbook.save(buffer)
-    return buffer.getvalue()
+            values[order_inquiry_export.CONTINUED] = True
+        records.append(values)
+    return order_inquiry_export.xlsx(records, columns)
 
 
 #: OI-DOWNLOAD (owner, 21 Oct: "nicer, like the LOW STOCK REPORT"): each heading's width, by
@@ -4130,18 +4015,16 @@ _EXPORT_DATE_HEADINGS = frozenset(
 
 def _style_sheet(sheet, columns: Sequence[str]) -> None:
     """The house style (`app.services.excel_style`, the LOW STOCK REPORT's look) on the OI
-    sheet: the title row bold, the heading row (row 2) dark with white bold text, every table
-    cell bordered and wrapped, frozen under the headings, dates dd/mm/yyyy. Columns, their
-    order and every value are untouched."""
-    from openpyxl.styles import Font
+    sheet: the heading row (row 1, no title above it since OI-EXPORT-SHARED) dark with white
+    bold text, every table cell bordered and wrapped, frozen under the headings, dates
+    dd/mm/yyyy. Columns, their order and every value are untouched."""
     from openpyxl.utils import get_column_letter
 
     from app.services import excel_style
 
-    sheet["A1"].font = Font(bold=True, size=13)
     excel_style.style_table(
         sheet,
-        header_row=2,
+        header_row=1,
         widths={
             get_column_letter(index): _EXPORT_WIDTHS.get(heading, _EXPORT_DEFAULT_WIDTH)
             for index, heading in enumerate(columns, start=1)

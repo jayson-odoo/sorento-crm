@@ -203,19 +203,35 @@ from tests.scm.test_order_summary_sheet import MARKER, _scope_row  # noqa: E402
 from tests.scm.test_summary_order_service import chain, db  # noqa: E402,F401
 
 
+def _seed(db, product):
+    """Two sales orders: SO B (one line, due earliest of all) seeded first, then SO A with a
+    December row and an October row, so neither seeding order nor date alone gives the
+    S/O-then-date order. S/O A sorts before S/O B."""
+    from app.models.project_so import OrderInquiryRow
+
+    so_a, so_b = f"{MARKER}-A-SO", f"{MARKER}-B-SO"
+    b = _scope_row(db, product=product, qty=1, delivery=date(2026, 9, 1), so_number=so_b)
+    a = _scope_row(db, product=product, qty=2, delivery=date(2026, 12, 1), so_number=so_a)
+    # The sheet prints the project SO's AutoCount number (`_SO_NUMBER`).
+    a["pso"].autocount_doc_no = so_a
+    b["pso"].autocount_doc_no = so_b
+    first = a["row"]
+    sibling = OrderInquiryRow(
+        order_inquiry_id=first.order_inquiry_id, so_line_id=first.so_line_id, qty=3,
+        verb=first.verb, state=first.state, ack_state=first.ack_state,
+        delivery_date=date(2026, 10, 1), supply_decision_id=None,
+    )
+    db.add(sibling)
+    db.flush()
+    return so_a, so_b, [b["row"], first, sibling]
+
+
 @requires_pg
 def test_the_list_export_starts_with_the_header_and_sorts_by_so_then_date(db, chain):
     from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 
-    product = chain["product"]
-    so_a, so_b = f"{MARKER}-A-SO", f"{MARKER}-B-SO"
-    seeded = [
-        _scope_row(db, product=product, qty=1, delivery=date(2026, 9, 1), so_number=so_b),
-        _scope_row(db, product=product, qty=2, delivery=date(2026, 12, 1), so_number=so_a),
-        _scope_row(db, product=product, qty=3, delivery=date(2026, 10, 1), so_number=so_a),
-    ]
-    db.flush()
-    row_ids = [entry["row"].id for entry in seeded]
+    so_a, so_b, seeded = _seed(db, chain["product"])
+    row_ids = [row.id for row in seeded]
 
     _filename, content = OrderInquiryWorklistService(db).export_xlsx(row_ids=row_ids)
     sheet = _sheet(content)
@@ -239,16 +255,9 @@ def test_the_list_pdf_prints_the_same_header_and_order(db, chain, monkeypatch):
         "render_pdf",
         lambda columns, values: printed.update(columns=list(columns), values=values) or b"%PDF",
     )
-    product = chain["product"]
-    so_a, so_b = f"{MARKER}-A-SO", f"{MARKER}-B-SO"
-    seeded = [
-        _scope_row(db, product=product, qty=1, delivery=date(2026, 9, 1), so_number=so_b),
-        _scope_row(db, product=product, qty=2, delivery=date(2026, 12, 1), so_number=so_a),
-        _scope_row(db, product=product, qty=3, delivery=date(2026, 10, 1), so_number=so_a),
-    ]
-    db.flush()
+    so_a, so_b, seeded = _seed(db, chain["product"])
 
-    OrderInquiryWorklistService(db).export_pdf(row_ids=[e["row"].id for e in seeded])
+    OrderInquiryWorklistService(db).export_pdf(row_ids=[row.id for row in seeded])
     assert printed["columns"] == OWNER_HEADER
     assert [(row[1], row[4]) for row in printed["values"]] == [
         (so_a, date(2026, 10, 1)),
@@ -264,17 +273,10 @@ def test_the_worksheet_starts_with_its_header_and_sorts_by_so_then_date(db, chai
         OrderInquiryWorklistService,
     )
 
-    product = chain["product"]
-    so_a, so_b = f"{MARKER}-A-SO", f"{MARKER}-B-SO"
-    seeded = [
-        _scope_row(db, product=product, qty=1, delivery=date(2026, 9, 1), so_number=so_b),
-        _scope_row(db, product=product, qty=2, delivery=date(2026, 12, 1), so_number=so_a),
-        _scope_row(db, product=product, qty=3, delivery=date(2026, 10, 1), so_number=so_a),
-    ]
-    db.flush()
+    so_a, so_b, seeded = _seed(db, chain["product"])
 
     _filename, content = OrderInquiryWorklistService(db).export_xlsx(
-        row_ids=[e["row"].id for e in seeded], columns=WORKSHEET_HEADINGS
+        row_ids=[row.id for row in seeded], columns=WORKSHEET_HEADINGS
     )
     sheet = _sheet(content)
     assert _header(sheet) == list(WORKSHEET_HEADINGS)
@@ -286,3 +288,49 @@ def test_the_worksheet_starts_with_its_header_and_sorts_by_so_then_date(db, chai
         (so_a, date(2026, 12, 1)),
         (so_b, date(2026, 9, 1)),
     ]
+
+
+# --------------------------------------------------------------------------- #
+# The reserve email's table follows the OI export's order (no database)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_reserve_email_table_goes_by_so_then_delivery_date():
+    from app.services.order_inquiry_reserve_service import merged_context
+
+    def context(inquiry_no, so_number, rows):
+        return {
+            "reserve": {
+                "inquiry_no": inquiry_no,
+                "so_number": so_number,
+                "so_date": "01/10/2026",
+                "customer": "Cust",
+                "project_customer": "Cust",
+                "oi_link": f"https://crm/oi/{inquiry_no}",
+                "link": f"https://crm/oi/{inquiry_no}?reserve=1",
+                "rows": [
+                    {
+                        "item_code": code,
+                        "delivery_iso": iso,
+                        "delivery_date": iso,
+                        "qty": "1",
+                        "qty_requested": "1",
+                        "status": "Reserved",
+                        "status_kind": "reserved",
+                    }
+                    for code, iso in rows
+                ],
+                "row_count": len(rows),
+                "open_row_count": 0,
+            },
+            "raiser": None,
+        }
+
+    merged = merged_context(
+        [
+            context("OI-2", "SO2", [("AAA", "2026-09-01")]),
+            context("OI-1", "SO1", [("AAA", "2026-12-01"), ("ZZZ", "2026-10-01"), ("MMM", None)]),
+        ]
+    )
+    got = [(line["so_number"], line["item_code"]) for line in merged["reserve"]["lines"]]
+    assert got == [("SO1", "ZZZ"), ("SO1", "AAA"), ("SO1", "MMM"), ("SO2", "AAA")]
