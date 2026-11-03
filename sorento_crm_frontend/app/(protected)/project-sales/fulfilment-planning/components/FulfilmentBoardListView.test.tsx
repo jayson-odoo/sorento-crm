@@ -2182,6 +2182,8 @@ describe('FulfilmentBoardListView: every column sorts (owner ruling 22 Sep)', ()
       'Sales order',
       'Agent',
       'Customer',
+      // OI-UX-FILTER-SNAPSHOT: the SO list's Project, right after Customer.
+      'Project',
       'Product',
       'OI',
       'Required date',
@@ -2194,6 +2196,13 @@ describe('FulfilmentBoardListView: every column sorts (owner ruling 22 Sep)', ()
     for (const title of sortableTitles) {
       expect(screen.getByRole('button', { name: title })).toBeInTheDocument();
     }
+  });
+
+  it('OI-UX-FILTER-SNAPSHOT: shows each line project beside its customer', async () => {
+    renderView({
+      contributions: [contribution({ project_label: 'TAMAN JAYA' })],
+    });
+    expect(await screen.findByText('TAMAN JAYA')).toBeInTheDocument();
   });
 
   it('sorts Outstanding qty numerically, not lexicographically (9 before 20)', async () => {
