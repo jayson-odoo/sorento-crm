@@ -1,12 +1,7 @@
 # PLAN: IMAGE-UNIFY - one image rendition service, one image component
 
-Status: P0 done; owner answered Q1-Q5 (3 Nov 14:35, recorded below); re-planned. P1 design settled,
-P1 code that does not depend on #2126 is built (crew answer 3 Nov: P1 stacks on #2133):
-`print_box_px` / `print_scale`, `single_flight`, `cache_control` on both backends,
-`new_upload_storage_key`; `tests/test_image_unify_p1.py` 27 red on main, green here, 8 of 8
-kill mutations red. The rest of P1 (rendition service on `_downscale`, cache removal, the 7
-upload sites, BE guard) starts when #2126 merges. P2 after P1 and #2101 (PRICETAG-SELF-APPROVAL) merge. P4 closed
-with no PR (Q2). Track: LEAD, phased.
+Status: P1 code complete on #2133 (crew answer: P1 stacks on the P0 PR), in review. P2 after P1
+and #2101 merge. P4 closed with no PR (Q2). Track: LEAD, phased.
 
 UAC: `image-unify-acceptance-criteria.md`. Behaviour card: `behaviour-card-image-unify.md`.
 
@@ -19,6 +14,26 @@ UAC: `image-unify-acceptance-criteria.md`. Behaviour card: `behaviour-card-image
 | Q3 attachment preview | SAME AS TODAY, the original ("the attachment is the most stable so far"). Resource Attachments (thumb in grid, original on open) is the stable reference | P3 does not change the preview; it moves onto the shared component only with identical behaviour |
 | Q4 prod backfill | NO backfill. Medium made at upload for new files and on demand the first time an old photo is opened; on-demand must be fast and safe: one generation per file under concurrency, cached after | P1: no backfill script; single-flight on-demand path |
 | Q5 sign page | YES: every line's picture, 320 px thumbs loaded as the customer scrolls, no 60 cap; security review of the signed links | P3 |
+
+## Crew rulings during P1 (3 Nov, #2133)
+
+| Ruling | Effect |
+| --- | --- |
+| P1 stacks on #2133 (sandbox can push one branch) | One PR per phase resumes from P2 |
+| Cache lifetime (b): one year `immutable` | `RENDITION_CACHE_CONTROL = "public, max-age=31536000, immutable"` |
+| Replace never reuses a key | `storage_router.replace_storage_key`: `<type>/<id>/v-<sha256[:16]>/<name>`; upload route, bulk ZIP import and the CMYK script use it; old objects stay for a cleanup job (not built in this lane; trigger: bucket growth from replaced files shows up in the storage audit) |
+
+## What P1 shipped (differences from the target below)
+
+- `store_thumbnail` is kept as the name the upload paths call; it IS `store_renditions`.
+- Cache 4 (`_SIGN_PICTURES`, sign-page data URIs) stays until P3 replaces the sign page's data URIs
+  with the token-scoped picture route; removing it first would re-render every picture per view.
+- Picture URLs are signed for 4 hours (was 1): `storage_router` reuses a signature for a sixth of
+  its lifetime, so this keeps the 40-minute reuse window the removed per-module cache gave.
+- `storage_router.delete_object_best_effort` also deletes an original's `<key>.medium.jpg`.
+- The redis-py lock is taken with `thread_local=False`: it is released by the generation thread,
+  and the default per-thread token made that release fail and left files locked for 120 s.
+- `npa_xlsx` embeds its picture through `downscale` (JPEG, white behind transparency).
 
 ## Journey
 
