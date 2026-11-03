@@ -24,3 +24,26 @@ describe "CONFIRM-DIALOG-SPEED".
   without it, and reads each product's documents a handful of times, not once per row.
 - **S11** A dry run still runs the placement pass (ordinary and planning-change paths), and the
   planning-change preview prints the REMARK the press sends.
+
+## PR 2 (lane CONFIRM-SPEED-PR2)
+
+- **P1** `_oi_placements` returns exactly the rows the one-join statement returned (same
+  `(source_ref, product, company, spo_number, qty, received)` multiset), with and without
+  `company_id`; a cancelled inquiry row and an SPO row of another product or company place
+  nothing.
+- **P2** A board GET reads the stock-debt assignment at most twice (`assignments_for`), however
+  many covered orders and donor lookups it has; its JSON is identical to main's (each `incoming`
+  list compared as a set, main orders it nondeterministically).
+- **P3** `assignments_for` over several products equals one call per product.
+- **P4** The placement pass reads a project line's product/core line once per line and an
+  inquiry's SO number once per inquiry; it writes exactly the same links and claims as before.
+- **P5** A confirm-all dry run and a real confirm return the same response and issue the same
+  writes in the same order as main.
+- **P6** A Confirm page whose dry run answers `ok=false` shows the dry run's error in the
+  failed-run pattern with Retry and its REMARK cells print no words. Confirm stays enabled
+  (crew ruling 3 Nov: holding it would block the other orders); the press posts only the ok
+  orders and the refused one lands on today's result card with its reason table.
+- **P7** Every line of a page's dry-run email appears on that page's Review split, once its words
+  land: a line the press does not change (SO373923 line 8, a carried borrow owing ORDER BACK MWH-BB)
+  as a read-only row with the email's words; an email line on no board row from its own entry.
+- **P8** On the clone (SO373923): board GET under 3 s warm, dry run under 5 s.

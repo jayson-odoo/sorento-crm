@@ -60,8 +60,12 @@ from app.services.error_handler import AppException
 from app.services.project_quotation_document_service import document_noun, quotation_no
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
+    COVER_LAYOUT_DESIGNED,
+    clean_terms_html,
     cover_reference,
     cover_rows,
+    cover_title,
+    design_of,
     layout_of,
 )
 from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
@@ -762,8 +766,8 @@ def _scope_html(
 """
 
 
-def _cover_html(rows: List[Dict[str, Any]], letterhead: str, noun: str = "Quotation") -> str:
-    """Page 1 (layout 2): letterhead, the title and the label/value rows of ``cover_rows``."""
+def _cover_row_html(rows: List[Dict[str, Any]]) -> List[str]:
+    """The label/value table rows of ``cover_rows``, shared by the layout 2 and layout 3 covers."""
     body: List[str] = []
     for row in rows:
         if row["key"] == "terms":
@@ -772,6 +776,12 @@ def _cover_html(rows: List[Dict[str, Any]], letterhead: str, noun: str = "Quotat
             value = "<br/>".join(_cell(row["text"]).splitlines())
         label = escape(f'{row["label"].upper()}:')
         body.append(f"<tr><th>{label}</th><td>{value}</td></tr>")
+    return body
+
+
+def _cover_html(rows: List[Dict[str, Any]], letterhead: str, noun: str = "Quotation") -> str:
+    """Page 1 (layout 2): letterhead, the title and the label/value rows of ``cover_rows``."""
+    body = _cover_row_html(rows)
     return f"""
   <section class="cover">
     <div class="cover-top">{letterhead}</div>
@@ -779,6 +789,46 @@ def _cover_html(rows: List[Dict[str, Any]], letterhead: str, noun: str = "Quotat
     <table class="cover-rows">{"".join(body)}</table>
   </section>
 """
+
+
+def _designed_cover_html(
+    rows: List[Dict[str, Any]],
+    design: Dict[str, Any],
+    letterhead: str,
+    issue: ProjectQuotationIssue,
+    noun: str = "Quotation",
+) -> str:
+    """Page 1 (layout 3): the design copied at send. Letterhead per the switch, the title, the
+    intro above the rows and the closing below, both through the terms cleaning."""
+    body = _cover_row_html(rows)
+    top = f'<div class="cover-top">{letterhead}</div>' if design.get("show_letterhead", True) else ""
+    title = cover_title(design, noun)
+    title_html = f'<div class="cover-title">{escape(title)}</div>' if title else ""
+    intro = clean_terms_html(issue.cover_letter_rendered)
+    closing = clean_terms_html(issue.cover_closing_rendered)
+    intro_html = f'<div class="cover-text cover-intro">{intro}</div>' if intro else ""
+    closing_html = f'<div class="cover-text cover-closing">{closing}</div>' if closing else ""
+    return f"""
+  <section class="cover">
+    {top}
+    {title_html}
+    {intro_html}
+    <table class="cover-rows">{"".join(body)}</table>
+    {closing_html}
+  </section>
+"""
+
+
+def _plain_terms_html(issue: ProjectQuotationIssue) -> str:
+    """Layout 3 with the Terms row hidden: the terms after the total, exactly as the cleaning
+    leaves them (a list the author typed stays a list, nothing is numbered for them)."""
+    terms = clean_terms_html(issue.terms_rendered)
+    if not terms:
+        return ""
+    return (
+        '<div class="terms terms-plain"><div class="terms-title">TERMS &amp; CONDITIONS</div>'
+        f"{terms}</div>"
+    )
 
 
 def _terms_html(issue: ProjectQuotationIssue) -> str:
@@ -962,6 +1012,18 @@ _COVER_STYLE = """
   table.cover-rows td ol { margin: 0; padding-left: 18px; list-style: decimal; }
 """
 
+# Added only for layout 3 (the designed cover), so layout 2 renders from exactly #2088's stylesheet.
+_DESIGNED_COVER_STYLE = """
+  .cover-text { margin: 0 0 18px; line-height: 1.45; }
+  .cover-text p { margin: 0 0 6px; }
+  .cover-text ul { margin: 0; padding-left: 18px; list-style: disc; }
+  .cover-text ol { margin: 0; padding-left: 18px; list-style: decimal; }
+  .cover-closing { margin: 18px 0 0; }
+  .terms-plain p { margin: 0 0 4px; }
+  .terms-plain ul { margin: 0; padding-left: 18px; list-style: disc; }
+  .terms-plain ol { margin: 0; padding-left: 18px; list-style: decimal; }
+"""
+
 
 def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
     """The whole document as HTML, straight off the issue snapshot.
@@ -973,7 +1035,13 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
     sender = _sender(db, document)
     scopes = _load_scopes(db, issue)
 
-    letter = "".join(f"<p>{block}</p>" for block in _text_blocks(issue.cover_letter_rendered))
+    designed = layout_of(issue) >= COVER_LAYOUT_DESIGNED
+    # Layout 3 prints the letter as the cover's intro, not again on the price pages.
+    letter = (
+        ""
+        if designed
+        else "".join(f"<p>{block}</p>" for block in _text_blocks(issue.cover_letter_rendered))
+    )
     letter_html = f'<div class="letter">{letter}</div>' if letter else ""
     # One cache for the whole document: the same product often appears in more than one scope.
     image_cache: Dict[str, Optional[str]] = {}
@@ -990,11 +1058,19 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
             else None
         )
         reference = cover_reference(document, issue, project)
-        cover = _cover_html(
-            cover_rows(db, document, issue, project), letterhead, document_noun(document)
-        )
-        style = _STYLE + _COVER_STYLE
-        terms = ""
+        if designed:
+            design = design_of(issue)
+            rows = cover_rows(db, document, issue, project, design)
+            cover = _designed_cover_html(rows, design, letterhead, issue, document_noun(document))
+            # The terms print on the cover only while their row is shown.
+            shown = any(r["key"] == "terms" for r in rows)
+            terms = "" if shown else _plain_terms_html(issue)
+        else:
+            cover = _cover_html(
+                cover_rows(db, document, issue, project), letterhead, document_noun(document)
+            )
+            terms = ""
+        style = _STYLE + _COVER_STYLE + (_DESIGNED_COVER_STYLE if designed else "")
     else:
         terms = _terms_html(issue)
 

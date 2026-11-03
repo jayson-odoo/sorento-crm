@@ -52,6 +52,11 @@ export interface ConfirmGuidePage {
   remarkType?: string | null;
   /** The lines this Confirm covers on the order, as the board states them (UAC F2, F10). */
   covered: ConfirmGuideLine[];
+  /**
+   * CONFIRM-SPEED-PR2: lines the page's email prints that this Confirm does not cover, shown
+   * read-only with the email's words once its dry run has landed.
+   */
+  emailOnly?: ConfirmGuideLine[];
 }
 
 /** A read-only row prints the planner's own remark, else the default words (UAC F25). */
@@ -114,6 +119,7 @@ export function ConfirmGuideDialog({
   wordsLoading = false,
   wordsFailed = false,
   wordsPendingPsoIds,
+  wordsErrors,
   onRetryWords,
   onPageSaved,
   onRetryRefresh,
@@ -168,6 +174,8 @@ export function ConfirmGuideDialog({
    * landed yet. Their REMARK cells print "Preparing email preview...", never board words.
    */
   wordsPendingPsoIds?: ReadonlySet<string>;
+  /** CONFIRM-SPEED-PR2: a refused page's own dry-run sentence, by pso id. */
+  wordsErrors?: ReadonlyMap<string, string>;
   onRetryWords?: () => void;
   /** CONFIRM-DIALOG-SPEED review B1: a page's Save landed, so the email preview is read again. */
   onPageSaved?: () => void;
@@ -233,6 +241,8 @@ export function ConfirmGuideDialog({
     page && !page.psoId && !preparing ? prepareErrors?.get(page.salesOrderId) ?? null : null;
   const prepareFailed = Boolean(prepareError);
   const readFailed = Boolean(splitRead?.isError);
+  // CONFIRM-SPEED-PR2: the dry run's own refusal of the page on screen (Confirm stays open).
+  const refusal = (page?.psoId && wordsErrors?.get(page.psoId)) || null;
   // OI-SPLIT-CONFIRM-POLISH (owner, SO426939): the ONE SO date every sheet on the page prints:
   // the order's split read, else the board's (an order nobody adopted has no read at all).
   const soDate = splitRead?.data?.so_date ?? page?.soDate ?? null;
@@ -241,7 +251,10 @@ export function ConfirmGuideDialog({
   const sheet = React.useMemo(
     () =>
       page && !reading && !readFailed && !unready
-        ? coveredSheetLines(splitRead?.data ?? null, page.covered.map(readOnlyWords))
+        ? coveredSheetLines(
+            splitRead?.data ?? null,
+            [...page.covered, ...(page.emailOnly ?? [])].map(readOnlyWords),
+          )
         : null,
     [page, reading, readFailed, unready, splitRead?.data],
   );
@@ -283,6 +296,7 @@ export function ConfirmGuideDialog({
         null,
         page.covered
           .filter((line) => !line.lineId || !read.has(line.lineId))
+          .concat(page.emailOnly ?? [])
           .map(readOnlyWords),
       ),
     };
@@ -605,12 +619,14 @@ export function ConfirmGuideDialog({
               Save or undo your split changes first
             </p>
           ) : null}
-          {wordsFailed && !wordsLoading && !stale ? (
+          {(refusal || (wordsFailed && !wordsLoading)) && !stale ? (
             <div
               data-testid="confirm-guide-words-failed"
               className="flex w-full flex-wrap items-center gap-2 text-xs"
             >
-              <span role="alert">The email preview could not be prepared.</span>
+              <span role="alert" className="break-words">
+                {refusal || 'The email preview could not be prepared.'}
+              </span>
               {onRetryWords ? (
                 <Button type="button" variant="outline" size="sm" onClick={onRetryWords}>
                   Retry

@@ -3406,37 +3406,57 @@ class ProjectSupplyService:
         """The raw rows behind `_oi_linked_landed_by_ref`: `(line source_ref, product,
         company, spo_number, placed, received)` for every live order-inquiry SPO placement
         on a line holding one of `refs`. The SPO row must be for the line's own product and
-        company (the same AC-6 pairing the SPO receipt join states in its JOIN)."""
-        query = (
+        company (the same AC-6 pairing the SPO receipt join states in its JOIN).
+
+        Statement shape matters: the one-join form let the planner drive from `spo_allocations`
+        by product (estimated 11 rows a loop, actual 1,302; 1.45M loops), 2.4-5.4 s on the prod
+        clone. The SO lines are read first in a MATERIALIZED CTE, then their live inquiry rows,
+        links and the SPO rows by id: 15-400 ms, the same rows. An index on
+        `sales_order_lines.source_ref` alone did not help (2.2-2.9 s).
+
+        The CTE gets no company-scope criteria from do_orm_execute on the core lines (the old
+        statement did); rows stay identical because the SPO join pairs company with the line's
+        company and the scoped SPO read filters the rest."""
+        lines = (
             self.db.query(
-                SalesOrderLine.source_ref,
-                SalesOrderLine.product_id,
-                SalesOrderLine.company_id,
-                SPOAllocation.spo_number,
-                OrderInquiryLink.qty,
-                SPOAllocation.quantity_received,
+                SalesOrderLine.source_ref.label("source_ref"),
+                SalesOrderLine.product_id.label("product_id"),
+                SalesOrderLine.company_id.label("company_id"),
+                ProjectSalesOrderLine.id.label("so_line_id"),
             )
             .join(
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.core_sales_order_line_id == SalesOrderLine.id,
             )
-            .join(OrderInquiryRow, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
+            .filter(
+                SalesOrderLine.source_ref.in_(list(refs)),
+                SalesOrderLine.product_id.in_(list(product_ids)),
+            )
+        )
+        if company_id is not None:
+            lines = lines.filter(SalesOrderLine.company_id == company_id)
+        lines = lines.cte("oi_placement_lines").prefix_with("MATERIALIZED")
+        return (
+            self.db.query(
+                lines.c.source_ref,
+                lines.c.product_id,
+                lines.c.company_id,
+                SPOAllocation.spo_number,
+                OrderInquiryLink.qty,
+                SPOAllocation.quantity_received,
+            )
+            .select_from(lines)
+            .join(OrderInquiryRow, OrderInquiryRow.so_line_id == lines.c.so_line_id)
             .join(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
             .join(
                 SPOAllocation,
                 (SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
-                & (SPOAllocation.product_id == SalesOrderLine.product_id)
-                & (SPOAllocation.company_id == SalesOrderLine.company_id),
+                & (SPOAllocation.product_id == lines.c.product_id)
+                & (SPOAllocation.company_id == lines.c.company_id),
             )
-            .filter(
-                SalesOrderLine.source_ref.in_(list(refs)),
-                SalesOrderLine.product_id.in_(list(product_ids)),
-                OrderInquiryRow.state != INQUIRY_CANCELLED,
-            )
+            .filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
+            .all()
         )
-        if company_id is not None:
-            query = query.filter(SalesOrderLine.company_id == company_id)
-        return query.all()
 
     def _prefetch_own_arrival(
         self, entries: Sequence[Tuple[Any, _LineFacts, Any]]

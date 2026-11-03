@@ -117,6 +117,7 @@ import type {
   BoardDraft,
   BoardGranularity,
   BoardRowAxis,
+  ConfirmEmailLine,
   ConfirmManyBody,
   ConfirmManyOrderResult,
   PreviewInquiryRow,
@@ -2411,9 +2412,45 @@ export function FulfilmentBoardPanel({
     return (board.data?.orders ?? []).flatMap((order) => {
       const lines = covered.get(order.sales_order_id);
       if (!lines) return [];
+      // CONFIRM-SPEED-PR2 (owner: the email = the preview): once the page's dry run has landed,
+      // every email line with no row on this page is shown read-only, with the email's words.
+      const pageId = order.project_sales_order_id ?? guideAdopted.get(order.sales_order_id) ?? null;
+      const landed = pageId ? guideEmail.get(pageId) : undefined;
+      const onPage = new Set(lines.map((line) => line.project_line_id).filter(Boolean));
+      const emailOnly: ConfirmGuidePage['covered'] = [];
+      if (landed?.status === 'ready') {
+        // One row per email line id: a line told twice reads both remarks (the same " / "
+        // join the covered lines get) and its quantities add up.
+        const told = new Map<string, ConfirmEmailLine[]>();
+        for (const email of landed.emailLines ?? []) {
+          if (!email.so_line_id || onPage.has(email.so_line_id)) continue;
+          told.set(email.so_line_id, [...(told.get(email.so_line_id) ?? []), email]);
+        }
+        const words = emailWordsByLine(landed.emailLines ?? []);
+        for (const [lineId, entries] of told) {
+          const first = entries[0];
+          const own = allContributions.find((line) => line.project_line_id === lineId);
+          emailOnly.push({
+            lineId,
+            key: own?.key ?? `email:${lineId}`,
+            lineNo: own ? (own.so_line_no ?? own.line_no) : null,
+            itemCode: own?.item_code ?? first.item_code ?? '',
+            location: own?.fulfilment_location ?? '',
+            qty: own
+              ? Number(own.qty) || 0
+              : entries.reduce((sum, entry) => sum + (Number(entry.qty) || 0), 0),
+            date: own?.required_date ?? first.delivery_date ?? null,
+            savedRemark: words.get(lineId) ?? null,
+            ownRemark: null,
+            remarkEditable: false,
+            isMockup: Boolean(own?.is_mockup),
+          });
+        }
+      }
       return [
         {
-          psoId: order.project_sales_order_id ?? guideAdopted.get(order.sales_order_id) ?? null,
+          emailOnly,
+          psoId: pageId,
           salesOrderId: order.sales_order_id,
           soNumber: order.so_number,
           // OI-UX-FILTER-SNAPSHOT: the order's customer / project (a line carries both).
@@ -2549,7 +2586,9 @@ export function FulfilmentBoardPanel({
   }, [bumpEmailEpochs]);
   const retryFailedEmail = React.useCallback(() => {
     bumpEmailEpochs(
-      [...guideEmailRef.current].filter(([, entry]) => entry.status === 'failed').map(([id]) => id),
+      [...guideEmailRef.current].filter(
+        ([, entry]) => entry.status === 'failed' || entry.status === 'refused',
+      ).map(([id]) => id),
     );
   }, [bumpEmailEpochs]);
   /**
@@ -2588,15 +2627,28 @@ export function FulfilmentBoardPanel({
     void (async () => {
       try {
         let words: ReadonlyMap<string, string> | null = null;
+        let refused: string | null = null;
+        let emailLines: readonly ConfirmEmailLine[] = [];
         if (body) {
           const dry = await previewConfirmManyRef.current.mutateAsync({
             ...body,
             signal: abort.signal,
           });
           const entry = dry.results.find((result) => result.pso_id === psoId);
-          if (entry?.ok && entry.email_lines) words = emailWordsByLine(entry.email_lines);
+          if (entry?.ok) {
+            if (entry.email_lines) {
+              words = emailWordsByLine(entry.email_lines);
+              emailLines = entry.email_lines;
+            }
+          } else {
+            // CONFIRM-SPEED-PR2 (owner: the email = the preview = the attachment): a refused
+            // page keeps the dry run's own sentence and prints no words; Confirm stays open and the
+            // press itself lists the refusal on the result card.
+            refused = entry?.error || 'The email preview could not be prepared.';
+          }
         }
-        settle({ key, status: 'ready', words });
+        if (refused !== null) settle({ key, status: 'refused', words: null, error: refused });
+        else settle({ key, status: 'ready', words, emailLines });
       } catch {
         // Replaced (its page's key moved) or the guide closed: not a failed read.
         if (!abort.signal.aborted) settle({ key, status: 'failed', words: null });
@@ -2694,6 +2746,15 @@ export function FulfilmentBoardPanel({
       ) as ReadonlySet<string>,
     [guidePsoIds, guideEmail],
   );
+  /** CONFIRM-SPEED-PR2: a refused page's own dry-run sentence, by pso id. */
+  const guideEmailErrors = React.useMemo(() => {
+    const out = new Map<string, string>();
+    for (const psoId of guidePsoIds) {
+      const entry = guideEmail.get(psoId);
+      if (entry?.status === 'refused' && entry.error) out.set(psoId, entry.error);
+    }
+    return out as ReadonlyMap<string, string>;
+  }, [guidePsoIds, guideEmail]);
   const guideEmailFailed = React.useMemo(
     () => guidePsoIds.some((psoId) => guideEmail.get(psoId)?.status === 'failed'),
     [guidePsoIds, guideEmail],
@@ -4166,6 +4227,7 @@ export function FulfilmentBoardPanel({
           onRetryRefresh={refreshGuide}
           // Review B2: a failed email preview never takes the sheet away; it holds Confirm.
           wordsFailed={guideEmailFailed}
+          wordsErrors={guideEmailErrors}
           onRetryWords={retryFailedEmail}
           onPageSaved={bumpEmailEpoch}
           onPageChange={setGuidePagePso}
@@ -4194,8 +4256,12 @@ export function FulfilmentBoardPanel({
 /** CONFIRM-DIALOG-SPEED: one guide page's email words, and the dry-run key they were read for. */
 interface GuideEmailEntry {
   key: string;
-  status: 'loading' | 'ready' | 'failed';
+  status: 'loading' | 'ready' | 'failed' | 'refused';
   words: ReadonlyMap<string, string> | null;
+  /** CONFIRM-SPEED-PR2: a refused dry run's own error text ('' when it named none). */
+  error?: string;
+  /** CONFIRM-SPEED-PR2: every line the email prints, for the page's read-only rows. */
+  emailLines?: readonly ConfirmEmailLine[];
 }
 
 const UNPOSTABLE_REASONS: UnpostableReason[] = ['no_mirror', 'no_reserve_warehouse'];

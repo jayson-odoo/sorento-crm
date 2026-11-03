@@ -41,6 +41,7 @@ from app.models.user import User
 from app.services import project_seed_service
 
 from ._pg_fixture import blank_session
+from ._quote_fixture_prices import UNDISCOUNTED_LIST_PRICE
 
 MARKER = "zzt-qdownload"
 
@@ -274,7 +275,7 @@ def _issue_one(client, db, project) -> tuple:
     """A signed, issued document with one priced line. Returns ``(root, document, issue)``."""
     uom = _uom(db)
     category = _category(db, "Sanitary Ware")
-    product = _product(db, category.id, uom, "300.00")
+    product = _product(db, category.id, uom, UNDISCOUNTED_LIST_PRICE)
     db.commit()
 
     root = f"{BASE}/projects/{project.id}/quotation-documents"
