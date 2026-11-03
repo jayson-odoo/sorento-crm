@@ -167,10 +167,18 @@ import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
 type BoardView = 'grid' | 'list';
 
 
-/** OI-UX-FILTER-SNAPSHOT: an order's `CUSTOMER / project` under the line that names it. */
-function SoPartyLine({ label }: { label: string | undefined }) {
+/**
+ * OI-UX-FILTER-SNAPSHOT: an order's `CUSTOMER / project` under the line that names it.
+ * `inMenu`: a menu item's accessible name stays its action ("Split delivery SO1"); the
+ * customer / project there is visual context, hidden from the name.
+ */
+function SoPartyLine({ label, inMenu = false }: { label: string | undefined; inMenu?: boolean }) {
   return label ? (
-    <span className="block truncate text-xs font-normal text-muted-foreground" title={label}>
+    <span
+      className="block truncate text-xs font-normal text-muted-foreground"
+      title={label}
+      aria-hidden={inMenu || undefined}
+    >
       {label}
     </span>
   ) : null;
@@ -3239,7 +3247,7 @@ export function FulfilmentBoardPanel({
                         <Split className="size-4" aria-hidden />
                         <span className="flex min-w-0 flex-col">
                           <span className="truncate">{`Split delivery ${order.so_number}`}</span>
-                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} />
+                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} inMenu />
                         </span>
                       </DropdownMenuItem>
                       <DropdownMenuItem
@@ -3253,7 +3261,7 @@ export function FulfilmentBoardPanel({
                         <Split className="size-4" aria-hidden />
                         <span className="flex min-w-0 flex-col">
                           <span className="truncate">{`View splits ${order.so_number}`}</span>
-                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} />
+                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} inMenu />
                         </span>
                       </DropdownMenuItem>
                     </React.Fragment>
@@ -3309,7 +3317,7 @@ export function FulfilmentBoardPanel({
                           <span className="truncate" title={label}>
                             {label}
                           </span>
-                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} />
+                          <SoPartyLine label={partyByOrder.get(order.sales_order_id)} inMenu />
                           {secondLine ? (
                             // `text-foreground/70`, not `text-muted-foreground`
                             // (review round follow-up): the disabled item's own
