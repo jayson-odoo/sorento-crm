@@ -2903,3 +2903,187 @@ describe('CONFIRM-DIALOG-SPEED: the Review split never waits on the email dry ru
     await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
   });
 });
+
+// ---------------------------------------------------------------------------
+// CONFIRM-SPEED-PR2 (UAC P6): a refused dry run is shown, never settled as ready
+// ---------------------------------------------------------------------------
+describe('CONFIRM-SPEED-PR2 refused dry run', () => {
+  const REFUSAL =
+    'Line 3 cannot be confirmed: BRW now has 1 free for this line, and 30 was asked for';
+  const BOARD_WORDS = 'USE BRW 522 & ORDER 294';
+
+  function refuseEveryRun() {
+    previewConfirmMany.mockImplementation(
+      (body: { orders: { pso_id: string }[] }) =>
+        Promise.resolve({
+          results: body.orders.map((order) => ({
+            pso_id: order.pso_id,
+            ok: false,
+            preview: true,
+            error: REFUSAL,
+            email_lines: [],
+            lines_confirmed: [],
+            lines_carried: 0,
+            lines_held_back: [],
+            lines_fulfilled_skipped: 0,
+            inquiry_rows: [],
+            transfers: [],
+          })),
+        }),
+    );
+  }
+
+  async function openRefusedPage() {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    refuseEveryRun();
+    await mountWith(oneDraftBoard(), ['SO000001']);
+    const guide = await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    return { guide, page };
+  }
+
+  it('P6 RED: the dry run\'s own error is shown in a role=alert line with a Retry beside it', async () => {
+    const { guide } = await openRefusedPage();
+    const alert = await within(guide).findByRole('alert');
+    expect(alert).toHaveTextContent(REFUSAL);
+    const holder = alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!;
+    expect(within(holder as HTMLElement).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('P6 RED: the page prints no words in its REMARK cells: not the board\'s, not "Preparing email preview..."', async () => {
+    const { page } = await openRefusedPage();
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(page).not.toHaveTextContent(BOARD_WORDS);
+    expect(page).not.toHaveTextContent('Preparing email preview...');
+    expect(within(page).queryByTestId('remark-words-pending')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument();
+  });
+
+  it('P6 RED: Confirm is held while the page\'s dry run is refused', async () => {
+    await openRefusedPage();
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await clickNext();
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(confirm).toBeDisabled();
+  });
+
+  it('P6 RED: pressing Retry sends the dry run again', async () => {
+    const { guide } = await openRefusedPage();
+    const alert = await within(guide).findByRole('alert');
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    const holder = (alert.closest('[data-testid="confirm-guide-words-failed"]') ?? alert.parentElement!) as HTMLElement;
+    fireEvent.click(within(holder).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(2));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CONFIRM-SPEED-PR2 (UAC P7): every line the email carries is on Review split
+// ---------------------------------------------------------------------------
+describe('CONFIRM-SPEED-PR2 every email line on Review split', () => {
+  // Line 3 is this press's confirmed line; line 2 (CKSW015) is CARRIED: on the board with a
+  // decision, no draft, so the press does not confirm it, yet the email prints it.
+  const CARRIED = demand({
+    project_line_id: 'pl-1-2',
+    line_no: 2,
+    item_code: 'CKSW015',
+    qty: '8',
+  });
+  const REMARK = 'ORDER BACK MWH-BB';
+
+  const bothLinesRead = () => ({
+    ...splitRead('pso-so-1', 'SO000001', [{ id: 'pl-1-3', no: 3, item: 'ZZT-ITEM-1C' }]),
+    lines: [
+      wireLine(2, 'CKSW015', 8, '2026-09-20', {
+        line_id: 'pl-1-2',
+        now_qty: 8,
+        split_state: 'applied',
+        split_view: { status: 'confirmed' },
+        splits: [],
+      }),
+      wireLine(3, 'ZZT-ITEM-1C', 10, '2026-09-20', {
+        line_id: 'pl-1-3',
+        now_qty: 10,
+        split_state: 'applied',
+        split_view: { status: 'confirmed' },
+        splits: [],
+      }),
+    ],
+  });
+
+  const board = () =>
+    withDraft(boardOf([CARRIED, SO1_L3]), ['pl-1-3'], { 'pl-1-3': 'USE BRW 522 & ORDER 294' });
+
+  function emailAnswers(emailLines: Row[]) {
+    previewConfirmMany.mockImplementation((body: { orders: { pso_id: string }[] }) =>
+      Promise.resolve({
+        results: body.orders.map((order) => ({
+          pso_id: order.pso_id,
+          ok: true,
+          preview: true,
+          decision_revision: 4,
+          lines_confirmed: [{ project_line_id: 'pl-1-3', line_no: 3, item_code: 'ZZT-ITEM-1C' }],
+          lines_carried: 1,
+          lines_held_back: [],
+          lines_fulfilled_skipped: 0,
+          inquiry_rows: [],
+          transfers: [],
+          email_lines: emailLines,
+        })),
+      }),
+    );
+  }
+
+  async function openPage() {
+    serveSplits({ 'pso-so-1': bothLinesRead() });
+    await mountWith(board(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    return page;
+  }
+
+  it('P7 RED: a carried covered line the email prints shows as a read-only row with the email\'s words', async () => {
+    emailAnswers([
+      { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'CHANGED: ORDER 72 -> USE BRW 72' },
+      { so_line_id: 'pl-1-2', item_code: 'CKSW015', qty: '8', remark: REMARK },
+    ]);
+    const page = await openPage();
+    const block = await within(page).findByTestId('split-line-2');
+    expect(block).toHaveTextContent('CKSW015');
+    expect(block).toHaveTextContent('8');
+    expect(block).toHaveTextContent(REMARK);
+    expect(block.querySelectorAll('input, textarea')).toHaveLength(0);
+    // The page's own confirmed row stays as it was.
+    expect(within(page).getByTestId('split-line-3')).toHaveTextContent('CHANGED: ORDER 72 -> USE BRW 72');
+  });
+
+  it('P7 GUARD: the carried line does not show before its page\'s email words land', async () => {
+    previewConfirmMany.mockImplementation(() => new Promise(() => {}));
+    serveSplits({ 'pso-so-1': bothLinesRead() });
+    await mountWith(board(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    expect(within(page).queryByTestId('split-line-2')).not.toBeInTheDocument();
+  });
+
+  it('P7 RED: an email line on no board row at all still shows a read-only row from the email\'s own entry', async () => {
+    emailAnswers([
+      { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', remark: 'USE BRW' },
+      { so_line_id: 'pl-not-on-board', item_code: 'ZZT-ORPHAN-9', qty: '5', remark: 'ORDER 5 FOR ORPHAN' },
+    ]);
+    const page = await openPage();
+    const words = await within(page).findByText(/ORDER 5 FOR ORPHAN/);
+    const row = words.closest('tr') as HTMLElement;
+    expect(row).toHaveTextContent('ZZT-ORPHAN-9');
+    expect(row).toHaveTextContent('5');
+    expect(row.querySelectorAll('input, textarea')).toHaveLength(0);
+    expect(within(page).getByTestId('split-line-3')).toHaveTextContent('USE BRW');
+  });
+});
