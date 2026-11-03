@@ -206,6 +206,9 @@ def test_po_dedicated_rows_carry_customer_and_project(scm_app):
     [dedicated] = block["dedicated_to"]
     assert dedicated["customer_name"] == DEBTOR
     assert dedicated["project_label"] == PROJECT
+    from app.schemas.scm_orders import PurchaseOrderPlacement
+
+    assert {"customer_name", "project_label"} <= set(PurchaseOrderPlacement.model_fields)
 
 
 def test_po_line_book_so_carries_customer_and_project():

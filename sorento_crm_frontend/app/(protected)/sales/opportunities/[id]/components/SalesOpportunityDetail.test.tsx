@@ -196,7 +196,7 @@ beforeEach(() => {
   );
   service.getSalesOpportunitySalesOrderOptions.mockReset();
   service.getSalesOpportunitySalesOrderOptions.mockResolvedValue([
-    { id: 'so-1', so_number: 'SO-000001', customer_id: 'cust-1', customer_name: 'ZZT Dealer', order_date: '2026-10-01' },
+    { id: 'so-1', so_number: 'SO-000001', customer_id: 'cust-1', customer_name: 'ZZT Dealer', project_label: 'ZZT Tower', order_date: '2026-10-01' },
   ]);
   service.getSalesOpportunityCustomerOptions.mockReset();
   service.getSalesOpportunityCustomerOptions.mockResolvedValue({ items: [], prospect: null, blocked: null });
@@ -307,17 +307,18 @@ describe('SalesOpportunityDetail', () => {
     await waitFor(() =>
       expect(service.getSalesOpportunitySalesOrderOptions).toHaveBeenCalledWith('opp-1', ''),
     );
-    expect(screen.getByRole('option', { name: 'SO-000001 - ZZT Dealer' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'SO-000001 - ZZT Dealer / ZZT Tower' })).toBeTruthy();
   });
 
   it('fix reviewer-3: shows the linked sales order after a Won move', () => {
     hooks.useSalesOpportunity.mockReturnValue({
-      data: detail({ outcome: 'won', stage_key: 'won', sales_order_id: 'so-1', sales_order_no: 'SO-000001', available_transitions: [] }),
+      data: detail({ outcome: 'won', stage_key: 'won', sales_order_id: 'so-1', sales_order_no: 'SO-000001', sales_order_customer_name: 'ZZT Dealer', sales_order_project_label: 'ZZT Tower', available_transitions: [] }),
       isLoading: false,
       isError: false,
     });
     render(<SalesOpportunityDetail id="opp-1" />);
     expect(screen.getByText('SO-000001')).toBeTruthy();
+    expect(screen.getByText('ZZT Dealer / ZZT Tower')).toBeTruthy();
   });
 
   it('fix reviewer-3: shows the lost reason label after a Lost move', () => {

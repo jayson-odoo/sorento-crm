@@ -1290,6 +1290,9 @@ export interface OrderInquiryPoDetailLine {
    * component, so a line's linkage reads identically on both screens. Never a guess.
    */
   book_so_number?: string | null;
+  /** That sales order's customer (debtor name, else customer master) and project label. */
+  book_so_customer_name?: string | null;
+  book_so_project_label?: string | null;
   /** True when the book named a sales order this CRM does not hold. */
   book_so_unresolved?: boolean | null;
   /** SUPPLY-SPO-LINK: every SPO this line was transferred onto, sorted; empty when none. */

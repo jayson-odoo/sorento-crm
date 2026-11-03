@@ -645,10 +645,18 @@ class PurchaseOrderService:
         dedications: dict[str, list[dict]] = {}
         reserved_per_line: dict[str, float] = {}
         # OI-UX-FILTER-SNAPSHOT: each dedicated sales order names its customer and project.
+        inquiry_placements = [
+            p for rows_ in placements.values() for p in rows_ if p.get("kind") == "inquiry"
+        ]
         parties = so_parties(
             self.db,
-            numbers=[c["so_number"] for claims in reservations.values() for c in claims],
+            numbers=[
+                *(c["so_number"] for claims in reservations.values() for c in claims),
+                *(p["so_number"] for p in inquiry_placements),
+            ],
         )
+        for placement in inquiry_placements:
+            with_party(placement, parties, placement["so_number"])
         for line_id, claims in reservations.items():
             for claim in claims:
                 owed_in_total = float(claim["outstanding"])

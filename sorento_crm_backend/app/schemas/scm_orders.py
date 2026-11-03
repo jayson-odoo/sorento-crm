@@ -685,6 +685,9 @@ class PurchaseOrderPlacement(BaseModel):
     #: The sales order this quantity is owed to - its AutoCount number where it has one.
     so_number: Optional[str] = None
     customer: Optional[str] = None
+    #: That order's customer (debtor name, else customer master) and project label.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     #: Who sold it, by person label, falling back to the agent code.
     agent: Optional[str] = None
     qty: float = 0.0
