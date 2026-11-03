@@ -1,6 +1,6 @@
 # PLAN: paste from the system clipboard into the tag designer (DESIGNER-PASTE)
 
-Status: in progress. Track: small fix track (frontend only, no migration, no auth/RBAC change,
+Status: in review (round 2 after reviewer findings B1, B2, S1-S3, N1, N3). Track: small fix track (frontend only, no migration, no auth/RBAC change,
 upload reuses the existing `POST /dealer-kit/assets` surface).
 
 ## Journey
@@ -26,7 +26,16 @@ Ctrl+V / Cmd+V. The picture lands on the canvas as an image layer, ready to move
   new image layer is added, centred on the canvas, sized at 96 dpi and scaled down to fit inside the
   canvas keeping the aspect ratio. One `commit` per paste, so one Ctrl+Z undoes it.
 - D4. The context-menu Paste item keeps pasting the in-editor clipboard only (reading the system
-  clipboard there needs a browser permission prompt).
+  clipboard there needs a browser permission prompt). Context-menu Copy/Cut run
+  `document.execCommand('copy')` so the marker reaches the system clipboard too.
+- D5 (review round 2). Safari: `beforecopy`/`beforecut`/`beforepaste` are cancelled on the canvas
+  (WebKit fires the real event on a non-editable page only then), and the Ctrl+V keydown pastes the
+  in-editor layers itself on the next task if no `paste` event arrived. If no `copy` event fired at
+  all, the copied words go out through `navigator.clipboard.writeText` and a paste of exactly those
+  words is read as the layers.
+- D6 (review round 2). The marker counts only when this tab still holds copied layers (reload,
+  other tab: fall through to the text). An image beside RTF, or beside HTML without an `<img>`
+  (Word/Excel on Windows), pastes as text.
 
 ## UAC
 

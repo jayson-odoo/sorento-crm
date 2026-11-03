@@ -249,15 +249,18 @@ describe('TagCanvasEditor system clipboard paste', () => {
     const state = renderEditor(docWith(baseLayer('l1')));
     const input = document.createElement('input');
     document.body.appendChild(input);
-    input.focus();
-    const event = pasteEvent(
-      { types: { 'text/plain': 'typed' }, files: [png()] },
-      input,
-    );
-    expect(event.defaultPrevented).toBe(false);
-    expect(state.latest).toHaveLength(1);
-    expect(uploadAsset).not.toHaveBeenCalled();
-    input.remove();
+    try {
+      input.focus();
+      const event = pasteEvent(
+        { types: { 'text/plain': 'typed' }, files: [png()] },
+        input,
+      );
+      expect(event.defaultPrevented).toBe(false);
+      expect(state.latest).toHaveLength(1);
+      expect(uploadAsset).not.toHaveBeenCalled();
+    } finally {
+      input.remove();
+    }
   });
 
   it('Ctrl+Z undoes an image paste in one step (AC-5)', async () => {
@@ -344,5 +347,58 @@ describe('TagCanvasEditor system clipboard paste', () => {
       window.dispatchEvent(keydown);
     });
     expect(keydown.defaultPrevented).toBe(false);
+  });
+
+  it('names a pasted screenshot after the paste, not the generic image.png', async () => {
+    renderEditor(docWith(baseLayer('l1')));
+    pasteEvent({ files: [png()] });
+    await waitFor(() => expect(uploadAsset).toHaveBeenCalledTimes(1));
+    expect(uploadAsset.mock.calls[0][0].name).toMatch(/^Pasted image /);
+  });
+
+  it('cancels beforepaste on the canvas (WebKit only fires paste on a non-editable page then)', () => {
+    renderEditor(docWith(baseLayer('l1')));
+    const event = new Event('beforepaste', { bubbles: true, cancelable: true });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('leaves beforepaste alone inside an input', () => {
+    renderEditor(docWith(baseLayer('l1')));
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    try {
+      input.focus();
+      const event = new Event('beforepaste', {
+        bubbles: true,
+        cancelable: true,
+      });
+      act(() => {
+        input.dispatchEvent(event);
+      });
+      expect(event.defaultPrevented).toBe(false);
+    } finally {
+      input.remove();
+    }
+  });
+
+  it('Ctrl+V still pastes the copied layers when the browser fires no paste event (Safari fallback)', async () => {
+    const state = renderEditor(docWith(baseLayer('l1')));
+    fireEvent.click(screen.getByTestId('layer-l1'));
+    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
+    fireEvent.keyDown(window, { key: 'v', ctrlKey: true });
+    await waitFor(() => expect(state.latest).toHaveLength(2));
+  });
+
+  it('a Ctrl+V whose paste event does arrive pastes once, not twice', async () => {
+    const state = renderEditor(docWith(baseLayer('l1')));
+    fireEvent.click(screen.getByTestId('layer-l1'));
+    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
+    fireEvent.keyDown(window, { key: 'v', ctrlKey: true });
+    pasteEvent({});
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(state.latest).toHaveLength(2);
   });
 });

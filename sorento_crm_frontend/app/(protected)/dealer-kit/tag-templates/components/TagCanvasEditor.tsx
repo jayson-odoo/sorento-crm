@@ -202,6 +202,7 @@ import {
 import {
   TAG_LAYERS_MIME,
   classifyPaste,
+  copiedLayersText,
   fitPastedImage,
   pastedImageProblem,
   readImageSize,
@@ -367,6 +368,13 @@ function isFormControl(node: EventTarget | null): boolean {
     node instanceof HTMLSelectElement ||
     (node instanceof HTMLElement && node.isContentEditable)
   );
+}
+
+/** Library name for a pasted picture: browsers call every one `image.png`. */
+function pastedAssetName(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `Pasted image ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
 }
 
 /** How far a duplicate or a paste lands from its original, in mm. */
@@ -2936,6 +2944,43 @@ export function TagCanvasEditor({
    */
   const copyMarkPending = useRef(false);
 
+  /**
+   * Set by the Ctrl+V keydown, cleared by the `paste` event that should
+   * follow it. Safari fires no `paste` on a page with nothing editable
+   * focused unless `beforepaste` was cancelled, so if none has arrived by the
+   * next task the keydown pastes the editor's own layers itself, as it did
+   * before DESIGNER-PASTE.
+   */
+  const pastePending = useRef(false);
+
+  /**
+   * After the editor's own Copy/Cut: get the marker onto the system
+   * clipboard. `viaCommand` (the context menu, which has no keystroke of its
+   * own) runs the browser's copy command so the `copy` listener fires. If no
+   * `copy` event came at all, write the copied words with the async clipboard
+   * API instead, so a stale screenshot cannot win the next paste;
+   * `classifyPaste` reads those words back as the layers.
+   */
+  const markSystemClipboard = useCallback((viaCommand: boolean) => {
+    copyMarkPending.current = true;
+    if (viaCommand) {
+      try {
+        document.execCommand?.('copy');
+      } catch {
+        // No copy command here: the fallback below covers it.
+      }
+    }
+    window.setTimeout(() => {
+      if (!copyMarkPending.current) return;
+      copyMarkPending.current = false;
+      const copied = getTagClipboard();
+      if (!copied || typeof navigator === 'undefined' || !navigator.clipboard) return;
+      navigator.clipboard.writeText(copiedLayersText(copied.layers) || ' ').catch(() => {
+        // Clipboard permission refused: nothing more to do.
+      });
+    }, 0);
+  }, []);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // The listener is on `window`, so `e.target` is only ever right when
@@ -3104,11 +3149,19 @@ export function TagCanvasEditor({
       // leave a marker for the `copy` / `cut` listener to write.
       if (e.key === 'c' && modifier && selectionRoots.length > 0) {
         handleCopy();
-        copyMarkPending.current = true;
+        markSystemClipboard(false);
       }
       if (e.key === 'x' && modifier && selectionRoots.length > 0) {
         handleCut();
-        copyMarkPending.current = true;
+        markSystemClipboard(false);
+      }
+      if (e.key === 'v' && modifier) {
+        pastePending.current = true;
+        window.setTimeout(() => {
+          if (!pastePending.current) return;
+          pastePending.current = false;
+          handlePaste();
+        }, 0);
       }
 
       // Nudge with arrow keys (0.25mm, 1mm with shift, 0.1mm with alt/option).
@@ -3157,6 +3210,8 @@ export function TagCanvasEditor({
     handleRedo,
     handleCopy,
     handleCut,
+    handlePaste,
+    markSystemClipboard,
     selectionRoots,
     handleFit,
     handleZoomReset,
@@ -3190,11 +3245,13 @@ export function TagCanvasEditor({
       const toastId = toast.loading('Uploading pasted image');
       try {
         const [asset, natural] = await Promise.all([
-          uploadAsset({ file, kind: 'decorative', name: file.name || 'Pasted image' }),
+          uploadAsset({ file, kind: 'decorative', name: pastedAssetName() }),
           readImageSize(file),
         ]);
         const source: ImageSource = { type: 'asset', assetId: asset.id };
-        const newId = newLayerId();
+        // Reusing the replace target's id when it vanished mid-upload (deleted,
+        // undone) keeps the selection below pointing at a layer that exists.
+        const layerId = replaceId ?? newLayerId();
         setLayers((prev) => {
           const target = replaceId ? prev.find((l) => l.id === replaceId) : undefined;
           let next: TagLayer[];
@@ -3206,7 +3263,7 @@ export function TagCanvasEditor({
           } else {
             const z = prev.length ? Math.max(...prev.map((l) => l.z_index)) + 1 : 1;
             const layer: TagLayer = {
-              id: newId,
+              id: layerId,
               type: 'image',
               ...fitPastedImage(natural, canvas),
               rotation_deg: 0,
@@ -3222,7 +3279,7 @@ export function TagCanvasEditor({
           history.pushState(next);
           return next;
         });
-        setSelectedIds(new Set([replaceId ?? newId]));
+        setSelectedIds(new Set([layerId]));
         // A freshly uploaded asset is not in the library map yet (as in
         // `handleImagePicked`), so the layer would draw empty until reloaded.
         void library.reload();
@@ -3256,6 +3313,15 @@ export function TagCanvasEditor({
       return Boolean(dialog && !(containerRef.current && dialog.contains(containerRef.current)));
     };
 
+    // WebKit fires copy/cut/paste on a page with nothing editable focused
+    // only when the matching `before*` event was cancelled.
+    const onBeforeCopyOrCut = (e: Event) => {
+      if (copyMarkPending.current) e.preventDefault();
+    };
+    const onBeforePaste = (e: Event) => {
+      if (!elsewhere(e.target)) e.preventDefault();
+    };
+
     const onCopyOrCut = (e: ClipboardEvent) => {
       if (!copyMarkPending.current) return;
       copyMarkPending.current = false;
@@ -3264,18 +3330,18 @@ export function TagCanvasEditor({
       e.clipboardData.setData(TAG_LAYERS_MIME, copied.sourceDocId ?? 'tag-layers');
       // Plain text alongside, so pasting into a text box elsewhere gives the
       // words that were copied rather than nothing.
-      const words = copied.layers
-        .map((layer) => (layer.props.kind === 'text' ? layer.props.text : ''))
-        .filter(Boolean)
-        .join('\n');
-      e.clipboardData.setData('text/plain', words);
+      e.clipboardData.setData('text/plain', copiedLayersText(copied.layers));
       e.preventDefault();
     };
 
     const onPaste = (e: ClipboardEvent) => {
+      pastePending.current = false;
       if (elsewhere(e.target)) return;
       const copied = getTagClipboard();
-      const intent = classifyPaste(e.clipboardData, Boolean(copied && copied.layers.length > 0));
+      const intent = classifyPaste(
+        e.clipboardData,
+        copied && copied.layers.length > 0 ? copiedLayersText(copied.layers) : null,
+      );
       if (intent.kind === 'none') return;
       e.preventDefault();
       if (intent.kind === 'layers') handlePaste();
@@ -3283,10 +3349,16 @@ export function TagCanvasEditor({
       else handlePasteText(intent.text);
     };
 
+    window.addEventListener('beforecopy', onBeforeCopyOrCut);
+    window.addEventListener('beforecut', onBeforeCopyOrCut);
+    window.addEventListener('beforepaste', onBeforePaste);
     window.addEventListener('copy', onCopyOrCut);
     window.addEventListener('cut', onCopyOrCut);
     window.addEventListener('paste', onPaste);
     return () => {
+      window.removeEventListener('beforecopy', onBeforeCopyOrCut);
+      window.removeEventListener('beforecut', onBeforeCopyOrCut);
+      window.removeEventListener('beforepaste', onBeforePaste);
       window.removeEventListener('copy', onCopyOrCut);
       window.removeEventListener('cut', onCopyOrCut);
       window.removeEventListener('paste', onPaste);
@@ -4462,12 +4534,22 @@ export function TagCanvasEditor({
           <ContextMenuContent className="w-56">
             {hasSelection && !menuOnEmpty ? (
               <>
-                <ContextMenuItem onSelect={handleCut}>
+                <ContextMenuItem
+                  onSelect={() => {
+                    handleCut();
+                    markSystemClipboard(true);
+                  }}
+                >
                   <Scissors />
                   Cut
                   <ContextMenuShortcut>Ctrl+X</ContextMenuShortcut>
                 </ContextMenuItem>
-                <ContextMenuItem onSelect={handleCopy}>
+                <ContextMenuItem
+                  onSelect={() => {
+                    handleCopy();
+                    markSystemClipboard(true);
+                  }}
+                >
                   <Copy />
                   Copy
                   <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>

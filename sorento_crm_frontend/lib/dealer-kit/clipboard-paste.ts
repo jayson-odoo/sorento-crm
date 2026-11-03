@@ -8,6 +8,8 @@
  * tell "the layers I copied here" from "a screenshot I copied elsewhere since".
  */
 
+import type { TagLayer } from './tag-template-types';
+
 /** Marker the editor writes on its own copy/cut, read back on paste. */
 export const TAG_LAYERS_MIME = 'application/x-sorento-tag-layers';
 
@@ -39,25 +41,59 @@ export type PasteIntent =
   | { kind: 'none' };
 
 /**
- * Editor marker first, then an image file, then non-blank text, then the
- * editor's own copied layers (`hasCopiedLayers`) as the fallback.
+ * The words of the copied text layers: what the editor puts on the system
+ * clipboard as `text/plain` beside its marker, so pasting them into a text box
+ * elsewhere gives the words. Also what a paste compares against when the
+ * marker could not be written (see `classifyPaste`).
+ */
+export function copiedLayersText(layers: readonly TagLayer[]): string {
+  return layers
+    .map((layer) => (layer.props.kind === 'text' ? layer.props.text : ''))
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * What a paste means. `copiedText` is `copiedLayersText` of the editor's own
+ * clipboard, or null when the editor holds no copied layers.
+ *
+ * 1. The editor's marker (and layers to go with it): the copied layers.
+ * 2. Plain text equal to the copied layers' words: the copied layers too. This
+ *    is the fallback for a browser that fired no `copy` event, where the
+ *    editor wrote the words with `navigator.clipboard.writeText` instead.
+ * 3. An image file: an image paste, unless the clipboard came from a document
+ *    (Word, Excel: RTF, or HTML with no picture in it), where Chrome on Windows
+ *    adds a picture of the text and the text is what was meant.
+ * 4. Non-blank text: a text layer.
+ * 5. Otherwise the copied layers, if any.
  */
 export function classifyPaste(
   data: PasteData | null,
-  hasCopiedLayers: boolean,
+  copiedText: string | null,
 ): PasteIntent {
-  if (!data) return hasCopiedLayers ? { kind: 'layers' } : { kind: 'none' };
-  if (Array.from(data.types).includes(TAG_LAYERS_MIME))
+  const hasCopied = copiedText !== null;
+  if (!data) return hasCopied ? { kind: 'layers' } : { kind: 'none' };
+  const types = Array.from(data.types);
+  if (hasCopied && types.includes(TAG_LAYERS_MIME)) return { kind: 'layers' };
+
+  const text = (data.getData('text/plain') ?? '').replace(/\r\n?/g, '\n');
+  const blank = !text.trim();
+  if (hasCopied && !blank && text.trim() === copiedText.trim())
     return { kind: 'layers' };
 
   const files = Array.from(data.files ?? []);
   const image = files.find((file) => file.type.startsWith('image/'));
-  if (image) return { kind: 'image', file: image };
+  if (image) {
+    const fromDocument =
+      types.includes('text/rtf') ||
+      (types.includes('text/html') &&
+        !/<img\b/i.test(data.getData('text/html') ?? ''));
+    if (blank || !fromDocument) return { kind: 'image', file: image };
+  }
 
-  const text = (data.getData('text/plain') ?? '').replace(/\r\n?/g, '\n');
-  if (text.trim()) return { kind: 'text', text };
+  if (!blank) return { kind: 'text', text };
 
-  return hasCopiedLayers ? { kind: 'layers' } : { kind: 'none' };
+  return hasCopied ? { kind: 'layers' } : { kind: 'none' };
 }
 
 /** Why a pasted image cannot be uploaded, or null when it can. */

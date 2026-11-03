@@ -17,3 +17,12 @@ kd:v   -> paste on INPUT text=typed, input value "typed"                 (input 
 So: an uncancelled Ctrl+V keydown is followed by a `paste` event carrying the image as a File; the
 editor's copy marker replaces whatever image was on the clipboard and is read back on the next
 paste; a paste inside an input is the browser's.
+
+## Round 2 (after review): before* events and the keydown fallback
+
+The stub now also cancels `beforepaste` (outside inputs) and `beforecopy` (after the editor's own
+Ctrl+C), and the Ctrl+V keydown arms a next-task fallback that a `paste` event disarms. Same log
+as above, and `FALLBACK-FIRED` never appears: in Chromium the `paste` event lands before the next
+task, so the fallback cannot double-paste. WebKit and Firefox are not installed in this sandbox;
+Safari relies on the cancelled `beforepaste` (WebKit's documented switch) and, failing that, the
+keydown fallback for in-editor layers. Hand-test on Safari is in the PR's crew-handtest.

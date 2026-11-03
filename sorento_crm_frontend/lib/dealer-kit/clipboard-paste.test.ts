@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
+import type { TagLayer } from './tag-template-types';
+import { defaultShapeProps, defaultTextProps } from './tag-template-types';
+
 import {
   PASTE_IMAGE_MAX_BYTES,
   TAG_LAYERS_MIME,
   classifyPaste,
+  copiedLayersText,
   fitPastedImage,
   pastedImageProblem,
   type PasteData,
@@ -32,19 +36,79 @@ describe('classifyPaste', () => {
         types: { [TAG_LAYERS_MIME]: 'doc', 'text/plain': 'Hello' },
         files: [png()],
       }),
-      true,
+      'Hello',
     );
     expect(intent).toEqual({ kind: 'layers' });
+  });
+
+  it('ignores the marker when this tab holds no copied layers (reload, other tab) and uses the text', () => {
+    expect(
+      classifyPaste(
+        data({ types: { [TAG_LAYERS_MIME]: 'doc', 'text/plain': 'Hello' } }),
+        null,
+      ),
+    ).toEqual({ kind: 'text', text: 'Hello' });
+  });
+
+  it('text equal to the copied layers words is the copied layers (no-copy-event fallback)', () => {
+    expect(
+      classifyPaste(
+        data({ types: { 'text/plain': 'Promo\r\nNow' } }),
+        'Promo\nNow',
+      ),
+    ).toEqual({
+      kind: 'layers',
+    });
   });
 
   it('an image file on the clipboard is an image paste', () => {
     const file = png();
     expect(
-      classifyPaste(data({ files: [file], types: { 'text/plain': '' } }), true),
+      classifyPaste(data({ files: [file], types: { 'text/plain': '' } }), ''),
     ).toEqual({
       kind: 'image',
       file,
     });
+  });
+
+  it('an image copied from a web page (HTML holding an img) stays an image', () => {
+    const file = png();
+    expect(
+      classifyPaste(
+        data({
+          files: [file],
+          types: {
+            'text/html': '<meta charset="utf-8"><img src="https://x/y.png">',
+            'text/plain': 'https://x/y.png',
+          },
+        }),
+        null,
+      ),
+    ).toEqual({ kind: 'image', file });
+  });
+
+  it('cells copied from Excel or Word (RTF or HTML without img, plus a picture) paste as text', () => {
+    expect(
+      classifyPaste(
+        data({
+          files: [png()],
+          types: { 'text/rtf': '{\\rtf1}', 'text/plain': 'Sale' },
+        }),
+        null,
+      ),
+    ).toEqual({ kind: 'text', text: 'Sale' });
+    expect(
+      classifyPaste(
+        data({
+          files: [png()],
+          types: {
+            'text/html': '<table><td>Sale</td></table>',
+            'text/plain': 'Sale',
+          },
+        }),
+        null,
+      ),
+    ).toEqual({ kind: 'text', text: 'Sale' });
   });
 
   it('skips a non-image file and falls through to text', () => {
@@ -52,7 +116,7 @@ describe('classifyPaste', () => {
     expect(
       classifyPaste(
         data({ files: [pdf], types: { 'text/plain': 'hi' } }),
-        false,
+        null,
       ),
     ).toEqual({
       kind: 'text',
@@ -62,7 +126,10 @@ describe('classifyPaste', () => {
 
   it('plain text from another app is a text paste, even when the editor holds copied layers', () => {
     expect(
-      classifyPaste(data({ types: { 'text/plain': 'Sale 20%' } }), true),
+      classifyPaste(
+        data({ types: { 'text/plain': 'Sale 20%' } }),
+        'Other words',
+      ),
     ).toEqual({
       kind: 'text',
       text: 'Sale 20%',
@@ -70,26 +137,44 @@ describe('classifyPaste', () => {
   });
 
   it('whitespace-only text with copied layers pastes the layers', () => {
-    expect(
-      classifyPaste(data({ types: { 'text/plain': '   ' } }), true),
-    ).toEqual({
-      kind: 'layers',
-    });
+    expect(classifyPaste(data({ types: { 'text/plain': '   ' } }), '')).toEqual(
+      {
+        kind: 'layers',
+      },
+    );
   });
 
   it('an empty clipboard and nothing copied is nothing', () => {
-    expect(classifyPaste(data({}), false)).toEqual({ kind: 'none' });
-    expect(classifyPaste(null, false)).toEqual({ kind: 'none' });
-    expect(classifyPaste(null, true)).toEqual({ kind: 'layers' });
+    expect(classifyPaste(data({}), null)).toEqual({ kind: 'none' });
+    expect(classifyPaste(null, null)).toEqual({ kind: 'none' });
+    expect(classifyPaste(null, '')).toEqual({ kind: 'layers' });
   });
 
   it('normalises Windows line endings in pasted text', () => {
     expect(
-      classifyPaste(data({ types: { 'text/plain': 'a\r\nb' } }), false),
+      classifyPaste(data({ types: { 'text/plain': 'a\r\nb' } }), null),
     ).toEqual({
       kind: 'text',
       text: 'a\nb',
     });
+  });
+});
+
+describe('copiedLayersText', () => {
+  it('joins the text layers words, skipping other layers', () => {
+    const text = (id: string, t: string) =>
+      ({
+        id,
+        props: { ...defaultTextProps(), text: t },
+      }) as unknown as TagLayer;
+    const shape = {
+      id: 's',
+      props: defaultShapeProps(),
+    } as unknown as TagLayer;
+    expect(
+      copiedLayersText([text('a', 'Promo'), shape, text('b', 'Now')]),
+    ).toBe('Promo\nNow');
+    expect(copiedLayersText([shape])).toBe('');
   });
 });
 
