@@ -73,7 +73,16 @@ def test_spo_planner_project_coverage_carries_customer_and_project():
         [out] = svc._project_coverage(db, w.product("P").id)
         assert out["document"] == pso.autocount_doc_no
         assert out["customer_name"] == DEBTOR
-        assert out["project_label"] == PROJECT
+        # Seam rule (audit round): a row from an order inquiry names its own project, the way
+        # the OI worklist prints it; the sales order fills only a half the row does not know.
+        from app.models.projects import Project
+
+        title = db.query(Project.title).filter(Project.id == pso.project_id).scalar()
+        assert out["project_label"] == title
+        core.project_label = None
+        db.flush()
+        [out] = svc._project_coverage(db, w.product("P").id)
+        assert out["project_label"] == title
 
 
 def test_spo_planner_project_coverage_without_a_core_so_keeps_the_project_title():

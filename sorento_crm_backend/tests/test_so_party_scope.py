@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from app.models.base import company_scope
 from app.models.order import SalesOrder
-from app.services.scm.so_party import EMPTY_PARTY, so_parties
+from app.services.scm.so_party import EMPTY_PARTY, fill_party, so_parties
 from tests.test_finance_billing_documents_api import world  # noqa: F401
 
 PARTY_A = {"customer_name": "ZZT Debtor A", "project_label": "ZZT Tower A"}
@@ -63,3 +63,24 @@ def test_an_all_company_read_of_a_unique_number_still_names_it(world):
     with company_scope(world.db, None):
         parties = so_parties(world.db, numbers=[world.so2.so_number])
     assert parties[world.so2.so_number] == PARTY_A
+
+
+def test_fill_party_keeps_a_half_the_row_already_names():
+    """Seam rule (audit round): a row from an order inquiry already knows its project (and
+    sometimes its customer), the way the OI worklist prints them. The sales order fills only
+    a blank half; a missing or nameless order never erases what the row knew."""
+    parties = {"SO1": {"customer_name": "ZZT Debtor", "project_label": "ZZT SO Label"}}
+    row = {"customer_name": None, "project_label": "ZZT Project Title"}
+    assert fill_party(row, parties, "SO1") == {
+        "customer_name": "ZZT Debtor", "project_label": "ZZT Project Title",
+    }
+    row = {"customer_name": None, "project_label": None}
+    assert fill_party(row, parties, "SO1") == parties["SO1"]
+    row = {"customer_name": "ZZT Issuer", "project_label": "ZZT Project Title"}
+    assert fill_party(row, {}, "SO-MISSING") == {
+        "customer_name": "ZZT Issuer", "project_label": "ZZT Project Title",
+    }
+    row = {"customer_name": None, "project_label": "ZZT Project Title"}
+    assert fill_party(row, {"SO1": dict(EMPTY_PARTY)}, "SO1") == {
+        "customer_name": None, "project_label": "ZZT Project Title",
+    }
