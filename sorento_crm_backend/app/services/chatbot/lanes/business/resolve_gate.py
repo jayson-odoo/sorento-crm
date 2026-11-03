@@ -668,7 +668,9 @@ def _visible_reference_kinds(ctx: dict[str, Any]) -> list[str]:
 def _allowed_entity_types(ctx: dict[str, Any], entities: list[Any]) -> list[Any]:
     """The entities' hints, with every reference hint (a typed number whose kind may be any
     visible one) replaced by the kinds this asker may probe."""
-    hints = [jsc.get(x, "hint") for x in entities]
+    # SUPPLIER-ASK fix round 9 (crew turn 36f11957, "太阳的" with hint null): an entity with no kind names no type to
+    # allow; passed through as None it failed the resolver request's validation and the turn lost its resolve.
+    hints = [h for h in (jsc.get(x, "hint") for x in entities) if isinstance(h, str) and h]
     if not any(h in REFERENCE_NARROW for h in hints):
         return hints
     out = [h for h in hints if h not in REFERENCE_NARROW]
@@ -743,6 +745,14 @@ def resolve_entity_body(
         entities = [e for e in entities if not (isinstance(e, dict) and e.get("listed") == "cert_scheme")]
     if excluded_entity_ids:
         entities = [e for e in entities if id(e) not in excluded_entity_ids]
+    if not ctx.get("supplier_visible"):
+        # SUPPLIER-ASK: a supplier is staff-only (`contracts.supplier_visible`); a word the
+        # parser hinted as one is never looked up for anyone else.
+        entities = [e for e in entities if jsc.lower_or_empty(jsc.get(e, "hint")) != "supplier"]
+    else:
+        # SUPPLIER-ASK: a supplier the span pass placed binds by its row id (`bind_span_suppliers`),
+        # never by its name through the resolver's text probes.
+        entities = [e for e in entities if span_supplier_group(e, ctx) is None]
 
     match_mode = parse_output.get("match_mode")
     match_mode = match_mode if jsc.truthy(match_mode) else "and"
@@ -1591,6 +1601,11 @@ def run(
         listed_scheme_resolutions(parser, resolved)
     if hide_customers and isinstance(resolved, dict):
         _without_customer_rows(resolved)
+    if isinstance(resolved, dict) and not ctx.get("supplier_visible"):
+        # SUPPLIER-ASK: the resolver's cross-type rerun can place any word on a supplier.
+        without_rows_of(resolved, "supplier")
+    if isinstance(resolved, dict):
+        bind_span_suppliers(parser, resolved, ctx)
     if customer_names is not None and isinstance(resolved, dict):
         name_unnamed_customers(resolved, customer_names)
 
@@ -1773,9 +1788,64 @@ def _without_customer_rows(resolved: dict[str, Any]) -> None:
     A token whose every match was a customer is named on `hidden_customer_tokens`. Under
     `order` the resolver reads a brand or category word as the customer it names
     (`entity_resolver._DOMAIN_HINT_EXPANSIONS`), so the parser's tag cannot be trusted here."""
+    without_rows_of(resolved, "customer")
+
+
+def span_supplier_group(entity: Any, ctx: dict[str, Any]) -> list[tuple[str, str]] | None:
+    """SUPPLIER-ASK: the span pass's group for a supplier entity whose `canonical_code` is the id of a Supplier
+    candidates line (`engine._supplier_groups`), else None. The id is the binding; a name is never matched here."""
+    if jsc.lower_or_empty(jsc.get(entity, "hint")) != "supplier":
+        return None
+    groups = ctx.get("span_suppliers") if isinstance(ctx.get("span_suppliers"), dict) else {}
+    return groups.get(jsc.nullish_str(jsc.get(entity, "canonical_code")).strip()) or None
+
+
+def bind_span_suppliers(parser: dict[str, Any], resolved: dict[str, Any], ctx: dict[str, Any]) -> None:
+    """SUPPLIER-ASK (owner ruling, 1 Nov 2026: "match by meaning"): each supplier entity the span pass placed joins
+    the resolver's answer as one resolution holding its whole score group: one supplier binds, a near tie stays
+    several and the purchase_order narrowing (`supplier: optional_filter`) asks which one. In place."""
+    if not ctx.get("supplier_visible"):
+        return
+    added = []
+    for e in jsc.array(parser.get("entities")):
+        group = span_supplier_group(e, ctx)
+        if not group:
+            continue
+        token = jsc.nullish_str(jsc.get(e, "raw")).strip() or jsc.nullish_str(jsc.get(e, "canonical_code"))
+        # Fix round 6 (owner, 2 Nov 2026): a span that named customers too is a name on both sides; its customers sit
+        # beside the suppliers, so the reconciliation asks "customer or supplier?" and neither is assumed.
+        both = ctx.get("span_supplier_customers") if isinstance(ctx.get("span_supplier_customers"), dict) else {}
+        customers = list(dict.fromkeys(c for key, _n in group for c in (both.get(key) or [])))
+        added.append({
+            "raw": token,
+            "token": token,
+            "matches": [
+                {
+                    "entity_type": "supplier", "uuid": key, "canonical_code": name, "match_field": "span",
+                    "match_tier": "exact" if len(group) == 1 and not customers else "span",
+                    "display": {"supplier_name": name},
+                }
+                for key, name in group
+            ] + [
+                {
+                    "entity_type": "customer", "uuid": key, "canonical_code": name, "match_field": "span",
+                    "match_tier": "span", "display": {"customer_name": name},
+                }
+                for key, name in customers
+            ],
+        })
+    if added:
+        resolved["resolutions"] = [*jsc.array(resolved.get("resolutions")), *added]
+        resolved["tokens"] = [*jsc.array(resolved.get("tokens")), *(a["token"] for a in added)]
+
+
+def without_rows_of(resolved: dict[str, Any], kind: str) -> None:
+    """Drop every `kind` row from the resolver's answer, in place; a token whose every match
+    was one is named on `hidden_<kind>_tokens`. SUPPLIER-ASK reuses it for `supplier`: the
+    resolver's cross-type rerun can place any word on a supplier, whatever the parser said."""
 
     def _kept(rows: Any) -> list[Any]:
-        return [r for r in jsc.array(rows) if jsc.nullish_str(jsc.get(r, "entity_type")).strip().lower() != "customer"]
+        return [r for r in jsc.array(rows) if jsc.nullish_str(jsc.get(r, "entity_type")).strip().lower() != kind]
 
     hidden: list[str] = []
     for resolution in jsc.array(resolved.get("resolutions")):
@@ -1799,10 +1869,96 @@ def _without_customer_rows(resolved: dict[str, Any]) -> None:
     by_type = resolved.get("by_entity_type")
     if isinstance(by_type, dict):
         resolved["by_entity_type"] = {
-            k: (_kept(v) if isinstance(v, list) else v) for k, v in by_type.items() if str(k).lower() != "customer"
+            k: (_kept(v) if isinstance(v, list) else v) for k, v in by_type.items() if str(k).lower() != kind
         }
     if hidden:
-        resolved["hidden_customer_tokens"] = hidden
+        resolved[f"hidden_{kind}_tokens"] = hidden
+
+
+#: SUPPLIER-ASK: the domains an "outstanding for <supplier>" ask is parsed into ("outstanding"
+#: is an order word) and the entity hints that keep it a customer-side ask.
+SUPPLIER_SWITCH_DOMAINS = frozenset({"order", "sales"})
+#: Fix round on #2066: the domains whose list a named supplier filters (`unbound_supplier_refusal`).
+SUPPLIER_FETCH_DOMAINS = SUPPLIER_SWITCH_DOMAINS | {"purchase_order"}
+ORDER_PARTY_HINTS = frozenset(
+    {"customer", "customer_order", "order", "order_number", "delivery_order", "sales_order", "customer_po_ref", "transporter"}
+)
+
+
+#: Fix round on #2066: said when the message names a supplier the turn cannot bind.
+SUPPLIER_NOT_VISIBLE_LINE = "Sorry, that supplier isn't under your account."
+SUPPLIER_NOT_FOUND_LINE = "Sorry, I couldn't find a supplier called \"{raw}\"."
+
+
+def unbound_supplier_refusal(
+    verdict: dict[str, Any], resolved: Any, asker_sees_suppliers: bool, domains: Any
+) -> str | None:
+    """Fix round on #2066 (owner hand test, console turn 52faa07d): a supplier the message names is a filter the
+    fetch must carry, so when it cannot be bound the turn says so instead of fetching with no supplier at all.
+    Returns the refusal line, or None when the message names no supplier or a supplier row was bound (one row,
+    or several for the picker). An asker `contracts.supplier_visible` refuses is told it is not under their
+    account; for one who may see suppliers, a word no supplier row matches is named back. Only on the purchase_order
+    and order-side domains, where a supplier is the list's filter; elsewhere (stock, promotion) the word is dropped
+    as before and the rest of the turn is answered."""
+    if not set(jsc.array(domains)) & SUPPLIER_FETCH_DOMAINS:
+        return None
+    named = [
+        jsc.nullish_str(jsc.get(e, "raw")).strip() or jsc.nullish_str(jsc.get(e, "canonical_code")).strip()
+        for e in jsc.array(verdict.get("entities"))
+        if isinstance(e, dict)
+        and e.get("current_message") is not False
+        and jsc.lower_or_empty(jsc.get(e, "hint")) == "supplier"
+    ]
+    if not named:
+        return None
+    if not asker_sees_suppliers:
+        return SUPPLIER_NOT_VISIBLE_LINE
+    if holds_supplier_row(resolved):
+        return None
+    return SUPPLIER_NOT_FOUND_LINE.format(raw=named[0])
+
+
+def holds_supplier_row(resolved: Any) -> bool:
+    """Whether the resolver's answer carries any supplier row: per token (`resolutions`) or the AND answer
+    (`intersection`, which `by_entity_type` is built from)."""
+    if not isinstance(resolved, dict):
+        return False
+    rows: list[Any] = [*jsc.array(resolved.get("intersection"))]
+    for resolution in jsc.array(resolved.get("resolutions")):
+        if isinstance(resolution, dict):
+            rows += jsc.array(resolution.get("matches"))
+    return any(jsc.lower_or_empty(jsc.get(r, "entity_type")) == "supplier" for r in rows if isinstance(r, dict))
+
+
+def supplier_ask_reads_purchase_orders(verdict: dict[str, Any]) -> dict[str, Any]:
+    """SUPPLIER-ASK (owner, 1 Nov 2026: "outstanding for supplier X yes the open POs not yet
+    received"): what is outstanding with a supplier is our purchase orders to it, so an
+    order-side verdict whose message names a supplier and no customer-side party is the
+    purchase_order domain. Decided by the KIND the parser gave the entity (from the span pass's
+    Supplier list), never by a word. Runs before the plan, so every later step reads one domain.
+    Returns a new verdict; the one passed in is not changed."""
+    if verdict.get("domain_hint") not in SUPPLIER_SWITCH_DOMAINS:
+        return verdict
+    hints = {
+        jsc.lower_or_empty(jsc.get(e, "hint"))
+        for e in jsc.array(verdict.get("entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False
+    }
+    if "supplier" not in hints or hints & ORDER_PARTY_HINTS:
+        return verdict
+    out = {**verdict, "domain_hint": "purchase_order", "intent_hint": "check_po", "order_status": None}
+    # Fix round 6: the order-side status set aside, so a "customer or supplier?" pick of the customer answers the same
+    # outstanding ask on the sales side (`turn/apply._reconcile_step`).
+    set_aside = verdict.get("order_status") or verdict.get("status")
+    if set_aside:
+        out["sales_side_status"] = set_aside
+    if isinstance(verdict.get("asks"), list):
+        # The plan reads `asks` before `domain_hint` (`turn/apply.py`), as `_dealer_cost_as_promotion` found.
+        out["asks"] = [
+            {**a, "domain": "purchase_order"} if isinstance(a, dict) and a.get("domain") in SUPPLIER_SWITCH_DOMAINS else a
+            for a in verdict["asks"]
+        ]
+    return out
 
 
 def probe_incoming(
@@ -1931,8 +2087,8 @@ def _run_probe(
     reason: a transient MCP failure must arrive as "we did not measure", never as an empty
     answer set, or every line renders a confident miss on evidence nobody gathered.
     `probe-incoming` has no such setting and its failure ends the turn in n8n - the port
-    logs and returns None instead, which the incoming annotator renders as today's
-    "None of these have incoming stock right now."
+    logs and returns None instead, which the incoming annotator reads as not measured: the
+    roster stays as the gate wrote it, with no stamps.
     """
     semantic_input = _semantic_input(
         ctx, aggregate=aggregate, default_start=default_start, space_id=space_id

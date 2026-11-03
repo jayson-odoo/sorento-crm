@@ -35,13 +35,16 @@ from app.schemas.price_tag import (
     PriceTagRequestCreate,
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
+    ProductTagTemplateItem,
     RequestChangesPayload,
     RequestChangesResponse,
     ResolvedLineData,
     ReviewCommentResponse,
     TagItemLookupItem,
+    TagPreviewIn,
+    TagPreviewOut,
 )
-from app.services.dealer_kit import tag_data_service
+from app.services.dealer_kit import product_tag_template_service, tag_data_service
 from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
 from app.services.error_handler import AppException, handle_not_found
 from app.services import price_tag_review_service
@@ -462,6 +465,10 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
         # first, because "you have no dealer" is more use than a guard message about
         # a line on a request that was never going to be accepted anyway.
         PriceTagRequestService.validate_submittable(req)
+        # PRICETAG-TEMPLATE-PER-PRODUCT: a product with several published
+        # templates needs the salesperson's pick before marketing gets it.
+        with company_scope(db, frozenset({req.company_id})):
+            product_tag_template_service.require_line_templates(db, req)
         # The set guard used to refuse here. Warn and allow instead (D2, AC-S2-7):
         # a guarded line with no package carries a `package_warning` marketing reads
         # and the request goes through.
@@ -816,6 +823,70 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
     # a line's own Promotion select reads THIS, not a flat promotion list, since
     # which promotions are even offered now depends on what is on the line.
     # ---------------------------------------------------------------------------
+
+
+    @router.get(
+        "/lookups/product-tag-templates/{product_id}",
+        response_model=list[ProductTagTemplateItem],
+    )
+    def portal_lookup_product_tag_templates(
+        product_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """The PUBLISHED templates this product may print with
+        (PRICETAG-TEMPLATE-PER-PRODUCT): one = the line uses it, several = the
+        salesperson picks, none = no field. Called once per product pick, like
+        `product-combos`. Same gate and company scope as the other lookups."""
+        _assert_visible(db, token.contact_id)
+        product_id = validate_uuid_path(product_id, resource="Product")
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            links = product_tag_template_service.published_links(db, [product_id])
+            return [
+                ProductTagTemplateItem(**product_tag_template_service.template_item(t))
+                for t in links.get(product_id, [])
+            ]
+
+
+    @router.post("/lookups/tag-preview", response_model=TagPreviewOut)
+    def portal_tag_preview(
+        payload: TagPreviewIn,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """The request form's live preview (PRICETAG-TEMPLATE-PER-PRODUCT R5):
+        per line, the template to draw and the tag data the proof would resolve,
+        with nothing written. Same gate, viewer and company scope as
+        `line-pricing`, so the price drawn is the price the form already shows."""
+        _assert_visible(db, token.contact_id)
+        if payload.request_id:
+            # A saved request of THIS contact's own (404 otherwise, same as the
+            # detail route), resolved under the request's own company.
+            request_id = validate_uuid_path(payload.request_id, resource="Price tag request")
+            req = _require_own_request(db, token, request_id)
+            with company_scope(db, frozenset({req.company_id})):
+                result = product_tag_template_service.preview_for_request(db, req)
+            return TagPreviewOut(
+                lines=[ResolvedLineData.model_validate(row) for row in result["lines"]],
+                templates=result["templates"],
+                assets=result["assets"],
+                images=result["images"],
+                fonts=result["fonts"],
+            )
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            result = product_tag_template_service.preview(
+                db,
+                price_mode=payload.price_mode,
+                lines=[line.model_dump() for line in payload.lines],
+                viewer=tag_data_service.contact_viewer(db, token.contact_id),
+            )
+        return TagPreviewOut(
+            lines=[ResolvedLineData.model_validate(row) for row in result["lines"]],
+            templates=result["templates"],
+            assets=result["assets"],
+            images=result["images"],
+            fonts=result["fonts"],
+        )
 
 
     @router.post("/lookups/line-pricing", response_model=list[LinePricingRow])

@@ -1707,6 +1707,57 @@ for _key, _fn, _label in (
     )
 
 
+def _unassign_tag_template_products(db: Session, payload: dict):
+    """PRICETAG-TEMPLATE-PER-PRODUCT: the bulk "Remove from N products" -
+    an unlink, so it parks (5s, reversible: Add puts the links back). The
+    filter is re-applied at commit, under the requester's own scope."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.bulk_assign(
+        db,
+        _entity_id(payload),
+        {
+            key: payload.get(key) or []
+            for key in ("brand_ids", "category_ids", "item_class_ids", "family_codes")
+        },
+        "remove",
+        user_id=payload.get("requested_by_id"),
+    )
+
+
+register(
+    FormAction(
+        key="tag_template.unassign_products",
+        entity_types=("tag_template",),
+        execute=_unassign_tag_template_products,
+        window=WINDOW_REVERSIBLE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Remove tag template from products",
+    )
+)
+
+
+def _unlink_product_tag_templates(db: Session, payload: dict):
+    """PRICETAG-TEMPLATE-PER-PRODUCT: unticking templates on the product page."""
+    from app.services.dealer_kit import product_tag_template_service
+
+    return product_tag_template_service.unlink_product_templates(
+        db, _entity_id(payload), [str(t) for t in payload.get("template_ids") or []]
+    )
+
+
+register(
+    FormAction(
+        key="product.unlink_tag_templates",
+        entity_types=("product",),
+        execute=_unlink_product_tag_templates,
+        window=WINDOW_REVERSIBLE,
+        permission="dealer_kit.tag_templates.manage",
+        label="Unlink tag templates from product",
+    )
+)
+
+
 def _delete_tag_size_preset(db: Session, payload: dict):
     """Both callers - the `/dealer-kit/tag-sizes` listing's row menu and the
     request designer's Tag Size control (the saved-size `x`) - park through
@@ -2706,5 +2757,30 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="projects.projects.delete",
         label="Delete quotation",
+    )
+)
+
+
+def _delete_project_party_contact(db: Session, payload: dict):
+    """The same hard delete `DELETE /project-sales/parties/{id}/contacts/{cid}` runs
+    (PS-REGISTRATION-V3 rule 4). Stakeholders copied from it keep their copy."""
+    from app.models.projects import ProjectPartyContact
+    from app.services import project_party_contact_service as contacts
+    from app.services.error_handler import handle_not_found
+
+    row = db.query(ProjectPartyContact).filter(ProjectPartyContact.id == _entity_id(payload)).first()
+    if row is None:
+        raise handle_not_found("Contact", _entity_id(payload))
+    return contacts.delete_contact(db, row)
+
+
+register(
+    FormAction(
+        key="project_party_contact.delete",
+        entity_types=("project_party_contact",),
+        execute=_delete_project_party_contact,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.parties.edit",
+        label="Delete party contact",
     )
 )

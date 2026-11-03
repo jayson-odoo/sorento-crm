@@ -134,8 +134,9 @@ ALLOWED: dict[str, list[str]] = {
     # the PO tool takes `warehouse_ids`; a customer or transporter token no longer rides into
     # it. Supersedes PLAN-chatbot-warehouse-entity-and-last-in line 47 ("purchase_order
     # stays as is"). `ALLOWS_EMPTY` below keeps a bare "PO" listing the open book.
+    # SUPPLIER-ASK: "POs for supplier X" / "outstanding for supplier X" narrows by supplier.
     "purchase_order": [
-        "product", "warehouse", "category", "brand",
+        "product", "warehouse", "category", "brand", "supplier",
         "sales_order", "customer_po_ref", "purchase_order", "purchase_request",
     ],
 }
@@ -361,7 +362,8 @@ def _display_name(match: Any) -> str | None:
     the customer typed. A product code IS the product's name to this audience.
     """
     display = jsc.get(match, "display")
-    for key in ("customer_name", "debtor_name"):
+    # SUPPLIER-ASK: a supplier's `canonical_code` is its supplier code, not what was typed either.
+    for key in ("customer_name", "debtor_name", "supplier_name"):
         value = jsc.get(display, key)
         if jsc.truthy(value):
             return jsc.js_string(value).strip()

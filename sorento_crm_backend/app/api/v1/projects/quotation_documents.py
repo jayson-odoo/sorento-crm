@@ -15,7 +15,8 @@ from __future__ import annotations
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -24,6 +25,7 @@ from app.database import get_db
 from app.dependencies import require_any_permission_with_api_key, require_permission
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
+    MakeQuotationRequest,
     ProjectQuotationDocumentCreate,
     QuotationAmendmentApplyResponse,
     QuotationAmendmentDecideRequest,
@@ -36,11 +38,13 @@ from app.schemas.projects import (
     ProjectQuotationDocumentResponse,
     ProjectQuotationDocumentUpdate,
     ProjectQuotationIssueResponse,
+    QuotationIssueViewResponse,
     ProjectQuotationScopeCreate,
     ProjectQuotationScopeSummary,
     ProjectQuotationScopeUpdate,
 )
 from app.schemas.status import StatusGraphResponse
+from app.services import after_response
 from app.services import project_quotation_approval_service as approvals
 from app.services import project_quotation_document_service as svc
 from app.services import project_service as projects
@@ -363,6 +367,32 @@ def list_quotation_issues(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.get(
+    "/projects/{project_id}/quotation-documents/{document_id}/views",
+    response_model=ListResponse[QuotationIssueViewResponse],
+)
+def list_quotation_views(
+    project_id: str,
+    document_id: str,
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
+    db: Session = Depends(get_db),
+):
+    """The customer's counted opens of every revision's sign link, newest first (PS-QUOTE-VIEWS).
+
+    Same gate as the issue history: anyone who can open the document reads its log.
+    """
+    from app.services import quotation_view_service as views
+
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(project_id, resource="Project")
+        projects.get_project_or_404(db, project_id)
+        document = svc.get_document_or_404(db, project_id, document_id)
+        return _envelope(views.log_for_document(db, document))
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issue",
     response_model=ProjectQuotationIssueResponse,
@@ -371,6 +401,7 @@ def list_quotation_issues(
 def issue_quotation_document(
     project_id: str,
     document_id: str,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -385,9 +416,62 @@ def issue_quotation_document(
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
         record = svc.issue(db, document=document, actor_user_id=current_user["id"])
+        changes = list(getattr(record, "price_changes", None) or [])
         db.commit()
         db.refresh(record)
-        return svc.serialize_issue(db, record)
+        payload = svc.serialize_issue(db, record)
+        # After the response: the alert fans out per recipient and must not hold the Send button.
+        if changes:
+            after_response.defer(
+                background_tasks,
+                db,
+                svc.alert_price_changes_job,
+                str(document.id),
+                str(record.id),
+                changes,
+            )
+        return payload
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/projects/{project_id}/quotation-documents/{document_id}/make-quotation",
+    response_model=ProjectQuotationDocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def make_quotation_from_proposal(
+    project_id: str,
+    document_id: str,
+    payload: MakeQuotationRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """PS-PROPOSAL-QUOTATION: a won project's salesperson turns one issued proposal revision into
+    the project's quotation. 409 ``project_not_won`` / ``project_has_quotation``, 422
+    ``quotation_source_not_proposal``, 404 ``quotation_issue_not_found``."""
+    try:
+        validate_uuid_path(document_id, resource="Quotation")
+        validate_uuid_path(payload.issue_id, resource="Revision")
+        _editable_project(db, project_id, current_user)
+        proposal = svc.get_document_or_404(db, project_id, document_id)
+        try:
+            quotation = svc.make_quotation(
+                db, proposal=proposal, issue_id=payload.issue_id, actor_user_id=current_user["id"]
+            )
+            db.commit()
+        except IntegrityError:
+            # Two presses racing past the service check: the one-quotation-per-project index
+            # refuses the second, which is the same answer the check gives.
+            db.rollback()
+            raise AppException(
+                status_code=409,
+                message="This project already has a quotation.",
+                code="project_has_quotation",
+            )
+        db.refresh(quotation)
+        return svc.serialize_document(db, quotation)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -921,7 +1005,8 @@ def _queue_issue_export(
         # Named up front so the drawer reads as the quotation it is while still pending; the
         # task overwrites it with the renderer's own name once it knows it.
         filename=(
-            f"quotation-{svc.quotation_no(document.document_no, record.issue_no)}"
+            f"{svc.document_noun(document).lower()}-"
+            f"{svc.quotation_no(document.document_no, record.issue_no, record.revision_label)}"
             f".{suffix}"
         ).replace("/", "-"),
     )

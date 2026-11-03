@@ -4,15 +4,18 @@ import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import type { SampleRequestWrite } from '@/types/sampleRequest';
 import {
+  answerSampleRequestDate,
   createSampleRequest,
   getProjectSampleRequests,
   getSampleRequest,
   getSampleRequests,
   getSampleRequestSwitches,
+  linkSampleRequestConsignment,
   moveSampleRequest,
   saveSampleRequestInternal,
   submitSampleRequest,
   updateSampleRequest,
+  type SampleRequestDateAnswerBody,
   type SampleRequestListParams,
   type SampleRequestMoveBody,
 } from '../services/sampleRequestService';
@@ -26,6 +29,7 @@ export function sampleRequestsListQueryKey(params: SampleRequestListParams): Que
     params.sorting,
     params.searchQuery,
     params.status,
+    params.stage,
     params.projectId,
     params.salespersonId,
   ];
@@ -38,6 +42,7 @@ function listParamsFromUrl(params: ListPagerParams): SampleRequestListParams {
     sorting: params.sorting,
     searchQuery: params.searchQuery,
     status: params.filters.status,
+    stage: params.filters.stage,
     projectId: params.filters.project_id,
     salespersonId: params.filters.salesperson_id,
   };
@@ -139,5 +144,25 @@ export function useSampleRequestMutations() {
     onError: fail('Failed to save the consignment details'),
   });
 
-  return { create, update, submit, move, saveInternal };
+  const answerDate = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: SampleRequestDateAnswerBody }) =>
+      answerSampleRequestDate(id, body),
+    onSuccess: () => {
+      refresh();
+      toast.success('Date answer saved');
+    },
+    onError: fail('Failed to save the date answer'),
+  });
+
+  const linkConsignment = useMutation({
+    mutationFn: ({ id, consignmentOrderId }: { id: string; consignmentOrderId: string | null }) =>
+      linkSampleRequestConsignment(id, consignmentOrderId),
+    onSuccess: () => {
+      refresh();
+      toast.success('Consignment linked');
+    },
+    onError: fail('Failed to link the consignment'),
+  });
+
+  return { create, update, submit, move, saveInternal, answerDate, linkConsignment };
 }

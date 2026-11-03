@@ -12,7 +12,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { DELIVERY_MODE_LABELS, type SampleRequestRow } from '@/types/sampleRequest';
 import { useProjectSampleRequestsQuery } from '../../sample-requests/hooks/useSampleRequests';
-import { deliveryText } from '../../sample-requests/components/SampleRequestsList';
+import { DeliveryCell, deliveryText } from '../../sample-requests/components/SampleRequestsList';
 import type { Project } from '../../_shared/types/project.types';
 
 /**
@@ -62,7 +62,7 @@ export function SampleRequestsPanel({ project }: { project: Project }) {
         id: 'delivery',
         accessorFn: (row) => deliveryText(row),
         header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
-        cell: ({ row }) => deliveryText(row.original),
+        cell: ({ row }) => <DeliveryCell row={row.original} />,
         size: 120,
         meta: { headerTitle: 'Delivery' },
       },

@@ -1,11 +1,12 @@
 """Marketing management schemas."""
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator
 from typing import Generic, Optional, TypeVar
 from datetime import date, datetime
 
 from app.schemas.common import ListResponse
+from app.services.promo_selling_price import brand_has_no_selling_price
 
 from app.schemas.promotion_dates import (
     normalize_promotion_start_end_optional,
@@ -438,12 +439,29 @@ class PromotionProductResponse(BaseModel):
     promotion_type_name: Optional[str] = None
     # The parent promotion has ended and its TYPE says it still applies.
     expired_but_usable: bool = False
+    # CABANA-NO-SELLING-PRICE: the product's brand carries no promotion selling price, so
+    # the price and discount above are always null and a reader shows none (not list price).
+    no_selling_price: bool = False
 
     @field_validator("id", "promotion_id", "promotion_group_id", "product_id", "company_id", mode="before")
     @classmethod
     def _uuid_id_fields(cls, v):
         """Nested from_attributes (e.g. under promotion_groups) bypasses custom model_validate."""
         return _uuid_to_str(v)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _no_selling_price_brand(cls, obj, handler):
+        """CABANA-NO-SELLING-PRICE: a brand whose promotions carry no selling price shows
+        none, nor the discount derived from it. A wrap validator so the nested path
+        (promotion detail's groups) is masked too; MCP and the chatbot read this."""
+        result = handler(obj)
+        if not isinstance(obj, dict) and brand_has_no_selling_price(getattr(obj, "product", None)):
+            result.promotion_price = None
+            result.discount_amount = None
+            result.discount_percent = None
+            result.no_selling_price = True
+        return result
 
     class Config:
         from_attributes = True
@@ -474,6 +492,10 @@ class PromotionProductResponse(BaseModel):
             # Map promo_selling_price to promotion_price
             data['promotion_price'] = getattr(obj, 'promo_selling_price', None)
             data['display_order'] = getattr(obj, 'display_order', 0)
+            if brand_has_no_selling_price(product_obj):
+                # The dict path skips the wrap validator's ORM check: mask here too.
+                data['promotion_price'] = data['discount_amount'] = data['discount_percent'] = None
+                data['no_selling_price'] = True
             return cls(**data)
         return super().model_validate(obj, **kwargs)
 

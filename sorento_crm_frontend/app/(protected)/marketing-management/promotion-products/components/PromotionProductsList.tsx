@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { displayPromoPrice } from '@/app/(protected)/marketing-management/promotions/lib/promoPrice';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -97,7 +98,8 @@ export default function PromotionProductsList() {
         header: ({ column }) => <DataGridColumnHeader title="Promo Price" column={column} />,
         size: 120,
         cell: ({ row }) => {
-          const price = row.original.promotion_price || row.original.product?.list_price || 0;
+          const price = displayPromoPrice(row.original);
+          if (price === null) return '-';
           return new Intl.NumberFormat('en-MY', { style: 'currency', currency: 'MYR' }).format(price);
         },
         meta: { headerTitle: 'Promo Price' },

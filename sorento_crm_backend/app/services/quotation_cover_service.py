@@ -31,7 +31,7 @@ def layout_of(issue: Any) -> int:
 def cover_reference(document: Any, issue: Any, project: Optional[Project]) -> str:
     from app.services.project_quotation_document_service import quotation_no
 
-    number = quotation_no(document.document_no, issue.issue_no)
+    number = quotation_no(document.document_no, issue.issue_no, issue.revision_label)
     title = (project.title or "").strip() if project is not None else ""
     return f"{number} {title}" if title else number
 
@@ -156,7 +156,7 @@ def cover_rows(
         ("contact", "Contact", clean(document.recipient_phone_snapshot)),
         ("address", "Add", clean(document.recipient_address_snapshot)),
         ("email", "Email", clean(document.recipient_email_snapshot)),
-        ("purpose", "Quotation Purpose", clean(document.quotation_purpose)),
+        ("purpose", f"{'Quotation' if getattr(document, 'kind', None) == 'quotation' else 'Proposal'} Purpose", clean(document.quotation_purpose)),
     ]
     tail = [
         ("payment_terms", "Payment Terms", clean(issue.payment_terms)),

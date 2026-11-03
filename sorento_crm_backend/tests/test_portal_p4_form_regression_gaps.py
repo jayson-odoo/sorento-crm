@@ -81,7 +81,7 @@ def test_gap_sample_request_staff_moves_to_delivered_show_in_my_requests(world):
     s.ok(w.rep.me.call("POST", f"{srso.SR_PORTAL}/{sid}/submit"))
     path = f"{srso.SR}/{sid}/move"
 
-    s.ok(w.staff(coord, "POST", path, json={"to": "processing"}))
+    s.ok(w.staff(coord, "POST", path, json={"to": "processing", "date_feasible": True}))
     no_date = w.staff(coord, "POST", path, json={"to": "customer_confirmed"})
     assert no_date.status_code == 422, no_date.text
     assert no_date.json()["code"] == "SAMPLE_REQUEST_DATE_REQUIRED"

@@ -42,7 +42,6 @@ MEANING_PARAGRAPH = (
     "sure what it means, \"meaning\" is null. Never invent a meaning."
 )
 
-
 def _schema(with_meaning: bool) -> dict[str, Any]:
     props: dict[str, Any] = {"text": {"type": "string"}, "type": {"type": "string", "enum": list(SPAN_TYPES)}}
     required = ["text", "type"]
@@ -94,13 +93,14 @@ class SpanAnswer:
     failure: str | None = None
 
 
-def resolve_config(db: Session, *, llm_choice=None) -> SpanConfig:
-    """The span prompt, its provider and model, and the API key. Session-bound; raises when no key is set."""
+def resolve_config(db: Session, *, llm_choice=None, override_version_id: str | None = None) -> SpanConfig:
+    """The span prompt, its provider and model, and the API key. Session-bound; raises when no key is set.
+    `override_version_id` (dry run only, `engine._span_override`) runs that span version instead of the label's."""
     from app.services import ai_prompt_registry
     from app.services.ai_assistant_service import AIAssistantConfigService
     from app.services.contact_llm_choice import apply_choice
 
-    resolved = ai_prompt_registry.get_prompt(db, PROMPT_KEY)
+    resolved = ai_prompt_registry.get_prompt(db, PROMPT_KEY, override_version_id=override_version_id)
     system_prompt, version = ai_prompt_registry.render_resolved(db, PROMPT_KEY, resolved)
     provider_label, model_label = ai_prompt_registry.agent_model(db, PROMPT_KEY)
     config = AIAssistantConfigService(db).get()

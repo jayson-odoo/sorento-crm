@@ -1,3 +1,4 @@
+import type { QtyOverProduct } from '../lib/qtyOverQuote';
 /**
  * Customer PO intake (P4) and handwriting review cards (P5).
  *
@@ -218,7 +219,14 @@ export interface POIntakeController {
   updateHeader: (body: Partial<POVersionHeader>) => Promise<void>;
   updateLine: (lineId: string, body: POLineUpdateBody) => Promise<void>;
   /** True on success (S4): the caller navigates to the review page's origin, if it carries one. */
-  confirm: () => Promise<boolean>;
+  /** `qtyOverReason` is sent on the second press after the qty-over soft stop. */
+  confirm: (qtyOverReason?: string) => Promise<boolean>;
+  /**
+   * PS-PROPOSAL-QUOTATION: set when the last confirm was stopped because the project's POs order
+   * more than the quotation quotes; the screen asks for a reason. Optional for the mock seam.
+   */
+  qtyOverProducts?: QtyOverProduct[] | null;
+  clearQtyOver?: () => void;
   acceptAnnotation: (annotationId: string, note?: string | null) => Promise<void>;
   editAnnotation: (annotationId: string, body: POAnnotationEditBody) => Promise<void>;
   rejectAnnotation: (annotationId: string, note: string) => Promise<void>;

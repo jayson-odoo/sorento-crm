@@ -71,11 +71,8 @@ UNCALLABLE_READS = {
     "crm_outstanding_report": "retired from the chatbot; outstanding asks run on crm_report_ask",
     # 8 Sep 2026 (turns 87694182 / 0b10a4c0 / 11932963): `metric` is a required query
     # param and the fetch lane never maps one from the parser. Back in when it does.
-    "crm_order_analytics": "requires `metric`; the lane never sends it",
-    # SEAT-AS-PRODUCT (owner rule 13 Oct 2026): a `fits` parse is a product resolution step
-    # (`lanes/business/find.as_linked_products`), never a reply of its own; the MCP tool and
-    # route stay a generic read for other callers.
-    "crm_find": "a seat-cover ask resolves to the linked codes; no find reply lane",
+    # AGENTIC-UNIFY PR 4: `crm_order_analytics` and `crm_find` are now in the pool for the panel agent (plain GETs);
+    # the fetch lane still never calls them, and no chat lane reaches them (AC-0: panel only).
 }
 
 
