@@ -15175,13 +15175,6 @@ def _lines_by_inquiry(
 def handover_route_groups(
     db: Session, items: Sequence[Dict[str, Any]]
 ) -> List[List[Dict[str, Any]]]:
-    """The lines of each email, see `_handover_routes`."""
-    return [group for _rows, group in _handover_routes(db, items)]
-
-
-def _handover_routes(
-    db: Session, items: Sequence[Dict[str, Any]]
-) -> List[Tuple[frozenset, List[Dict[str, Any]]]]:
     """The queued handover lines split into one email each (OI-ROUTE-BY-RAISER), in the
     order each group first appears.
 
@@ -15237,7 +15230,7 @@ def _handover_routes(
                 )
             )
         groups.setdefault((cls, passing[facts]), []).append(item)
-    return [(row_ids, group) for (_cls, row_ids), group in groups.items()]
+    return list(groups.values())
 
 
 def send_handover_groups(
@@ -15249,7 +15242,7 @@ def send_handover_groups(
 
     # A group no enabled row takes still dispatches (and fires nothing), as before: the
     # workbook is only stored when an enabled row exists (`store_excel`).
-    for _row_ids, group in _handover_routes(db, items):
+    for group in handover_route_groups(db, items):
         try:
             built = build_handover_email(db, group, store_excel=store_excel)
             if built is None:

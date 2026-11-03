@@ -32,6 +32,17 @@ if (!window.matchMedia) {
 }
 
 let searchParamsValue = '';
+const toastError = vi.fn();
+vi.mock('@/lib/toast', () => ({
+  toast: Object.assign(vi.fn(), {
+    success: vi.fn(),
+    error: (...args: unknown[]) => toastError(...args),
+    info: vi.fn(),
+    warning: vi.fn(),
+    message: vi.fn(),
+  }),
+}));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/order-inquiries',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -457,5 +468,8 @@ describe('Send to purchasing for ONE order inquiry that goes through two rows (O
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
     );
     expect(sendResendSpy).toHaveBeenCalledTimes(1);
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining('Sent to some recipients only: OI-0001'),
+    );
   });
 });
