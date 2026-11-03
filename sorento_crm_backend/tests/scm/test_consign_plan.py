@@ -4,8 +4,9 @@ Written test-first, before the code. The owner's rule (15-16 Oct 2026): a consig
 planned like a sales order, but its goods sit at CON, a bin that is flagged OUT of fulfilment
 planning. So for a consignment line only, the "Outside fulfilment planning" verdict is lifted,
 CON is offered under Borrow as the line's own location (BORROW-OWN-LOC), Confirm writes a
-decision with no Buy and no purchasing row, and the plan quantity nets `qty_returned`. A sales
-order line never sees CON.
+decision with no Buy, and the plan quantity nets `qty_returned`. A sales order line never sees
+CON. The Borrow from CON raises its ORDER_BACK row like a sales order line's own-bin Borrow
+(owner ruling 2 Nov 2026, CONSIGN-OWN-BIN-EMAIL, reversing Q1's "nothing to purchasing").
 
 Postgres via `blank_session`; every chain seeded here (CI's database is empty). Board fixtures
 come from `tests/test_fulfilment_board.py`, confirm fixtures from the ladder suite, as in
@@ -51,6 +52,19 @@ from .test_project_supply_service_ladder import (
 )
 
 REQUIRED = date(2026, 9, 3)
+
+
+def _order_backs(db, line_id):
+    """The line's live order inquiry rows: what purchasing was told."""
+    from app.models.project_so import INQUIRY_CANCELLED
+
+    return [
+        (row.verb, row.qty, row.stock_location)
+        for row in db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line_id,
+                OrderInquiryRow.state != INQUIRY_CANCELLED)
+        .all()
+    ]
 
 
 # --------------------------------------------------------------------------- helpers
@@ -234,7 +248,7 @@ def test_uac05_a_sales_order_line_at_a_flagged_off_bin_still_reads_outside_plann
 # --------------------------------------------------------------------------- UAC-06
 
 
-def test_uac06_confirming_borrow_from_con_succeeds_with_no_buy_and_no_purchasing_row():
+def test_uac06_confirming_borrow_from_con_succeeds_with_no_buy_and_its_order_back():
     with blank_session() as db:
         world = _consign_world(db)
         body = _confirm(db, world, borrow=[_own_borrow(world, "10", "Goods are the CON stock.")])
@@ -247,17 +261,13 @@ def test_uac06_confirming_borrow_from_con_succeeds_with_no_buy_and_no_purchasing
             .one()
         )
         buys = [Decimal(str(s.get("buy_qty") or 0)) for s in decision.line_snapshots]
-        inquiry_rows = (
-            db.query(OrderInquiryRow)
-            .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
-            .filter(ProjectSalesOrderLine.id == world["line"].id)
-            .count()
-        )
+        rows = _order_backs(db, world["line"].id)
+        own_code = world["own"].warehouse_code
         planned, plannable = _planned_state(db, world["core_so"])
 
     assert body["lines_decided"] == 1
     assert len(buys) == 1 and buys == [Decimal("0")]
-    assert inquiry_rows == 0, "nothing goes to purchasing"
+    assert rows == [("ORDER_BACK", Decimal("10"), own_code)], "owed back like a sales order"
     assert (planned, plannable) == (1, 1)
 
 
@@ -368,9 +378,8 @@ def test_a_never_adopted_consignment_adopts_then_confirms_a_con_borrow_with_no_b
         world = {"eling": eling, "product": product, "own": con, "pool": None,
                  "order": order, "line": line}
         body = _confirm(db, world, borrow=[_own_borrow(world, "10", "Goods are the CON stock.")])
-        inquiry_rows = (
-            db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).count()
-        )
+        rows = _order_backs(db, line.id)
+        con_code = con.warehouse_code
         decision = (
             db.query(SOSupplyDecision)
             .filter(SOSupplyDecision.project_sales_order_id == order.id,
@@ -382,7 +391,7 @@ def test_a_never_adopted_consignment_adopts_then_confirms_a_con_borrow_with_no_b
 
     assert body["lines_decided"] == 1
     assert buys == [Decimal("0")]
-    assert inquiry_rows == 0, "nothing goes to purchasing"
+    assert rows == [("ORDER_BACK", Decimal("10"), con_code)], "owed back like a sales order"
     assert (planned, plannable) == (1, 1)
 
 
@@ -468,7 +477,7 @@ def test_b2_an_own_bin_borrow_on_a_consignment_at_a_planned_bin_raises_its_order
     assert found == [(own_code, Decimal("10"))]
 
 
-def test_b1_confirming_the_consignments_own_proposal_writes_no_buy_and_no_purchasing_row():
+def test_b1_confirming_the_consignments_own_proposal_writes_no_buy_and_its_order_back():
     with blank_session() as db:
         world = _consign_world(db)
         proposal = ProjectSupplyService(db).proposal_for(world["order"])
@@ -486,14 +495,12 @@ def test_b1_confirming_the_consignments_own_proposal_writes_no_buy_and_no_purcha
                 "reason": borrows[0]["reason"],
             }],
         )
-        inquiry_rows = (
-            db.query(OrderInquiryRow)
-            .filter(OrderInquiryRow.so_line_id == world["line"].id).count()
-        )
+        rows = _order_backs(db, world["line"].id)
+        own_code = world["own"].warehouse_code
         planned, plannable = _planned_state(db, world["core_so"])
 
     assert body["lines_decided"] == 1
-    assert inquiry_rows == 0
+    assert rows == [("ORDER_BACK", Decimal("10"), own_code)]
     assert (planned, plannable) == (1, 1)
 
 
@@ -684,7 +691,7 @@ def test_con_board_admits_and_proposes_one_borrow_at_con_no_buy(con_active):
 
 
 @CON_FLAGS
-def test_con_confirming_the_boards_own_proposal_has_no_buy_and_no_purchasing_row(con_active):
+def test_con_confirming_the_boards_own_proposal_has_no_buy_and_its_order_back(con_active):
     with blank_session() as db:
         world = _consign_world(db, con_active=con_active)
         proposal = ProjectSupplyService(db).proposal_for(world["order"])
@@ -694,12 +701,12 @@ def test_con_confirming_the_boards_own_proposal_has_no_buy_and_no_purchasing_row
             "source": "other_location", "warehouse_id": str(world["own"].id),
             "qty": str(components[0]["qty"]), "reason": components[0]["reason"],
         }])
-        inquiry_rows = db.query(OrderInquiryRow).filter(
-            OrderInquiryRow.so_line_id == world["line"].id).count()
+        rows = _order_backs(db, world["line"].id)
+        own_code = world["own"].warehouse_code
         planned, plannable = _planned_state(db, world["core_so"])
 
     assert body["lines_decided"] == 1
-    assert inquiry_rows == 0
+    assert rows == [("ORDER_BACK", Decimal("10"), own_code)]
     assert (planned, plannable) == (1, 1)
 
 
@@ -716,8 +723,8 @@ def test_con_holding_none_still_proposes_and_confirms_the_borrow(con_active):
         confirm_world = _consign_world(db, qty="1", con_stock=0, con_active=con_active)
         body = _confirm(db, confirm_world, borrow=[
             _own_borrow(confirm_world, "1", "Goods are the CON stock.")])
-        inquiry_rows = db.query(OrderInquiryRow).filter(
-            OrderInquiryRow.so_line_id == confirm_world["line"].id).count()
+        rows = _order_backs(db, confirm_world["line"].id)
+        own_code = confirm_world["own"].warehouse_code
         held = ProjectSupplyService(db).held_stock_by_location(
             [str(confirm_world["product"].id)]
         ).get((str(confirm_world["product"].id), str(confirm_world["own"].id)))
@@ -727,7 +734,7 @@ def test_con_holding_none_still_proposes_and_confirms_the_borrow(con_active):
 
     assert kinds == ["borrow"]
     assert body["lines_decided"] == 1
-    assert inquiry_rows == 0
+    assert rows == [("ORDER_BACK", Decimal("1"), own_code)]
     assert (planned, plannable) == (1, 1)
 
 

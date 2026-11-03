@@ -855,8 +855,8 @@ class _LineFacts:
     #: reconciled AutoCount line). Set, the line is read out with no components and no
     #: donors; it is never carried and cannot be named to a confirmation.
     unplannable_reason: Optional[str] = None
-    #: The order's doc type (CONSIGN-PLAN): a doc type in `PLANNED_AT_OWN_BIN_DOC_TYPES` owes
-    #: nothing back for goods taken from its own bin.
+    #: The order's doc type (CONSIGN-PLAN): a doc type in `PLANNED_AT_OWN_BIN_DOC_TYPES` is
+    #: planned at its own bin (`planned_at_own_bin`).
     doc_type: Optional[str] = None
     #: Ladder v2 (`PLAN-demo-followups-19aug-ladder-v2.md` section E, section 8). The
     #: OWNERSHIP GROUP this line's own location belongs to - the suffix after the hyphen
@@ -1973,7 +1973,8 @@ class ProjectSupplyService:
             if planned_at_own_bin(fact.warehouse, fact.doc_type) and fact.open_qty > _ZERO:
                 # CONSIGN-PLAN (owner Q1): the goods are already at the own bin, so the
                 # proposal is a plain Borrow of the whole plan quantity from it - never a
-                # Buy, nothing to purchasing - and it draws on no shared pile.
+                # Buy - and it draws on no shared pile. Confirmed, it is owed back at that
+                # bin like any own-bin Borrow (owner ruling 2 Nov 2026).
                 own = fact.own_code
                 out[key] = (
                     (
@@ -8705,7 +8706,9 @@ class ProjectSupplyService:
         """"Borrow from another order" OFF (D4, B3): every borrow that is not a document is
         owed back on the BORROWING line, at its own date, at the location it left from. The
         line's own location and its own group included (Q3): a project line is demand only
-        through its OI rows, so nothing else would replace what it took. One row per (line,
+        through its OI rows, so nothing else would replace what it took. A consignment's Borrow
+        at its own bin too, like a sales order line's (owner ruling 2 Nov 2026,
+        CONSIGN-OWN-BIN-EMAIL, reversing CONSIGN-PLAN Q1 for it). One row per (line,
         location).
 
         `unnamed_order_borrows_only` is the switch-ON reading: only a later order's stock
@@ -8718,12 +8721,6 @@ class ProjectSupplyService:
                 if qty <= _ZERO or not item.warehouse_id:
                     continue
                 if getattr(item, "supply_key", None):
-                    continue
-                if planned_at_own_bin(fact.warehouse, fact.doc_type) and str(
-                    item.warehouse_id
-                ) == str(fact.warehouse.id):
-                    # CONSIGN-PLAN: the goods ARE the consignment's own bin; nothing was
-                    # lent, so nothing is owed back and purchasing hears nothing.
                     continue
                 if unnamed_order_borrows_only and (
                     not getattr(item, "donor_core_line_id", None)
