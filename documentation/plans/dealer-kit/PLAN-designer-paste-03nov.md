@@ -1,6 +1,6 @@
 # PLAN: paste from the system clipboard into the tag designer (DESIGNER-PASTE)
 
-Status: in review (round 3: keydown paste timer dropped after review). Track: small fix track (frontend only, no migration, no auth/RBAC change,
+Status: in review, reviewer READY (round 3); awaiting CI and owner hand test on macOS Safari + Chrome. Track: small fix track (frontend only, no migration, no auth/RBAC change,
 upload reuses the existing `POST /dealer-kit/assets` surface).
 
 ## Journey
