@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ExpandedState,
@@ -71,6 +71,32 @@ const STATE_FILTER_OPTIONS: SearchableMultiSelectOption[] = [
   { value: RESERVE_RESERVED_FILTER_VALUE, label: 'Reserved' },
   { value: RESERVE_DECLINED_FILTER_VALUE, label: 'Not reserved' },
 ];
+
+// OI-UX-FILTER-SNAPSHOT (owner, 3 Nov 19:15): the lines view lives in the URL, so prev/next
+// OI (`useListPager` carries every `view_*` key) and a reload keep it. State is comma-joined,
+// the way every other multi-select filter writes its URL; sort is `<column>:<asc|desc>`.
+const VIEW_SEARCH_PARAM = 'view_q';
+const VIEW_STATE_PARAM = 'view_state';
+const VIEW_SORT_PARAM = 'view_sort';
+/** A search writes the URL once typing pauses, not on every key (each write is a navigation). */
+const SEARCH_URL_DELAY_MS = 300;
+const STATE_FILTER_VALUES = new Set(STATE_FILTER_OPTIONS.map((option) => option.value));
+
+function stateFilterFromUrl(raw: string | null): string[] | null {
+  if (raw == null) return null;
+  return raw.split(',').filter((value) => STATE_FILTER_VALUES.has(value));
+}
+
+function sortingFromUrl(raw: string | null): SortingState {
+  if (!raw) return [];
+  const [id, dir] = raw.split(':');
+  return id ? [{ id, desc: dir === 'desc' }] : [];
+}
+
+function sortingToUrl(sorting: SortingState): string | null {
+  const first = sorting[0];
+  return first ? `${first.id}:${first.desc ? 'desc' : 'asc'}` : null;
+}
 
 function matchesStateFilter(row: OrderInquiryWorklistRow, selected: string[]): boolean {
   if (selected.length === 0) return true;
@@ -177,18 +203,52 @@ export function OrderInquiryLinesTab({
   const searchParams = useSearchParams();
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
-  const [sorting, setSorting] = useState<SortingState>([]);
-  const [search, setSearch] = useState('');
+  const [sorting, setSorting] = useState<SortingState>(() =>
+    sortingFromUrl(searchParams.get(VIEW_SORT_PARAM)),
+  );
+  const [search, setSearchState] = useState(() => searchParams.get(VIEW_SEARCH_PARAM) ?? '');
   const [expanded, setExpanded] = useState<ExpandedState>({});
   // AC-RS-88: `?reserve=<id>` preselects "Request to reserve" - never opens a dialog
   // any more (round 3's own deep-link dialog is retired).
   // Not for `reserved` / `notice_parked`: those lines are already answered (AC-RF-83).
+  // A `view_state` the reader chose themselves (carried from the previous OI) wins.
   const [stateFilter, setStateFilter] = useState<string[]>(() => {
+    const fromView = stateFilterFromUrl(searchParams.get(VIEW_STATE_PARAM));
+    if (fromView) return fromView;
     const reserve = searchParams.get('reserve');
     return reserve && reserve !== 'reserved' && reserve !== 'notice_parked'
       ? [RESERVE_REQUESTED_FILTER_VALUE]
       : [];
   });
+
+  // The URL as it stands NOW, for a write that fires after a delay.
+  const searchParamsRef = useRef(searchParams);
+  searchParamsRef.current = searchParams;
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+  }, []);
+
+  /** Rewrites the lines-view params, keeping every other param (list state, tab, row). */
+  function writeView(patch: Record<string, string | null>, drop: string[] = []) {
+    const params = new URLSearchParams(searchParamsRef.current.toString());
+    for (const key of drop) params.delete(key);
+    for (const [key, value] of Object.entries(patch)) {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    }
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }
+
+  function setSearch(next: string) {
+    setSearchState(next);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(
+      () => writeView({ [VIEW_SEARCH_PARAM]: next.trim() ? next : null }),
+      SEARCH_URL_DELAY_MS,
+    );
+  }
   // #1312 (AC-U6): ONE lookup call for every line's attachments, never one per row -
   // the same shape the fulfilment board's own list view reads.
   const attachmentLineIds = useMemo(
@@ -217,12 +277,14 @@ export function OrderInquiryLinesTab({
     // back on every unrelated re-render.
     // A list status is the list's own filter and stays, so the pager keeps its list (AC-RF-81).
     const reserve = searchParams.get('reserve');
-    if (reserve && !reserveStatusFrom(reserve)) {
-      const params = new URLSearchParams(searchParams.toString());
-      params.delete('reserve');
-      const qs = params.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-    }
+    const dropReserve = reserve && !reserveStatusFrom(reserve) ? ['reserve'] : [];
+    writeView({ [VIEW_STATE_PARAM]: next.length ? next.join(',') : null }, dropReserve);
+  }
+
+  function handleSortingChange(updater: SortingState | ((old: SortingState) => SortingState)) {
+    const next = typeof updater === 'function' ? updater(sorting) : updater;
+    setSorting(next);
+    writeView({ [VIEW_SORT_PARAM]: sortingToUrl(next) });
   }
 
   // S0 (owner ruling 26 Sep, G5): ONE row per sales order line. S2 (AC-ND-20): `lines`
@@ -253,7 +315,7 @@ export function OrderInquiryLinesTab({
     },
     state: { pagination, sorting, rowSelection: lineSelection, globalFilter: search, expanded },
     onPaginationChange: setPagination,
-    onSortingChange: setSorting,
+    onSortingChange: handleSortingChange,
     onExpandedChange: setExpanded,
     onRowSelectionChange: (updater) =>
       onRowSelectionChange(
