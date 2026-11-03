@@ -2321,7 +2321,9 @@ def run_fetch(
                 n for n in (fetch_mod.SO_NOT_ENABLED_MESSAGE, semantic_input.get("report_ask_note")) if n
             )
         if _named:
-            semantic_input["report_ask_names"] = report_ask.arg_names(db, semantic_input["report_ask_args"], _own_companies)
+            semantic_input["report_ask_names"] = report_ask.arg_names(
+                db, semantic_input["report_ask_args"], _own_companies, settled.extras.get("agent_words")
+            )
         if settled.extras.get("detail"):
             semantic_input["report_ask_detail"] = True  # R3c: a row's detail leaves the ranking on screen
             if settled.extras.get("detail_second"):

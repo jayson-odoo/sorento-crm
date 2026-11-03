@@ -1493,6 +1493,7 @@ def _word_filters(
     a row of that company; a word with no row there is not applied (said), never dropped."""
     out: dict[str, Any] = {}
     unbound: list[tuple[str, str]] = []
+    agent_words: dict[str, list[str]] = {}
     company = jsc.js_string((scope or {}).get("company") or "").strip() or None
 
     def not_bound(hint: str, word: str, outside: bool = False) -> tuple[str, str]:
@@ -1574,10 +1575,14 @@ def _word_filters(
                 listed = ", ".join(sorted(distinct.values()))
                 return None, f"'{word}' matches several {SEVERAL_NOUNS[hint]}: {listed}. Ask again naming one."
             ids.extend(i for i in found if i not in ids)
+            if hint == "sales_agent" and scope is not None:
+                agent_words[word] = [i for i in found if i]  # the word as typed and the rows it resolved to (`arg_names`)
         if ids:
             out[param] = ids
     if unbound:
         out["_unbound"] = unbound
+    if agent_words:
+        out["_agent_words"] = agent_words
     return out, None
 
 
@@ -1813,6 +1818,7 @@ def _fresh_args(
     if filters is None:
         return None, line
     unbound = filters.pop("_unbound", [])
+    agent_words = filters.pop("_agent_words", None)
     args.update(filters)
     if plan["account_types"]:
         args["account_types"] = plan["account_types"]
@@ -1910,6 +1916,8 @@ def _fresh_args(
         if not set(args) - _NON_FILTER_ARGS - {"date_from", "date_to", "top_n"}:
             return None, unbound[0][1]  # the word was the only subject: said, and the ask
         args["_unbound"] = [text for text, _line in unbound]  # popped by `settle`; never a route param
+    if agent_words:
+        args["_agent_words"] = agent_words  # popped by `settle`; never a route param
     return args, None
 
 
@@ -2332,6 +2340,7 @@ def _settle(
     if args is None:
         return None, line
     not_applied = args.pop("_unbound", [])
+    agent_words = args.pop("_agent_words", None)
     kind_ask = args.pop("_kind_ask", None)
     covered = args.pop("_covered", False)
     from app.services.reports.ask_params import _asked_number
@@ -2437,6 +2446,8 @@ def _settle(
         # period alone never runs a total (it asks). One that names its own axis (R5 row 7) keeps its period.
         given["period"] = period
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
+    if agent_words:
+        extras["agent_words"] = agent_words  # semantic carry: the words the agents were typed as (`arg_names`)
     if breakdown:
         extras["breakdown"] = True
     extras.update(company_extras)
@@ -2704,6 +2715,7 @@ def _drill(
         return None, line
     kind_ask = own.pop("_kind_ask", None)
     own.pop("_covered", None)
+    own.pop("_agent_words", None)
     group_by = own.get("group_by")
     if group_by is None:
         return None, CATALOGUE_LINE
@@ -2955,12 +2967,13 @@ _OBJECT_HINTS = frozenset({"sales_agent", "brand", "category", "account_type", "
 REPORT_STATUSES = frozenset({ASK_NAME, "top_selling", *SALES_STATUSES, *OUTSTANDING_STATUSES})
 
 
-def arg_names(db: Any, args: Any, companies: Any = ()) -> dict[str, dict[str, str]]:
+def arg_names(db: Any, args: Any, companies: Any = (), words: Any = None) -> dict[str, dict[str, str]]:
     """The word each id of a report's route args is shown with, and the company's name among the contact's own. Kept
     beside the ids on the frame and on an open question's slot, so the `Held report:` line names them and never prints
     an id. A carried word is resolved again (`_word_filters`), so a row is shown by a word that resolves back to exactly
-    the held rows in the ask's company: a sales agent by its code (unique per company), a brand or category by its name
-    when the name resolves to exactly those rows, else by its code (unique per company); a customer by its name (the
+    the held rows in the ask's company: a sales agent by the one word it was typed as (`words`: word -> the ids it
+    resolved to) when that word resolves back to exactly those rows, else by its code (unique per company); a brand or
+    category by its name when the name resolves to exactly those rows, else by its code; a customer by its name (the
     held ids ride beside it, `_fresh_args`); a product by its code."""
     from app.models.order import Customer
     from app.models.product import Brand, Product, ProductCategory
@@ -2990,6 +3003,11 @@ def arg_names(db: Any, args: Any, companies: Any = ()) -> dict[str, dict[str, st
                 word = next(n for n in named.values() if n.casefold() == shown)
                 if set(_in_company(db, hint, _fresh_ids(db, hint, word), company or None)) != held:
                     named.update({i: codes[i] or named[i] for i in held})  # the name would widen or miss: the code
+        if param == "sales_agent_ids":
+            for word, typed in _dict(words).items():
+                typed = {str(i) for i in jsc.array(typed) if str(i) in named}
+                if typed and set(_in_company(db, "sales_agent", _fresh_ids(db, "sales_agent", word), company or None)) == typed:
+                    named.update({i: str(word) for i in typed})  # one person's codes, as the one word that names them
         out[param] = {i: n for i, n in named.items() if n}
     shown = next((str(c[1]) for c in _own_companies(companies) if company and company == str(c[0])), None)
     if shown:
@@ -3003,7 +3021,7 @@ def with_names(db: Any, slot: Any, companies: Any = ()) -> Any:
         return slot
     extras = _dict(slot.get("extras"))
     so_far = route_args(rf.Outcome(values=_dict(slot.get("values")), extras=extras))
-    return {**slot, "extras": {**extras, "names": arg_names(db, so_far, companies)}}
+    return {**slot, "extras": {**extras, "names": arg_names(db, so_far, companies, extras.get("agent_words"))}}
 
 
 def _object_of(args: dict[str, Any], names: dict[str, Any], *, words: Any = (), outstanding: bool = False) -> dict[str, Any]:
@@ -3126,7 +3144,8 @@ def _word_kinds(ask: dict[str, Any], verdict: dict[str, Any], focus: Any, picked
     """V4: each brand / account type word of the object as `(word, how)`, how = brand | account_type | unsure (`unsure`:
     the tables decide, `_account_plan`, and a word in both is asked). Not the object's list alone (a model may list a word
     the message left open as a brand), never the message's text: in order, the declared pick of an offered option while
-    the brand-or-account-type question is open fills the asked words (the V5 list-pick class); a word this message names
+    the brand-or-account-type question is open fills the asked words the object still carries (the V5 list-pick class;
+    an asked word the object dropped stays dropped, the object being the newer value); a word this message names
     as an entity is that entity's kind when `kind_said` says it, unsure when null; a word the open question still owes is
     unsure (asked again); a word left in `brand_or_account_type` is unsure; any other word, carried from the held report,
     keeps its list and is never asked."""
@@ -3147,8 +3166,6 @@ def _word_kinds(ask: dict[str, Any], verdict: dict[str, Any], focus: Any, picked
     out: list[tuple[str, str]] = []
     lists = [(key, default) for key, default in (("brands", "brand"), ("account_types", "account_type"), ("brand_or_account_type", None))]
     words = [(w, default) for key, default in lists for w in jsc.array(ask.get(key))]
-    if picked:
-        words += [(w, None) for w in owed_words]  # the asked words, wherever (or whether) the object listed them
     for word, default in words:
         word = " ".join(jsc.js_string(word).split())
         key = fold(word)
@@ -3219,6 +3236,15 @@ def from_object(verdict: dict[str, Any], *, on: bool, focus: Any = None, pending
     basis = ask["basis"] if ask.get("basis") in BASES else None
     outstanding = ask.get("kind") == "outstanding" or basis in OUTSTANDING_KINDS
     axis = jsc.js_string(ask.get("group_by") or "").strip().lower() or None
+    open_slot = _dict(getattr(focus, "required_ask", None))
+    if axis and open_slot.get("ask") == ASK_NAME:
+        # A reply to this ask's open question sets no axis the held ask did not have unless this message types one (the
+        # parser's own `by_words`, or a count, direction or ranked measure: main's `_typed` rule), so a total stays one.
+        typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
+            verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
+        )
+        if not typed and GROUP_BY.get(axis, axis) != _dict(_dict(open_slot.get("extras")).get("args")).get("group_by"):
+            axis = None
     if outstanding:
         status = status if status in OUTSTANDING_STATUSES else "outstanding"
     elif axis is None:
@@ -3292,7 +3318,8 @@ def _in_company(db: Any, hint: str, ids: Any, company: Any) -> list[str]:
 
 
 def _fresh_ids(db: Any, hint: str, word: str) -> list[str]:
-    """The ids a brand or category word resolves to, as `_word_filters` resolves it (none for an ambiguous category)."""
+    """The ids a brand, category or sales agent word resolves to, as `_word_filters` resolves it (none for an ambiguous
+    category)."""
     if hint == "category":
         from app.services.chatbot.lanes import business as business_pkg
 
