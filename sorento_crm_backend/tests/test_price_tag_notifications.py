@@ -760,8 +760,8 @@ class TestTheRoundReachesBothNotifications:
 
 
 class TestSubmitNotifies:
-    """The copy table opens with "{doc} received. We will start designing
-    shortly." and nothing ever sends it: the salesperson presses Submit and
+    """The copy table opens with "{doc} received." (PRICETAG-SELF-APPROVAL: the
+    tag now waits for the salesperson's own approval) and nothing ever sent it: the salesperson presses Submit and
     hears nothing back, which is the exact silence B1 was ruled to end.
     """
 

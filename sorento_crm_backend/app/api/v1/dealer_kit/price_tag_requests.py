@@ -363,6 +363,14 @@ def transition_price_tag_request(
     user: dict = Depends(_PROCESS),
 ):
     """Apply a status transition with optional note."""
+    if payload.status == STATUS_NEW:
+        # PRICETAG-SELF-APPROVAL: the only way back to `new` is the salesperson's
+        # Escalate, which also clears the assignee and starts the form SLA stage.
+        raise AppException(
+            status_code=409,
+            message="Only the salesperson's Escalate sends a request back to new.",
+            code="INVALID_TRANSITION",
+        )
     result = PriceTagRequestService.transition_status(
         db,
         request_id,
