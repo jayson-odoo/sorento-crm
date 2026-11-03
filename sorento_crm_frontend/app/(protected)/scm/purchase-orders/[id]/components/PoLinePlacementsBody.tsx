@@ -75,7 +75,9 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
       number: p.inquiry_no,
       purchaseOrderId: null,
       document: p.so_number,
-      customer: p.customer_name ?? p.customer,
+      // The two halves the server split (issuing party; project with its PRE-ORDER note).
+      // Never the combined `customer`: with no party it is the project title alone.
+      customer: p.customer_name ?? null,
       project: p.project_label ?? null,
       qty: p.qty,
       landsAt: p.needed_at,

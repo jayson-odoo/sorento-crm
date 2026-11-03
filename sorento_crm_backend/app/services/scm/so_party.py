@@ -87,10 +87,13 @@ def fill_party(
 ) -> Dict[str, Any]:
     """`row` with a BLANK `customer_name` / `project_label` filled from its order.
 
-    For a row that comes from an order inquiry: it already names its halves the way the OI
-    worklist prints them (the issuing party; the project title with its PRE-ORDER note), and
-    those win. The sales order only fills a half the row does not know, so an order not synced
-    yet, a provisional ref, a stand-in debtor or a NULL label never erases what the row knew."""
+    For a row that comes from an order inquiry: whatever half it already names wins, and the
+    sales order only fills a half the row does not know, so an order not synced yet, a
+    provisional ref, a NULL label or an ambiguous number never erases what the row knew. Each
+    caller states what its row knows: the PO line placements carry the OI worklist's own split
+    (issuing party; project title with its PRE-ORDER note); the SPO planner coverage and the
+    SPO document's project entries carry the project title only, so their customer is the
+    order's own (the SO list's Customer)."""
     party = parties.get(str(key), EMPTY_PARTY) if key else EMPTY_PARTY
     for field in ("customer_name", "project_label"):
         if not row.get(field):

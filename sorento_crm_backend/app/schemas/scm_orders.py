@@ -685,7 +685,8 @@ class PurchaseOrderPlacement(BaseModel):
     #: The sales order this quantity is owed to - its AutoCount number where it has one.
     so_number: Optional[str] = None
     customer: Optional[str] = None
-    #: That order's customer (debtor name, else customer master) and project label.
+    #: `customer` split in two, the OI worklist's way: the issuing party's customer and the
+    #: project title with its PRE-ORDER note; a blank half is filled from the sales order.
     customer_name: Optional[str] = None
     project_label: Optional[str] = None
     #: Who sold it, by person label, falling back to the agent code.
