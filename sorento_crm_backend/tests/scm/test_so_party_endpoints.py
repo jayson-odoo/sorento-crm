@@ -271,6 +271,47 @@ def test_stock_detail_hold_declares_customer_and_project():
     assert hold["project_label"] == PROJECT
 
 
+def test_donor_debt_and_lent_to_orders_are_named_in_a_planning_payload():
+    from app.schemas import project_board as board
+    from app.schemas import project_supply as supply
+    from app.services.scm.so_party_payload import attach_donor_parties
+
+    with pg_session() as db:
+        w = World(db)
+        wh = w.warehouse("WH")
+        _line, so = _retail_demand(db, w, "P", wh, qty=3, required=date(2026, 9, 1))
+        _name_order(so)
+        db.flush()
+        payload = {
+            "rows": [{
+                "sources": [{"donor_so_number": so.so_number}, {"donor_so_number": None}],
+                "options": [{"debt_so_number": so.so_number, "debt_month": "2026-09"}],
+                "lent_to": [{"qty": "3", "so_number": so.so_number, "line_no": 1}],
+                "unknown": [{"donor_so_number": f"{MARKER}-NOPE"}],
+            }]
+        }
+        out = attach_donor_parties(db, payload)
+        row = out["rows"][0]
+        assert row["sources"][0]["donor_customer_name"] == DEBTOR
+        assert row["sources"][0]["donor_project_label"] == PROJECT
+        assert "donor_customer_name" not in row["sources"][1]
+        assert row["options"][0]["debt_customer_name"] == DEBTOR
+        assert row["options"][0]["debt_project_label"] == PROJECT
+        assert row["lent_to"][0]["customer_name"] == DEBTOR
+        assert row["lent_to"][0]["project_label"] == PROJECT
+        assert row["unknown"][0]["donor_customer_name"] is None
+        # The input is left as it was: a frozen decision's JSON must not pick up the keys.
+        assert "donor_customer_name" not in payload["rows"][0]["sources"][0]
+
+    # `response_model` drops undeclared fields: every carrier declares the new ones.
+    for model in (board.BoardSource, board.BoardDecisionBorrow, board.BorrowCandidate,
+                  supply.SupplyComponent, supply.BorrowCandidate):
+        assert {"donor_customer_name", "donor_project_label"} <= set(model.model_fields), model
+    for model in (board.BoardLadderOption, supply.SupplyLadderOption):
+        assert {"debt_customer_name", "debt_project_label"} <= set(model.model_fields), model
+    assert {"customer_name", "project_label"} <= set(board.BoardLineLending.model_fields)
+
+
 def test_trend_customer_orders_carry_customer_and_project(db_world):
     from sqlalchemy import text
 

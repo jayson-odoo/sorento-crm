@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.services.scm.demand_class import DEMAND_CLASSES
+from app.services.scm.so_party_payload import attach_donor_parties
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.models.product import Product
@@ -385,7 +386,7 @@ def get_planning_board(
             actor_user_id=_user.get("id") if _user else None,
         )
         db.commit()
-        return body
+        return attach_donor_parties(db, body)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -1175,7 +1176,7 @@ def get_supply_proposal(
         order = service.get_order(pso_id)
         body = service.proposal_for(order)
         db.commit()
-        return body
+        return attach_donor_parties(db, body)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
