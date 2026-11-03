@@ -2393,19 +2393,28 @@ export function FulfilmentBoardPanel({
       const onPage = new Set(lines.map((line) => line.project_line_id).filter(Boolean));
       const emailOnly: ConfirmGuidePage['covered'] = [];
       if (landed?.status === 'ready') {
+        // One row per email line id: a line told twice reads both remarks (the same " / "
+        // join the covered lines get) and its quantities add up.
+        const told = new Map<string, ConfirmEmailLine[]>();
         for (const email of landed.emailLines ?? []) {
           if (!email.so_line_id || onPage.has(email.so_line_id)) continue;
-          const words = (email.remark ?? '').trim();
-          const own = allContributions.find((line) => line.project_line_id === email.so_line_id);
+          told.set(email.so_line_id, [...(told.get(email.so_line_id) ?? []), email]);
+        }
+        const words = emailWordsByLine(landed.emailLines ?? []);
+        for (const [lineId, entries] of told) {
+          const first = entries[0];
+          const own = allContributions.find((line) => line.project_line_id === lineId);
           emailOnly.push({
-            lineId: email.so_line_id,
-            key: own?.key ?? `email:${email.so_line_id}`,
+            lineId,
+            key: own?.key ?? `email:${lineId}`,
             lineNo: own ? (own.so_line_no ?? own.line_no) : null,
-            itemCode: own?.item_code ?? email.item_code ?? '',
+            itemCode: own?.item_code ?? first.item_code ?? '',
             location: own?.fulfilment_location ?? '',
-            qty: Number(own?.qty ?? email.qty) || 0,
-            date: own?.required_date ?? email.delivery_date ?? null,
-            savedRemark: words || null,
+            qty: own
+              ? Number(own.qty) || 0
+              : entries.reduce((sum, entry) => sum + (Number(entry.qty) || 0), 0),
+            date: own?.required_date ?? first.delivery_date ?? null,
+            savedRemark: words.get(lineId) ?? null,
             ownRemark: null,
             remarkEditable: false,
             isMockup: Boolean(own?.is_mockup),

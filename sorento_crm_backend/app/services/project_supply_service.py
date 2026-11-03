@@ -3412,7 +3412,11 @@ class ProjectSupplyService:
         by product (estimated 11 rows a loop, actual 1,302; 1.45M loops), 2.4-5.4 s on the prod
         clone. The SO lines are read first in a MATERIALIZED CTE, then their live inquiry rows,
         links and the SPO rows by id: 15-400 ms, the same rows. An index on
-        `sales_order_lines.source_ref` alone did not help (2.2-2.9 s)."""
+        `sales_order_lines.source_ref` alone did not help (2.2-2.9 s).
+
+        The CTE gets no company-scope criteria from do_orm_execute on the core lines (the old
+        statement did); rows stay identical because the SPO join pairs company with the line's
+        company and the scoped SPO read filters the rest."""
         lines = (
             self.db.query(
                 SalesOrderLine.source_ref.label("source_ref"),

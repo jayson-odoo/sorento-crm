@@ -609,13 +609,13 @@ export function ConfirmGuideDialog({
               Save or undo your split changes first
             </p>
           ) : null}
-          {(wordsFailed || refusal) && !wordsLoading && !stale ? (
+          {(refusal || (wordsFailed && !wordsLoading)) && !stale ? (
             <div
               data-testid="confirm-guide-words-failed"
               className="flex w-full flex-wrap items-center gap-2 text-xs"
             >
               <span role="alert" className="break-words">
-                {wordsFailed || !refusal ? 'The email preview could not be prepared.' : refusal}
+                {refusal || 'The email preview could not be prepared.'}
               </span>
               {onRetryWords ? (
                 <Button type="button" variant="outline" size="sm" onClick={onRetryWords}>
