@@ -254,8 +254,24 @@ def create_product_attachment(
         product_id = str(product_attachment_data.product_id)
         attachment_id = str(product_attachment_data.attachment_id)
         was_linked = product_link_audit.link_exists(db, product_id, attachment_id)
-        product_attachment = service.create_product_attachment(product_attachment_data, created_by=created_by)
-        if not was_linked and product_attachment is not None:
+        audited = []
+
+        def _audit_link(row):
+            # Same transaction as the new link: one commit writes both or neither.
+            product_link_audit.log_product_file_link(
+                db, product_link_audit.LINK,
+                product_id=product_id, attachment_id=attachment_id,
+                entity_type="product_attachments", entity_id=str(row.id),
+                user_id=created_by,
+            )
+            audited.append(row)
+
+        product_attachment = service.create_product_attachment(
+            product_attachment_data, created_by=created_by,
+            before_commit=None if was_linked else _audit_link,
+        )
+        if not was_linked and not audited and product_attachment is not None:
+            # The certificate path (`_certificate_link_target`) commits on its own.
             product_link_audit.log_product_file_link(
                 db, product_link_audit.LINK,
                 product_id=product_id, attachment_id=attachment_id,
