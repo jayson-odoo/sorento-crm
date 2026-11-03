@@ -1,7 +1,7 @@
 # PLAN: CONFIRM-DIALOG-SPEED
 
-Status: PR 1 #2128 merged (81d653330b, 3 Nov). PR 2 in progress, lane CONFIRM-SPEED-PR2,
-branch `crew/confirm-speed-pr2`. Track: standard (M: two owner-visible dialog rules; no migration,
+Status: PR 1 #2128 merged (81d653330b, 3 Nov). PR 2 #2151 in review (reviewer READY round 2,
+3 Nov), lane CONFIRM-SPEED-PR2, branch `crew/confirm-speed-pr2`; owner hand test pending. Track: standard (M: two owner-visible dialog rules; no migration,
 no auth/RBAC change). UAC: `confirm-dialog-speed-3nov-acceptance-criteria.md`.
 
 Owner report (3 Nov 13:15): Fulfilment Planning -> Confirm SO423361 sits on the Review split
