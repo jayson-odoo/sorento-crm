@@ -638,7 +638,7 @@ def _seed_named(session_factory, name: str, code: str) -> str:
 
 
 def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver.Span, near: set[str], *,
-               qf: dict[str, Any] | None = None, attributes=STAFF_GRANTS, supplier_ids: bool = True):
+               qf: dict[str, Any] | None = None, attributes=STAFF_GRANTS, supplier_ids: bool = True, embed=None):
     import functools
 
     from app.services import contact_field_reveal_service
@@ -652,7 +652,7 @@ def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver
     monkeypatch.setattr(span_extract, "resolve_config", lambda db, **kw: span_extract.SpanConfig(
         "sys", 1, "openai", "gpt-zz", "ZZ-key", "label"))
     monkeypatch.setattr(span_extract, "extract", lambda config, message: span_extract.SpanAnswer([span], {}, 1))
-    monkeypatch.setattr(ll, "EMBED", meaning_embed({t.casefold() for t in near}))
+    monkeypatch.setattr(ll, "EMBED", embed or meaning_embed({t.casefold() for t in near}))
     monkeypatch.setattr(contact_field_reveal_service, "granted_keys", lambda db, pk: list(attributes))
     qf = qf or _ask(span.text, None)
     seen = _PickFirstSupplierId(qf)
@@ -1980,3 +1980,132 @@ def test_crews_unknown_supplier_with_no_parser_entity_never_lists_the_po_book(se
 def test_a_hintless_entity_never_breaks_the_resolver_request():
     """Crew turn 36f11957: '太阳的' with hint null reached `allowed_entity_types` as None and the resolver request failed."""
     assert resolve_gate._allowed_entity_types({}, [{"raw": "太阳的", "hint": None}, {"raw": "x", "hint": "supplier"}]) == ["supplier"]
+
+
+# --------------------------------------------------------------------------- #
+# Follow-up to #2066 (crew re-check at 8b759db7): 金百川 read "Kim Pak Chuan" placed KIM HOH HARDWARE (403-K032) ALONE
+# at exactly the supplier meaning floor; the turn listed KIM HOH's POs (turns ed977e5f, c5ffe95e). A lone row that only
+# just reaches the floor is never the answer: the turn asks among the near rows, or finds nothing.
+# --------------------------------------------------------------------------- #
+
+KIM_HOH = "ZZT KIM HOH HARDWARE"
+KIM_SENG = "ZZT KIM SENG TRADING"
+JINBAICHUAN = "ZZT JINBAICHUAN SANITARY CO LTD"
+KIM_READING = "Kim Pak Chuan"
+
+
+class _CosineEmbed:
+    """`cos[phrase][text]` is the cosine the phrase scores against that row text; every other text is orthogonal.
+    `model` None is a plain callable (the OpenAI floors)."""
+
+    def __init__(self, cos: dict[str, dict[str, float]], model: str | None = None) -> None:
+        import math
+
+        if model:
+            self.model = model
+        self.dim = 4096
+        texts = sorted({t.casefold() for row in cos.values() for t in row})
+        self.axis = {t: i for i, t in enumerate(texts)}
+        self.fixed: dict[str, list[float]] = {t: self._unit(i) for t, i in self.axis.items()}
+        rest = len(texts)
+        for phrase, row in cos.items():
+            v = [0.0] * self.dim
+            for t, c in row.items():
+                v[self.axis[t.casefold()]] = c
+            v[rest] = math.sqrt(max(0.0, 1 - sum(c * c for c in row.values())))
+            self.fixed[phrase.casefold()] = v
+
+    def _unit(self, i: int) -> list[float]:
+        v = [0.0] * self.dim
+        v[i] = 1.0
+        return v
+
+    def __call__(self, texts):
+        import hashlib
+
+        out = []
+        for t in texts:
+            v = self.fixed.get(t.casefold().strip())
+            if v is None:
+                v = self._unit(len(self.axis) + 1 + int(hashlib.md5(t.encode()).hexdigest(), 16) % (self.dim - len(self.axis) - 1))
+            out.append(v)
+        return out
+
+
+def _kim_rows():
+    return [
+        _sup_row("s-kh", KIM_HOH, "403-K032"), _sup_row("s-ks", KIM_SENG, "403-K040"),
+        _sup_row("s-jb", JINBAICHUAN, "403-J011"),
+    ]
+
+
+def test_a_lone_supplier_at_the_meaning_floor_is_asked_among_its_near_rows():
+    """Crew's emission: KIM HOH at exactly the gemini supplier floor (0.65), alone over it; KIM SENG just under."""
+    embed = _CosineEmbed({KIM_READING: {KIM_HOH: 0.651, KIM_SENG: 0.62}}, model="gemini-embedding-001")
+    res = list_resolver.resolve([list_resolver.Span(NATIVE_JBC, "customer", meaning=KIM_READING)], _kim_rows(), embed=embed)[0]
+    assert res.status == "ambiguous", res
+    assert [c.row.key for c in res.candidates] == ["s-kh", "s-ks"], res
+
+
+def test_a_lone_supplier_at_the_meaning_floor_with_nothing_near_is_not_found():
+    embed = _CosineEmbed({KIM_READING: {KIM_HOH: 0.651}}, model="gemini-embedding-001")
+    res = list_resolver.resolve([list_resolver.Span(NATIVE_JBC, "customer", meaning=KIM_READING)], _kim_rows(), embed=embed)[0]
+    assert res.status == "unresolved" and not res.candidates, res
+
+
+@pytest.mark.parametrize("cos", [0.67, 0.69])
+def test_a_lone_supplier_clearly_over_the_floor_still_binds(cos):
+    """The true reading's hits scored 0.687-0.692 (crew turn 659346ce): a clear lone match stays the answer."""
+    embed = _CosineEmbed({"Jin Bai Chuan": {JINBAICHUAN: cos, KIM_SENG: 0.62}}, model="gemini-embedding-001")
+    res = list_resolver.resolve([list_resolver.Span(NATIVE_JBC, "customer", meaning="Jin Bai Chuan")], _kim_rows(), embed=embed)[0]
+    assert res.status == "resolved" and res.candidates[0].row.key == "s-jb", res
+
+
+@pytest.mark.parametrize("typed", ["kim hoh", "kimhoh hardware"])
+def test_a_lone_spelling_match_is_untouched_by_the_weak_meaning_rule(typed):
+    """"kimhoh hardware" spells KIM HOH alone at 0.636, under the floor plus the margin: only meaning is judged weak."""
+    embed = _CosineEmbed({}, model="gemini-embedding-001")  # the 0.65 floor, no meaning hits
+    res = list_resolver.resolve([list_resolver.Span(typed, "supplier")], _kim_rows(), embed=embed)[0]
+    assert res.status == "resolved" and res.candidates[0].row.key == "s-kh", res
+
+
+def test_a_lone_customer_at_its_meaning_floor_is_unchanged():
+    """Only the supplier list is measured near a wrong row; a customer's lone meaning match keeps resolving."""
+    rows = [ll.LookupRow("customer", "c1", "ZZT HARBOUR TILES", ("ZZT HARBOUR TILES",), homes=("label",))]
+    embed = _CosineEmbed({"port tiles": {"ZZT HARBOUR TILES": 0.75}}, model="gemini-embedding-001")
+    res = list_resolver.resolve([list_resolver.Span("port tiles", "customer")], rows, embed=embed)[0]
+    assert res.status == "resolved", res
+
+
+NATIVE_JBC = "金百川"
+
+
+def test_crews_kim_pak_chuan_turn_never_lists_the_lone_floor_suppliers_pos(session_factory, monkeypatch):
+    """Crew turns ed977e5f / c5ffe95e end to end: "Outstanding for 金百川", the span pass reads it "Kim Pak Chuan", which
+    scores KIM HOH alone at the floor. The turn asks which supplier (KIM HOH beside KIM SENG) and lists nothing."""
+    _staff_world(session_factory)
+    kh = _seed_named(session_factory, KIM_HOH, "ZZTSUP-KH32")
+    ks = _seed_named(session_factory, KIM_SENG, "ZZTSUP-KS40")
+    floor = list_resolver._meaning_floor(_CosineEmbed({}), "supplier")
+    embed = _CosineEmbed({KIM_READING: {KIM_HOH: floor + 0.001, KIM_SENG: floor - 0.03}})
+    span = list_resolver.Span(NATIVE_JBC, "customer", meaning=KIM_READING)
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "Outstanding for 金百川", span, set(), qf=_ask(NATIVE_JBC, None), embed=embed,
+    )
+    assert not [a for n, a in captured if n == PO_TOOL and a.get("supplier_ids") == [kh]], (reply, captured)
+    assert KIM_HOH in reply and KIM_SENG in reply, reply
+    assert not _po_calls(captured), captured
+    assert ks
+
+
+def test_crews_kim_pak_chuan_turn_with_nothing_near_never_lists_that_supplier(session_factory, monkeypatch):
+    _staff_world(session_factory)
+    kh = _seed_named(session_factory, KIM_HOH, "ZZTSUP-KH32")
+    floor = list_resolver._meaning_floor(_CosineEmbed({}), "supplier")
+    embed = _CosineEmbed({KIM_READING: {KIM_HOH: floor + 0.001}})
+    span = list_resolver.Span(NATIVE_JBC, "customer", meaning=KIM_READING)
+    reply, captured, _seen = _span_turn(
+        session_factory, monkeypatch, "Outstanding for 金百川", span, set(), qf=_ask(NATIVE_JBC, None), embed=embed,
+    )
+    assert not [a for n, a in captured if n == PO_TOOL and kh in (a.get("supplier_ids") or [])], (reply, captured)
+    assert not [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS and not a.get("supplier_ids")], (reply, captured)
