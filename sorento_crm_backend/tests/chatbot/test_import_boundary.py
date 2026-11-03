@@ -76,6 +76,13 @@ ALLOWED = {
     # `head.parser` and the engine's access check and wraps `trace.TurnTrace.record`, none of
     # which `/chat/turn` exposes. A developer tool, not core, not on any request path.
     "scripts/chat_latency_probe.py",
+    # SUPPLIER-ASK (#2066): measures the supplier span meaning floor offline over `head.lookup_lists` /
+    # `head.list_resolver` on a dev copy. A developer tool, not core, not on any request path.
+    "scripts/measure_supplier_span_floor.py",
+    # SUPPLIER-ASK fix round 3 (#2066): the phrasing sweep runs console DRY RUNS in process through
+    # `console_service.run_console_turn`, the console page's own path, pinned to one parser version. A developer
+    # tool run by hand against a copy, not core, not on any request path.
+    "scripts/sweep_supplier_ask.py",
     # AGENTIC-WA-W2 router wording measure and gate: read-only developer tools run by crew. They build the
     # router's exact Jev input (`router._router_prompt`, `agent_tool_labels`, `portal_writes`), which no route
     # exposes, and write nothing.
