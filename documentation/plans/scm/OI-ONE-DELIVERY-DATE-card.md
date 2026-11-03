@@ -188,6 +188,17 @@ the SAME date (no date question; out of scope). Q5.
   the ask, and (b) invents splits from migrated sheet rows nobody confirmed. (Rows with no SO line,
   the old Q4, are dropped: 0 exist; the rule keeps their own date as a fallback.)
 
+## Coordination
+
+- **OI-EXPORT-SHARED (#2146)** moves every OI Excel / PDF onto `app/services/order_inquiry_export.py`.
+  Its exports sort by S/O, then by the date the DELIVERY DATE cell prints. That date comes from the
+  row's `delivery_date` (`OrderInquiryWorklistService._records`), `serialize_rows`, the handover
+  `line.was.delivery_date or line.delivery_date` (`_handover_sorted`), and the reserve
+  `delivery_iso`. This lane changes only where those fields get their value: the worklist
+  projection, `serialize_rows`, `handover_item` and the reserve `_row_context`. It does not touch
+  `_records`, `export_xlsx`, `_handover_sorted` or `_handover_sort_key`, so #2146's sort follows
+  the SO line date with no change on its side. Whichever PR merges second rebases.
+
 ## Build outline (after answers)
 
 1. Red tests from the UAC: helper + SQL expression; each surface in the table returns the SO line
