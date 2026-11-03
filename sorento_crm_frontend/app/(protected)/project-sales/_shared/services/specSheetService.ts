@@ -261,6 +261,22 @@ export async function saveSpecSheetPageEdit(
   );
 }
 
+/** The open page's pictures at a sharper rendition than the strip's thumbnails. */
+export async function getSpecSheetPageImages(
+  projectId: string,
+  documentId: string,
+  issueId: string | null,
+  key: string,
+): Promise<{ images: Record<string, string> }> {
+  const params = new URLSearchParams({ key });
+  if (issueId) params.set('issue_id', issueId);
+  const response = await apiFetch(
+    `${url(projectId, documentId, '/page-images')}?${params.toString()}`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the page'));
+  return response.json();
+}
+
 export async function queueSpecSheetPdf(
   projectId: string,
   documentId: string,

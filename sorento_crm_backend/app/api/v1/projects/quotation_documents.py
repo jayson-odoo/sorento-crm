@@ -120,7 +120,9 @@ def list_quotation_documents(
     try:
         validate_uuid_path(project_id, resource="Project")
         projects.get_project_or_404(db, project_id)
-        return _envelope(svc.serialize_documents(db, svc.list_documents(db, project_id)))
+        return _envelope(svc.serialize_documents(
+                db, svc.list_documents(db, project_id), viewer_id=(_user or {}).get("id")
+            ))
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -151,7 +153,7 @@ def create_quotation_document(
             _notify_breaches(db, line, current_user["id"])
         db.commit()
         db.refresh(document)
-        return svc.serialize_document(db, document)
+        return svc.serialize_document(db, document, viewer_id=current_user["id"])
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -189,7 +191,7 @@ def get_quotation_document(
         # Scoped to the project in the lookup, so a document belonging to another project 404s
         # rather than leaking its recipient and totals to whoever guessed the id.
         document = svc.get_document_or_404(db, project_id, document_id)
-        return svc.serialize_document(db, document)
+        return svc.serialize_document(db, document, viewer_id=(_user or {}).get("id"))
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -251,7 +253,7 @@ def update_quotation_document(
                 _notify_breaches(db, line, current_user["id"])
         db.commit()
         db.refresh(document)
-        return svc.serialize_document(db, document)
+        return svc.serialize_document(db, document, viewer_id=current_user["id"])
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -543,7 +545,7 @@ def move_quotation_approval(
         # After the commit, best effort: a notification fault never undoes the status.
         approvals.notify_requested(db, document, current_user["id"])
         db.refresh(document)
-        return svc.serialize_document(db, document)
+        return svc.serialize_document(db, document, viewer_id=current_user["id"])
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -580,7 +582,7 @@ def approve_quotation_document(
         db.commit()
         approvals.notify_decided(db, document, current_user["id"], approved=True)
         db.refresh(document)
-        return svc.serialize_document(db, document)
+        return svc.serialize_document(db, document, viewer_id=current_user["id"])
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -620,7 +622,7 @@ def reject_quotation_document(
             db, document, current_user["id"], approved=False, reason=document.approval_rejected_reason
         )
         db.refresh(document)
-        return svc.serialize_document(db, document)
+        return svc.serialize_document(db, document, viewer_id=current_user["id"])
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -649,7 +651,7 @@ def revise_quotation_approval(
         if was_pending:
             approvals.notify_withdrawn(db, document, current_user["id"], reason)
         db.refresh(document)
-        return svc.serialize_document(db, document)
+        return svc.serialize_document(db, document, viewer_id=current_user["id"])
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

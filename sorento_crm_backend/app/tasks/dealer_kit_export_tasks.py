@@ -290,6 +290,14 @@ def generate_spec_sheet_pdf(download_id: str) -> dict:
         if download is None:
             raise RuntimeError("download row not found")
         size_mm = spec.page_size_for_download(db, download)
+        # QUOTE-PERF-HOTFIX: page-sized copies of the pictures first, so Chromium never decodes
+        # a 4000 px original. Best-effort: a failure here prints the originals, as before.
+        try:
+            spec.prepare_export_images(db, download)
+        except Exception:  # noqa: BLE001
+            logger.warning("spec sheet %s: image cap skipped", download_id, exc_info=True)
+        # Hand the connection back for the render: Chromium can take minutes.
+        db.close()
 
         pdf_bytes = _render_pdf(
             _tag_sheet_print_url(download_id),

@@ -92,6 +92,9 @@ class SystemSettingUpdate(BaseModel):
     n8n_close_convo_webhook_url: Optional[str] = None
     purchase_request_default_approver_user_id: Optional[str] = None
     sponsorship_form_default_approver_user_id: Optional[str] = None
+    # PS-QUOTE-RULES R4: who approves an off-series line, and the last-resort approver.
+    off_series_approver_user_id: Optional[str] = None
+    default_quotation_approver_user_id: Optional[str] = None
     # AI assistant trace (M2) retention + payload caps.
     ai_trace_ttl_days: Optional[int] = Field(None, ge=1, le=3650)
     ai_trace_error_ttl_days: Optional[int] = Field(None, ge=1, le=3650)
@@ -287,6 +290,20 @@ class AppConfigResponse(BaseModel):
     deferred_delete_seconds: Optional[int] = None
 
 
+def _quotation_approver_fields(db: Session, settings) -> dict:
+    """The two project quotation approver settings (PS-QUOTE-RULES R4), id + name each."""
+    out: dict = {}
+    for col, stem in (
+        ("off_series_approver_user_id", "off_series_approver"),
+        ("default_quotation_approver_user_id", "default_quotation_approver"),
+    ):
+        uid = getattr(settings, col, None) if settings else None
+        user = db.query(User).filter(User.id == uid).first() if uid else None
+        out[f"{stem}_user_id"] = uid
+        out[f"{stem}_name"] = (user.name or user.email) if user else None
+    return out
+
+
 @router.get("/")
 def get_settings(
     current_user: dict = Depends(require_permission("user_management.settings.view")),
@@ -394,6 +411,7 @@ def get_settings(
                 "sponsorship_form_default_approver_user_id": sf_uid,
                 "sponsorship_form_default_approver_name": user_sf.name if user_sf else None,
                 "sponsorship_form_default_approver_email": user_sf.email if user_sf else None,
+                **_quotation_approver_fields(db, settings),
                 "n8n_attachment_webhook_url": getattr(settings, "n8n_attachment_webhook_url", None)
                 if settings
                 else None,
@@ -960,6 +978,8 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     for col in (
         "purchase_request_default_approver_user_id",
         "sponsorship_form_default_approver_user_id",
+        "off_series_approver_user_id",
+        "default_quotation_approver_user_id",
     ):
         if col in update_data:
             uid = update_data[col]

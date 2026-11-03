@@ -378,17 +378,30 @@ def notify_quotation_approval_requested(
     requester_name: str,
     resubmitted: bool = False,
     below_proposal: int = 0,
+    reasons: Optional[str] = None,
 ) -> int:
-    """A quotation was sent for approval: tell every approver but the sender. One per press."""
-    lines = approval_reason_text(below, below_proposal)
+    """A quotation was sent for approval: tell its routed approver (PS-QUOTE-RULES R4), or every
+    approver but the sender when it was routed to nobody. One per press. ``reasons`` is the
+    approval service's own sentence (every reason); without it, the minimum-price and
+    below-proposal counts are worded here."""
+    lines = (
+        reasons[:1].lower() + reasons[1:]
+        if reasons
+        else approval_reason_text(below, below_proposal)
+    )
     verb = "appealed" if resubmitted else "sent"
     text = (
         f"{requester_name} {verb} quotation {document.document_no} ({project_label(project)}) "
         f"for approval: {lines}."
     )
+    routed = getattr(document, "approver_user_id", None)
     return _send(
         db,
-        user_ids=approver_user_ids(db, document.company_id, {requester_id}),
+        user_ids=(
+            [str(routed)]
+            if routed
+            else approver_user_ids(db, document.company_id, {requester_id})
+        ),
         notif_type="project_quotation_approval_requested",
         title=f"{project_label(project)}: approval needed on {document.document_no}",
         body=text,
@@ -444,14 +457,19 @@ def notify_quotation_approval_withdrawn(
     actor_name: str,
     reason: Optional[str],
 ) -> int:
-    """The creator pulled a pending quotation back to change it: tell the approvers."""
+    """The creator pulled a pending quotation back to change it: tell its approver(s)."""
     text = (
         f"{actor_name} took quotation {document.document_no} ({project_label(project)}) back "
         f"for changes: {reason or ''}"
     ).strip()
+    routed = getattr(document, "approver_user_id", None)
     return _send(
         db,
-        user_ids=approver_user_ids(db, document.company_id, {actor_id}),
+        user_ids=(
+            [str(routed)]
+            if routed
+            else approver_user_ids(db, document.company_id, {actor_id})
+        ),
         notif_type="project_quotation_approval_withdrawn",
         title=f"{project_label(project)}: {document.document_no} withdrawn",
         body=text,
