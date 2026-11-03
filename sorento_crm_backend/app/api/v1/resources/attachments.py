@@ -656,6 +656,25 @@ def _resolve_attachment_file_path(
     return resolve_signed_url(file_path, provider=provider)
 
 
+def new_upload_storage_key(
+    entity_type: Optional[str],
+    final_entity_type: str,
+    entity_id: Optional[str],
+    attachment_id: str,
+    original_filename: str,
+) -> str:
+    """Storage key of a NEW upload. Basename = the immutable original filename.
+
+    Every key carries the attachment id, so two uploads never share an object: the old flat
+    ``{type}/{name}`` scheme could silently clobber, and so could ``promotion/{entity}/{name}``
+    until IMAGE-UNIFY, which matters now that renditions beside a key are cached as immutable.
+    Promotion keys keep their ``promotion/{entity_id}/`` prefix.
+    """
+    if (entity_type or "").strip().lower() == "promotion" and entity_id:
+        return f"promotion/{entity_id}/{attachment_id}/{original_filename}"
+    return f"{final_entity_type}/{attachment_id}/{original_filename}"
+
+
 def _attachment_response_with_linked_entities(
     service: AttachmentService, attachment, current_user: Optional[dict] = None
 ) -> dict:
@@ -1013,10 +1032,7 @@ async def create_attachment(
                 db, existing_to_replace.entity_type, existing_to_replace.entity_id, current_user
             )
 
-        # Construct storage key. Basename = immutable original_filename.
-        # - promotion: already scoped by entity_id (unchanged).
-        # - generic: uuid-segregated by attachment_id so same-name uploads across folders
-        #    can NEVER share a key (the old flat {type}/{name} scheme could silently clobber).
+        # Construct storage key (`new_upload_storage_key`). Replace keeps its existing key.
         if existing_to_replace is not None:
             # Replace-in-place: overwrite the EXISTING object at its own key so we
             # don't orphan bytes or desync the uuid-segregated key from the row id.
@@ -1026,10 +1042,10 @@ async def create_attachment(
                 f"{final_entity_type}/{existing_to_replace.id}/"
                 f"{sanitize_storage_filename(existing_to_replace.original_filename) or original_filename}"
             )
-        elif (entity_type or "").strip().lower() == "promotion" and entity_id:
-            s3_file_path = f"promotion/{entity_id}/{original_filename}"
         else:
-            s3_file_path = f"{final_entity_type}/{attachment_id}/{original_filename}"
+            s3_file_path = new_upload_storage_key(
+                entity_type, final_entity_type, entity_id, attachment_id, original_filename
+            )
 
         # Upload to whichever provider STORAGE_DEFAULT_PROVIDER points at (s3 or r2).
         from app.services.storage_router import (

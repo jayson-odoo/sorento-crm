@@ -37,6 +37,7 @@ class StorageBackend(Protocol):
         file_path: str,
         content_type: Optional[str] = ...,
         signed_url_expires_in: int = ...,
+        cache_control: Optional[str] = ...,
     ) -> tuple[str, str]: ...
 
     def upload_fileobj(
