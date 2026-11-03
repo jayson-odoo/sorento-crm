@@ -267,6 +267,10 @@ export type OrderSummaryDemandKind = 'project' | 'retail' | 'unclassified' | 'de
 /** One contributing project line (AC-C2.3 / AC-D06 / AC-E07). */
 export interface ProjectDemandLine {
   project_name: string;
+  /** The order's own customer (debtor name, else customer master) and project label;
+   *  `project_name` above is the customer, kept for older readers. */
+  customer_name?: string | null;
+  project_label?: string | null;
   so_number: string;
   qty: number;
   /** ISO date the line is required on site. Null when the SO carries no date. */
@@ -285,7 +289,8 @@ export interface ProjectDemandLine {
 
 /** One SO line whose demand class is missing, shown as an exception (AC-E02). */
 export interface UnclassifiedDemandLine {
-  customer_name: string;
+  customer_name: string | null;
+  project_label?: string | null;
   so_number: string;
   line_no: number | null;
   qty: number;
@@ -298,6 +303,8 @@ export interface UnclassifiedDemandLine {
 /** One contributing dealer or retail line (AC-C2.4). */
 export interface DealerDemandLine {
   dealer_name: string;
+  customer_name?: string | null;
+  project_label?: string | null;
   so_number: string;
   qty: number;
   /**

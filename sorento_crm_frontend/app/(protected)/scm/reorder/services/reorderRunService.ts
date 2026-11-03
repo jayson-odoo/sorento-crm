@@ -1062,6 +1062,8 @@ export async function getRecommendationDemand(
 /** One sales order behind a customer's line in the trend popover. */
 export interface CustomerOrderLine {
   so_number: string;
+  customer_name?: string | null;
+  project_label?: string | null;
   order_date: string | null;
   qty: number;
   unit_price: number | null;

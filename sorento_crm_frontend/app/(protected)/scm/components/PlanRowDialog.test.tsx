@@ -1249,6 +1249,22 @@ describe('SoCoveragePicker', () => {
     expect(within(footer).getByText('60')).toBeTruthy();
   });
 
+  it('names the order\'s Project beside its Customer (OI-UX-FILTER-SNAPSHOT)', () => {
+    renderWithClient(
+      <SoCoveragePicker
+        coverage={[{ ...coverage[0], project_label: 'TUJU RESIDENCES' }]}
+        tickedKeys={[]}
+        onChange={() => {}}
+        unassigned={0}
+      />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'Project' })).toBeTruthy();
+    const row = screen.getAllByRole('row')[1];
+    expect(row.textContent).toContain('PEMBINAAN MAJU');
+    expect(within(row).getByText('TUJU RESIDENCES')).toBeTruthy();
+  });
+
   it('hands the whole tick set back on a change', () => {
     const onChange = vi.fn();
     renderWithClient(

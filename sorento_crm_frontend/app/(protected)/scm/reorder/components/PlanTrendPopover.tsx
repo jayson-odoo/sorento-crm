@@ -7,6 +7,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SoCustomerProject } from '@/components/common/SoCustomerProject';
 import { cn } from '@/lib/utils';
 import { fmtDate, fmtInt, fmtSupplierCost } from '../../lib/format';
 import { useCustomerOrders } from '../hooks/useReorderRun';
@@ -95,8 +96,11 @@ function CustomerOrderLines({
           <tbody>
             {data.lines.map((l, i) => (
               <tr key={`${l.so_number}-${i}`}>
-                <td className="max-w-32 truncate py-0.5" title={l.so_number}>
-                  {l.so_number}
+                <td className="max-w-40 py-0.5">
+                  <span className="block truncate" title={l.so_number}>
+                    {l.so_number}
+                  </span>
+                  <SoCustomerProject customer={l.customer_name} project={l.project_label} />
                 </td>
                 {/* Where the order asked for it. Same pill as the demand popover uses, and
                     the same honest wording when the order named no location at all. */}
