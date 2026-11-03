@@ -139,7 +139,7 @@ def test_d4_a_held_grouped_customer_carries_through_breakdown_and_top_n(rbot, ob
     assert got == want, f"setup: the object path differs from the typed-word path: typed {want}, object {got}"
     _not_a_strict_subset(got, ids, "setup")
     if got[0] == "asked":  # the typed path asks which one: pick the group
-        text, calls = rbot.say(_pick_one(_group_position(got[1])), "1")
+        text, calls = rbot.say(_pick_one(_p := _group_position(got[1])), str(_p))
         got = _outcome(text, calls)
     assert got[0] == "ran", f"setup: no run for the held ask: {got}"
     held = set(got[1])
@@ -208,7 +208,7 @@ def test_d6_another_slots_answer_while_the_which_one_is_open_keeps_the_slot_and_
     text, calls = b.say(_answer_basis(flag_on), "invoiced")
     assert not _ran(calls), f"R3: 'invoiced' ran the report with no customer: {_ran(calls)[0] if _ran(calls) else ''}"
     assert text.strip() == first.strip(), f"R3: want the same which-one question again, got {text!r}"
-    text, calls = b.say(_pick_one(_group_position(first)), "1")
+    text, calls = b.say(_pick_one(_p := _group_position(first)), str(_p))
     ran = _ran(calls)
     assert ran, f"R3: the pick did not run; the bot said {text.strip()!r}"
     args = ran[0]
@@ -222,7 +222,7 @@ def test_d6_control_a_pick_right_away_runs_the_group(request, flag_on) -> None:
     ids, _bath = _seed(b)
     text, calls = b.say(_ask([WORD], _ent(WORD, "customer"), flag_on=flag_on), "dealer zzdealer oct sale invoiced")
     assert not _ran(calls), f"setup: want the which-one, got a run: {calls}"
-    text, calls = b.say(_pick_one(_group_position(text)), "1")
+    text, calls = b.say(_pick_one(_p := _group_position(text)), str(_p))
     ran = _ran(calls)
     assert ran and _is_the_group(ran[0].get("customer_ids"), ids), f"control: {ran or text!r}"
 
@@ -327,7 +327,7 @@ def test_d6b_every_other_slot_reply_keeps_the_which_one_open_until_the_pick(requ
     text, calls = b.say(_by_product(flag_on), "by product")
     assert not _ran(calls), f"R3: 'by product' ran with no customer: group_by {[a.get('group_by') for a in _ran(calls)]} ids {[a.get('customer_ids') for a in _ran(calls)]}"
     assert text.strip() == first.strip(), f"R3: want the which-one asked again, got {text!r}"
-    text, calls = b.say(_pick_one(_group_position(text)), "1")
+    text, calls = b.say(_pick_one(_p := _group_position(text)), str(_p))
     ran = _ran(calls)
     assert ran, f"R3: the pick did not run; the bot said {text.strip()!r}"
     args = ran[0]
