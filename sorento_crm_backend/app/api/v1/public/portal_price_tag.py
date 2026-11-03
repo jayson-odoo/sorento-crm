@@ -26,6 +26,7 @@ from app.api.v1.public.portal import get_portal_token
 from app.database import get_db
 from app.models.base import company_scope
 from app.models.portal import PortalToken
+from app.models.price_tag import PriceTagRequest
 from app.models.dealer_kit import Page
 from app.schemas.price_tag import (
     DebtorForAgentItem,
@@ -573,8 +574,15 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
         request_id = validate_uuid_path(request_id, resource="Price tag request")
         _assert_visible(db, token.contact_id)
         req = _require_own_request(db, token, request_id)
+        # Two tabs must not both submit the same draft (review nit): the second
+        # waits here, then finds it no longer a draft.
+        db.query(PriceTagRequest).filter(PriceTagRequest.id == req.id).with_for_update().first()
+        db.refresh(req)
         _require_draft(req, "This request has already been submitted.", code="ALREADY_SUBMITTED")
         PriceTagRequestService.validate_submittable(req)
+        with company_scope(db, frozenset({req.company_id})):
+            # The same multi-template gate the plain submit runs (#2100).
+            product_tag_template_service.require_line_templates(db, req)
         if not payload.doc:
             raise AppException(
                 status_code=422,
@@ -605,8 +613,15 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
         request_id = validate_uuid_path(request_id, resource="Price tag request")
         _assert_visible(db, token.contact_id)
         req = _require_own_request(db, token, request_id)
+        # Two tabs must not both submit the same draft (review nit): the second
+        # waits here, then finds it no longer a draft.
+        db.query(PriceTagRequest).filter(PriceTagRequest.id == req.id).with_for_update().first()
+        db.refresh(req)
         _require_draft(req, "This request has already been submitted.", code="ALREADY_SUBMITTED")
         PriceTagRequestService.validate_submittable(req)
+        with company_scope(db, frozenset({req.company_id})):
+            # The same multi-template gate the plain submit runs (#2100).
+            product_tag_template_service.require_line_templates(db, req)
         if not (payload.note or "").strip():
             raise AppException(
                 status_code=422,
@@ -1079,7 +1094,7 @@ def price_tag_neighbours(db: Session, token: PortalToken, request_id: str) -> di
 
 
 def _submit_in_place(db: Session, req) -> None:
-    """The draft becomes a submitted request at his own proof, committed.
+    """The draft becomes a submitted request at his own proof (flushed only).
 
     The same state the plain submit leaves (R1) - package warnings stamped, no
     form SLA, nobody assigned - without the "received" message: the approve or
@@ -1088,8 +1103,11 @@ def _submit_in_place(db: Session, req) -> None:
     PriceTagRequestService.apply_package_warnings(db, req)
     req.portal_draft_at = None
     req.status = STATUS_PROOF_READY
+    # Flushed, not committed (review should-fix 1): the approve or escalate that
+    # follows commits inside its own transition, so the submit and the approval
+    # land together, and a failure on the way rolls back to the draft instead
+    # of leaving a submitted request behind a form that can no longer save it.
     db.flush()
-    db.commit()
 
 
 def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:

@@ -1295,7 +1295,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       : previewState.failed
         ? 'The tag preview could not be drawn. Escalate it to marketing.'
         : !previewState.drawn
-          ? lines.some((l) => l.product_id || l.product_set_id)
+          ? lines.some((l) => (l.line_type === 'product' ? !!l.product_id : !!l.product_set_id))
             ? 'Drawing the tag preview...'
             : 'Add an item to see its tag before approving.'
           : null;

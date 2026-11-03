@@ -144,6 +144,7 @@ export function PriceTagLivePreview({
     if (sentRef.current.length === 0) {
       setPayload(null);
       setMissing([]);
+      setFailed(false);
       setLoading(false);
       return;
     }

@@ -1053,3 +1053,51 @@ class TestEscalateFromTheDraft:
         res = c.post(f"{_BASE}/{draft['id']}/submit-escalate", json={"note": "x"})
 
         assert res.status_code == 404, res.text
+
+
+class TestOneStepReviewFixes:
+    """Review of the owner-ruling round."""
+
+    def test_a_failure_after_the_submit_rolls_back_to_the_draft(self, client):
+        """Should-fix 1: submit and approve land together or not at all."""
+        c, db, _ = client
+        draft = _draft(c, db)
+        doc = _sheet(_placed_tag_ids(db, draft["id"]))
+
+        with patch(
+            "app.services.dealer_kit.tag_data_service.pin_tags",
+            side_effect=RuntimeError("storage blip"),
+        ):
+            with pytest.raises(RuntimeError):
+                c.post(f"{_BASE}/{draft['id']}/submit-approve", json={"doc": doc})
+
+        db.rollback()
+        row = _row(db, draft["id"])
+        assert row.portal_draft_at is not None
+        assert row.status == "new"
+
+    def test_an_unpicked_multi_template_line_is_refused_on_escalate(self, client):
+        """Should-fix 3: the #2100 pick rule holds on the one-step routes too."""
+        from tests.test_product_tag_templates import _link, _template
+
+        c, db, state = client
+        product_id = _seed_product(db)
+        _link(db, product_id, state["template_id"], _template(db, "ZZT second tag"))
+        db.commit()
+        draft = _draft(c, db, product_id=product_id)
+
+        res = c.post(f"{_BASE}/{draft['id']}/submit-escalate", json={"note": "x"})
+
+        assert res.status_code == 422, res.text
+        assert res.json().get("code") == "TAG_TEMPLATE_REQUIRED"
+        assert _row(db, draft["id"]).portal_draft_at is not None
+
+    def test_submit_approve_on_someone_elses_draft_is_404(self, client):
+        c, db, state = client
+        draft = _draft(c, db)
+        doc = _sheet(_placed_tag_ids(db, draft["id"]))
+        state["contact_id"] = _seed_contact_who_can_see_the_form(db)
+
+        res = c.post(f"{_BASE}/{draft['id']}/submit-approve", json={"doc": doc})
+
+        assert res.status_code == 404, res.text
