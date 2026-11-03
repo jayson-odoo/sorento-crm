@@ -138,8 +138,8 @@ def apply_reconciliation(
     hand-built map). The hint narrowing and the single-kind retype need such a hit: "basin"
     inside the code ZZBASINWC1 is never a product (review M2). A hint naming a kind that is the only
     kind with an exact hit keeps that kind, never asked. `typed` (the folded own text of the message; None =
-    no limit) arms a kind pick only for a token the asker typed. `side` ("customer" or "supplier", the side the
-    message's own words name, `engine._party_side`) keeps only that party kind of a word that is both: never asked."""
+    no limit) arms a kind pick only for a token the asker typed. `side` ("customer" or "supplier", the parser's semantic
+    `party_side` for the turn) keeps only that party kind of a word that is both: never asked."""
     result = ReconcileResult()
     if not resolved:
         result.entities = list(entities)
@@ -170,7 +170,7 @@ def apply_reconciliation(
             inside = [k for k in matched if k in narrow and whole.get(k)]
             if inside:
                 matched = sorted(inside, key=lambda k: (k != hint_kind, -hits[k], k))
-        # Owner ruling 3 Nov 2026 (prod, "fullshun"): a sales or purchase question decides a both-sides name.
+        # Owner ruling 3 Nov 2026 (prod, "fullshun"): the side the parser read for the turn decides a both-sides name.
         sided = side in _PARTY_KINDS and set(_PARTY_KINDS) <= set(matched)
         if sided:
             matched = [k for k in matched if k not in _PARTY_KINDS or k == side]

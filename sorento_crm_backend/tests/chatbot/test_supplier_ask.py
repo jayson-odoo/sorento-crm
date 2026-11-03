@@ -638,7 +638,8 @@ def _seed_named(session_factory, name: str, code: str) -> str:
 
 
 def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver.Span, near: set[str], *,
-               qf: dict[str, Any] | None = None, attributes=STAFF_GRANTS, supplier_ids: bool = True, embed=None):
+               qf: dict[str, Any] | None = None, attributes=STAFF_GRANTS, supplier_ids: bool = True, embed=None,
+               party_side: bool = False):
     import functools
 
     from app.services import contact_field_reveal_service
@@ -647,7 +648,7 @@ def _span_turn(session_factory, monkeypatch, text_body: str, span: list_resolver
 
     monkeypatch.setattr(
         parser_mod, "ParserConfig",
-        functools.partial(parser_mod.ParserConfig, lookup_spans=True, supplier_ids=supplier_ids),
+        functools.partial(parser_mod.ParserConfig, lookup_spans=True, supplier_ids=supplier_ids, party_side=party_side),
     )
     monkeypatch.setattr(span_extract, "resolve_config", lambda db, **kw: span_extract.SpanConfig(
         "sys", 1, "openai", "gpt-zz", "ZZ-key", "label"))
@@ -2113,38 +2114,31 @@ def test_crews_kim_pak_chuan_turn_with_nothing_near_never_lists_that_supplier(se
 
 # --------------------------------------------------------------------------- #
 # Owner ruling, 3 Nov 2026 (prod, after #2066 went live): "it keeps asking me to choose fullshun customer or supplier,
-# it is so clear that sales is talking about customer". The question's own words decide a both-sides name: a sales
-# word is the customer, a purchase word the supplier, an explicit party word always; only a message with neither asks.
+# it is so clear that sales is talking about customer". The PARSER reads the side of a both-sides name from the whole
+# turn (`party_side`, behind `parser.PARTY_SIDE_LINE`); code reads no word of the message (owner rule, 28 Oct). Only
+# "unclear" (or a prompt without the line) asks.
 # --------------------------------------------------------------------------- #
 
 FULLSHUN = "ZZT FULLSHUN HARDWARE SDN BHD"
 
 
-@pytest.mark.parametrize("message,side", [
-    ("delivery for hanlim", "customer"),
-    ("dealer fullshun oct sale", "customer"),
-    ("fullshun only", None),
-    ("customer fullshun only", "customer"),
-    ("Outstanding order for orionis", "customer"),
-    ("invoiced for fullshun last month", "customer"),
-    ("quotation for fullshun", "customer"),
-    ("outstanding SO for fullshun", "customer"),
-    ("PO for fullshun", "supplier"),
-    ("purchase order for fullshun", "supplier"),
-    ("incoming from fullshun", "supplier"),
-    ("PO placed with fullshun", "supplier"),
-    ("supplier fullshun outstanding", "supplier"),
-    ("supplier fullshun sales", "supplier"),
-    ("Outstandinf for orionis", None),
-    ("fullshun", None),
-    ("customer or supplier fullshun", None),
-    ("fullshun 的销售", "customer"),
-    ("fullshun 采购单", "supplier"),
-])
-def test_the_messages_own_words_name_the_side(message, side):
+def test_the_party_side_line_turns_the_schema_key_on_and_only_then():
+    from app.services.chatbot.head import parser as parser_mod
+
+    base = parser_mod._base_schema(parser_mod.ParserConfig("x", 1, "openai", "m", "k"))
+    assert "party_side" not in base["properties"] and "party_side" not in base["required"]
+    on = parser_mod._base_schema(parser_mod.ParserConfig("x", 1, "openai", "m", "k", party_side=True))
+    assert on["properties"]["party_side"] == {"type": ["string", "null"], "enum": ["customer", "supplier", "unclear", None]}
+    assert on["required"][-1] == "party_side"
+    assert parser_mod.with_party_side(base)["properties"].keys() - base["properties"].keys() == {"party_side"}
+
+
+def test_no_word_list_decides_the_side_in_code():
+    """Owner rule 28 Oct (#1947): meaning comes from the parser. The engine keeps no side word list or message read."""
     from app.services.chatbot import engine as engine_mod
 
-    assert engine_mod._party_side(message) == side
+    assert not hasattr(engine_mod, "_party_side")
+    assert not [n for n in dir(engine_mod) if n.endswith("_SIDE_WORDS") or n.endswith("_PARTY_WORDS")]
 
 
 @pytest.mark.parametrize("side,expect", [("customer", "customer"), ("supplier", "supplier")])
@@ -2169,25 +2163,34 @@ def _fullshun_world(session_factory) -> dict[str, Any]:
     return ids
 
 
-def _fullshun_turn(session_factory, monkeypatch, text: str, hint: str, canonical: str | None, **parse):
+def _fullshun_turn(session_factory, monkeypatch, text: str, hint: str, canonical: str | None, *, flag: bool = True,
+                   **parse):
     qf = _parser_output(
         entities=[{"raw": "fullshun", "hint": hint, "canonical_code": canonical, "current_message": True, "confident": True}],
         **parse,
     )
     return _span_turn(
         session_factory, monkeypatch, text, list_resolver.Span("fullshun", hint), {"fullshun", FULLSHUN.casefold()},
-        qf=qf, attributes=OWNER_GRANTS,
+        qf=qf, attributes=OWNER_GRANTS, party_side=flag,
     )
 
 
+#: The sales side's own next question for these asks (the kind, the basis, the period).
+_SALES_SIDE_REPLIES = ("Undelivered orders or pending delivery?", "Invoiced, delivered, ordered or outstanding?", "Which period")
+
 _SALES_ASKS = {
-    "delivery for fullshun": dict(domain_hint="order", intent_hint="check_order", order_status=None, document=["DO"]),
-    "dealer fullshun oct sale": dict(
+    "delivery for fullshun": dict(
+        domain_hint="order", intent_hint="check_order", order_status=None, document=["DO"], party_side="customer",
+    ),
+    "dealer fullshun oct sale": dict(party_side="customer",
         domain_hint="sales", intent_hint="sales_report", status="sales_report", order_status=None, date_mode="range", date_filter_start="2026-10-01", date_filter_end="2026-10-31",
     ),
-    "customer fullshun only": dict(domain_hint="sales", intent_hint="sales_report", status="sales_report", order_status=None),
+    "customer fullshun only": dict(
+        domain_hint="sales", intent_hint="sales_report", status="sales_report", order_status=None, party_side="customer",
+    ),
     "Outstanding order for fullshun": dict(
         domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        party_side="customer",
     ),
 }
 
@@ -2203,6 +2206,7 @@ def test_owners_prod_sales_asks_over_a_both_sides_name_are_the_customer_never_as
     canonical = ids["fs_supplier"] if hint == "supplier" else None
     reply, captured, _seen = _fullshun_turn(session_factory, monkeypatch, text, hint, canonical, **_SALES_ASKS[text])
     assert "(supplier)" not in reply and "Which one do you mean?" not in reply, reply
+    assert any(q in reply for q in _SALES_SIDE_REPLIES), reply  # the sales side's own next step, never an empty turn
     assert not _po_calls(captured), (reply, captured)
     party = [a for n, a in captured if n in fetch_mod.SUPPLIER_GUARDED_TOOLS]
     assert all(ids["fs_supplier"] not in (a.get("supplier_ids") or []) for a in party), (reply, captured)
@@ -2214,12 +2218,16 @@ def n_party(args: dict[str, Any]) -> bool:
 
 
 _PURCHASE_ASKS = {
-    "PO for fullshun": dict(domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"]),
-    "outstanding PO for fullshun": dict(
+    "PO for fullshun": dict(
+        domain_hint="purchase_order", intent_hint="check_po", order_status=None, document=["PO"], party_side="supplier",
+    ),
+    "fullshun PO outstanding": dict(
         domain_hint="purchase_order", intent_hint="check_po", order_status=None, status="outstanding", document=["PO"],
+        party_side="supplier",
     ),
     "supplier fullshun outstanding": dict(
         domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        party_side="supplier",
     ),
 }
 
@@ -2244,6 +2252,19 @@ def test_a_both_sides_name_with_no_side_word_is_still_asked(session_factory, mon
     reply, captured, _seen = _fullshun_turn(
         session_factory, monkeypatch, "Outstandinf for fullshun", hint, canonical,
         domain_hint="order", intent_hint="check_order", order_status="outstanding", status="outstanding",
+        party_side="unclear",
+    )
+    assert "(customer)" in reply and "(supplier)" in reply, reply
+    assert not _fetch_calls(captured), (reply, captured)
+
+
+@pytest.mark.parametrize("said", ["customer", "supplier"])
+def test_a_party_side_from_a_prompt_without_the_line_is_ignored_and_the_name_asked(session_factory, monkeypatch, said):
+    """Production today: no text carries `PARTY_SIDE_LINE`, so a stray key never decides; the #2066 question stands."""
+    ids = _fullshun_world(session_factory)
+    reply, captured, _seen = _fullshun_turn(
+        session_factory, monkeypatch, "delivery for fullshun", "supplier", ids["fs_supplier"], flag=False,
+        domain_hint="order", intent_hint="check_order", order_status=None, document=["DO"], party_side=said,
     )
     assert "(customer)" in reply and "(supplier)" in reply, reply
     assert not _fetch_calls(captured), (reply, captured)
@@ -2284,3 +2305,39 @@ def test_a_delivery_ask_over_a_both_sides_name_names_the_customer(session_factor
         session_factory, monkeypatch, "delivery for fullshun", hint, canonical, **_SALES_ASKS["delivery for fullshun"],
     )
     assert FULLSHUN in reply and "couldn't find" not in reply, reply
+
+
+def _parser_config_for(session_factory, monkeypatch, template: str):
+    """`test_eem_category_pick._config_for` over a parser with no other label (the session DB keeps earlier rows)."""
+    from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+    from app.services.chatbot.head import parser as parser_mod
+    from tests.chatbot.test_eem_category_pick import _config_for
+
+    db = session_factory()
+    db.query(AIPromptLabel).filter(AIPromptLabel.name == parser_mod.PROMPT_KEY).delete()
+    db.query(AIPromptVersion).filter(AIPromptVersion.name == parser_mod.PROMPT_KEY).delete()
+    db.commit()
+    db.close()
+    from app.services import ai_prompt_registry
+    from app.services import chatbot_prompt_vars as pv
+
+    ai_prompt_registry.bust_cache()
+    pv.clear_cache()
+    return _config_for(session_factory, monkeypatch, template)
+
+
+@pytest.mark.parametrize("gate", ["", "== CLOSED LISTS ==\n"])
+def test_a_prompt_with_the_party_side_line_offers_the_key_on_both_schema_paths(session_factory, monkeypatch, gate):
+    from app.services.chatbot.head import parser as parser_mod
+    on = _parser_config_for(session_factory, monkeypatch, "Rules {{current_date}}.\n" + gate + parser_mod.PARTY_SIDE_LINE + "\n")
+    assert on.party_side is True
+    schema = on.json_schema or parser_mod._base_schema(on)
+    assert schema["properties"]["party_side"]["enum"] == ["customer", "supplier", "unclear", None], schema["properties"].keys()
+    assert "party_side" in schema["required"]
+
+
+def test_a_prompt_without_the_party_side_line_has_no_key(session_factory, monkeypatch):
+    from app.services.chatbot.head import parser as parser_mod
+    off = _parser_config_for(session_factory, monkeypatch, "Rules {{current_date}}.\n== CLOSED LISTS ==\n")
+    assert off.party_side is False
+    assert "party_side" not in (off.json_schema or parser_mod._base_schema(off))["properties"]
