@@ -766,6 +766,8 @@ def seed_chatbot_policy() -> None:
     spk = _load("_spk_0001_specification_kind", "spk_0001_specification_kind.py")
     # REF-PROBES: the five reference kinds' rows, also before the republish.
     rkind3 = _load("_rkind_0003_reference_kind_rows", "rkind_0003_reference_kind_rows.py")
+    # SUPPLIER-ASK: the supplier kind's row, also before the republish.
+    sask = _load("_sask_0001_supplier_kind", "sask_0001_supplier_kind.py")
     top_selling = _load("_chatbot_top_selling_tool", "chatbot_top_selling_tool.py")
     sales_s1 = _load("_sales_s1_reports_module", "sales_s1_reports_module.py")
     pdyn1 = _load("_pdyn_0001_status_words_sales", "pdyn_0001_status_words_sales.py")
@@ -787,6 +789,8 @@ def seed_chatbot_policy() -> None:
     with engine.begin() as conn:
         kinds_inserted += rkind3.insert_kinds(conn)
     with engine.begin() as conn:
+        kinds_inserted += int(sask.insert_kind(conn))
+    with engine.begin() as conn:
         s4.publish_policy_blocks(conn)
     with engine.begin() as conn:
         s6d.apply_narrowing(conn)
@@ -806,6 +810,8 @@ def seed_chatbot_policy() -> None:
         s11.apply_narrowing(conn)
     with engine.begin() as conn:
         s12.apply_narrowing(conn)
+    with engine.begin() as conn:
+        sask.apply_narrowing(conn)
     # After every narrowing step: the `sales` row copies the `order` row's narrowing.
     with engine.begin() as conn:
         pdyn1.apply(conn)

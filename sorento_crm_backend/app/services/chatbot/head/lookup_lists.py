@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 HEADER_NOUN = {
     "category": "Category", "spec": "Spec", "file_type": "File type", "brand": "Brand",
     "promotion_kind": "Promotion kind", "salesperson": "Salesperson", "location": "Location",
-    "sales_channel": "Sales channel", "customer": "Customer",
+    "sales_channel": "Sales channel", "customer": "Customer", "supplier": "Supplier",
 }
 FLOOR_SPELLING = 0.5
 #: ENTITY-EXTRACT-MATCH S2 V2: on the span path a row the message spells at least this well is offered even when no
@@ -43,6 +43,8 @@ FLOOR_MEANING = 0.5
 #: Per list for text-embedding-3-small (free re-score of 26 Oct); any other list uses `_FLOOR_MEANING_OTHER`.
 FLOOR_MEANING_BY_LIST = {
     "category": 0.55, "sales_channel": 0.55, "brand": 0.58, "spec": 0.55, "file_type": 0.59, "customer": 0.53,
+    # SUPPLIER-ASK: a company name list like Customer, so Customer's measured floor until one is measured for it.
+    "supplier": 0.53,
 }
 _FLOOR_MEANING_OTHER = 0.55
 #: A message is read for its first words only (CPU bound).
@@ -53,10 +55,11 @@ MAX_NUMBER_ASKS = 3
 MAX_LABEL_CHARS = 120
 TOP_K = {
     "category": 10, "spec": 10, "file_type": 5, "brand": 3, "promotion_kind": 3, "salesperson": 5, "location": 5,
-    "sales_channel": 2, "customer": 5,
+    "sales_channel": 2, "customer": 5, "supplier": 5,
 }
 DEFAULT_ORDER = (
     "category", "spec", "file_type", "brand", "promotion_kind", "salesperson", "location", "sales_channel", "customer",
+    "supplier",
 )
 
 EMBED_MODEL = "text-embedding-3-small"
@@ -67,6 +70,9 @@ EMBED_TIMEOUT = 3.0
 EMBED_CHUNK = 500
 #: Row-text vectors kept per process; cleared whole when it grows past this.
 _CACHE_CAP = 20000
+#: SUPPLIER-ASK fix round 7: at most this many uncached row texts are embedded on a turn itself (`usable_embedder`);
+#: a larger gap is the background warm's, and the turn reads the cached rows by meaning meanwhile.
+TURN_EMBED_GAP = 64
 
 Embedder = Callable[[list[str]], list[list[float]]]
 
@@ -415,7 +421,7 @@ def _grouped_category_lines(hits: list[Hit]) -> list[str]:
 
 
 #: REPORT-UNIFY slice 3: the lists whose rows the report ask binds by id; their lines carry it when `row_ids`.
-ID_LISTS = frozenset({"brand", "salesperson", "category"})
+ID_LISTS = frozenset({"brand", "salesperson", "category", "supplier"})
 
 
 def cap_hits(name: str, hits: list[Hit]) -> list[Hit]:
@@ -449,6 +455,7 @@ def cap_hits(name: str, hits: list[Hit]) -> list[Hit]:
 def render(
     hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *, group_categories: bool = False,
     row_ids: bool = False,
+    supplier_ids: bool = False,
 ) -> list[str]:
     """One block per list with hits: the header, then `- <label>` once per label (a category block one line per
     class when `group_categories`). `row_ids` (a prompt that asks for it) ends the line of a brand, salesperson or
@@ -467,7 +474,9 @@ def render(
             label = _one_line(h.row.label)
             if label and label not in labels:
                 labels.append(label)
-                with_id = row_ids and name in ID_LISTS and h.row.key and not str(h.row.key).startswith("type:")
+                # SUPPLIER-ASK: a supplier line carries its id under its own prompt sentence (`supplier_ids`).
+                asks_id = supplier_ids if name == "supplier" else row_ids
+                with_id = asks_id and name in ID_LISTS and h.row.key and not str(h.row.key).startswith("type:")
                 printed.append(f"{label} [id: {h.row.key}]" if with_id else label)
         if labels:
             lines.append(header(name))
@@ -625,10 +634,25 @@ def _customer_rows(db: "Session", only_ids: frozenset[str] | None) -> list[Looku
     ]
 
 
+def _supplier_rows(db: "Session") -> list[LookupRow]:
+    """SUPPLIER-ASK: active suppliers of the session's companies, labelled by `supplier_name`, with the supplier code
+    as a second text. Staff-only: the engine asks for them only for an office contact (`include_suppliers`)."""
+    from app.models.procurement import Supplier
+
+    out: list[LookupRow] = []
+    query = db.query(Supplier.id, Supplier.supplier_name, Supplier.supplier_code).filter(Supplier.is_active.is_(True))
+    for sid, name, code in query.order_by(Supplier.supplier_code).all():
+        label = (name or "").strip()
+        if label and _fold(label):
+            texts, homes = _tagged(("label", [label]), ("code", [(code or "").strip()]))
+            out.append(LookupRow("supplier", str(sid), label, texts, homes=homes))
+    return out
+
+
 def load_rows(
     db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = False,
     include_customers: bool = False, customer_ids: frozenset[str] | None = None, brands: list[dict] | None = None,
-    group_categories: bool = False,
+    group_categories: bool = False, include_suppliers: bool = False,
 ) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
     spec word values, file types and the sales channels. `group_categories` (EEM-CATEGORY-PICK) reads the class
@@ -682,6 +706,8 @@ def load_rows(
         out.extend(_salesperson_rows(db))
     if include_customers:
         out.extend(_customer_rows(db, customer_ids))
+    if include_suppliers:
+        out.extend(_supplier_rows(db))
     # The channel values are code's; the owner's `sales_channel_alias` set only adds words for them ("retail" = dealer).
     channel_words = pv._alias_words(db, "sales_channel_alias")
     for ch in SALES_CHANNELS:
@@ -1041,7 +1067,31 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
                     _pieces.pop(next(iter(_pieces)))
         return np.stack([got[t] for t in texts])
 
+    def cached_matrix(texts: list[str]):
+        """The row matrix from the cache alone, a zero row for a text not cached yet (it scores no meaning; its
+        spelling still counts). Raises when nothing is cached (no vector to size the zero rows by)."""
+        import numpy as np
+
+        with _store_lock:
+            vectors = [_cache.get(_key(t, model)) for t in texts]
+        present = next((v for v in vectors if v is not None), None)
+        if present is None:
+            raise LookupError("no row vector cached yet")
+        zero = np.zeros_like(present)
+        return np.stack([v if v is not None else zero for v in vectors])
+
+    def load_stored(texts: list[str]) -> int:
+        """Fix round 8 (crew: the first turn of a fresh process read 金百川 by spelling while the warm ran): the
+        stored vectors of `texts` (`lookup_word` chunks of this model) into the cache, one SELECT, no provider call."""
+        from app.database import SessionLocal
+        from app.services.chatbot.head import lookup_word_store
+
+        with SessionLocal() as s:
+            return lookup_word_store.load_lookup_vectors(s, model, list(texts))
+
     embed.fill = fill  # type: ignore[attr-defined]
+    embed.load_stored = load_stored  # type: ignore[attr-defined]
+    embed.cached_matrix = cached_matrix  # type: ignore[attr-defined]
     embed.matrix = matrix  # type: ignore[attr-defined]
     embed.pieces = pieces_matrix  # type: ignore[attr-defined]
     embed.needs_warm = True  # type: ignore[attr-defined]
@@ -1164,12 +1214,61 @@ def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
     threading.Thread(target=run, name="lookup-lists-warm", daemon=True).start()
 
 
+class _CachedRows:
+    """The provider embedder while the warm is still filling: the message's pieces are embedded live as always, the
+    rows read from the cache only (`cached_matrix`), so an uncached row scores no meaning and every cached row keeps
+    its meaning. No row is embedded on the request path."""
+
+    needs_warm = False
+
+    def __init__(self, embed: Any) -> None:
+        self._embed = embed
+        self.model = getattr(embed, "model", EMBED_MODEL)
+
+    def matrix(self, texts: list[str]):
+        return self._embed.cached_matrix(texts)
+
+    def pieces(self, texts: list[str]):
+        return self._embed.pieces(texts)
+
+    def __call__(self, texts: list[str]):
+        raise LookupError("cached rows only")  # `_meaning` reads `matrix` / `pieces`; nothing embeds rows here
+
+
 def usable_embedder(rows: list[LookupRow], embed: Embedder | None) -> Embedder | None:
-    """`embed` for the turn: the provider embedder only once every row text is cached (else None, spelling
-    only, while `warm` fills the cache); any other embedder as given."""
+    """`embed` for the turn: the provider embedder when every row text is cached; while the warm still fills the
+    cache, the same embedder over the cached rows only (`_CachedRows`). SUPPLIER-ASK fix round 7 (crew sweep at
+    55545eb7: 金百川 and 太阳 lost every meaning hit on some sends and kept them on others): this used to be None,
+    spelling only for the WHOLE turn, as soon as one row text was not cached. Any other embedder as given."""
     if embed is not None and getattr(embed, "needs_warm", False) and not embed.is_cached(row_texts(rows)):  # type: ignore[attr-defined]
-        return None
+        missing = embed.missing(row_texts(rows)) if hasattr(embed, "missing") else None  # type: ignore[attr-defined]
+        if missing is not None and len(missing) > TURN_EMBED_GAP and hasattr(embed, "load_stored"):
+            # A large gap (a fresh process, the warm still running): the vectors already stored are read first.
+            try:
+                embed.load_stored(sorted(missing))  # type: ignore[attr-defined]
+                missing = embed.missing(row_texts(rows))  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 - advisory: the cached rows still read by meaning
+                logger.warning("lookup: stored vectors not loaded on the turn", exc_info=True)
+            if not missing:
+                return embed
+        if missing is not None and len(missing) <= TURN_EMBED_GAP:
+            # A small gap (a new customer, a held value) is embedded now, inside the embedder's own time budget,
+            # so the turn keeps every row's meaning; on a failure the cached rows still read by meaning.
+            try:
+                embed(sorted(missing))
+                return embed
+            except Exception:  # noqa: BLE001 - advisory: fall back to the cached rows
+                logger.warning("lookup: %d uncached row texts not embedded on the turn", len(missing), exc_info=True)
+        return _CachedRows(embed) if hasattr(embed, "cached_matrix") else None
     return embed
+
+
+def cached_share(rows: list[LookupRow], embed: Embedder | None) -> str | None:
+    """"cached/total" row texts for the trace (fix round 7: a turn that read some rows by spelling says so)."""
+    if embed is None or not hasattr(embed, "missing"):
+        return None
+    texts = row_texts(rows)
+    return f"{len(texts) - len(embed.missing(texts))}/{len(texts)}"  # type: ignore[attr-defined]
 
 
 def embedder(db: "Session") -> Embedder | None:

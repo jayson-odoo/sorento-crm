@@ -226,6 +226,7 @@ def _at(cosine: float):
 def test_floor_by_list_table():
     assert ll.FLOOR_MEANING_BY_LIST == {
         "category": 0.55, "sales_channel": 0.55, "brand": 0.58, "spec": 0.55, "file_type": 0.59, "customer": 0.53,
+        "supplier": 0.53,  # SUPPLIER-ASK: borrowed from customer, not measured
     }
     assert ll.FLOOR_SPELLING == 0.5
 
