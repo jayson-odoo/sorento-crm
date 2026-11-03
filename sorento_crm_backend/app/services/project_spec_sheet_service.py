@@ -1462,7 +1462,9 @@ def ensure_key(db: Session, sheet: ProjectQuotationSpecSheet, key: str) -> None:
         raise AppException(status_code=404, message="Page not found.", code="spec_sheet_page_missing")
 
 
-def _check_assets(db: Session, sheet: ProjectQuotationSpecSheet, layers: list) -> None:
+def _check_assets(
+    db: Session, sheet: ProjectQuotationSpecSheet, layers: list, pinned: Optional[dict] = None
+) -> None:
     """A layer may name a library asset only if a pinned template version already does, or it is
     an asset of the document's own company."""
     from app.models.dealer_kit import Asset
@@ -1471,7 +1473,7 @@ def _check_assets(db: Session, sheet: ProjectQuotationSpecSheet, layers: list) -
     named = asset_service.tag_sheet_asset_ids({"layers": layers})
     if not named:
         return
-    allowed = _version_asset_ids(_pinned(db, sheet))
+    allowed = _version_asset_ids(pinned if pinned is not None else _pinned(db, sheet))
     unknown = named - allowed
     if unknown:
         owned = {
@@ -1499,6 +1501,10 @@ def _check_value(value: Any, depth: int) -> None:
             if not isinstance(k, str) or len(k) > 200:
                 raise _invalid_layer("A layer has an invalid property name.")
             _check_value(v, depth + 1)
+    elif isinstance(value, float):
+        # Postgres rejects NaN / Infinity in jsonb: refused here, not a 500 on the write.
+        if not math.isfinite(value):
+            raise _invalid_layer("A layer holds a number that is not finite.")
     elif isinstance(value, list):
         for v in value:
             _check_value(v, depth + 1)
@@ -1523,6 +1529,42 @@ def _check_layer(layer: Any) -> None:
     _check_value(layer, 1)
 
 
+def _too_large() -> AppException:
+    return AppException(
+        status_code=422,
+        message="That page edit is too large to keep.",
+        code="spec_sheet_page_edit_too_large",
+    )
+
+
+def _validate_page_edit(
+    db: Session,
+    sheet: ProjectQuotationSpecSheet,
+    layers: Any,
+    *,
+    pinned: Optional[dict] = None,
+) -> int:
+    """Check one page's layers (shape, bounds, artwork) and return their serialized size. Writes
+    nothing; the page key is the caller's to have checked."""
+    if not isinstance(layers, list) or len(layers) > LAYERS_MAX:
+        raise AppException(
+            status_code=422,
+            message=f"A page holds at most {LAYERS_MAX} layers.",
+            code="spec_sheet_layers_invalid",
+        )
+    for layer in layers:
+        _check_layer(layer)
+    _check_assets(db, sheet, layers, pinned)
+    size = len(json.dumps(layers, default=str))
+    if size > PAGE_EDIT_MAX:
+        raise _too_large()
+    return size
+
+
+def _edit_size(edit: Any) -> int:
+    return len(json.dumps(edit.get("layers"), default=str)) if isinstance(edit, dict) else 0
+
+
 def save_page_edit(
     db: Session,
     sheet: ProjectQuotationSpecSheet,
@@ -1532,27 +1574,10 @@ def save_page_edit(
 ) -> ProjectQuotationSpecSheet:
     """Store ``layers`` as this page's override. The template and its versions are untouched."""
     ensure_key(db, sheet, key)
-    if not isinstance(layers, list) or len(layers) > LAYERS_MAX:
-        raise AppException(
-            status_code=422,
-            message=f"A page holds at most {LAYERS_MAX} layers.",
-            code="spec_sheet_layers_invalid",
-        )
-    for layer in layers:
-        _check_layer(layer)
-    _check_assets(db, sheet, layers)
-    size = len(json.dumps(layers, default=str))
-    others = sum(
-        len(json.dumps(v.get("layers"), default=str))
-        for k, v in (sheet.page_edits or {}).items()
-        if k != key and isinstance(v, dict)
-    )
-    if size > PAGE_EDIT_MAX or others + size > PAGE_EDITS_TOTAL_MAX:
-        raise AppException(
-            status_code=422,
-            message="That page edit is too large to keep.",
-            code="spec_sheet_page_edit_too_large",
-        )
+    size = _validate_page_edit(db, sheet, layers)
+    others = sum(_edit_size(v) for k, v in (sheet.page_edits or {}).items() if k != key)
+    if others + size > PAGE_EDITS_TOTAL_MAX:
+        raise _too_large()
     sheet.page_edits = {**(sheet.page_edits or {}), key: {"layers": layers}}
     _stamp(sheet, user_id)
     db.flush()
@@ -1601,12 +1626,18 @@ def _check_apply(changes: Any) -> dict:
             for pkey, pvalue in value.items():
                 if pkey not in APPLY_PROPS_KEYS:
                     raise _invalid_apply(f"{pkey} cannot be applied to every page.")
-                if isinstance(pvalue, (dict, list)) or (isinstance(pvalue, str) and len(pvalue) > 200):
+                if (
+                    isinstance(pvalue, (dict, list))
+                    or (isinstance(pvalue, str) and len(pvalue) > 200)
+                    or (isinstance(pvalue, float) and not math.isfinite(pvalue))
+                ):
                     raise _invalid_apply(f"{pkey} must be a plain value.")
             clean["props"] = dict(value)
         elif key in APPLY_TOP_KEYS:
             ok = isinstance(value, bool) if key == "visible" else (
-                isinstance(value, (int, float)) and not isinstance(value, bool)
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and (not isinstance(value, float) or math.isfinite(value))
             )
             if not ok:
                 raise _invalid_apply(f"{key} has an invalid value.")
@@ -1628,9 +1659,12 @@ def apply_to_all_pages(
     through the same checks and size bounds as a single page edit."""
     clean = _check_apply(changes)
     pinned = _pinned(db, sheet)
+    # Pages and the pinned versions are read ONCE; every merged page is validated in memory and the
+    # sheet is written once, not once per page (each write rewrites the whole page_edits column).
     entries = [(COVER_KEY, "cover")] + [
         (p["key"], p["template"]) for p in pages(db, sheet) if not p["hidden"]
     ]
+    edits = dict(sheet.page_edits or {})
     touched = 0
     for key, template in entries:
         layers = _page_layers(sheet, pinned, key, template)
@@ -1643,10 +1677,16 @@ def apply_to_all_pages(
                 if "props" in clean:
                     layer["props"] = {**(layer.get("props") or {}), **clean["props"]}
             merged.append(layer)
-        save_page_edit(db, sheet, key, merged, user_id=user_id)
+        _validate_page_edit(db, sheet, merged, pinned=pinned)
+        edits[key] = {"layers": merged}
         touched += 1
     if not touched:
         raise AppException(status_code=404, message="No page has that layer.", code="spec_sheet_layer_missing")
+    if sum(_edit_size(v) for v in edits.values()) > PAGE_EDITS_TOTAL_MAX:
+        raise _too_large()
+    sheet.page_edits = edits
+    _stamp(sheet, user_id)
+    db.flush()
     return sheet
 
 

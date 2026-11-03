@@ -2036,3 +2036,119 @@ def test_r7_apply_all_skips_left_out_pages_and_works_on_a_sheet_with_edits():
             assert stored["y_mm"] == 40 and stored["x_mm"] == 9 and stored["props"]["text"] == "MY OWN WORDING"
         finally:
             _restore(originals)
+
+
+# ------------------------------------------------------------------ round 7b: one write, finite numbers
+
+
+def _ten_page_sheet(db):
+    from app.models.projects import ProjectQuotationLine
+
+    env = _setup(db)
+    document = _document(db, env)
+    scope = _scope(db, env, document)
+    for n in range(10):
+        product = _product(db, env["category"].id, env["uom"], description=f"{MARKER} item {n}")
+        _line(db, env, scope, {"product_id": product.id})
+    issue = _issue(db, document, env["owner"])
+    c = {**env, "document": document, "issue": issue}
+    both = {
+        "cover": _template(db, env["company_id"], "spec_cover"),
+        "page": _template(db, env["company_id"], "spec_page", layers=[_logo()]),
+        "single": _template(db, env["company_id"], "spec_page", layers=[_logo()]),
+    }
+    assert db.query(ProjectQuotationLine).count() >= 10
+    return c, _make(db, c, templates=both)
+
+
+def _count_sheet_updates(db, work):
+    from sqlalchemy import event
+
+    seen = []
+    bind = db.get_bind()
+
+    def hook(conn, cursor, statement, *a):
+        if statement.lstrip().upper().startswith("UPDATE") and "quotation_spec_sheets" in statement:
+            seen.append(statement)
+
+    event.listen(bind, "before_cursor_execute", hook)
+    try:
+        work()
+    finally:
+        event.remove(bind, "before_cursor_execute", hook)
+    return len(seen)
+
+
+def test_r7b_apply_all_over_ten_pages_writes_the_sheet_once():
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c, sheet = _ten_page_sheet(db)
+        assert len(spec.pages(db, sheet)) == 10
+        db.flush()
+
+        updates = _count_sheet_updates(
+            db, lambda: (spec.apply_to_all_pages(db, sheet, "logo", {"x_mm": 31}), db.flush())
+        )
+
+        assert updates == 1
+        assert len(sheet.page_edits) == 10
+        assert all(v["layers"][0]["x_mm"] == 31 for v in sheet.page_edits.values())
+
+
+def test_r7b_an_over_cap_total_answers_422_and_writes_nothing(monkeypatch):
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        c, sheet = _ten_page_sheet(db)
+        db.flush()
+        one_page = len(__import__("json").dumps([_logo()]))
+        monkeypatch.setattr(spec, "PAGE_EDITS_TOTAL_MAX", one_page * 3)
+
+        updates = _count_sheet_updates(db, lambda: None)
+        with pytest.raises(AppException) as raised:
+            spec.apply_to_all_pages(db, sheet, "logo", {"x_mm": 31})
+        assert (raised.value.status_code, raised.value.code) == (422, "spec_sheet_page_edit_too_large")
+        assert sheet.page_edits == {}
+        assert _count_sheet_updates(db, db.flush) == 0 and updates == 0
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_r7b_non_finite_numbers_are_refused_not_a_500(bad):
+    from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c, templates=_logo_templates(db, c))
+        for changes in ({"x_mm": bad}, {"props": {"fontSize": bad}}):
+            with pytest.raises(AppException) as raised:
+                spec.apply_to_all_pages(db, sheet, "logo", changes)
+            assert (raised.value.status_code, raised.value.code) == (422, "spec_sheet_apply_invalid")
+        layer = _logo()
+        layer["x_mm"] = bad
+        layer["props"] = {**layer["props"], "extra": [bad]}
+        with pytest.raises(AppException) as raised:
+            spec.save_page_edit(db, sheet, f"set:{c['set'].id}", [layer])
+        assert (raised.value.status_code, raised.value.code) == (422, "spec_sheet_page_edit_invalid")
+        assert sheet.page_edits == {}
+
+
+def test_r7b_a_raw_nan_in_the_request_is_a_422():
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c, templates=_logo_templates(db, c))
+        client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
+        try:
+            for body in ('{"changes": {"x_mm": NaN}}', '{"changes": {"props": {"fontSize": Infinity}}}'):
+                got = client.post(_apply_url(c, sheet), content=body, headers={"Content-Type": "application/json"})
+                assert got.status_code == 422, (body, got.text)
+            put = client.put(
+                _base(c, f"/{sheet.id}/pages/set:{c['set'].id}/edit"),
+                content='{"layers": [{"id": "l", "type": "text", "x_mm": NaN}]}',
+                headers={"Content-Type": "application/json"},
+            )
+            assert put.status_code == 422, put.text
+        finally:
+            _restore(originals)
