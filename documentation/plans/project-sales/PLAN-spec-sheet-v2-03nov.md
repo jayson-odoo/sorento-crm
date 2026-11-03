@@ -1,8 +1,9 @@
 # PLAN: Spec sheet tab v2, saved spec sheets list + PDF-style viewer (SPEC-SHEET-V2)
 
-**Status:** Built, PR #2124 ready for review (mock v2 approved 3 Nov 11:45). Reviewer READY (last kill test fixed), security
-PASS, cloud browser pass done (one defect found and fixed: edit route double-encoded the page key). Waiting on CI
-label, owner hand test, and #2126's export image cap. Track: L.
+**Status:** Built, PR #2124. Owner hand test FAIL 3 Nov 23:45 (F1-F5); F1/F2/F3/F5 fixed and F4 (edit every
+page in place, rail, autosave, Undo/Redo, Apply to every page, phone editing) built after the F4 mock was approved.
+Reviewer READY on the F4 rounds (row lock on sheet writes, library cache per company), browser evidence at 1280 and
+375. Waiting on CI, the crew browser pass and the owner hand test. Track: L.
 Card: `CARD-spec-sheet-v2-03nov.md`.
 Track: L (new table migration, new routes). Builds on #2103 (`PLAN-ps-spec-sheet-02nov.md`).
 UAC: `spec-sheet-v2-03nov-acceptance-criteria.md` (after the mock is approved).

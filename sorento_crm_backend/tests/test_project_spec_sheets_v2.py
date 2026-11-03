@@ -2270,14 +2270,22 @@ def test_f4_every_sheet_write_locks_the_row_so_two_page_saves_cannot_lose_one():
 
 
 def test_f4_the_reset_page_commit_locks_the_row_and_rereads_it():
+    """The deferred reset's COMMIT handler (not just the helper) reads the sheet FOR UPDATE."""
     from app.services import record_actions
 
     with blank_session() as db:
         c = _chain(db)
         sheet = _make(db, c)
+        from app.services import project_spec_sheet_service as spec
+
+        spec.save_page_edit(db, sheet, c["basin"].id, [_layer("ONE")])
+        db.flush()
+        payload = {
+            "entity_id": sheet.id,
+            "page_key": c["basin"].id,
+            "requested_by_id": c["owner"],
+        }
         with _Statements(db) as sql:
-            record_actions.assert_spec_sheet_editable(db, sheet.id, c["owner"], lock=True)
-        assert sql.locked_sheet_reads()
-        with _Statements(db) as sql:
-            record_actions.assert_spec_sheet_editable(db, sheet.id, c["owner"])
-        assert not sql.locked_sheet_reads()
+            record_actions._reset_quotation_spec_sheet_page(db, payload)
+        assert sql.locked_sheet_reads(), "the reset commit read the sheet without FOR UPDATE"
+        assert c["basin"].id not in (sheet.page_edits or {})
