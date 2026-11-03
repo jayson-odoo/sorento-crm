@@ -10,7 +10,7 @@ from app.models.base import company_scope
 from app.models.project_so import DECISION_ACTIVE, OrderInquiryRow, SOSupplyDecision
 
 from ._oi_one_date_seed import Chain, digits
-from ._pg_fixture import blank_session
+from ._pg_fixture import blank_session, pg_session
 from .test_order_inquiry_worklist import _restore, _sorento
 from .test_project_order_inquiry_import_migration import D_NOV, D_OCT, sheet, world as import_world
 
@@ -101,15 +101,18 @@ def test_a8_link_window_reads_the_so_line_date():
 
 
 def test_a8_demand_leg_horizon_reads_the_so_line_date():
+    from sqlalchemy import text
+
     from app.services.scm.demand import run_scope_oi_rows
 
-    with blank_session() as db:
-        company_id = _sorento(db)
+    # Raw SQL names `projects.*`, so this runs on the real schema in a rolled-back session.
+    with pg_session() as db:
+        company_id = db.execute(text("select id from companies where code = 'SRT'")).scalar()
         with company_scope(db, frozenset({company_id})):
             chain = Chain(db, company_id)
             _c, line = chain.add_line(core_date=NEW, mirror_date=NEW)
             row = chain.add_row(line, told=OLD)
-            db.commit()
+            db.flush()
             pid = [str(chain.product.id)]
 
             in_line_month = run_scope_oi_rows(
@@ -158,3 +161,23 @@ def test_c1_reupload_with_two_dated_rows_on_one_item_raises_nothing_twice():
         again = w.apply(data)
         assert again["rows_raised"] == 0, again
         assert len(w.rows()) == 2
+
+
+def test_c1_reupload_restates_the_row_by_its_was_not_onto_the_free_line():
+    """One sheet row, two lines: the row raised on the first line carries the line's date and
+    the sheet's as its Was, so the re-upload must find it by that Was instead of raising a
+    second row on the free line."""
+    sheet_date = date(2026, 9, 1)
+    with import_world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="50", required_date=D_OCT)
+        w.line(order, qty_ordered="50", required_date=D_NOV)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, sheet_date, w.warehouse.warehouse_code, ""),
+        ])
+        first = w.apply(data)
+        assert first["rows_raised"] == 1, first
+        assert w.one_row().previous_delivery_date == sheet_date
+        again = w.apply(data)
+        assert again["rows_raised"] == 0, again
+        assert len(w.rows()) == 1

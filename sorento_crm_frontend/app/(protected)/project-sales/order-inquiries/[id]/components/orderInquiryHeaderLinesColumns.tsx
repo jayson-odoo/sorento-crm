@@ -774,7 +774,7 @@ export function useOrderInquiryHeaderLinesColumns({
         id: 'po_number',
         accessorFn: (row) => lineDocumentsOf(lineOf(row), 'po')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
-        size: 240,
+        size: 200,
         meta: { headerTitle: 'PO' },
         cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="po" />,
       },
@@ -804,7 +804,7 @@ export function useOrderInquiryHeaderLinesColumns({
       {
         accessorKey: 'verb',
         header: ({ column }) => <DataGridColumnHeader title="Instruction" column={column} />,
-        size: 240,
+        size: 200,
         meta: { headerTitle: 'Instruction', skeleton: <Skeleton className="h-4 w-24" /> },
         // G5: the line's most urgent instruction (CANCEL_BALANCE > CHANGE_SO > DELAY >
         // ADVANCE > the primary row's own verb). The pill only, never the shared cell's

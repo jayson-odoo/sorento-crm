@@ -6,8 +6,9 @@ bug. Every chain is seeded here (`tests/_oi_one_date_seed.py`).
 
 Not covered here, named so nobody thinks it is: the handover Excel attachment and the
 worklist / per-project Excel and PDF exports (AC-A5/A9) read the same fields the tests below
-pin (OI-EXPORT-SHARED, #2146, owns those files), the undo email (AC-A6) and the planning
-leg readers (AC-A8) are exercised by the existing suites once the resolver lands.
+pin (OI-EXPORT-SHARED, #2146, owns those files). The undo email and confirm preview (AC-A6),
+the matrix (AC-A3), the link window and demand legs (AC-A8) and the sheet re-upload (AC-C1)
+are pinned in `tests/test_oi_one_delivery_date_legs.py`.
 """
 from __future__ import annotations
 
