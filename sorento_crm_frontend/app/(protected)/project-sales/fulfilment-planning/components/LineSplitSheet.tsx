@@ -696,7 +696,11 @@ const LineBlock = React.memo(function LineBlock({
   // OI-SPLIT-GUIDE (UAC F3, F18, F25): the guided Confirm's words for the line's saved
   // decision (only the guide sets them), and the planner's own remark over them.
   const savedRemark = line.savedRemark || null;
-  const ownRemark = line.ownRemark || '';
+  // CONFIRM-DIALOG-SPEED (crew measure, 3 Nov 2026): while the page's email words are being
+  // read, a cell prints only the planner's own DRAFT remark (the email prints that too);
+  // never a carried line's old confirmed remark nor the sheet's generated words.
+  const wordsPending = React.useContext(RemarkWordsPendingContext);
+  const ownRemark = wordsPending && !line.remarkInDraft ? '' : line.ownRemark || '';
   // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026, "popup = email = Excel"; item 4): Confirm plans
   // a delivered line at its ordered qty (`plan_qty_of`, owner ruling 14 Sep), so its saved
   // decision DOES reach purchasing and the row prints that decision's words like any saved
@@ -752,7 +756,7 @@ const LineBlock = React.memo(function LineBlock({
           ) : savedRemark || ownRemark ? (
             <RemarkText value={ownRemark || savedRemark || ''} generated="" />
           ) : delivered && line.remarkGenerated ? (
-            <RemarkText value={line.remarkGenerated} generated="" />
+            <RemarkText value={wordsPending ? '' : line.remarkGenerated} generated="" />
           ) : null}
         </TableCell>
         {balance}
@@ -826,7 +830,7 @@ const LineBlock = React.memo(function LineBlock({
               label={`Remark, line ${no}`}
               // OI-SPLIT-GEAR-REMARK: a stored split remark wins, then the server's words, then
               // the line's confirmed remark (display only, never copied into the split state).
-              value={only?.remark || (savedRemark ? '' : line.ownRemark) || ''}
+              value={only?.remark || (savedRemark || wordsPending ? '' : line.ownRemark) || ''}
               generated={savedRemark ?? line.remarkGenerated ?? ''}
               onValue={(remark) =>
                 only &&
