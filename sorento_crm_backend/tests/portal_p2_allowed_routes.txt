@@ -89,6 +89,7 @@ GET /projects/{project_id}/quotation-documents/{document_id}/issues
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheet
+GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheet/page-images
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheet/preview
 GET /projects/{project_id}/quotation-documents/{document_id}/views
 GET /projects/{project_id}/quotations
