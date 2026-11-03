@@ -346,11 +346,15 @@ def test_the_line_payload_carries_a_signed_thumbnail_and_never_a_raw_object_key(
 
         signed: list = []
 
-        def _sign(file_path, *, provider=None, expires_in=3600):
-            signed.append(file_path)
-            return f"https://signed.zzt.test/x?sig={len(signed)}"
+        # IMAGE-UNIFY: the one signing point is storage_router; fake the signer under it.
+        class _Signer:
+            def get_signed_url(self, key, expires_in=3600):
+                signed.append(key)
+                return f"https://signed.zzt.test/x?sig={len(signed)}"
 
-        monkeypatch.setattr(images, "resolve_signed_url", _sign)
+        from app.services import storage_router
+
+        monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: _Signer())
 
         document = qdocs.create_document(
             db, project=env["project"], actor_user_id=env["owner"]
@@ -367,7 +371,7 @@ def test_the_line_payload_carries_a_signed_thumbnail_and_never_a_raw_object_key(
         # across. The ORIGINAL is signed too but only travels as `preview_url`, for the viewer
         # that opens on click - a thumbnail turns to mush the moment somebody zooms it.
         assert cell["preview_url"] == "https://signed.zzt.test/x?sig=2"
-        assert signed == [photo.thumbnail_path, photo.file_path]
+        assert signed == [storage_router.extract_key(photo.thumbnail_path), storage_router.extract_key(photo.file_path)]
         # And the id, so the viewer can download through the authenticated route.
         assert cell["attachment_id"] == str(photo.id)
 
@@ -613,15 +617,19 @@ def test_a_photos_url_is_reused_between_reads_so_the_browser_can_cache_it(monkey
         photo = _attachment(db, env["company_id"], "wc.jpg")
         images.choose(db, _link(db, product, photo))
 
-        images._url_cache.clear()
+        from app.services import storage_router
+
+        storage_router.clear_signed_url_cache()
         calls: list = []
 
-        def _sign(file_path, *, provider=None, expires_in=3600):
-            calls.append(file_path)
-            # A fresh signature every time, exactly like the real signer.
-            return f"https://signed.zzt.test/x?sig={len(calls)}"
+        # IMAGE-UNIFY: reuse is storage_router's cache, the one signing point; the fake sits
+        # under it and, like the real signer, returns a fresh signature on every call.
+        class _Signer:
+            def get_signed_url(self, key, expires_in=3600):
+                calls.append(key)
+                return f"https://signed.zzt.test/x?sig={len(calls)}"
 
-        monkeypatch.setattr(images, "resolve_signed_url", _sign)
+        monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: _Signer())
 
         document = qdocs.create_document(
             db, project=env["project"], actor_user_id=env["owner"]
@@ -641,7 +649,7 @@ def test_a_photos_url_is_reused_between_reads_so_the_browser_can_cache_it(monkey
 
         # And the window is not forever: once it lapses, a fresh signature is issued rather
         # than handing out a URL that has expired.
-        images._url_cache.clear()
+        storage_router.clear_signed_url_cache()
         third = _cell(db, line)
         assert third["url"] != first["url"]
 

@@ -429,6 +429,14 @@ def delete_object_best_effort(provider: str, key: str) -> None:
         get_backend(provider).delete_file(k)
     except Exception as e:  # noqa: BLE001
         logger.warning("delete_object_best_effort: delete of %s failed (orphan left): %s", k, e)
+    # An image original has a medium rendition beside it (IMAGE-UNIFY) that no caller knows to
+    # delete; the thumb is already deleted by the callers that keep one. A non-image has none, and
+    # deleting an absent object is a no-op.
+    if not k.endswith((".thumb.jpg", ".medium.jpg")):
+        try:
+            get_backend(provider).delete_file(f"{k}.medium.jpg")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("delete_object_best_effort: delete of %s.medium.jpg failed: %s", k, e)
 
 
 def _looks_signed(url: str) -> bool:
