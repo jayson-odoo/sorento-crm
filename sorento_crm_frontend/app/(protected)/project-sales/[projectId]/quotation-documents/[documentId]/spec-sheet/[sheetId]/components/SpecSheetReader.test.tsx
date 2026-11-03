@@ -27,7 +27,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 if (!window.matchMedia) {
@@ -97,6 +97,7 @@ function report(visibleKeys: string[]) {
 const getSpecSheet = vi.fn();
 const getSpecSheetPreview = vi.fn();
 const updateSpecSheet = vi.fn();
+const getSpecSheetPageImages = vi.fn();
 vi.mock('@/app/(protected)/project-sales/_shared/services/specSheetService', () => ({
   listSpecSheets: vi.fn(),
   createSpecSheet: vi.fn(),
@@ -104,6 +105,7 @@ vi.mock('@/app/(protected)/project-sales/_shared/services/specSheetService', () 
   updateSpecSheet: (...a: unknown[]) => updateSpecSheet(...a),
   getSpecSheetPreview: (...a: unknown[]) => getSpecSheetPreview(...a),
   getSpecSheetPageDesign: vi.fn(),
+  getSpecSheetPageImages: (...a: unknown[]) => getSpecSheetPageImages(...a),
   saveSpecSheetPageEdit: vi.fn(),
   queueSpecSheetPdf: vi.fn(),
 }));
@@ -258,6 +260,7 @@ beforeEach(() => {
   peak = 0;
   getSpecSheet.mockReset().mockResolvedValue(detail());
   updateSpecSheet.mockReset().mockResolvedValue(detail());
+  getSpecSheetPageImages.mockReset().mockResolvedValue({ images: {}, assets: {} });
   getSpecSheetPreview
     .mockReset()
     .mockImplementation(async (_p: string, _d: string, _s: string, keys: string[]) => previewFor(keys));
@@ -376,5 +379,39 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
 
     expect(getSpecSheetPreview).toHaveBeenCalledTimes(1);
     expect(getSpecSheet).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks for sharper pictures of the current page only, once it has settled', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['cover', 'k1', 'k2']);
+
+    await waitFor(() => expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1));
+    // The page being read (the cover until the reader scrolls), never the strip or the others.
+    expect(getSpecSheetPageImages).toHaveBeenCalledWith('p1', 'd1', 'sheet-1', 'cover');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks nothing for pages scrolled past before the reader settles', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k3', 'k4', 'k5']);
+    // A fast run through the pages, all inside the settle time.
+    for (const key of ['k3', 'k4', 'k5']) {
+      fireEvent.click(
+        within(screen.getByTestId(`spec-rail-${key}`)).getByRole('button', { name: new RegExp(`CODE-${key}`) }),
+      );
+    }
+
+    expect(getSpecSheetPageImages).not.toHaveBeenCalled();
+    await waitFor(() => expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1));
+    expect(getSpecSheetPageImages).toHaveBeenCalledWith('p1', 'd1', 'sheet-1', 'k5');
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1);
   });
 });

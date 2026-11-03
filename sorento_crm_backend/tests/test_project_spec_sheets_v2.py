@@ -1434,11 +1434,10 @@ def _asset_layer(asset_id):
 
 def test_sf8_a_page_edit_may_name_a_template_or_same_company_asset_and_it_is_signed(monkeypatch):
     from app.services import project_spec_sheet_service as spec
-    from app.services.dealer_kit import asset_service
 
     asked = []
     monkeypatch.setattr(
-        asset_service, "urls_for", lambda db, ids: asked.append(set(ids)) or {i: f"https://x/{i}" for i in ids}
+        spec, "_asset_urls", lambda db, ids, export, manifest: asked.append(set(ids)) or {}
     )
     with blank_session() as db:
         c = _chain(db)

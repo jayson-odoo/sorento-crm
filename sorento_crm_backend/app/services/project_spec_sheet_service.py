@@ -21,7 +21,9 @@ A template that places no price prints none (the owner's sample has none).
 """
 from __future__ import annotations
 
+import io
 import json
+import logging
 import math
 import uuid
 from datetime import datetime
@@ -44,11 +46,30 @@ from app.models.projects import (
 from app.services.dealer_kit.pricing import DEFAULT_CURRENCY
 from app.services.error_handler import AppException
 from app.services.pdf_render import in_malaysia
+from app.services.storage_router import (
+    default_provider as _default_provider,
+    extract_key,
+    get_backend,
+    normalize_provider,
+    resolve_signed_url,
+)
+
+logger = logging.getLogger(__name__)
 
 #: ``user_downloads.kind`` of a spec sheet PDF. The print payload route answers it.
 KIND = "quotation_spec_sheet_pdf"
 #: ``user_downloads.source_entity_type`` of a spec sheet PDF (the sheet's own id).
 SOURCE_TYPE = "quotation_spec_sheet"
+
+#: A printed picture is the image layer's designed box at this resolution, never upscaled
+#: (IMAGE-UNIFY ruling; QUOTE-PERF-HOTFIX 3 Nov).
+EXPORT_DPI = 300
+#: The export's decode ceiling, in the worker, one picture at a time: a JPEG over it is decoded
+#: at reduced scale first (``draft``), so this bounds only a PNG or WebP. Above it the original
+#: prints as before.
+EXPORT_MAX_PIXELS = 100_000_000
+#: How long the print page's signed links stay valid (the render waits up to 15 minutes).
+_EXPORT_URL_SECONDS = 60 * 60
 
 COVER_FAMILY = "spec_cover"
 PAGE_FAMILY = "spec_page"
@@ -716,6 +737,315 @@ def _version_asset_ids(pinned: dict) -> set:
     return ids
 
 
+def _stamp_media(db: Session, chosen: List[dict]) -> tuple:
+    """``(products, attachment ids)`` behind ``chosen`` pages, stamping each page's and
+    accessory's own ``_photo`` / ``_drawing``: the frozen line photo / drawing first, the
+    product's own files as the fallback."""
+    part_ids = [a["product_id"] for p in chosen for a in p["accessories"] if a.get("product_id")]
+    main_ids = [p["product_id"] for p in chosen if p["product_id"]]
+    files = _files(db, part_ids + main_ids)
+    products = _products(db, part_ids + main_ids)
+    wanted: List[Optional[str]] = []
+    for page in chosen:
+        own = files.get(str(page["product_id"]), {}) if page["product_id"] else {}
+        page["_photo"] = page["image_attachment_id"] or own.get("photo")
+        page["_drawing"] = page["drawing_attachment_id"] or own.get("drawing")
+        wanted += [page["_photo"], page["_drawing"]]
+        for acc in page["accessories"]:
+            mine = files.get(str(acc.get("product_id")), {}) if acc.get("product_id") else {}
+            acc["_photo"] = acc.get("image_attachment_id") or mine.get("photo")
+            acc["_drawing"] = acc.get("drawing_attachment_id") or mine.get("drawing")
+            wanted += [acc["_photo"], acc["_drawing"]]
+    return products, wanted
+
+
+def _storage(provider: Optional[str] = None):
+    return get_backend(normalize_provider(provider) if provider else _default_provider())
+
+
+def _asset_rows(db: Session, asset_ids) -> Dict[str, Any]:
+    """``{asset_id: Attachment}`` behind library assets (the same rows `urls_for` signs)."""
+    from app.models.dealer_kit import Asset
+    from app.models.resources import Attachment
+
+    ids = {a for a in asset_ids if a and _is_uuid(a)}
+    if not ids:
+        return {}
+    rows = (
+        db.query(Asset, Attachment)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(Asset.id.in_(ids), Attachment.is_deleted.is_(False))
+        .all()
+    )
+    return {str(asset.id): attachment for asset, attachment in rows}
+
+
+def _asset_urls(db: Session, asset_ids, *, export: bool, manifest: Optional[dict]) -> Dict[str, str]:
+    """``{asset_id: url}`` for the artwork a sheet draws.
+
+    On screen never the original: the attachment's thumbnail when it has one, else a stored
+    medium rendition (a pasted 4000 px logo must not reach the browser). The export prints the
+    per-box copy from the manifest, the original only when there is none.
+    """
+    from app.services import product_image_service as images
+    from app.services.dealer_kit import asset_service
+
+    rows = _asset_rows(db, asset_ids)
+    if not rows:
+        return {}
+    if export:
+        out: Dict[str, str] = {}
+        rest: List[str] = []
+        for asset_id, attachment in rows.items():
+            entry = (manifest or {}).get(str(attachment.id))
+            url = (
+                resolve_signed_url(
+                    entry.get("key"),
+                    provider=entry.get("provider"),
+                    expires_in=_EXPORT_URL_SECONDS,
+                    strict=True,
+                )
+                if entry
+                else None
+            )
+            if url:
+                out[asset_id] = url
+            else:
+                rest.append(asset_id)
+        if rest:
+            out.update(asset_service.urls_for(db, rest))
+        return out
+    with_thumb = {a: att for a, att in rows.items() if att.thumbnail_path}
+    thumbs = images.preview_urls(db, [att.id for att in with_thumb.values()], full=False)
+    without = [att.id for a, att in rows.items() if a not in with_thumb]
+    renditions = images.medium_urls(db, without) if without else {}
+    out = {}
+    for asset_id, attachment in rows.items():
+        url = thumbs.get(str(attachment.id)) if asset_id in with_thumb else renditions.get(str(attachment.id))
+        if url:
+            out[asset_id] = url
+    return out
+
+
+def _export_urls(
+    db: Session, wanted: List[Optional[str]], manifest: Optional[dict]
+) -> Dict[str, str]:
+    """The export's pictures: the per-box copies ``prepare_export_images`` made, else the
+    original (exactly what printed before the cap existed)."""
+    urls: Dict[str, str] = {}
+    wanted_set = {str(a) for a in wanted if a}
+    for attachment_id, entry in (manifest or {}).items():
+        if attachment_id not in wanted_set:
+            continue
+        url = resolve_signed_url(
+            entry.get("key"),
+            provider=entry.get("provider"),
+            expires_in=_EXPORT_URL_SECONDS,
+            strict=True,
+        )
+        if url:
+            urls[attachment_id] = url
+    rest = [a for a in wanted_set if a not in urls]
+    if rest:
+        urls.update(_sign(db, rest, full=True))
+    return urls
+
+
+# ----------------------------------------------------------------------------- image caps
+
+
+def px_for_mm(mm: float) -> int:
+    """Pixels a picture needs to print ``mm`` across at ``EXPORT_DPI``."""
+    return math.ceil(mm / 25.4 * EXPORT_DPI)
+
+
+def export_cap_px(size_mm: tuple) -> int:
+    """The fallback cap for a picture no image layer is found for: the page's long edge at
+    ``EXPORT_DPI``. No picture slot is bigger than the page."""
+    return px_for_mm(max(size_mm))
+
+
+def _page_layers(sheet: ProjectQuotationSpecSheet, pinned: dict, key: str, template: str) -> list:
+    """The layers a page prints: its edit, else the pinned version's."""
+    edit = (sheet.page_edits or {}).get(key)
+    if isinstance(edit, dict) and isinstance(edit.get("layers"), list):
+        return edit["layers"]
+    return (pinned[template].doc or {}).get("layers") or []
+
+
+def _image_boxes(sheet: ProjectQuotationSpecSheet, pinned: dict, visible: List[dict]) -> Dict[str, float]:
+    """The largest box, in mm, each picture is drawn in on any printed page.
+
+    Keys are attachment ids (a page's product photo / drawing slot, or an accessory part N slot
+    through ``subjectPart``) and ``asset:<id>`` (library artwork named by a layer), read from the
+    pinned version layers or the page's edit layers, whichever the page prints.
+    """
+    from app.services.dealer_kit import asset_service
+
+    boxes: Dict[str, float] = {}
+
+    def note(ident: Optional[str], layer: dict) -> None:
+        if not ident:
+            return
+        try:
+            box = max(float(layer.get("width_mm") or 0), float(layer.get("height_mm") or 0))
+        except (TypeError, ValueError):
+            return
+        if box > 0:
+            boxes[ident] = max(boxes.get(ident, 0.0), box)
+
+    entries: List[tuple] = [(COVER_KEY, "cover", None)] + [(p["key"], p["template"], p) for p in visible]
+    for key, template, page in entries:
+        for layer in _page_layers(sheet, pinned, key, template):
+            if not isinstance(layer, dict):
+                continue
+            for asset_id in asset_service.tag_sheet_asset_ids({"layers": [layer]}):
+                note(f"asset:{asset_id}", layer)
+            slot = layer.get("slot_binding")
+            if page is None or layer.get("type") != "image" or slot not in ("product_image", "drawing"):
+                continue
+            attr = "_photo" if slot == "product_image" else "_drawing"
+            part = (layer.get("props") or {}).get("subjectPart")
+            if isinstance(part, int) and not isinstance(part, bool) and part >= 0:
+                accessories = page["accessories"]
+                note(accessories[part].get(attr) if part < len(accessories) else None, layer)
+            else:
+                note(page.get(attr), layer)
+    return boxes
+
+
+def _export_folder(download_id: str) -> str:
+    return f"exports/quotation-spec-sheet/{download_id}/img"
+
+
+def _manifest_key(download_id: str) -> str:
+    return f"{_export_folder(download_id)}/manifest.json"
+
+
+def prepare_export_images(db: Session, download) -> Dict[str, dict]:
+    """Downscale every picture the export prints to its own box at ``EXPORT_DPI`` and store the
+    copies beside the PDF, with a manifest the print payload reads.
+
+    The cap is PER PICTURE: the largest box (mm) any image layer draws it in, across every
+    printed page. A picture with no image layer found uses the page-long-edge fallback. Never
+    upscaled: a picture already within its cap prints from its original. Runs in the worker, one
+    picture at a time, before Chromium starts; one that cannot be read is left out of the
+    manifest and prints from its original.
+    """
+    from PIL import Image
+
+    from app.models.base import company_scope
+    from app.models.resources import Attachment
+    from app.services import product_image_service as images
+
+    with company_scope(db, None):
+        document, sheet = source_of_download(db, download)
+    if not document.company_id:
+        raise AppException(status_code=404, message="Not found")
+    with company_scope(db, frozenset({document.company_id})):
+        pinned = _pinned(db, sheet)
+        fallback = export_cap_px(pinned["size"])
+        visible = [p for p in pages(db, sheet) if not p["hidden"]]
+        _products_unused, wanted = _stamp_media(db, visible)
+        boxes = _image_boxes(sheet, pinned, visible)
+        caps: Dict[str, int] = {}
+        for attachment_id in {str(a) for a in wanted if a}:
+            box = boxes.get(attachment_id)
+            caps[attachment_id] = px_for_mm(box) if box else fallback
+        for asset_id, attachment in _asset_rows(
+            db, [k[len("asset:"):] for k in boxes if k.startswith("asset:")]
+        ).items():
+            box = boxes.get(f"asset:{asset_id}")
+            cap = px_for_mm(box) if box else fallback
+            caps[str(attachment.id)] = max(caps.get(str(attachment.id), 0), cap)
+        ids = list(caps)
+        rows = db.query(Attachment).filter(Attachment.id.in_(ids)).all() if ids else []
+        sources = [(str(r.id), r.file_path, r.storage_provider) for r in rows]
+
+    out_provider = _default_provider()
+    out = _storage(out_provider)
+    manifest: Dict[str, dict] = {}
+    for attachment_id, file_path, provider in sources:
+        key = extract_key(file_path) if file_path else None
+        if not key:
+            continue
+        cap = caps[attachment_id]
+        try:
+            raw = _storage(provider).download_file(key)
+            with Image.open(io.BytesIO(raw)) as opened:
+                size = opened.size
+            if max(size) <= cap:
+                manifest[attachment_id] = {"key": file_path, "provider": normalize_provider(provider)}
+                continue
+            rendered = images._downscale(
+                raw,
+                attachment_id,
+                box=cap,
+                quality=85,
+                upright=True,
+                draft=True,
+                max_pixels=EXPORT_MAX_PIXELS,
+            )
+            del raw
+            if rendered is None:
+                continue
+            stored, _signed = out.upload_file(
+                file_content=rendered.data,
+                file_path=f"{_export_folder(str(download.id))}/{attachment_id}.jpg",
+                content_type="image/jpeg",
+            )
+            manifest[attachment_id] = {"key": stored, "provider": out_provider}
+        except Exception:  # noqa: BLE001 - that picture prints from its original instead
+            logger.warning("spec sheet export: cannot cap %s", attachment_id, exc_info=True)
+    try:
+        out.upload_file(
+            file_content=json.dumps(manifest).encode(),
+            file_path=_manifest_key(str(download.id)),
+            content_type="application/json",
+        )
+    except Exception:  # noqa: BLE001 - no manifest: the render prints originals, as before
+        logger.warning("spec sheet export: cannot store manifest for %s", download.id, exc_info=True)
+    return manifest
+
+
+def _load_manifest(download_id: str) -> Optional[dict]:
+    try:
+        data = json.loads(_storage().download_file(_manifest_key(download_id)))
+    except Exception:  # noqa: BLE001 - absent or unreadable: originals, as before
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def page_images(
+    db: Session, sheet: ProjectQuotationSpecSheet, key: str, release=None
+) -> Dict[str, Dict[str, str]]:
+    """The ONE open page's pictures and artwork at ``MEDIUM_BOX``: the strip and the other pages
+    keep thumbnails, the page being read gets a rendition sharp enough for a drawing's figures.
+    Only what that page draws, so nothing else can be asked for. ``release`` hands the DB
+    connection back before any byte moves."""
+    from app.services import product_image_service as images
+    from app.services.dealer_kit import asset_service
+
+    ensure_key(db, sheet, key)
+    pinned = _pinned(db, sheet)
+    page = None if key == COVER_KEY else next(p for p in pages(db, sheet) if p["key"] == key)
+    if page is not None and page["hidden"]:
+        return {"images": {}, "assets": {}}
+    wanted: List[Optional[str]] = []
+    if page is not None:
+        _p, wanted = _stamp_media(db, [page])
+    layers = _page_layers(sheet, pinned, key, "cover" if page is None else page["template"])
+    asset_att = {
+        a: str(att.id)
+        for a, att in _asset_rows(db, asset_service.tag_sheet_asset_ids({"layers": layers})).items()
+    }
+    medium = images.medium_urls(db, [*wanted, *asset_att.values()], release=release)
+    return {
+        "images": {str(a): medium[str(a)] for a in wanted if a and str(a) in medium},
+        "assets": {a: medium[att] for a, att in asset_att.items() if att in medium},
+    }
+
+
 def _invalid_keys() -> AppException:
     return AppException(
         status_code=422,
@@ -730,6 +1060,7 @@ def build_print_payload(
     *,
     keys: Optional[Sequence[str]] = None,
     full: bool = False,
+    manifest: Optional[dict] = None,
 ) -> dict:
     """Everything ``TagSheetRenderer`` draws.
 
@@ -757,24 +1088,13 @@ def build_print_payload(
         wanted = set(keys)
         chosen, with_cover = [p for p in every if p["key"] in wanted], COVER_KEY in wanted
 
-    # Media: the frozen line photo / drawing first, the product's own files as the fallback.
-    part_ids = [a["product_id"] for p in chosen for a in p["accessories"] if a.get("product_id")]
-    main_ids = [p["product_id"] for p in chosen if p["product_id"]]
-    files = _files(db, part_ids + main_ids)
-    products = _products(db, part_ids + main_ids)
-    wanted_media: List[Optional[str]] = []
-    for page in chosen:
-        own = files.get(str(page["product_id"]), {}) if page["product_id"] else {}
-        page["_photo"] = page["image_attachment_id"] or own.get("photo")
-        page["_drawing"] = page["drawing_attachment_id"] or own.get("drawing")
-        wanted_media += [page["_photo"], page["_drawing"]]
-        for acc in page["accessories"]:
-            mine = files.get(str(acc.get("product_id")), {}) if acc.get("product_id") else {}
-            acc["_photo"] = acc.get("image_attachment_id") or mine.get("photo")
-            acc["_drawing"] = acc.get("drawing_attachment_id") or mine.get("drawing")
-            wanted_media += [acc["_photo"], acc["_drawing"]]
-    # Export prints originals; PR #2126 adds the ~200 dpi cap for these, merged later.
-    urls = _sign(db, wanted_media, full=full)
+    products, wanted_media = _stamp_media(db, chosen)
+    # On screen: thumbnails (a library asset: a rendition, never its original). The export prints
+    # the per-box copies `prepare_export_images` made, else the originals as before.
+    if full:
+        urls = _export_urls(db, wanted_media, manifest)
+    else:
+        urls = _sign(db, wanted_media, full=False)
 
     edits = sheet.page_edits or {}
 
@@ -862,7 +1182,9 @@ def build_print_payload(
         "resolvedData": resolved,
         # The pinned versions' artwork plus what this sheet's stored page edits name (checked
         # against the company's library when the edit was saved).
-        "assets": asset_service.urls_for(db, asset_service.tag_sheet_asset_ids(doc)),
+        "assets": _asset_urls(
+            db, asset_service.tag_sheet_asset_ids(doc), export=full, manifest=manifest
+        ),
         "images": urls,
         "fonts": asset_service.font_assets(db),
         "requestDocNumber": doc_fields["quotation_no"],
@@ -1204,16 +1526,18 @@ def reset_page_edit(
 
 def design(db: Session, sheet: ProjectQuotationSpecSheet, key: str) -> dict:
     """What the page designer opens: the page's layers (its override, else the frozen template
-    version's), bound to that page's data, at thumbnail image size."""
+    version's), bound to that page's data; thumbnails, with the open page at medium size."""
     ensure_key(db, sheet, key)
     payload = build_print_payload(db, sheet, keys=[key])
     tag = payload["doc"]["sheets"][0]["tags"][0]
     template = db.get(TagTemplate, tag["template_id"]) if tag.get("template_id") else None
+    # The designer shows ONE page large: medium renditions over the thumbnails.
+    sharp = page_images(db, sheet, key)
     return {
         "layers": tag["layers"],
         "bound": payload["resolvedData"][key],
-        "images": payload["images"],
-        "assets": payload["assets"],
+        "images": {**payload["images"], **sharp["images"]},
+        "assets": {**payload["assets"], **sharp["assets"]},
         "fonts": payload["fonts"],
         "width_mm": payload["page_size"]["width_mm"],
         "height_mm": payload["page_size"]["height_mm"],
@@ -1484,8 +1808,9 @@ def print_payload_for_download(db: Session, download) -> dict:
     # Fail closed: a document with no company would otherwise be read with no company filter.
     if not document.company_id:
         raise AppException(status_code=404, message="Not found")
+    manifest = _load_manifest(str(download.id))
     with company_scope(db, frozenset({document.company_id})):
-        return build_print_payload(db, sheet, full=True)
+        return build_print_payload(db, sheet, full=True, manifest=manifest)
 
 
 def page_size_for_download(db: Session, download) -> tuple:

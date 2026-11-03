@@ -11,6 +11,7 @@ import {
   createSpecSheet,
   getSpecSheet,
   getSpecSheetPageDesign,
+  getSpecSheetPageImages,
   getSpecSheetPreview,
   listSpecSheets,
   queueSpecSheetPdf,
@@ -24,9 +25,10 @@ import {
 /**
  * SPEC-SHEET-V2: the spec sheet list, the reader and the page designer.
  *
- * Every query opts out of refetch on window focus. The reader holds a page stack and a window of
- * previews; a tab switch that refetched them all is the bottleneck the owner asked not to
- * repeat. Data changes only through the mutations below, which invalidate exactly what they touch.
+ * No query refetches on window focus: the app's QueryProvider turns that off for every query. The
+ * reader holds a page stack and a window of previews; a tab switch that refetched them all is the
+ * bottleneck the owner asked not to repeat. Data changes only through the mutations below, which
+ * invalidate exactly what they touch.
  */
 /** A fetched preview chunk is good until a write invalidates it. */
 const PREVIEW_STALE_MS = 5 * 60_000;
@@ -122,6 +124,26 @@ export function useSpecSheetPageDesign(
     queryFn: () => getSpecSheetPageDesign(projectId, documentId, sheetId, key),
     // The designer owns its layers once opened; a background refetch would not reach them.
     staleTime: Infinity,
+  });
+}
+
+/**
+ * The ONE open page's pictures at medium size. `key` is null until the reader has settled on a
+ * page, so a fast scroll asks for nothing. Cached like the previews; nothing here refetches by
+ * itself.
+ */
+export function useSpecSheetPageImages(
+  projectId: string,
+  documentId: string,
+  sheetId: string,
+  key: string | null,
+) {
+  return useQuery({
+    queryKey: [...specSheetPreviewPrefix(documentId, sheetId), 'page-images', key],
+    queryFn: () => getSpecSheetPageImages(projectId, documentId, sheetId, key as string),
+    enabled: key !== null,
+    retry: false,
+    staleTime: PREVIEW_STALE_MS,
   });
 }
 

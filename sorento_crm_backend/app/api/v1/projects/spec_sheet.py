@@ -203,6 +203,25 @@ def preview_spec_sheet(
         raise _fail(exc)
 
 
+@router.get(f"{BASE}/{{sheet_id}}/page-images")
+def spec_sheet_page_images(
+    project_id: str,
+    document_id: str,
+    sheet_id: str,
+    key: str = Query(..., min_length=1),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
+    db: Session = Depends(get_db),
+):
+    """The open page's pictures and artwork at medium size (the other pages keep thumbnails)."""
+    try:
+        document = _document(db, project_id, document_id)
+        sheet = _sheet(db, document, sheet_id)
+        # The DB connection goes back before any picture is read or made.
+        return spec.page_images(db, sheet, key, release=db.close)
+    except Exception as exc:
+        raise _fail(exc)
+
+
 @router.get(f"{BASE}/{{sheet_id}}/pages/{{page_key:path}}/design")
 def design_spec_sheet_page(
     project_id: str,

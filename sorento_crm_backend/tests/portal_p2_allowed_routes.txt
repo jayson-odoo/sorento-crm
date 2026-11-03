@@ -90,6 +90,7 @@ GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/p
 GET /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}
+GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/page-images
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/pages/{page_key}/design
 GET /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/preview
 GET /projects/{project_id}/quotation-documents/{document_id}/views

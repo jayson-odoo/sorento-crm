@@ -12,7 +12,7 @@ import pytest
 
 from ._pg_fixture import blank_session
 from .test_project_quotation_pdf import _FakeBackend, _attachment, _photo_bytes
-from .test_project_spec_sheet import _chain, _templates
+from .test_project_spec_sheet import _chain, _sheet, _template, _templates
 
 
 # ------------------------------------------------------------------ spec sheet
@@ -35,13 +35,37 @@ def _with_line_media(db, c):
     return photo, drawing
 
 
-def _settings(db, c):
-    from app.services import project_spec_sheet_service as spec
+def _image_layer(slot, width, height, part=None, layer_id=None):
+    props = {"kind": "image", "fit": "contain"}
+    if part is not None:
+        props["subjectPart"] = part
+    return {
+        "id": layer_id or f"img-{slot}-{part}",
+        "type": "image",
+        "x_mm": 0,
+        "y_mm": 0,
+        "width_mm": width,
+        "height_mm": height,
+        "rotation_deg": 0,
+        "z_index": 0,
+        "slot_binding": slot,
+        "props": props,
+    }
 
-    t = _templates(db, c)
-    spec.save_settings(
-        db, c["document"], {"cover_template_id": t["cover"].id, "page_template_id": t["page"].id}
-    )
+
+def _boxed_templates(db, c, photo_mm=100, drawing_mm=60, extra=()):
+    """Page templates whose photo slot is a photo_mm x 0.8 photo_mm box and drawing slot a
+    drawing_mm box: the designed boxes the export caps each picture to."""
+    layers = [
+        _image_layer("product_image", photo_mm, photo_mm * 0.8),
+        _image_layer("drawing", drawing_mm, drawing_mm * 0.6),
+        *extra,
+    ]
+    return {
+        "cover": _template(db, c["company_id"], "spec_cover"),
+        "page": _template(db, c["company_id"], "spec_page", layers=layers),
+        "single": _template(db, c["company_id"], "spec_page", layers=layers),
+    }
 
 
 def test_the_on_screen_preview_signs_thumbnails_not_originals(monkeypatch):
@@ -58,30 +82,34 @@ def test_the_on_screen_preview_signs_thumbnails_not_originals(monkeypatch):
     with blank_session() as db:
         c = _chain(db)
         photo, _drawing = _with_line_media(db, c)
-        _settings(db, c)
+        sheet = _sheet(db, c)
 
-        payload = spec.build_print_payload(db, c["document"], c["issue"])
+        payload = spec.build_print_payload(db, sheet)
 
         assert asked and not any(asked)
         assert payload["images"][photo.id].startswith("https://signed.zzt.test/thumb/")
 
 
-def test_export_cap_is_the_page_long_edge_at_200_dpi():
+def test_export_pixel_caps_are_the_layer_box_at_300_dpi():
     from app.services import project_spec_sheet_service as spec
 
-    assert spec.export_cap_px((420, 297)) == 3308
-    assert spec.export_cap_px((338.7, 190.5)) == 2667
+    assert spec.EXPORT_DPI == 300
+    assert spec.px_for_mm(100) == 1182
+    assert spec.px_for_mm(25.4) == 300
+    # The fallback for a picture no image layer is found for: the page's long edge.
+    assert spec.export_cap_px((420, 297)) == 4961
+    assert spec.export_cap_px((338.7, 190.5)) == 4001
 
 
-def _download(db, c):
+def _download(db, c, sheet):
     from app.models.download import UserDownload
     from app.services import project_spec_sheet_service as spec
 
     row = UserDownload(
         user_id=c["owner"],
         kind=spec.KIND,
-        source_entity_type="quotation_issue",
-        source_entity_id=c["issue"].id,
+        source_entity_type="quotation_spec_sheet",
+        source_entity_id=sheet.id,
         status="pending",
         filename="spec-sheet-x.pdf",
     )
@@ -111,7 +139,18 @@ class _Store:
         return file_path, f"https://signed.zzt.test/{file_path}"
 
 
-def test_export_downscales_big_originals_to_the_cap_and_the_print_payload_uses_them(monkeypatch):
+def _fake_sign(monkeypatch, spec):
+    signed = []
+
+    def fake_sign(source, *, provider=None, expires_in=3600, strict=False):
+        signed.append(source)
+        return f"https://signed.zzt.test/{source}"
+
+    monkeypatch.setattr(spec, "resolve_signed_url", fake_sign)
+    return signed
+
+
+def test_export_downscales_each_picture_to_its_own_box_and_the_print_payload_uses_the_copies(monkeypatch):
     from PIL import Image
 
     from app.services import product_image_service as images
@@ -121,24 +160,17 @@ def test_export_downscales_big_originals_to_the_cap_and_the_print_payload_uses_t
     with blank_session() as db:
         c = _chain(db)
         photo, drawing = _with_line_media(db, c)
-        _settings(db, c)
-        download = _download(db, c)
-
+        sheet = _sheet(db, c, templates=_boxed_templates(db, c))  # photo box 100 mm, drawing 60 mm
+        download = _download(db, c, sheet)
         store = _Store(
             {
                 extract_key(photo.file_path): _photo_bytes(4000, 2000),
-                extract_key(drawing.file_path): _photo_bytes(800, 600, seed=1),
+                extract_key(drawing.file_path): _photo_bytes(600, 400, seed=1),
             }
         )
         monkeypatch.setattr(spec, "_storage", lambda provider=None: store)
         monkeypatch.setattr(spec, "_default_provider", lambda: "s3")
-        signed = []
-
-        def fake_sign(source, *, provider=None, expires_in=3600, strict=False):
-            signed.append(source)
-            return f"https://signed.zzt.test/{source}"
-
-        monkeypatch.setattr(spec, "resolve_signed_url", fake_sign)
+        _fake_sign(monkeypatch, spec)
         monkeypatch.setattr(
             images,
             "preview_urls",
@@ -147,17 +179,142 @@ def test_export_downscales_big_originals_to_the_cap_and_the_print_payload_uses_t
 
         manifest = spec.prepare_export_images(db, download)
 
-        # The 4000 px photo is downscaled to the 200 dpi cap of a 338.7 mm page; the small
-        # drawing is printed from its own original, untouched.
-        cap = spec.export_cap_px((338.7, 190.5))
+        # The photo is capped to its 100 mm box at 300 dpi; the 600 px drawing is already under
+        # its 60 mm cap (709 px), so it prints from its original and is never upscaled.
         capped_key = manifest[photo.id]["key"]
         with Image.open(io.BytesIO(store.uploads[capped_key])) as im:
-            assert max(im.size) == cap
+            assert max(im.size) == spec.px_for_mm(100) == 1182
         assert manifest[drawing.id]["key"] == drawing.file_path
 
         payload = spec.print_payload_for_download(db, download)
         assert payload["images"][photo.id] == f"https://signed.zzt.test/{capped_key}"
         assert payload["images"][drawing.id] == f"https://signed.zzt.test/{drawing.file_path}"
+
+
+def test_a_41_page_sheet_of_4000_by_3000_pictures_gets_a_copy_within_each_box_never_upscaled(monkeypatch):
+    from PIL import Image
+
+    from app.models.projects import ProjectQuotationLine
+    from app.services import project_spec_sheet_service as spec
+    from app.services.storage_router import extract_key
+
+    from .test_project_quotation_pdf import _issue, _product, _setup
+    from .test_project_spec_sheet import MARKER, _document, _line, _scope
+
+    def flat(width, height):
+        buffer = io.BytesIO()
+        Image.new("RGB", (width, height), (90, 120, 160)).save(buffer, format="JPEG", quality=60)
+        return buffer.getvalue()
+
+    with blank_session() as db:
+        env = _setup(db)
+        document = _document(db, env)
+        scope = _scope(db, env, document)
+        originals, photos = {}, []
+        big, small = flat(4000, 3000), flat(500, 300)
+        for n in range(41):
+            product = _product(db, env["category"].id, env["uom"], description=f"{MARKER} p{n}")
+            line = _line(db, env, scope, {"product_id": product.id})
+            att = _attachment(db, env["company_id"], f"p{n}.jpg")
+            db.get(ProjectQuotationLine, line.id).image_attachment_id = att.id
+            originals[extract_key(att.file_path)] = small if n == 40 else big
+            photos.append(att)
+        db.flush()
+        issue = _issue(db, document, env["owner"])
+        c = {**env, "document": document, "issue": issue}
+        sheet = _sheet(db, c, templates=_boxed_templates(db, c))
+        assert sheet.page_count == 42
+        download = _download(db, c, sheet)
+        store = _Store(originals)
+        monkeypatch.setattr(spec, "_storage", lambda provider=None: store)
+        monkeypatch.setattr(spec, "_default_provider", lambda: "s3")
+        _fake_sign(monkeypatch, spec)
+
+        manifest = spec.prepare_export_images(db, download)
+
+        cap = spec.px_for_mm(100)
+        assert len(manifest) == 41
+        for n, att in enumerate(photos):
+            entry = manifest[att.id]
+            if n == 40:
+                assert entry["key"] == att.file_path  # 500 px: under its cap, kept as is
+                continue
+            with Image.open(io.BytesIO(store.uploads[entry["key"]])) as im:
+                assert max(im.size) == cap
+                assert im.width >= im.height  # the 4:3 shape is kept
+
+        payload = spec.print_payload_for_download(db, download)
+        for att in photos[:3]:
+            assert payload["images"][att.id] == f"https://signed.zzt.test/{manifest[att.id]['key']}"
+
+
+def test_with_no_image_layer_found_a_picture_falls_back_to_the_page_long_edge_at_300_dpi(monkeypatch):
+    from PIL import Image
+
+    from app.services import project_spec_sheet_service as spec
+    from app.services.storage_router import extract_key
+
+    with blank_session() as db:
+        c = _chain(db)
+        photo, drawing = _with_line_media(db, c)
+        sheet = _sheet(db, c)  # the standard templates carry no image layer
+        download = _download(db, c, sheet)
+        store = _Store(
+            {
+                extract_key(photo.file_path): _big_jpeg(),
+                extract_key(drawing.file_path): _photo_bytes(800, 600, seed=1),
+            }
+        )
+        monkeypatch.setattr(spec, "_storage", lambda provider=None: store)
+        monkeypatch.setattr(spec, "_default_provider", lambda: "s3")
+
+        manifest = spec.prepare_export_images(db, download)
+
+        with Image.open(io.BytesIO(store.uploads[manifest[photo.id]["key"]])) as im:
+            assert max(im.size) == spec.export_cap_px((338.7, 190.5)) == 4001
+        assert manifest[drawing.id]["key"] == drawing.file_path
+
+
+def test_an_accessory_part_slot_sets_the_cap_of_its_own_picture(monkeypatch):
+    """subjectPart N draws accessory N's picture: a big part slot lifts that picture's cap only."""
+    from PIL import Image
+
+    from app.services import project_spec_sheet_service as spec
+    from app.services.storage_router import extract_key
+
+    with blank_session() as db:
+        c = _chain(db)
+        photo, _drawing = _with_line_media(db, c)
+        part_photo = _attachment(db, c["company_id"], "valve.png")
+        sheet = _sheet(
+            db,
+            c,
+            templates=_boxed_templates(
+                db, c, photo_mm=50, extra=[_image_layer("product_image", 200, 150, part=0, layer_id="part0")]
+            ),
+        )
+        # The WC set's first accessory (the valve) has this picture; its page is the set page.
+        monkeypatch.setattr(
+            spec,
+            "_files",
+            lambda db_, ids: {str(i): {"photo": part_photo.id, "drawing": None} for i in ids if str(i) == str(c["valve"].id)},
+        )
+        download = _download(db, c, sheet)
+        store = _Store(
+            {
+                extract_key(photo.file_path): _photo_bytes(3000, 2000),
+                extract_key(part_photo.file_path): _photo_bytes(3000, 2000, seed=2),
+            }
+        )
+        monkeypatch.setattr(spec, "_storage", lambda provider=None: store)
+        monkeypatch.setattr(spec, "_default_provider", lambda: "s3")
+
+        manifest = spec.prepare_export_images(db, download)
+
+        with Image.open(io.BytesIO(store.uploads[manifest[photo.id]["key"]])) as im:
+            assert max(im.size) == spec.px_for_mm(50)
+        with Image.open(io.BytesIO(store.uploads[manifest[part_photo.id]["key"]])) as im:
+            assert max(im.size) == spec.px_for_mm(200)
 
 
 def test_an_export_without_a_manifest_still_prints_originals(monkeypatch):
@@ -168,8 +325,8 @@ def test_an_export_without_a_manifest_still_prints_originals(monkeypatch):
     with blank_session() as db:
         c = _chain(db)
         photo, _drawing = _with_line_media(db, c)
-        _settings(db, c)
-        download = _download(db, c)
+        sheet = _sheet(db, c)
+        download = _download(db, c, sheet)
         monkeypatch.setattr(spec, "_storage", lambda provider=None: _Store({}))
         monkeypatch.setattr(
             images,
@@ -195,6 +352,97 @@ def test_renders_run_one_at_a_time_on_the_batch_worker_only():
 
     roles = [role for name, role in worker.QUEUES if name == "catalogue_render"]
     assert roles == ["batch"]
+
+
+class _MediumStore(_Store):
+    def file_exists(self, key):
+        return key in self.uploads
+
+
+def _open_page_env(db, monkeypatch, original: bytes):
+    from app.services import product_image_service as images
+    from app.services.storage_router import extract_key
+
+    c = _chain(db)
+    photo, drawing = _with_line_media(db, c)
+    sheet = _sheet(db, c)
+    store = _MediumStore(
+        {
+            extract_key(photo.file_path): original,
+            extract_key(drawing.file_path): _photo_bytes(800, 600, seed=1),
+        }
+    )
+    monkeypatch.setattr(images, "get_backend", lambda provider: store)
+    signed = []
+
+    def fake_sign(source, *, provider=None, expires_in=3600, strict=False):
+        signed.append(source)
+        return f"https://signed.zzt.test/{source}"
+
+    monkeypatch.setattr(images, "resolve_signed_url", fake_sign)
+    images._medium_cache.clear()
+    return c, sheet, photo, drawing, store, signed
+
+
+def test_a_pasted_asset_is_never_signed_as_its_original_on_screen(monkeypatch):
+    from app.models.dealer_kit import Asset
+    from app.models.resources import Attachment
+    from app.services import project_spec_sheet_service as spec
+    from app.services.storage_router import extract_key
+
+    from .test_project_spec_sheets_v2 import _asset, _asset_layer
+
+    with blank_session() as db:
+        c, sheet, _photo, _drawing, store, signed = _open_page_env(db, monkeypatch, _photo_bytes(600, 600))
+        logo = _asset(db, c["company_id"])
+        attachment = db.get(Attachment, db.get(Asset, logo.id).attachment_id)
+        store.originals[extract_key(attachment.file_path)] = _big_jpeg(4000, 3000)
+        spec.save_page_edit(db, sheet, c["basin"].id, [_asset_layer(logo.id)])
+
+        payload = spec.build_print_payload(db, sheet, keys=[c["basin"].id])
+        design = spec.design(db, sheet, c["basin"].id)
+
+        assert ".medium.jpg" in payload["assets"][logo.id]
+        assert ".medium.jpg" in design["assets"][logo.id]
+        assert attachment.file_path not in signed
+
+
+def test_a_library_asset_is_capped_to_its_layer_box_in_the_export(monkeypatch):
+    from PIL import Image
+
+    from app.models.dealer_kit import Asset
+    from app.models.resources import Attachment
+    from app.services import project_spec_sheet_service as spec
+    from app.services.storage_router import extract_key
+
+    from .test_project_spec_sheets_v2 import _asset
+
+    with blank_session() as db:
+        c = _chain(db)
+        logo = _asset(db, c["company_id"])
+        attachment = db.get(Attachment, db.get(Asset, logo.id).attachment_id)
+        art = {
+            "id": "logo-layer",
+            "type": "image",
+            "x_mm": 0,
+            "y_mm": 0,
+            "width_mm": 50,
+            "height_mm": 30,
+            "props": {"kind": "image", "source": {"type": "asset", "assetId": logo.id}},
+        }
+        sheet = _sheet(db, c, templates=_boxed_templates(db, c, extra=[art]))
+        download = _download(db, c, sheet)
+        store = _Store({extract_key(attachment.file_path): _photo_bytes(4000, 3000)})
+        monkeypatch.setattr(spec, "_storage", lambda provider=None: store)
+        monkeypatch.setattr(spec, "_default_provider", lambda: "s3")
+        _fake_sign(monkeypatch, spec)
+
+        manifest = spec.prepare_export_images(db, download)
+
+        with Image.open(io.BytesIO(store.uploads[manifest[attachment.id]["key"]])) as im:
+            assert max(im.size) == spec.px_for_mm(50)
+        payload = spec.print_payload_for_download(db, download)
+        assert payload["assets"][logo.id] == f"https://signed.zzt.test/{manifest[attachment.id]['key']}"
 
 
 # ------------------------------------------------------------------ sign page
@@ -450,8 +698,8 @@ def test_an_export_copy_of_a_phone_photo_stays_upright(monkeypatch):
     with blank_session() as db:
         c = _chain(db)
         photo, drawing = _with_line_media(db, c)
-        _settings(db, c)
-        download = _download(db, c)
+        sheet = _sheet(db, c, templates=_boxed_templates(db, c))
+        download = _download(db, c, sheet)
         store = _Store(
             {
                 extract_key(photo.file_path): _rotated_jpeg(),
@@ -465,7 +713,7 @@ def test_an_export_copy_of_a_phone_photo_stays_upright(monkeypatch):
 
         with Image.open(io.BytesIO(store.uploads[manifest[photo.id]["key"]])) as im:
             assert im.height > im.width
-            assert max(im.size) == spec.export_cap_px((338.7, 190.5))
+            assert max(im.size) == spec.px_for_mm(100)
 
 
 def test_the_export_worker_holds_no_db_connection_during_the_render(monkeypatch):
@@ -606,64 +854,6 @@ def _big_jpeg(width=8000, height=6000) -> bytes:
     return buffer.getvalue()
 
 
-def test_export_caps_a_photo_over_40_megapixels(monkeypatch):
-    from PIL import Image
-
-    from app.services import project_spec_sheet_service as spec
-    from app.services.storage_router import extract_key
-
-    with blank_session() as db:
-        c = _chain(db)
-        photo, drawing = _with_line_media(db, c)
-        _settings(db, c)
-        download = _download(db, c)
-        store = _Store(
-            {
-                extract_key(photo.file_path): _big_jpeg(),
-                extract_key(drawing.file_path): _photo_bytes(800, 600, seed=1),
-            }
-        )
-        monkeypatch.setattr(spec, "_storage", lambda provider=None: store)
-        monkeypatch.setattr(spec, "_default_provider", lambda: "s3")
-
-        manifest = spec.prepare_export_images(db, download)
-
-        key = manifest[photo.id]["key"]
-        assert key != photo.file_path
-        with Image.open(io.BytesIO(store.uploads[key])) as im:
-            assert max(im.size) == spec.export_cap_px((338.7, 190.5))
-
-
-class _MediumStore(_Store):
-    def file_exists(self, key):
-        return key in self.uploads
-
-
-def _open_page_env(db, monkeypatch, original: bytes):
-    from app.services import product_image_service as images
-    from app.services.storage_router import extract_key
-
-    c = _chain(db)
-    photo, drawing = _with_line_media(db, c)
-    _settings(db, c)
-    store = _MediumStore(
-        {
-            extract_key(photo.file_path): original,
-            extract_key(drawing.file_path): _photo_bytes(800, 600, seed=1),
-        }
-    )
-    monkeypatch.setattr(images, "get_backend", lambda provider: store)
-    signed = []
-
-    def fake_sign(source, *, provider=None, expires_in=3600, strict=False):
-        signed.append(source)
-        return f"https://signed.zzt.test/{source}"
-
-    monkeypatch.setattr(images, "resolve_signed_url", fake_sign)
-    images._medium_cache.clear()
-    return c, photo, drawing, store, signed
-
-
 def test_the_open_page_gets_a_1024_px_rendition_never_the_original(monkeypatch):
     from PIL import Image
 
@@ -671,12 +861,12 @@ def test_the_open_page_gets_a_1024_px_rendition_never_the_original(monkeypatch):
     from app.services import project_spec_sheet_service as spec
 
     with blank_session() as db:
-        c, photo, drawing, store, signed = _open_page_env(db, monkeypatch, _big_jpeg())
+        c, sheet, photo, drawing, store, signed = _open_page_env(db, monkeypatch, _big_jpeg())
 
-        out = spec.page_images(db, c["document"], c["issue"], c["basin"].id)
+        out = spec.page_images(db, sheet, c["basin"].id)
 
-        assert set(out) == {photo.id, drawing.id}
-        assert all(".medium.jpg" in url for url in out.values())
+        assert set(out["images"]) == {photo.id, drawing.id}
+        assert all(".medium.jpg" in url for url in out["images"].values())
         assert not any(s in (photo.file_path, drawing.file_path) for s in signed)
         medium = next(k for k in store.uploads if k.startswith("products/") and "basin.png" in k)
         with Image.open(io.BytesIO(store.uploads[medium])) as im:
@@ -685,18 +875,21 @@ def test_the_open_page_gets_a_1024_px_rendition_never_the_original(monkeypatch):
         # Made once: a later open signs the stored rendition without reading the original.
         images._medium_cache.clear()
         store.downloads.clear()
-        spec.page_images(db, c["document"], c["issue"], c["basin"].id)
+        spec.page_images(db, sheet, c["basin"].id)
         assert store.downloads == []
 
 
-def test_the_cover_and_unknown_pages_ask_for_no_rendition(monkeypatch):
+def test_the_cover_asks_for_no_picture_and_an_unknown_page_is_a_404(monkeypatch):
     from app.services import project_spec_sheet_service as spec
+    from app.services.error_handler import AppException
 
     with blank_session() as db:
-        c, _photo, _drawing, store, _signed = _open_page_env(db, monkeypatch, _photo_bytes(600, 600))
+        c, sheet, _photo, _drawing, store, _signed = _open_page_env(db, monkeypatch, _photo_bytes(600, 600))
 
-        assert spec.page_images(db, c["document"], c["issue"], "cover") == {}
-        assert spec.page_images(db, c["document"], c["issue"], "no-such-page") == {}
+        assert spec.page_images(db, sheet, "cover") == {"images": {}, "assets": {}}
+        with pytest.raises(AppException) as raised:
+            spec.page_images(db, sheet, "no-such-page")
+        assert raised.value.status_code == 404
         assert store.downloads == []
 
 
@@ -707,15 +900,32 @@ def test_the_page_images_route_answers_the_open_pages_renditions(monkeypatch):
 
     with blank_session() as db:
         c = _chain(db)
-        _settings(db, c)
+        sheet = _sheet(db, c)
         monkeypatch.setattr(
-            spec, "page_images", lambda db, document, issue, key, release=None: {"a": f"u-{key}"}
+            spec,
+            "page_images",
+            lambda db_, sheet_, key, release=None: {"images": {"a": f"u-{key}"}, "assets": {}},
         )
         client, originals = _client(db, c["owner"])
         try:
-            response = client.get(_url(c, "/page-images"), params={"key": c["basin"].id})
+            response = client.get(_url(c, f"/{sheet.id}/page-images"), params={"key": c["basin"].id})
         finally:
             _restore(originals)
 
         assert response.status_code == 200, response.text
-        assert response.json() == {"images": {"a": f"u-{c['basin'].id}"}}
+        assert response.json() == {"images": {"a": f"u-{c['basin'].id}"}, "assets": {}}
+
+
+def test_the_page_images_route_refuses_a_page_the_sheet_does_not_have_and_needs_a_key():
+    from .test_project_spec_sheet import _client, _restore, _url
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _sheet(db, c)
+        client, originals = _client(db, c["owner"], slugs=["projects.projects.view"])
+        try:
+            assert client.get(_url(c, f"/{sheet.id}/page-images"), params={"key": "set:nope"}).status_code == 404
+            assert client.get(_url(c, f"/{sheet.id}/page-images")).status_code == 422
+            assert client.get(_url(c, f"/{sheet.id}/page-images"), params={"key": "cover"}).status_code == 200
+        finally:
+            _restore(originals)

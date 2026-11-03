@@ -31,6 +31,7 @@ import {
   specSheetListKey,
   useSpecSheetDetail,
   useSpecSheetMutations,
+  useSpecSheetPageImages,
   useSpecSheetPreviews,
 } from '../../../../../../_shared/hooks/useSpecSheet';
 import type {
@@ -47,6 +48,8 @@ const CHUNK_SIZE = 6;
 const DRAWN_MAX = 12;
 /** The window starts one viewport above and below what is on screen. */
 const WINDOW_MARGIN = '100% 0px';
+/** The page being read must stay put this long before its sharper pictures are asked for. */
+const SETTLE_MS = 250;
 /** Side padding of the stack, px. */
 const STACK_PAD = 16;
 /** Scale before the stack has been measured. */
@@ -293,6 +296,29 @@ export function SpecSheetReader({
   );
 
   const activeKey = currentKey ?? pages[0]?.key ?? null;
+
+  // Only the page being read gets medium pictures, and only once it has stayed current for a
+  // moment: a fast scroll asks for nothing, the strip and the other pages keep their thumbnails.
+  const [settledKey, setSettledKey] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!activeKey) return;
+    const timer = setTimeout(() => setSettledKey(activeKey), SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [activeKey]);
+  const sharp = useSpecSheetPageImages(projectId, documentId, sheetId, settledKey);
+  const sharpBase = settledKey ? (drawn.get(settledKey)?.payload ?? null) : null;
+  const sharpData = sharp.data;
+  const sharpPayload = React.useMemo(
+    () =>
+      sharpBase && sharpData
+        ? {
+            ...sharpBase,
+            images: { ...sharpBase.images, ...sharpData.images },
+            assets: { ...sharpBase.assets, ...sharpData.assets },
+          }
+        : null,
+    [sharpBase, sharpData],
+  );
   const scrollTo = (key: string) => {
     const el = Array.from(
       scroller.current?.querySelectorAll<HTMLElement>('[data-page-wrap]') ?? [],
@@ -551,7 +577,11 @@ export function SpecSheetReader({
                 boxWidth={boxWidth}
                 boxHeight={boxHeight}
                 scale={scale}
-                payload={drawn.get(page.key)?.payload ?? null}
+                payload={
+                  page.key === settledKey && sharpPayload
+                    ? sharpPayload
+                    : (drawn.get(page.key)?.payload ?? null)
+                }
                 sheetIndex={drawn.get(page.key)?.index}
                 canEdit={canEdit}
                 editDisabledReason={
