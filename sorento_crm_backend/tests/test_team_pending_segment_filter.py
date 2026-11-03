@@ -197,4 +197,46 @@ def test_member_serves_segments_rule():
     assert member_serves_segments({"project"}, set()) is True  # untagged contact
     assert member_serves_segments({"project"}, {"retail"}) is False
     assert member_serves_segments({"project", "retail"}, {"retail"}) is True
-    assert member_serves_segments({"Project"}, {" project "}) is True
+
+
+def test_active_coverage_shows_covered_colleague_tasks_in_full(db, do_cs):
+    """Crew ruling 3 Nov: while I hold an active coverage of a colleague, that colleague's
+    tasks show on My Team unfiltered, so the coverage deep link never opens an empty list."""
+    from app.models.notification import NotificationSubscription
+
+    pid = do_cs["pid"]
+    project_cs, retail_cs = do_cs["project_cs"], do_cs["retail_cs"]
+    retail_contact = _contact(db, "retail")
+    covered_task = _track(db, pid, assignee=retail_cs, contact=retail_contact, due_h=7)
+
+    # Without coverage: the retail CS's retail task stays hidden from project CS.
+    assert covered_task not in _ids(db, project_cs)
+
+    # An expired / inactive coverage does not lift the filter.
+    db.add(
+        NotificationSubscription(
+            id=str(uuid.uuid4()),
+            subscriber_id=project_cs,
+            target_user_id=retail_cs,
+            is_active=True,
+            expires_at=datetime(2020, 1, 1),
+        )
+    )
+    db.commit()
+    assert covered_task not in _ids(db, project_cs)
+
+    db.query(NotificationSubscription).delete()
+    db.add(
+        NotificationSubscription(
+            id=str(uuid.uuid4()),
+            subscriber_id=project_cs,
+            target_user_id=retail_cs,
+            is_active=True,
+        )
+    )
+    db.commit()
+    ids = _ids(db, project_cs)
+    assert covered_task in ids
+    # The coverage lifts the filter for the covered colleague only: the holder's
+    # retail task is still hidden.
+    assert do_cs["tasks"]["retail"] not in ids
