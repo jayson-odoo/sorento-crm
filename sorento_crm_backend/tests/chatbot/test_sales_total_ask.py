@@ -201,16 +201,13 @@ def test_t5b_outstanding_answering_the_basis_question_with_no_declared_mode_neve
     assert "Invoiced, delivered, ordered or outstanding?" in _reply(result), _reply(result)
 
 
-def test_t6_two_companies_basis_then_company_then_both_ride(two):
+def test_t6_two_companies_basis_then_it_runs_over_every_company(two):
+    """O-R2 (was: basis then company then both ride): the basis answer runs, no company question, no company arg."""
     _ask(two)
     result, captured = two.say(_answer(basis="ordered", open_question_answer=FILL), "ordered")
-    assert COMPANY_QUESTION in _reply(result), f"then the company: {_reply(result)!r}"
-    assert not [a for a in _calls(captured, TOOL) if a.get("company")], captured
-    _result, captured = two.say(_answer(open_question_answer=_pick(2), order_status=None), "2")
+    assert COMPANY_QUESTION not in _reply(result), f"O-R2: the company was asked: {_reply(result)!r}"
     args = _ran(captured, "ordered")
-    from tests._mc_lookup_seed import MOCHA_ID
-
-    assert args.get("company") == MOCHA_ID, args  # the report ask sends the company id
+    assert not args.get("company"), f"O-R2: a company arg was sent: {args}"
 
 
 # --------------------------------------------------------------------------- #
