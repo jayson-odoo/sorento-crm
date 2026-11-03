@@ -245,6 +245,7 @@ from app.services.numbering_defaults import (
 from app.services.numbering_service import NumberingService
 from app.services.rules import shipping_order_rules
 from app.services.scm.demand_class import PROJECT as _DEMAND_CLASS_PROJECT
+from app.services.scm.so_party import so_parties, with_party
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
 logger = logging.getLogger(__name__)
@@ -1289,6 +1290,11 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
             # `sales_orders.demand_class` to read here, so this is a constant, not a lookup.
             "demand_class": _DEMAND_CLASS_PROJECT,
         })
+    # OI-UX-FILTER-SNAPSHOT: `customer_name` above held the project title; it now names the
+    # order's own customer, and `project_label` is the order's project.
+    parties = so_parties(db, numbers=[o["document"] for o in out])
+    for o in out:
+        with_party(o, parties, o["document"])
     return out
 
 
@@ -1366,6 +1372,9 @@ def _retail_coverage(db: Session, product_id: str) -> list[dict]:
             # vs a book line), `demand_class` says what the SO ITSELF is classified as.
             "demand_class": r.demand_class,
         })
+    parties = so_parties(db, numbers=[o["document"] for o in out])
+    for o in out:
+        with_party(o, parties, o["document"])
     return out
 
 
@@ -3557,6 +3566,10 @@ def plan_of(db: Session, purchase_order_id: str) -> dict:
                 "qty": qty,
                 "warehouse": row[3] if row else None,
             })
+
+    parties = so_parties(db, numbers=[c["so_number"] for c in covers])
+    for c in covers:
+        with_party(c, parties, c["so_number"])
 
     return {"pulls": pulls, "covers": covers}
 

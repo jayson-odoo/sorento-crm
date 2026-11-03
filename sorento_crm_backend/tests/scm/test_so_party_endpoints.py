@@ -1,0 +1,219 @@
+"""OI-UX-FILTER-SNAPSHOT: wherever a sales order is named, its customer and project come too.
+
+Each case seeds a sales order carrying `debtor_name` (the customer the order was issued under)
+and `project_label`, reads one endpoint's service, and asserts BOTH fields come back. A
+`response_model` drops an undeclared field silently, so the schema-backed shapes are asserted
+at the schema as well. One case per area asserts nulls for an order nobody could name.
+"""
+from __future__ import annotations
+
+import json
+from datetime import date
+
+from app.models.order import SalesOrder
+from app.models.procurement import PurchaseOrderLine
+from app.services.scm import spo_conversion_service as svc
+from tests._pg_fixture import pg_session
+from tests.scm.conftest import requires_pg, scm_app  # noqa: F401
+from tests.scm.test_spo_conversion import MARKER, World, _u
+from tests.scm.test_summary_order_service import chain as summary_chain  # noqa: F401
+from tests.scm.test_coverage_service import chain, db  # noqa: F401
+from tests.scm.test_trajectory import db_world  # noqa: F401
+from tests.scm.test_spo_planner_selection import _project_chain, _retail_demand
+
+pytestmark = requires_pg
+
+DEBTOR = f"{MARKER} Debtor Sdn Bhd"
+PROJECT = f"{MARKER} Tower Project"
+
+
+def _name_order(so: SalesOrder, *, debtor=DEBTOR, project=PROJECT) -> None:
+    so.debtor_name = f"  {debtor}  " if debtor else None
+    so.project_label = project
+
+
+def test_spo_planner_retail_coverage_carries_customer_and_project():
+    with pg_session() as db:
+        w = World(db)
+        wh = w.warehouse("WH")
+        line, so = _retail_demand(db, w, "P", wh, qty=5, required=date(2026, 9, 1))
+        _name_order(so)
+        db.flush()
+        [row] = svc._retail_coverage(db, w.product("P").id)
+        assert row["customer_name"] == DEBTOR
+        assert row["project_label"] == PROJECT
+
+
+def test_spo_planner_retail_coverage_without_party_is_null():
+    with pg_session() as db:
+        w = World(db)
+        wh = w.warehouse("WH")
+        line, so = _retail_demand(db, w, "P", wh, qty=5, required=date(2026, 9, 1))
+        so.customer_id = None
+        so.debtor_name = None
+        so.project_label = None
+        db.flush()
+        [row] = svc._retail_coverage(db, w.product("P").id)
+        assert row["customer_name"] is None
+        assert row["project_label"] is None
+
+
+def test_spo_planner_project_coverage_carries_customer_and_project():
+    with pg_session() as db:
+        w = World(db)
+        row, pso = _project_chain(db, w, "P", qty=4, delivery=date(2026, 9, 1))
+        core = SalesOrder(
+            id=_u(), so_number=pso.autocount_doc_no, order_date=date(2026, 7, 1), status="open",
+        )
+        _name_order(core)
+        db.add(core)
+        db.flush()
+        [out] = svc._project_coverage(db, w.product("P").id)
+        assert out["document"] == pso.autocount_doc_no
+        assert out["customer_name"] == DEBTOR
+        assert out["project_label"] == PROJECT
+
+
+def test_po_plan_covers_carry_customer_and_project():
+    with pg_session() as db:
+        w = World(db)
+        wh = w.warehouse("WH")
+        line, so = _retail_demand(db, w, "P", wh, qty=5, required=date(2026, 9, 1))
+        _name_order(so)
+        po = w.po("PLAN", w.supplier(), [("P", 5, 0)])
+        po.source_system = svc.SOURCE_SYSTEM
+        pol = db.query(PurchaseOrderLine).filter(PurchaseOrderLine.purchase_order_id == po.id).one()
+        pol.source_ref = json.dumps({"pulls": [], "so_coverage": [{"so_line_id": str(line.id), "qty": 5}]})
+        db.flush()
+        [cover] = svc.plan_of(db, po.id)["covers"]
+        assert cover["so_number"] == so.so_number
+        assert cover["customer_name"] == DEBTOR
+        assert cover["project_label"] == PROJECT
+
+
+def test_coverage_undated_demand_carries_customer_and_project(db, chain):
+    from tests.scm.test_coverage_service import _so_line
+    from app.services.scm.coverage_service import CoverageService
+
+    so = _so_line(db, chain["product"], chain["bin_a"], 40, None)
+    _name_order(so)
+    db.flush()
+    cov = CoverageService(db).coverage_for(chain["product"].id, pool_id=chain["pool"].id)
+    [undated] = cov.undated_demand
+    assert undated.customer_name == DEBTOR
+    assert undated.project_label == PROJECT
+    from app.schemas.scm_coverage import CoverageUndatedDemandOut
+
+    assert {"customer_name", "project_label"} <= set(CoverageUndatedDemandOut.model_fields)
+
+
+def test_explain_net_committed_sos_carry_customer_and_project():
+    from app.services.scm import reorder_run_service as run_svc
+
+    with pg_session() as db:
+        w = World(db)
+        wh = w.warehouse("WH")
+        _line, named = _retail_demand(db, w, "P", wh, qty=12, required=date(2026, 9, 1))
+        _name_order(named)
+        _line2, plain = _retail_demand(db, w, "P", wh, qty=5, required=date(2026, 9, 2))
+        db.flush()
+        body = run_svc.net_breakdown(db, w.product("P").id, wh.id)
+        by_so = {r["so_number"]: r for r in body["committed_sos"]}
+        assert by_so[named.so_number]["customer_name"] == DEBTOR
+        assert by_so[named.so_number]["project_label"] == PROJECT
+        assert by_so[plain.so_number]["customer_name"] == f"{MARKER} dealer"
+        assert by_so[plain.so_number]["project_label"] is None
+
+
+def test_demand_drill_lines_carry_customer_and_project(db, summary_chain):
+    from app.schemas.scm_order_summary import OrderSummaryDemandDrillOut
+    from app.services.scm import summary_order_service as order_svc
+    from tests.scm.test_summary_order_service import _so
+
+    f = summary_chain
+    for order_type, key in (("project", "project_lines"), ("dealer", "retail_lines")):
+        so, _cust = _so(db, f["product"], f["bin"], 10, order_type=order_type)
+        _name_order(so)
+        db.flush()
+        out = order_svc.demand_drill(db, f["product"].product_code, kind=order_type)
+        [line] = out[key]
+        assert line["customer_name"] == DEBTOR
+        assert line["project_label"] == PROJECT
+        shaped = OrderSummaryDemandDrillOut(**out).model_dump()
+        assert shaped[key][0]["customer_name"] == DEBTOR
+        assert shaped[key][0]["project_label"] == PROJECT
+
+
+def test_plan_exception_candidate_so_carries_customer_and_project():
+    from types import SimpleNamespace
+
+    from app.services.scm import plan_exception_service as pe_svc
+    from app.services.scm.so_party import so_parties
+
+    with pg_session() as db:
+        w = World(db)
+        wh = w.warehouse("WH")
+        _line, so = _retail_demand(db, w, "P", wh, qty=3, required=date(2026, 9, 1))
+        _name_order(so)
+        db.flush()
+        row = SimpleNamespace(
+            id=_u(), exception_type="shortfall_earlier", product_id=None, warehouse_id=None,
+            pool_code=None, purchase_order_id=None, po_expected_date=None, quantity=3,
+            timeline_json={}, reading_json={}, status="open", decided_by=None,
+            decided_at=None, decided_action=None, decision_reason=None,
+            actions_json=[
+                {"code": "relink_so", "rank": 1, "rationale": "x",
+                 "candidate_so_number": so.so_number},
+                {"code": "hold", "rank": 2, "rationale": "y", "candidate_so_number": None},
+            ],
+        )
+        parties = so_parties(db, numbers=[so.so_number])
+        out = pe_svc._row_out(row, {}, {}, {}, {}, parties)
+        relink, hold = out["actions"]
+        assert relink["customer_name"] == DEBTOR
+        assert relink["project_label"] == PROJECT
+        assert hold["customer_name"] is None
+
+
+def test_trend_customer_orders_carry_customer_and_project(db_world):
+    from sqlalchemy import text
+
+    from tests.scm.test_trajectory import _orders
+
+    first = db_world["vivo_orders"][0]
+    db_world["db"].execute(text(
+        "UPDATE sales_orders SET debtor_name = :d, project_label = :p WHERE so_number = :n"
+    ), {"d": DEBTOR, "p": PROJECT, "n": first})
+    db_world["db"].flush()
+    out = _orders(db_world, db_world["customer_id"])
+    by_so = {l["so_number"]: l for l in out["lines"]}
+    assert by_so[first]["customer_name"] == DEBTOR
+    assert by_so[first]["project_label"] == PROJECT
+    other = by_so[db_world["vivo_orders"][1]]
+    assert other["project_label"] is None
+
+
+def test_spo_document_so_covered_carries_customer_and_project(scm_app):
+    from tests.scm import test_spo_allocation_documents as d
+
+    client, db = d._client(scm_app)
+    chain = d._chain(db)
+    product = d._product(db, chain)
+    warehouse = d._warehouse(db)
+    supplier = d._supplier(db)
+    po, po_line = d._spo_line(db, product=product, supplier=supplier)
+    doc = d.unique_code("SPO-PARTY")
+    allocation = d._line(
+        db, spo_number=doc, line_no=1, product=product, warehouse=warehouse, allocated=30,
+    )
+    allocation.po_line_id = po_line.id
+    db.flush()
+    so, _customer, so_line = d._retail_sales_order(db, product=product, warehouse=warehouse, qty="20")
+    _name_order(so)
+    d._cover(db, po_line, so_line, 20.0)
+
+    r = client.get(f"{d.DOCUMENTS_URL}/{doc}")
+    assert r.status_code == 200, r.text
+    [covered] = r.json()["lines"][0]["so_covered"]
+    assert covered["customer_name"] == DEBTOR
+    assert covered["project_label"] == PROJECT

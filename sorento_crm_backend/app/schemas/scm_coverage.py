@@ -88,6 +88,8 @@ class CoverageUndatedDemandOut(BaseModel):
     item_code: str
     qty: float
     location: str
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 class CoverageTransferProposalOut(BaseModel):
