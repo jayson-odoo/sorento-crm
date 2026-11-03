@@ -59,7 +59,7 @@ export function useSpecSheetPageImages(
   key: string | null,
 ) {
   return useQuery({
-    queryKey: [SPEC_SHEET_PREVIEW_KEY, documentId, issueId ?? 'latest', 'page-images', key],
+    queryKey: [SPEC_SHEET_PREVIEW_KEY, documentId, issueId ?? 'latest', 'sharper', key],
     queryFn: () => getSpecSheetPageImages(projectId, documentId, issueId, key as string),
     enabled: Boolean(key),
     retry: false,
