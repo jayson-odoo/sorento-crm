@@ -640,12 +640,13 @@ export function FulfilmentBoardListView({
         // after Customer, so every sales order on the board names its project.
         id: 'project',
         meta: { headerTitle: 'Project' },
-        accessorFn: (row) => row.project_label ?? '',
+        // The SO list's Project (`so_project_label`), never the board's own note fallback.
+        accessorFn: (row) => row.so_project_label ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
         cell: ({ row }) =>
-          row.original.project_label ? (
-            <span className="block truncate" title={row.original.project_label}>
-              {row.original.project_label}
+          row.original.so_project_label ? (
+            <span className="block truncate" title={row.original.so_project_label}>
+              {row.original.so_project_label}
             </span>
           ) : (
             <span className="text-muted-foreground">-</span>

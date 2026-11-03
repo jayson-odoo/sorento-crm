@@ -1663,7 +1663,7 @@ function axisKeyOf(
     return {
       key: contribution.sales_order_id,
       label: contribution.so_number,
-      party: soCustomerProjectLabel(contribution.customer_name, contribution.project_label),
+      party: soCustomerProjectLabel(contribution.so_customer_name, contribution.so_project_label),
     };
   }
   if (axis === 'customer') {
@@ -1986,29 +1986,23 @@ export function confirmNoticeLines(result: {
  * left out, so a caller prints nothing rather than a placeholder.
  */
 export function orderPartyLabels(
-  orders: Array<{ sales_order_id: string; customer_name?: string | null }>,
+  orders: Array<{ sales_order_id: string }>,
   contributions: Array<{
     sales_order_id: string;
-    customer_name?: string | null;
-    project_label?: string | null;
+    so_customer_name?: string | null;
+    so_project_label?: string | null;
   }>,
 ): Map<string, string> {
-  const lineCustomer = new Map<string, string>();
-  const lineProject = new Map<string, string>();
+  // Every line of one order carries the same two halves (the SO list's Customer and Project,
+  // named by the server), so the first line of each order speaks for it.
+  const firstLine = new Map<string, (typeof contributions)[number]>();
   for (const line of contributions) {
-    if (line.customer_name && !lineCustomer.has(line.sales_order_id)) {
-      lineCustomer.set(line.sales_order_id, line.customer_name);
-    }
-    if (line.project_label && !lineProject.has(line.sales_order_id)) {
-      lineProject.set(line.sales_order_id, line.project_label);
-    }
+    if (!firstLine.has(line.sales_order_id)) firstLine.set(line.sales_order_id, line);
   }
   const out = new Map<string, string>();
   for (const order of orders) {
-    const label = soCustomerProjectLabel(
-      order.customer_name || lineCustomer.get(order.sales_order_id),
-      lineProject.get(order.sales_order_id),
-    );
+    const line = firstLine.get(order.sales_order_id);
+    const label = soCustomerProjectLabel(line?.so_customer_name, line?.so_project_label);
     if (label) out.set(order.sales_order_id, label);
   }
   return out;

@@ -1244,6 +1244,10 @@ export interface BoardContribution {
   /** Who the code belongs to, shown as the code's `title`, never in place of the code. */
   agent_label?: string | null;
   project_label?: string | null;
+  /** OI-UX-FILTER-SNAPSHOT: the order's Customer and Project as the SO list names them;
+   *  what the CUSTOMER / project labels and the List view's Project column print. */
+  so_customer_name?: string | null;
+  so_project_label?: string | null;
   /**
    * The project's normalised key, for grouping only, never rendered.
    *

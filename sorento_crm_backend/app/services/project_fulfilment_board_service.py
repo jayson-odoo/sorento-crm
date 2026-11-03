@@ -84,7 +84,7 @@ from app.models.user import User
 from app.services import project_line_draft_service
 from app.services import so_remark_rules
 from app.services.error_handler import AppException
-from app.services.scm.so_party import so_parties, with_party
+from app.services.scm.so_party import EMPTY_PARTY, so_parties, with_party
 from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import (
     LADDER_VERSION,
@@ -670,7 +670,25 @@ class FulfilmentBoardService:
 
     def build(self, so_numbers: Sequence[str], **kwargs: Any) -> Dict[str, Any]:
         """`_build`, with every masked delay printed as its published ETA."""
-        return _shown(self._build(so_numbers, **kwargs))
+        return self._name_orders(_shown(self._build(so_numbers, **kwargs)))
+
+    def _name_orders(self, board: Dict[str, Any]) -> Dict[str, Any]:
+        """OI-UX-FILTER-SNAPSHOT: every contributing line names its sales order's Customer and
+        Project the way the SO list does (`so_party`, one query by order id), for the board's
+        CUSTOMER / project labels and the List view's Project column. The line's own
+        `project_label` keeps its note fallback (#813) for the pivot by project; it is never
+        what those labels print, since a note such as "OWN COLLECT" is not a project."""
+        lines = [
+            *board.get("contributions", []),
+            *(line for cell in board.get("cells", []) for line in cell.get("contributions", [])),
+        ]
+        parties = so_parties(self.db, ids=[line.get("sales_order_id") for line in lines])
+        for line in lines:
+            order_id = line.get("sales_order_id")
+            party = parties.get(str(order_id), EMPTY_PARTY) if order_id else EMPTY_PARTY
+            line["so_customer_name"] = party["customer_name"]
+            line["so_project_label"] = party["project_label"]
+        return board
 
     def stock_detail(self, product_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         """`_stock_detail`, with every masked delay printed as its published ETA."""

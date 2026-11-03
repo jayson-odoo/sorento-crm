@@ -626,6 +626,11 @@ class BoardContribution(BaseModel):
     #: Shown as the code's `title`, never in place of the code.
     agent_label: Optional[str] = None
     project_label: Optional[str] = None
+    #: OI-UX-FILTER-SNAPSHOT: the order's Customer and Project exactly as the SO list names them
+    #: (`so_party`). What the board's CUSTOMER / project labels and the List view's Project
+    #: column print; `project_label` above keeps its note fallback for the pivot by project.
+    so_customer_name: Optional[str] = None
+    so_project_label: Optional[str] = None
     #: What a pivot BY PROJECT groups on: the project string, normalised. An order adopted from
     #: the AutoCount book has no project registration by design, so the string is the only
     #: identity a project has here.
