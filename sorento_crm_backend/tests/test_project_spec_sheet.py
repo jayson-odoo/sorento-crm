@@ -1010,6 +1010,10 @@ def test_a_zero_priced_line_carries_no_price_and_the_detail_route_never_returns_
         c = _chain(db)
         # A component quoted at zero after its parent, picked under the WC.
         hose = _product(db, c["category"].id, c["uom"], description=f"{MARKER} spare hose")
+        # A no-charge component lists at nothing, so its 0.00 is not a discount needing approval
+        # before Issue (PS-QUOTE-RULES #2096, same fixture rule as test_project_quotation_pdf).
+        hose.list_price = Decimal("0.00")
+        db.flush()
         quotes.revise(db, quotation=c["scope"], actor_user_id=c["owner"])
         _line(db, c, c["scope"], {"product_id": hose.id, "unit_price": "0"})
         issue = _issue(db, c["document"], c["owner"])
