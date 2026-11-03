@@ -1108,7 +1108,7 @@ def _check_assets(db: Session, sheet: ProjectQuotationSpecSheet, layers: list) -
         owned = {
             str(row.id)
             for row in db.query(Asset.id).filter(
-                Asset.id.in_(list(unknown)), Asset.company_id == sheet.company_id
+                Asset.id.in_([a for a in unknown if _is_uuid(a)]), Asset.company_id == sheet.company_id
             )
         } if sheet.company_id else set()
         if unknown - owned:

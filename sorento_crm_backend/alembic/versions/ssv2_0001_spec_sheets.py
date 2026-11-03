@@ -284,8 +284,10 @@ def backfill(connection) -> None:
                 if template_id
                 else None
             )
-        if single and versions["single"] is None:
-            continue
+        if versions["single"] is None:
+            # A single-item template that is gone, unpublished, of another family or company:
+            # the sheet uses its page template instead.
+            single = None
         if versions["cover"] is None or versions["page"] is None:
             continue
         items = _items(connection, issue_id)
