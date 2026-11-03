@@ -267,7 +267,8 @@ class OrderInquiryHandoverResend:
         picks which open rows go; `None` is every open row."""
         if not inquiry_ids:
             raise AppException(422, "Choose at least one order inquiry.")
-        if len(inquiry_ids) > MAX_INQUIRIES:
+        # Counted once per OI: the dialog names an OI once per row it goes through.
+        if len(set(map(str, inquiry_ids))) > MAX_INQUIRIES:
             raise AppException(422, f"Send at most {MAX_INQUIRIES} order inquiries at once.")
         if row_ids is not None and len(set(map(str, inquiry_ids))) != 1:
             raise AppException(422, "Lines can be chosen for one order inquiry at a time.")
@@ -290,6 +291,9 @@ class OrderInquiryHandoverResend:
                 skipped.append(_skip(inquiry, "nothing_open"))
                 continue
             context, line_count = self._context(rows, actor_user_id)
+            if not context.get("raised_by") and inquiry.raised_by:
+                # The rows are picked on the header's raiser; the email says the same.
+                context["raised_by"] = str(inquiry.raised_by)
             # DEALER-OI-ROUTE + OI-ROUTE-BY-RAISER: every row this OI's class and raiser
             # match, as the automatic email; one email per row.
             picked = None if row_ids is None else [str(row.id) for row in rows]
@@ -297,7 +301,7 @@ class OrderInquiryHandoverResend:
             for automation in handover_automations(
                 self.db,
                 context.get("sales_order_class"),
-                context.get("raised_by") or (str(inquiry.raised_by) if inquiry.raised_by else None),
+                context.get("raised_by"),
             ):
                 recipients = park_send.resolve_ordered(self.db, automation, context)
                 if not recipients:
@@ -320,7 +324,9 @@ class OrderInquiryHandoverResend:
         sendable, skipped = self._plan(inquiry_ids, actor_user_id, row_ids)
         notes = self._handover_notes([str(entry[0].id) for entry in sendable])
         last_sent = self._last_sent(notes)
-        single = len(sendable) == 1 and len(set(map(str, inquiry_ids))) == 1
+        # One OI asked for, however many rows it goes through (OI-ROUTE-BY-RAISER): each of
+        # its emails carries the same line ticks.
+        single = len(set(map(str, inquiry_ids))) == 1
         emails = []
         for inquiry, context, line_count, recipients, open_rows, picked, automation in sendable:
             email = park_send.render_preview(
@@ -363,8 +369,10 @@ class OrderInquiryHandoverResend:
         actor_user_id: str,
         row_ids: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
-        """One email per OI. Each is its own committed automation run, so one failure is
-        reported and the rest still go."""
+        """One email per (OI, matching row). Each is its own committed automation run, so one
+        failure is reported and the rest still go. An OI whose every email failed is
+        `failed` (the dialog sends it again); one where some went is `partly_failed`, never
+        retried by the dialog, so a row that already has it is not emailed twice."""
         from app.services import automation_triggers
         from app.services.automation_service import AutomationService
         from app.services.project_order_inquiry_service import store_handover_excel
@@ -372,6 +380,8 @@ class OrderInquiryHandoverResend:
         sendable, skipped = self._plan(inquiry_ids, actor_user_id, row_ids)
         sent = 0
         stored: set = set()
+        went: set = set()
+        failed: Dict[str, OrderInquiry] = {}
         for inquiry, context, _line_count, _recipients, _open_rows, _picked, automation in sendable:
             try:
                 # Stored only now, for an OI that has someone to send to (review S2), and
@@ -386,9 +396,18 @@ class OrderInquiryHandoverResend:
                 )
                 AutomationService(self.db).send_match(automation, match)
                 sent += 1
+                went.add(str(inquiry.id))
             except Exception:  # noqa: BLE001 - reported per OI, never a stuck screen
-                logger.exception("handover resend failed for order inquiry %s", inquiry.id)
-                skipped.append(_skip(inquiry, "failed"))
+                logger.exception(
+                    "handover resend failed for order inquiry %s via automation %s",
+                    inquiry.id,
+                    automation.id,
+                )
+                failed[str(inquiry.id)] = inquiry
+        for inquiry_id, inquiry in failed.items():
+            skipped.append(
+                _skip(inquiry, "partly_failed" if inquiry_id in went else "failed")
+            )
         return {"emails_sent": sent, "items_sent": sent, "skipped": skipped}
 
 

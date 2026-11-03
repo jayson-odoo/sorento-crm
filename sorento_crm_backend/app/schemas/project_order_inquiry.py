@@ -1798,7 +1798,7 @@ class HandoverResendEmailOut(ParkedEmailOut):
 class HandoverResendSkipOut(BaseModel):
     inquiry_id: str
     inquiry_no: Optional[str] = None
-    reason: Literal["nothing_open", "no_recipient", "failed"]
+    reason: Literal["nothing_open", "no_recipient", "failed", "partly_failed"]
 
 
 class HandoverResendPreviewOut(BaseModel):

@@ -457,3 +457,56 @@ def test_detail_names_the_raiser_not_the_id(rs):
     facts = fact_map(automation_triggers.fact_sources_for(HANDOVER))
     text = tree_text(_rule("not_in", [agnes]), facts, world.db)
     assert text == "Sales order class is Project AND Raised by is none of ZZT Agnes Prose"
+
+
+def test_one_oi_through_two_rows_keeps_its_line_ticks(rs):
+    """Review B1: one OI going through two rows is still a single-OI preview, so every one of
+    its emails carries the line ticks (the dialog's Send needs them)."""
+    client, world = rs
+    setup = _Setup(world)
+    _row_automation(world.db, setup.template, world.requester, name="legacy",
+                    recipient=setup.eling, conditions=_class_rule("project"))
+    world.db.commit()
+    agnes_oi, row = setup.oi(setup.agnes, "ZZT-RS-TICKS")
+
+    body = _ok(client.post(PREVIEW, json={"inquiry_ids": [agnes_oi.id]}))
+    assert len(body["emails"]) == 2
+    assert body["inquiry_total"] == 1
+    for email in body["emails"]:
+        assert [line["row_id"] for line in email["lines"]] == [str(row.id)]
+
+    # The dialog names the OI once per email; the limit counts OIs, and one send goes.
+    result = _ok(client.post(SEND, json={"inquiry_ids": [agnes_oi.id, agnes_oi.id],
+                                         "row_ids": [str(row.id)]}))
+    assert result["emails_sent"] == 2 and result["skipped"] == []
+
+
+def test_partly_failed_send_is_not_reported_as_failed(rs, monkeypatch):
+    """Review S2: one row's email fails, the other's went. The OI reads `partly_failed`, which
+    the dialog does not retry, so the row that has it is not emailed twice."""
+    from app.services.automation_service import AutomationService
+
+    client, world = rs
+    setup = _Setup(world)
+    legacy = _row_automation(world.db, setup.template, world.requester, name="legacy",
+                             recipient=setup.eling, conditions=_class_rule("project"))
+    world.db.commit()
+    agnes_oi, _row_ = setup.oi(setup.agnes, "ZZT-RS-PARTLY")
+    real = AutomationService.send_match
+
+    def _flaky(self, automation, match):
+        if str(automation.id) == str(legacy.id):
+            raise RuntimeError("boom")
+        return real(self, automation, match)
+
+    monkeypatch.setattr(AutomationService, "send_match", _flaky)
+    result = _ok(client.post(SEND, json={"inquiry_ids": [agnes_oi.id]}))
+    assert result["emails_sent"] == 1
+    assert [s["reason"] for s in result["skipped"]] == ["partly_failed"]
+
+    def _down(self, automation, match):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(AutomationService, "send_match", _down)
+    result = _ok(client.post(SEND, json={"inquiry_ids": [agnes_oi.id]}))
+    assert [s["reason"] for s in result["skipped"]] == ["failed"]
