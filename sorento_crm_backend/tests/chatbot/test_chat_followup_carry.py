@@ -365,14 +365,21 @@ def test_u2_a_new_product_keeps_the_held_customer_as_the_parser_s_table_says():
     assert held and held["customer_ids"] == [U1, U2], held
 
 
-@pytest.mark.parametrize("entity_op", ["modify", "replace_combine"])
+@pytest.mark.parametrize("entity_op", ["modify", "replace", "replace_combine"])
 def test_u3_guard_a_customer_named_is_no_follow_up_on_these_ops(entity_op):
     assert _stamp(_verdict(entity_op, NAMED), _focus(TOTAL)) is None
 
 
-@pytest.mark.parametrize("entity_op", ["replace", "clear", None])
+@pytest.mark.parametrize("entity_op", ["clear", None])
 def test_u4_guard_every_other_op_stays_off(entity_op):
     assert _stamp(_verdict(entity_op), _focus(TOTAL)) is None
+
+
+def test_u4b_a_replace_naming_no_subject_is_a_follow_up():
+    """O-R3 (owner 3 Nov) supersedes the old 'replace is never stamped' pin (was `replace` in u4): a replace that names no
+    subject holds the customer and the basis as u1 does. A replace naming a customer of its own is u3's `replace` case."""
+    held = _stamp(_verdict("replace"), _focus(TOTAL))
+    assert held and held["customer_ids"] == [U1, U2] and held["basis"] == "invoiced", held
 
 
 def test_u5_guard_replace_combine_with_no_customer_held_stays_off():
