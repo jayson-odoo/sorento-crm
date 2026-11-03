@@ -126,7 +126,11 @@ def test_changing_or_activating_designs_afterwards_leaves_the_sent_revision_alon
         document.cover_closing_html = CLOSING
         record = _issue(db, document, env["owner"])
         html_before = qpdf.build_issue_html(db, record)
+        tmpl_id, record_id = tmpl.id, record.id
         body_before = sign_body(db, record)
+        # the sign route closes its session (#2126), so reload what was held before it
+        tmpl = db.get(type(tmpl), tmpl_id)
+        record = db.get(type(record), record_id)
 
         templates.update_template(db, template=tmpl, payload={"design": make_design(title="CHANGED TITLE")})
         other = seed_design(db, env, make_design(title="OTHER TITLE"), name=f"{MARKER} other", active=False)
