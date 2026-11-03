@@ -903,7 +903,10 @@ const LineBlock = React.memo(function LineBlock({
             )}
           </TableCell>
           <TableCell className={cell}>
-            <RemarkText value={split.remark} generated={split.remarkGenerated ?? ''} />
+            {/* A split row's remark is the sheet's own, not the email's: never pending. */}
+            <RemarkWordsPendingContext.Provider value={false}>
+              <RemarkText value={split.remark} generated={split.remarkGenerated ?? ''} />
+            </RemarkWordsPendingContext.Provider>
           </TableCell>
         </TableRow>
       );
@@ -963,13 +966,16 @@ const LineBlock = React.memo(function LineBlock({
           )}
         </TableCell>
         <TableCell className={cell}>
-          <RemarkCell
-            label={`Remark, line ${originNo} split ${n}`}
-            value={split.remark}
-            generated={split.remarkGenerated ?? ''}
-            onValue={(remark) => handlers.remark(origin, split.id, remark)}
-            onBlur={handlers.fieldBlur}
-          />
+          {/* A split row's remark is the sheet's own, not the email's: never pending. */}
+          <RemarkWordsPendingContext.Provider value={false}>
+            <RemarkCell
+              label={`Remark, line ${originNo} split ${n}`}
+              value={split.remark}
+              generated={split.remarkGenerated ?? ''}
+              onValue={(remark) => handlers.remark(origin, split.id, remark)}
+              onBlur={handlers.fieldBlur}
+            />
+          </RemarkWordsPendingContext.Provider>
         </TableCell>
         {first ? balance : null}
         <TableCell className={cn(cell, 'px-0')}>

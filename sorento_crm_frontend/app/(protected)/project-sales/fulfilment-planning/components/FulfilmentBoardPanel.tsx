@@ -2396,6 +2396,12 @@ export function FulfilmentBoardPanel({
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
             const facts = remarkFactsOf(line);
             const email = emailWordsFor(guideEmailWords, order.project_sales_order_id, line);
+            // Review B3 (crew ruling S2): a page whose run has not landed carries no words at
+            // all, so no row of it (editable or read-only) can print the board's as the email's.
+            const pagePsoId =
+              order.project_sales_order_id ?? guideAdopted.get(order.sales_order_id) ?? null;
+            const wordsPending =
+              Boolean(pagePsoId) && guideEmail.get(pagePsoId as string)?.status !== 'ready';
             return {
               lineId: line.project_line_id ?? null,
               key: line.key,
@@ -2407,7 +2413,7 @@ export function FulfilmentBoardPanel({
               // The email's own words when the dry run previewed this order (round 3); none
               // when the email sends no line for it; the board's words only for an order the
               // dry run did not preview.
-              savedRemark: email === undefined ? facts.words : email,
+              savedRemark: wordsPending ? null : email === undefined ? facts.words : email,
               // CONFIRM-ITEM4: the dry run says the email holds no line for it (null), so
               // Confirm sends purchasing nothing for it; unknown (undefined) claims nothing.
               purchasingSilent: email === null,
@@ -2429,6 +2435,7 @@ export function FulfilmentBoardPanel({
     remarkFactsOf,
     guideAdopted,
     guideEmailWords,
+    guideEmail,
   ]);
   const unplannedGuideOrders = React.useMemo(
     () => guidePages.filter((page) => !page.psoId).map((page) => page.salesOrderId),

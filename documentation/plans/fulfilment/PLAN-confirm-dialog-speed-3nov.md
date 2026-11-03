@@ -19,12 +19,14 @@ confirm-all dry run as well, in series.
    cancels a run. A page's run is replaced only when its key moves: its body, or a save made on
    that page (the body carries no split rows), or its Retry.
 3. A page whose email words have not landed prints "Preparing email preview..." in its REMARK
-   cells (never the board's words as if they were the email's) and takes no remark typing yet.
+   cells, editable and read-only rows alike (never the board's words as if they were the
+   email's), and takes no line-remark typing yet; split-row remarks are the sheet's own.
    Confirm waits until every page's run has landed, under the same line. A failed run shows its
    own Retry and holds Confirm only; the sheet (and any unsaved edit) stays.
 4. Opening Confirm joins a board read already in flight instead of cancelling and resending it.
 5. Backend (crew profile hot spot 1): the placement pass reads each product's open PO lines and
-   SPO allocations once per pass (`_document_rows_memo`) instead of once per row walked.
+   SPO allocations once per pass (`_document_rows_memo`, keyed by product and the session's
+   company scope) instead of once per row walked.
    Skipping the pass in a dry run was measured and refused: on the planning-change path the
    email REMARK changes without it ("ADVANCE, ORDER 15" against the press's "ADVANCE, ORDER 25").
 

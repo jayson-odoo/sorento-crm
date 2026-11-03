@@ -3,8 +3,9 @@
 Plan: `PLAN-confirm-dialog-speed-3nov.md`. Tests: `FulfilmentBoardPanel.confirmGuide.test.tsx`,
 describe "CONFIRM-DIALOG-SPEED".
 
-- **S1** Step 1 (Review split) renders and is interactive (Remark box, Next) while the email dry
-  run is still pending.
+- **S1** Step 1 (Review split) renders and is usable (the split sheet, Next) while the email dry
+  run is still pending. Its REMARK cells read "Preparing email preview..." and take no typing
+  until that page's words land (S9); split-row remarks are the sheet's own and stay editable.
 - **S2** The email dry run starts as the guide opens, before the board re-read answers, and is
   not sent again when that read leaves the order's body unchanged.
 - **S3** The Confirm step shows "Preparing email preview..." and keeps Confirm disabled until

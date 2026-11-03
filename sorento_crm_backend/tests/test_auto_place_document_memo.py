@@ -33,6 +33,7 @@ from .test_so_supply_confirmation import (  # noqa: F401 - `api` is a fixture
     _core_so,
     _line_payload,
     _project_line,
+    _product,
     _project_so,
     _suffix,
     api,
@@ -41,15 +42,15 @@ from .test_so_supply_confirmation import (  # noqa: F401 - `api` is a fixture
 ROWS = 9
 
 
-def _raised_rows(client, world):
+def _raised_rows(client, world, product):
     """ROWS orders of the product, each confirmed as a Buy BEFORE any document exists, so
     every ORDER row is raised, awaiting and unlinked when the pass runs."""
     db = world.db
     for n in range(ROWS):
         order = _project_so(db, world.project)
         core_so = _core_so(db, world.company_id)
-        core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered=str(5 + n))
-        line = _project_line(db, order, line_no=10, product=world.product, core_line=core)
+        core = _core_line(db, core_so, product, world.own_wh, qty_ordered=str(5 + n))
+        line = _project_line(db, order, line_no=10, product=product, core_line=core)
         db.commit()
         response = client.post(
             f"{BASE}/sales-orders/{order.id}/confirm",
@@ -58,7 +59,7 @@ def _raised_rows(client, world):
         assert response.status_code == 200, response.text
     rows = (
         db.query(OrderInquiryRow)
-        .filter(OrderInquiryRow.item_code == world.product.product_code)
+        .filter(OrderInquiryRow.item_code == product.product_code)
         .all()
     )
     assert len(rows) == ROWS and all(r.state == "raised" for r in rows), [
@@ -67,7 +68,7 @@ def _raised_rows(client, world):
     return rows
 
 
-def _documents(world):
+def _documents(world, product):
     """Scarce supply at the pool bin: two PO lines and two SPO allocations whose total
     covers only part of the rows' need, at different dates, so which row gets what depends
     on the order and on every `remaining` the walk tracks."""
@@ -82,14 +83,14 @@ def _documents(world):
         db.flush()
         db.add(PurchaseOrderLine(
             id=str(uuid.uuid4()), company_id=world.company_id, purchase_order_id=po.id,
-            product_id=world.product.id, warehouse_id=world.pool_wh.id,
+            product_id=product.id, warehouse_id=world.pool_wh.id,
             qty_ordered=Decimal(qty), qty_received=Decimal("0"),
             expected_date=today + timedelta(days=days), line_status="open",
         ))
     for qty, days in ((8, 30), (6, 60)):
         db.add(SPOAllocation(
             id=str(uuid.uuid4()), spo_number=f"ZZT-SPO-{_suffix()}", spo_line_number=1,
-            product_id=world.product.id, warehouse_id=world.pool_wh.id,
+            product_id=product.id, warehouse_id=world.pool_wh.id,
             allocated_quantity=qty, quantity_received=0, receipt_status="pending",
             line_status="open", expected_date=today + timedelta(days=days),
             company_id=world.company_id,
@@ -97,7 +98,7 @@ def _documents(world):
     db.commit()
 
 
-def _links(db, item_code):
+def _links(db, item_codes):
     """Every link and every suggested link on the product's rows (an awaiting row's
     placement is a suggestion), keyed by what the row IS (its sales-order line, qty and
     state), not its id: a placement may split a row, and the split's id is new each run."""
@@ -106,36 +107,37 @@ def _links(db, item_code):
         for link, row in (
             db.query(model, OrderInquiryRow)
             .join(OrderInquiryRow, OrderInquiryRow.id == model.row_id)
-            .filter(OrderInquiryRow.item_code == item_code)
+            .filter(OrderInquiryRow.item_code.in_(item_codes))
         ):
             out.append((
-                kind, str(row.so_line_id), str(Decimal(row.qty).normalize()), str(row.state),
+                kind, row.item_code, str(row.so_line_id), str(Decimal(row.qty).normalize()), str(row.state),
                 str(link.po_line_id or ""), str(link.spo_allocation_id or ""),
                 str(Decimal(link.qty).normalize()),
             ))
     return sorted(out)
 
 
-def _rows(db, item_code):
+def _rows(db, item_codes):
     return sorted(
-        (str(r.so_line_id), str(Decimal(r.qty).normalize()), str(r.state))
-        for r in db.query(OrderInquiryRow).filter(OrderInquiryRow.item_code == item_code)
+        (r.item_code, str(r.so_line_id), str(Decimal(r.qty).normalize()), str(r.state))
+        for r in db.query(OrderInquiryRow).filter(OrderInquiryRow.item_code.in_(item_codes))
     )
 
 
-def _run_pass(db, product_id, item_code, *, redeal):
+def _run_pass(db, product_ids, item_codes, *, redeal):
     service = ProjectOrderInquiryService(db)
     answer = service.auto_place_for_products(
-        [product_id], actor_user_id=None, trigger="test-memo", include_awaiting=True,
+        list(product_ids), actor_user_id=None, trigger="test-memo", include_awaiting=True,
         link_horizon="none",
     )
     if redeal:
         answer = (answer, service.auto_place_for_products(
-            [product_id], actor_user_id=None, trigger="test-memo", include_awaiting=True,
+            list(product_ids), actor_user_id=None, trigger="test-memo", include_awaiting=True,
             link_horizon="none", redeal_drafts=True,
         ))
     db.flush()
-    return answer, (_links(db, item_code), _rows(db, item_code))
+    assert service._document_rows_memo is None, "the memo outlives its pass"
+    return answer, (_links(db, item_codes), _rows(db, item_codes))
 
 
 def _document_reads(db):
@@ -158,11 +160,15 @@ def _document_reads(db):
 def _compare(api, monkeypatch, *, redeal):
     client, world = api
     db = world.db
-    rows = _raised_rows(client, world)
-    _documents(world)
-    item_code = world.product.product_code
-    product_id = str(world.product.id)
-    assert len(rows) == ROWS
+    # Two products (review N6): a memo keyed without the product would hand one product's
+    # documents to the other's rows.
+    second = _product(db)
+    products = [world.product, second]
+    for product in products:
+        _raised_rows(client, world, product)
+        _documents(world, product)
+    item_codes = [product.product_code for product in products]
+    product_ids = [str(product.id) for product in products]
     engine = db.get_bind()
 
     # Oracle: the memo patched off, every row reads its documents itself (the old code).
@@ -174,7 +180,7 @@ def _compare(api, monkeypatch, *, redeal):
         old_seen, old_count = _document_reads(db)
         event.listen(engine, "before_cursor_execute", old_count)
         try:
-            old_answer, old_links = _run_pass(db, product_id, item_code, redeal=redeal)
+            old_answer, old_links = _run_pass(db, product_ids, item_codes, redeal=redeal)
         finally:
             event.remove(engine, "before_cursor_execute", old_count)
     savepoint.rollback()
@@ -184,7 +190,7 @@ def _compare(api, monkeypatch, *, redeal):
     new_seen, new_count = _document_reads(db)
     event.listen(engine, "before_cursor_execute", new_count)
     try:
-        new_answer, new_links = _run_pass(db, product_id, item_code, redeal=redeal)
+        new_answer, new_links = _run_pass(db, product_ids, item_codes, redeal=redeal)
     finally:
         event.remove(engine, "before_cursor_execute", new_count)
     savepoint.rollback()
@@ -192,8 +198,9 @@ def _compare(api, monkeypatch, *, redeal):
     # Not vacuous: the pass placed some rows, and the scarce supply could not cover all.
     links, _rows_after = old_links
     assert links, ("the oracle pass placed nothing", old_answer)
-    placed_lines = {link[1] for link in links}
-    assert 0 < len(placed_lines) < ROWS, placed_lines
+    for code in item_codes:
+        placed_lines = {link[2] for link in links if link[1] == code}
+        assert 0 < len(placed_lines) < ROWS, (code, placed_lines)
     assert new_links == old_links
     assert new_answer == old_answer
     return old_seen, new_seen
@@ -202,15 +209,15 @@ def _compare(api, monkeypatch, *, redeal):
 def test_a_pass_writes_the_same_links_with_the_document_memo(api, monkeypatch):
     old_seen, new_seen = _compare(api, monkeypatch, redeal=False)
     # A handful per product instead of one per row walked.
-    assert old_seen["po"] >= ROWS, old_seen
-    assert new_seen["po"] <= 2 and new_seen["spo"] <= 2, new_seen
+    assert old_seen["po"] >= 2 * ROWS, old_seen
+    assert new_seen["po"] <= 4 and new_seen["spo"] <= 4, new_seen
 
 
 def test_a_redeal_pass_writes_the_same_links_with_the_document_memo(api, monkeypatch):
     old_seen, new_seen = _compare(api, monkeypatch, redeal=True)
     # Two passes, each holding its own memo: a handful each, not one per row per pass.
-    assert old_seen["po"] >= 2 * ROWS, old_seen
-    assert new_seen["po"] <= 4 and new_seen["spo"] <= 4, new_seen
+    assert old_seen["po"] >= 4 * ROWS, old_seen
+    assert new_seen["po"] <= 8 and new_seen["spo"] <= 8, new_seen
 
 
 def test_outside_a_pass_the_documents_are_read_fresh(api):
@@ -221,3 +228,33 @@ def test_outside_a_pass_the_documents_are_read_fresh(api):
     assert service._document_rows(("po", "x", False), lambda: reads.append(1) or [1]) == [1]
     assert service._document_rows(("po", "x", False), lambda: reads.append(1) or [1]) == [1]
     assert len(reads) == 2
+
+
+def test_the_memo_is_dropped_when_a_pass_raises(api, monkeypatch):
+    _client, world = api
+    service = ProjectOrderInquiryService(world.db)
+
+    def boom(self, product_ids, **kwargs):
+        assert self._document_rows_memo == {}
+        raise RuntimeError("walk failed")
+
+    monkeypatch.setattr(ProjectOrderInquiryService, "_auto_place_for_products", boom)
+    try:
+        service.auto_place_for_products(None, actor_user_id=None, trigger="test-memo")
+    except RuntimeError:
+        pass
+    assert service._document_rows_memo is None
+
+
+def test_a_read_under_one_company_scope_never_answers_another(api):
+    from app.models.base import company_scope
+
+    _client, world = api
+    service = ProjectOrderInquiryService(world.db)
+    service._document_rows_memo = {}
+    reads = []
+    with company_scope(world.db, {"00000000-0000-0000-0000-0000000000aa"}):
+        service._document_rows(("po", "p", False), lambda: reads.append("a") or ["a"])
+    with company_scope(world.db, {"00000000-0000-0000-0000-0000000000bb"}):
+        got = service._document_rows(("po", "p", False), lambda: reads.append("b") or ["b"])
+    assert got == ["b"] and reads == ["a", "b"]

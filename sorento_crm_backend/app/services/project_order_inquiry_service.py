@@ -53,7 +53,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import event, func, or_, tuple_
 from sqlalchemy.orm import Session
 
-from app.models.base import company_scope
+from app.models.base import company_scope, get_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.services import so_remark_rules
@@ -11094,6 +11094,14 @@ class ProjectOrderInquiryService:
         memo = self._document_rows_memo
         if memo is None:
             return read()
+        # The session's company scope filters these reads, and the book step runs a nested
+        # pass per company under its own scope (`follow_book_for_rows`): a read made under
+        # one company's scope must never answer for another's (the S2 rule `_linked_by_target`
+        # keeps for the same reason).
+        scope = get_company_scope(self.db)
+        if isinstance(scope, (set, frozenset)):
+            scope = frozenset(str(company) for company in scope)
+        key = (*key, scope)
         if key not in memo:
             memo[key] = read()
         return memo[key]
