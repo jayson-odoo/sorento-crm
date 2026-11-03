@@ -136,8 +136,25 @@ def submitted(api, w: World, **over) -> str:
     return rid
 
 
+def escalated(api, w: World, **over) -> str:
+    """Submitted, then escalated by the salesperson: with marketing (PRICETAG-SELF-APPROVAL)."""
+    rid = submitted(api, w, **over)
+    s.ok(api.call("POST", f"{SUB}/{rid}/escalate", json={"note": "ZZT please redraw"}))
+    return rid
+
+
 def to_proof(w: World, rid: str) -> None:
-    """Marketing (the admin approver) claims the request and sends the proof."""
+    """Marketing (the admin approver) claims the request and sends the proof.
+
+    A submit lands at the salesperson's own proof, so it is escalated first.
+    """
+    row = pt_row(w, rid)
+    if row.status == "proof_ready" and not row.assigned_to_id:
+        owner = w.rep if row.contact_id == w.rep.contact.id else w.other
+        s.ok(owner.me.call("POST", f"{SUB}/{rid}/escalate", json={"note": "ZZT please redraw"}))
+        if pt_row(w, rid).status != "new":  # a config auto-assigned it: already designing
+            s.ok(w.sc.staff_call("POST", f"{STAFF}/{rid}/transition", json={"status": "proof_ready"}))
+            return
     s.ok(w.sc.staff_call("POST", f"{STAFF}/{rid}/claim"))
     s.ok(w.sc.staff_call("POST", f"{STAFF}/{rid}/transition", json={"status": "proof_ready"}))
 

@@ -6,16 +6,14 @@ import {
   ENTITY_DOWNLOADS_QUERY_KEY,
   MY_DOWNLOADS_QUERY_KEY,
 } from '@/services/myDownloadsService';
-import type { QuotationAmendmentDecision } from '../types/project.types';
+import type { QuotationFeedback } from '../types/project.types';
 import {
   addQuotationScope,
-  applyQuotationAmendmentRequest,
   approveQuotationDocument,
   createQuotationDocument,
   createQuotationSignLink,
-  decideQuotationAmendmentRow,
   deleteQuotationDocument,
-  getQuotationAmendmentRequest,
+  getQuotationFeedback,
   getQuotationApprovalGraph,
   getQuotationDocument,
   getQuotationLetterTemplates,
@@ -29,6 +27,7 @@ import {
   queueQuotationIssuePdf,
   queueQuotationIssueXlsx,
   rejectQuotationDocument,
+  setQuotationFeedbackHandled,
   reviseQuotationApproval,
   signQuotationDocument,
   updateQuotationDocument,
@@ -44,11 +43,10 @@ const ISSUES_KEY = 'project-quotation-issues';
 const VIEWS_KEY = 'project-quotation-views';
 const APPROVAL_GRAPH_KEY = ['quotation-approval-graph'];
 /**
- * The customer's suggestions on a document. Invalidated by every write that can open or close a
- * version (issue, revise, approval moves, scope revise), because its `blocked_scopes` says
- * whether a hand-made draft now stands in the way of Apply.
+ * The customer's feedback on a document (PS-QUOTE-MATRIX R19-R22). Read by the Customer feedback
+ * tab, its badge and the Lines grid's marks; a column change refreshes it (cell labels).
  */
-export const AMENDMENT_KEY = 'project-quotation-amendment';
+export const FEEDBACK_KEY = 'project-quotation-feedback';
 
 export const quotationDocumentsKey = (projectId: string) => [DOCUMENTS_KEY, projectId];
 export const quotationDocumentKey = (projectId: string, documentId: string) => [
@@ -139,7 +137,6 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
     queryClient.invalidateQueries({ queryKey: [ISSUES_KEY, projectId] });
     queryClient.invalidateQueries({ queryKey: ['project-quotations'] });
     queryClient.invalidateQueries({ queryKey: ['project-quotation-versions'] });
-    queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY] });
   };
 
   /**
@@ -364,67 +361,57 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
   };
 }
 
-export const quotationAmendmentKey = (projectId: string, documentId: string) => [
-  AMENDMENT_KEY,
+export const quotationFeedbackKey = (projectId: string, documentId: string) => [
+  FEEDBACK_KEY,
   projectId,
   documentId,
 ];
 
-/** The customer's suggestions on this document's latest issue, or null (QUOTE-CUSTOMER-AMEND). */
-export function useQuotationAmendmentRequest(
+/** Every feedback note on this document, and how many are still open. */
+export function useQuotationFeedback(
   projectId: string | undefined,
   documentId: string | undefined,
   enabled = true,
 ) {
   return useQuery({
-    queryKey: quotationAmendmentKey(projectId ?? '', documentId ?? ''),
-    queryFn: () => getQuotationAmendmentRequest(projectId as string, documentId as string),
+    queryKey: quotationFeedbackKey(projectId ?? '', documentId ?? ''),
+    queryFn: () => getQuotationFeedback(projectId as string, documentId as string),
     enabled: Boolean(projectId && documentId) && enabled,
   });
 }
 
 /**
- * Deciding a suggestion and applying the decisions. A decision only rewrites the request, so it
- * puts the answer straight into the cache; Apply opens draft versions, so it invalidates the
- * scopes and their versions as an issue does.
+ * Handled, the one action a note has. The tick lands in the cache at once (the badge and the
+ * grid's marks move with it) and the read is refreshed for who and when.
  */
-export function useQuotationAmendmentMutations(projectId: string, documentId: string) {
+export function useQuotationFeedbackMutation(projectId: string, documentId: string) {
   const queryClient = useQueryClient();
-  const key = quotationAmendmentKey(projectId, documentId);
+  const key = quotationFeedbackKey(projectId, documentId);
 
-  const decide = useMutation({
-    mutationFn: ({
-      requestId,
-      rowId,
-      decision,
-      reason,
-    }: {
-      requestId: string;
-      rowId: string;
-      decision: QuotationAmendmentDecision;
-      reason?: string;
-    }) =>
-      decideQuotationAmendmentRow(projectId, documentId, requestId, rowId, { decision, reason }),
-    onSuccess: (request) => queryClient.setQueryData(key, request),
-    onError: (error: Error) => toast.error(error.message),
-  });
-
-  const apply = useMutation({
-    mutationFn: (requestId: string) =>
-      applyQuotationAmendmentRequest(projectId, documentId, requestId),
-    onSuccess: (result) => {
-      queryClient.setQueryData(key, result.request);
-      queryClient.invalidateQueries({ queryKey: [DOCUMENTS_KEY, projectId] });
-      queryClient.invalidateQueries({ queryKey: ['project-quotations'] });
-      queryClient.invalidateQueries({ queryKey: ['project-quotation-versions'] });
-      toast.success(
-        result.version_ids.length > 0
-          ? 'Decisions applied. The revision is a draft for you to check and send.'
-          : 'Decisions applied. Nothing was accepted, so no revision was opened.',
-      );
+  return useMutation({
+    mutationFn: ({ rowId, handled }: { rowId: string; handled: boolean }) =>
+      setQuotationFeedbackHandled(projectId, documentId, rowId, handled),
+    onMutate: async ({ rowId, handled }) => {
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<QuotationFeedback>(key);
+      if (previous) {
+        let open = previous.open_count;
+        const requests = previous.requests.map((request) => ({
+          ...request,
+          rows: request.rows.map((row) => {
+            if (row.id !== rowId || Boolean(row.handled_at) === handled) return row;
+            open += handled ? -1 : 1;
+            return { ...row, handled_at: handled ? new Date().toISOString() : null };
+          }),
+        }));
+        queryClient.setQueryData<QuotationFeedback>(key, { open_count: open, requests });
+      }
+      return { previous };
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error, _variables, context) => {
+      if (context?.previous) queryClient.setQueryData(key, context.previous);
+      toast.error(error.message);
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: key }),
   });
-
-  return { decide, apply };
 }
