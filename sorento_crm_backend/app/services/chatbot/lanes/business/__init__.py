@@ -601,6 +601,10 @@ def _ref_page_fragment(db: Any, ref_status: Any, carry: dict[str, Any]) -> dict[
     return fragment
 
 
+#: SUPPLIER-ASK fix round 9: said when a supplier-scoped turn carried no line of its own.
+SUPPLIER_SCOPE_FALLBACK_LINE = "Which supplier do you mean? Give me its name or code."
+
+
 def _fixed_reply(
     text: str,
     *,
@@ -1552,6 +1556,9 @@ def run_fetch(
     scoped_to_links = bool(customer_scope.get("enforced") and customer_scope.get("ids"))
     if scoped_to_links:
         semantic_input["scope_customer_ids"] = list(customer_scope["ids"])
+    if isinstance(ctx.get("supplier_scope"), dict):
+        # SUPPLIER-ASK fix round 9: read by `entity_ids_transformer`'s guard (`fetch.SupplierScopeViolation`).
+        semantic_input["supplier_scope"] = dict(ctx["supplier_scope"])
     # CHATBOT-SELFREF-SCOPE (owner hand test, 30 Sep 2026, "Mr Loo"): a contact WITH linked
     # accounts asking for sales is asking about those accounts, staff tier or not - the
     # company analysis route refuses any linked contact outright (`analysis.py:253-258`,
@@ -2426,6 +2433,11 @@ def run_fetch(
         args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
         if dry_run and tool_name == _LOW_STOCK_TOOL:
             args["dry_run"] = True
+    except fetch_mod.SupplierScopeViolation as violation:
+        # SUPPLIER-ASK fix round 9: no tool is called; the turn says the scope's own line.
+        if trace is not None:
+            trace.add("supplier_scope", {"refused": "unfiltered_list", "tool": tool_name})
+        return _fixed_reply(violation.line or SUPPLIER_SCOPE_FALLBACK_LINE, refused=True)
     except fetch_mod.ScopeViolation as violation:
         # D4: the defence behind the engine's gate. No tool is called.
         if trace is not None:
@@ -2488,6 +2500,12 @@ def run_fetch(
     _tool_started = time.perf_counter()
     try:
         raw = fetch_mod.call_tool(tool_name, args, mcp=_McpSeam(services.mcp_call))
+        parsed = fetch_mod.parse_mcp_content(raw)
+        if isinstance(parsed, str):
+            # Plain text is no envelope: the MCP server hands back a 2xx body it cannot parse
+            # unchanged (`presenters.present_response`). Read as an answer it has no rows, and
+            # would be told to the customer as a real empty result ("No stock and no incoming").
+            raise RuntimeError("answered with no readable result")
     except fetch_mod.ToolNotAllowed as refused:
         # H58: the top hit was a WRITE tool and nothing was called. Recorded with its own
         # outcome rather than as a tool failure, because the two need different reading:
@@ -2510,7 +2528,7 @@ def run_fetch(
         )
 
     envelope = brand_guard.guard_result(
-        tool_name, fetch_mod.parse_mcp_content(raw), semantic_input.get("scope_brand_ids"), db
+        tool_name, parsed, semantic_input.get("scope_brand_ids"), db
     )
     second_group = semantic_input.get("report_ask_second_group") if tool_name == report_ask.TOOL else None
     if second_group and isinstance(envelope, dict) and envelope.get("response"):
@@ -2590,6 +2608,11 @@ def run_fetch(
     # The ERROR check comes BEFORE the render: an error envelope has no rows, and rendering
     # it first would build a "No matching results found." message for a turn that failed.
     if isinstance(envelope, dict) and isinstance(envelope.get("error"), str):
+        if tool_name == _LOW_STOCK_TOOL:
+            # A 502 from the MCP server is the same failure as the raise above: this tool
+            # says its own line and names its filters.
+            filters = semantic_input.get("low_stock_filters")
+            return _low_stock_unavailable(filters.get("header") if isinstance(filters, dict) else None)
         # REPORT-ENGINE slice 1b: the route's own refusal (the audience check is the
         # route's) is said as its message, a 404 as one line.
         refusal = report_ask.error_line(envelope) if tool_name == report_ask.TOOL else None

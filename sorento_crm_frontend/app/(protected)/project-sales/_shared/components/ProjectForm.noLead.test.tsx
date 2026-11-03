@@ -29,6 +29,15 @@ vi.mock('next-auth/react', () => ({
 }));
 
 let granted = new Set<string>();
+// PS-REGISTRATION-V3: the lead source list is a lookup set.
+vi.mock('@/hooks/useLookupSetOptions', () => ({
+  useLookupSetOptions: (key: string) => ({
+    data: key === 'project_lead_source' ? [{ value: 'site_visit', label: 'Site visit' }] : [],
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
+
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => granted.has(slug),
 }));
@@ -374,13 +383,17 @@ function renderForm(props: { mode: 'create' } | { mode: 'edit'; project: Project
 
 const section = () =>
   screen
-    .getByRole('button', { name: /^Customer and salesperson/ })
+    .getByRole('button', { name: /^Lead source, customer and salesperson/ })
     .closest('[data-slot="card"]') as HTMLElement;
 const typeTitle = (text: string) =>
   fireEvent.change(screen.getByLabelText(/project title/i), { target: { value: text } });
 async function pickCustomer(typed = 'KEDAI', name = 'KEDAI CONTOH SDN. BHD.') {
   fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: typed } });
   fireEvent.click(await screen.findByRole('button', { name }));
+}
+/** PS-REGISTRATION-V3: Register / Submit need a lead source; the customer is optional. */
+async function pickLeadSource() {
+  fireEvent.change(screen.getByLabelText(/^Lead source/), { target: { value: 'site_visit' } });
 }
 const registerButton = () => screen.getByRole('button', { name: 'Register project' });
 const customerTextbox = () => screen.queryByRole('textbox', { name: /^Customer/ });
@@ -420,7 +433,7 @@ async function toDetails(text = 'Setia Alam Phase 3B') {
   fireEvent.click(screen.getByRole('button', { name: 'Check' }));
   await screen.findByText('No clash');
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-  await screen.findByRole('button', { name: /^Customer and salesperson/ });
+  await screen.findByRole('button', { name: /^Lead source, customer and salesperson/ });
 }
 
 
@@ -428,17 +441,17 @@ const bodyOf = (fn: ReturnType<typeof vi.fn>) =>
   (fn.mock.calls[0] as unknown as Array<Record<string, unknown>>).slice(-1)[0] as Record<string, unknown>;
 
 describe('AC-L1 create mode', () => {
-  it('AC-L1 step 2 names the section Customer and salesperson and drops the old one', async () => {
+  it('AC-L1 step 2 names the section Lead source, customer and salesperson and drops the old one', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
-    expect(screen.getByRole('button', { name: /^Customer and salesperson/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Lead source, customer and salesperson/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Lead, customer and salesperson/ })).toBeNull();
   });
 
   it('AC-L1 has no Lead field and no Create lead option', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
     fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'Pavilion' } });
     expect(screen.queryByRole('button', { name: /Create lead/ })).toBeNull();
     expect(listLeads).not.toHaveBeenCalled();
@@ -453,11 +466,12 @@ describe('AC-L1 create mode', () => {
     expect(customer.compareDocumentPosition(sales) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('AC-L1 Register stays disabled until a Customer is picked, then sends customer_id and no lead_id key', async () => {
+  it('PS-REGISTRATION-V3 Register stays disabled until a lead source is picked, then sends customer_id and no lead_id key', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
-    expect(registerButton()).toBeDisabled();
     await pickCustomer();
+    expect(registerButton()).toBeDisabled();
+    await pickLeadSource();
     await waitFor(() => expect(registerButton()).toBeEnabled());
     fireEvent.click(registerButton());
     await waitFor(() => expect(registerProject).toHaveBeenCalledTimes(1));
@@ -466,13 +480,14 @@ describe('AC-L1 create mode', () => {
     expect(body).not.toHaveProperty('lead_id');
   });
 
-  it('AC-L1 the picked Customer stays editable: it can be cleared and Register disables again', async () => {
+  it('PS-REGISTRATION-V3 the picked Customer can be cleared and Register stays enabled (customer optional)', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
+    await pickLeadSource();
     await pickCustomer();
     await waitFor(() => expect(registerButton()).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: /^Clear .*customer/i }));
-    await waitFor(() => expect(registerButton()).toBeDisabled());
+    expect(registerButton()).toBeEnabled();
   });
 
   it('AC-L1 Customer starts empty (nothing fills it for you) and Register is disabled', async () => {
@@ -488,19 +503,20 @@ describe('AC-L1 submit-only salesperson', () => {
     granted = new Set(['projects.registrations.submit']);
   });
 
-  it('AC-L1 no Lead; Save draft needs no customer, Submit for approval does', async () => {
+  it('PS-REGISTRATION-V3 no Lead; Save draft needs nothing more, Submit for approval needs a lead source', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeDisabled();
-    await pickCustomer();
+    await pickLeadSource();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeEnabled());
   });
 
   it('AC-L1 Submit for approval sends customer_id and no lead_id key', async () => {
     renderForm({ mode: 'create' });
     await toDetails();
+    await pickLeadSource();
     await pickCustomer();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Submit for approval' }));
@@ -522,9 +538,9 @@ describe('AC-L1 submit-only salesperson', () => {
 describe('AC-L5 edit mode', () => {
   it('AC-L5 a project that has a lead shows no Lead field, and the Customer is the editable picker', () => {
     renderForm({ mode: 'edit', project: baseProject() });
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
     expect(screen.queryByRole('button', { name: /Create lead/ })).toBeNull();
-    expect(screen.getByRole('button', { name: /^Customer and salesperson/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Lead source, customer and salesperson/ })).toBeInTheDocument();
     const picker = screen.getByLabelText(/^Customer/);
     expect(picker).toBeEnabled();
     expect(picker).toHaveValue('KEDAI CONTOH SDN. BHD.');
@@ -558,7 +574,7 @@ describe('AC-L5 edit mode', () => {
 
   it('AC-L5 a project with no lead has the same editable picker', () => {
     renderForm({ mode: 'edit', project: baseProject({ lead_id: null, lead_code: null, lead_title: null }) });
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.queryByLabelText(/^Lead(?! source)/)).toBeNull();
     expect(screen.getByLabelText(/^Customer/)).toBeEnabled();
   });
 });

@@ -32,11 +32,11 @@ from decimal import Decimal
 from typing import Iterable, Optional, Sequence
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models.marketing import Promotion, PromotionProduct
-from app.models.product import Product
+from app.models.product import Brand, Product
 from app.models.product_combo import ProductCombo
 from app.services import promotion_serving, promotion_window
 from app.services.dealer_kit.product_images import PUBLIC_ACCESS_CODE
@@ -179,6 +179,15 @@ def _may_see_offer(levels: Optional[Sequence[str]], viewer: ViewerContext) -> bo
     return bool(codes & set(levels))
 
 
+def _no_selling_price_product_ids(product_ids: Sequence[str]):
+    """Subquery: the given products whose brand carries no promotion selling price."""
+    return (
+        select(Product.id)
+        .join(Brand, Brand.id == Product.brand_id)
+        .where(Product.id.in_(list(product_ids)), Brand.no_promo_selling_price.is_(True))
+    )
+
+
 def _offer_prices(
     db: Session,
     product_ids: Sequence[str],
@@ -201,6 +210,9 @@ def _offer_prices(
         .join(Promotion, Promotion.id == PromotionProduct.promotion_id)
         .filter(PromotionProduct.promotion_id == promotion_id)
         .filter(PromotionProduct.product_id.in_(list(product_ids)))
+        # CABANA-NO-SELLING-PRICE: a brand whose promotions carry no selling price
+        # never offers one; its tag falls back to the list price.
+        .filter(~PromotionProduct.product_id.in_(_no_selling_price_product_ids(product_ids)))
         .all()
     )
     # Same promotion on every row: judged once. Inclusive at both ends and

@@ -1402,3 +1402,25 @@ def test_group_by_year_rows_sum_to_the_total_across_a_two_year_period(client, db
     }, body["rows"]
     assert sum(r["qty"] for r in body["rows"]) == whole["total"]["qty"], (body, whole)
     assert body["group_label"] == "Year", body
+
+
+# ================================================================ H3 guard: a contact read still fails closed
+
+
+@pytest.mark.parametrize("basis", ["ordered", "outstanding"])
+def test_h3_a_contact_read_whose_contact_resolves_no_policy_still_answers_nothing(client, db, monkeypatch, basis):
+    """PR 4 H3: a staff read is not capped by a location policy, a CONTACT read still is, and with no policy
+    resolved it answers nothing. The same seeded line counts for the contact while a policy resolves."""
+    cust = seed_customer(db, name=unique_code("Cust"))
+    prod = _prod(db, "ZZTH3-1")
+    seed_so_line(db, cust=cust, prod=prod, qty=3, total="1234.50", delivered=0, order_date=SEP)
+    db.commit()
+    contact = _full(db)
+    counted = _ok(client, contact, basis=basis)
+    assert float(counted["total"]["amount"]) == 1234.5, counted["total"]
+
+    from app.services import stock_visibility
+
+    monkeypatch.setattr(stock_visibility, "resolve_policy", lambda *a, **k: None)
+    closed = _ok(client, contact, basis=basis)
+    assert not closed["total"]["amount"] and not closed["total"]["qty"], closed["total"]

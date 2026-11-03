@@ -3494,6 +3494,11 @@ class OrderService:
             ]
             with suppress_embedding_events("order"):
                 self.db.flush()
+                # PS-SAMPLE-TRACKING: a sample request linked to a consignment takes its
+                # delivered date from that CG's Overall Tracking row once one lands.
+                from app.services.sample_request_service import sync_tracked_orders_safely
+
+                sync_tracked_orders_safely(self.db, touched_orders)
                 seen: set[str] = set()
                 touched_ids: list[str] = []
                 for o in changed_orders:

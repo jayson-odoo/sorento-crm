@@ -45,8 +45,9 @@ vi.mock('@/services/userSelectService', () => ({
 }));
 
 vi.mock('@/hooks/useLookupSetOptions', () => ({
-  useLookupSetOptions: () => ({
-    data: [
+  // PS-REGISTRATION-V3: the lead source list is its own lookup set.
+  useLookupSetOptions: (key: string) => ({
+    data: key === 'project_lead_source' ? [{ value: 'site_visit', label: 'Site visit' }] : [
       { value: 'Johor', label: 'Johor' },
       { value: 'Selangor', label: 'Selangor' },
     ],
@@ -272,7 +273,7 @@ async function toDetails(text = 'Setia Alam Phase 3B') {
   fireEvent.click(screen.getByRole('button', { name: 'Check' }));
   await screen.findByText('No clash');
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-  await screen.findByRole('button', { name: /^Customer and salesperson/ });
+  await screen.findByRole('button', { name: /^Lead source, customer and salesperson/ });
 }
 
 describe('editing a pending project: the typed name hint (RW14)', () => {

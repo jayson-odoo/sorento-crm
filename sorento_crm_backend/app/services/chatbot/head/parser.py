@@ -169,6 +169,9 @@ class ParserConfig:
     # `report_ask` object (`with_report_ask`), the user turn carries the `Held report:` line and the report lane builds
     # the ask from the object. False for a bare config and for every text without the line: all of it unchanged.
     report_ask: bool = False
+    # SUPPLIER-ASK: the prompt in use carries `SUPPLIER_ID_ASK`, so a Supplier candidate line ends with its row id
+    # and the parser answers with it; the id binds the supplier (and every supplier the span pass scored as close).
+    supplier_ids: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -1005,6 +1008,9 @@ ROW_ID_ASK = (
     "For a brand, sales agent or category entity, canonical_code is the label or the id of the candidates line "
     "the message means."
 )
+#: SUPPLIER-ASK: the raw template sentence that turns `supplier_ids` on (migration `sask_0002_span_supplier` carries
+#: a frozen copy). Supplier lines then print `[id: <row id>]`; the id binds, never the name.
+SUPPLIER_ID_ASK = "For a supplier entity, canonical_code is the id of the Supplier candidates line the message means."
 LANGUAGE_ASK = 'Also return top-level "message_language": the language the user wrote the current message in.'
 
 
@@ -1187,6 +1193,7 @@ def resolve_config(
         opportunity=OPPORTUNITY_LINE in (raw_template or ""),
         category_pick=CATEGORY_PICK_ASK in (raw_template or ""),
         row_ids=ROW_ID_ASK in (raw_template or ""),
+        supplier_ids=SUPPLIER_ID_ASK in (raw_template or ""),
         message_language=LANGUAGE_ASK in (raw_template or ""),
         report_ask=REPORT_ASK_LINE in (raw_template or ""),
         template=TEMPLATE_MARKER in (raw_template or ""),

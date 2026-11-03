@@ -1289,13 +1289,22 @@ def with_held(
     outstanding, which that report has not, runs the report-ask total on the held product and period below."""
     domains = held_domains if held_domains is not None else getattr(focus, "domains", None)
     frame = _dict(getattr(focus, "sales_ranking_frame", None))
+    status = jsc.js_string(verdict.get("order_status") or "").strip()
     if (
-        jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME
+        # SUPPLIER-ASK fix round 8 (crew turns fe876b64 / 5f7b1567): an outstanding ask IS this report ask under its
+        # outstanding kind (`as_outstanding` reroutes it after this seam), so the answer to the open kind question
+        # ("Pending delivery", parsed as a fresh outstanding ask naming nothing) keeps the held customer as well.
+        not (status == ASK_NAME or (status in OUTSTANDING_STATUSES and replaced is not None))
         or not _follows_up(verdict, frame, replaced)
         or verdict.get("topic_reset") is True
         or _new_subject(verdict, parser_ops)
         or (frame.get("group_by") and not _holds_a_customer(frame))
-        or contracts.SALES_DOMAIN not in (domains or [])
+        or not (
+            contracts.SALES_DOMAIN in (domains or [])
+            # Fix round 8: an outstanding ask's open kind question can sit under `order` (a customer picked over a
+            # purchase-side ask moves it there, `turn/apply._side_of_the_parties`); it is the same report ask.
+            or (status in OUTSTANDING_STATUSES and "order" in (domains or []))
+        )
         or (open_ask is not None and replaced is None)
     ):
         return verdict
@@ -1327,7 +1336,23 @@ def with_held(
         window = _dict(getattr(focus, "date_window", None))
         held = {"date_from": window.get("start"), "date_to": window.get("end"), "product": bool(getattr(focus, "products", None))}
         held = {k: v for k, v in held.items() if v}
+    verdict = _kind_answered_by_position(verdict, replaced)
     return {**verdict, HELD_KEY: held} if held else verdict
+
+
+def _kind_answered_by_position(verdict: dict[str, Any], replaced: dict[str, Any] | None) -> dict[str, Any]:
+    """SUPPLIER-ASK fix round 8 (crew turns fe876b64 / 5f7b1567): "Pending delivery" under the open kind question
+    ("Undelivered orders or pending delivery?") parses as a fresh outstanding ask with no `basis` but the position it
+    picked (`reference_positions` [2]). That fresh ask replaces the question, so the position is read against the
+    question it answered: its option there is the basis. Parser fields and the replaced question only."""
+    if verdict.get("basis") or not isinstance(replaced, dict) or replaced.get("asking") != "basis":
+        return verdict
+    positions = [p for p in jsc.array(verdict.get("reference_positions")) if isinstance(p, int) and not isinstance(p, bool)]
+    options = [o for o in jsc.array(replaced.get("options")) if isinstance(o, (list, tuple)) and o]
+    if len(positions) != 1 or not 1 <= positions[0] <= len(options):
+        return verdict
+    basis = options[positions[0] - 1][0]
+    return {**verdict, "basis": basis} if basis in OUTSTANDING_KINDS else verdict
 
 
 def dealer_location_words(parse_output: dict[str, Any]) -> dict[str, Any]:

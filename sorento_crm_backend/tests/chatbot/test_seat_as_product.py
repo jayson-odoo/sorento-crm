@@ -456,7 +456,8 @@ def test_k4_crm_find_is_no_chatbot_tool_any_more() -> None:
     from app.services.chatbot.lanes.business.fetch import CHATBOT_READ_ONLY_TOOLS
     from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS
 
-    assert "crm_find" not in CHATBOT_READ_ONLY_TOOLS
+    # AGENTIC-UNIFY PR 4: the panel agent calls it, so the read-only allow-list holds it; no chat lane routes it.
+    assert "crm_find" in CHATBOT_READ_ONLY_TOOLS
     assert "crm_find" not in CHATBOT_TOOL_DOMAINS
 
 

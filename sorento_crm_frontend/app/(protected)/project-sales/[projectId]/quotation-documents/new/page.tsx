@@ -4,7 +4,7 @@ import RequireAccess from '@/app/components/common/RequireAccess';
 import { QuotationFormClient } from '../components/QuotationFormClient';
 
 export const metadata: Metadata = {
-  title: 'New quotation',
+  title: 'New proposal',
   description: 'The letterhead, the scopes and their lines, saved together.',
 };
 

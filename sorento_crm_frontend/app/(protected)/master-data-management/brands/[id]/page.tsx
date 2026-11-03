@@ -46,6 +46,7 @@ interface Draft {
   flows_to_purchasing: boolean;
   chatbot_weight: string;
   is_searchable: boolean;
+  no_promo_selling_price: boolean;
   dealer_company_id: string | null;
 }
 
@@ -148,6 +149,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
       flows_to_purchasing: brand.flows_to_purchasing,
       chatbot_weight: String(brand.chatbot_weight ?? 0),
       is_searchable: brand.is_searchable ?? true,
+      no_promo_selling_price: brand.no_promo_selling_price ?? false,
       dealer_company_id: brand.dealer_company_id ?? null,
     });
     setEditing(true);
@@ -174,6 +176,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
         flows_to_purchasing: draft.flows_to_purchasing,
         chatbot_weight: parseNumberDraft(draft.chatbot_weight) as number,
         is_searchable: draft.is_searchable,
+        no_promo_selling_price: draft.no_promo_selling_price,
         dealer_company_id: draft.dealer_company_id,
       },
     });
@@ -382,6 +385,22 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
                       onCheckedChange={(value) => setDraft({ ...draft, is_searchable: value })}
                     />
                   ) : (brand.is_searchable ?? true) ? (
+                    'Yes'
+                  ) : (
+                    'No'
+                  )}
+                </Field>
+
+                <Field label="Promotions carry no selling price" htmlFor="brand-no-promo-selling-price">
+                  {editing && draft ? (
+                    <Switch
+                      id="brand-no-promo-selling-price"
+                      checked={draft.no_promo_selling_price}
+                      onCheckedChange={(value) =>
+                        setDraft({ ...draft, no_promo_selling_price: value })
+                      }
+                    />
+                  ) : brand.no_promo_selling_price ? (
                     'Yes'
                   ) : (
                     'No'

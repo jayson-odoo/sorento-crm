@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -97,7 +98,7 @@ import { TasksPanel } from './TasksPanel';
 export const TABS = [
   { id: 'overview', label: 'Overview', icon: Info },
   { id: 'documents', label: 'Documents', icon: Paperclip },
-  { id: 'quotations', label: 'Quotation', icon: FileText },
+  { id: 'quotations', label: 'Proposals', icon: FileText },
   { id: 'sample-requests', label: 'Samples Request', icon: ClipboardList },
   { id: 'sponsorships', label: 'Sponsorship Form', icon: HandCoins },
   // PO is the old Orders tab (id kept so links hold); SO lists every sales order.
@@ -534,9 +535,22 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               />
             </Section>
 
-            <Section title="Consultants">
+            <Section title="Parties">
               <Fact label="Architect" value={project.architect_name} />
               <Fact label="Main contractor" value={project.main_contractor_name} />
+              {LINKED_ROLES.map(([role, label]) => (
+                <Fact
+                  key={role}
+                  label={label}
+                  value={
+                    (project.party_links ?? [])
+                      .filter((link) => link.role === role)
+                      .map((link) => link.name)
+                      .filter(Boolean)
+                      .join(', ') || null
+                  }
+                />
+              ))}
             </Section>
 
             <SourceCard project={project} />
@@ -754,6 +768,11 @@ function RejectProjectDialog({
  * claimed the same hour never had a lead.
  */
 function SourceCard({ project }: { project: Project }) {
+  // The project's own lead source (PS-REGISTRATION-V3), labelled from its editable list.
+  const sources = useLookupSetOptions('project_lead_source');
+  const options = Array.isArray(sources.data) ? sources.data : [];
+  const sourceLabel =
+    options.find((o) => o.value === project.lead_source)?.label ?? labelise(project.lead_source);
   return (
     <Card>
       <CardHeader>
@@ -773,11 +792,17 @@ function SourceCard({ project }: { project: Project }) {
                 </Link>
               </dd>
             </div>
-            <Fact label="Lead source" value={labelise(project.lead_source)} />
+            <Fact label="Lead source" value={sourceLabel} />
             <Fact label="Lead raised" value={formatDate(project.lead_created_at)} />
           </dl>
         ) : (
-          <p className="text-sm">Registered directly, with no lead before it.</p>
+          <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+            <Fact label="Lead source" value={sourceLabel} />
+            <div className="min-w-0">
+              <dt className="text-xs text-muted-foreground">Lead</dt>
+              <dd className="text-sm">Registered directly, with no lead before it.</dd>
+            </div>
+          </dl>
         )}
       </CardContent>
     </Card>
@@ -814,6 +839,15 @@ function formatMyr(value: string): string {
   if (Number.isNaN(amount)) return value;
   return `RM ${amount.toLocaleString('en-MY', { maximumFractionDigits: 2 })}`;
 }
+
+/** The roles a project links beyond architect and main contractor, in display order. */
+const LINKED_ROLES: [string, string][] = [
+  ['subcontractor', 'Subcontractors'],
+  ['trading_house', 'Trading houses'],
+  ['tender_party', 'Tender parties'],
+  ['consultant', 'Consultant'],
+  ['interior_designer', 'Interior designer'],
+];
 
 /** A stored code ("tender_notice") as a readable phrase. No dictionary to drift. */
 function labelise(value?: string | null): string | null {

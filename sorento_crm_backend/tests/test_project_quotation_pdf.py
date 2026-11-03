@@ -981,7 +981,7 @@ def test_the_issue_renders_to_real_pdf_bytes():
         assert pdf_bytes[:4] == b"%PDF"
         assert len(pdf_bytes) > 1000
         assert filename.endswith(".pdf")
-        assert "R1" in filename
+        assert filename.startswith("proposal-") and filename.endswith("-A.pdf")
 
 
 # ------------------------------------------------------- component lines (real data)
@@ -1187,7 +1187,7 @@ def test_the_pdf_shows_one_quotation_no_row_built_from_document_no_and_issue_no(
 
         html = qpdf.build_issue_html(db, issue)
 
-        assert _row("Quotation No.", f"{document.document_no}-R{issue.issue_no}").search(html)
+        assert _row("Proposal No.", f"{document.document_no}-A").search(html)
         assert "Our Ref" not in html
         assert "(R1)" not in html
         assert "Revision" not in html
@@ -1262,9 +1262,9 @@ def test_the_pdf_file_name_is_built_from_document_no_and_issue_no():
         db.flush()
 
         issue.our_ref_text = "PRJQ-2026-0003 (R1)"
-        assert qpdf.build_filename(issue) == "quotation-PRJQ-2026-0003-R1.pdf"
+        assert qpdf.build_filename(issue) == "proposal-PRJQ-2026-0003-A.pdf"
         issue.our_ref_text = "STALE TEXT"
-        assert qpdf.build_filename(issue) == "quotation-PRJQ-2026-0003-R1.pdf"
+        assert qpdf.build_filename(issue) == "proposal-PRJQ-2026-0003-A.pdf"
 
 
 def test_the_letterhead_holds_the_logo_image_when_the_download_gives_one(monkeypatch):

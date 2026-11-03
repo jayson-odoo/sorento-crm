@@ -52,9 +52,10 @@ from app.models.projects import (
 from app.models.user import SystemSetting
 from app.services import geo_places
 from app.services import product_image_service as product_images
+from app.services import quotation_columns
 from app.services.complaint_pdf_service import PDFRenderingUnavailable
 from app.services.error_handler import AppException
-from app.services.project_quotation_document_service import quotation_no
+from app.services.project_quotation_document_service import document_noun, quotation_no
 from app.services.quotation_cover_service import (
     COVER_LAYOUT,
     cover_reference,
@@ -69,23 +70,6 @@ ZERO = Decimal("0.00")
 
 LOGO_FETCH_TIMEOUT_SECONDS = 3
 MAX_LOGO_BYTES = 1_048_576
-
-# The sample workbook's column set, in its order. PRODUCT IMAGE is conditional per scope
-# (AC-F4): a page of blank cells is worse than no column, and it squeezes the columns that do
-# carry information down to an unreadable width.
-_IMAGE_COLUMN = "PRODUCT IMAGE"
-_COLUMNS: Tuple[str, ...] = (
-    "ITEM",
-    _IMAGE_COLUMN,
-    "TECHNICAL SPEC",
-    "DESCRIPTION",
-    "BRAND",
-    "PRODUCT CODE",
-    "QTY",
-    "UNIT RATE (RM)",
-    "COMPLETE SET",
-    "GRAND TOTAL",
-)
 
 RATE_ONLY_TEXT = "rate only"
 
@@ -453,8 +437,8 @@ def _header_html(
 ) -> str:
     refs = [
         (
-            "Quotation No.",
-            _cell(reference or quotation_no(document.document_no, issue.issue_no)),
+            f"{document_noun(document)} No.",
+            _cell(reference or quotation_no(document.document_no, issue.issue_no, issue.revision_label)),
         ),
         ("Your Ref", _cell(document.your_ref)),
     ]
@@ -504,8 +488,10 @@ def _scope_html(
     lines: Sequence[ProjectQuotationLine] = scope["lines"]
 
     # The column set depends on whether ANY line has an image, so the whole scope is resolved
-    # before a single row is written.
-    show_image = any(line.image_attachment_id for line in lines)
+    # before a single row is written. The set itself is `quotation_columns`, the one definition
+    # the customer's sign page reads too (QUOTE-SIGN-COLUMNS).
+    columns = quotation_columns.for_lines(lines)
+    show_image = any(key == quotation_columns.IMAGE for key, _label in columns)
     images = (
         {
             line.id: _attachment_data_uri(db, line.image_attachment_id, image_cache)
@@ -514,7 +500,6 @@ def _scope_html(
         if show_image
         else {}
     )
-    columns = [c for c in _COLUMNS if c != _IMAGE_COLUMN or show_image]
     # TECHNICAL SPEC prints the line's drawing (QUOTATION-UX, AC-QLG11), stamped at issue like the
     # photo. The column stays whether or not any line has one: it is in the sample's column set.
     drawings = {
@@ -536,11 +521,8 @@ def _scope_html(
                 f'<tr class="band"><td colspan="{len(columns)}">{_cell(band)}</td></tr>'
             )
 
-        image_cell = ""
-        if show_image:
-            uri = images.get(line.id)
-            picture = f'<img src="{escape(uri)}"/>' if uri else ""
-            image_cell = f'<td class="img">{picture}</td>'
+        uri = images.get(line.id)
+        picture = f'<img src="{escape(uri)}"/>' if uri else ""
 
         qty_text = _qty(line.quantity)
         if line.uom:
@@ -559,20 +541,21 @@ def _scope_html(
             if _cell(line.technical_spec)
             else ""
         )
-        body.append(
-            "<tr>"
-            f'<td class="item">{_cell(item_number(line, position))}</td>'
-            f"{image_cell}"
-            f'<td class="spec">{spec_cell}</td>'
-            f'<td class="desc">{_multiline(line.description_snapshot)}{legacy}</td>'
-            f"<td>{_cell(line.brand_snapshot)}</td>"
-            f"<td>{_cell(line.product_code_snapshot)}</td>"
-            f'<td class="num">{qty_text}</td>'
-            f'<td class="num">{_line_money(line.unit_price)}</td>'
-            f"<td>{_cell(line.complete_set)}</td>"
-            f'<td class="num">{money}</td>'
-            "</tr>"
-        )
+        cells = {
+            "item": f'<td class="item">{_cell(item_number(line, position))}</td>',
+            quotation_columns.IMAGE: f'<td class="img">{picture}</td>',
+            "spec": f'<td class="spec">{spec_cell}</td>',
+            "description": (
+                f'<td class="desc">{_multiline(line.description_snapshot)}{legacy}</td>'
+            ),
+            "brand": f"<td>{_cell(line.brand_snapshot)}</td>",
+            "product_code": f"<td>{_cell(line.product_code_snapshot)}</td>",
+            "qty": f'<td class="num">{qty_text}</td>',
+            "unit_rate": f'<td class="num">{_line_money(line.unit_price)}</td>',
+            "complete_set": f"<td>{_cell(line.complete_set)}</td>",
+            "amount": f'<td class="num">{money}</td>',
+        }
+        body.append("<tr>" + "".join(cells[key] for key, _label in columns) + "</tr>")
 
     if not body:
         body.append(
@@ -580,7 +563,7 @@ def _scope_html(
             "scope.</td></tr>"
         )
 
-    head = "".join(f"<th>{escape(column)}</th>" for column in columns)
+    head = "".join(f"<th>{escape(label)}</th>" for _key, label in columns)
     return f"""
   <div class="scope">
     <div class="scope-label">{_cell(scope["label"])}</div>
@@ -596,7 +579,7 @@ def _scope_html(
 """
 
 
-def _cover_html(rows: List[Dict[str, Any]], letterhead: str) -> str:
+def _cover_html(rows: List[Dict[str, Any]], letterhead: str, noun: str = "Quotation") -> str:
     """Page 1 (layout 2): letterhead, the title and the label/value rows of ``cover_rows``."""
     body: List[str] = []
     for row in rows:
@@ -609,7 +592,7 @@ def _cover_html(rows: List[Dict[str, Any]], letterhead: str) -> str:
     return f"""
   <section class="cover">
     <div class="cover-top">{letterhead}</div>
-    <div class="cover-title">QUOTATION</div>
+    <div class="cover-title">{escape(noun.upper())}</div>
     <table class="cover-rows">{"".join(body)}</table>
   </section>
 """
@@ -824,7 +807,9 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
             else None
         )
         reference = cover_reference(document, issue, project)
-        cover = _cover_html(cover_rows(db, document, issue, project), letterhead)
+        cover = _cover_html(
+            cover_rows(db, document, issue, project), letterhead, document_noun(document)
+        )
         style = _STYLE + _COVER_STYLE
         terms = ""
     else:
@@ -843,17 +828,19 @@ def build_issue_html(db: Session, issue: ProjectQuotationIssue) -> str:
 
 def build_filename(issue: ProjectQuotationIssue) -> str:
     """Named after the reference the customer quotes back, so a saved file is identifiable."""
-    document_no = None
+    document = None
     session = object_session(issue)
     if session is not None:
-        document_no = (
-            session.query(ProjectQuotationDocument.document_no)
+        document = (
+            session.query(ProjectQuotationDocument)
             .filter(ProjectQuotationDocument.id == issue.document_id)
-            .scalar()
+            .first()
         )
-    ref = quotation_no(document_no, issue.issue_no) if document_no else f"R{issue.issue_no}"
-    safe = re.sub(r"[^A-Za-z0-9]+", "-", ref).strip("-") or "quotation"
-    return f"quotation-{safe}.pdf"
+    document_no = document.document_no if document is not None else None
+    ref = quotation_no(document_no, issue.issue_no, issue.revision_label) if document_no else f"R{issue.issue_no}"
+    stem = document_noun(document).lower()
+    safe = re.sub(r"[^A-Za-z0-9]+", "-", ref).strip("-") or stem
+    return f"{stem}-{safe}.pdf"
 
 
 def render_issue_pdf(db: Session, issue: ProjectQuotationIssue) -> Tuple[bytes, str]:

@@ -1170,3 +1170,85 @@ def test_round14_guard_a_no_pick_clear_over_an_unmeasured_roster_keeps_todays_pa
     assert "reset_turn" not in t.trace_of(result), "the reset seam answered over an unmeasured roster"
     assert t.plans, "apply never ran: the turn did not take today's path"
     assert _lane_actions_tools(t, result) == B173_R14_CUSTOMER_ORDER_PICK, _lane_actions_tools(t, result)
+
+
+# --- CHAT-RESET-CAPABILITY: an all-broaden with no held subject has nothing to reset -----------------
+#
+# Crew pass on PR #2079 (2 of 3 runs): "what can you do for me here" in a NEW chat (an empty
+# session) came back "Okay, I've cleared that". The parser (temperature 0, still flips) read the
+# capability question as `message_type` clarification beside `entity_op` clear / `broaden_axis` all;
+# all_broaden_over_nothing_open fired over an empty focus and clarification is a reset message type,
+# so the seam acknowledged a reset of nothing. A console turn after Reset (focus = RESET_KEEPS) reaches
+# the same seam. The round 12 rule now needs a held subject beyond RESET_KEEPS; with none, the turn
+# takes today's path and the question gets its normal answer. Round 12's own held-subject cases above
+# are the guard that the "clear all" over a held subject still resets.
+
+CAPABILITY = "what can you do for me here"
+
+#: The empty sessions: a new chat, and the focus a Reset leaves (RESET_KEEPS only).
+NO_HELD_SUBJECT = {
+    "new_chat": Focus(),
+    "after_reset_keeps_tier_and_brands": Focus(tier=["dealer"], brands=["SORENTO"]),
+}
+
+#: The all-broaden shapes the parser was seen flipping to on the capability question.
+CAPABILITY_READS = {
+    "entity_op_clear": dict(entity_op="clear", broaden_axis=None, broaden_to=None),
+    "broaden_axis_all": dict(entity_op=None, broaden_axis="all", broaden_to="all"),
+    "both": dict(entity_op="clear", broaden_axis="all", broaden_to="all"),
+}
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+@pytest.mark.parametrize("session", list(NO_HELD_SUBJECT))
+@pytest.mark.parametrize("read", list(CAPABILITY_READS))
+def test_capability_question_over_no_held_subject_is_no_reset_turn(turn, session, read, gate):
+    t = turn(gate)
+    stored = _focus_session(NO_HELD_SUBJECT[session])
+    emission = _measured_all_broaden(gate, message_type="clarification", user_goal=CAPABILITY,
+                                     **CAPABILITY_READS[read])
+    result = t.say(stored, emission, CAPABILITY)
+    reply = (result.reply or {}).get("text") or ""
+    assert reply != ACK["en"], (result.branch_kind, reply)
+    assert "reset_turn" not in t.trace_of(result), "the reset seam answered a turn with nothing to reset"
+    assert reply, (result.branch_kind, "the capability question got no answer")
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_capability_guard_the_same_read_over_a_held_subject_still_resets(turn, gate):
+    """The #1829 round 12 behaviour, with the capability read's own message type: over a held subject
+    (products and the inventory domain) with nothing open, the all-broaden is still "clear all"."""
+    t = turn(gate)
+    stored = _held_subject()
+    result = t.say(stored, _measured_all_broaden(gate, message_type="clarification"), "clear all")
+    _assert_the_reset_turn(t, result, stored)
+
+
+#: Held slots `chat_state._subject` does not show (reviewer should-fix): each still holds a subject.
+HIDDEN_HELD = {
+    "id_only_customer": Focus(customers=[{"uuid": ht.uuid_of("ZZC001"), "hint": "customer"}]),
+    "outstanding_brand_ids_only": Focus(outstanding_brand_ids=[ht.uuid_of("ZZB001")]),
+    "mode_only_date_window": Focus(date_window={"mode": "this_year", "start": None, "end": None}),
+    "code_only_extra_row": Focus(extra={"order": [{"code": "SO900001"}]}),
+}
+
+
+@pytest.mark.parametrize("name", list(HIDDEN_HELD))
+def test_capability_guard_a_held_slot_the_subject_line_hides_still_counts(name):
+    state = type("S", (), {"focus": HIDDEN_HELD[name], "pending": None})()
+    assert engine_mod._all_broaden_over_nothing_open(_measured_all_broaden(False), state)
+
+
+@pytest.mark.parametrize("focus", [Focus(), Focus(tier=["dealer"], brands=["SORENTO"]), Focus(extra={"order": []})],
+                         ids=["new_chat", "after_reset", "extra_kind_with_no_rows"])
+def test_capability_nothing_beyond_reset_keeps_is_nothing_to_clear(focus):
+    state = type("S", (), {"focus": focus, "pending": None})()
+    assert not engine_mod._all_broaden_over_nothing_open(_measured_all_broaden(False), state)
+
+
+@pytest.mark.parametrize("gate", [False, True], ids=["old_path", "state_path"])
+def test_capability_guard_clear_all_over_an_id_only_customer_still_resets(turn, gate):
+    t = turn(gate)
+    stored = _focus_session(HIDDEN_HELD["id_only_customer"])
+    result = t.say(stored, _measured_all_broaden(gate), "clear all")
+    _assert_the_reset_turn(t, result, stored)

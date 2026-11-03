@@ -1,5 +1,5 @@
 import { apiFetch } from '@/lib/api';
-import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, codedError, extractApiError } from '@/lib/api-client';
 import type {
   AdoptSalesOrderResult,
   BoardDecision,
@@ -23,6 +23,7 @@ import type {
   SupplyFailingLine,
   SupplyProposal,
 } from '../types/fulfilmentPlanning.types';
+import { LINE_DRAFT_NEWER, LineDraftNewerError } from '../lib/confirmPreviewFresh';
 
 /**
  * Fulfilment Planning: the worklist of everything that needs planning, the reconciliation
@@ -675,19 +676,33 @@ export async function getPlanningHistory(psoIds: string[]): Promise<PlanningHist
  * Sales Order page's Suggested column can read a saved-but-unconfirmed line's composition.
  * Omitted keeps the request body exactly as before.
  */
+
+/**
+ * `basedOnSavedAt` (CONFIRM-PREVIEW-STALE): the `saved_at` of the draft the decision stands on,
+ * `null` when the caller holds none. Left `undefined`, nothing is sent and last writer wins.
+ */
 export async function putLineDraft(
   contributionKey: string,
   decision: BoardDecision,
   proposed?: BoardSource[],
+  basedOnSavedAt?: string | null,
 ): Promise<BoardLineDraft> {
+  const body: Record<string, unknown> = proposed ? { decision, proposed } : { decision };
+  if (basedOnSavedAt !== undefined) body.based_on_saved_at = basedOnSavedAt;
   const response = await apiFetch(
     `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(proposed ? { decision, proposed } : { decision }),
+      body: JSON.stringify(body),
     },
   );
+  if (response.status === 409) {
+    // Every 409 here has a code; only `board_line_draft_newer` means "saved again elsewhere".
+    const error = await codedError(response, 'Failed to save the decision');
+    if (error.code === LINE_DRAFT_NEWER) throw new LineDraftNewerError(error.message);
+    throw error;
+  }
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to save the decision'));
   return response.json();
@@ -698,11 +713,25 @@ export async function putLineDraft(
  *
  *   DELETE /project-sales/fulfilment-planning/lines/{contribution_key}/draft -> 204
  */
-export async function deleteLineDraft(contributionKey: string): Promise<void> {
+export async function deleteLineDraft(
+  contributionKey: string,
+  basedOnSavedAt?: string | null,
+): Promise<void> {
+  // CONFIRM-PREVIEW-STALE: `null` says "this tab holds no draft" (`none`), so an Undo never
+  // removes a draft saved elsewhere that this tab has not read.
+  const query =
+    basedOnSavedAt === undefined
+      ? ''
+      : `?${new URLSearchParams({ based_on_saved_at: basedOnSavedAt ?? 'none' }).toString()}`;
   const response = await apiFetch(
-    `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft`,
+    `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft${query}`,
     { method: 'DELETE' },
   );
+  if (response.status === 409) {
+    const error = await codedError(response, 'Failed to remove the saved decision');
+    if (error.code === LINE_DRAFT_NEWER) throw new LineDraftNewerError(error.message);
+    throw error;
+  }
   // 404 IS the post-condition Undo asked for: there is no saved decision on that line any
   // more. "Undo all" walks every key in the panel's draft map, and a `?batch=` board
   // pre-marks lines as approved locally that were never PUT, so refusing those would put an

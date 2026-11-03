@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Register a project v3</title>
+<!-- PS-REGISTRATION-V3 mock v1 (2 Nov). All names, phones and codes are invented. -->
+<style>
+:root{--fg:#09090b;--muted:#71717a;--border:#e4e4e7;--muted-bg:#f4f4f5;--primary:#1b84ff;--destructive:#dc2626;--callout:#e11d74;--dec:#7c3aed;--decbg:#f5f3ff;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 8px;max-width:980px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%}
+.frame{background:#fff;border:1px solid var(--border);border-radius:12px;position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:300px;max-width:620px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;font-family:ui-monospace,Menlo,monospace;word-break:break-word}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:22px;height:22px;padding:0 3px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.pin{position:absolute;z-index:5;right:-8px;top:-8px}.rel{position:relative}
+.dtag{display:inline-flex;align-items:center;gap:4px;border:1px dashed var(--dec);background:var(--decbg);color:var(--dec);border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap}
+.muted{color:var(--muted)}.xs{font-size:12px}.b{font-weight:600}
+.shell{display:flex}.side{width:232px;flex:none;border-right:1px solid var(--border);padding:16px 12px;background:#fcfcfd;font-size:13px}
+.side .brand{font-weight:700;font-size:16px;margin:0 8px 18px}.side .grp{color:var(--muted);font-size:11px;text-transform:uppercase;margin:14px 8px 6px}
+.side .it{padding:6px 8px;border-radius:6px}.side .it.on{background:#e9f3ff;color:var(--primary);font-weight:600}
+.main{flex:1;min-width:0}.topbar{height:52px;border-bottom:1px solid var(--border)}.content{padding:20px 28px 28px}
+.phdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:8px}.phdr h1{font-size:20px;font-weight:600;margin:0}
+.crumb{font-size:12px;color:var(--muted)}
+.banner{border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:14px}
+.banner.ok{border-color:#bbf7d0;background:#f0fdf4;color:#14532d}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--primary);background:var(--primary);color:#fff;border-radius:6px;padding:7px 14px;font:500 13px var(--font);white-space:nowrap}
+.btn.out{background:#fff;color:var(--fg);border-color:var(--border)}.btn.sm{padding:4px 10px;font-size:12px}
+.pill{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;background:#f1f5f9;color:#334155}
+.pill.ok{background:#dcfce7;color:#166534}.pill.blue{background:#dbeafe;color:#1e40af}
+.badge2{display:inline-flex;border-radius:6px;background:var(--muted-bg);padding:1px 8px;font-size:12px;font-weight:500}
+.inp{border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-height:34px;display:flex;justify-content:space-between;align-items:center;gap:6px;background:#fff;font-size:14px;width:100%}
+.inp.ph{color:var(--muted)}.inp.ta{min-height:56px;align-items:flex-start}
+.req{color:var(--destructive)}
+.dd{border:1px solid var(--border);border-radius:6px;margin-top:4px;box-shadow:0 2px 6px rgba(0,0,0,.08);font-size:13px;background:#fff}
+.dd div{padding:6px 10px}.dd div.hl{background:var(--muted-bg)}
+
+/* the paper form: a bordered 2-column label:value sheet */
+.paper{max-width:860px;margin:0 auto;border:1px solid var(--border);border-radius:12px;background:#fff;padding:22px 26px 26px}
+.paper .ttl{text-align:center;font-size:20px;font-weight:700;text-decoration:underline;text-underline-offset:4px;letter-spacing:.02em;margin:4px 0 18px}
+.paper .sec{text-align:center;font-size:16px;font-weight:700;letter-spacing:.02em;margin:22px 0 10px}
+table.sheet{border-collapse:collapse;width:100%;table-layout:fixed}
+table.sheet th{width:200px;text-align:right;font-weight:700;font-size:13px;letter-spacing:.02em;padding:8px 12px;border:1px solid #d4d4d8;background:#fafafa;vertical-align:top}
+table.sheet td{padding:6px 10px;border:1px solid #d4d4d8;vertical-align:top;font-size:14px}
+table.sheet td .inp{border-color:transparent;padding:4px 2px;min-height:28px}
+table.sheet td.edit .inp{border-color:var(--border);padding:5px 8px}
+table.sheet tr.app th{color:var(--muted);font-weight:600}
+.prodhdr{display:flex;justify-content:space-between;align-items:center;background:var(--muted-bg);border:1px solid #d4d4d8;border-bottom:none;padding:6px 10px;font-weight:600;font-size:13px;margin-top:14px}
+.img{display:flex;gap:10px;flex-wrap:wrap}
+.ph-img{width:150px;height:110px;border:1px dashed #a1a1aa;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;text-align:center;background:repeating-linear-gradient(45deg,#fafafa,#fafafa 8px,#f4f4f5 8px,#f4f4f5 16px)}
+.ph-add{width:150px;height:110px;border:1px dashed var(--primary);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:12px;text-align:center}
+.ro{color:var(--muted)}
+.opened{border:1px solid #bbf7d0;background:#f0fdf4;border-radius:6px;padding:6px 10px;font-size:13px}
+.audit{max-width:860px;margin:16px auto 0;border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px 18px}
+
+/* phone */
+.w375 .content{padding:14px 12px}
+.w375 .paper{padding:14px 10px;border-radius:10px}
+.w375 table.sheet th,.w375 table.sheet td{display:block;width:auto;border:none;text-align:left;padding:2px 2px}
+.w375 table.sheet tr{display:block;border-bottom:1px solid #e4e4e7;padding:6px 0}
+.w375 table.sheet th{background:none;font-size:11px;color:var(--muted)}
+.w375 .ph-img,.w375 .ph-add{width:100px;height:80px}
+
+/* excel preview */
+.xl{background:#fff;border:1px solid #c7c7c7;width:640px;font:12px Calibri,Arial,sans-serif;margin:0 auto}
+.xl .bar{background:#217346;color:#fff;padding:6px 10px;font:12px var(--font)}
+.xl table{border-collapse:collapse;width:100%}
+.xl td{border:1px solid #9ca3af;padding:5px 8px;vertical-align:top}
+.xl td.l{width:150px;text-align:right;font-weight:700}
+.xl td.h{text-align:center;font-weight:700;font-size:16px}
+.dec{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:14px 0}
+.dec table{border-collapse:collapse;width:100%;font-size:13px}
+.dec th,.dec td{border-bottom:1px solid var(--border);padding:7px 8px;text-align:left;vertical-align:top}
+.dec th{color:var(--muted);font-weight:500}
+.warn{border:1px solid #fde68a;background:#fffbeb;color:#78350f;border-radius:8px;padding:8px 12px;font-size:13px;margin:6px 0}
+.pill.red{background:#fee2e2;color:#991b1b}.pill.amber{background:#fef3c7;color:#92400e}
+table.grid{border-collapse:collapse;width:100%;font-size:13px;table-layout:fixed}
+table.grid th{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border);padding:8px}
+table.grid td{border-bottom:1px solid var(--border);padding:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.portalbar{height:52px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;font-weight:700}
+.fld{margin-bottom:12px}.fld label{display:block;font-size:13px;font-weight:500;margin-bottom:4px}
+.form1{max-width:720px}
+.sect{border:1px solid var(--border);border-radius:10px;margin-bottom:12px}
+.sect .sh{padding:10px 14px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px;display:flex;justify-content:space-between}
+.sect .sb{padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.sect .sb .full{grid-column:1/3}
+.meta{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:-6px 0 12px}
+.meta b{color:var(--fg);font-weight:500}
+.dup{font-size:13px;margin-bottom:12px}
+</style>
+</head>
+<body><div class="doc">
+<h1>Register a project v3 (PS-REGISTRATION-V3 mock v2, as built)</h1>
+<p class="sub">Step 2 "Details" of the create wizard. Static; existing components only; every callout names its component and repo path (FE = sorento_crm_frontend/). Every name, phone and code is invented (public repo). Dashed purple tags = a card question drawn with the recommended answer.</p>
+
+<h2 class="ft">A. Register a project, step 2 Details (1280)</h2>
+<div class="layout"><div class="scroll"><div class="frame w1280"><div class="shell">
+<div class="side"><div class="brand">Sorento CRM</div><div class="grp">Project sales</div><div class="it on">Projects</div><div class="it">Parties</div><div class="it">Sample requests</div></div>
+<div class="main"><div class="topbar"></div><div class="content">
+<div class="crumb">Projects / Register a project</div>
+<div class="phdr"><h1>Register a project</h1></div>
+<div class="banner ok">No clash: Residensi Taman Contoh Phase 2, Pembangunan Contoh Sdn Bhd</div>
+
+<div class="prodhdr">Details</div>
+<div style="border:1px solid #d4d4d8;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:14px">
+ <div><div class="b xs">Registered company / SPV</div><div class="inp ph">Optional</div></div>
+ <div></div>
+ <div><div class="b xs">State</div><div class="inp">Selangor <span class="muted">&#9662;</span></div></div>
+ <div class="rel"><span class="co pin">2</span><div class="b xs">Area <span class="dtag">Q3 (a) districts of the State</span></div><div class="inp">Petaling <span class="muted">&#9662;</span></div></div>
+ <div style="grid-column:1/3"><div class="b xs">Address</div><div class="inp ta ph">Optional</div></div>
+ <div><div class="b xs">Reference</div><div class="inp ph">e.g. PS26-0143</div></div>
+ <div><div class="b xs">Estimated value (RM)</div><div class="inp">850,000</div></div>
+</div>
+<p class="xs muted rel" style="margin:6px 0 0"><span class="co">3</span> Location is gone from the form (State + Area say it). Still shown and editable on the project page.</p>
+
+<div class="prodhdr rel"><span>Parties and contacts</span><span class="co">4</span></div>
+<div style="border:1px solid #d4d4d8;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:14px">
+ <div><div class="b xs">Architect</div><div class="inp">Arkitek Contoh <span class="muted">&times;</span></div>
+   <div class="b xs" style="margin-top:6px">Contacts <span class="co">5</span></div><div class="inp"><span><span class="badge2">Ar. Example One (0120000111) &times;</span></span><span class="muted">&#9662;</span></div></div>
+ <div><div class="b xs">Main contractor</div><div class="inp">Binaan Sampel Sdn Bhd <span class="muted">&times;</span></div>
+   <div class="b xs" style="margin-top:6px">Contacts</div><div class="inp"><span><span class="badge2">Example Two, QS (0130000222) &times;</span> <span class="badge2">Example Three, PM &times;</span></span><span class="muted">&#9662;</span></div>
+   <div class="dd"><div class="hl">Example Four, Site supervisor</div><div class="b" style="color:var(--primary)">+ Add contact "Example Five" <span class="co">6</span></div></div></div>
+ <div class="rel"><span class="co pin">7</span><div class="b xs">Subcontractors <span class="dtag">Q5 (b) several</span></div><div class="inp"><span><span class="badge2">Sub Contoh A &times;</span> <span class="badge2">Sub Contoh B &times;</span></span><span class="muted">&#9662;</span></div></div>
+ <div><div class="b xs">Trading houses <span class="dtag">several</span></div><div class="inp ph">Search trading houses</div></div>
+ <div><div class="b xs">Tender parties <span class="dtag">several</span></div><div class="inp ph">Search tender parties</div></div>
+ <div><div class="b xs">Consultant <span class="dtag">one</span></div><div class="inp ph">Search consultants</div></div>
+ <div><div class="b xs">Interior designer <span class="dtag">one</span></div><div class="inp ph">Search interior designers</div></div>
+</div>
+
+<div class="prodhdr rel"><span>Lead source, customer and salesperson</span><span class="co">8</span></div>
+<div style="border:1px solid #d4d4d8;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:14px">
+ <div class="rel"><span class="co pin">1</span><div class="b xs">Lead source <span class="req">*</span> <span class="dtag">Q4 editable list</span></div><div class="inp">Referral <span class="muted">&#9662;</span></div></div>
+ <div><div class="b xs">Customer</div><div class="inp ph">Search customers (optional)</div></div>
+ <div><div class="b xs">Salesperson</div><div class="inp">Sales A <span class="muted">&#9662;</span></div></div>
+</div>
+<div style="display:flex;justify-content:space-between;margin-top:16px"><span class="btn out">Back</span><span><span class="btn out">Save draft</span> <span class="btn">Register</span></span></div>
+</div></div></div></div></div>
+<div class="notes"><ol>
+<li><span class="co">1</span><div><b>Lead source: new, required on Register / Submit.</b>One list shared with leads, editable in Settings (lookup set project_lead_source). Drafts free. In the always-open bottom section, because Details starts folded.<span class="ref">SearchableSelect FE/components/common/SearchableSelect.tsx, clearable off when required; list = BE/models/projects.py LEAD_SOURCES</span></div></li>
+<li><span class="co">2</span><div><b>Area becomes a selection</b> filtered by State (if Q3 = a), a stored old value still shows as itself, as State does today.<span class="ref">SearchableSelect; pattern ProjectForm.tsx:725-745</span></div></li>
+<li><span class="co">3</span><div><b>Location removed from the register form only.</b><span class="ref">ProjectForm.tsx:713-719</span></div></li>
+<li><span class="co">4</span><div><b>New section "Parties and contacts"</b> takes Architect + Main contractor out of Details and adds four party selects.<span class="ref">FormSection FE/components/common/FormSection.tsx</span></div></li>
+<li><span class="co">5</span><div><b>Contacts under each picked party</b>: that party's active contacts. Register copies each pick into the project's Stakeholders. Clearing the party clears its picks.<span class="ref">SearchableMultiSelect FE/components/common/SearchableMultiSelect.tsx; shows on FE/app/(protected)/project-sales/[projectId]/components/StakeholdersPanel.tsx</span></div></li>
+<li><span class="co">6</span><div><b>Add contact row</b> opens a small dialog: Name *, Job title, Phone, Email (phone optional, owner 2 Nov). Needs projects.parties.edit, same as the party create row.<span class="ref">createOption prop, SearchableMultiSelect.createOption.test.tsx</span></div></li>
+<li><span class="co">7</span><div><b>Five new party pickers</b>: several subcontractors, trading houses, tender parties; one consultant and one interior designer (owner Q5 b). Contacts picker under each picked party.<span class="ref">partyCreateOption, ProjectForm.tsx:828-848</span></div></li>
+<li><span class="co">8</span><div><b>Customer is optional</b>: no asterisk, server no longer refuses.<span class="ref">ProjectForm.tsx:888-893; BE require_customer removed</span></div></li>
+</ol></div></div>
+
+<h2 class="ft">B. A party's Contacts (as built: a section on the party's page, same table)</h2>
+<div class="layout"><div class="frame" style="width:640px;padding:20px">
+<div class="b" style="font-size:16px">Edit party</div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+ <div><div class="b xs">Name *</div><div class="inp">Binaan Sampel Sdn Bhd</div></div>
+ <div><div class="b xs">Type *</div><div class="inp">Main contractor <span class="muted">&#9662;</span></div></div>
+</div>
+<div class="prodhdr rel"><span>Contacts</span><span class="btn sm out">Add contact</span><span class="co pin">9</span></div>
+<table class="sheet"><tr><th style="text-align:left;width:auto">Name</th><th style="text-align:left;width:auto">Job title</th><th style="text-align:left;width:auto">Phone</th><th style="text-align:left;width:auto">Email</th><th style="width:70px"></th></tr>
+<tr><td>Example Two</td><td>QS</td><td>0130000222</td><td>two@example.com</td><td class="xs muted">Edit &middot; Delete</td></tr>
+<tr><td>Example Three</td><td>PM</td><td>0140000333</td><td class="muted">None</td><td class="xs muted">Edit &middot; Delete</td></tr>
+<tr><td>Example Four</td><td>Site supervisor</td><td>0150000444</td><td class="muted">None</td><td class="xs">Deleting 9s &middot; Cancel</td></tr>
+</table>
+<div style="text-align:right;margin-top:14px"><span class="btn out">Cancel</span> <span class="btn">Save</span></div>
+</div>
+<div class="notes"><ol>
+<li><span class="co">9</span><div><b>Contacts table on the party dialog.</b> Add / Edit inline, Delete = deferred countdown with Cancel, no confirm. Empty state: "No contacts yet".<span class="ref">PanelDataGrid FE/components/common/PanelDataGrid.tsx inside FE/app/(protected)/project-sales/parties/components/PartyFormDialog.tsx</span></div></li>
+<li><span class="co">10</span><div><b>Type list gains Subcontractor and Interior designer.</b><span class="ref">FE/app/(protected)/project-sales/parties/components/partyTypes.ts; BE/services/project_reference_service.py:26</span></div></li>
+</ol></div></div>
+
+
+<h2 class="ft">D. Send via WhatsApp: choose the parties (owner 2 Nov ~21:20)</h2>
+<div class="layout"><div class="frame" style="width:560px;padding:20px">
+<div class="b" style="font-size:16px">Send R2 via WhatsApp</div>
+<div class="b xs rel" style="margin-top:12px">To <span class="co">11</span></div>
+<table class="sheet"><tr><th style="text-align:left;width:auto">Party</th><th style="text-align:left;width:auto">Person</th><th style="text-align:left;width:150px">Number</th><th style="width:110px"></th></tr>
+<tr><td>Developer<br><span class="xs muted">Pembangunan Contoh</span></td><td class="muted">Office</td><td>+60 3-0000 1000</td><td><span class="btn sm">Open WhatsApp</span></td></tr>
+<tr><td>Main contractor<br><span class="xs muted">Binaan Sampel</span></td><td>Example Two, QS</td><td>+60 130000222</td><td><span class="btn sm">Open WhatsApp</span></td></tr>
+<tr class="rel"><td>Main contractor<br><span class="xs muted">Binaan Sampel</span></td><td>Example Three, PM</td><td class="edit"><div class="inp ph">Type a number</div><span class="co">12</span></td><td><span class="btn sm" style="opacity:.5">Open WhatsApp</span></td></tr>
+<tr><td>Architect<br><span class="xs muted">Arkitek Contoh</span></td><td>Ar. Example One</td><td>+60 120000111</td><td><span class="btn sm">Open WhatsApp</span></td></tr>
+</table>
+<div class="b xs" style="margin-top:12px">Message</div><div class="inp ta">Dear Sir/Madam, please find quotation Q-2026-0001 R2 ... (unchanged template)</div>
+<div style="text-align:right;margin-top:14px"><span class="btn out">Close</span> <span class="btn out">Copy link</span></div>
+</div>
+<div class="notes"><ol>
+<li><span class="co">11</span><div><b>To = the project's parties and their registered contacts</b>, one row each, its own Open WhatsApp (wa.me opens one chat per click). Replaces the free-text To.<span class="ref">FE/app/(protected)/project-sales/[projectId]/quotation-documents/[documentId]/components/QuotationWhatsAppDialog.tsx:134-140; table = PanelDataGrid FE/components/common/PanelDataGrid.tsx</span></div></li>
+<li><span class="co">12</span><div><b>No number on file: type it here.</b> Open WhatsApp saves it to that contact (or the party's own phone) and opens the chat. Only an empty number is ever saved; a number on file is never overwritten from here.<span class="ref">Input FE/components/ui/input.tsx; new BE POST /projects/{id}/parties/{party_id}/phone</span></div></li>
+</ol></div></div>
+
+<h2 class="ft">C. 375 width, Parties and contacts section</h2>
+<div class="frame w375" style="padding:16px">
+ <div class="prodhdr">Parties and contacts</div>
+ <div style="border:1px solid #d4d4d8;padding:12px;display:grid;gap:10px">
+ <div><div class="b xs">Architect</div><div class="inp">Arkitek Contoh &times;</div></div>
+ <div><div class="b xs">Contacts</div><div class="inp" style="flex-wrap:wrap"><span class="badge2">Ar. Example One &times;</span></div></div>
+ <div><div class="b xs">Main contractor</div><div class="inp ph">Search main contractors</div></div>
+ <div><div class="b xs">Subcontractor</div><div class="inp ph">Search subcontractors</div></div>
+ </div>
+ <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px"><span class="btn" style="justify-content:center">Register</span><span class="btn out" style="justify-content:center">Save draft</span></div>
+</div>
+</div></body></html>

@@ -569,6 +569,10 @@ class BoardLineDraftBody(BaseModel):
 
     decision: Dict[str, Any]
     proposed: Optional[List[BoardSource]] = None
+    #: CONFIRM-PREVIEW-STALE: the `saved_at` of the draft the caller's decision stands on
+    #: (`null` = it holds none). When SENT, a stored draft saved after it refuses the write
+    #: (409 `board_line_draft_newer`); left out, last writer wins as before.
+    based_on_saved_at: Optional[datetime] = None
 
 
 class BoardContribution(BaseModel):

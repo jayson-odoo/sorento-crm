@@ -28,9 +28,21 @@ You get one line back:
 
 ## Step 2: Details
 
-Fill in the project facts (**Location**, **State**, **Area**, **Address**, **Reference**,
-**Project launch date**, **Architect**, **Main contractor** and so on), and under **Customer and
-salesperson** pick the customer and the **Salesperson**. Then click **Register project**.
+Most fields are picked from a list, not typed.
+
+* **Details**: **Registered company / SPV**, **State**, then **Area** (the districts of the state
+  you picked; pick the State first), **Address**, **Reference**, value and dates.
+* **Parties and contacts**: **Architect** and **Main contractor**, then **Subcontractors**,
+  **Trading houses** and **Tender parties** (pick as many as the job has), **Consultant** and
+  **Interior designer** (one each). Under every party you picked, **Contacts at {party}** lists the
+  people at that firm: pick the ones on this project. They are added to the project's
+  **Stakeholders**. Someone missing? Type the name and choose **Add contact "{name}"** (needs the
+  right to edit parties). A phone number is not required.
+* **Lead source, customer and salesperson**: **Lead source** (required: where the project came
+  from), **Customer** (optional, you can add it later) and **Salesperson**.
+
+Then click **Register project** (a salesperson without edit rights gets **Save draft** and
+**Submit for approval**; a draft needs only the title).
 
 There is no lead field: registering a project never links or changes a lead. A lead is linked
 only from the lead's own page (**Qualify**).
@@ -43,6 +55,19 @@ submit is refused and you are told the project code and title.
 A **Registered** project needs at least one document before it can move to **Spec In**. Until it
 has one, the header shows **Upload Requirement** instead of **Spec In**. Upload any file (it then
 appears on the **Documents** tab) and **Spec In** comes back.
+
+## Keep each party's contacts
+
+Open **Parties**, click the firm, and use its **Contacts** section: **Add contact** (only the name
+is required), edit, or delete (the button counts down; click **Cancel** to keep the contact). A
+project that already has the person keeps them in its Stakeholders.
+
+## Send a quotation on WhatsApp to a party
+
+In **Send via WhatsApp**, pick the party or person under **Send to**. Their number fills **To**.
+If they have no number yet, type it: when you click **Open WhatsApp** it is saved to that party or
+person, so next time it is there. A number already on file is never changed from here. To send to
+another party, pick them and click **Open WhatsApp** again.
 
 ## Secondary leads on a project
 
