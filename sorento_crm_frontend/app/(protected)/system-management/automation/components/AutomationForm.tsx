@@ -57,7 +57,8 @@ const emptyRecipients: RecipientConfig = {
   extra_emails: [],
 };
 
-/** The six To/Cc address lists; any other recipient setting is not an address change. */
+/** The six To/Cc address lists; any other recipient setting is not an address change. Order
+ * counts: a legacy row puts its FIRST address on To, so reordering changes who gets To. */
 const ADDRESS_KEYS = [
   'user_ids',
   'role_ids',
@@ -69,8 +70,8 @@ const ADDRESS_KEYS = [
 
 function addressesChanged(before: RecipientConfig, after: RecipientConfig): boolean {
   return ADDRESS_KEYS.some((key) => {
-    const was = [...(before[key] ?? [])].sort();
-    const now = [...(after[key] ?? [])].sort();
+    const was = before[key] ?? [];
+    const now = after[key] ?? [];
     return was.length !== now.length || was.some((value, i) => value !== now[i]);
   });
 }

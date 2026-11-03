@@ -198,6 +198,35 @@ describe('AutomationForm - edit-open hydration (AC-H16)', () => {
     expect(updateMutateAsync.mock.calls[0][0].recipient_config.explicit_to_cc).toBe(true);
   });
 
+  it('re-adding a removed To address moves it last, which is a change on a legacy row', async () => {
+    // A legacy row puts its FIRST address on To, so the order of the To list is who gets To.
+    render(
+      <AutomationForm
+        open
+        onOpenChange={vi.fn()}
+        automation={{
+          ...AUTOMATION,
+          recipient_config: {
+            ...AUTOMATION.recipient_config,
+            extra_emails: ['first@example.com', 'second@example.com'],
+          },
+        }}
+      />,
+    );
+    await screen.findByLabelText(/Cc the person who raised it/i);
+    const to = within(screen.getByRole('group', { name: 'To' }));
+    fireEvent.click(to.getByRole('button', { name: /remove first@example.com/i }));
+    fireEvent.change(to.getByPlaceholderText('someone@example.com'), {
+      target: { value: 'first@example.com' },
+    });
+    fireEvent.click(to.getByRole('button', { name: 'Add' }));
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(updateMutateAsync).toHaveBeenCalledTimes(1));
+    const config = updateMutateAsync.mock.calls[0][0].recipient_config;
+    expect(config.extra_emails).toEqual(['second@example.com', 'first@example.com']);
+    expect(config.explicit_to_cc).toBe(true);
+  });
+
   it('a row already explicit stays explicit on an unchanged save', async () => {
     render(
       <AutomationForm
