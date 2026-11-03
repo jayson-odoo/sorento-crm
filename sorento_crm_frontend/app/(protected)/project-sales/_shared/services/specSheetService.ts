@@ -1,17 +1,20 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
+import type { TagBindingData, TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import type { QueuedDownload } from './quotationDocumentService';
 
 /**
- * Project spec sheet (PS-SPEC-SHEET): the Spec sheet tab of a quotation document.
+ * Saved spec sheets of a quotation document (SPEC-SHEET-V2), SS1, SS2 ...
  *
- *   GET  /projects/{projectId}/quotation-documents/{id}/spec-sheet[?issue_id=]  -> SpecSheetView
- *   PUT  /projects/{projectId}/quotation-documents/{id}/spec-sheet              -> SpecSheetView
- *   GET  /projects/{projectId}/quotation-documents/{id}/spec-sheet/preview[?issue_id=]
- *        -> the same payload the PDF prints from (cover + one sheet per visible page)
- *   POST /projects/{projectId}/quotation-documents/{id}/spec-sheet/export[?issue_id=]
- *        -> the queued download (My Downloads)
+ *   GET   .../quotation-documents/{id}/spec-sheets                         -> SpecSheetList
+ *   POST  .../spec-sheets                                                  -> SpecSheetDetail (201)
+ *   GET   .../spec-sheets/{sheetId}                                        -> SpecSheetDetail
+ *   PATCH .../spec-sheets/{sheetId}                                        -> SpecSheetDetail
+ *   GET   .../spec-sheets/{sheetId}/preview?keys=a,b                       -> one window of pages
+ *   GET   .../spec-sheets/{sheetId}/pages/{key}/design                     -> the page designer's input
+ *   PUT   .../spec-sheets/{sheetId}/pages/{key}/edit                       -> SpecSheetDetail
+ *   POST  .../spec-sheets/{sheetId}/export                                 -> the queued download
  */
 
 const BASE = '/api/v1/project-sales';
@@ -25,14 +28,6 @@ export interface SpecSheetRow {
   accessories: string[];
 }
 
-export interface SpecSheetSettings {
-  cover_template_id: string | null;
-  page_template_id: string | null;
-  single_page_template_id: string | null;
-  issue_id: string | null;
-  rows: SpecSheetRow[];
-}
-
 export interface SpecSheetAccessory {
   /** Set only on a hand-picked accessory: the item it came from. */
   key: string | null;
@@ -43,24 +38,78 @@ export interface SpecSheetAccessory {
   brand: string;
 }
 
+export type SpecSheetPageTemplate = 'cover' | 'page' | 'single';
+
 export interface SpecSheetPage {
   key: string;
-  line_id: string;
-  product_id: string | null;
+  /** Printed page number (cover is 1); null for a left-out page. */
+  number: number | null;
   code: string;
   name: string;
   brand: string;
-  image_attachment_id: string | null;
-  drawing_attachment_id: string | null;
-  accessories: SpecSheetAccessory[];
-  picked: string[];
   /** Typed on the page, else `area_default`. */
   area: string;
-  /** The Section heading the line sits under on the Lines tab (owner, mock v5). */
+  /** The Section heading the line sits under on the Lines tab. */
   area_default: string;
   comment: string;
   marker: string;
   hidden: boolean;
+  picked: string[];
+  accessories: SpecSheetAccessory[];
+  edited: boolean;
+  template: SpecSheetPageTemplate;
+}
+
+export interface SpecSheetTemplateRef {
+  id: string;
+  name: string;
+  version_no: number;
+}
+
+export interface SpecSheetDetail {
+  id: string;
+  sheet_no: number;
+  label: string;
+  source_label: string;
+  source_hint: string;
+  is_draft: boolean;
+  templates: {
+    cover: SpecSheetTemplateRef | null;
+    page: SpecSheetTemplateRef | null;
+    single: SpecSheetTemplateRef | null;
+  };
+  newer_templates: boolean;
+  page_size: { width_mm: number; height_mm: number };
+  /** Cover first. No images: the reader asks for those per window. */
+  pages: SpecSheetPage[];
+  prev_id: string | null;
+  next_id: string | null;
+  can_edit: boolean;
+}
+
+export interface SpecSheetListRow {
+  id: string;
+  sheet_no: number;
+  label: string;
+  source_label: string;
+  source_hint: string;
+  is_draft: boolean;
+  cover_name: string;
+  page_name: string;
+  single_name: string | null;
+  page_count: number;
+  edited_count: number;
+  created_by_name: string;
+  created_at: string | null;
+  updated_at: string | null;
+  last_exported_at: string | null;
+  newer_templates: boolean;
+}
+
+export interface SpecSheetSource {
+  value: string;
+  label: string;
+  hint: string;
 }
 
 export interface SpecSheetTemplateOption {
@@ -70,75 +119,154 @@ export interface SpecSheetTemplateOption {
   height_mm: number | null;
 }
 
-export interface SpecSheetIssueOption {
-  id: string;
-  issue_no: number;
-  label: string;
-  issued_at: string | null;
-}
-
-export interface SpecSheetView {
-  settings: SpecSheetSettings;
-  issue_id: string | null;
-  issues: SpecSheetIssueOption[];
-  pages: SpecSheetPage[];
+export interface SpecSheetList {
+  items: SpecSheetListRow[];
+  sources: SpecSheetSource[];
   templates: { cover: SpecSheetTemplateOption[]; page: SpecSheetTemplateOption[] };
+  defaults: {
+    source: string | null;
+    cover_template_id: string | null;
+    page_template_id: string | null;
+    single_page_template_id: string | null;
+  };
+  create_disabled_reason: string | null;
 }
 
-export type SpecSheetSettingsBody = Partial<SpecSheetSettings>;
+export interface CreateSpecSheetBody {
+  source: string;
+  cover_template_id: string;
+  page_template_id: string;
+  single_page_template_id: string | null;
+}
 
-/** What the preview answers: the print payload, plus the page size it was laid out at. */
+export interface UpdateSpecSheetBody {
+  rows?: SpecSheetRow[];
+  use_latest_templates?: boolean;
+}
+
+/** One window of the print payload, thumbnails only, plus the pages the sheet leaves out. */
 export type SpecSheetPreview = Omit<TagSheetDesignPayload, 'page_id' | 'source'> & {
   page_size: { width_mm: number; height_mm: number };
+  hidden: string[];
 };
 
-function url(projectId: string, documentId: string, suffix = '', issueId?: string | null) {
-  const query = issueId ? `?issue_id=${encodeURIComponent(issueId)}` : '';
-  return `${BASE}/projects/${projectId}/quotation-documents/${documentId}/spec-sheet${suffix}${query}`;
+export interface SpecSheetPageDesign {
+  layers: TagLayer[];
+  /** The page's resolved row, in the shape the designer binds a line to. */
+  bound: Extract<TagBindingData, { kind: 'line' }>['line'];
+  images: Record<string, string>;
+  assets: Record<string, string>;
+  fonts: TagSheetDesignPayload['fonts'];
+  width_mm: number;
+  height_mm: number;
+  template_name: string;
+  template_id: string | null;
+  edited: boolean;
+}
+
+function url(projectId: string, documentId: string, suffix = '') {
+  return `${BASE}/projects/${projectId}/quotation-documents/${documentId}/spec-sheets${suffix}`;
+}
+
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+async function read<T>(response: Response, fallback: string): Promise<T> {
+  if (!response.ok) throw new Error(await extractApiError(response, fallback));
+  return response.json();
+}
+
+export async function listSpecSheets(projectId: string, documentId: string): Promise<SpecSheetList> {
+  return read(await apiFetch(url(projectId, documentId)), 'Could not load the spec sheets');
+}
+
+export async function createSpecSheet(
+  projectId: string,
+  documentId: string,
+  body: CreateSpecSheetBody,
+): Promise<SpecSheetDetail> {
+  return read(
+    await apiFetch(url(projectId, documentId), {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(body),
+    }),
+    'Could not create the spec sheet',
+  );
 }
 
 export async function getSpecSheet(
   projectId: string,
   documentId: string,
-  issueId?: string | null,
-): Promise<SpecSheetView> {
-  const response = await apiFetch(url(projectId, documentId, '', issueId));
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the spec sheet'));
-  return response.json();
+  sheetId: string,
+): Promise<SpecSheetDetail> {
+  return read(await apiFetch(url(projectId, documentId, `/${sheetId}`)), 'Could not load the spec sheet');
 }
 
-export async function saveSpecSheet(
+export async function updateSpecSheet(
   projectId: string,
   documentId: string,
-  body: SpecSheetSettingsBody,
-): Promise<SpecSheetView> {
-  const response = await apiFetch(url(projectId, documentId), {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the spec sheet'));
-  return response.json();
+  sheetId: string,
+  body: UpdateSpecSheetBody,
+): Promise<SpecSheetDetail> {
+  return read(
+    await apiFetch(url(projectId, documentId, `/${sheetId}`), {
+      method: 'PATCH',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(body),
+    }),
+    'Could not save the spec sheet',
+  );
 }
 
 export async function getSpecSheetPreview(
   projectId: string,
   documentId: string,
-  issueId?: string | null,
+  sheetId: string,
+  keys: string[],
 ): Promise<SpecSheetPreview> {
-  const response = await apiFetch(url(projectId, documentId, '/preview', issueId));
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to draw the spec sheet'));
-  return response.json();
+  const query = `?keys=${encodeURIComponent(keys.join(','))}`;
+  return read(
+    await apiFetch(url(projectId, documentId, `/${sheetId}/preview${query}`)),
+    'Could not draw the spec sheet pages',
+  );
+}
+
+export async function getSpecSheetPageDesign(
+  projectId: string,
+  documentId: string,
+  sheetId: string,
+  key: string,
+): Promise<SpecSheetPageDesign> {
+  return read(
+    await apiFetch(url(projectId, documentId, `/${sheetId}/pages/${encodeURIComponent(key)}/design`)),
+    'Could not open the page',
+  );
+}
+
+export async function saveSpecSheetPageEdit(
+  projectId: string,
+  documentId: string,
+  sheetId: string,
+  key: string,
+  layers: TagLayer[],
+): Promise<SpecSheetDetail> {
+  return read(
+    await apiFetch(url(projectId, documentId, `/${sheetId}/pages/${encodeURIComponent(key)}/edit`), {
+      method: 'PUT',
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ layers }),
+    }),
+    'Could not save the page',
+  );
 }
 
 export async function queueSpecSheetPdf(
   projectId: string,
   documentId: string,
-  issueId?: string | null,
+  sheetId: string,
 ): Promise<QueuedDownload> {
-  const response = await apiFetch(url(projectId, documentId, '/export', issueId), {
-    method: 'POST',
-  });
-  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to queue the spec sheet'));
-  return response.json();
+  return read(
+    await apiFetch(url(projectId, documentId, `/${sheetId}/export`), { method: 'POST' }),
+    'Could not queue the spec sheet',
+  );
 }
