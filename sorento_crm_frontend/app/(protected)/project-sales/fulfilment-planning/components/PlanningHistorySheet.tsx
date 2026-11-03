@@ -1,5 +1,6 @@
 'use client';
 
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import * as React from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -355,6 +356,12 @@ export function PlanningHistorySheet({
     events.forEach((event) => {
       if (!soLabel.has(event.pso_id) && event.so_no) soLabel.set(event.pso_id, event.so_no);
     });
+    // OI-UX-FILTER-SNAPSHOT: the order's customer and project ride on its option.
+    events.forEach((event) => {
+      const party = soCustomerProjectLabel(event.customer_name, event.project_label);
+      const base = soLabel.get(event.pso_id);
+      if (party && base && !base.includes(' - ')) soLabel.set(event.pso_id, `${base} - ${party}`);
+    });
     const products = new Set<string>();
     const lineNos = new Set<number>();
     const users = new Set<string>();
@@ -445,7 +452,13 @@ export function PlanningHistorySheet({
       ),
       tags: (
         <>
-          {event.so_no && <span className="text-xs text-muted-foreground">{event.so_no}</span>}
+          {event.so_no && (
+            <span className="text-xs text-muted-foreground">
+              {[event.so_no, soCustomerProjectLabel(event.customer_name, event.project_label)]
+                .filter(Boolean)
+                .join(' - ')}
+            </span>
+          )}
           {event.kind === 'revision_confirmed' && (
             <span className="text-xs text-muted-foreground">{`Rev ${event.revision_no}`}</span>
           )}

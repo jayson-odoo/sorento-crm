@@ -469,6 +469,8 @@ def test_demand_with_no_date_anywhere_is_reported_not_dated_today_and_not_droppe
         "item_code": chain["product"].product_code,
         "qty": 40,
         "location": chain["bin_a"].warehouse_code,
+        "customer_name": None,
+        "project_label": None,
     }]
     # Not dated today: no dated row at all, and the balance is untouched.
     dated = [row["event"]["at"] for row in body["rows"] if row["event"]["at"]]

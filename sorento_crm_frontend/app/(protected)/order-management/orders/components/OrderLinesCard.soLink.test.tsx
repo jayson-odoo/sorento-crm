@@ -41,7 +41,13 @@ function line(id: string, code: string, extra: Partial<OrderLine>): OrderLine {
 const LINES: OrderLine[] = [
   line('l-1', 'WESERP10B', {
     from_doc_no: 'SO419866',
-    sales_order: { id: 'so-a', so_number: 'SO419866', line_no: 3 },
+    sales_order: {
+      id: 'so-a',
+      so_number: 'SO419866',
+      line_no: 3,
+      customer_name: 'Maju Debtor',
+      project_label: 'Tuju Residences',
+    },
   }),
   line('l-2', 'C-FH14', {
     from_doc_no: 'SO419866',
@@ -116,5 +122,17 @@ describe('OrderLinesCard - SO column (DO-SO-LINK-SURFACE R1)', () => {
     const cell = soCell('WESERP10B');
     expect((cell.textContent ?? '').trim()).toBe('SO419866 · line 3');
     expect(within(cell).queryByRole('link')).toBeNull();
+  });
+
+  it('names the linked order\'s Customer then Project after the SO (OI-UX-FILTER-SNAPSHOT)', () => {
+    renderCard();
+    const headers = screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim());
+    const so = headers.indexOf('SO');
+    expect(headers[so + 1]).toBe('Customer');
+    expect(headers[so + 2]).toBe('Project');
+    const cells = rowOf('WESERP10B').querySelectorAll('td');
+    expect((cells[so + 1].textContent ?? '').trim()).toBe('Maju Debtor');
+    expect((cells[so + 2].textContent ?? '').trim()).toBe('Tuju Residences');
+    expect((rowOf('SRTWB1515').querySelectorAll('td')[so + 1].textContent ?? '').trim()).toBe('-');
   });
 });

@@ -36,6 +36,7 @@ from app.models.product import Product
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm import order_link_service, priority, supply_claim
+from app.services.scm.so_party import so_parties, with_party
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
 from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as CRM_SPO_SOURCE
 
@@ -185,6 +186,11 @@ class PurchaseOrderService:
         from app.services.autocount_cancel_ingest_service import cancel_sources
         from app.services.scm import goods_chain
 
+        book_so_parties = (
+            None
+            if book_so_by_ref is order_link_service.BOOK_SO_NOT_RESOLVED
+            else so_parties(self.db, numbers=book_so_by_ref.values())
+        )
         dead_ids = (
             goods_chain.dead_po_line_ids(self.db, [ln.id for ln in po.lines])
             if spos_by_line is not None
@@ -276,7 +282,7 @@ class PurchaseOrderService:
                 # (review of PR #764, F5) - it also carries the FOURTH, list-only state
                 # `book_so_by_ref is BOOK_SO_NOT_RESOLVED`.
                 **order_link_service.book_so_fields(
-                    self._shown_book_ref(ln, po), book_so_by_ref
+                    self._shown_book_ref(ln, po), book_so_by_ref, book_so_parties
                 ),
                 # LINKAGE-UNIFY U4: every SPO line this line was transferred onto, with
                 # where its goods landed or why it brings nothing (`goods_chain`). Only the
@@ -638,6 +644,19 @@ class PurchaseOrderService:
         # explicit here rather than renamed on the wire.
         dedications: dict[str, list[dict]] = {}
         reserved_per_line: dict[str, float] = {}
+        # OI-UX-FILTER-SNAPSHOT: each dedicated sales order names its customer and project.
+        inquiry_placements = [
+            p for rows_ in placements.values() for p in rows_ if p.get("kind") == "inquiry"
+        ]
+        parties = so_parties(
+            self.db,
+            numbers=[
+                *(c["so_number"] for claims in reservations.values() for c in claims),
+                *(p["so_number"] for p in inquiry_placements),
+            ],
+        )
+        for placement in inquiry_placements:
+            with_party(placement, parties, placement["so_number"])
         for line_id, claims in reservations.items():
             for claim in claims:
                 owed_in_total = float(claim["outstanding"])
@@ -649,12 +668,12 @@ class PurchaseOrderService:
                 reserved_per_line[line_id] = (
                     reserved_per_line.get(line_id, 0.0) + held_on_this_line
                 )
-                dedications.setdefault(line_id, []).append({
+                dedications.setdefault(line_id, []).append(with_party({
                     "so_number": claim["so_number"],
                     "reserved": owed_in_total,
                     "unplaced": held_on_this_line,
                     "source": claim["source"],
-                })
+                }, parties, claim["so_number"]))
 
         # NOT added to `allocated`. `spo_conversion_service.create` advances the source
         # line's own `qty_received` by exactly what it pulls - the same write a shipment

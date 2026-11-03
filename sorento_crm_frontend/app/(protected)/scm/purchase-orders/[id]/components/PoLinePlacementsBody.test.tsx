@@ -88,6 +88,31 @@ describe('PoLinePlacementsBody', () => {
     expect(within(row).getByText('40')).toBeInTheDocument();
   });
 
+  it('names the dedicated order\'s customer and project (OI-UX-FILTER-SNAPSHOT)', () => {
+    renderWithClient(
+      <PoLinePlacementsBody
+        allocation={{
+          ...LINE,
+          dedicated_to: [
+            {
+              so_number: 'SO391853',
+              customer_name: 'Maju Debtor',
+              project_label: 'Tuju Residences',
+              reserved: 40,
+              unplaced: 40,
+              source: 'po_upload',
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'Project' })).toBeInTheDocument();
+    const row = screen.getByText('SO391853').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Maju Debtor')).toBeInTheDocument();
+    expect(within(row).getByText('Tuju Residences')).toBeInTheDocument();
+  });
+
   it('never renders a Needed at header', () => {
     renderWithClient(<PoLinePlacementsBody allocation={LINE} />);
 

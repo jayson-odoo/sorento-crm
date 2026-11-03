@@ -96,6 +96,9 @@ export interface SalesOrderLinkRef {
   id: string;
   so_number: string;
   line_no: number | null;
+  /** That order's customer (debtor name, else customer master) and project label. */
+  customer_name?: string | null;
+  project_label?: string | null;
 }
 
 export interface OrderFormData {

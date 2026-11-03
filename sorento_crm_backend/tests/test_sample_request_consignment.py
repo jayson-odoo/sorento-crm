@@ -64,6 +64,8 @@ def _code(res):
 def test_picker_lists_live_consignments_of_the_company_only(world):
     rid = _processing(world)
     live = _cg(world, debtor="Picker Live Sdn Bhd")
+    live.project_label = "ZZT Picker Tower"
+    world.db.flush()
     voided = _cg(world, status="cancelled")
     so = _cg(world, doc_type="sales_order")
     other = _cg(world, company_id=second_company(world.db))
@@ -77,6 +79,9 @@ def test_picker_lists_live_consignments_of_the_company_only(world):
     assert row["so_number"] == live.so_number
     assert row["debtor_name"] == "Picker Live Sdn Bhd"
     assert row["order_date"] == CG_DATE.isoformat()
+    # OI-UX-FILTER-SNAPSHOT: the option names the order's customer and project.
+    assert row["customer_name"] == "Picker Live Sdn Bhd"
+    assert row["project_label"] == "ZZT Picker Tower"
 
 
 def test_picker_is_for_the_sample_team(world):
@@ -102,6 +107,8 @@ def test_linking_a_live_consignment_delivers_on_its_date(world):
     assert body["consignment"] == {
         "id": cg.id,
         "so_number": cg.so_number,
+        "customer_name": "ZZT consignee",
+        "project_label": None,
         "order_date": "2026-11-20",
         "status": "closed",
         "delivered_on": "2026-11-20",

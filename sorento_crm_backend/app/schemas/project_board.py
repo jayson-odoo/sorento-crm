@@ -97,6 +97,8 @@ class BoardSource(BaseModel):
     #: because a missing key read as "older than v4" everywhere.
     ladder: Optional[str] = None
     donor_so_number: Optional[str] = None
+    donor_customer_name: Optional[str] = None
+    donor_project_label: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
     same_agent: bool = False
@@ -341,6 +343,8 @@ class BoardLadderOption(BaseModel):
     #: in. Set on the borrow steps only: `use` draws the free pile and `buy` orders new
     #: stock, so neither owes anybody.
     debt_so_number: Optional[str] = None
+    debt_customer_name: Optional[str] = None
+    debt_project_label: Optional[str] = None
     debt_month: Optional[str] = None
     #: The step the engine proposed. At most ONE option carries it, and none does when
     #: nothing covers the unit.
@@ -395,6 +399,8 @@ class BoardDecisionBorrow(BaseModel):
     #: `group_borrow`. `None` on an ordinary location/project Borrow.
     rung: Optional[str] = None
     donor_so_number: Optional[str] = None
+    donor_customer_name: Optional[str] = None
+    donor_project_label: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
     same_agent: bool = False
@@ -504,6 +510,9 @@ class BoardLineLending(BaseModel):
     so_number: Optional[str] = None
     #: Its line on that order, so two lines of one order are told apart.
     line_no: Optional[int] = None
+    #: That order's customer and project (OI-UX-FILTER-SNAPSHOT).
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
 
 
 class BoardProposed(BaseModel):
@@ -839,6 +848,8 @@ class BorrowCandidate(BaseModel):
     #: donor row, `None` for a plain `other_location`/`other_project` donor.
     rung: Optional[str] = None
     donor_so_number: Optional[str] = None
+    donor_customer_name: Optional[str] = None
+    donor_project_label: Optional[str] = None
     donor_line_no: Optional[int] = None
     donor_agent_code: Optional[str] = None
     donor_core_line_id: Optional[str] = None
@@ -929,6 +940,8 @@ class StockDetailHold(BaseModel):
     #: The order holding it. Null when its line has not been reconciled to a core order yet,
     #: which is the only case with no number a person could read.
     so_number: Optional[str] = None
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     location: Optional[str] = None
     #: The holder's own required date, which is where the hold sits in the walk.
     required_date: Optional[date] = None
@@ -1013,6 +1026,7 @@ class PileQueueLine(BaseModel):
     #: What the order calls the line (AutoCount's number), the mirror's `line_no` without one.
     so_line_no: Optional[int] = None
     customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     qty: str
     required_date: Optional[date] = None
     order_date: Optional[date] = None

@@ -1614,6 +1614,8 @@ export interface SoCoverageRow {
   kind: 'project' | 'retail';
   document: string | null;
   customer_name: string | null;
+  /** The order's project (OI-UX-FILTER-SNAPSHOT). */
+  project_label?: string | null;
   required_date: string | null;
   qty: number;
   warehouse_code: string | null;
@@ -1843,6 +1845,17 @@ export function SoCoveragePicker({
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.customer_name ?? undefined}>
             {textCell(row.original.customer_name)}
+          </span>
+        ),
+        size: 170,
+      },
+      {
+        id: 'project_label',
+        accessorFn: (c) => c.project_label ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.project_label ?? undefined}>
+            {textCell(row.original.project_label)}
           </span>
         ),
         size: 170,

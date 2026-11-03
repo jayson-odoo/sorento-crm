@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { soCustomerProjectLabel } from '@/components/common/SoCustomerProject';
 import { EM_DASH, fmtInt } from '../../lib/format';
 import { DemandContextHeader, hasDemandContext } from './DemandContextHeader';
 import { dayLabel } from '../lib/coverageTimeline';
@@ -193,8 +194,11 @@ function ProjectLines({
           className="flex items-start justify-between gap-3 border-b px-3 py-2 text-sm last:border-b-0"
         >
           <div className="min-w-0">
-            <div className="truncate font-medium" title={line.project_name}>
-              {line.project_name}
+            <div
+              className="truncate font-medium"
+              title={soCustomerProjectLabel(line.customer_name, line.project_label) ?? line.project_name}
+            >
+              {soCustomerProjectLabel(line.customer_name, line.project_label) ?? line.project_name}
             </div>
             <div className="truncate text-2xs text-muted-foreground">
               {/* Click-through to the Order Inquiry worklist, scoped to this SO (captain,
@@ -245,8 +249,11 @@ function RetailLines({
           className="flex items-start justify-between gap-3 border-b px-3 py-2 text-sm last:border-b-0"
         >
           <div className="min-w-0">
-            <div className="truncate font-medium" title={line.dealer_name}>
-              {line.dealer_name}
+            <div
+              className="truncate font-medium"
+              title={soCustomerProjectLabel(line.customer_name, line.project_label) ?? line.dealer_name}
+            >
+              {soCustomerProjectLabel(line.customer_name, line.project_label) ?? line.dealer_name}
             </div>
             <div className="truncate text-2xs text-muted-foreground">
               {line.so_number} · raised{' '}
@@ -291,8 +298,11 @@ function UnclassifiedLines({
           className="flex items-start justify-between gap-3 border-b px-3 py-2 text-sm last:border-b-0"
         >
           <div className="min-w-0">
-            <div className="truncate font-medium" title={line.customer_name}>
-              {line.customer_name}
+            <div
+              className="truncate font-medium"
+              title={soCustomerProjectLabel(line.customer_name, line.project_label) ?? undefined}
+            >
+              {soCustomerProjectLabel(line.customer_name, line.project_label) ?? EM_DASH}
             </div>
             <div className="truncate text-2xs text-muted-foreground">
               {line.so_number}

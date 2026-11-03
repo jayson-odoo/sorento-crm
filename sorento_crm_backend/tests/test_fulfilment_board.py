@@ -4596,6 +4596,28 @@ def test_the_pile_queue_is_exactly_the_queue_the_trail_counted():
         assert mine["cumulative_ahead_qty"] == "190", "the running sum includes this row"
 
 
+def test_the_pile_queue_names_each_orders_customer_and_project():
+    """OI-UX-FILTER-SNAPSHOT: the queue names the debtor and project of every order in it."""
+    from app.schemas.project_board import PileQueueLine
+
+    with blank_session() as db:
+        ours, product, warehouse = _queued_pile(db)
+        ours.debtor_name = "ZZT Debtor Sdn Bhd"
+        ours.project_label = "ZZT Tower"
+        db.flush()
+        board = _service(db).build([ours.so_number], granularity="week", as_of=TODAY)
+        contribution = _behind(board, product.product_code)
+
+        queue = _service(db).pile_queue(
+            str(product.id), str(warehouse.id), contribution["line_id"]
+        )
+
+        mine = next(line for line in queue["lines"] if line["is_this_line"])
+        assert mine["customer_name"] == "ZZT Debtor Sdn Bhd"
+        assert mine["project_label"] == "ZZT Tower"
+        assert PileQueueLine(**mine).model_dump()["project_label"] == "ZZT Tower"
+
+
 def test_the_pile_queue_is_ordered_exactly_as_the_pile_book_orders_it():
     from app.services.project_supply_service import ProjectSupplyService
 
@@ -6356,7 +6378,8 @@ def test_a_donor_line_says_what_was_lent_off_it_and_to_which_order():
             if contribution["so_number"] == "ZZT-SO-DONOR"
         ]
         assert on_the_wire and on_the_wire[0]["lent_to"] == [
-            {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no}
+            {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no,
+             "customer_name": None, "project_label": None}
         ]
 
 

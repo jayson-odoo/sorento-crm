@@ -84,6 +84,7 @@ from app.models.user import User
 from app.services import project_line_draft_service
 from app.services import so_remark_rules
 from app.services.error_handler import AppException
+from app.services.scm.so_party import so_parties, with_party
 from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import (
     LADDER_VERSION,
@@ -1258,17 +1259,27 @@ class FulfilmentBoardService:
         # the sales-order rows above, and listing it again would subtract it twice. Only the
         # GROUP reading asks: one bin's drill is read beside its own Available, which does
         # not net holds either.
-        holds = [
-            {
-                "so_number": hold["so_number"],
-                "location": codes.get(hold["warehouse_id"]),
-                "required_date": hold["required_date"],
-                "qty": qty_text(hold["qty"]),
-            }
+        outside_holds = [
+            hold
             for hold in (
                 self.supply.holds_at_locations([product_id], target_ids) if group else []
             )
             if hold["line_warehouse_id"] not in codes
+        ]
+        # OI-UX-FILTER-SNAPSHOT: a hold names its order's customer and project.
+        hold_parties = so_parties(self.db, numbers=[h["so_number"] for h in outside_holds])
+        holds = [
+            with_party(
+                {
+                    "so_number": hold["so_number"],
+                    "location": codes.get(hold["warehouse_id"]),
+                    "required_date": hold["required_date"],
+                    "qty": qty_text(hold["qty"]),
+                },
+                hold_parties,
+                hold["so_number"],
+            )
+            for hold in outside_holds
         ]
         holds.sort(
             key=lambda hold: (
@@ -1482,13 +1493,14 @@ class FulfilmentBoardService:
             else None
         )
 
+        parties = so_parties(self.db, ids=[row.get("sales_order_id") for row in book])
         lines: List[Dict[str, Any]] = []
         running = _ZERO
         for position, row in enumerate(book, start=1):
             running += _dec(row["open_qty"])
             raw = priority.raw_facts_for_demand_row(row)
             lines.append(
-                {
+                with_party({
                     "position": position,
                     "line_id": row["line_id"],
                     "sales_order_id": row.get("sales_order_id"),
@@ -1521,7 +1533,7 @@ class FulfilmentBoardService:
                     "cumulative_ahead_qty": qty_text(running),
                     "is_this_line": asked is not None and row["line_id"] == asked["line_id"],
                     "is_covered_excluded": False,
-                }
+                }, parties, row.get("sales_order_id"))
             )
 
         return {

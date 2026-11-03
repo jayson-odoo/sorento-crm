@@ -83,6 +83,7 @@ from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
+from app.services.scm.so_party import so_parties, with_party
 from app.utils.multi_value import multi_text, multi_values
 from app.services.product_companion_service import (
     bundled_with_item_codes_map,
@@ -2025,6 +2026,15 @@ class OrderInquiryWorklistService:
         candidates_by_product = self._repoint_candidates_by_product(
             {product_id for _row_id, _link, product_id in triggered}
         )
+        # OI-UX-FILTER-SNAPSHOT: each suggested order names its customer and project.
+        candidate_parties = so_parties(
+            self.db,
+            numbers=[
+                candidate["so_number"]
+                for candidates in candidates_by_product.values()
+                for candidate in candidates
+            ],
+        )
         for row_id, link, product_id in triggered:
             own_so_line = so_line_by_row.get(row_id)
             delivery_date = delivery_by_row.get(row_id)
@@ -2040,13 +2050,13 @@ class OrderInquiryWorklistService:
                 link["suggestion"] = {
                     "kind": "reallocate",
                     "candidates": [
-                        {
+                        with_party({
                             "inquiry_no": candidate["inquiry_no"],
                             "item_code": candidate["item_code"],
                             "so_number": candidate["so_number"],
                             "delivery_date": candidate["delivery_date"].isoformat(),
                             "open_qty": _qty_str(candidate["open_qty"]),
-                        }
+                        }, candidate_parties, candidate["so_number"])
                         for candidate in eligible
                     ],
                 }
@@ -2803,6 +2813,7 @@ class OrderInquiryWorklistService:
         book_so_by_ref = order_link_service.book_so_numbers_by_ref(
             self.db, [ref for ref in shown_ref.values() if ref]
         )
+        book_so_parties = so_parties(self.db, numbers=book_so_by_ref.values())
         # Issue #1215 point 2: which LINE an order inquiry's placement sits on, not only
         # which document - a PO with two lines of the same item made the "Allocated to"
         # panel's Item column ambiguous. Summed here (never per-row in the loop below) so
@@ -2855,7 +2866,7 @@ class OrderInquiryWorklistService:
                     # (`order_link_service.book_so_fields`, review of PR #764, F5) rather
                     # than a second copy of the derivation.
                     **order_link_service.book_so_fields(
-                        shown_ref[str(line_id)], book_so_by_ref
+                        shown_ref[str(line_id)], book_so_by_ref, book_so_parties
                     ),
                     "spo_numbers": spo_numbers_by_line.get(str(line_id), []),
                     "spos": spos_by_line.get(str(line_id), []),
