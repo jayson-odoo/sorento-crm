@@ -27,14 +27,27 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
   const statusKey = document.approval_status_key ?? null;
   const withManager = isWithManager(document);
   const belowFloor = document.below_floor_line_count ?? 0;
+  // PS-PROPOSAL-QUOTATION: a quotation line below the proposal it came from (a further discount).
+  const belowProposal = document.below_proposal_count ?? 0;
   const blocked = isBlockedByApproval(document);
 
-  if (belowFloor === 0) return null;
+  if (belowFloor === 0 && belowProposal === 0) return null;
 
-  const priced =
-    belowFloor === 1
-      ? 'One line is priced below minimum price'
-      : `${belowFloor} lines are priced below minimum price`;
+  const priced = [
+    belowFloor === 0
+      ? null
+      : belowFloor === 1
+        ? 'One line is priced below minimum price'
+        : `${belowFloor} lines are priced below minimum price`,
+    belowProposal === 0
+      ? null
+      : belowProposal === 1
+        ? 'one line is priced below the proposal'
+        : `${belowProposal} lines are priced below the proposal`,
+  ]
+    .filter(Boolean)
+    .join(' and ')
+    .replace(/^o/, 'O');
 
   const tone = blocked
     ? 'border-amber-500/40 bg-amber-500/5'
@@ -57,7 +70,9 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
           {statusKey === 'rejected' && (
             <>
               <BlockLine>
-                A manager sent this back. Re-price the lines below the minimum price, then ask again.
+                {belowProposal === 0
+                  ? 'A manager sent this back. Re-price the lines below the minimum price, then ask again.'
+                  : 'A manager sent this back. Re-price the flagged lines, then ask again.'}
               </BlockLine>
               {document.approval_rejected_reason && (
                 <p className="min-w-0 break-words text-sm text-muted-foreground">

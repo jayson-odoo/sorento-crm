@@ -143,7 +143,7 @@ def sync_lookup_words(db: Session, *, model: str | None = None, embed: bool = Tr
     scope = get_company_scope(db)
     set_company_scope(db, None)
     try:
-        rows = ll.load_rows(db, include_salespeople=True, include_customers=True, customer_ids=None)
+        rows = ll.load_rows(db, include_salespeople=True, include_customers=True, customer_ids=None, include_suppliers=True)
         # LOOKUP-WARM-STORM: the spec-name rows are warmed with the lookup rows (`engine.start_lookup_warm`), so they
         # are stored too; without a document of theirs every fresh worker sent their ~279 texts to the provider.
         rows.extend(list_resolver.spec_key_rows(active_registry(db)))

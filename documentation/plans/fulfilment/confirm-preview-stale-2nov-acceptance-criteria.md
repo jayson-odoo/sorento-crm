@@ -1,5 +1,9 @@
 # UAC: CONFIRM-PREVIEW-STALE
 
+> Superseded in part (3 Nov 2026): the "AutoCount moved this line" warning with Keep / Take
+> suggestion is removed by `PLAN-no-ac-moved-warning-3nov.md` (owner: a saved decision stands
+> silently). Do not restore it.
+
 Plan: `PLAN-confirm-preview-stale-2nov.md`. Owner rulings: popup = email = Excel; one bad line
 never refuses an order.
 

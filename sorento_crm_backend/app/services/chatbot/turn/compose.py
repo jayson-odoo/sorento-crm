@@ -359,7 +359,7 @@ def _with_quantities(codes: list[Any], state: State) -> list[Any]:
     return out
 
 
-def _header_subjects(entities: list[Any]) -> list[str]:
+def _header_subjects(entities: list[Any], whole: Any = ()) -> list[str]:
     """Every subject the answer is FOR, each named once.
 
     Owner ruling, hand pass 3 row 2 (turn 463413b0): "All" over a customer roster fetched
@@ -370,20 +370,41 @@ def _header_subjects(entities: list[Any]) -> list[str]:
     name rather than any one ledger's.
 
     A code with no family (every product code) keys on itself, so the only thing this
-    collapses there is a genuine repeat.
+    collapses there is a genuine repeat. A subject in `whole` (the envelope's `supplier_subjects`, SUPPLIER-ASK fix
+    round 3) is not a customer: it keys on itself and prints as it is, code included.
     """
+    kept = {str(w).strip() for w in (whole or ()) if str(w).strip()}
     out: list[str] = []
     seen: set[str] = set()
     for value in entities:
         text = str(value).strip()
         if not text:
             continue
-        key = ledger_family_key(text) or text.casefold()
+        key = ("\x00" + text.casefold()) if text in kept else (ledger_family_key(text) or text.casefold())
         if key in seen:
             continue
         seen.add(key)
-        out.append(ledger_family_label(text))
+        out.append(text if text in kept else ledger_family_label(text))
     return out
+
+
+def _section_subjects(env: dict[str, Any], state: State) -> list[Any]:
+    """A section header's subjects: the envelope's entities named once each, a supplier whole with its code
+    (`supplier_subjects`), a product with its quantity."""
+    return _with_quantities(_header_subjects(env.get("entities") or [], env.get("supplier_subjects")), state)
+
+
+def _header_codes(subjects: list[Any], env: dict[str, Any]) -> str:
+    """What a section header says the answer is for: every subject by name up to `HEADER_SUBJECT_MAX`, else a count.
+    SUPPLIER-ASK fix round 4 (owner, "未找到 7 items 的 PO"): a counted header still names each supplier (whole, with
+    its code) and counts only the rest, so the reply always names whose purchase orders it lists."""
+    if len(subjects) <= HEADER_SUBJECT_MAX:
+        return ", ".join(str(s) for s in subjects)
+    whole = {str(s).strip() for s in (env.get("supplier_subjects") or [])}
+    named = [str(s) for s in subjects if str(s).strip() in whole]
+    rest = len(subjects) - len(named)
+    word = "products" if env.get("domain") in _PRODUCT_DOMAINS else "items"
+    return ", ".join([*([f"{rest} {word}"] if rest else []), *named])
 
 
 #: The most subjects a section header names one by one; past it the header counts them.
@@ -666,14 +687,10 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         # The domain label is policy wording, not a value: it reads in the reply's language
         # wherever a composer sentence below prints it.
         shown_label = localizer.sentence(label) if isinstance(label, str) else label
-        subjects = _with_quantities(_header_subjects(entities), state)
+        subjects = _section_subjects(env, state)
         # W6 (owner hand test round 2, turn 1): a long subject list is counted, never
         # dumped as one line of codes ("*stock* for BRBC22102W, BRBC22108W-1A, ...").
-        codes = (
-            ", ".join(subjects)
-            if len(subjects) <= HEADER_SUBJECT_MAX
-            else f"{len(subjects)} {'products' if env.get('domain') in _PRODUCT_DOMAINS else 'items'}"
-        )
+        codes = _header_codes(subjects, env)
         # A counted-set answer (AC-1316, "10 taps have certificates.") carries its OWN
         # header, computed off the qualifying total and the class word rather than the
         # domain label - it wins over the generic

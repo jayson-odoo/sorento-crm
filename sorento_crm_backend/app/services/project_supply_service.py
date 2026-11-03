@@ -642,6 +642,12 @@ def _preview_move_facts(move: Any) -> Tuple[Any, ...]:
     )
 
 
+#: A dry run that waited past its lock timeout behind another save of the same order.
+PREVIEW_LOCK_BUSY_MESSAGE = (
+    "Another change to this order is being saved right now. Try again in a moment."
+)
+
+
 def _error_detail(exc: Exception) -> Tuple[str, Optional[List[Dict[str, Any]]]]:
     """What went wrong, and which lines it named, off any exception `confirm` can raise.
 
@@ -11916,12 +11922,24 @@ class ProjectSupplyService:
 
     # --------------------------------------------------- confirm all approved (D3)
 
+    def _bound_preview_locks(self) -> None:
+        """CONFIRM-REMARK-FIX: a Confirm dry run (`confirm_many(preview=True)`) must not sit
+        on a lock behind a real save, the same bound Simulate takes (`SIMULATE_LOCK_TIMEOUT`).
+        SET LOCAL: the transaction's end restores the session's value, so it is set again after
+        any rollback inside the dry run. A real press and Simulate (its own session) never
+        come here."""
+        from app.services.confirm_simulation import SIMULATE_LOCK_TIMEOUT
+
+        self.db.execute(text(f"SET LOCAL lock_timeout = '{SIMULATE_LOCK_TIMEOUT}'"))
+
     def _write_holding_back(
         self,
         order: ProjectSalesOrder,
         entry: Any,
         write: Callable[[ProjectSalesOrder, Any], Dict[str, Any]],
         hold_back: bool,
+        *,
+        preview: bool = False,
     ) -> Tuple[Dict[str, Any], Any, List[Dict[str, Any]]]:
         """#1362 (owner, 29 Sep 2026: "i think we are too restrictive already"): one line's
         stale or conflicting decision must not refuse the whole order.
@@ -11956,6 +11974,10 @@ class ProjectSupplyService:
                 ):
                     raise
                 self.db.rollback()
+                # The rollback ended the transaction and its SET LOCAL with it: a dry run's
+                # retry is bounded again (review N1).
+                if preview:
+                    self._bound_preview_locks()
                 held.extend(
                     {k: v for k, v in f.items() if k != "project_line_id"} for f in failing
                 )
@@ -12041,6 +12063,8 @@ class ProjectSupplyService:
             if preview:
                 self.db.info["confirm_preview"] = True
             try:
+                if preview:
+                    self._bound_preview_locks()
                 order = self.get_order(pso_id)
                 assert_can_act(self.db, order)
                 only = getattr(entry, "only_line_ids", None)
@@ -12074,7 +12098,7 @@ class ProjectSupplyService:
 
                 queued_before = len(self.db.info.get(_HANDOVER_PENDING_KEY) or [])
                 body, entry, held_back = self._write_holding_back(
-                    order, entry, write, can_hold_back(entry)
+                    order, entry, write, can_hold_back(entry), preview=preview
                 )
                 # CONFIRM-PREVIEW-STALE (crew final pass, 2 Nov 2026; owner rule "popup =
                 # email = Excel"): a dry run answers the purchasing email's OWN lines for this
@@ -12139,6 +12163,11 @@ class ProjectSupplyService:
             except Exception as exc:  # noqa: BLE001 - every order must get an answer
                 self.db.rollback()
                 message, failing_lines = _error_detail(exc)
+                if preview:
+                    from app.services.confirm_simulation import is_lock_busy
+
+                    if is_lock_busy(exc):
+                        message = PREVIEW_LOCK_BUSY_MESSAGE
                 if raw_errors:
                     from app.services.confirm_simulation import error_text
 

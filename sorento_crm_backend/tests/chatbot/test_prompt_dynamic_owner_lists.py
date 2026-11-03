@@ -86,8 +86,9 @@ def test_with_the_seeds_the_owner_file_swaps_these_lists_and_still_renders_byte_
     source = SNAPSHOT.read_text(encoding="utf-8")
     with pg_session() as db:
         _seeded(db)
-        # The 1 Oct file's entity-kind block predates the five REF-PROBES kinds (#1569).
-        db.execute(text("DELETE FROM chatbot_entity_kinds WHERE kind = ANY(:k)"), {"k": REFERENCE_KINDS})
+        # The 1 Oct file's entity-kind block predates the five REF-PROBES kinds (#1569) and the
+        # SUPPLIER-ASK `supplier` kind.
+        db.execute(text("DELETE FROM chatbot_entity_kinds WHERE kind = ANY(:k)"), {"k": [*REFERENCE_KINDS, "supplier"]})
         pv.clear_cache()
         # The statuses bullets match only when the rows carry the owner's words (the
         # sandbox may hold a hand-test word on a sales row, which is untagged anyway).
