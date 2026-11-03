@@ -839,3 +839,28 @@ describe('layers as the PDF reads them', () => {
     expect(lastDocLayers[0]).toMatchObject({ id: 'logo', visible: true, locked: false, rotation_deg: 0, z_index: 0 });
   });
 });
+
+describe('a page that does not move under the pointer', () => {
+  it('keeps a one-line page header whether or not the page actions show', async () => {
+    renderReader();
+    const page = await screen.findByTestId('spec-page-k29');
+    const wrap = page.closest('[data-page-wrap]') as HTMLElement;
+    const header = () => wrap.querySelector('[data-testid^="spec-sheet-bar-"]')!.parentElement as HTMLElement;
+    // Hovering shows the page actions; if they could wrap the header, the page would slide
+    // down under the pointer between the move and the press and the click would miss.
+    expect(header().className).not.toContain('flex-wrap');
+    expect(header().className).toContain('h-8');
+    fireEvent.mouseEnter(wrap);
+    const actions = await screen.findByTestId('spec-sheet-leave-out-k29');
+    expect(header().className).not.toContain('flex-wrap');
+    expect(header().className).toContain('h-8');
+    expect(actions.parentElement!.className).toContain('absolute');
+    fireEvent.mouseLeave(wrap);
+  });
+
+  it('holds the format bar room in the toolbar when no text layer is picked', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(screen.getByTestId('spec-sheet-format-slot').className).toContain('invisible');
+  });
+});

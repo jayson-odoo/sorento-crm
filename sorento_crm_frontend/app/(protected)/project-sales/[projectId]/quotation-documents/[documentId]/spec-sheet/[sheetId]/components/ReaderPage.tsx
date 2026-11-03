@@ -351,7 +351,11 @@ export const ReaderPage = React.memo(function ReaderPage({
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
-      <div className="flex min-h-8 min-w-0 flex-wrap items-center justify-between gap-2">
+      <div
+        // A fixed one-line header: the page actions float over its right end, so hovering or
+        // selecting a page never re-wraps the header and slides the page out from under the pointer.
+        className="relative flex h-8 min-w-0 items-center justify-between gap-2"
+      >
         <span
           className="flex min-w-0 items-center gap-1 text-sm"
           data-testid={`spec-sheet-bar-${page.key}`}
@@ -373,7 +377,7 @@ export const ReaderPage = React.memo(function ReaderPage({
           )}
         </span>
         {showActions && (
-          <span className="flex flex-wrap items-center gap-2">
+          <span className="absolute inset-y-0 end-0 flex items-center gap-2 bg-background ps-2">
             {page.edited && (
               <ResetPageButton
                 documentId={documentId}
