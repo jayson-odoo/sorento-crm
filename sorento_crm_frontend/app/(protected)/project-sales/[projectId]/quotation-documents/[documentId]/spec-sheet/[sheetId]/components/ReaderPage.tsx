@@ -17,6 +17,7 @@ import type {
   TagBindingData,
   TagLayer,
 } from '@/lib/dealer-kit/tag-template-types';
+import { normalizeLayers } from '@/lib/dealer-kit/tag-template-types';
 import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 
@@ -228,7 +229,13 @@ export const ReaderPage = React.memo(function ReaderPage({
 
   const drawn = !page.hidden && payload !== null && sheetIndex !== undefined;
   const tag = drawn ? payload.doc?.sheets[sheetIndex]?.tags[0] : undefined;
-  const baseLayers = tag?.layers;
+  // Read the way the PDF reads them (a layer with no `visible` key is shown), once per payload so
+  // the identity the host compares echoes against stays stable.
+  const rawLayers = tag?.layers;
+  const baseLayers = React.useMemo(
+    () => (rawLayers ? normalizeLayers(rawLayers) : undefined),
+    [rawLayers],
+  );
   const layersNow = draftLayers ?? baseLayers;
   const spots =
     canEdit && layersNow && !isCover

@@ -216,6 +216,7 @@ vi.mock(
   () => ({
     TagCanvasEditor: function FakeEditor(props: FakeProps) {
       const key = props.docId.split(':').slice(1).join(':');
+      lastDocLayers = props.doc.layers as unknown as Record<string, unknown>[];
       // The canvas owns its layers, adopts the host's when they differ, and reports every change.
       const [layers, setLayers] = React.useState(props.doc.layers);
       const latest = React.useRef(layers);
