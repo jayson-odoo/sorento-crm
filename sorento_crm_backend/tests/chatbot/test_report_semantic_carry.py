@@ -1450,3 +1450,18 @@ def test_r5_2c_guard_separately_typed_codes_stay_codes_on_the_held_line(rbot, wo
     seen = _copy_held(rbot, follow, date_from="2025-01-01", date_to="2025-12-31")
     rbot.say(follow, "and 2025")
     assert sorted(seen.get("sales_agents") or []) == sorted(typed), f"R5-2c guard: the Held line shows {seen.get('sales_agents')}, want the codes {typed}"
+
+
+def test_r5_1b_the_asked_word_carries_when_the_answer_names_no_word_of_its_own(rbot, world) -> None:
+    """Gold sc-03 shape: "Cabana: brand or account type?" is open; the reply "account type" declares the pick and the
+    object holds no brand, account type or brand_or_account_type word. The asked word carries: CABANA runs."""
+    sorento, _mocha = world
+    _kind_question_for_cabana(rbot, sorento)
+    reply = _v(
+        "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], **Y),
+        entity_op="reuse", continuation=True, open_question_answer=_pick_of(2), **YR,
+    )
+    text, calls = rbot.say(reply, "account type")
+    ran = _ran(calls)
+    assert ran, f"R5-1b: the answer did not run: {text!r}"
+    assert ran[0].get("account_types") == ["CABANA"], f"R5-1b: want account type CABANA, got {ran[0].get('account_types')}"
