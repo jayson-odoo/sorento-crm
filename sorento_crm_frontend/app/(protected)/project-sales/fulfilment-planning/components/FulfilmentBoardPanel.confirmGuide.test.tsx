@@ -2903,3 +2903,55 @@ describe('CONFIRM-DIALOG-SPEED: the Review split never waits on the email dry ru
     await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
   });
 });
+
+/*
+ * CONFIRM-DIALOG-SPEED PR 2 (crew pass on #2128, owner rule "email = preview"): two gaps that
+ * were there before #2128. A page whose dry run refuses the order printed the board's words as
+ * if they were the email's, with Confirm on; and an email line on a line the press does not
+ * cover (SO373923: CKSW015 "ORDER BACK MWH-BB") had no row on the Review split.
+ */
+describe('CONFIRM-DIALOG-SPEED PR 2: the preview shows what the email does, or why it cannot', () => {
+  function boardWithTwoLines() {
+    return mapContributions(boardOf([SO1_L2, SO1_L3]), (entry) =>
+      entry.project_line_id === 'pl-1-3'
+        ? {
+            ...entry,
+            saved_remark: 'BOARDWORDS',
+            draft: { decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-11-02T01:00:00Z' },
+          }
+        : entry,
+    );
+  }
+
+  it('a page whose dry run refuses the order shows the refusal, no board words, and Confirm is held', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    dryRunAnswers({ 'pso-so-1': { error: 'BRW now has 1 free for this line, and 30 was asked for' } });
+    await mountWith(boardWithTwoLines(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const refused = await within(page).findByTestId('confirm-guide-dry-run-refused');
+    expect(refused).toHaveTextContent('BRW now has 1 free for this line, and 30 was asked for');
+    expect(page).not.toHaveTextContent('BOARDWORDS');
+    await clickNext();
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(confirm).toBeDisabled();
+  });
+
+  it('every email line appears on the Review split, a line the press does not cover included', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    dryRunAnswers({
+      'pso-so-1': {
+        email: [
+          { so_line_id: 'pl-1-3', item_code: 'ZZT-ITEM-1C', qty: '10', delivery_date: '20/09/2026', remark: 'ORDER 10' },
+          { so_line_id: 'pl-1-2', item_code: 'ZZT-ITEM-1B', qty: '5', delivery_date: '20/09/2026', remark: 'ORDER BACK MWH-BB' },
+        ],
+      },
+    });
+    await mountWith(boardWithTwoLines(), ['SO000001']);
+    await openConfirmGuide();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await waitFor(() => expect(page).toHaveTextContent('ORDER BACK MWH-BB'));
+    expect(page).toHaveTextContent('ZZT-ITEM-1B');
+  });
+});

@@ -116,6 +116,7 @@ import type {
   BoardDraft,
   BoardGranularity,
   BoardRowAxis,
+  ConfirmEmailLine,
   ConfirmManyBody,
   ConfirmManyOrderResult,
   PreviewInquiryRow,
@@ -2376,6 +2377,38 @@ export function FulfilmentBoardPanel({
     [changeBatchData],
   );
   const guidePages = React.useMemo<ConfirmGuidePage[]>(() => {
+    /**
+     * PR 2 (crew pass on #2128, owner rule "email = preview"): an email line on a line this
+     * press does not cover (SO373923: CKSW015 "ORDER BACK MWH-BB") is still a line of the
+     * email, so it is a read-only row of the page with the email's own words.
+     */
+    const emailOnlyLines = (order: { sales_order_id: string; project_sales_order_id?: string | null }) => {
+      const psoId = order.project_sales_order_id ?? guideAdopted.get(order.sales_order_id) ?? null;
+      const entry = psoId ? guideEmail.get(psoId) : undefined;
+      if (!entry || entry.status !== 'ready' || !entry.lines?.length) return [];
+      const onPage = new Set(
+        (covered.get(order.sales_order_id) ?? []).map((line) => line.project_line_id ?? ''),
+      );
+      return entry.lines.flatMap((email, index) => {
+        if (!email.so_line_id || onPage.has(email.so_line_id)) return [];
+        const board = allContributions.find((line) => line.project_line_id === email.so_line_id);
+        return [
+          {
+            lineId: null,
+            key: `email:${email.so_line_id}:${index}`,
+            lineNo: board ? (board.so_line_no ?? board.line_no) : null,
+            itemCode: email.item_code ?? board?.item_code ?? '',
+            location: board?.fulfilment_location ?? '',
+            qty: Number(email.qty) || 0,
+            date: emailDateIso(email.delivery_date),
+            savedRemark: email.remark,
+            purchasingSilent: false,
+            ownRemark: null,
+            remarkEditable: false,
+          },
+        ];
+      });
+    };
     const covered = confirmLinesByOrder(
       allContributions,
       draftWithoutPreMark,
@@ -2421,7 +2454,7 @@ export function FulfilmentBoardPanel({
               remarkEditable: facts.editable,
               isMockup: Boolean(line.is_mockup),
             };
-          }),
+          }).concat(emailOnlyLines(order)),
         },
       ];
     });
@@ -2559,15 +2592,30 @@ export function FulfilmentBoardPanel({
     void (async () => {
       try {
         let words: ReadonlyMap<string, string> | null = null;
+        let lines: readonly ConfirmEmailLine[] = [];
         if (body) {
           const dry = await previewConfirmManyRef.current.mutateAsync({
             ...body,
             signal: abort.signal,
           });
           const entry = dry.results.find((result) => result.pso_id === psoId);
-          if (entry?.ok && entry.email_lines) words = emailWordsByLine(entry.email_lines);
+          if (entry && !entry.ok) {
+            // PR 2 (crew pass, owner rule "email = preview"): the press would refuse this
+            // order (stock moved since the decision). Say so; never the board's words.
+            settle({
+              key,
+              status: 'refused',
+              words: null,
+              error: entry.error || 'This order cannot be confirmed as saved.',
+            });
+            return;
+          }
+          if (entry?.ok && entry.email_lines) {
+            words = emailWordsByLine(entry.email_lines);
+            lines = entry.email_lines;
+          }
         }
-        settle({ key, status: 'ready', words });
+        settle({ key, status: 'ready', words, lines });
       } catch {
         // Replaced (its page's key moved) or the guide closed: not a failed read.
         if (!abort.signal.aborted) settle({ key, status: 'failed', words: null });
@@ -2663,6 +2711,16 @@ export function FulfilmentBoardPanel({
           return !entry || entry.status === 'loading';
         }),
       ) as ReadonlySet<string>,
+    [guidePsoIds, guideEmail],
+  );
+  const guideEmailRefusals = React.useMemo(
+    () =>
+      new Map(
+        guidePsoIds.flatMap((psoId) => {
+          const entry = guideEmail.get(psoId);
+          return entry?.status === 'refused' ? [[psoId, entry.error ?? ''] as const] : [];
+        }),
+      ) as ReadonlyMap<string, string>,
     [guidePsoIds, guideEmail],
   );
   const guideEmailFailed = React.useMemo(
@@ -4120,6 +4178,7 @@ export function FulfilmentBoardPanel({
           refreshing={guideRefreshing}
           wordsLoading={guideEmailPending.size > 0}
           wordsPendingPsoIds={guideEmailPending}
+          refusedByPso={guideEmailRefusals}
           refreshFailed={guideRefreshFailed}
           onRetryRefresh={refreshGuide}
           // Review B2: a failed email preview never takes the sheet away; it holds Confirm.
@@ -4152,8 +4211,18 @@ export function FulfilmentBoardPanel({
 /** CONFIRM-DIALOG-SPEED: one guide page's email words, and the dry-run key they were read for. */
 interface GuideEmailEntry {
   key: string;
-  status: 'loading' | 'ready' | 'failed';
+  /** `refused`: the dry run answered that the order cannot be confirmed (`error` says why). */
+  status: 'loading' | 'ready' | 'failed' | 'refused';
   words: ReadonlyMap<string, string> | null;
+  /** The email's own lines (PR 2: every one of them is on the page). */
+  lines?: readonly ConfirmEmailLine[];
+  error?: string | null;
+}
+
+/** `DD/MM/YYYY` (the email's date) as `YYYY-MM-DD` (the sheet's); anything else as is. */
+function emailDateIso(value: string | null | undefined): string | null {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec((value ?? '').trim());
+  return match ? `${match[3]}-${match[2]}-${match[1]}` : value || null;
 }
 
 const UNPOSTABLE_REASONS: UnpostableReason[] = ['no_mirror', 'no_reserve_warehouse'];
