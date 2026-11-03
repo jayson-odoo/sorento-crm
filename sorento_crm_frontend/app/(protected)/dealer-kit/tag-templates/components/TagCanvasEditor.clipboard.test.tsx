@@ -16,7 +16,7 @@
  * which offset a paste gets depending on whether `docId` matches.
  */
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -112,8 +112,21 @@ function cut() {
   fireEvent.keyDown(window, { key: 'x', ctrlKey: true });
 }
 
+/**
+ * Ctrl+V as a browser delivers it: the keydown (no longer cancelled, so the
+ * browser goes on) and then the `paste` event that carries the system
+ * clipboard (DESIGNER-PASTE). An empty system clipboard falls back to the
+ * editor's own copied layers.
+ */
 function paste() {
   fireEvent.keyDown(window, { key: 'v', ctrlKey: true });
+  const event = new Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', {
+    value: { types: [], getData: () => '', files: [] },
+  });
+  act(() => {
+    window.dispatchEvent(event);
+  });
 }
 
 afterEach(() => {
