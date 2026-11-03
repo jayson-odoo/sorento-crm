@@ -208,6 +208,23 @@ Review rounds 7b / 7c (3 Nov):
 - Known limits: whether v71 / v72 ever emit `broaden_axis` "company" is unverified (the console runs check v72);
   flag off, "sales 2026" after "dealer sales may 2026" (no subject named) keeps the dealer channel.
 
+Rounds 7d / 7e (3 Nov, lead console pass at 32f6798a51 on the copy + crew rulings):
+- Console: steps 1-14 3/3 (round-6 failures fixed), R3 carry holds, "<customer> only" narrows with no menu. Found a
+  wrong figure: a customer whose order debtor name equals the typed / model-written name settles on that ONE ledger
+  (turn/narrow.py:393-408 `typed_exact_settles`) although the office's explicit `customer_group_id` joins several.
+  Rule (report lane, both paths, one seam after `route_args`): every customer id the report sends widens to all
+  ledgers of its explicit group in the same company; a dealer keeps only its linked ledgers. A held group is shown on
+  the Held line by the group's name and maps back to exactly its ids.
+- Crew ruling (a), owner R3: while the which-one customer pick of an asked report is open, a reply that names no
+  subject or domain, resets nothing and picks nothing keeps its slot values on the question and re-asks it, every
+  time (7e), never runs without the customer.
+- Crew ruling (b): the chatbot gate's own group lookup never finds a grouped ledger (gate.py:375-377 strips the
+  [A/C ..] suffix before `customer_group_of`, ledger_family.py:112 matches full names), so which-one lists group by
+  the name rule. Separate lane from main; untouched here.
+- Crew ruling R4 (a): customers are joined only by explicit links (customer_group_id); never by parsing names here.
+- Known limits: a held group switched to the other company is looked up there by the group's name (resolves or asks,
+  never a wrong figure); the per-company split cannot show on the copy (no 2026 Mocha invoices), tests carry it.
+
 Round-6 turns (copy DB, parser v72): 17023f41 agent change dropped CERAMIC (entities: the agent only); f26a5645
 "invoiced" dropped CERAMIC and swapped month for sales agent (no entities); 23d6cb50 "for ceramic account type" set
 `group_by` account_type over a CERAMIC filter ("Top 1 account type"); 35e6909a fixed at 4a5babb25b (the asked word

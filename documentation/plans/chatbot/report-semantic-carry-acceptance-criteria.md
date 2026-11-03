@@ -101,3 +101,9 @@ The fake parser returns the object the owner expects at each turn; the assertion
 ## F. PR B (after the label moves)
 
 - SC-17 The carry functions listed in the plan's Deletion section are gone; SC-6, SC-8 to SC-14 still pass.
+- SC-23 (console finding 3 Nov, crew R4 (a)) A customer the report names runs every ledger of its explicit
+  customer_group in the same company (never one ledger of a group); a dealer runs only its linked ledgers; a held
+  group carries whole, also when the model re-writes its name.
+- SC-24 (crew ruling (a), owner R3) While the which-one customer pick is open, every reply that answers another
+  slot keeps that slot and asks the which-one again; it never runs without the customer. A reply naming another
+  customer or a topic reset closes it.
