@@ -435,6 +435,10 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     renderReader();
 
     expect(await screen.findByText('The page template of this spec sheet was deleted.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Someone who can edit this quotation can pick new templates.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Pick new templates to show and export it.')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Pick templates' })).toBeNull();
   });
 });

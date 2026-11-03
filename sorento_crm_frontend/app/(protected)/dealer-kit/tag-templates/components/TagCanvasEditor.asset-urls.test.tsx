@@ -64,7 +64,13 @@ vi.mock('@/lib/dealer-kit/fonts', () => ({
 const ORIGINAL = 'https://cdn.test/library/logo-original-7mb.png';
 vi.mock('../../services/assetService', () => ({
   listAssets: vi.fn(async () => [
-    { id: 'asset-logo', name: 'Logo', kind: 'logo', url: 'https://cdn.test/library/logo-original-7mb.png' },
+    {
+      id: 'asset-logo',
+      name: 'Logo',
+      kind: 'logo',
+      url: 'https://cdn.test/library/logo-original-7mb.png',
+      thumb_url: 'https://cdn.test/library/logo.thumb.jpg',
+    },
   ]),
   listFontAssets: vi.fn(async () => []),
 }));
@@ -159,6 +165,18 @@ describe('TagCanvasEditor host-supplied asset urls', () => {
     );
     // Give the library list time to land; the layer must still not switch to the original.
     await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByTestId('layer-logo-layer')).not.toHaveAttribute('data-image', ORIGINAL);
+  });
+
+  it('in host mode an asset the host did not list draws the library thumbnail, never the original', async () => {
+    render(<TagCanvasEditor doc={doc} onChange={vi.fn()} assetUrls={{ 'some-other-asset': 'x' }} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('layer-logo-layer')).toHaveAttribute(
+        'data-image',
+        'https://cdn.test/library/logo.thumb.jpg',
+      ),
+    );
     expect(screen.getByTestId('layer-logo-layer')).not.toHaveAttribute('data-image', ORIGINAL);
   });
 

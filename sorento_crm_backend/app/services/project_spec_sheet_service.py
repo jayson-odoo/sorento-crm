@@ -105,6 +105,8 @@ PAGE_MM_MIN = 10.0
 PAGE_MM_MAX = 1500.0
 
 NO_LINES_REASON = "Add a line to the quotation first."
+#: The page size (mm) a sheet with no usable template reports; nothing is drawn at it.
+DEFAULT_PAGE_MM = (338.7, 190.5)
 
 
 def _text(value: Any, limit: int) -> str:
@@ -850,16 +852,7 @@ def _asset_urls(db: Session, asset_ids, *, export: bool, manifest: Optional[dict
         if rest:
             out.update(asset_service.urls_for(db, rest))
         return out
-    with_thumb = {a: att for a, att in rows.items() if att.thumbnail_path}
-    thumbs = images.preview_urls(db, [att.id for att in with_thumb.values()], full=False)
-    without = [att.id for a, att in rows.items() if a not in with_thumb]
-    renditions = images.medium_urls(db, without) if without else {}
-    out = {}
-    for asset_id, attachment in rows.items():
-        url = thumbs.get(str(attachment.id)) if asset_id in with_thumb else renditions.get(str(attachment.id))
-        if url:
-            out[asset_id] = url
-    return out
+    return asset_service.screen_urls_for(db, rows.keys())
 
 
 def _export_urls(
@@ -1761,9 +1754,9 @@ def detail_view(
         pinned = {"cover": cover_v, "page": page_v, "single": single_v}
         known = next((v for v in (cover_v, page_v, single_v) if v is not None), None)
         try:
-            width, height = _doc_size("", known.doc) if known is not None else (338.7, 190.5)
+            width, height = _doc_size("", known.doc) if known is not None else DEFAULT_PAGE_MM
         except AppException:
-            width, height = 338.7, 190.5
+            width, height = DEFAULT_PAGE_MM
     else:
         pinned = _pinned(db, sheet)
         width, height = pinned["size"]

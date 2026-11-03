@@ -515,7 +515,9 @@ export function SpecSheetReader({
             } deleted.`}
           </h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            Pick new templates to show and export it.
+            {canEdit
+              ? 'Pick new templates to show and export it.'
+              : 'Someone who can edit this quotation can pick new templates.'}
           </p>
         </div>
       ) : (

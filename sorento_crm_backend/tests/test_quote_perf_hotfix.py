@@ -943,3 +943,53 @@ def test_the_designer_binds_the_open_page_to_medium_pictures_not_thumbnails_or_o
         assert ".medium.jpg" in bound["images"][0]["url"]
         assert ".medium.jpg" in bound["drawing"]["url"]
         assert bound["images"][0]["url"] != photo.file_path and bound["drawing"]["url"] != drawing.file_path
+
+
+def test_the_asset_list_carries_a_thumb_url_that_is_never_the_original(monkeypatch):
+    from app.models.base import company_scope
+    from app.models.dealer_kit import Asset
+    from app.models.resources import Attachment
+    from app.services import product_image_service as images
+    from app.services.storage_router import extract_key
+
+    from .test_project_spec_sheet import _client, _restore
+    from .test_project_spec_sheets_v2 import _asset
+
+    with blank_session() as db:
+        c = _chain(db)
+        plain = _asset(db, c["company_id"])
+        thumbed = _asset(db, c["company_id"])
+        plain_att = db.get(Attachment, db.get(Asset, plain.id).attachment_id)
+        thumbed_att = db.get(Attachment, db.get(Asset, thumbed.id).attachment_id)
+        thumbed_att.thumbnail_path = "https://cdn.zzt.test/library/logo-thumb.jpg"
+        store = _MediumStore({extract_key(plain_att.file_path): _big_jpeg(4000, 3000)})
+        monkeypatch.setattr(images, "get_backend", lambda provider: store)
+        monkeypatch.setattr(
+            images,
+            "resolve_signed_url",
+            lambda source, *, provider=None, expires_in=3600, strict=False: f"https://signed.zzt.test/{source}",
+        )
+        from app.services.dealer_kit import asset_service
+
+        monkeypatch.setattr(
+            asset_service,
+            "resolve_signed_url",
+            lambda source, *, provider=None, expires_in=3600, strict=False: f"https://signed.zzt.test/ORIGINAL/{source}",
+        )
+        images._medium_cache.clear()
+        images._url_cache.clear()
+        db.commit()
+        with company_scope(db, frozenset({c["company_id"]})):
+            client, originals = _client(db, c["owner"], slugs=["dealer_kit.library.manage"])
+            try:
+                got = client.get("/api/v1/dealer-kit/assets", params={"limit": 50})
+            finally:
+                _restore(originals)
+
+        assert got.status_code == 200, got.text
+        rows = {row["id"]: row for row in got.json()}
+        assert rows[plain.id]["url"] == f"https://signed.zzt.test/ORIGINAL/{plain_att.file_path}"  # unchanged
+        assert ".medium.jpg" in rows[plain.id]["thumb_url"]
+        assert rows[thumbed.id]["thumb_url"] == "https://signed.zzt.test/https://cdn.zzt.test/library/logo-thumb.jpg"
+        for row in rows.values():
+            assert row["thumb_url"] != row["url"]

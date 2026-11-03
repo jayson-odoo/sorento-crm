@@ -164,6 +164,8 @@ export function useTagBindings(promotionId?: string | null): TagBindings {
 export interface KitLibrary {
   /** assetId -> signed URL, for image and badge layers. */
   assetUrls: Record<string, string>;
+  /** assetId -> a screen rendition (thumbnail or medium), for a host that must never draw originals. */
+  thumbUrls: Record<string, string>;
   fonts: KitAsset[];
   /** The spec vocabulary the Insert field dialog offers under Specs (D58). */
   specKeys: SpecKeyOption[];
@@ -265,6 +267,14 @@ export function useKitLibrary(): KitLibrary {
     return map;
   }, [assets]);
 
+  const thumbUrls = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const asset of assets) {
+      if (asset.thumb_url) map[asset.id] = asset.thumb_url;
+    }
+    return map;
+  }, [assets]);
+
   const fontOptions = useMemo(() => {
     const brand = fonts.map((font) => ({
       value: font.name,
@@ -275,5 +285,5 @@ export function useKitLibrary(): KitLibrary {
     return [...brand, ...STATIC_FONT_OPTIONS.filter((o) => !known.has(o.value))];
   }, [fonts]);
 
-  return { assetUrls, fonts, specKeys, fontOptions, reload, remember, rename, forget };
+  return { assetUrls, thumbUrls, fonts, specKeys, fontOptions, reload, remember, rename, forget };
 }

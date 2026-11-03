@@ -448,7 +448,8 @@ interface TagCanvasEditorProps {
   /**
    * assetId -> url the HOST wants drawn, over the library's. The library lists every asset with
    * its original; a host that shows one page large (the spec sheet page editor) hands in
-   * renditions so the original is never loaded. Absent: the library's urls, as before.
+   * renditions so the original is never loaded; an asset it did not list (picked this session)
+   * draws the library's thumbnail, never the original. Absent: the library's urls, as before.
    */
   assetUrls?: Record<string, string>;
   /**
@@ -630,9 +631,14 @@ export function TagCanvasEditor({
 
   const bindings = useTagBindings(promotionId);
   const library = useKitLibrary();
+  // With a host (the spec sheet page editor) nothing falls back to a library ORIGINAL: an asset the
+  // host did not list (one picked this session) draws its screen rendition.
   const assetUrls = useMemo(
-    () => (hostAssetUrls ? { ...library.assetUrls, ...hostAssetUrls } : library.assetUrls),
-    [library.assetUrls, hostAssetUrls],
+    () =>
+      hostAssetUrls
+        ? { ...library.thumbUrls, ...hostAssetUrls }
+        : library.assetUrls,
+    [library.assetUrls, library.thumbUrls, hostAssetUrls],
   );
 
   /**
