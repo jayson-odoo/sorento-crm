@@ -77,16 +77,18 @@ def _document(db: Session, project_id: str, document_id: str):
     return qdocs.get_document_or_404(db, project_id, document_id)
 
 
-def _sheet(db: Session, document, sheet_id: str) -> ProjectQuotationSpecSheet:
+def _sheet(db: Session, document, sheet_id: str, *, lock: bool = False) -> ProjectQuotationSpecSheet:
+    """The sheet, 404 when it is not on this document. ``lock`` (every write) holds the row until
+    commit: each write rewrites the whole ``page_edits`` / ``rows`` value, so two saves of different
+    pages read in parallel would otherwise each write back a copy missing the other's page."""
     validate_uuid_path(sheet_id, resource="Spec sheet")
-    sheet = (
-        db.query(ProjectQuotationSpecSheet)
-        .filter(
-            ProjectQuotationSpecSheet.id == sheet_id,
-            ProjectQuotationSpecSheet.document_id == document.id,
-        )
-        .first()
+    query = db.query(ProjectQuotationSpecSheet).filter(
+        ProjectQuotationSpecSheet.id == sheet_id,
+        ProjectQuotationSpecSheet.document_id == document.id,
     )
+    if lock:
+        query = query.with_for_update().populate_existing()
+    sheet = query.first()
     if sheet is None:
         raise AppException(
             status_code=404, message="Spec sheet not found.", code="spec_sheet_not_found"
@@ -177,7 +179,7 @@ def update_spec_sheet(
     try:
         _editable_project(db, project_id, current_user)
         document = _document(db, project_id, document_id)
-        sheet = _sheet(db, document, sheet_id)
+        sheet = _sheet(db, document, sheet_id, lock=True)
         spec.update_sheet(
             db, sheet, payload.model_dump(exclude_unset=True), user_id=str(current_user["id"])
         )
@@ -264,7 +266,7 @@ def save_spec_sheet_page(
     try:
         _editable_project(db, project_id, current_user)
         document = _document(db, project_id, document_id)
-        sheet = _sheet(db, document, sheet_id)
+        sheet = _sheet(db, document, sheet_id, lock=True)
         spec.save_page_edit(db, sheet, page_key, payload.layers, user_id=str(current_user["id"]))
         db.commit()
         db.refresh(sheet)
@@ -287,7 +289,7 @@ def apply_spec_sheet_layer_to_all(
     try:
         _editable_project(db, project_id, current_user)
         document = _document(db, project_id, document_id)
-        sheet = _sheet(db, document, sheet_id)
+        sheet = _sheet(db, document, sheet_id, lock=True)
         spec.apply_to_all_pages(
             db,
             sheet,

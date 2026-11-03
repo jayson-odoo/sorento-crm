@@ -2761,7 +2761,7 @@ register(
 )
 
 
-def assert_spec_sheet_editable(db: Session, sheet_id: str, user_id):
+def assert_spec_sheet_editable(db: Session, sheet_id: str, user_id, *, lock: bool = False):
     """The spec sheet routes' write checks (edit right + write access to the project), run at park
     time and again when the window lapses. 404 when the sheet is gone or not in the caller's
     company, 403 without the right. Returns the sheet."""
@@ -2770,7 +2770,11 @@ def assert_spec_sheet_editable(db: Session, sheet_id: str, user_id):
     from app.services.error_handler import handle_not_found
     from app.services.user_service import UserPermissionService
 
-    sheet = db.query(ProjectQuotationSpecSheet).filter(ProjectQuotationSpecSheet.id == sheet_id).first()
+    query = db.query(ProjectQuotationSpecSheet).filter(ProjectQuotationSpecSheet.id == sheet_id)
+    if lock:
+        # Held until commit so a reset cannot interleave with a page save (both rewrite page_edits).
+        query = query.with_for_update().populate_existing()
+    sheet = query.first()
     document = db.get(ProjectQuotationDocument, sheet.document_id) if sheet is not None else None
     project = db.query(Project).filter(Project.id == document.project_id).first() if document else None
     if sheet is None or project is None:
@@ -2807,7 +2811,9 @@ def _reset_quotation_spec_sheet_page(db: Session, payload: dict):
     assert_spec_sheet_page_resettable(
         db, _entity_id(payload), payload.get("page_key"), payload.get("requested_by_id")
     )
-    sheet = assert_spec_sheet_editable(db, _entity_id(payload), payload.get("requested_by_id"))
+    sheet = assert_spec_sheet_editable(
+        db, _entity_id(payload), payload.get("requested_by_id"), lock=True
+    )
     spec.reset_page_edit(
         db, sheet, str(payload.get("page_key") or ""), user_id=payload.get("requested_by_id")
     )

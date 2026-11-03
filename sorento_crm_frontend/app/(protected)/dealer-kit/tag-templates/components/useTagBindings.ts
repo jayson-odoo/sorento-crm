@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { QueryClient, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
@@ -25,6 +25,7 @@ import type {
   TagBindingData,
 } from '@/lib/dealer-kit/tag-template-types';
 import { bindingKey } from '@/lib/dealer-kit/tag-template-types';
+import { kitLibraryClient, resetKitLibraryCache } from '@/lib/dealer-kit/kit-library-cache';
 import {
   ensureFontsLoaded,
   ensureSeedFontsLoaded,
@@ -188,29 +189,11 @@ export interface KitLibrary {
   forget: (id: string) => void;
 }
 
-/**
- * One client for the designer's library, with no provider to mount: the artwork list, the brand
- * fonts and the spec vocabulary are read ONCE per session however many editors open (the spec sheet
- * reader mounts a live canvas per visible page, and each used to read all three again, signing up
- * to 200 originals every time). `reload` and the upload / rename / delete helpers write to this
- * cache, so every open editor sees the change.
- */
-const libraryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: Infinity,
-      gcTime: Infinity,
-      retry: false,
-    },
-  },
-});
+const libraryClient = kitLibraryClient;
 const ASSETS_KEY = ['dealer-kit', 'library', 'assets'] as const;
 const FONTS_KEY = ['dealer-kit', 'library', 'fonts'] as const;
 const SPEC_KEYS_KEY = ['dealer-kit', 'library', 'spec-keys'] as const;
-/** Forget what was read (a test, or a company switch): the next open reads the library again. */
-export function resetKitLibraryCache(): void {
-  libraryClient.clear();
-}
+export { resetKitLibraryCache };
 const NO_ASSETS: KitAsset[] = [];
 const NO_SPEC_KEYS: SpecKeyOption[] = [];
 

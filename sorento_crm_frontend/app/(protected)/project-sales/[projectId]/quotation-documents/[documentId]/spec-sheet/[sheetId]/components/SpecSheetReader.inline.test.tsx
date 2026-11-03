@@ -190,6 +190,12 @@ vi.mock(
         >
           move logo
         </button>
+        <button
+          type="button"
+          onClick={() => layer && onUpdate(layer.id, { y_mm: 40 })}
+        >
+          lower logo
+        </button>
       </div>
     ),
   }),
@@ -608,6 +614,72 @@ describe('apply to every page', () => {
     });
 
     expect(applySpecSheetLayerToAll).not.toHaveBeenCalled();
+  });
+});
+
+describe('apply to every page: one send per pause, other pages held while it runs', () => {
+  async function selectedEveryPage() {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    await screen.findByTestId('live-canvas-k2');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    await screen.findByTestId('inspector');
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Every page of this sheet/ }),
+    );
+  }
+
+  it('changes made in quick succession go out as ONE apply with all of them', async () => {
+    await selectedEveryPage();
+    fireEvent.click(screen.getByRole('button', { name: 'move logo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'lower logo' }));
+
+    await waitFor(() =>
+      expect(applySpecSheetLayerToAll).toHaveBeenCalledTimes(1),
+    );
+    expect(applySpecSheetLayerToAll.mock.calls[0][4]).toEqual({
+      x_mm: 77,
+      y_mm: 40,
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 700));
+    });
+    expect(applySpecSheetLayerToAll).toHaveBeenCalledTimes(1);
+  });
+
+  it('every other page is read-only until the apply answers, so no edit there is saved over it', async () => {
+    let answer: (v: unknown) => void = () => undefined;
+    applySpecSheetLayerToAll.mockImplementationOnce(
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    await selectedEveryPage();
+    fireEvent.click(screen.getByRole('button', { name: 'move logo' }));
+    await waitFor(() =>
+      expect(applySpecSheetLayerToAll).toHaveBeenCalledTimes(1),
+    );
+
+    expect(screen.getByTestId('live-canvas-k2')).toHaveAttribute(
+      'data-readonly',
+      'yes',
+    );
+    expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute(
+      'data-readonly',
+      'no',
+    );
+
+    await act(async () => {
+      answer(detail());
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('live-canvas-k2')).toHaveAttribute(
+        'data-readonly',
+        'no',
+      ),
+    );
   });
 });
 

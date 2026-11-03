@@ -59,6 +59,9 @@ import { applicableChanges } from './selectionTools';
 import { useSheetEditing } from './useSheetEditing';
 import { COVER, ReaderPage } from './ReaderPage';
 
+/** How long "Every page" waits for the user to pause before it sends what was changed. */
+export const APPLY_ALL_MS = 600;
+
 /** Pages per preview call. The window snaps to these chunks, so a scroll that stays inside one
  *  costs nothing and a scroll back is a cache hit. Well under the server's 12-key limit. */
 const CHUNK_SIZE = 6;
@@ -454,9 +457,14 @@ export function SpecSheetReader({
     : null;
   const targetKey = selection?.pageKey ?? editing.lastKey() ?? null;
 
-  const sendToEveryPage = React.useCallback(
-    (layerId: string, changes: ApplyAllChanges) => {
-      const keep = selection?.pageKey ?? null;
+  // The page an apply started from while it runs: every OTHER page is read-only for that round
+  // trip, since an edit made there now would be saved over the change the server is applying.
+  const [applyingFrom, setApplyingFrom] = React.useState<string | null | false>(
+    false,
+  );
+  const runApplyAll = React.useCallback(
+    (layerId: string, changes: ApplyAllChanges, keep: string | null) => {
+      setApplyingFrom(keep);
       void (async () => {
         // Every page's pending edit goes first, and no save lands in the middle of the apply.
         const release = await editing.settle();
@@ -474,11 +482,53 @@ export function SpecSheetReader({
           // The mutation reports its own error.
         } finally {
           release();
+          setApplyingFrom(false);
         }
       })();
     },
-    [applyAll, sheetId, selection, editing],
+    [applyAll, sheetId, editing],
   );
+  // "Every page" changes are gathered while the user is still typing or clicking (a font size
+  // typed as "24" is one apply, not two) and sent once they pause.
+  const queuedApply = React.useRef<{
+    layerId: string;
+    keep: string | null;
+    changes: ApplyAllChanges;
+    timer: ReturnType<typeof setTimeout>;
+  } | null>(null);
+  // The latest `runApplyAll` (it changes every render), so the flush and its unmount cleanup
+  // stay stable and a gathered change is not sent early by a re-render.
+  const runApplyAllRef = React.useRef(runApplyAll);
+  runApplyAllRef.current = runApplyAll;
+  const flushApply = React.useCallback(() => {
+    const queued = queuedApply.current;
+    if (!queued) return;
+    clearTimeout(queued.timer);
+    queuedApply.current = null;
+    runApplyAllRef.current(queued.layerId, queued.changes, queued.keep);
+  }, []);
+  const sendToEveryPage = React.useCallback(
+    (layerId: string, changes: ApplyAllChanges) => {
+      const keep = selection?.pageKey ?? null;
+      const queued = queuedApply.current;
+      if (queued && (queued.layerId !== layerId || queued.keep !== keep))
+        flushApply();
+      const prev = queuedApply.current?.changes;
+      if (queuedApply.current) clearTimeout(queuedApply.current.timer);
+      const merged: ApplyAllChanges = { ...prev, ...changes };
+      if (prev?.props || changes.props)
+        merged.props = { ...prev?.props, ...changes.props };
+      queuedApply.current = {
+        layerId,
+        keep,
+        changes: merged,
+        timer: setTimeout(flushApply, APPLY_ALL_MS),
+      };
+    },
+    [selection, flushApply],
+  );
+  // Leaving the reader sends what was gathered.
+  React.useEffect(() => () => flushApply(), [flushApply]);
   const changeSelectedProps = (id: string, changes: Partial<TagLayerProps>) => {
     if (!selection) return;
     controllerRefFor(selection.pageKey).current?.updateLayerProps(id, changes);
@@ -807,7 +857,10 @@ export function SpecSheetReader({
                     externalLayers={editing.externalOf(page.key)}
                     current={page.key === activeKey}
                     sharp={page.key === settledKey ? sharpData : null}
-                    canEdit={canEdit}
+                    canEdit={
+                      canEdit &&
+                      (applyingFrom === false || applyingFrom === page.key)
+                    }
                     pages={pages}
                     documentId={documentId}
                     sheetId={sheetId}

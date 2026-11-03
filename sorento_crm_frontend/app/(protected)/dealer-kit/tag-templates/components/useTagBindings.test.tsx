@@ -28,7 +28,12 @@ import {
   getProductSetTagData,
   listSpecKeys,
 } from '../../services/tagDataService';
-import { listFontAssets } from '../../services/assetService';
+import { listAssets, listFontAssets } from '../../services/assetService';
+import {
+  invalidateKitLibrary,
+  kitLibraryClient,
+  KIT_LIBRARY_STALE_MS,
+} from '@/lib/dealer-kit/kit-library-cache';
 import {
   resetTagBindingsToastDedupeForTests,
   resetKitLibraryCache,
@@ -214,6 +219,73 @@ describe('useKitLibrary forget/rename', () => {
     expect(
       result.current.fontOptions.some((o) => o.value === 'Sorento Display'),
     ).toBe(false);
+  });
+});
+
+describe('useKitLibrary across a company switch and signed URL expiry', () => {
+  const mockListAssets = vi.mocked(listAssets);
+
+  beforeEach(() => {
+    resetKitLibraryCache();
+    mockListAssets.mockReset();
+    vi.mocked(listSpecKeys).mockResolvedValue([]);
+  });
+
+  function asset(id: string) {
+    return { id, name: id, kind: 'image', tags: [], url: `https://cdn/${id}`, mime_type: 'image/png' };
+  }
+
+  async function settle() {
+    for (let i = 0; i < 10; i += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+  }
+
+  it('an open editor reads the new company library after the switch invalidates the cache', async () => {
+    mockListAssets.mockResolvedValueOnce([asset('company-a')] as never);
+    mockListAssets.mockResolvedValue([asset('company-b')] as never);
+    const { result } = renderHook(() => useKitLibrary());
+    await settle();
+    expect(Object.keys(result.current.assetUrls)).toEqual(['company-a']);
+
+    await act(async () => {
+      await invalidateKitLibrary();
+    });
+    await settle();
+
+    expect(mockListAssets).toHaveBeenCalledTimes(2);
+    expect(Object.keys(result.current.assetUrls)).toEqual(['company-b']);
+  });
+
+  it('a closed editor reads again on its next open after a switch', async () => {
+    mockListAssets.mockResolvedValue([asset('a')] as never);
+    const first = renderHook(() => useKitLibrary());
+    await settle();
+    first.unmount();
+    await act(async () => {
+      await invalidateKitLibrary();
+    });
+    renderHook(() => useKitLibrary());
+    await settle();
+    expect(mockListAssets).toHaveBeenCalledTimes(2);
+  });
+
+  it('goes stale before the signed URLs expire (3600 s), so a later open signs fresh links', async () => {
+    expect(KIT_LIBRARY_STALE_MS).toBeLessThan(3600 * 1000);
+    mockListAssets.mockResolvedValue([asset('a')] as never);
+    const first = renderHook(() => useKitLibrary());
+    await settle();
+    first.unmount();
+    // Pretend the read happened just past the stale window.
+    const query = kitLibraryClient
+      .getQueryCache()
+      .find({ queryKey: ['dealer-kit', 'library', 'assets'] });
+    query?.setState({ dataUpdatedAt: Date.now() - KIT_LIBRARY_STALE_MS - 1000 });
+    renderHook(() => useKitLibrary());
+    await settle();
+    expect(mockListAssets).toHaveBeenCalledTimes(2);
   });
 });
 

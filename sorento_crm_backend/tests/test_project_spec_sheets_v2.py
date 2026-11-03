@@ -2197,3 +2197,87 @@ def test_r7c_an_item_page_apply_all_leaves_the_cover_alone_and_a_cover_apply_all
             assert bad.status_code == 404
         finally:
             _restore(originals)
+
+
+# ------------------------------------------------------------------ F4 review blocker 2: lost update
+
+
+class _Statements:
+    """Every SQL statement run on the test's connection while the block is open."""
+
+    def __init__(self, db):
+        self.connection = db.connection()
+        self.seen: list = []
+
+    def _hook(self, conn, cursor, statement, parameters, context, executemany):
+        self.seen.append(" ".join(statement.split()).upper())
+
+    def __enter__(self):
+        from sqlalchemy import event
+
+        event.listen(self.connection, "before_cursor_execute", self._hook)
+        return self
+
+    def __exit__(self, *exc):
+        from sqlalchemy import event
+
+        event.remove(self.connection, "before_cursor_execute", self._hook)
+
+    def locked_sheet_reads(self):
+        return [
+            s for s in self.seen
+            if s.startswith("SELECT") and "QUOTATION_SPEC_SHEETS" in s and "FOR UPDATE" in s
+        ]
+
+
+def test_f4_every_sheet_write_locks_the_row_so_two_page_saves_cannot_lose_one():
+    """Each write rewrites the whole page_edits value. Two saves of DIFFERENT pages read in
+    parallel would each write back a copy missing the other's page (READ COMMITTED), so every
+    write route reads the sheet FOR UPDATE and the second save waits and sees the first."""
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c, templates=_logo_templates(db, c))
+        set_key = f"set:{c['set'].id}"
+        client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
+        try:
+            writes = {
+                "save page": lambda: client.put(
+                    _base(c, f"/{sheet.id}/pages/{c['basin'].id}/edit"), json={"layers": [_layer("A")]}
+                ),
+                "apply to every page": lambda: client.post(
+                    _apply_url(c, sheet), json={"changes": {"x_mm": 12}}
+                ),
+                "rows": lambda: client.patch(
+                    _base(c, f"/{sheet.id}"), json={"rows": [{"key": c["basin"].id, "area": "Lobby"}]}
+                ),
+            }
+            for name, call in writes.items():
+                with _Statements(db) as sql:
+                    answer = call()
+                assert answer.status_code == 200, (name, answer.text)
+                assert sql.locked_sheet_reads(), f"{name} read the sheet without FOR UPDATE"
+
+            with _Statements(db) as sql:
+                read = client.get(_base(c, f"/{sheet.id}"))
+            assert read.status_code == 200
+            assert not sql.locked_sheet_reads(), "a read must not lock the sheet"
+
+            # Both pages kept: the basin edit and the set page the apply wrote.
+            db.expire_all()
+            assert {c["basin"].id, set_key} <= set(sheet.page_edits)
+        finally:
+            _restore(originals)
+
+
+def test_f4_the_reset_page_commit_locks_the_row_and_rereads_it():
+    from app.services import record_actions
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c)
+        with _Statements(db) as sql:
+            record_actions.assert_spec_sheet_editable(db, sheet.id, c["owner"], lock=True)
+        assert sql.locked_sheet_reads()
+        with _Statements(db) as sql:
+            record_actions.assert_spec_sheet_editable(db, sheet.id, c["owner"])
+        assert not sql.locked_sheet_reads()
