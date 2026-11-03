@@ -45,6 +45,8 @@ def _app() -> FastAPI:
     return app
 
 
+# The request line logs the path only, so the query cases guard against a future change that
+# starts logging the full URL; query redaction itself is covered by the redact_url/filter tests.
 @pytest.mark.parametrize("url", TOKEN_PATHS + TOKEN_QUERIES)
 def test_request_log_carries_no_token(url, caplog):
     client = TestClient(_app())
@@ -55,7 +57,8 @@ def test_request_log_carries_no_token(url, caplog):
     assert lines, "the request line is still written"
     assert all(TOKEN not in line for line in lines), lines
     assert all(TOKEN[:12] not in line for line in lines), lines
-    assert any("[redacted:" in line for line in lines if "?" not in url), lines
+    if "?" not in url:  # the request line carries the path only; a path token shows its marker
+        assert any("[redacted:" in line for line in lines), lines
 
 
 @pytest.mark.parametrize("url", TOKEN_PATHS + TOKEN_QUERIES)
@@ -120,3 +123,76 @@ def test_access_filter_installed_on_uvicorn_access_logger():
     import app.main  # noqa: F401  (installs the filter at import)
 
     assert any(isinstance(f, RedactUrlTokensFilter) for f in logging.getLogger("uvicorn.access").filters)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        f"https://crm.example.com/quotation-sign/{TOKEN}",
+        f"/portal/ideas/{TOKEN}",
+        f"/portal/ticket-draft/{TOKEN}",
+        f"/c/ACME/supplier-request/{TOKEN}",
+        f"/onboarding/{TOKEN}",
+        f"https://crm.example.com/f/{TOKEN}",
+        f"https://crm.example.com/view/complaint?token={TOKEN}",
+    ],
+)
+def test_customer_page_urls_redacted(url):
+    out = redact_url(url)
+    assert TOKEN not in out
+    assert "[redacted:" in out
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/api/v1/user-management/onboarding/requests",
+        "/api/v1/public/onboarding/me",
+        "/api/v1/master-data/f/thing",
+    ],
+)
+def test_staff_routes_with_page_words_unchanged(url):
+    assert redact_url(url) == url
+
+
+def test_api_call_log_body_strips_link_urls():
+    from app.services.api_call_log_service import sanitize_body
+
+    body = (
+        '{"view_url": "https://crm.example.com/view/complaint?token=%s",'
+        ' "portal_url": "https://crm.example.com/portal/c/acme?token=%s",'
+        ' "path": "/quotation-sign/%s", "token": "%s"}' % (TOKEN, TOKEN, TOKEN, TOKEN)
+    )
+    stored = sanitize_body(body)
+    assert TOKEN not in stored
+    assert "view/complaint?token=[redacted:" in stored
+    assert TOKEN not in sanitize_body("plain text https://x.example.com/f/%s" % TOKEN)
+
+
+def test_httpx_request_line_not_logged_at_info():
+    import app.main  # noqa: F401
+
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+
+
+def test_db_errors_hide_bound_parameters():
+    from app.config import settings
+    from app.database import engine
+
+    if not settings.debug:
+        assert engine.hide_parameters is True
+
+
+def test_error_handler_request_url_line_redacted(caplog):
+    """The 422 handler's `Request URL:` line (app/main.py) carries no token (UAC 3)."""
+    from app.main import app
+
+    client = TestClient(app)
+    with caplog.at_level(logging.ERROR, logger="app.main"):
+        resp = client.post(f"/api/v1/public/quotation-sign/{TOKEN}/view?token={TOKEN}")
+    assert resp.status_code == 422
+    url_lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Request URL:")]
+    assert url_lines
+    assert all(TOKEN not in line for line in url_lines), url_lines
+    assert all("[redacted:" in line for line in url_lines), url_lines

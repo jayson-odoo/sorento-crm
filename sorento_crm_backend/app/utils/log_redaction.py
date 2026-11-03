@@ -24,11 +24,21 @@ _PATH_TOKEN_PREFIXES = (
 )
 
 _PATH_TOKEN_RE = re.compile(
-    "(" + "|".join(re.escape(p) for p in _PATH_TOKEN_PREFIXES) + r")([^/?#\s\"]+)"
+    "(" + "|".join(re.escape(p) for p in _PATH_TOKEN_PREFIXES) + r")([^/?#\s\"']+)"
+)
+# The customer-facing page URLs the backend builds and returns (an `/external` response body
+# lands in api_call_logs): sign page, idea, ticket draft, supplier request, onboarding, file link.
+# Anchored to the start of a path, a host, or a quote, so a staff route that merely contains
+# "onboarding" is not touched.
+_PAGE_TOKEN_RE = re.compile(
+    r"((?:^|(?<=[\s\"'=(])|https?://[^/\s\"'?#]+)"
+    r"(?:/c/[^/\s\"'?#]+)?"
+    r"/(?:quotation-sign|portal/ideas|portal/ticket-draft|supplier-request|onboarding|f)/)"
+    r"([^/?#\s\"']+)"
 )
 # Any query parameter whose name ends in "token" (token, access_token, ...): the view,
 # approval, print, portal token-info and unsubscribe links all carry `?token=`.
-_QUERY_TOKEN_RE = re.compile(r"([?&][A-Za-z0-9_]*token=)([^&#\s\"]+)", re.IGNORECASE)
+_QUERY_TOKEN_RE = re.compile(r"([?&][A-Za-z0-9_]*token=)([^&#\s\"']+)", re.IGNORECASE)
 
 
 def _marker(secret: str) -> str:
@@ -40,6 +50,10 @@ def redact_url(text: str) -> str:
     if not text:
         return text
     text = _PATH_TOKEN_RE.sub(lambda m: m.group(1) + _marker(m.group(2)), text)
+    text = _PAGE_TOKEN_RE.sub(
+        lambda m: m.group(0) if m.group(2).startswith("[redacted:") else m.group(1) + _marker(m.group(2)),
+        text,
+    )
     return _QUERY_TOKEN_RE.sub(lambda m: m.group(1) + _marker(m.group(2)), text)
 
 
@@ -58,7 +72,11 @@ class RedactUrlTokensFilter(logging.Filter):
 
 def install_access_log_filter() -> None:
     """Idempotent: attach the filter to the `uvicorn.access` logger (dev uvicorn and the gunicorn
-    UvicornWorker both log requests through it)."""
+    UvicornWorker both log requests through it), and keep httpx's per-request INFO line (the full
+    outbound URL, e.g. the portal idea proxy's `/public/ideas/<token>`) out of the log."""
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, RedactUrlTokensFilter) for f in access.filters):
         access.addFilter(RedactUrlTokensFilter())
+    for name in ("httpx", "httpcore"):
+        if logging.getLogger(name).getEffectiveLevel() < logging.WARNING:
+            logging.getLogger(name).setLevel(logging.WARNING)
