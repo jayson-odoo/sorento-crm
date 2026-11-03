@@ -1,6 +1,6 @@
 # OI-ONE-DELIVERY-DATE owner card (3 Nov 2026)
 
-Status: CARD POSTED, waiting on the owner (Q1 to Q5). Size L, LEAD pattern, full track
+Status: CARD POSTED with dev data (3 Nov), waiting on the owner (Q1 to Q5). Size L, LEAD pattern, full track
 (data migration). No code until the card is answered.
 
 Owner ask (3 Nov 19:15): "we only need one delivery date, which is the SO line delivery date ...
@@ -101,8 +101,8 @@ value from a backend field, so the backend change carries them; paths under
    with an SO line whose stored date differs: `previous_delivery_date := delivery_date`,
    `delivery_date := SO line date`, so the OI shows "Was 01/09/2026, Now 04/02/2027" for the sheet
    rows (Q2). Counted and logged per OI; reversible from the migration's own log table.
-5. **Rows with no SO line** keep their own date (Q4); the reserve dialog, email and grid show it
-   unchanged.
+5. **Rows with no SO line** keep their own date (0 live rows today; a fallback only). An SO line
+   on the TBA placeholder or with no date: Q4.
 6. **Emails tally.** Email body, preview and Excel all come from `handover_item` lines, so changing
    the one `delivery_date` read there changes all three. Reserve emails keep the 31 Oct rules (full
    table, one email per raised_by CS, button opens exactly that email's OIs, no TOTAL QTY,
@@ -115,22 +115,52 @@ value from a backend field, so the backend change carries them; paths under
   for purchasing (SO314593's note at `:2817-2826` is exactly this case).
 - **Split SO line (OI-LINE-SPLIT tranches, `projects.so_line_splits`):** each tranche has its own
   date and an optional `sits_on_line_id` (the AutoCount line staff picked). Q3.
-- **Legacy duplicate rows on the wrong SO line:** reading the linked line's date shows that line's
-  date, which may be wrong for the row. Q5.
+- **Several OI rows on one SO line at different dates** (116 lines, mostly monthly sheet tranches):
+  all read the one line date, old dates as Was; they still differ by quantity and links. Q5.
+- **SO line on TBA (2030-01-01) or undated** (19 undated rows): Q4.
+- **Mirror line not caught up with its core line** (3 lines on dev): Rule 1 reads core first.
 - **SO line deleted:** `so_line_id` is SET NULL (`project_so.py:1011-1014`), so the row falls under
   Rule 5 with its last stored date.
-- **Several OI rows on one SO line with different dates** (query 5): all read the one line date; the
-  rows still differ by quantity and links. If Q3/Q5 answers leave none of these, the email's split
-  "was" line reads the same as today.
 
 ## Real examples (dev data)
 
-This sandbox has no copy of dev data. `OI-ONE-DELIVERY-DATE-examples.sql` (read-only) pulls:
-(1) OI-2609-0588 row by row, OI date vs SO line date; (2) how many live rows differ / agree / have
-no SO line; (3) mirror vs core drift (expected 0); (4) the five largest gaps; (5) SO lines carrying
-several live OI rows with different dates, split or not; (6) rows with no SO line by verb. Crew:
-please run it on the dev copy and paste the output under this heading; the 3 to 5 examples for the
-hand test are taken from (1), (4) and (5).
+Crew ran `OI-ONE-DELIVERY-DATE-examples.sql` read-only on `sorento_prod_1020` (prod clone 20 Oct
+plus dev rows), 3 Nov.
+
+**Scale (16,007 live rows):** 13,303 already match their SO line; **2,685 differ** (actioned 1,573,
+placed 702, raised 351, partly linked 59) across 259 OIs / 259 SOs; 2,080 of them have an OI date
+EARLIER than the line, 605 later. 19 rows sit on an SO line with no date. **0 live rows have no SO
+line.** Only 1 differing row sits on a split line.
+
+**Mirror vs core drift: 3 lines, not 0** (SO314593 L6 mirror 2026-06-01 vs core 2030-01-01, 1 live
+OI row; SO314595 L6 2026-12-01 vs 2030-01-01, 1 row; SO314595 L2 2026-12-01 vs 2027-05-04, 0 rows).
+So Rule 1 reads the CORE `required_date` first and the mirror only when no core line is linked.
+
+**The owner's OI-2609-0588 (SO397450):** 234 rows, one per SO line, 25 items; 152 match, 82 differ
+(placed 44, raised 33, partly linked 5), every one with the OI date earlier (9 to 352 days).
+`previous_delivery_date` is empty on all 234.
+
+| OI row (item, qty, state) | OI date today | SO line | SO line date = shown after |
+| --- | --- | --- | --- |
+| B2155-NL-BLUE 578 placed | 01/07/2026 | SO397450 L312 | 07/01/2027 (Was 01/07/2026) |
+| C-FH12 513 placed | 01/07/2026 | SO397450 L313 | 07/01/2027 (Was 01/07/2026) |
+| B2155-NL-BLUE 276 placed | 03/08/2026 | SO397450 L446 | 21/07/2027 (Was 03/08/2026) |
+| B2155-NL-BLUE 326 raised | 01/10/2026 | SO397450 L352 | 18/02/2027 (Was 01/10/2026) |
+| B2155-NL-BLUE 276 raised | 04/03/2027 | SO397450 L373 | 04/03/2027 (no Was, unchanged) |
+
+**Largest gaps are all the TBA placeholder.** AutoCount books "no date agreed yet" as 2030-01-01;
+the code already reads it as undated / TBA (`stock_status_service.py:58`, policy `tba_date_from`,
+`app/models/scm.py:802`). Top 5: OI-2609-0043 SO325661 L29 SRTWT167 13 raised, OI 05/01/2026;
+OI-2609-0448 SO370716 L50 CHS3220 108 and 110 raised, OI 15/01 and 01/02/2026; OI-2609-0579
+SO324265 L221 SRTKS2406 20 actioned, OI 02/02/2026. All lines on 2030-01-01. Q4.
+
+**Several rows on one SO line at different dates: 116 lines / 255 live rows on 32 SOs** (max 3 per
+line; only 1 of the 116 has a split; 77 have one row matching the line date). The pattern is monthly
+sheet tranches on ONE AutoCount line: SO369829 L27 M228-CR rows at 01/02, 01/03, 01/04/2027 vs the
+line's 30/12/2027 (L23 B2154-NL and L30 MAB7050-WH the same); SO368698 L1 SRTWT6812 rows at 03/03,
+03/04, 04/05/2026 vs the line's 01/11/2025. Top SOs: SO369829 (15 lines / 45 rows), SO382618 (12/24),
+SO394876 (11/22), SO372694 (9/21), SO398400 (10/20). Another 127 lines / 267 rows carry 2+ rows at
+the SAME date (no date question; out of scope). Q5.
 
 ## Questions (recommendation first)
 
@@ -138,22 +168,25 @@ hand test are taken from (1), (4) and (5).
   reserve dialog and emails show the new SO line date at once, with "Was <old>" on the OI row until
   CS confirms; (b) keep the old date until CS confirms. **Recommend (a)**: (b) is exactly the
   "two dates" confusion between OI and Stock Debt.
-- **Q2. Sheet-migrated rows that carry the sheet's date (reverses the 18 Sep ruling).** (a) Backfill
-  to the SO line date, Was = sheet date shown on the OI, no email; (b) same, plus one DELAY / ADVANCE
-  email per OI to purchasing. **Recommend (a)**: the SO did not change, so purchasing is not being
-  told news; a burst of emails for a data fix would bury real changes. Crew sends the owner the
-  count from query 2 before the migration runs.
-- **Q3. Split tranches.** (a) A tranche that sits on an SO line shows that line's date; a tranche with
-  no sits-on line yet (AutoCount has not added the line) shows its planned date marked "planned"
-  until AutoCount does; (b) every tranche shows its parent SO line's date. **Recommend (a)**: (b)
-  prints one date for parts that will arrive months apart, which is the opposite of the split's
-  purpose.
-- **Q4. Rows with no SO line** (line deleted, stock / manual rows). (a) Keep their own date;
-  (b) show blank. **Recommend (a)**: it is the only date the row has.
-- **Q5. Legacy duplicate rows sitting on the wrong SO line.** (a) Show the linked line's date and
-  list such rows (query 5) for CS to repoint with the existing repoint action; (b) auto-repoint each
-  to the same-item line whose date matches. **Recommend (a)**: an automatic repoint moves links and
-  netting nobody asked for; (b) is its own lane if the list is long.
+- **Q2. The 2,685 rows carrying a sheet date (1,573 of them already actioned by purchasing).**
+  (a) Backfill to the SO line date, Was = the old date shown on the OI, no email; (b) same, plus
+  one DELAY / ADVANCE email per OI (259 emails) to purchasing. **Recommend (a)**: the SO did not
+  change, so this is a correction, not news; 259 emails would bury real changes. Crew can hand
+  purchasing the list as one Excel instead if wanted.
+- **Q3. Split tranches (OI-LINE-SPLIT).** (a) A tranche that sits on an SO line shows that line's
+  date; one with no sits-on line yet (AutoCount has not added it) shows its planned date marked
+  "planned"; (b) every tranche shows the parent line's date. **Recommend (a)**. Today this touches
+  1 differing row, so it is about the rule going forward.
+- **Q4. SO line on the TBA placeholder 2030-01-01, or with no date (19 rows).** (a) Show "TBA" (as
+  Stock Debt and the plan already treat it), the old OI date as Was; (b) print 01/01/2030; (c) keep
+  the OI's own date for these rows only. **Recommend (a)**: (c) is a second date by the back door,
+  and (b) prints a date nobody agreed.
+- **Q5. Sheet tranches on one SO line (116 lines / 255 rows, e.g. SO369829 L27 M228-CR: 3 rows
+  Feb/Mar/Apr 2027, line 30/12/2027).** (a) Every row shows the line's date, old dates as Was; where
+  the tranches are real, CS records them with Split (which also tells AutoCount users to add the
+  lines); (b) convert these rows into split tranches automatically. **Recommend (a)**: one date is
+  the ask, and (b) invents splits from migrated sheet rows nobody confirmed. (Rows with no SO line,
+  the old Q4, are dropped: 0 exist; the rule keeps their own date as a fallback.)
 
 ## Build outline (after answers)
 
