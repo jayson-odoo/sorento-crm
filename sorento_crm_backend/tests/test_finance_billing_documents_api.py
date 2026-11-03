@@ -529,7 +529,8 @@ class TestDetail:
         world.so.debtor_name = "ZZT Debtor"
         world.so.project_label = "ZZT Tower"
         world.db.flush()
-        body = api(VIEW).get(f"{LIST}/{iv.id}").json()
+        # DOC-RELATIONS: a line's sales order follows the SO view slug, like the header's list.
+        body = api(VIEW, "scm.dashboard.view").get(f"{LIST}/{iv.id}").json()
         lines = body["lines"]
         first = lines[0]
         # OI-UX-FILTER-SNAPSHOT: a sales order named here also names its customer and project.
@@ -542,6 +543,18 @@ class TestDetail:
         assert second["project_label"] is None
         assert lines[2]["sales_order"] is None
         assert lines[2]["product_name"] is None
+
+    def test_lines_name_no_sales_order_without_the_so_view_slug(self, world, api):
+        # Security review (OI-UX-FILTER-SNAPSHOT): the header's sales orders are masked for a
+        # finance-only viewer (DOC-RELATIONS), so a line must not hand back the same order's id,
+        # customer or project either. The AutoCount source text on the line stays.
+        iv, _cn, _dn = self._invoice_world(world)
+        world.so.debtor_name = "ZZT Debtor"
+        world.so.project_label = "ZZT Tower"
+        world.db.flush()
+        lines = api(VIEW).get(f"{LIST}/{iv.id}").json()["lines"]
+        assert [line["sales_order"] for line in lines] == [None] * len(lines)
+        assert lines[0]["from_doc_type"] == "SO" and lines[0]["from_doc_no"] == world.so.so_number
 
     def test_related_notes_sales_orders_and_delivery_orders(self, world, api):
         iv, cn, dn = self._invoice_world(world)
