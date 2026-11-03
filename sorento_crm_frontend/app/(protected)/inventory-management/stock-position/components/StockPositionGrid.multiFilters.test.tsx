@@ -152,6 +152,25 @@ describe('Stock position: Supplier, Brand, Warehouse are multi-select', () => {
     });
   });
 
+  it("the list's own URL write does not re-apply onto the search box while the user keeps typing", async () => {
+    // The router commits what the list writes, as Next does: the next render reads it back.
+    nav.replace.mockImplementation((url: string) => {
+      nav.search = new URL(url, 'http://x').searchParams.toString();
+    });
+    const user = userEvent.setup();
+    const { rerender } = renderGrid();
+    const box = screen.getByPlaceholderText('Search item code or description...') as HTMLInputElement;
+    await user.type(box, 'abc');
+    await waitFor(() => expect(nav.search).toContain('query=abc'), { timeout: 2000 });
+    await user.type(box, 'd');
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <StockPositionGrid />
+      </QueryClientProvider>,
+    );
+    expect(box.value).toBe('abcd');
+  });
+
   it('restores the selection, sort and page from the URL', () => {
     nav.search = 'page=2&limit=50&sort=total_stock&dir=desc&brand_id=b-1,b-2&supplier_id=s-1&warehouse_id=w-2';
     renderGrid();

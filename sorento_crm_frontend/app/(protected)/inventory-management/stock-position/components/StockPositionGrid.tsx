@@ -89,8 +89,8 @@ export default function StockPositionGrid() {
   const [brandIds, setBrandIds] = useState('');
   const [warehouseIds, setWarehouseIds] = useState('');
   const [exporting, setExporting] = useState(false);
-  // Supplier names by id, for the chosen chips: the picker's own pages and the rows on screen.
-  const supplierNames = useRef<Record<string, string>>({});
+  // Supplier names by id from the picker's own pages, for the chosen chips (rows add theirs below).
+  const pickedSupplierNames = useRef<Record<string, string>>({});
 
   const { data: brands } = useBrandSelectQuery();
 
@@ -98,9 +98,12 @@ export default function StockPositionGrid() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const writtenSearch = useRef<string | null>(null);
+  const searchKey = searchParams.toString();
+  // Every query string this list has written itself: one arriving late (two writes in flight) is
+  // still its own and must not re-apply over what the user has typed or picked since.
+  const writtenSearches = useRef<Set<string>>(new Set());
   useListStateFromUrl((state) => {
-    if (searchParams.toString() === writtenSearch.current) return; // this list's own write
+    if (writtenSearches.current.has(searchKey)) return; // this list's own write
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting.length ? state.sorting : DEFAULT_SORTING);
     resetSearch(state.searchQuery);
@@ -120,7 +123,11 @@ export default function StockPositionGrid() {
   const params = { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery };
   const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useStockPosition(params, filters);
   const rows = data?.data ?? [];
-  for (const r of rows) if (r.supplier_id && r.supplier_name) supplierNames.current[r.supplier_id] = r.supplier_name;
+  const rowSupplierNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const r of data?.data ?? []) if (r.supplier_id && r.supplier_name) names[r.supplier_id] = r.supplier_name;
+    return names;
+  }, [data?.data]);
 
   const urlSearch = buildDetailSearch(params, {
     supplier_id: supplierIds,
@@ -128,12 +135,12 @@ export default function StockPositionGrid() {
     warehouse_id: warehouseIds,
   });
   useEffect(() => {
-    if (urlSearch === searchParams.toString()) return;
-    writtenSearch.current = urlSearch;
+    // Also when the URL goes bare under an unchanged state (the sidebar link to this page), so
+    // the address always names what the grid shows and Back restores it.
+    if (urlSearch === searchKey) return;
+    writtenSearches.current.add(urlSearch);
     router.replace(`${pathname}?${urlSearch}`, { scroll: false });
-    // Written when the list state changes; the URL itself is read by useListStateFromUrl.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlSearch]);
+  }, [urlSearch, searchKey, pathname, router]);
   const total = data?.pagination.total ?? 0;
   const warehouseCodes = useMemo(() => (data?.warehouses ?? []).map((w) => w.code), [data?.warehouses]);
 
@@ -228,7 +235,7 @@ export default function StockPositionGrid() {
   const activeCount = (supplierIds ? 1 : 0) + (brandIds ? 1 : 0) + (warehouseIds ? 1 : 0);
   const fetchSuppliers = async (q: string, pageIndex: number) => {
     const options = await getSuppliersSelect(q, pageIndex);
-    for (const o of options) supplierNames.current[o.value] = o.label;
+    for (const o of options) pickedSupplierNames.current[o.value] = o.label;
     return options;
   };
 
@@ -323,7 +330,7 @@ export default function StockPositionGrid() {
                       fetchOptions={fetchSuppliers}
                       selectedOptions={filters.supplierIds.map((id) => ({
                         value: id,
-                        label: supplierNames.current[id] ?? 'Selected supplier',
+                        label: pickedSupplierNames.current[id] ?? rowSupplierNames[id] ?? 'Selected supplier',
                       }))}
                       renderTriggerLabel={(chosen) => filterTrigger(chosen, 'All suppliers')}
                       placeholder="All suppliers"

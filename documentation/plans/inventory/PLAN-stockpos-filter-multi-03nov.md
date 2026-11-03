@@ -1,6 +1,6 @@
 # PLAN: Stock position Supplier, Brand, Warehouse filters multi-select (STOCKPOS-FILTER-MULTI)
 
-Status: Build. Small fix track (expected diff under 300 lines, no migration, no auth/RBAC change,
+Status: Review (reviewer READY 3 Nov, should-fix items folded in; owner hand test next). Small fix track (expected diff under 300 lines, no migration, no auth/RBAC change,
 no new ingest surface).
 
 ## Why
@@ -36,4 +36,5 @@ still single-select for Supplier, Brand and Warehouse: a second Brand pick repla
 
 - BE `tests/scm/test_stock_position.py::test_supplier_brand_and_warehouse_filters_take_several_values_or_ed`.
 - FE `services/stockPositionService.test.ts` (comma-joined params, export too) and
-  `components/StockPositionGrid.test.tsx` (a second Brand pick adds, not replaces).
+  `components/StockPositionGrid.multiFilters.test.tsx` (a second Brand pick adds, not replaces;
+  export and URL carry the selection; the list's own URL write never re-applies over typing).
