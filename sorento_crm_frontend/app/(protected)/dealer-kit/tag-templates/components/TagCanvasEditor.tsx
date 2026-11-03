@@ -2945,15 +2945,6 @@ export function TagCanvasEditor({
   const copyMarkPending = useRef(false);
 
   /**
-   * Set by the Ctrl+V keydown, cleared by the `paste` event that should
-   * follow it. Safari fires no `paste` on a page with nothing editable
-   * focused unless `beforepaste` was cancelled, so if none has arrived by the
-   * next task the keydown pastes the editor's own layers itself, as it did
-   * before DESIGNER-PASTE.
-   */
-  const pastePending = useRef(false);
-
-  /**
    * After the editor's own Copy/Cut: get the marker onto the system
    * clipboard. `viaCommand` (the context menu, which has no keystroke of its
    * own) runs the browser's copy command so the `copy` listener fires. If no
@@ -3155,14 +3146,6 @@ export function TagCanvasEditor({
         handleCut();
         markSystemClipboard(false);
       }
-      if (e.key === 'v' && modifier) {
-        pastePending.current = true;
-        window.setTimeout(() => {
-          if (!pastePending.current) return;
-          pastePending.current = false;
-          handlePaste();
-        }, 0);
-      }
 
       // Nudge with arrow keys (0.25mm, 1mm with shift, 0.1mm with alt/option).
       const nudge = e.shiftKey ? NUDGE_MM.shift : e.altKey ? NUDGE_MM.alt : NUDGE_MM.base;
@@ -3210,7 +3193,6 @@ export function TagCanvasEditor({
     handleRedo,
     handleCopy,
     handleCut,
-    handlePaste,
     markSystemClipboard,
     selectionRoots,
     handleFit,
@@ -3314,7 +3296,10 @@ export function TagCanvasEditor({
     };
 
     // WebKit fires copy/cut/paste on a page with nothing editable focused
-    // only when the matching `before*` event was cancelled.
+    // only when the matching `before*` event was cancelled. There is no
+    // keydown fallback for Ctrl+V: on macOS Cmd+V reaches the page through
+    // the app's Edit menu AFTER the keydown, so a timer would race the real
+    // paste event and paste twice.
     const onBeforeCopyOrCut = (e: Event) => {
       if (copyMarkPending.current) e.preventDefault();
     };
@@ -3335,7 +3320,6 @@ export function TagCanvasEditor({
     };
 
     const onPaste = (e: ClipboardEvent) => {
-      pastePending.current = false;
       if (elsewhere(e.target)) return;
       const copied = getTagClipboard();
       const intent = classifyPaste(

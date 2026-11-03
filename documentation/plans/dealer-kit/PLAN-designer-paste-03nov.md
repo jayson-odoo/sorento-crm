@@ -1,6 +1,6 @@
 # PLAN: paste from the system clipboard into the tag designer (DESIGNER-PASTE)
 
-Status: in review (round 2 after reviewer findings B1, B2, S1-S3, N1, N3). Track: small fix track (frontend only, no migration, no auth/RBAC change,
+Status: in review (round 3: keydown paste timer dropped after review). Track: small fix track (frontend only, no migration, no auth/RBAC change,
 upload reuses the existing `POST /dealer-kit/assets` surface).
 
 ## Journey
@@ -29,10 +29,10 @@ Ctrl+V / Cmd+V. The picture lands on the canvas as an image layer, ready to move
   clipboard there needs a browser permission prompt). Context-menu Copy/Cut run
   `document.execCommand('copy')` so the marker reaches the system clipboard too.
 - D5 (review round 2). Safari: `beforecopy`/`beforecut`/`beforepaste` are cancelled on the canvas
-  (WebKit fires the real event on a non-editable page only then), and the Ctrl+V keydown pastes the
-  in-editor layers itself on the next task if no `paste` event arrived. If no `copy` event fired at
-  all, the copied words go out through `navigator.clipboard.writeText` and a paste of exactly those
-  words is read as the layers.
+  (WebKit fires the real event on a non-editable page only then). No keydown timer for Ctrl+V: on
+  macOS Cmd+V reaches the page through the app menu after the keydown, so a timer would race the
+  real paste (review round 3). If no `copy` event arrives by the next task, the copied words go out
+  through `navigator.clipboard.writeText` and a paste of exactly those words is read as the layers.
 - D6 (review round 2). The marker counts only when this tab still holds copied layers (reload,
   other tab: fall through to the text). An image beside RTF, or beside HTML without an `<img>`
   (Word/Excel on Windows), pastes as text.

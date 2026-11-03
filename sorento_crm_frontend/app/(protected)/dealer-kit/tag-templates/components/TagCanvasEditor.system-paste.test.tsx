@@ -384,21 +384,22 @@ describe('TagCanvasEditor system clipboard paste', () => {
     }
   });
 
-  it('Ctrl+V still pastes the copied layers when the browser fires no paste event (Safari fallback)', async () => {
+  it('the Ctrl+V keydown alone pastes nothing: the paste event does (no race with a late macOS paste)', async () => {
     const state = renderEditor(docWith(baseLayer('l1')));
     fireEvent.click(screen.getByTestId('layer-l1'));
     fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
     fireEvent.keyDown(window, { key: 'v', ctrlKey: true });
-    await waitFor(() => expect(state.latest).toHaveLength(2));
-  });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(state.latest).toHaveLength(1);
 
-  it('a Ctrl+V whose paste event does arrive pastes once, not twice', async () => {
-    const state = renderEditor(docWith(baseLayer('l1')));
-    fireEvent.click(screen.getByTestId('layer-l1'));
-    fireEvent.keyDown(window, { key: 'c', ctrlKey: true });
-    fireEvent.keyDown(window, { key: 'v', ctrlKey: true });
-    pasteEvent({});
+    // The paste arriving late (after the keydown's task, as Cmd+V does on a
+    // Mac) is still the one paste.
+    pasteEvent({ types: { 'text/plain': 'hello' } });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(state.latest).toHaveLength(2);
+    expect(state.latest[1].props).toMatchObject({
+      kind: 'text',
+      text: 'hello',
+    });
   });
 });
