@@ -1,35 +1,52 @@
-# PLAN: chatbot gate applies the office's explicit customer groups (CUSTOMER-GROUP-GATE)
+# PLAN: chatbot which-one lists apply the office's explicit customer groups (CUSTOMER-GROUP-GATE)
 
-Status: in progress (small fix track: under 300 lines, no migration, no auth/RBAC change)
+Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface)
 
 ## Bug
 
-`gate._cust_base` (`sorento_crm_backend/app/services/chatbot/lanes/business/gate.py`) looks the
-customer group up with `customer_group_of(_cust_name(match))`. `_cust_name` has already stripped
-the trailing `[A/C ..]` / `- [A/C ..]` account suffix, while the group map
+`gate._cust_base` (`sorento_crm_backend/app/services/chatbot/lanes/business/gate.py`) looked the
+customer group up with the `[A/C ..]`-stripped name, while the group map
 (`customer_group_service.family_overrides`) and `ledger_family.customer_group_of` match only the
-exact normalised FULL ledger name (owner ruling (b), 2 Oct 2026). So a ledger with a suffix is
-never found in its group, and every such ledger falls to the name rule. On the dev copy all 8
-FULLSHUN ledgers (both companies, grouped or not) became one name-rule family.
+exact normalised FULL ledger name. So a suffixed ledger never reached its group and every ledger
+fell to the name rule. On the dev copy all 8 FULLSHUN ledgers (both companies, grouped or not)
+became one name-rule family. This fed every domain's which-one list.
 
-This feeds every domain's which-one list (stock / outstanding / sales / DO): the gate's
-`bases` / `picker_families` are keyed by `_cust_base`.
+## Owner ruling (CUSTOMER-GROUP 2 Oct 2026, restated by crew 3 Nov 2026)
 
-## Fix
+Explicit, staff-set groups only:
 
-Look the group up by the row's FULL display name (`display.customer_name` /
-`display.debtor_name`, unstripped), falling back to the stripped name / canonical code only as
-before. Grouped ledgers then key to their group; ungrouped ledgers keep the name rule (with the
-existing `apart_from_group` separation).
+1. Groups apply, looked up by customer id (or exact full name when no id is at hand), per
+   company: 190 group names exist in both MCH and SRT on the 20 Oct prod copy and must never
+   merge across companies.
+2. The name-rule family is removed for grouping: every ungrouped ledger is its own entry in a
+   which-one list (3,713 of 6,854 ledgers are ungrouped on the copy, so lists may get longer:
+   accepted). Name matching stays for SEARCH only (what a typed word matches).
+
+## Change
+
+- `customer_group_service`: `family_ids` (customer id -> group name) beside `family_overrides`
+  (full name -> group name; a name in two groups, in one company or two, or in a group and none,
+  is left out). A group name shared by companies in scope carries its company code,
+  "NAME (SRT)", so the two groups are two entries.
+- `ledger_family`: `customer_groups(mapping, ids=)`; `customer_group_of`, `ledger_family_key`,
+  `ledger_family_label` take the row's id. An ungrouped row keys by its own full name.
+  `trading_name_key` is the search-only name rule; `without_ledger_marker` for a line that must
+  not print a marker. `UNGROUPED_JOINS_NAME_MATCHED_GROUP` / `apart_from_group` removed (ruled).
+- `gate._cust_base` = `ledger_family_key(full display name, uuid)`; the gate's roster title for
+  a several-ledger entry is the group's name.
+- `narrow._options` keys by id too and never prints a company tag twice.
+- `resolve_gate` "a word that IS one trading name" uses `trading_name_key` (search).
+- `engine` and `stock_ask_service` load both maps.
 
 ## Tests (red first)
 
-`sorento_crm_backend/tests/chatbot/test_customer_group_gate.py`: per domain (`inventory`,
-`outstanding`-class domain, `sales`, `order`), a grouped `[A/C ..]` ledger pair plus an
-ungrouped customer of the same trading name: the gate's family map puts the grouped ledgers in
-the group's family and the ungrouped one apart.
+`sorento_crm_backend/tests/chatbot/test_customer_group_gate.py`: loaders over two seeded
+companies; per list (gate `order` DO, `order` outstanding, `sales`, and the stock roster), one
+entry per group and per ungrouped ledger, covering grouped, ungrouped, the same full name grouped
+and ungrouped, and one group name in two companies.
 
-## Report (no change)
+## Report (to crew, rows not on GitHub)
 
-How many ledgers still fall to the name rule after the fix, with real examples from the dev DB,
-goes to crew as a PR comment for the owner's no-auto-name-matching ruling.
+Name-rule ledgers after the lookup fix on the 20 Oct copy: 3,713 of 6,854 (MCH 1,148, SRT
+2,565); 1,136 rows over 227 trading names share a name with a grouped ledger. Crew offers the
+owner a reviewed grouping list for those, separately.

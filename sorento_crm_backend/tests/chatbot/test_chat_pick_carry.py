@@ -35,15 +35,16 @@ DEALER_B = "ZZ DEMO BATH SDN BHD (PROJECT)"
 STRANGER = "ZZ STRANGER HARDWARE SDN BHD - [A/C I]"
 #: The account code option 1 carries: the first picked ledger's, and in the other company a different customer's.
 SHARED_CODE = "300-ZZ10"
-#: Option 1 as the roster prints it: the group's name and its companies.
-OPTION_LABEL = f"{DEALER_A} (SRT, MCH)"
+#: Option 1 as the roster prints it: the group's name. A group is ONE company's (CUSTOMER-GROUP-GATE,
+#: owner ruling 3 Nov 2026), so dealer A's three ledgers sit in its Sorento group.
+OPTION_LABEL = DEALER_A
 
 PICKED = ("project", "ac1", "iborn")
 
 
 def _seed(session_factory) -> dict[str, str]:
-    """Dealer A: three ledgers in its customer group of each company. Dealer B: one ledger. The stranger: the other
-    company's row of dealer A's project ledger code, in no group, nothing to do with dealer A."""
+    """Dealer A: three ledgers in its Sorento customer group. Dealer B: one ledger. The stranger: the other company's
+    row of dealer A's project ledger code, in no group, nothing to do with dealer A."""
     from sqlalchemy import text as sql_text
 
     from app.models.order import CustomerGroup
@@ -58,13 +59,13 @@ def _seed(session_factory) -> dict[str, str]:
                  "SELECT gen_random_uuid(), id, :company FROM respond_contacts WHERE respond_io_id = :cid"),
         {"cid": str(CONTACT_ID), "company": MOCHA_ID},
     )
-    groups = {company: CustomerGroup(name=DEALER_A, company_id=company) for company in (DEFAULT_COMPANY_ID, MOCHA_ID)}
+    groups = {DEFAULT_COMPANY_ID: CustomerGroup(name=DEALER_A, company_id=DEFAULT_COMPANY_ID)}
     db.add_all(groups.values())
     db.flush()
     rows = {
         "project": customer(db, company_id=DEFAULT_COMPANY_ID, name=f"{DEALER_A} (PROJECT)"),
         "ac1": customer(db, company_id=DEFAULT_COMPANY_ID, name=f"{DEALER_A} [A/C I]"),
-        "iborn": customer(db, company_id=MOCHA_ID, name=f"{DEALER_A} - [IBORN]"),
+        "iborn": customer(db, company_id=DEFAULT_COMPANY_ID, name=f"{DEALER_A} - [IBORN]"),
         "dealer_b": customer(db, company_id=DEFAULT_COMPANY_ID, name=DEALER_B),
         "stranger": customer(db, company_id=MOCHA_ID, name=STRANGER),
     }
@@ -85,7 +86,7 @@ def _services(ids: dict[str, str]) -> ResolveGateServices:
 
     project = hit("project", SHARED_CODE, f"{DEALER_A} (PROJECT)")
     ac1 = hit("ac1", "300-ZZ04", f"{DEALER_A} [A/C I]")
-    iborn = hit("iborn", "300-ZZ33", f"{DEALER_A} - [IBORN]", "MCH")
+    iborn = hit("iborn", "300-ZZ33", f"{DEALER_A} - [IBORN]")
 
     def _resolve(body: dict[str, Any]) -> dict[str, Any]:
         tokens = body.get("tokens") or []
