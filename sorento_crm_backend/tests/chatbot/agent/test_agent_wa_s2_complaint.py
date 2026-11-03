@@ -1273,3 +1273,104 @@ def test_cp1_the_model_cannot_pass_the_dealers_words_itself(db, store):
     out, step = writes.propose_step(db, _ctx(db, contact), CP_CREATE, args, seen_ids=set(), loop_args={"_is_test": False})
 
     assert step is None and "Unknown argument" in out.message
+
+
+# ================================================================ crew pass on 1b1a6244 (owner-visible text)
+
+
+def _answer(text_, not_found=()):
+    return _asks({"id": "ans", "name": "answer",
+                  "arguments": {"text": text_, "figures": [], "not_found": list(not_found), "not_checked": []}})
+
+
+def test_t1_a_tool_backed_not_found_gets_no_hedge_line(db, store):
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    contact = _dealer(db)
+    foreign = _order(db, None, debtor="ZZT Rival Sdn Bhd")
+    provider = _scripted(
+        _asks({"id": "p1", "name": CP_CREATE, "arguments": _claim(foreign)}),
+        _answer(f"I could not find delivery order {foreign} on your account.",
+                [{"what": f"Delivery order {foreign}", "call_id": "p1"}]),
+    )
+
+    turn = run_agent_turn(db, contact_respond_id=contact["respond_id"],
+                          text=f"{foreign} ELP3754 cracked, yes under warranty, please claim",
+                          provider=provider, mcp_call=_forbidden, catalog={}, is_test=False)
+
+    assert "could not confirm that nothing exists" not in turn.reply_text, turn.reply_text
+    assert f"could not find delivery order {foreign}" in turn.reply_text
+    assert "Rival" not in turn.reply_text
+
+
+def test_t2_a_confirm_block_the_model_copies_shows_once(db, store):
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+    first = _scripted(_asks({"id": "p1", "name": CP_CREATE, "arguments": _claim(do)}), _answer("Please confirm."))
+    turn1 = run_agent_turn(db, contact_respond_id=contact["respond_id"], text=f"ELP3754 {do} leaking, yes under warranty",
+                           provider=first, mcp_call=_forbidden, catalog={}, is_test=False)
+    block = turn1.reply_text.split("Please confirm.", 1)[1].strip()
+    assert block.startswith("I will make these changes")
+
+    # The dealer changes a detail; the model re-proposes and copies the block it saw in history into its text.
+    second = _scripted(
+        _asks({"id": "p2", "name": CP_CREATE, "arguments": _claim(do)}),
+        _answer(f"Updated, here it is again:\n{block}"),
+    )
+    turn2 = run_agent_turn(db, contact_respond_id=contact["respond_id"], text="same claim please",
+                           provider=second, mcp_call=_forbidden, catalog={}, is_test=False)
+
+    assert turn2.reply_text.count("I will make these changes when you confirm") == 1, turn2.reply_text
+    assert turn2.reply_text.count("File a warranty / complaint claim") == 1, turn2.reply_text
+    assert turn2.reply_text.count("Reply yes to go ahead") == 1, turn2.reply_text
+
+
+def test_t2_the_with_the_team_line_the_model_copies_shows_once(db, store):
+    from app.services.chatbot.agent.loop import run_agent_turn
+
+    contact = _dealer(db)
+    do = _order(db, contact["pk"])
+    first = _scripted(_asks({"id": "p1", "name": CP_CREATE, "arguments": _claim(do)}), _answer("Please confirm."))
+    turn1 = run_agent_turn(db, contact_respond_id=contact["respond_id"], text=f"ELP3754 {do} leaking, yes under warranty",
+                           provider=first, mcp_call=_forbidden, catalog={}, is_test=False)
+
+    class Provider:
+        """Confirms, then (like a model copying an earlier reply) repeats the team line in its own words."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, *, tools=None, **kw):
+            self.calls += 1
+            if self.calls == 1:
+                return _asks({"id": "c1", "name": "confirm_action", "arguments": {"action_id": turn1.pending_action["id"]}})
+            [row] = _complaints(db, contact["pk"])
+            return _answer(f"Done. Complaint {row.complaint_number} is with the team. "
+                           "Reply undo within 10 minutes to withdraw it.")
+
+    turn2 = run_agent_turn(db, contact_respond_id=contact["respond_id"], text="yes", provider=Provider(),
+                           mcp_call=_forbidden, catalog={}, is_test=False)
+
+    assert turn2.reply_text.count("is with the team") == 1, turn2.reply_text
+
+
+def test_t3_photos_already_used_by_an_earlier_live_claim_are_not_offered_again(db, store):
+    contact = _dealer(db)
+    ctx, _do, [old], step = _claim_step(db, store, contact, photos=1)
+    assert _store_and_confirm(db, ctx, step).status == "executed"
+    new = _chat_photo(db, store, contact, minutes_ago=0)
+
+    photos = _read_photos(db, ctx)["photos"]
+
+    assert [p["id"] for p in photos] == [new]
+    out, refused = _propose(db, ctx, CP_CREATE, _claim(_order(db, contact["pk"]), photo_ids=[old]), {old})
+    assert refused is None and "not found" in out.message.lower()
+
+
+def test_t3_the_claim_tool_says_to_attach_unread_photos_too():
+    from app.services.chatbot.agent import portal_writes
+
+    text = portal_writes.PORTAL_WRITES[CP_CREATE].schema["function"]["description"]
+    assert "could not be read" in text
