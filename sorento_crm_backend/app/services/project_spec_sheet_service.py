@@ -856,7 +856,7 @@ def sources(db: Session, document: ProjectQuotationDocument) -> List[dict]:
                 {
                     "value": DRAFT,
                     "label": "Current draft",
-                    "hint": f"changed after {_revision_name(newest)} · not issued",
+                    "hint": f"changed after R{newest.issue_no} · not issued",
                 }
             )
     for issue in issues:

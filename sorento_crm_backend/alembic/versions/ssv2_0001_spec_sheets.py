@@ -140,7 +140,7 @@ _BRANDS = _t("brands", "id", "brand_name", schema=None)
 
 def _jsonb(value):
     # A text parameter cast in SQL: a JSONB-typed bind would serialise the string a second time.
-    return sa.cast(sa.literal(json.dumps(value), sa.Text), postgresql.JSONB)
+    return sa.cast(sa.literal(json.dumps(value, default=str), sa.Text), postgresql.JSONB)
 
 
 def _items(connection, issue_id):
@@ -196,12 +196,15 @@ def _items(connection, issue_id):
             items[key] = {
                 "key": key,
                 "line_id": str(line["id"]),
-                "product_id": (driver or {}).get("product_id") or line["product_id"],
+                "product_id": (driver or {}).get("product_id")
+                or (str(line["product_id"]) if line["product_id"] else None),
                 "code": (driver or {}).get("product_code") or line["product_code_snapshot"] or "",
                 "description": (driver or {}).get("description") or line["description_snapshot"] or "",
                 "brand": line["brand_snapshot"] or line["product_brand"] or "",
-                "image_attachment_id": line["image_attachment_id"],
-                "drawing_attachment_id": line["drawing_attachment_id"],
+                "image_attachment_id": str(line["image_attachment_id"]) if line["image_attachment_id"] else None,
+                "drawing_attachment_id": str(line["drawing_attachment_id"])
+                if line["drawing_attachment_id"]
+                else None,
                 "section": section,
                 "unit_price": price,
                 "set_parts": [
