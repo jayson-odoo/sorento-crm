@@ -1,7 +1,8 @@
 # PLAN: the parser writes the whole report ask each turn (semantic carry, 2 Nov 2026)
 
-**Status:** Review (PR A: red 194174a4f4 + 2a6e449d22 + 847771fcd2 + 6da25eadf6 + b021ccc367 + 3677a20646, green 819f45105e + ac6116db6d + 523bda322c + 9b6fee096f + 0538e65004; re-review next; split ruled by crew 2 Nov). Track: full (L-ish: parser prompt + schema + the lane's report path; no migration, no route change,
-no auth change). Branch `crew/sales-account-type-semantic` from origin/main 46de2f6d77. Lane SALES-ACCOUNT-TYPE,
+**Status:** Build, round 7 (PR A: rounds 1-5 reviewer READY at 4a5babb25b, 3 Nov; round 7 = owner production feedback
+R2-R4 + crew round-6 decisions, red next; split ruled by crew 2 Nov). Track: full (L-ish: parser prompt + schema + the
+lane's report path; no migration, no auth change; round 7 adds a route field + an MCP presenter line for O-R2). Branch `crew/sales-account-type-semantic` from origin/main 46de2f6d77. Lane SALES-ACCOUNT-TYPE,
 follow-up of #2067 / #2074. Supersedes `PLAN-report-multiturn-carry-2nov.md` (PR #2092, coded carry rules, closed
 unmerged). UAC: `report-semantic-carry-acceptance-criteria.md`.
 
@@ -37,9 +38,9 @@ Investigation (crew/state/files/sales-check-1nov/agentic-vs-chat-2nov.md, file:l
   - V1 basis is never defaulted (owner 27 Oct): the object's basis counts only when this message says it (the
     parse's own `basis` / `sales_basis`) or it is the basis the held report or the open ask already has (the user
     chose it earlier in the conversation). Else the basis question.
-  - V2 company is one of the contact's own (`_company_said` report_ask.py:2388-2393, else COMPANY_FORBIDDEN_LINE);
-    two or more companies and nothing in the ask that says which -> the company question (`_owes_company` :2396-2400,
-    unchanged).
+  - V2 company is one of the contact's own (`_company_said` report_ask.py:2388-2393, else COMPANY_FORBIDDEN_LINE).
+    (The company question for an ask naming none was REVERSED by the owner on 3 Nov: no question, every company, split
+    by company in the reply. See "Round 7", O-R2.)
   - V3 dealer refusal over the final args (`_dealer_outside` :1408-1429 and the route's own refusal).
   - V4 data questions stay: a word in both the brand and the account type tables -> "brand or account type?"
     (`_account_plan` :1542-1633) when the object left it in `brand_or_account_type`, or this message has an entity
@@ -147,6 +148,50 @@ beyond run-to-run noise.
   missing in the named company gets the same reply as the same name typed there.
 - A held brand whose code equals another brand's name is asked "matches several brands" on the next turn (fails
   safe, never a wrong figure).
+
+## Round 7 (3 Nov): owner production feedback R2-R4 + crew round-6 decisions
+
+Owner, production sales asks (crew relay 3 Nov ~11:15; production parser v71 has no marker, so these ran the flag-OFF
+path). Crew, same day: build R2 and decide R3 on BOTH paths; red tests start from synthetic turns, the real production
+turns are swapped in when the owner's read-only query returns. Basis question unchanged (27 Oct). The customer-vs-supplier
+side question belongs to SUPPLIER-ASK-L and is not touched here.
+
+- O-R2 (owner 3 Nov, REVERSES the company question of V2 / SC-10, #2070's company pick and R2-4a): the bot never asks
+  "Sorento or Mocha?". An ask that names no company runs over every company the contact holds, which the route already
+  does when `company` is null (api/v1/order_management/report_ask.py:546-552, one `run_ask` over all grants :688). With
+  two or more companies holding figures, the reply shows each company's total, then the combined total. A company the
+  message names narrows to that one (sales and outstanding alike); a company the contact does not hold stays refused.
+  Both paths. Mechanism, smallest form:
+  - lane: delete the question (`COMPANY` in `SALES_RANKING_ASK.fields`, `_owes_company` / `_company_question_fields` and
+    their two callers in `_settle` / `_refine`, `settle()`'s company reply, `_company_held`, the company open-question
+    word and pick fill on the flag-on path, engine `_company_pick`). The named-company path stays (`_company_said`,
+    `COMPANY_FORBIDDEN_LINE`, `from_object`, `_object_scope`).
+  - route: when no company was named and 2+ companies, add `data["companies"]` = per-company totals (the same filters,
+    one `run_ask` per company, no breakdown), companies with no figure left out.
+  - MCP presenter (`_report_ask`): one line per company before the Total line, printed only when 2+ companies remain.
+  Release: backend and MCP ship in the same release; the old presenter ignores the new key.
+- O-R3 (owner 3 Nov): a held customer is never dropped by a follow-up that does not name a customer. Both paths.
+  Drop point and rule: see "R3 diagnosis" below.
+- O-R4 (owner 3 Nov): "<customer> only" / "customer <customer> only" after a report runs the current report narrowed
+  to that customer, no question, no menu.
+- C6-1 (crew, round 6): a both-table word that is also one of the contact's companies (name or code, data) is asked
+  "<WORD>: brand, account type or company?"; an object whose `company` is that word (the model read "company") settles
+  it to the company with no question.
+- C6-2 (crew, round 6: "a held filter must survive a follow-up that does not mention it, and a new explicit value
+  replaces, never drops, the others"). Flag-on, a check over the model's OWN outputs (no message text): per kind
+  (sales agents, brand / account type words, categories, customers, products, company), when this message's entities
+  (current_message) name nothing of that kind and the object holds none of it, the held value stays; when they name
+  something, the object's value for that kind stands. Brand and account type count as one kind here (the model moves a
+  word between the two lists). Carry ends on another report kind or `topic_reset`. Breakdown: the held axis stays when
+  the object's axis is untyped on a turn that answers an open question (round 5 rule; it now restores the held axis
+  instead of none) or is a slot the ask filters to one value (a one-row breakdown is the filter: turn 23d6cb50).
+
+Round-6 turns (copy DB, parser v72): 17023f41 agent change dropped CERAMIC (entities: the agent only); f26a5645
+"invoiced" dropped CERAMIC and swapped month for sales agent (no entities); 23d6cb50 "for ceramic account type" set
+`group_by` account_type over a CERAMIC filter ("Top 1 account type"); 35e6909a fixed at 4a5babb25b (the asked word
+carries on a bare pick); 91e086bc follows step 12 ("only company sorento" written as brand SORENTO, no entity for
+"ceramic" at step 13): C6-1 covers the step-12 cause, the step-13 miss itself is a known limit (no model output names
+CERAMIC).
 
 ## Deletion (PR B; origin/main line numbers)
 

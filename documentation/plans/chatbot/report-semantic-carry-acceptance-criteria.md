@@ -58,8 +58,9 @@ The fake parser returns the object the owner expects at each turn; the assertion
 
 - SC-9 Basis: an object basis that this message does not say and the held report / open ask does not have -> the
   basis question, never a default. A basis the held report already has carries without a question.
-- SC-10 Company: an object company the contact does not hold -> the forbidden-company line; two companies and nothing
-  in the ask that says which -> the company question (unchanged rule); no company question on an outstanding ask.
+- SC-10 (REVISED 3 Nov, owner ruling O-R2; the company question is gone) Company: an object company the contact does
+  not hold -> the forbidden-company line; a company the ask names narrows the run to it (sales and outstanding); no
+  company named -> no question, the run covers every company the contact holds (see SC-18).
 - SC-11 Dealer: a dealer contact's object asking outside its own customer -> the existing refusal.
 - SC-12 A word in both the brand and the account type tables left in `brand_or_account_type` -> "brand or account
   type?"; a word in one table only goes to that one with no question.
@@ -73,8 +74,29 @@ The fake parser returns the object the owner expects at each turn; the assertion
 
 ## E. Unchanged
 
-- SC-15 Flag off (every production text today): the #2070, #2074 and sales channel suites pass unchanged.
-- SC-16 The reply template is unchanged (header names basis, period, filters, channel, then the table).
+- SC-15 Flag off (every production text today): the #2070, #2074 and sales channel suites pass, except the tests that
+  pinned the company question (rewritten to O-R2, round 7) and the R3 carry (SC-21).
+- SC-16 The reply template is unchanged (header names basis, period, filters, channel, then the table), except the
+  per-company lines of SC-18.
+
+## G. Round 7 (3 Nov): owner production feedback + crew round-6 decisions (both paths unless named)
+
+- SC-18 (owner O-R2) "Sorento or Mocha?" is never asked. A staff contact with two companies asking "sales 2026"
+  (basis answered) gets a run with no company arg. When two or more companies have figures for the filters, the reply
+  shows one line per company ("<Company> RM x, n pcs", in the contact's company order) right before the Total line;
+  a company with no figure is left out, so a subject that exists in one company prints no split. A named company
+  prints no split. The route's response carries the per-company totals as `companies`.
+- SC-19 (crew C6-1, flag on) A both-table word that is also one of the contact's companies is asked "<WORD>: brand,
+  account type or company?"; picking company runs that company with no brand / account type of that word. An object
+  whose company is that word asks nothing and runs the company.
+- SC-20 (crew C6-2, flag on) A held filter the model drops on a follow-up whose own entities name nothing of that kind
+  still runs (agent change keeps the account type; "invoiced" keeps the account type, company and month); a new value
+  of a kind replaces that kind only; another report kind or a topic reset carries nothing. A breakdown by a slot the
+  ask filters to one value runs as the plain report (no "Top 1" list).
+- SC-21 (owner O-R3) A held customer survives every follow-up that names no customer: the basis answer, the company
+  answer, "breakdown product", "top 5, by invoiced qty". The reply header names the customer each time.
+- SC-22 (owner O-R4) "<customer> only" / "customer <customer> only" after a report runs that report narrowed to the
+  customer, with no question and no menu.
 
 ## F. PR B (after the label moves)
 
