@@ -6,9 +6,10 @@ Plan: `PLAN-image-unify-03nov.md`.
 ## In one paragraph
 
 Every stored photo gets three sizes: a 320 px thumbnail (lists, grids, table cells), a 1024 px
-medium (any screen that shows one picture big: price tag designer, preview, attachment preview,
-spec sheet page) and the original (download, zoom, and the source for printing). Printing makes a
-copy capped to what the paper can show. Screens get exactly one way to draw a stored photo, which
+medium (screens that show a picture big: price tag designer and previews, spec sheet page) and
+the original (Resource Attachments preview, download, chatbot, and the source for printing).
+Printing makes a copy sized to the photo's box as designed on the tag, at 300 DPI.
+Old photos get their medium the first time someone opens them; there is no bulk backfill. Screens get exactly one way to draw a stored photo, which
 picks the right size and loads lazily, and a test stops new code drawing an original into a small
 box. This is what #2126 did for the spec sheet, made the rule for every screen.
 
@@ -16,13 +17,13 @@ box. This is what #2126 did for the spec sheet, made the rule for every screen.
 
 | Who | Where | Today | After | Phase |
 | --- | --- | --- | --- | --- |
-| Staff | Price Tag designer / preview | Loads every product photo's original (product photos run up to 29 MB; 96 stored images are 5 MB or more); a few big ones can freeze the tab like the spec sheet did | Loads the 1024 px medium; opens fast. On a 4K screen zoomed past 200 % a photo looks slightly softer | P2 |
-| Dealers | Printed price tags (PDF) | Chromium prints originals, uncapped | Prints a copy capped by Q1. At the recommended cap nobody can see a difference on paper | P2 |
-| Staff | Attachment preview (Files) | Opens the original | Opens the medium; "Open original" / zoom / download still get the original (Q3) | P3 |
-| Customers | Quotation sign page | 240 px pictures inlined, first 60 only; cells past 60 blank | Same 320 px thumbnails, all of them, loaded as the customer scrolls (Q5) | P3 |
+| Staff | Price Tag designer / preview | Loads every product photo's original (product photos run up to 29 MB; 96 stored images are 5 MB or more); a few big ones can freeze the tab like the spec sheet did | Loads the 1024 px medium; opens fast. The FIRST open of an old photo may show its thumbnail while the medium is made (at most 8 s wait); every open after that gets the medium. On a 4K screen zoomed past 200 % a photo looks slightly softer | P2 |
+| Dealers | Printed price tags (PDF) | Chromium prints originals, uncapped | Each photo prints from a copy the size of its box on the tag at 300 DPI (Q1). Same on the spec sheet PDF. Owner hand test on a real print | P2 |
+| Staff | Attachment preview (Files) | Opens the original | Unchanged (Q3): grid thumbnail, preview and download the original | - |
+| Customers | Quotation sign page | 240 px pictures inlined, first 60 only; cells past 60 blank | 320 px thumbnails for every line, loaded as the customer scrolls, no cap (Q5) | P3 |
 | Staff | Catalogue photos grid, line photos, shipment photos, pickers | Mostly thumbnails already, some not lazy | Same thumbnails, all lazy | P3 |
-| Customers | WhatsApp / chatbot photos | Originals | Unchanged under the recommendation (Q2) | P4 |
-| Nobody | Storage | Thumbs only, made at upload; old rows via a manual script | Thumb + medium at upload; a throttled, resumable backfill for old files; long cache headers on renditions | P1 |
+| Customers | WhatsApp / chatbot photos | Originals | Unchanged (Q2) | closed |
+| Nobody | Storage | Thumbs only, made at upload; old rows via a manual script | Thumb + medium at upload; old files get theirs on first open, one generation per file even under concurrent opens (Q4); long cache headers on renditions | P1 |
 
 ## Real examples (prod clone `sorento_prod_1020`: prod copy of 20 Oct plus dev uploads since; crew ran the queries read-only, 3 Nov)
 
@@ -81,7 +82,20 @@ GROUP BY a.id ORDER BY a.file_size_bytes DESC NULLS LAST LIMIT 10;
 ```
 
 
-## Questions for the owner (at most 5)
+## Owner answers (3 Nov 14:35)
+
+- **Q1:** "should be same size as what's designed". Each photo's print copy is sized to its image
+  layer's box on the tag (width x height mm at 300 DPI), never upscaled, aspect kept, fitted as the
+  layer draws today. Example: a 4000 x 3000 photo in a 40 x 30 mm box prints from a 473 x 355 copy.
+- **Q2:** unchanged; chatbot/WhatsApp keeps sending originals. P4 closes with no PR.
+- **Q3:** same as today; attachment preview keeps opening the original. Resource Attachments is the
+  stable reference.
+- **Q4:** no prod backfill. Medium at upload for new files, on demand on first open for old ones;
+  one generation per file under concurrency, cached after.
+- **Q5:** yes; every line's picture on the sign page, 320 px, loaded as the customer scrolls, no
+  60 cap; security review of the signed links.
+
+## Questions as asked (kept for the record)
 
 **Q1. Printed price tag sharpness: how big may a printed photo be?**
 (a) 300 DPI measured on the TAG's own size (the 95 x 44.5 mm tag, 4 templates, -> 1122 px copy; A5 -> 2480 px);

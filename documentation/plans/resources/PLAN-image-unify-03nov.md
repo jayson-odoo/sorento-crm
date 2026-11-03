@@ -1,10 +1,20 @@
 # PLAN: IMAGE-UNIFY - one image rendition service, one image component
 
-Status: P0 written; prod-clone numbers folded in (3 Nov); P1 design settled; waiting on owner answers (Q1-Q5 in
-`behaviour-card-image-unify.md`). Track: LEAD, phased. P1 starts after #2126 merges. P2 after
-#2101 (PRICETAG-SELF-APPROVAL) merges.
+Status: P0 done; owner answered Q1-Q5 (3 Nov 14:35, recorded below); re-planned. P1 design settled,
+P1 code starts after #2126 merges. P2 after P1 and #2101 (PRICETAG-SELF-APPROVAL) merge. P4 closed
+with no PR (Q2). Track: LEAD, phased.
 
 UAC: `image-unify-acceptance-criteria.md`. Behaviour card: `behaviour-card-image-unify.md`.
+
+## Owner rulings (3 Nov 14:35)
+
+| Q | Ruling | Effect on the plan |
+| --- | --- | --- |
+| Q1 print size | "should be same size as what's designed": each photo's print copy is sized to the IMAGE LAYER's designed box (width x height mm at 300 DPI), never upscaled, aspect kept, fitted as the layer draws today (cover / contain / stretch, crop) | P2: print copy per layer box, not per tag or sheet |
+| Q2 chatbot | Unchanged, originals | P4 closed, no PR |
+| Q3 attachment preview | SAME AS TODAY, the original ("the attachment is the most stable so far"). Resource Attachments (thumb in grid, original on open) is the stable reference | P3 does not change the preview; it moves onto the shared component only with identical behaviour |
+| Q4 prod backfill | NO backfill. Medium made at upload for new files and on demand the first time an old photo is opened; on-demand must be fast and safe: one generation per file under concurrency, cached after | P1: no backfill script; single-flight on-demand path |
+| Q5 sign page | YES: every line's picture, 320 px thumbs loaded as the customer scrolls, no 60 cap; security review of the signed links | P3 |
 
 ## Journey
 
@@ -86,118 +96,155 @@ Uploads set `ContentType` only, no `CacheControl` (`r2_service.py:100,123`).
 
 ### Backend (P1): `image_thumbnailer.py` becomes the rendition service
 
-One module, renamed in docstring only (file name kept, so imports stay):
+One module (file name kept, so imports stay):
 
 ```
 RENDITIONS = {"thumb": 320, "medium": 1024}
 rendition_key(original_key, size) -> "<key>.thumb.jpg" | "<key>.medium.jpg"
 downscale(raw, box, quality, max_pixels) -> RenderedImage | None   # the #2126 _downscale, moved here; upright + draft always on
-store_renditions(backend, provider, original_key, content, mime) -> thumb CDN base URL | None
-rendition_url(row, size, expires_in) -> signed url    # thumb | medium | original; through storage_router.resolve_signed_url only
-ensure_rendition(row, size) -> key | None             # on-demand fallback: make + store if missing, 10 min miss memo
-print_copy(raw, unit_mm, dpi) -> RenderedImage | None # cap = ceil(long edge mm / 25.4 * dpi); within cap -> None (print original)
+store_renditions(backend, provider, original_key, content, mime) -> thumb CDN base URL | None   # upload path
+ensure_renditions(rows, size, release=None, wait_seconds=RENDITION_WAIT_SECONDS) -> {attachment_id: key}   # on-demand, single-flight
+rendition_urls(rows, size, ...) -> {attachment_id: signed url}   # ensure + sign; thumb | medium | original; storage_router only
+print_box_px(width_mm, height_mm, dpi=300) -> (w_px, h_px)
+print_scale(src_w, src_h, box_px, fit, crop) -> float <= 1   # see "Print copy" below
 ```
 
-- Upload: the 7 `store_thumbnail` call sites call `store_renditions` (thumb + medium in one decode).
-  `store_thumbnail` stays as an alias for one release so an in-flight merge does not break, then
-  goes. A failed rendition never fails the upload (unchanged rule).
-- Read: everything signs via `storage_router.resolve_signed_url` and its cache. Caches 2, 3 and 4
-  go; cache 3's miss memo moves into `ensure_rendition` (one dict, bounded, same 10 min).
-- Medium: no new column. The key is derived; `ensure_rendition` checks `file_exists` only on a
-  memo miss. A column is not justified until a measured `file_exists` cost shows up (trigger named
-  here).
-- Cache-Control: rendition uploads send `public, max-age=31536000, immutable`. `upload_file` on
+- **Upload:** the 7 `store_thumbnail` call sites call `store_renditions` (one decode: medium from
+  the original, thumb from the medium). `store_thumbnail` stays as an alias for one release so an
+  in-flight merge does not break, then goes. A failed rendition never fails the upload.
+- **Read:** everything signs via `storage_router.resolve_signed_url` and its cache. Caches 2, 3 and 4
+  in the table above go.
+- **No new column.** Keys are derived. Existence is known from the single-flight memo below.
+- **Cache-Control:** rendition uploads send `public, max-age=31536000, immutable`. `upload_file` on
   both backends gains an optional `cache_control` argument; originals unchanged.
-- Overwrites: the promotion route and the CMYK script call `store_renditions` after they replace an
-  original, and new promotion uploads get an attachment-id segment in the key like every other
+- **Overwrites:** the promotion route and the CMYK script call `store_renditions` after they replace
+  an original; new promotion uploads get an attachment-id segment in the key like every other
   entity (`attachments.py:1032` pattern).
-- Backfill: `scripts/backfill_attachment_renditions.py` replaces the thumb backfill. Keyset-paged
-  (id order, page 200), resumable via `--after <id>`, `--sleep` between files (default 0.2 s),
-  `--limit`, `--dry-run`, one file decoded at a time, per-row try/except, summary line. Idempotent:
-  skips a rendition whose object exists. Runs on the dev copy first, numbers posted on the PR, then
-  owner decides the prod run (Q4).
-- Guard (BE): a test that greps `app/` for `Image.open(` outside `image_thumbnailer.py` (allow-list:
-  PDF/flyer readers that need full pixels, named in the test with a reason each).
+- **No backfill (Q4).** `scripts/backfill_attachment_thumbnails.py` stays as it is (existing ops
+  tool, not run by this lane); no rendition backfill is written.
+- **Guard (BE):** a test that greps `app/` for `Image.open(` outside `image_thumbnailer.py`
+  (allow-list: PDF/flyer readers that need full pixels, named in the test with a reason each).
 
-### P1 design decisions driven by the prod-clone numbers (crew, 3 Nov; card "Real examples")
+### On-demand path (Q4): one generation per file, cached after
 
-6343 live images (3404 MB), median 62 kB, max 29 MB, 96 at 5 MB or more; 859 without a thumb;
-4378 are product photos (3193 MB). Photos inside tag designs are all under 0.9 MB: the freeze risk
-is product photos pulled into the designer/preview, so P2 targets `dealer_kit/product_images.py`
-first and `asset_service.py` second.
+Old files get their medium (and a missing thumb) the first time a screen asks. This runs in the
+API request path, so it must be bounded.
 
-- **One decode per upload.** `store_renditions` decodes the original once (JPEG `draft` at the
-  medium box), makes the 1024 px medium, then the 320 px thumb FROM the medium. The thumb no longer
-  costs a second full decode; the upload path pays one decode where it paid one before.
-- **Always write a medium, even for small originals.** Most originals are tiny (median 62 kB), and a
-  "medium may be the original" branch would need a column or a second existence check to know
-  which. A re-encode of a small file costs milliseconds and keeps one rule: `<key>.medium.jpg`
-  exists for every image. A PNG with transparency comes out white-backed, the same as its thumb today.
-- **Pixel ceiling stays `_downscale`'s 40 MP** (`product_image_service.py:82`, `MAX_IMAGE_PIXELS`)
-  for upload and backfill. PNGs cannot draft-decode, so a large PNG decodes in full; 40 MP RGBA is
-  ~160 MB in one worker. Anything over the ceiling gets no rendition, is logged by attachment id,
-  and is counted in the backfill summary as `over_ceiling`; screens fall back to the thumb, then to
-  a placeholder, never to the original. Pixel sizes are not in the DB, so the dev-copy backfill
-  run is what reports how many exist (trigger to revisit the ceiling: more than a handful).
-- **Backfill is a script run by hand in the worker container, never the API container**
-  (`scripts/backfill_attachment_renditions.py`, throttled with `--sleep`). Order: keyset by id (resumable). `--only product` processes the
-  4378 product photos first so P2 can ship before the full run finishes. Deleted rows (1670, 1446
-  MB) are skipped. The old `backfill_attachment_thumbnails.py` is deleted in the same PR.
-- **The 240 px document copy** (`product_image_service.render`, `PRINT_BOX = 240`, used by the
-  quotation PDF) stays a size the rendition service makes on demand from the thumb, through the
-  same `downscale`. It is not stored (it is inlined in the PDF), so it is not a fourth rendition.
+1. **Positive memo, per process.** `(provider, key, size) -> exists`, bounded dict. A hit skips
+   storage entirely and goes straight to signing (which `storage_router` caches). Safe without a TTL:
+   a rendition is only ever replaced by a regenerated one under the same key (overwrite rule above).
+2. **Miss memo**, 10 min, for files that cannot be decoded or are over the pixel ceiling (moved from
+   #2126's `_medium_cache`). A miss falls back to the thumb, then to a placeholder, never the original.
+3. **Existence check** on a memo miss: `file_exists(rendition_key)`; present -> memo, done.
+4. **Single-flight, in process:** a dict of `key -> threading.Event` under one lock. The first caller
+   generates; concurrent callers in the same process wait on the event.
+5. **Single-flight, across processes** (blue/green API, worker): `SET image-rendition:<provider>:<key>
+   <owner> NX EX 120` in Redis (`REDIS_URL`, already used by RQ). The winner downloads the original
+   once, writes thumb and medium, deletes the lock (only if it still owns it). A loser polls for the
+   lock to clear (250 ms steps) inside its wait budget, then re-checks existence. Redis down:
+   generate anyway. A duplicate write is identical bytes under the same key, so the worst case is
+   wasted work, never a wrong picture.
+6. **Bounded work:** generation runs on a process-wide pool of 2 threads (worst case 2 x ~160 MB for
+   a 40 MP PNG), after the DB connection is handed back (`release`, as in #2126). A request waits at
+   most `RENDITION_WAIT_SECONDS` (8 s) in total. Pictures not ready by then come back as their thumb
+   URL; their generation keeps running and the next open gets the medium.
+7. **Pixel ceiling** stays `_downscale`'s 40 MP (`product_image_service.py:82`). PNGs cannot
+   draft-decode; over-ceiling files are logged by attachment id and miss-memoised.
 
-### Frontend (P3, shared component lands with P2 since the designer needs it)
+### Print copy (Q1): sized to the image layer's designed box
 
-- `components/common/AttachmentImage.tsx`: `<AttachmentImage attachment size="thumb|medium|original" />`
-  from `DriveImageThumbnail`: `loading="lazy"`, `decoding="async"`, fallback to the next size up on
-  error, then to a placeholder. Takes the URLs the backend sends; it does not build URLs.
-- Backend payloads that feed a picture carry `{thumb_url, medium_url, url}` (url = original) where
-  today they carry one `url`. One shared serializer in the rendition service.
-- `TagSheetRenderer` gets a rendition map (`attachment_id -> url`) built by the payload builder, so
-  screen = medium and PDF = print copy, without the renderer knowing which.
-- Guard (FE): an ESLint `no-restricted-syntax` rule on JSXOpeningElement `img` in
-  `app/(protected)/**`, `app/(auth)/**`, `components/**` with an allow-list file for the non-stored
-  sites above; plus a vitest that fails on a new `<img` outside the allow-list. The message points at
-  `AttachmentImage`.
+The PDF prints each photo from a copy made in the worker before Chromium starts (#2126's manifest
+flow, generalised from the spec sheet export to the tag-sheet export). The copy is per export, not
+a stored rendition, because its size depends on the layer.
+
+- Layer box at 300 DPI: `Bw = ceil(width_mm / 25.4 * 300)`, `Bh` likewise. The layer's `width_mm`,
+  `height_mm`, `fit` (`cover | contain | stretch`) and normalised `cropRect` are what the designer
+  and `TagSheetRenderer` already draw from (`KonvaTagLayer.tsx:123-126,471`, `lib/dealer-kit/image-crop.ts`).
+- Source pixels the layer shows: `cw = W * crop.width`, `ch = H * crop.height` (whole image when no crop).
+- Scale the renderer applies: cover `max(Bw/cw, Bh/ch)`; contain `min(Bw/cw, Bh/ch)`; stretch
+  `max(Bw/cw, Bh/ch)` (the sharper axis). Print copy = original scaled by `min(1, scale)`: never
+  upscaled, aspect kept. The crop is normalised, so it stays valid on the smaller copy.
+- One photo used by several layers or tags in one export: the largest scale wins, one copy.
+- A photo already within its box prints from the original; a failed copy prints from the original
+  (never a blank), exactly as #2126's spec sheet export.
+- Example: a product photo 4000 x 3000 in a 40 x 30 mm contain box -> box 473 x 355 px -> copy
+  473 x 355; the 29 MB SRTBF11833 _2.png in the same box becomes a few tens of kB.
+- **Spec sheet export uses the same rule** (it prints through the same `TagSheetRenderer` and
+  layers). Today it caps at the PAGE's long edge at 200 DPI (`export_cap_px`); the layer rule at 300
+  DPI is never softer for any layer and smaller for almost all. One rule for every printed page.
+
+### Frontend
+
+- `components/common/AttachmentImage.tsx` (P3): `<AttachmentImage thumbUrl mediumUrl url size="thumb|medium|original" />`,
+  built from `DriveImageThumbnail` (lazy, `decoding="async"`, fallback down to the thumb, then a
+  placeholder). It takes URLs the backend sends; it never builds one.
+- Payloads that feed a picture carry `{thumb_url, medium_url, url}`; one serializer in the rendition
+  service.
+- Price Tag (P2): `tag_sheet_export_service.design_media` (`:430`) is already the ONE resolver behind
+  the PDF payload, the portal preview and the CRM design preview, returning `images` (product
+  photos by attachment id) and `assets`. It gains `size`: screens ask for medium, the PDF payload
+  reads the print-copy manifest. `TagSheetRenderer` and `useHtmlImage` keep drawing whatever URL the
+  map holds, so neither knows which size it got.
+- Guard (FE, P3): ESLint `no-restricted-syntax` on JSX `img` in `app/(protected)/**`, `app/(auth)/**`,
+  `components/**` with an allow-list of the non-stored sites above, plus a vitest that fails on a new
+  `<img` outside the allow-list. The message points at `AttachmentImage`.
 
 ### Switches per phase
 
-- P2 Price Tag: designer canvas + preview -> medium; tag-sheet PDF -> print copy made in the worker
-  before Chromium starts (same flow as #2126's spec sheet export, generalised: manifest beside the
-  export, missing entries print the original). DPI and unit per Q1.
-- P3: attachment preview -> medium with "Open original" for zoom/download (Q3); sign page ->
-  shared component (Q5); catalogue grid and the rest of the inventory -> `AttachmentImage`.
-- P4 chatbot: per Q2 (recommendation: no change).
+- **P2 Price Tag:** designer canvas + previews -> medium (product photos first,
+  `dealer_kit/product_images.py:182`, then library assets `asset_service.py:250`); tag-sheet PDF and
+  spec sheet PDF -> print copy per layer box.
+- **P3:**
+  - Resource Attachments: grid thumb and preview original stay exactly as today (Q3). `DriveImageThumbnail`
+    becomes `AttachmentImage size="thumb"` and the preview modal `size="original"` only if every
+    existing test and a browser pass show identical behaviour; otherwise they stay untouched and
+    are allow-listed.
+  - Sign page (Q5): every line's picture, 320 px thumb, lazy, no 60 cap. The page no longer inlines
+    data URIs (cache 4 goes). Each picture is `GET /public/quotation-sign/{token}/pictures/{attachment_id}`,
+    which checks the token, checks the attachment is a picture of THIS issue, runs the on-demand
+    thumb path, and answers 302 to a short-lived signed URL. Lazy loading then drives generation:
+    only pictures the customer scrolls to are made. Security review covers the route (token scope,
+    attachment-belongs-to-issue, rate limit, link lifetime, no original ever reachable).
+  - Catalogue photos grid and the rest of the inventory -> `AttachmentImage`.
+- **P4:** closed, no PR (Q2).
 
 ## Phases and DoD
 
 | Phase | Size | Starts when | Customer/dealer visible |
 | --- | --- | --- | --- |
-| P0 plan + card | - | now | no |
-| P1 rendition service, backfill, Cache-Control, guards | M | #2126 merged | no (renditions appear in storage only) |
-| P2 Price Tag on renditions | M | P1 merged, #2101 merged, Q1 answered | yes: dealers' printed tags (Q1) |
-| P3 preview, sign page, catalogue grid, rest | S each | P1 merged | sign page (Q5) |
-| P4 chatbot | S or none | Q2 answered | customers, only if Q2 is (b)/(c) |
+| P0 plan + card | - | done | no |
+| P1 rendition service, on-demand single-flight, Cache-Control, overwrite fixes, BE guard | M | #2126 merged | no |
+| P2 Price Tag designer/preview on medium, PDFs on layer-box print copies | M | P1 and #2101 merged | yes: dealers' printed tags, spec sheet PDF |
+| P3 sign page, catalogue grid, rest, `AttachmentImage` + FE guard | S each | P1 merged | yes: customers see every picture on the sign page |
+| P4 chatbot | - | closed (Q2) | no |
 
 Done per phase: red-first tests and kill tests, reviewer, security review (signed URLs, cache
-headers, public routes), crew perf + browser pass on a local prod-clone copy (bytes on open,
-decoded memory, long tasks) before the owner hand test; owner hand test for P2 and any
-customer-visible change.
+headers, Redis lock, public routes), crew perf + browser pass on a local prod-clone copy (bytes on
+open, decoded memory, long tasks, first-open time with no renditions) before the owner hand test;
+owner hand test for P2 and P3's sign page.
 
 ## Tests (P1 list for the tester)
 
 1. `downscale` is the only resize: `generate_thumbnail` output equals `downscale(box=320, q=80)`.
 2. Upright: an EXIF-rotated JPEG comes out with width/height swapped; transparent PNG flattens white.
-3. `store_renditions` writes `<key>.thumb.jpg` and `<key>.medium.jpg` with `Cache-Control:
-   public, max-age=31536000, immutable` and `image/jpeg`; a non-image writes nothing and returns None.
+3. `store_renditions` writes `<key>.medium.jpg` and `<key>.thumb.jpg` with `Cache-Control:
+   public, max-age=31536000, immutable` and `image/jpeg`, decoding the original once (spy on
+   `Image.open`); a non-image writes nothing and returns None; a storage failure does not fail the upload.
 4. Every one of the 7 upload sites produces both renditions (parametrised).
-5. `ensure_rendition` makes a missing medium once; a second call does not download the original;
-   an undecodable original is memoised as a miss for 10 min.
-6. `rendition_url` signs through `storage_router` (spy): no other signer is called.
-7. Removing caches 2-4 does not change the spec sheet or sign page outputs (the #2126 tests stay green).
-8. Promotion re-upload of the same filename gets a new key; CMYK rewrite regenerates renditions.
-9. Backfill: dry-run writes nothing; a run with `--limit 3` then a resume with `--after` finishes the
-   rest with no file processed twice; a broken file is counted failed and the run continues.
-10. Guard tests: a planted `Image.open` in a new module fails the BE guard; a planted `<img src={x.url}>`
-    in a new component fails the FE guard.
+5. On-demand: a missing medium is made once; the next call neither downloads the original nor calls
+   `file_exists` (positive memo).
+6. Single-flight in process: 8 threads asking for the same missing medium -> exactly one download
+   and one upload; all 8 get the same URL.
+7. Single-flight across processes: with the Redis lock held by another owner, the caller does not
+   download, waits, and returns the URL once the object appears; when the budget lapses it returns
+   the thumb URL. Redis unavailable -> generation still happens.
+8. Budget: with generation slowed past `RENDITION_WAIT_SECONDS`, the call returns thumbs on time and
+   the medium exists after the background work finishes.
+9. Undecodable / over-ceiling original: miss-memoised for 10 min, falls back to the thumb, never the
+   original URL.
+10. `rendition_urls` signs only through `storage_router` (spy): no other signer is called.
+11. Removing caches 2-4 does not change the spec sheet or sign page outputs (#2126 tests stay green).
+12. Promotion re-upload of the same filename gets a new key; CMYK rewrite regenerates renditions.
+13. BE guard: a planted `Image.open` in a new module fails it.
+14. `print_scale` (lands in P1 as a pure function, used in P2): cover/contain/stretch, with and
+    without crop, never above 1; table-driven from the examples above.
