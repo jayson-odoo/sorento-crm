@@ -1013,6 +1013,7 @@ class PileQueueLine(BaseModel):
     #: What the order calls the line (AutoCount's number), the mirror's `line_no` without one.
     so_line_no: Optional[int] = None
     customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     qty: str
     required_date: Optional[date] = None
     order_date: Optional[date] = None

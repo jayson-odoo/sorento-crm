@@ -84,6 +84,7 @@ from app.models.user import User
 from app.services import project_line_draft_service
 from app.services import so_remark_rules
 from app.services.error_handler import AppException
+from app.services.scm.so_party import so_parties, with_party
 from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import (
     LADDER_VERSION,
@@ -1482,13 +1483,14 @@ class FulfilmentBoardService:
             else None
         )
 
+        parties = so_parties(self.db, ids=[row.get("sales_order_id") for row in book])
         lines: List[Dict[str, Any]] = []
         running = _ZERO
         for position, row in enumerate(book, start=1):
             running += _dec(row["open_qty"])
             raw = priority.raw_facts_for_demand_row(row)
             lines.append(
-                {
+                with_party({
                     "position": position,
                     "line_id": row["line_id"],
                     "sales_order_id": row.get("sales_order_id"),
@@ -1521,7 +1523,7 @@ class FulfilmentBoardService:
                     "cumulative_ahead_qty": qty_text(running),
                     "is_this_line": asked is not None and row["line_id"] == asked["line_id"],
                     "is_covered_excluded": False,
-                }
+                }, parties, row.get("sales_order_id"))
             )
 
         return {
