@@ -1,6 +1,6 @@
 # PLAN: redact customer link tokens from backend logs
 
-Status: in review (round 2). Small fix track (no migration, no auth/RBAC change, no new ingest surface; under 300 lines).
+Status: review READY (round 3). Small fix track by kind (no migration, no auth/RBAC change, no new ingest surface); the diff is ~410 lines, about half of it tests and this plan.
 Lane: SIGN-TOKEN-LOG-REDACT. UAC: `sign-token-log-redact-acceptance-criteria.md`.
 
 ## Problem
@@ -59,6 +59,8 @@ segment masked, a query with a token dropped, a link Referer dropped).
 - A dealer-kit render timeout's error text can name the print URL with its short-lived render JWT
   (`app/tasks/dealer_kit_export_tasks.py`); low impact, follow-up.
 - `webhook_service.py` logs n8n payloads at INFO; none carries a link token today.
+- `hide_parameters` hides SQLAlchemy's bound parameters, not Postgres's own error detail
+  (`Key (token)=(...) already exists`).
 
 No user-visible behaviour change: routing, responses and the audit rows are untouched.
 

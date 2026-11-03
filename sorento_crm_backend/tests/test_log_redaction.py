@@ -172,8 +172,10 @@ def test_api_call_log_body_strips_link_urls():
 def test_httpx_request_line_not_logged_at_info():
     import app.main  # noqa: F401
 
-    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
-    assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING
+    # The logger's own level: pytest's capture handler leaves the root at WARNING, so the
+    # effective level would pass without the fix.
+    assert logging.getLogger("httpx").level >= logging.WARNING
+    assert logging.getLogger("httpcore").level >= logging.WARNING
 
 
 def test_db_errors_hide_bound_parameters():

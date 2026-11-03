@@ -78,5 +78,4 @@ def install_access_log_filter() -> None:
     if not any(isinstance(f, RedactUrlTokensFilter) for f in access.filters):
         access.addFilter(RedactUrlTokensFilter())
     for name in ("httpx", "httpcore"):
-        if logging.getLogger(name).getEffectiveLevel() < logging.WARNING:
-            logging.getLogger(name).setLevel(logging.WARNING)
+        logging.getLogger(name).setLevel(logging.WARNING)
