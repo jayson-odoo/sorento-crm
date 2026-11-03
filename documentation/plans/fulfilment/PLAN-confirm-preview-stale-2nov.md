@@ -1,5 +1,9 @@
 # PLAN: CONFIRM-PREVIEW-STALE
 
+> Superseded in part (3 Nov 2026): the "AutoCount moved this line" warning with Keep / Take
+> suggestion is removed by `PLAN-no-ac-moved-warning-3nov.md` (owner: a saved decision stands
+> silently). Do not restore it.
+
 Status: in review, round 2, PR #2091. Track: standard (the diff is past the ~300 line small fix
 limit; no migration, no auth/RBAC change). Items 1-3 here; item 4 is a stacked follow-up PR
 (crew ruling, 2 Nov). UAC: `confirm-preview-stale-2nov-acceptance-criteria.md`.
