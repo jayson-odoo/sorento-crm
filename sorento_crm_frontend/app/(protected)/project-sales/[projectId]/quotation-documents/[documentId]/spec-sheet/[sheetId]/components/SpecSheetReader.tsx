@@ -443,14 +443,25 @@ export function SpecSheetReader({
   const sendToEveryPage = React.useCallback(
     (layerId: string, changes: ApplyAllChanges) => {
       const keep = selection?.pageKey ?? null;
-      applyAll
-        .mutateAsync({ sheetId, layerId, changes })
-        .then(() => {
+      void (async () => {
+        // Every page's pending edit goes first, and no save lands in the middle of the apply.
+        const release = await editing.settle();
+        try {
+          await applyAll.mutateAsync({
+            sheetId,
+            layerId,
+            changes,
+            originPageKey: keep ?? undefined,
+          });
           // The server changed the other pages: their local copies are stale, start them over.
           editing.forgetOthers(keep);
           setEpoch((n) => n + 1);
-        })
-        .catch(() => undefined);
+        } catch {
+          // The mutation reports its own error.
+        } finally {
+          release();
+        }
+      })();
     },
     [applyAll, sheetId, selection, editing],
   );

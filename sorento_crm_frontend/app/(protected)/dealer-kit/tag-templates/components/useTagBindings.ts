@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { QueryClient, useQuery } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
@@ -24,7 +25,10 @@ import type {
   TagBindingData,
 } from '@/lib/dealer-kit/tag-template-types';
 import { bindingKey } from '@/lib/dealer-kit/tag-template-types';
-import { ensureFontsLoaded, ensureSeedFontsLoaded } from '@/lib/dealer-kit/fonts';
+import {
+  ensureFontsLoaded,
+  ensureSeedFontsLoaded,
+} from '@/lib/dealer-kit/fonts';
 import {
   getProductSetTagData,
   getProductTagData,
@@ -105,7 +109,9 @@ export function useTagBindings(promotionId?: string | null): TagBindings {
       } catch (error) {
         toastResolutionFailureOnce(
           key,
-          error instanceof Error ? error.message : 'Failed to load product data',
+          error instanceof Error
+            ? error.message
+            : 'Failed to load product data',
         );
         return null;
       }
@@ -124,7 +130,9 @@ export function useTagBindings(promotionId?: string | null): TagBindings {
       } catch (error) {
         toastResolutionFailureOnce(
           key,
-          error instanceof Error ? error.message : 'Failed to load product set data',
+          error instanceof Error
+            ? error.message
+            : 'Failed to load product set data',
         );
         return null;
       }
@@ -149,7 +157,7 @@ export function useTagBindings(promotionId?: string | null): TagBindings {
   const get = useCallback(
     (binding: GroupBinding | undefined) => {
       const key = bindingKey(binding);
-      return key ? data[key] ?? null : null;
+      return key ? (data[key] ?? null) : null;
     },
     [data],
   );
@@ -180,32 +188,60 @@ export interface KitLibrary {
   forget: (id: string) => void;
 }
 
+/**
+ * One client for the designer's library, with no provider to mount: the artwork list, the brand
+ * fonts and the spec vocabulary are read ONCE per session however many editors open (the spec sheet
+ * reader mounts a live canvas per visible page, and each used to read all three again, signing up
+ * to 200 originals every time). `reload` and the upload / rename / delete helpers write to this
+ * cache, so every open editor sees the change.
+ */
+const libraryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: Infinity,
+      gcTime: Infinity,
+      retry: false,
+    },
+  },
+});
+const ASSETS_KEY = ['dealer-kit', 'library', 'assets'] as const;
+const FONTS_KEY = ['dealer-kit', 'library', 'fonts'] as const;
+const SPEC_KEYS_KEY = ['dealer-kit', 'library', 'spec-keys'] as const;
+/** Forget what was read (a test, or a company switch): the next open reads the library again. */
+export function resetKitLibraryCache(): void {
+  libraryClient.clear();
+}
+const NO_ASSETS: KitAsset[] = [];
+const NO_SPEC_KEYS: SpecKeyOption[] = [];
+
 export function useKitLibrary(): KitLibrary {
-  const [assets, setAssets] = useState<KitAsset[]>([]);
-  const [fonts, setFonts] = useState<KitAsset[]>([]);
-  const [specKeys, setSpecKeys] = useState<SpecKeyOption[]>([]);
+  // A library that will not load leaves layers showing their no-image state; it must not stop the
+  // canvas opening, so a failed read is simply empty data.
+  const assetsQuery = useQuery(
+    { queryKey: ASSETS_KEY, queryFn: () => listAssets({ limit: 200 }) },
+    libraryClient,
+  );
+  const fontsQuery = useQuery(
+    { queryKey: FONTS_KEY, queryFn: () => listFontAssets() },
+    libraryClient,
+  );
+  // A registry read that fails leaves the Specs group empty rather than stopping the canvas.
+  const specKeysQuery = useQuery(
+    {
+      queryKey: SPEC_KEYS_KEY,
+      queryFn: () => listSpecKeys().catch(() => NO_SPEC_KEYS),
+    },
+    libraryClient,
+  );
+  const assets = assetsQuery.data ?? NO_ASSETS;
+  const fonts = fontsQuery.data ?? NO_ASSETS;
+  const specKeys = specKeysQuery.data ?? NO_SPEC_KEYS;
 
   const reload = useCallback(async () => {
-    try {
-      const [all, fontRows] = await Promise.all([listAssets({ limit: 200 }), listFontAssets()]);
-      setAssets(all);
-      setFonts(fontRows);
-    } catch {
-      // A library that will not load leaves layers showing their no-image
-      // state. It must not stop the canvas opening.
-    }
-  }, []);
-
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-
-  // Fetched once. A registry read that fails leaves the Specs group empty
-  // rather than stopping the canvas: every other field still inserts.
-  useEffect(() => {
-    void listSpecKeys()
-      .then(setSpecKeys)
-      .catch(() => setSpecKeys([]));
+    await Promise.all([
+      libraryClient.refetchQueries({ queryKey: ASSETS_KEY }),
+      libraryClient.refetchQueries({ queryKey: FONTS_KEY }),
+    ]);
   }, []);
 
   // The seeded templates' stand-in faces (D32). Loaded unconditionally rather
@@ -241,22 +277,32 @@ export function useKitLibrary(): KitLibrary {
   }, [fonts]);
 
   const remember = useCallback((asset: KitAsset) => {
-    setAssets((prev) => [...prev.filter((a) => a.id !== asset.id), asset]);
+    libraryClient.setQueryData<KitAsset[]>(ASSETS_KEY, (prev) => [
+      ...(prev ?? []).filter((a) => a.id !== asset.id),
+      asset,
+    ]);
     if (asset.kind === 'font') {
-      setFonts((prev) => [...prev.filter((a) => a.id !== asset.id), asset]);
+      libraryClient.setQueryData<KitAsset[]>(FONTS_KEY, (prev) => [
+        ...(prev ?? []).filter((a) => a.id !== asset.id),
+        asset,
+      ]);
     }
   }, []);
 
   /** The row's name changed on the server; carry it here without a round trip. */
   const rename = useCallback((id: string, name: string) => {
-    setAssets((prev) => prev.map((a) => (a.id === id ? { ...a, name } : a)));
-    setFonts((prev) => prev.map((a) => (a.id === id ? { ...a, name } : a)));
+    const apply = (prev?: KitAsset[]) =>
+      (prev ?? []).map((a) => (a.id === id ? { ...a, name } : a));
+    libraryClient.setQueryData<KitAsset[]>(ASSETS_KEY, apply);
+    libraryClient.setQueryData<KitAsset[]>(FONTS_KEY, apply);
   }, []);
 
   /** The row was deleted on the server; drop it from every list it was in. */
   const forget = useCallback((id: string) => {
-    setAssets((prev) => prev.filter((a) => a.id !== id));
-    setFonts((prev) => prev.filter((a) => a.id !== id));
+    const apply = (prev?: KitAsset[]) =>
+      (prev ?? []).filter((a) => a.id !== id);
+    libraryClient.setQueryData<KitAsset[]>(ASSETS_KEY, apply);
+    libraryClient.setQueryData<KitAsset[]>(FONTS_KEY, apply);
   }, []);
 
   const assetUrls = useMemo(() => {
@@ -282,8 +328,21 @@ export function useKitLibrary(): KitLibrary {
       description: 'Brand font',
     }));
     const known = new Set(brand.map((option) => option.value));
-    return [...brand, ...STATIC_FONT_OPTIONS.filter((o) => !known.has(o.value))];
+    return [
+      ...brand,
+      ...STATIC_FONT_OPTIONS.filter((o) => !known.has(o.value)),
+    ];
   }, [fonts]);
 
-  return { assetUrls, thumbUrls, fonts, specKeys, fontOptions, reload, remember, rename, forget };
+  return {
+    assetUrls,
+    thumbUrls,
+    fonts,
+    specKeys,
+    fontOptions,
+    reload,
+    remember,
+    rename,
+    forget,
+  };
 }

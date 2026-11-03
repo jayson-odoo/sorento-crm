@@ -70,7 +70,7 @@ export function ReaderInspector({
     >
       {layer && (
         <div
-          className="flex items-center gap-1 px-2 pt-2"
+          className="flex flex-wrap items-center gap-1 px-2 pt-2"
           role="group"
           aria-label="Apply to"
         >
@@ -88,10 +88,11 @@ export function ReaderInspector({
             type="button"
             size="sm"
             variant={mode === 'all' ? 'primary' : 'outline'}
+            className="h-auto whitespace-normal text-start"
             aria-pressed={mode === 'all'}
             onClick={() => onModeChange('all')}
           >
-            Every page
+            Every page of this sheet (each becomes an edited page)
           </Button>
         </div>
       )}

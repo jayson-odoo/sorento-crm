@@ -1653,6 +1653,7 @@ def apply_to_all_pages(
     layer_id: str,
     changes: Any,
     user_id: Optional[str] = None,
+    origin_page_key: Optional[str] = None,
 ) -> ProjectQuotationSpecSheet:
     """Merge ``changes`` into the layer ``layer_id`` on every printed page whose effective layers
     (its edit, else the pinned version) hold it. Other pages are untouched. Each page's edit goes
@@ -1661,9 +1662,14 @@ def apply_to_all_pages(
     pinned = _pinned(db, sheet)
     # Pages and the pinned versions are read ONCE; every merged page is validated in memory and the
     # sheet is written once, not once per page (each write rewrites the whole page_edits column).
-    entries = [(COVER_KEY, "cover")] + [
-        (p["key"], p["template"]) for p in pages(db, sheet) if not p["hidden"]
-    ]
+    # An apply from the cover reaches the cover only; from an item page (or with no origin), the
+    # item pages only: a cover that happens to share a layer id is a different design.
+    if origin_page_key is not None:
+        ensure_key(db, sheet, origin_page_key)
+    if origin_page_key == COVER_KEY:
+        entries = [(COVER_KEY, "cover")]
+    else:
+        entries = [(p["key"], p["template"]) for p in pages(db, sheet) if not p["hidden"]]
     edits = dict(sheet.page_edits or {})
     touched = 0
     for key, template in entries:

@@ -275,10 +275,12 @@ export function useSpecSheetMutations(projectId: string, documentId: string) {
       sheetId,
       layerId,
       changes,
+      originPageKey,
     }: {
       sheetId: string;
       layerId: string;
       changes: ApplyAllChanges;
+      originPageKey?: string;
     }) =>
       applySpecSheetLayerToAll(
         projectId,
@@ -286,6 +288,7 @@ export function useSpecSheetMutations(projectId: string, documentId: string) {
         sheetId,
         layerId,
         changes,
+        originPageKey,
       ),
     onSuccess: async (detail, { sheetId }) => {
       if (detail)

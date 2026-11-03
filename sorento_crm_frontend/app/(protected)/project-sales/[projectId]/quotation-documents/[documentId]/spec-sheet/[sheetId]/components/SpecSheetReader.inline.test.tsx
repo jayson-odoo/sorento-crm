@@ -572,7 +572,9 @@ describe('apply to every page', () => {
     );
     await screen.findByTestId('inspector');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Every page' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Every page of this sheet/ }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'move logo' }));
 
     await waitFor(() =>
@@ -584,6 +586,7 @@ describe('apply to every page', () => {
       'sheet-1',
       'logo',
       { x_mm: 77 },
+      'k1',
     );
   });
 
@@ -682,5 +685,132 @@ describe('phone', () => {
       'data-readonly',
       'no',
     );
+  });
+});
+
+describe('every page, pending saves, save status and the unload guard', () => {
+  async function two() {
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout'],
+      shouldAdvanceTime: true,
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    await screen.findByTestId('live-canvas-k2');
+  }
+
+  it("sends another page's pending edit BEFORE applying to every page, and keeps it", async () => {
+    await two();
+    // Page B (k2) has an edit waiting for its second; then page A (k1) applies to every page.
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k2')).getByText('nudge k2'),
+    );
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    await screen.findByTestId('inspector');
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Every page of this sheet/ }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'move logo' }));
+
+    await waitFor(() =>
+      expect(applySpecSheetLayerToAll).toHaveBeenCalledTimes(1),
+    );
+    const firstSave = saveSpecSheetPageEdit.mock.calls.findIndex(
+      (c) => c[3] === 'k2',
+    );
+    expect(firstSave).toBeGreaterThanOrEqual(0);
+    expect(
+      (saveSpecSheetPageEdit.mock.calls[firstSave][4] as { x_mm: number }[])[0]
+        .x_mm,
+    ).toBe(6);
+    expect(
+      saveSpecSheetPageEdit.mock.invocationCallOrder[firstSave],
+    ).toBeLessThan(applySpecSheetLayerToAll.mock.invocationCallOrder[0]);
+    // B's own copy survives the apply (it was sent, and is still what the page holds).
+    expect(screen.getByTestId('live-canvas-k2')).toBeInTheDocument();
+  });
+
+  it('keeps "Not saved" while any page failed, retries it on the next flush, then says Saved', async () => {
+    let k2Ok = false;
+    saveSpecSheetPageEdit.mockImplementation(
+      async (_p: string, _d: string, _s: string, key: string) => {
+        if (key === 'k2' && !k2Ok) throw new Error('too large');
+        return detail();
+      },
+    );
+    await two();
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k2')).getByText('nudge k2'),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    expect(await screen.findByText('Not saved')).toBeInTheDocument();
+
+    // Page C saves; B is still failed, so the mark stays.
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await waitFor(() =>
+      expect(
+        saveSpecSheetPageEdit.mock.calls.filter((c) => c[3] === 'k1'),
+      ).toHaveLength(1),
+    );
+    expect(screen.getByText('Not saved')).toBeInTheDocument();
+    expect(screen.queryByText('Saved')).toBeNull();
+
+    // B can save now; the next flush retries it.
+    k2Ok = true;
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(screen.queryByText('Not saved')).toBeNull();
+  });
+
+  it('guards the tab with beforeunload while a save is pending, and lets go when idle', async () => {
+    const add = vi.spyOn(window, 'addEventListener') as unknown as {
+      mock: { calls: unknown[][] };
+      mockRestore: () => void;
+    };
+    const remove = vi.spyOn(window, 'removeEventListener') as unknown as {
+      mock: { calls: unknown[][] };
+      mockRestore: () => void;
+    };
+    await two();
+    expect(add.mock.calls.some((c) => c[0] === 'beforeunload')).toBe(false);
+
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'),
+    );
+    await waitFor(() =>
+      expect(add.mock.calls.some((c) => c[0] === 'beforeunload')).toBe(true),
+    );
+    const handler = add.mock.calls.find(
+      (c) => c[0] === 'beforeunload',
+    )?.[1] as (e: Event) => void;
+    const event = new Event('beforeunload', { cancelable: true });
+    handler(event);
+    expect(event.defaultPrevented).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await screen.findByText('Saved');
+    await waitFor(() =>
+      expect(remove.mock.calls.some((c) => c[0] === 'beforeunload')).toBe(true),
+    );
+    add.mockRestore();
+    remove.mockRestore();
   });
 });

@@ -31,6 +31,7 @@ import {
 import { listFontAssets } from '../../services/assetService';
 import {
   resetTagBindingsToastDedupeForTests,
+  resetKitLibraryCache,
   useKitLibrary,
   useTagBindings,
 } from './useTagBindings';
@@ -154,6 +155,8 @@ describe('useKitLibrary forget/rename', () => {
   const mockListFontAssets = vi.mocked(listFontAssets);
 
   beforeEach(() => {
+    // The library is read once per session; each test starts from an unread one.
+    resetKitLibraryCache();
     vi.mocked(listSpecKeys).mockResolvedValue([]);
   });
 
@@ -177,33 +180,40 @@ describe('useKitLibrary forget/rename', () => {
 
     await waitForFonts(result, 2);
 
-    act(() => {
+    // The shared library cache notifies its subscribers on the next tick.
+    await act(async () => {
       result.current.forget('f-1');
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(result.current.fonts.map((f) => f.id)).toEqual(['f-2']);
-    expect(result.current.fontOptions.some((o) => o.value === 'Sorento Display')).toBe(
-      false,
-    );
+    expect(
+      result.current.fontOptions.some((o) => o.value === 'Sorento Display'),
+    ).toBe(false);
   });
 
   it('rename swaps the label without dropping the option', async () => {
-    mockListFontAssets.mockResolvedValue([font({ id: 'f-1', name: 'Sorento Display' })]);
+    mockListFontAssets.mockResolvedValue([
+      font({ id: 'f-1', name: 'Sorento Display' }),
+    ]);
     const { result } = renderHook(() => useKitLibrary());
 
     await waitForFonts(result, 1);
 
-    act(() => {
+    await act(async () => {
       result.current.rename('f-1', 'Sorento Display Renamed');
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(result.current.fonts[0].name).toBe('Sorento Display Renamed');
     expect(
-      result.current.fontOptions.some((o) => o.value === 'Sorento Display Renamed'),
+      result.current.fontOptions.some(
+        (o) => o.value === 'Sorento Display Renamed',
+      ),
     ).toBe(true);
-    expect(result.current.fontOptions.some((o) => o.value === 'Sorento Display')).toBe(
-      false,
-    );
+    expect(
+      result.current.fontOptions.some((o) => o.value === 'Sorento Display'),
+    ).toBe(false);
   });
 });
 

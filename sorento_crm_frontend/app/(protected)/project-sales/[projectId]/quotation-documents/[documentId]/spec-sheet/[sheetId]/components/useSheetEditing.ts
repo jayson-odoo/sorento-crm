@@ -25,6 +25,10 @@ interface History {
  * about a second after its last change (one PUT with that page's layers) and survives its canvas
  * unmounting: scrolling a page away does not lose its edits or its undo steps. Nothing refetches;
  * a save writes its answer into the caches instead (`autosavePage`).
+ *
+ * Save state is per page: a page whose save failed stays "failed" (and is tried again with the
+ * next flush) however many other pages save, and the sheet reads "Saved" only when none is left.
+ * While anything is waiting or in flight the tab asks before it closes.
  */
 export function useSheetEditing(
   projectId: string,
@@ -39,38 +43,67 @@ export function useSheetEditing(
   const histories = React.useRef(new Map<string, History>());
   const timers = React.useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const chains = React.useRef(new Map<string, Promise<unknown>>());
+  const failed = React.useRef(new Set<string>());
   const inflight = React.useRef(0);
   const last = React.useRef<string | null>(null);
+  // Saves wait here while "Apply to every page" is running, so none lands in the middle of it.
+  const gate = React.useRef<Promise<void>>(Promise.resolve());
   // Layers the HOST set (undo, redo): the canvas adopts them.
   const [external, setExternal] = React.useState<Record<string, TagLayer[]>>(
     {},
   );
   const [, bump] = React.useState(0);
   const [status, setStatus] = React.useState<SaveStatus>('idle');
+  const [busy, setBusy] = React.useState(false);
+
+  /** Re-derive the sheet's mark and the unload guard from what is waiting, running and failed. */
+  const refresh = React.useCallback(() => {
+    const working = timers.current.size > 0 || inflight.current > 0;
+    setBusy(working);
+    setStatus((prev) => {
+      if (failed.current.size > 0 && !working) return 'error';
+      if (working) return 'saving';
+      return prev === 'idle' ? 'idle' : 'saved';
+    });
+  }, []);
+
+  const send = React.useCallback(
+    (key: string): Promise<unknown> | null => {
+      const layers = drafts.current.get(key);
+      if (!layers) return null;
+      inflight.current += 1;
+      const run = (chains.current.get(key) ?? Promise.resolve())
+        .catch(() => undefined)
+        .then(() => gate.current)
+        .then(() => save.current({ sheetId, key, layers }));
+      chains.current.set(key, run);
+      const done = run
+        .then(() => {
+          failed.current.delete(key);
+        })
+        .catch(() => {
+          failed.current.add(key);
+        })
+        .finally(() => {
+          inflight.current -= 1;
+          refresh();
+        });
+      refresh();
+      return done;
+    },
+    [sheetId, refresh],
+  );
 
   const flush = React.useCallback(
     (key: string) => {
       timers.current.delete(key);
-      const layers = drafts.current.get(key);
-      if (!layers) return;
-      inflight.current += 1;
-      setStatus('saving');
-      const run = (chains.current.get(key) ?? Promise.resolve())
-        .catch(() => undefined)
-        .then(() => save.current({ sheetId, key, layers }));
-      chains.current.set(key, run);
-      run
-        .then(() => {
-          inflight.current -= 1;
-          if (inflight.current === 0 && timers.current.size === 0)
-            setStatus('saved');
-        })
-        .catch(() => {
-          inflight.current -= 1;
-          setStatus('error');
-        });
+      send(key);
+      // A page whose last save failed is tried again with the next one.
+      for (const other of Array.from(failed.current)) {
+        if (other !== key && !timers.current.has(other)) send(other);
+      }
     },
-    [sheetId],
+    [send],
   );
 
   const schedule = React.useCallback(
@@ -81,10 +114,33 @@ export function useSheetEditing(
         key,
         setTimeout(() => flush(key), AUTOSAVE_MS),
       );
-      setStatus('saving');
+      refresh();
     },
-    [flush],
+    [flush, refresh],
   );
+
+  /**
+   * Send every page that is waiting and wait for every save in flight, then hold new saves back
+   * until `release` is called. "Apply to every page" runs between the two, so it never overtakes
+   * (or is overtaken by) another page's edit.
+   */
+  const settle = React.useCallback(async (): Promise<() => void> => {
+    for (const [key, timer] of Array.from(timers.current)) {
+      clearTimeout(timer);
+      timers.current.delete(key);
+      send(key);
+    }
+    // Wait for what was just sent (and anything already in flight) BEFORE closing the gate: the
+    // saves queue behind the gate they are created under.
+    await Promise.all(
+      Array.from(chains.current.values()).map((c) => c.catch(() => undefined)),
+    );
+    let release: () => void = () => undefined;
+    gate.current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }, [send]);
 
   // Leaving the reader saves what is still waiting.
   React.useEffect(() => {
@@ -92,10 +148,21 @@ export function useSheetEditing(
     return () => {
       for (const [key, timer] of waiting) {
         clearTimeout(timer);
-        flush(key);
+        send(key);
       }
     };
-  }, [flush]);
+  }, [send]);
+
+  // The tab asks before it closes while a save is waiting or running.
+  React.useEffect(() => {
+    if (!busy) return;
+    const guard = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [busy]);
 
   /** A canvas reports the layers it now holds. `base` is what it started from. */
   const report = React.useCallback(
@@ -141,17 +208,24 @@ export function useSheetEditing(
     return Boolean(history && history.index < history.stack.length - 1);
   };
 
-  /** Drop every page's local copy but `keep`'s (the server changed them: apply to every page). */
+  /**
+   * Drop the local copy of every page but `keep`'s (the server changed them: apply to every page).
+   * A page with an edit not yet sent, or whose save failed, keeps its copy: it was never sent.
+   */
   const forgetOthers = React.useCallback((keep: string | null) => {
     for (const key of Array.from(drafts.current.keys())) {
-      if (key === keep) continue;
+      if (key === keep || timers.current.has(key) || failed.current.has(key))
+        continue;
       drafts.current.delete(key);
       histories.current.delete(key);
-      const timer = timers.current.get(key);
-      if (timer) clearTimeout(timer);
-      timers.current.delete(key);
     }
-    setExternal((prev) => (keep && prev[keep] ? { [keep]: prev[keep] } : {}));
+    setExternal((prev) => {
+      const next: Record<string, TagLayer[]> = {};
+      for (const [key, layers] of Object.entries(prev)) {
+        if (key === keep || drafts.current.has(key)) next[key] = layers;
+      }
+      return next;
+    });
     bump((n) => n + 1);
   }, []);
 
@@ -166,5 +240,6 @@ export function useSheetEditing(
     canRedo,
     lastKey: () => last.current,
     forgetOthers,
+    settle,
   };
 }

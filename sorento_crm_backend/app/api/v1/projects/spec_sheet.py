@@ -66,6 +66,8 @@ class SpecSheetLayersIn(BaseModel):
 
 class SpecSheetApplyIn(BaseModel):
     changes: dict = Field(default_factory=dict)
+    # The page the change was made on: a cover applies to the cover, an item page to item pages.
+    origin_page_key: Optional[str] = Field(None, max_length=200)
 
 
 def _document(db: Session, project_id: str, document_id: str):
@@ -286,7 +288,14 @@ def apply_spec_sheet_layer_to_all(
         _editable_project(db, project_id, current_user)
         document = _document(db, project_id, document_id)
         sheet = _sheet(db, document, sheet_id)
-        spec.apply_to_all_pages(db, sheet, layer_id, payload.changes, user_id=str(current_user["id"]))
+        spec.apply_to_all_pages(
+            db,
+            sheet,
+            layer_id,
+            payload.changes,
+            user_id=str(current_user["id"]),
+            origin_page_key=payload.origin_page_key,
+        )
         db.commit()
         db.refresh(sheet)
         return spec.detail_view(db, document, sheet, can_edit=True)

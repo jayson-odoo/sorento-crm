@@ -2152,3 +2152,48 @@ def test_r7b_a_raw_nan_in_the_request_is_a_422():
             assert put.status_code == 422, put.text
         finally:
             _restore(originals)
+
+
+# ------------------------------------------------------------------ round 7c: apply-all keeps the cover out
+
+
+def _logo_everywhere(db, c):
+    return {
+        "cover": _template(db, c["company_id"], "spec_cover", layers=[_logo(x=1)]),
+        "page": _template(db, c["company_id"], "spec_page", layers=[_logo()]),
+        "single": _template(db, c["company_id"], "spec_page", layers=[_logo()]),
+    }
+
+
+def test_r7c_an_item_page_apply_all_leaves_the_cover_alone_and_a_cover_apply_all_only_the_cover():
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c, templates=_logo_everywhere(db, c))
+        client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
+        try:
+            ok = client.post(
+                _apply_url(c, sheet),
+                json={"changes": {"x_mm": 33}, "origin_page_key": c["basin"].id},
+            )
+            assert ok.status_code == 200, ok.text
+            assert "cover" not in sheet.page_edits
+            assert {c["basin"].id, f"set:{c['set'].id}"} == set(sheet.page_edits)
+
+            sheet.page_edits = {}
+            db.flush()
+            cover_only = client.post(
+                _apply_url(c, sheet), json={"changes": {"x_mm": 44}, "origin_page_key": "cover"}
+            )
+            assert cover_only.status_code == 200, cover_only.text
+            assert set(sheet.page_edits) == {"cover"}
+            assert sheet.page_edits["cover"]["layers"][0]["x_mm"] == 44
+
+            # No origin: item pages, as for an item-page origin. An unknown origin is a 404.
+            sheet.page_edits = {}
+            db.flush()
+            assert client.post(_apply_url(c, sheet), json={"changes": {"x_mm": 5}}).status_code == 200
+            assert "cover" not in sheet.page_edits
+            bad = client.post(_apply_url(c, sheet), json={"changes": {"x_mm": 5}, "origin_page_key": "set:nope"})
+            assert bad.status_code == 404
+        finally:
+            _restore(originals)

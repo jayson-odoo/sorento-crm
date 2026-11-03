@@ -343,6 +343,7 @@ export async function applySpecSheetLayerToAll(
   sheetId: string,
   layerId: string,
   changes: ApplyAllChanges,
+  originPageKey?: string,
 ): Promise<SpecSheetDetail> {
   return read(
     await apiFetch(
@@ -354,7 +355,7 @@ export async function applySpecSheetLayerToAll(
       {
         method: 'POST',
         headers: JSON_HEADERS,
-        body: JSON.stringify({ changes }),
+        body: JSON.stringify({ changes, origin_page_key: originPageKey }),
       },
     ),
     'Could not apply the change to every page',
