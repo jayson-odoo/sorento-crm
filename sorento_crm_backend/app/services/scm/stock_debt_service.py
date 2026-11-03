@@ -56,6 +56,7 @@ from app.models.project_so import (
 )
 from app.models.sales_agent import SalesAgent
 from app.services.scm import last_po_supplier as last_po_rule
+from app.services.scm.so_party import so_parties, with_party
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     ProjectSupplyService,
@@ -910,6 +911,20 @@ class StockDebtService:
         # each row's own Qty column actually offers - Outstanding for an SPO, the on-hand
         # figure otherwise - so the two tab labels state what a reader would get by adding
         # the column up themselves.
+        # OI-UX-FILTER-SNAPSHOT: every order the drill names carries its customer and project.
+        parties = so_parties(
+            self.db,
+            ids=[row.get("sales_order_id") for row in demand],
+            numbers=[
+                entry["so_number"] for row in supply for entry in row.get("assigned_to") or []
+            ],
+        )
+        for row in demand:
+            with_party(row, parties, row.get("sales_order_id"))
+        for row in supply:
+            for entry in row.get("assigned_to") or []:
+                with_party(entry, parties, entry.get("so_number"))
+
         demand_total_qty = sum(row["open_qty"] for row in demand)
         supply_total_qty = sum(
             row["outstanding_qty"] if row["outstanding_qty"] is not None else row["qty"]

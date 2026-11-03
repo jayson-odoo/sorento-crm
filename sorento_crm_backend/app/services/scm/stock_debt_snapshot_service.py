@@ -30,6 +30,7 @@ from app.models.project_so import (
 )
 from app.models.stock_debt_snapshot import StockDebtSnapshot, StockDebtSnapshotRow
 from app.models.user import User
+from app.services.scm.so_party import so_parties, with_party
 from app.services.audit_service import log_audit
 from app.services.error_handler import AppException, handle_not_found
 from app.services.order_inquiry_reserve_service import (
@@ -428,6 +429,11 @@ class StockDebtSnapshotService:
         lines = [dict(l) for l in row.lines if month is None or l["bucket"] == month]
         lines.sort(key=lambda l: (l["required_date"] is None, l["required_date"] or "", l["so_number"]))
         core_ids = sorted({l["sales_order_line_id"] for l in lines})
+        # OI-UX-FILTER-SNAPSHOT: customer and project, read off the order now, so a snapshot
+        # stored before the lines carried them names them too.
+        parties = so_parties(self.db, ids=[l.get("sales_order_id") for l in lines])
+        for line in lines:
+            with_party(line, parties, line.get("sales_order_id"))
 
         now = self._line_now(core_ids)
         # Security L1: without `projects.projects.view` no order inquiry row is served,
