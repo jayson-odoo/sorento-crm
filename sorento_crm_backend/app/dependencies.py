@@ -355,7 +355,7 @@ async def get_current_user(
     logger.debug(f"Authorization header present: {auth_header is not None}")
     logger.debug(f"Token extracted: {token is not None}")
     if token:
-        logger.debug(f"Token length: {len(token)}, first 20 chars: {token[:20]}...")
+        logger.debug(f"Token length: {len(token)}")
     
     if not token:
         # Do NOT log request headers - they carry Authorization / X-API-Key / cookies.

@@ -10,9 +10,11 @@ import {
 } from '@tanstack/react-table';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
-import { Check, Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2, X } from 'lucide-react';
+import { ChevronDown, Columns3, MoreHorizontal, Plus, StickyNote, Trash2, Undo2 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from '@/lib/toast';
+import { useDeferredDeleteSeconds } from '@/hooks/useDeferredDeleteSeconds';
+import { DEFAULT_DEFERRED_DELETE_SECONDS } from '@/services/deferredWindowService';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -46,12 +48,31 @@ import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import type {
-  QuotationAmendmentDecision,
-  QuotationAmendmentField,
-  QuotationAmendmentRow,
+  QuotationFeedbackRow,
   QuotationLine,
   StagedQuotationLine,
 } from '../../_shared/types/project.types';
+import {
+  addCol as addMatrixCol,
+  addHeader as addMatrixHeader,
+  appendCopy as appendMatrixCopy,
+  cellsUnder,
+  hasColumns,
+  leafKeys,
+  parsePaste,
+  removeKey,
+  summary,
+  usedKeys,
+  type MatrixHeader,
+} from '../../_shared/lib/quotationMatrix';
+import {
+  MATRIX_LABEL_FOOTER,
+  MatrixAmountFooterLines,
+  MatrixGridProvider,
+  buildMatrixColumns,
+  type MatrixGridContextValue,
+  type PendingRemoval,
+} from './QuotationMatrixColumns';
 import {
   formatMyrExact,
   isDecimalString,
@@ -63,6 +84,8 @@ import {
 } from '../../_shared/hooks/useProjects';
 import { formatMyr } from './QuotationsPanel';
 import {
+  cellsPatch,
+  draftCells,
   emptyDraft,
   INLINE_CHECKED,
   isInlineChecked,
@@ -80,7 +103,7 @@ import {
 } from './QuotationLineFileCell';
 import { QuotationStockChip, SetStockChip } from './QuotationStockChip';
 import { SET_OPTION_PREFIX, isSetOption } from '@/app/(protected)/scm/components/productOrSetPicker';
-import { LineFlags, MinimumPriceBadge, MinimumPriceFlag } from './QuotationLineFlags';
+import { LineFlags, MinimumPriceFlag } from './QuotationLineFlags';
 
 /** One line of the grid: the staged (or stored) line, and its true position in the scope. */
 interface GridRow {
@@ -125,163 +148,29 @@ interface GridContextValue {
   /** Rows whose description was left at least once: an empty one is marked from then on. */
   visited: Set<string>;
   markVisited: (key: string) => void;
-  /** The customer's suggestions on a stored line, by field (review mode only). */
-  suggestionOf: (row: GridRow, field: QuotationAmendmentField) => QuotationAmendmentRow | null;
-  onDecide: QuotationLinesReview['onDecide'] | null;
-  reviewDisabled: boolean;
+  /** Open customer feedback on the whole item (a dot by its number, mock frame 5). */
+  itemNotes: (row: GridRow) => QuotationFeedbackRow[];
+}
+
+/** The scope's column headers (PS-QUOTE-MATRIX), and the header editor while it is editable. */
+export interface QuotationLinesMatrix {
+  /** `[]` is today's single Qty column. */
+  columns: MatrixHeader[];
+  /** Present on an editable version in an edit session: every header change, whole. */
+  onChange?: (next: MatrixHeader[]) => void | Promise<boolean | void>;
+  /** A column write is on its way. */
+  saving?: boolean;
+  /** The document's other scopes, for Copy columns from. */
+  copySources?: { label: string; columns: MatrixHeader[] }[];
+  /** True while a removal counts down: the page's Save waits for it (its cells would 422). */
+  onRemovalPending?: (pending: boolean) => void;
 }
 
 /**
- * Review mode (QUOTE-CUSTOMER-AMEND): the customer's suggestions on the issued lines, each in the
- * cell it concerns, decided there. View mode only.
+ * How long a header or column removal counts down before it is written when System Settings has
+ * not answered: the D7 hard-delete window. The live value is `deferred_delete_seconds`.
  */
-export interface QuotationLinesReview {
-  rows: QuotationAmendmentRow[];
-  onDecide: (rowId: string, decision: QuotationAmendmentDecision, reason?: string) => void;
-  disabled?: boolean;
-}
-
-const SUGGESTION_WORDS: Record<QuotationAmendmentField, string> = {
-  quantity: 'suggested quantity on',
-  unit_price: 'suggested unit price on',
-  remove: 'removal of',
-};
-
-/**
- * Accept and Reject for one suggestion. Reject opens the reason in the same place; Enter sends
- * it, Escape closes it unsent. Pressing the decision already taken puts the row back to pending.
- * `compact` (the narrow row-actions column) stacks the buttons and opens the reason in a popover.
- */
-function SuggestionDecision({
-  suggestion,
-  label,
-  compact = false,
-}: {
-  suggestion: QuotationAmendmentRow;
-  label: string;
-  compact?: boolean;
-}) {
-  const grid = useGrid();
-  const [asking, setAsking] = React.useState(false);
-  const [reason, setReason] = React.useState(suggestion.decision_reason ?? '');
-  const words = SUGGESTION_WORDS[suggestion.field];
-  const decide = (decision: QuotationAmendmentDecision, why?: string) =>
-    why === undefined
-      ? grid.onDecide?.(suggestion.id, decision)
-      : grid.onDecide?.(suggestion.id, decision, why);
-  const accepted = suggestion.decision === 'accepted';
-  const rejected = suggestion.decision === 'rejected';
-
-  const reasonInput = (
-    <Input
-      variant="sm"
-      autoFocus
-      value={reason}
-      maxLength={500}
-      placeholder="Reason (optional)"
-      aria-label={`Reason for rejecting the ${words} ${label}`}
-      className="mt-1 w-full text-start text-xs"
-      onChange={(event) => setReason(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          setAsking(false);
-          decide('rejected', reason.trim());
-        } else if (event.key === 'Escape') {
-          setAsking(false);
-        }
-      }}
-    />
-  );
-
-  const rejectButton = (
-    <Button
-      type="button"
-      mode="icon"
-      variant={rejected ? 'destructive' : 'outline'}
-      size="sm"
-      aria-label={`Reject ${words} ${label}`}
-      aria-pressed={rejected}
-      title="Reject"
-      className="size-6"
-      disabled={grid.reviewDisabled}
-      onClick={() => (rejected ? decide('pending') : setAsking((open) => !open))}
-    >
-      <X className="size-3.5" />
-    </Button>
-  );
-
-  return (
-    <div className={compact ? 'flex flex-col items-center gap-0.5' : 'mt-1'}>
-      <div className={compact ? 'flex flex-col items-center gap-1' : 'flex justify-end gap-1.5'}>
-        <Button
-          type="button"
-          mode="icon"
-          variant={accepted ? 'primary' : 'outline'}
-          size="sm"
-          aria-label={`Accept ${words} ${label}`}
-          aria-pressed={accepted}
-          title="Accept"
-          className="size-6"
-          disabled={grid.reviewDisabled}
-          onClick={() => {
-            setAsking(false);
-            decide(accepted ? 'pending' : 'accepted');
-          }}
-        >
-          <Check className="size-3.5" />
-        </Button>
-        {compact ? (
-          <Popover open={asking} onOpenChange={setAsking}>
-            <PopoverTrigger asChild>{rejectButton}</PopoverTrigger>
-            <PopoverPortal>
-              <PopoverContent align="end" className="w-60 p-2">
-                {reasonInput}
-              </PopoverContent>
-            </PopoverPortal>
-          </Popover>
-        ) : (
-          rejectButton
-        )}
-      </div>
-      {!compact && asking && reasonInput}
-      {rejected && suggestion.decision_reason && !asking && (
-        <p
-          className="mt-0.5 truncate text-end text-2xs text-muted-foreground"
-          title={suggestion.decision_reason}
-        >
-          {suggestion.decision_reason}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** The issued value struck through above the suggested one, and the decision under them. */
-function Suggestion({
-  suggestion,
-  label,
-  format,
-  children,
-}: {
-  suggestion: QuotationAmendmentRow;
-  label: string;
-  format: (value: string) => string;
-  children?: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col items-end text-end">
-      <s className="text-xs text-muted-foreground tabular-nums">
-        {suggestion.value_from ? format(suggestion.value_from) : '-'}
-      </s>
-      <span className="text-sm font-medium tabular-nums">
-        {suggestion.value_to ? format(suggestion.value_to) : '-'}
-      </span>
-      {children}
-      <SuggestionDecision suggestion={suggestion} label={label} />
-    </div>
-  );
-}
+export const COLUMN_REMOVAL_MS = DEFAULT_DEFERRED_DELETE_SECONDS * 1000;
 
 const GridContext = React.createContext<GridContextValue | null>(null);
 
@@ -342,9 +231,20 @@ function fileLine(row: GridRow, kind: LineFileKind): QuotationLine | null {
 // ------------------------------------------------------------------------------ cells
 
 function ItemCell({ row }: CellContext<GridRow, unknown>) {
+  const grid = useGrid();
+  const notes = grid.itemNotes(row.original);
   return (
     <span className="block text-sm font-medium tabular-nums">
       {row.original.index + 1}
+      {notes.length > 0 && (
+        <span
+          role="img"
+          aria-label="Customer feedback"
+          data-testid="line-feedback-dot"
+          title={notes.map((note) => note.note || 'Customer feedback').join('\n')}
+          className="ms-0.5 inline-block size-1.5 rounded-full bg-warning align-middle"
+        />
+      )}
     </span>
   );
 }
@@ -591,34 +491,32 @@ function BrandCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   );
 }
 
-function QtyCell({ row: tableRow }: CellContext<GridRow, unknown>) {
+/** The line's stock pill for `quantity`: the set's parts, or the product's own stock. */
+function LineStockChip({ row, quantity }: { row: GridRow; quantity: string }) {
   const grid = useGrid();
-  const row = tableRow.original;
   const { staged } = row;
-  const label = grid.labelOf(row);
-  const quantity = staged.draft.quantity ?? '';
   const uom = staged.draft.uom ?? '';
   const productId = staged.draft.product_id ?? '';
   const setId = staged.draft.product_set_id ?? '';
-  const chip = setId ? (
+  return setId ? (
     <SetStock row={row} quantity={quantity} />
   ) : productId ? (
     <QuotationStockChip
       productId={productId}
       quantity={quantity}
       uom={uom}
-      label={label}
+      label={grid.labelOf(row)}
     />
   ) : null;
+}
 
-  const suggested = grid.editing ? null : grid.suggestionOf(row, 'quantity');
-  if (suggested) {
-    return (
-      <Suggestion suggestion={suggested} label={label} format={trimAmount}>
-        {chip}
-      </Suggestion>
-    );
-  }
+function QtyCell({ row: tableRow }: CellContext<GridRow, unknown>) {
+  const grid = useGrid();
+  const row = tableRow.original;
+  const { staged } = row;
+  const label = grid.labelOf(row);
+  const quantity = staged.draft.quantity ?? '';
+  const chip = <LineStockChip row={row} quantity={quantity} />;
 
   if (!grid.editing || staged.removed) {
     return (
@@ -704,20 +602,6 @@ function RateCell({ row: tableRow }: CellContext<GridRow, unknown>) {
       draft={staged.draft}
     />
   );
-
-  const suggested = grid.editing ? null : grid.suggestionOf(row, 'unit_price');
-  if (suggested) {
-    return (
-      <Suggestion suggestion={suggested} label={grid.labelOf(row)} format={formatMyr}>
-        {list}
-        {suggested.below_floor && (
-          <div className="mt-1">
-            <MinimumPriceBadge value={suggested.floor_value ?? null} />
-          </div>
-        )}
-      </Suggestion>
-    );
-  }
 
   if (!grid.editing || staged.removed) {
     return (
@@ -805,6 +689,12 @@ function TotalFooter() {
   );
 }
 
+/** The Amount column's footer on a grid scope: the scope total on the Total (RM) line. */
+function MatrixAmountFooter() {
+  const grid = useGrid();
+  return <MatrixAmountFooterLines total={grid.total} />;
+}
+
 function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   const grid = useGrid();
   const row = tableRow.original;
@@ -814,19 +704,7 @@ function ActionsCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   /** Set by an action that puts the caret somewhere itself, so the menu does not take it back. */
   const keepFocus = React.useRef(false);
 
-  // In review (view mode) this column holds only a suggested removal, where Remove lives in edit.
-  if (!grid.editing) {
-    const removal = grid.suggestionOf(row, 'remove');
-    if (!removal) return null;
-    return (
-      <div className="flex flex-col items-center gap-0.5 py-0.5">
-        <Badge variant="destructive" appearance="light" size="xs">
-          Remove
-        </Badge>
-        <SuggestionDecision suggestion={removal} label={label} compact />
-      </div>
-    );
-  }
+  if (!grid.editing) return null;
 
   if (staged.removed) {
     return (
@@ -1163,21 +1041,34 @@ const COLUMNS: ColumnDef<GridRow>[] = [
 ];
 
 /**
- * Review mode's widths (QUOTE-CUSTOMER-AMEND): the row-actions column holds a removal's badge over
- * its Accept / Reject, and Qty holds a decision pair. View mode's ten columns sum to 864px (the
- * Photo column is 56px like Drawing, so its Escalate tile fits: QUOTE-DRAWING-ESCALATE);
- * Description gives up what these two gain, so review sums to 892px, inside the 893px the grid
- * shows at 1280 with the sidebar open (measured in the browser pass). Same ids and order, so a
- * saved column order holds in both modes.
+ * The columns for a scope WITH column headers (PS-QUOTE-MATRIX, mock v3 frame 1): every column
+ * above stays where it is except Qty, whose place goes to the quantity columns after Rate; Total
+ * becomes Amount, and the description column carries the two footer labels.
  */
-const REVIEW_WIDTHS: Record<string, { size: number; minSize: number }> = {
-  row_actions: { size: 56, minSize: 56 },
-  qty: { size: 72, minSize: 64 },
-  description: { size: 144, minSize: 140 },
-};
-const REVIEW_COLUMNS: ColumnDef<GridRow>[] = COLUMNS.map((column) =>
-  column.id && REVIEW_WIDTHS[column.id] ? { ...column, ...REVIEW_WIDTHS[column.id] } : column,
-);
+function matrixColumns(headers: MatrixHeader[], editable: boolean): ColumnDef<GridRow>[] {
+  const quantity = buildMatrixColumns(headers, editable) as ColumnDef<GridRow>[];
+  return COLUMNS.flatMap((column) => {
+    switch (column.id) {
+      case 'qty':
+        return [];
+      case 'description':
+        return [{ ...column, footer: MATRIX_LABEL_FOOTER }];
+      case 'rate':
+        return [column, ...quantity];
+      case 'total':
+        return [
+          {
+            ...column,
+            header: 'Amount (RM)',
+            footer: MatrixAmountFooter,
+            meta: { ...column.meta, headerTitle: 'Amount (RM)' },
+          },
+        ];
+      default:
+        return [column];
+    }
+  });
+}
 
 // ------------------------------------------------------------------------------- grid
 
@@ -1209,8 +1100,13 @@ export interface QuotationLinesGridProps {
   /** Every edit, addition and reorder, as the whole staged set. Edit mode only. */
   onStage?: (lines: StagedQuotationLine[]) => void;
   onToggleRemoved?: (key: string) => void;
-  /** The customer's suggestions to decide, in view mode (QUOTE-CUSTOMER-AMEND). */
-  review?: QuotationLinesReview;
+  /** The scope's column headers and their editor (PS-QUOTE-MATRIX). Absent = no columns. */
+  matrix?: QuotationLinesMatrix;
+  /**
+   * OPEN customer feedback on this version's lines (PS-QUOTE-MATRIX R20): an amber corner on a
+   * cell, a dot by an item's number. Matched on the stored line id the notes name.
+   */
+  feedback?: QuotationFeedbackRow[];
 }
 
 /**
@@ -1241,8 +1137,21 @@ export function QuotationLinesGrid({
   onStage,
   onToggleRemoved,
   toolbar,
-  review,
+  matrix,
+  feedback,
 }: QuotationLinesGridProps) {
+  /**
+   * The header as last edited here, ahead of the server: a header or column just added is on
+   * screen (focused, its name selected) the moment it is asked for, not when the write answers,
+   * so typing that starts at once is not lost (fix round 3, M2a). Dropped when the server's
+   * columns arrive, and rolled back when the write fails.
+   */
+  const [optimistic, setOptimistic] = React.useState<MatrixHeader[] | null>(null);
+  const serverColumns = matrix?.columns;
+  React.useEffect(() => setOptimistic(null), [serverColumns]);
+  const headers = React.useMemo(() => optimistic ?? serverColumns ?? [], [optimistic, serverColumns]);
+  const isMatrix = hasColumns(headers);
+  const columnsEditable = editing && Boolean(matrix?.onChange);
   const [bandOpen, setBandOpen] = React.useState<Set<string>>(() => new Set());
   const [preview, setPreview] = React.useState<{
     items: AttachmentPreviewItem[];
@@ -1353,10 +1262,11 @@ export function QuotationLinesGrid({
       id: null,
       key: `new:${instanceKey}:${nextNewId.current}`,
       line: null,
-      draft: emptyDraft(),
+      // A grid scope's new line starts with no cells (quantity 0), not the plain default of 1.
+      draft: isMatrix ? { ...emptyDraft(), ...cellsPatch({}) } : emptyDraft(),
       removed: false,
     };
-  }, [instanceKey]);
+  }, [instanceKey, isMatrix]);
 
   const openBand = React.useCallback(
     (key: string) => {
@@ -1514,20 +1424,32 @@ export function QuotationLinesGrid({
     [productCodeOf],
   );
 
-  /** Suggestions by stored line id and field. Matched on the stored line only: they name issued lines. */
-  const reviewRows = review?.rows;
-  const suggestions = React.useMemo(() => {
-    const map = new Map<string, QuotationAmendmentRow>();
-    (reviewRows ?? []).forEach((item) => map.set(`${item.line_id}:${item.field}`, item));
-    return map;
-  }, [reviewRows]);
-  const suggestionOf = React.useCallback(
-    (row: GridRow, field: QuotationAmendmentField) =>
-      row.staged.line ? (suggestions.get(`${row.staged.line.id}:${field}`) ?? null) : null,
-    [suggestions],
+  /**
+   * Open feedback by the stored line it names: whole-item notes (and notes on a column no longer
+   * there) by line, cell notes by line and cell. Matched on the stored line only.
+   */
+  const leafSet = React.useMemo(() => new Set(leafKeys(headers)), [headers]);
+  const notes = React.useMemo(() => {
+    const items = new Map<string, QuotationFeedbackRow[]>();
+    const cells = new Map<string, QuotationFeedbackRow[]>();
+    (feedback ?? []).forEach((row) => {
+      if (row.handled_at) return;
+      const onCell = row.cell_key && leafSet.has(row.cell_key);
+      const map = onCell ? cells : items;
+      const key = onCell ? `${row.line_id}:${row.cell_key}` : row.line_id;
+      map.set(key, [...(map.get(key) ?? []), row]);
+    });
+    return { items, cells };
+  }, [feedback, leafSet]);
+  const itemNotes = React.useCallback(
+    (row: GridRow) => (row.staged.line ? (notes.items.get(row.staged.line.id) ?? []) : []),
+    [notes],
   );
-  const onDecide = review?.onDecide ?? null;
-  const reviewDisabled = Boolean(review?.disabled);
+  const cellNotes = React.useCallback(
+    (row: GridRow, leafKey: string) =>
+      row.staged.line ? (notes.cells.get(`${row.staged.line.id}:${leafKey}`) ?? []) : [],
+    [notes],
+  );
 
   const context = React.useMemo<GridContextValue>(
     () => ({
@@ -1551,9 +1473,7 @@ export function QuotationLinesGrid({
       visited,
       markVisited,
       labelOf,
-      suggestionOf,
-      onDecide,
-      reviewDisabled,
+      itemNotes,
     }),
     [
       act,
@@ -1562,18 +1482,16 @@ export function QuotationLinesGrid({
       closeEmptyBand,
       editing,
       fetchProducts,
+      itemNotes,
       labelOf,
       markVisited,
-      onDecide,
       onToggleRemoved,
       onUomRetry,
       openPreview,
       quotationId,
       resolveProduct,
-      reviewDisabled,
       seriesId,
       selectProduct,
-      suggestionOf,
       total,
       uomError,
       uomOptions,
@@ -1586,8 +1504,233 @@ export function QuotationLinesGrid({
   const [columnVisibility, setColumnVisibility] =
     React.useState<VisibilityState>({});
 
+  // ------------------------------------------------------------ grid scope (PS-QUOTE-MATRIX)
+
+  const [pending, setPending] = React.useState<PendingRemoval | null>(null);
+  const removalSeconds = useDeferredDeleteSeconds();
+  const removalMsRef = React.useRef(removalSeconds * 1000);
+  removalMsRef.current = removalSeconds * 1000;
+  const [focusKey, setFocusKey] = React.useState<string | null>(null);
+  const headersRef = React.useRef(headers);
+  headersRef.current = headers;
+  const onMatrixChange = matrix?.onChange;
+  const change = React.useCallback(
+    (next: MatrixHeader[]) => {
+      if (!onMatrixChange) return;
+      headersRef.current = next;
+      setOptimistic(next);
+      void Promise.resolve(onMatrixChange(next)).then(
+        // The write already said why it failed (a toast); the header goes back to the server's.
+        (ok) => {
+          if (ok === false) setOptimistic(null);
+        },
+        () => setOptimistic(null),
+      );
+    },
+    [onMatrixChange],
+  );
+  /** Adds an item and asks for its label box to take the caret once it is drawn. */
+  const changeAndFocus = React.useCallback(
+    (next: MatrixHeader[]) => {
+      const before = usedKeys(headersRef.current);
+      const added = Array.from(usedKeys(next)).find((key) => !before.has(key)) ?? null;
+      setFocusKey(added);
+      change(next);
+    },
+    [change],
+  );
+  const addCol = React.useCallback(
+    (headerKey: string) => {
+      const header = headersRef.current.find((row) => row.key === headerKey);
+      changeAndFocus(
+        addMatrixCol(headersRef.current, headerKey, `Column ${(header?.cols.length ?? 0) + 1}`),
+      );
+    },
+    [changeAndFocus],
+  );
+  const addHeader = React.useCallback(
+    () =>
+      changeAndFocus(
+        addMatrixHeader(headersRef.current, `Header ${headersRef.current.length + 1}`),
+      ),
+    [changeAndFocus],
+  );
+  const startRemoval = React.useCallback((key: string) => {
+    const all = headersRef.current.flatMap((header) => [
+      { key: header.key, label: header.label },
+      ...header.cols.map((col) => ({ key: col.key, label: col.label })),
+    ]);
+    const item = all.find((row) => row.key === key);
+    if (!item) return;
+    setPending({
+      key,
+      label: item.label,
+      commitAt: Date.now() + removalMsRef.current,
+      lines: cellsUnder(
+        headersRef.current,
+        key,
+        linesRef.current.filter((line) => !line.removed).map((line) => draftCells(line.draft)),
+      ),
+    });
+  }, []);
+  // The countdown commits on its own clock; Undo clears it first. One removal at a time, so two
+  // writes never race each other with stale columns.
+  const pendingRef = React.useRef(pending);
+  pendingRef.current = pending;
+  // The last handler the edit session gave: once it ends the grid has none, and the parked
+  // removal still has to reach the version it was started on.
+  const changeRef = React.useRef(onMatrixChange);
+  if (onMatrixChange) changeRef.current = onMatrixChange;
+  /** Writes the parked removal now, once. Safe to call when nothing is parked. */
+  const commitPending = React.useCallback(() => {
+    const held = pendingRef.current;
+    if (!held) return;
+    pendingRef.current = null;
+    setPending(null);
+    changeRef.current?.(removeKey(headersRef.current, held.key));
+  }, []);
+  React.useEffect(() => {
+    if (!pending) return;
+    const timer = window.setTimeout(commitPending, Math.max(0, pending.commitAt - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [commitPending, pending]);
+  // Leaving the edit session (Save, Cancel, a scope or tab switch) never drops a removal the user
+  // let run: it commits at once rather than vanishing with the countdown, which has no handler
+  // outside edit mode. Undo is the only way back, and it had its window.
+  React.useEffect(() => {
+    if (!columnsEditable) commitPending();
+  }, [columnsEditable, commitPending]);
+  const onRemovalPending = matrix?.onRemovalPending;
+  const onRemovalPendingRef = React.useRef(onRemovalPending);
+  onRemovalPendingRef.current = onRemovalPending;
+  const isRemovalPending = pending !== null;
+  React.useEffect(() => {
+    onRemovalPending?.(isRemovalPending);
+  }, [isRemovalPending, onRemovalPending]);
+  React.useEffect(
+    () => () => {
+      commitPending();
+      // Gone mid-countdown: the removal is now a write (the editor tracks that), not a countdown.
+      onRemovalPendingRef.current?.(false);
+    },
+    [commitPending],
+  );
+
+  const updateCell = React.useCallback(
+    (rowKey: string, leafKey: string, value: string) => {
+      const held = linesRef.current.find((line) => line.key === rowKey);
+      if (!held) return;
+      const cells = { ...(draftCells(held.draft) ?? {}) };
+      if (value.trim() === '') delete cells[leafKey];
+      else cells[leafKey] = value;
+      update(rowKey, cellsPatch(cells));
+    },
+    [update],
+  );
+
+  /** A block from a spreadsheet, right and down from the cell it lands in (R14). */
+  const visibleRowsRef = React.useRef(visibleRows);
+  visibleRowsRef.current = visibleRows;
+  const pasteAt = React.useCallback(
+    (rowKey: string, leafKey: string, text: string) => {
+      const keys = leafKeys(headersRef.current);
+      const rows = visibleRowsRef.current;
+      const result = parsePaste(
+        text,
+        keys.indexOf(leafKey),
+        rows.findIndex((row) => row.key === rowKey),
+      );
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      const byRow = new Map<string, Record<string, string>>();
+      result.cells.forEach((cell) => {
+        const row = rows[cell.rowIndex];
+        const key = keys[cell.leafIndex];
+        // Paste never creates rows or columns: what falls outside the grid is dropped.
+        if (!row || !key || row.staged.removed) return;
+        byRow.set(row.key, { ...(byRow.get(row.key) ?? {}), [key]: cell.value });
+      });
+      commit(
+        linesRef.current.map((line) => {
+          const pasted = byRow.get(line.key);
+          if (!pasted) return line;
+          const cells = { ...(draftCells(line.draft) ?? {}) };
+          Object.entries(pasted).forEach(([key, value]) => {
+            if (value === '') delete cells[key];
+            else cells[key] = value;
+          });
+          return { ...line, draft: { ...line.draft, ...cellsPatch(cells) } };
+        }),
+      );
+    },
+    [commit],
+  );
+
+  const matrixFooter = React.useMemo(
+    () =>
+      summary(
+        headers,
+        lines
+          .filter((line) => !line.removed)
+          .map((line) => ({
+            qty_cells: draftCells(line.draft),
+            unit_price: line.draft.unit_price,
+            is_rate_only: isInlineChecked(line.draft.is_rate_only),
+          })),
+      ).footer,
+    [headers, lines],
+  );
+
+  const matrixContext = React.useMemo<MatrixGridContextValue>(
+    () => ({
+      headers,
+      editing,
+      editable: columnsEditable,
+      saving: Boolean(matrix?.saving),
+      footer: matrixFooter,
+      change,
+      addCol,
+      addHeader,
+      pending,
+      startRemoval,
+      undoRemoval: () => setPending(null),
+      focusKey,
+      clearFocusKey: () => setFocusKey(null),
+      updateCell,
+      pasteAt,
+      labelOf,
+      cellNotes,
+      stockChip: (row, quantity) => <LineStockChip row={row} quantity={quantity} />,
+    }),
+    [
+      addCol,
+      addHeader,
+      cellNotes,
+      change,
+      columnsEditable,
+      editing,
+      focusKey,
+      headers,
+      labelOf,
+      matrix?.saving,
+      matrixFooter,
+      pasteAt,
+      pending,
+      startRemoval,
+      updateCell,
+    ],
+  );
+
+  const columns = React.useMemo(
+    () => (isMatrix ? matrixColumns(headers, columnsEditable) : COLUMNS),
+    [columnsEditable, headers, isMatrix],
+  );
+  const copySources = matrix?.copySources ?? [];
+
   const table = useReactTable({
-    columns: review ? REVIEW_COLUMNS : COLUMNS,
+    columns,
     data: visibleRows,
     getRowId: (row) => row.key,
     getCoreRowModel: getCoreRowModel(),
@@ -1597,8 +1740,7 @@ export function QuotationLinesGrid({
       columnVisibility: {
         ...columnVisibility,
         drag_handle: editing,
-        // In review the column holds a suggested removal's decision.
-        row_actions: editing || Boolean(review),
+        row_actions: editing,
       },
     },
     onColumnVisibilityChange: setColumnVisibility,
@@ -1669,6 +1811,7 @@ export function QuotationLinesGrid({
 
   return (
     <GridContext.Provider value={context}>
+     <MatrixGridProvider value={matrixContext}>
       <div className="min-w-0 space-y-2">
         <DataGrid
           table={table}
@@ -1677,7 +1820,9 @@ export function QuotationLinesGrid({
           // Rows render under the default layout while the saved one loads, rather than as
           // skeletons: an editor must never hide the lines somebody is about to type into.
           loadingMode="spinner"
-          listingKey="projects.projects.view::quotation-lines"
+          // A grid scope's columns are DATA (its own headers), so nothing is saved for it: a stored
+          // order would be re-applied against whichever headers exist (see DataGrid's opt-out).
+          listingKey={isMatrix ? null : 'projects.projects.view::quotation-lines'}
           tableLayout={{ width: 'fixed', columnsResizable: true, dense: true }}
           tableClassNames={{ headerRow: 'text-xs' }}
           emptyMessage={lines.length === 0 ? emptyHint : filterEmptyHint}
@@ -1691,7 +1836,37 @@ export function QuotationLinesGrid({
         >
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             {toolbar}
-            <div className="sm:ms-auto">
+            <div className="flex flex-wrap items-center gap-2 sm:ms-auto">
+              {columnsEditable && copySources.length > 0 && (
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      disabled={Boolean(matrix?.saving) || pending !== null}
+                    >
+                      Copy columns from
+                      <ChevronDown className="size-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    {copySources.map((source) => (
+                      <DropdownMenuItem
+                        key={source.label}
+                        disabled={!hasColumns(source.columns)}
+                        onSelect={() =>
+                          change(appendMatrixCopy(headersRef.current, source.columns))
+                        }
+                      >
+                        <span className="min-w-0 truncate" title={source.label}>
+                          {hasColumns(source.columns) ? source.label : `${source.label} (none)`}
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
               <DataGridColumnVisibility
                 table={table}
                 trigger={
@@ -1723,7 +1898,9 @@ export function QuotationLinesGrid({
                   <DataGridTableDndRows
                     handleDragEnd={handleRowDragEnd}
                     dataIds={visibleRows.map((row) => row.key)}
-                    columnsDraggable
+                    // A grid scope's two header rows are its column headers, edited in place;
+                    // the product columns keep their order there rather than dragging.
+                    columnsDraggable={!isMatrix}
                   />
                 </DataGridScroller>
                 {editing && (
@@ -1748,6 +1925,21 @@ export function QuotationLinesGrid({
                       <Plus className="size-4" aria-hidden />
                       Add a section
                     </Button>
+                    {/* How a grid starts: the first column header (R11, R12). Once there is
+                        one, + Column header sits at the end of the header row instead. */}
+                    {columnsEditable && !isMatrix && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-primary hover:text-primary"
+                        disabled={Boolean(matrix?.saving)}
+                        onClick={addHeader}
+                      >
+                        <Plus className="size-4" aria-hidden />
+                        Column header
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1817,6 +2009,7 @@ export function QuotationLinesGrid({
           />
         )}
       </div>
+     </MatrixGridProvider>
     </GridContext.Provider>
   );
 }

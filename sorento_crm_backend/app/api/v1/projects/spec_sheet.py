@@ -178,6 +178,26 @@ def preview_spec_sheet(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+@router.get(f"{BASE}/page-images")
+def spec_sheet_page_images(
+    project_id: str,
+    document_id: str,
+    key: str = Query(..., max_length=200),
+    issue_id: Optional[str] = Query(None),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
+    db: Session = Depends(get_db),
+):
+    """The open page's pictures, sharper than the strip's thumbnails (QUOTE-PERF-HOTFIX)."""
+    try:
+        document = _document(db, project_id, document_id)
+        issue = _issue(db, document, issue_id)
+        if issue is None:
+            return {"images": {}}
+        return {"images": spec.page_images(db, document, issue, key, release=db.close)}
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.post(f"{BASE}/export")
 def export_spec_sheet(
     project_id: str,

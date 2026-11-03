@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SpecSheetView } from '../../../../_shared/services/specSheetService';
@@ -42,16 +42,29 @@ const getSpecSheet = vi.fn();
 const saveSpecSheet = vi.fn();
 const getSpecSheetPreview = vi.fn();
 const queueSpecSheetPdf = vi.fn();
+const getSpecSheetPageImages = vi.fn();
 
 vi.mock('../../../../_shared/services/specSheetService', () => ({
   getSpecSheet: (...a: unknown[]) => getSpecSheet(...a),
   saveSpecSheet: (...a: unknown[]) => saveSpecSheet(...a),
   getSpecSheetPreview: (...a: unknown[]) => getSpecSheetPreview(...a),
   queueSpecSheetPdf: (...a: unknown[]) => queueSpecSheetPdf(...a),
+  getSpecSheetPageImages: (...a: unknown[]) => getSpecSheetPageImages(...a),
 }));
 
 vi.mock('@/components/dealer-kit/ScaledSheet', () => ({
-  default: ({ sheetIndex }: { sheetIndex: number }) => <div data-testid={`sheet-${sheetIndex}`} />,
+  default: ({
+    sheetIndex,
+    payload,
+  }: {
+    sheetIndex: number;
+    payload?: { images?: Record<string, string> };
+  }) => (
+    <div
+      data-testid={`sheet-${sheetIndex}`}
+      data-images={JSON.stringify(payload?.images ?? {})}
+    />
+  ),
   sheetPixelSize: () => ({ width: 1280, height: 720 }),
   PX_PER_MM: 96 / 25.4,
 }));
@@ -195,9 +208,16 @@ function renderTab() {
 
 beforeEach(() => {
   canEdit = true;
-  for (const fn of [getSpecSheet, saveSpecSheet, getSpecSheetPreview, queueSpecSheetPdf]) {
+  for (const fn of [
+    getSpecSheet,
+    saveSpecSheet,
+    getSpecSheetPreview,
+    queueSpecSheetPdf,
+    getSpecSheetPageImages,
+  ]) {
     fn.mockReset();
   }
+  getSpecSheetPageImages.mockResolvedValue({ images: {} });
   getSpecSheetPreview.mockResolvedValue({
     doc: {
       kind: 'tag_sheet',
@@ -456,5 +476,79 @@ describe('Spec sheet tab (review round)', () => {
 
     expect(await screen.findByText('Pick a cover and a page template')).toBeInTheDocument();
     expect(getSpecSheetPreview).not.toHaveBeenCalled();
+  });
+});
+
+describe('Spec sheet strip draws only the pages in view (QUOTE-PERF-HOTFIX)', () => {
+  it('draws no thumbnail until it scrolls into view, then draws that one', async () => {
+    const seen: Array<{ cb: IntersectionObserverCallback; el: Element }> = [];
+    const original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class {
+      cb: IntersectionObserverCallback;
+      constructor(cb: IntersectionObserverCallback) {
+        this.cb = cb;
+      }
+      observe(el: Element) {
+        seen.push({ cb: this.cb, el });
+      }
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    } as unknown as typeof IntersectionObserver;
+    try {
+      getSpecSheet.mockResolvedValue(view());
+      renderTab();
+      await screen.findByTestId('spec-sheet-strip');
+      await screen.findByTestId('spec-sheet-open-page');
+
+      // The open page (the cover) is drawn once, in the big view; no strip thumbnail yet.
+      await waitFor(() => expect(screen.getAllByTestId('sheet-0')).toHaveLength(1));
+      expect(screen.queryByTestId('sheet-2')).toBeNull();
+      expect(seen.length).toBeGreaterThanOrEqual(4);
+
+      // The third page scrolls into view: its thumbnail, and only its, is drawn.
+      const third = seen[2];
+      act(() => {
+        third.cb(
+          [{ isIntersecting: true, target: third.el } as unknown as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+      expect(await screen.findByTestId('sheet-2')).toBeInTheDocument();
+      expect(screen.queryByTestId('sheet-3')).toBeNull();
+    } finally {
+      globalThis.IntersectionObserver = original;
+    }
+  });
+});
+
+describe('The open page draws a sharper rendition than the strip (QUOTE-PERF-HOTFIX round 2)', () => {
+  it('asks for the open page only, never the cover, and draws it over the thumbnails', async () => {
+    getSpecSheet.mockResolvedValue(view());
+    getSpecSheetPreview.mockResolvedValueOnce({
+      ...(await getSpecSheetPreview()),
+      images: { a1: 'https://cdn/thumb-a1', a2: 'https://cdn/thumb-a2' },
+    });
+    getSpecSheetPageImages.mockResolvedValue({ images: { a1: 'https://cdn/medium-a1' } });
+    renderTab();
+    await screen.findByTestId('spec-sheet-open-page');
+
+    // The cover is open: nothing extra is fetched.
+    expect(getSpecSheetPageImages).not.toHaveBeenCalled();
+
+    await openPage('SRTWB0002');
+    await waitFor(() =>
+      expect(getSpecSheetPageImages).toHaveBeenCalledWith('p1', 'd1', 'issue-1', 'basin'),
+    );
+    expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      const open = within(screen.getByTestId('spec-sheet-open')).getByTestId('sheet-2');
+      expect(JSON.parse(open.getAttribute('data-images') ?? '{}')).toEqual({
+        a1: 'https://cdn/medium-a1',
+        a2: 'https://cdn/thumb-a2',
+      });
+    });
   });
 });

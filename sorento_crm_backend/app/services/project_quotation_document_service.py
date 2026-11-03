@@ -21,9 +21,10 @@ from __future__ import annotations
 import logging
 import re
 import secrets
+import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -516,6 +517,14 @@ def apply_form_scopes(
             )
             continue
         scope = get_scope_or_404(db, document, str(scope_id))
+        if item.get("matrix_columns") is not None:
+            # A saved scope's columns move its quantities (set_columns); the form is not a
+            # second way in that would skip that move.
+            raise AppException(
+                status_code=422,
+                message="Change a saved scope's columns in its table header.",
+                code="quotation_columns_invalid",
+            )
         fields = {key: item[key] for key in _SCOPE_FIELDS if key in item}
         if fields:
             scope_service.update_quotation(db, quotation=scope, payload=fields)
@@ -546,6 +555,15 @@ def _add_form_scope(
         actor_user_id=actor_user_id,
         payload={key: item[key] for key in ("series_id", "notes") if key in item},
     )
+    # PS-QUOTE-MATRIX: a scope added on the form brings its column headers. Set before the lines
+    # (it has none yet, so nothing moves), so each line's cells are validated against them and
+    # its quantity derived from them, all in this one transaction.
+    if item.get("matrix_columns"):
+        scope_service.set_columns(
+            db,
+            version=scope_service.current_version(db, scope.id),
+            columns=item["matrix_columns"],
+        )
     if not lines:
         return []
     return scope_service.replace_lines(
@@ -668,11 +686,6 @@ def issue(
         )
     record.grand_total = grand
     db.flush()
-    # A request still open on an older revision can no longer be answered there: the customer
-    # now holds this one, with its own link (QUOTE-CUSTOMER-AMEND AC-QCA-25).
-    from app.services import quotation_amendment_service as amendments
-
-    amendments.close_open_requests_superseded_by(db, document, record)
     # Issuing SPENDS an approval: a manager approved those prices, so the document moves off
     # `approved` and the next revision that dips below the floor has to be approved on its own
     # merits. A no-op on a quotation that was never on the graph.
@@ -909,12 +922,18 @@ def make_quotation(
         )
         db.add(copy)
         db.flush()
+        source_version = (
+            db.query(ProjectQuotationVersion)
+            .filter(ProjectQuotationVersion.id == pair.version_id)
+            .first()
+        )
         version = ProjectQuotationVersion(
             company_id=quotation.company_id,
             quotation_id=copy.id,
             version_no=1,
             issued_by=actor_user_id,
             total_amount=ZERO,
+            matrix_columns=source_version.matrix_columns if source_version else None,
         )
         db.add(version)
         db.flush()
@@ -1070,7 +1089,9 @@ def _kind_fields(db: Session, document: ProjectQuotationDocument) -> Dict[str, A
     }
 
 
-def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[str, Any]:
+def serialize_document(
+    db: Session, document: ProjectQuotationDocument, viewer_id: Optional[str] = None
+) -> Dict[str, Any]:
     """One document, with its tabs and its money.
 
     `grand_total` is summed HERE rather than by the caller, so the header, the tabs and the PDF
@@ -1167,16 +1188,16 @@ def serialize_document(db: Session, document: ProjectQuotationDocument) -> Dict[
         # absent would be as bad as wrong. Spread from one function so this manual dict and the
         # approval service cannot drift - this repo has been bitten by a manual builder silently
         # dropping a new column more than once (`get_user`, `system_settings`).
-        **approvals.serialize_approval(db, document),
+        **approvals.serialize_approval(db, document, viewer_id=viewer_id),
         "created_at": document.created_at,
         "updated_at": document.updated_at,
     }
 
 
 def serialize_documents(
-    db: Session, documents: List[ProjectQuotationDocument]
+    db: Session, documents: List[ProjectQuotationDocument], viewer_id: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    return [serialize_document(db, document) for document in documents]
+    return [serialize_document(db, document, viewer_id=viewer_id) for document in documents]
 
 
 def serialize_issue(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any]:
@@ -1567,27 +1588,6 @@ def accept_issue(
     if record.accepted_at is not None:
         return record
     assert_not_superseded(db, record)
-    # Owner decision Q1 (a), 30 Oct 2026: no signature while suggested changes are unanswered,
-    # and none on a revision whose suggestions drafted a new one, since that one follows.
-    from app.services import quotation_amendment_service as amendments
-
-    asked = amendments.request_for_issue(db, record.id)
-    blocked = amendments.blocks_issue(asked)
-    if blocked == "amendment_open":
-        raise AppException(
-            status_code=409,
-            message="You can sign once Sorento has answered your suggestions.",
-            code="quotation_amendment_open",
-        )
-    if blocked == "amendment_applied":
-        raise AppException(
-            status_code=409,
-            message=(
-                "Sorento has answered your suggestions. "
-                "Your salesperson will send the revised quotation."
-            ),
-            code="quotation_amendment_applied",
-        )
     if (record.terms_rendered or "").strip() and terms_accepted is not True:
         raise AppException(
             status_code=422,
@@ -1681,9 +1681,8 @@ def request_changes(
     The read is taken ``FOR UPDATE`` so two submissions from the same thumb serialise instead of
     racing: without the lock both see a null note and both notify.
 
-    The reverse order is ALLOWED for this free-text request: somebody who asked for changes can
-    still decide to sign. A suggested-changes request (``quotation_amendment_service``) is the
-    exception, by owner decision Q1 (a): while one is open, ``accept_issue`` refuses.
+    The reverse order is ALLOWED: somebody who asked for changes can still decide to sign, and
+    feedback notes (``quotation_amendment_service``) never block signing either.
     """
     text_note = (note or "").strip()
     if not text_note:
@@ -1811,18 +1810,128 @@ def _serialize_signature(signature: Optional[QuotationSignature]) -> Optional[Di
     }
 
 
-#: Rendered sign-page pictures by attachment id, across requests. Bounded: ~15 KB each, so the cap
-#: holds a few MB; evicting the lot on overflow costs one re-render per picture.
+#: Rendered sign-page pictures by attachment id, across requests: ``(data uri, deadline)``. A
+#: rendered picture never goes stale (the ids are stamped at issue), so it keeps for good; a miss
+#: (storage down, a file Pillow will not open) keeps for ``_SIGN_MISS_SECONDS`` so a page that is
+#: refetched does not refetch a broken picture each time, yet a hiccup is not a permanent blank.
+#: Bounded: ~15 KB each, so the cap holds a few MB; evicting the lot costs one re-render each.
 _SIGN_PICTURES_MAX = 512
-_SIGN_PICTURES: Dict[str, str] = {}
+_SIGN_PICTURES: Dict[str, Tuple[Optional[str], float]] = {}
+_SIGN_MISS_SECONDS = 10 * 60
+#: Most pictures one sign page inlines, in page order (QUOTE-PERF-HOTFIX, 3 Nov): each is an
+#: image decode inside the request, and a page of hundreds of lines made one GET do hundreds.
+SIGN_PICTURES_PER_PAGE = 60
 
 
-def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str, Any]:
+def _sign_clock() -> float:
+    return time.monotonic()
+
+
+def _sign_cached(attachment_id: str) -> Tuple[bool, Optional[str]]:
+    hit = _SIGN_PICTURES.get(attachment_id)
+    if hit is None or hit[1] <= _sign_clock():
+        return False, None
+    return True, hit[0]
+
+
+def _sign_remember(attachment_id: str, uri: Optional[str]) -> None:
+    if len(_SIGN_PICTURES) >= _SIGN_PICTURES_MAX:
+        _SIGN_PICTURES.clear()
+    deadline = float("inf") if uri is not None else _sign_clock() + _SIGN_MISS_SECONDS
+    _SIGN_PICTURES[attachment_id] = (uri, deadline)
+
+
+def _save_thumbnails(
+    made: Dict[str, str], company_id: Optional[str], db: Optional[Session] = None
+) -> None:
+    """Record thumbnails the sign page made, so the original is never read for them again.
+
+    Through ``db`` when the caller still holds it, else a short session of its own: by now the
+    request's connection has been handed back.
+    """
+    if not made:
+        return
+    from app.database import SessionLocal
+    from app.models.base import company_scope
+    from app.models.resources import Attachment
+
+    own = db is None
+    session = SessionLocal() if own else db
+    try:
+        # Pinned to the issue's company: the ids came from a read scoped to it.
+        scope = frozenset({company_id}) if company_id else None
+        with company_scope(session, scope):
+            for attachment_id, url in made.items():
+                session.query(Attachment).filter(
+                    Attachment.id == attachment_id, Attachment.thumbnail_path.is_(None)
+                ).update({Attachment.thumbnail_path: url}, synchronize_session=False)
+        if own:
+            session.commit()
+        else:
+            session.flush()
+    except Exception:  # noqa: BLE001 - the picture is already on the page; this is a saving
+        logger.warning("sign page: could not save made thumbnails", exc_info=True)
+        if own:
+            session.rollback()
+    finally:
+        if own:
+            session.close()
+
+
+def _sign_pictures(
+    db: Session,
+    wanted: List[str],
+    release: Optional[Callable[[], None]],
+    company_id: Optional[str] = None,
+) -> Dict[str, Optional[str]]:
+    """Every picture the page inlines, as data URIs. A data URI rather than a link: the customer
+    has no login, and a signed URL would carry the storage key into their browser.
+
+    Where each file lives is read first; then ``release`` hands the DB connection back before any
+    byte is fetched or decoded, so a slow bucket never pins a pool connection.
+    """
+    from app.services import product_image_service as product_images
+
+    out: Dict[str, Optional[str]] = {}
+    missing: List[str] = []
+    for key in wanted:
+        known, uri = _sign_cached(key)
+        if known:
+            out[key] = uri
+        else:
+            missing.append(key)
+    sources = product_images.picture_sources(db, missing) if missing else {}
+    if release is not None:
+        release()
+    made: Dict[str, str] = {}
+    for key in missing:
+        source = sources.get(key)
+        rendered, thumb = (
+            product_images.render_source(source) if source is not None else (None, None)
+        )
+        uri = product_images.as_data_uri(rendered)
+        if thumb:
+            made[key] = thumb
+        _sign_remember(key, uri)
+        out[key] = uri
+    _save_thumbnails(made, company_id, None if release is not None else db)
+    return out
+
+
+def serialize_sign_page(
+    db: Session,
+    record: ProjectQuotationIssue,
+    *,
+    release: Optional[Callable[[], None]] = None,
+) -> Dict[str, Any]:
     """The quotation as ISSUED, for the customer's read-only counter-sign page.
 
     Every line comes from the `version_id` the issue recorded, never from the scope's current
     version. If it read live rows, the page could show the customer something different from the
     PDF in their inbox, which is the one thing a signing surface must never do.
+
+    ``release`` (the route's ``db.close``) is called once every row has been read and before any
+    picture is fetched; the session must not be used by the caller afterwards.
     """
     document = (
         db.query(ProjectQuotationDocument)
@@ -1836,33 +1945,28 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         .all()
     )
 
-    # Imported here, as the PDF service is elsewhere in this module: keeps module load light.
-    from app.services import product_image_service as product_images
+    version_columns = {
+        str(v.id): v.matrix_columns
+        for v in db.query(ProjectQuotationVersion)
+        .filter(ProjectQuotationVersion.id.in_([p.version_id for p in pairs]))
+        .all()
+    } if pairs else {}
     from app.services import quotation_columns
 
-    # Per page, as per PDF render: one photo commonly repeats down a scope.
-    picture_cache: Dict[str, Optional[str]] = {}
+    # Pictures are collected in page order and filled in at the very end (see `_sign_pictures`).
+    wanted: List[str] = []
+    slots: List[Tuple[Dict[str, Any], str, str]] = []
 
-    def _picture(attachment_id: Optional[str]) -> Optional[str]:
-        """The PDF's own inline, downscaled bytes. A data URI rather than a link: the customer has
-        no login, and a signed URL would carry the storage key into their browser.
-
-        Kept across requests (`_SIGN_PICTURES`): the page is public and refetched after every
-        answer, and without it each anonymous GET downloads and decodes every picture again. The
-        ids are stamped at issue, so a cached render never goes stale. A miss (storage down) is
-        not kept, so a hiccup does not become a permanent blank."""
-        if not attachment_id:
-            return None
+    def _want(row: Dict[str, Any], field: str, attachment_id: Optional[str], shown: bool) -> None:
+        row[field] = None
+        if not attachment_id or not shown:
+            return
         key = str(attachment_id)
-        hit = _SIGN_PICTURES.get(key)
-        if hit is not None:
-            return hit
-        uri = product_images.data_uri(db, key, picture_cache)
-        if uri is not None:
-            if len(_SIGN_PICTURES) >= _SIGN_PICTURES_MAX:
-                _SIGN_PICTURES.clear()
-            _SIGN_PICTURES[key] = uri
-        return uri
+        if key not in wanted:
+            if len(wanted) >= SIGN_PICTURES_PER_PAGE:
+                return
+            wanted.append(key)
+        slots.append((row, field, key))
 
     scopes: List[Dict[str, Any]] = []
     for pair in pairs:
@@ -1881,48 +1985,54 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
             )
             .all()
         )
+        columns = quotation_columns.for_lines(lines)
+        shown = {key for key, _label in columns}
+        rows: List[Dict[str, Any]] = []
+        for position, line in enumerate(lines, start=1):
+            row: Dict[str, Any] = {
+                # The handle a suggested change names. Only lines of this issue are
+                # accepted back, so the id gives nothing beyond the page itself.
+                "id": str(line.id),
+                # Same definition the PDF and the workbook use. The customer signing this
+                # page and the customer reading the PDF must see the same item numbers.
+                # Same definition the PDF and the workbook use, imported INSIDE the
+                # function on purpose: the pdf module pulls in WeasyPrint's neighbours and
+                # storage, and importing that at module scope changes what is loaded before
+                # the test fixtures build their schema.
+                "item_label": _item_number(line, position),
+                "description": line.description_snapshot,
+                "technical_spec": line.technical_spec,
+                "image_url": None,
+                "drawing_url": None,
+                "brand": line.brand_snapshot,
+                "product_code": line.product_code_snapshot,
+                "quantity": Decimal(line.quantity or 0),
+                # Printed after the quantity, as the PDF's QTY cell does ("2 pcs").
+                "uom": line.uom,
+                "unit_price": Decimal(line.unit_price or 0),
+                "complete_set": line.complete_set,
+                "band_label": line.band_label,
+                "is_rate_only": bool(line.is_rate_only),
+                # None, not zero: the page prints "rate only" and a zero would read as free.
+                "amount": None if line.is_rate_only else Decimal(line.line_total or 0),
+                "qty_cells": dict(line.qty_cells or {}),
+            }
+            # Inline only what the page draws: the photo sits in PRODUCT IMAGE, the drawing in
+            # TECHNICAL SPEC.
+            _want(row, "image_url", line.image_attachment_id, quotation_columns.IMAGE in shown)
+            _want(row, "drawing_url", line.drawing_attachment_id, "spec" in shown)
+            rows.append(row)
         scopes.append(
             {
                 # The label is read live, and that is a deliberate, small exception: renaming a tab
                 # does not change what was priced, and a stale label helps nobody.
                 "scope_label": scope.scope_label if scope else "",
                 "scope_total": Decimal(pair.scope_total or 0),
+                "matrix_columns": list(version_columns.get(str(pair.version_id)) or []),
                 # The PDF's column set for this scope, from the one shared definition
                 # (QUOTE-SIGN-COLUMNS): the page renders these, it keeps no list of its own.
-                "columns": [
-                    {"key": key, "label": label}
-                    for key, label in quotation_columns.for_lines(lines)
-                ],
-                "lines": [
-                    {
-                        # The handle a suggested change names. Only lines of this issue are
-                        # accepted back, so the id gives nothing beyond the page itself.
-                        "id": str(line.id),
-                        # Same definition the PDF and the workbook use. The customer signing this
-                        # page and the customer reading the PDF must see the same item numbers.
-                        # Same definition the PDF and the workbook use, imported INSIDE the
-                        # function on purpose: the pdf module pulls in WeasyPrint's neighbours and
-                        # storage, and importing that at module scope changes what is loaded before
-                        # the test fixtures build their schema.
-                        "item_label": _item_number(line, position),
-                        "description": line.description_snapshot,
-                        "technical_spec": line.technical_spec,
-                        "image_url": _picture(line.image_attachment_id),
-                        "drawing_url": _picture(line.drawing_attachment_id),
-                        "brand": line.brand_snapshot,
-                        "product_code": line.product_code_snapshot,
-                        "quantity": Decimal(line.quantity or 0),
-                        # Printed after the quantity, as the PDF's QTY cell does ("2 pcs").
-                        "uom": line.uom,
-                        "unit_price": Decimal(line.unit_price or 0),
-                        "complete_set": line.complete_set,
-                        "band_label": line.band_label,
-                        "is_rate_only": bool(line.is_rate_only),
-                        # None, not zero: the page prints "rate only" and a zero would read as free.
-                        "amount": None if line.is_rate_only else Decimal(line.line_total or 0),
-                    }
-                    for position, line in enumerate(lines, start=1)
-                ],
+                "columns": [{"key": key, "label": label} for key, label in columns],
+                "lines": rows,
             }
         )
 
@@ -1954,7 +2064,6 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
 
     from app.services import quotation_amendment_service as amendments
 
-    asked = amendments.request_for_issue(db, record.id)
     newer = later_issue(db, record)
     # One reason, the first that applies, so the page never prints two.
     if record.accepted_at is not None:
@@ -1962,7 +2071,7 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
     elif newer is not None:
         blocked = "superseded"
     else:
-        blocked = amendments.blocks_issue(asked)
+        blocked = None
 
     cover = None
     our_ref = (
@@ -1978,7 +2087,7 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         )
         cover = cover_rows(db, document, record, project)
         our_ref = cover_reference(document, record, project)
-    return {
+    page = {
         "our_ref": our_ref,
         "document_kind": (document.kind if document is not None else None) or KIND_PROPOSAL,
         "cover_rows": cover,
@@ -2006,9 +2115,14 @@ def serialize_sign_page(db: Session, record: ProjectQuotationIssue) -> Dict[str,
         "changes_requested_note": record.changes_requested_note,
         "changes_requested_by_name": record.changes_requested_by_name,
         "is_changes_requested": record.changes_requested_at is not None,
-        # Floors are internal pricing, so the customer's copy of the request carries none.
-        "amendment_request": amendments.serialize_request(db, asked, staff=False),
+        "amendment_request": amendments.sign_page_feedback(db, record.id),
         "superseded_by_ref": newer.our_ref_text if newer is not None else None,
         "can_sign": blocked is None,
         "sign_blocked_reason": blocked,
     }
+    # Last, once every row has been read: the connection goes back before any picture work.
+    company_id = str(document.company_id) if document is not None and document.company_id else None
+    pictures = _sign_pictures(db, wanted, release, company_id)
+    for row, field, key in slots:
+        row[field] = pictures.get(key)
+    return page

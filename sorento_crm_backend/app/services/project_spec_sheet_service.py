@@ -19,6 +19,9 @@ badge print it. A template that places no price prints none (the owner's sample 
 """
 from __future__ import annotations
 
+import io
+import json
+import logging
 import math
 import uuid
 from typing import Any, Dict, List, Optional, Sequence
@@ -36,9 +39,27 @@ from app.models.projects import (
 )
 from app.services.dealer_kit.pricing import DEFAULT_CURRENCY
 from app.services.error_handler import AppException
+from app.services.storage_router import (
+    default_provider as _default_provider,
+    extract_key,
+    get_backend,
+    normalize_provider,
+    resolve_signed_url,
+)
+
+logger = logging.getLogger(__name__)
 
 #: ``user_downloads.kind`` of a spec sheet PDF. The print payload route answers it.
 KIND = "quotation_spec_sheet_pdf"
+
+#: QUOTE-PERF-HOTFIX (3 Nov): the export prints no picture finer than this on its page.
+EXPORT_DPI = 200
+#: The export's decode ceiling, in the worker, one picture at a time: a JPEG over it is decoded
+#: at reduced scale first (``draft``), so this bounds only a PNG or WebP. Above it the original
+#: prints as before.
+EXPORT_MAX_PIXELS = 100_000_000
+#: How long the print page's signed links stay valid (the render waits up to 15 minutes).
+_EXPORT_URL_SECONDS = 60 * 60
 
 COVER_FAMILY = "spec_cover"
 PAGE_FAMILY = "spec_page"
@@ -332,11 +353,21 @@ def _files(db: Session, product_ids: Sequence[str]) -> Dict[str, dict]:
     return out
 
 
-def _sign(db: Session, attachment_ids: Sequence[Optional[str]]) -> Dict[str, str]:
-    """Full-size signed URLs, omitting any that cannot be signed (a print needs the original)."""
+def _sign(
+    db: Session, attachment_ids: Sequence[Optional[str]], full: bool = False
+) -> Dict[str, str]:
+    """Signed URLs, omitting any that cannot be signed.
+
+    Thumbnails by default: the tab draws its pages on screen, where a full-size original per
+    picture froze the browser (QUOTE-PERF-HOTFIX). ``full`` only for the PDF export.
+    """
     from app.services import product_image_service as images
 
-    return {k: v for k, v in images.preview_urls(db, attachment_ids, full=True).items() if v}
+    return {k: v for k, v in images.preview_urls(db, attachment_ids, full=full).items() if v}
+
+
+def _storage(provider: Optional[str] = None):
+    return get_backend(normalize_provider(provider) if provider else _default_provider())
 
 
 def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -> dict:
@@ -581,19 +612,10 @@ def _blank_row(tag_id: str, label: str, doc: dict) -> dict:
     }
 
 
-def build_print_payload(
-    db: Session, document: ProjectQuotationDocument, issue: ProjectQuotationIssue
-) -> dict:
-    """Everything ``TagSheetRenderer`` draws: cover, then one sheet per visible page."""
-    from app.services.dealer_kit import asset_service
-
-    settings = settings_of(document)
-    templates = _templates_for(db, settings)
-    width, height = templates["size"]
-    doc_fields = _doc_fields(db, document, issue)
-    visible = [p for p in pages(db, document, issue) if not p["hidden"]]
-
-    # Media: the frozen line photo / drawing first, the product's own files for accessories.
+def _media(db: Session, visible: List[dict]) -> tuple:
+    """``(products, attachment ids)`` behind the visible pages, stamping each page's own
+    ``_photo`` / ``_drawing``: the frozen line photo / drawing first, the product's own files
+    for accessories."""
     part_ids = [a["product_id"] for p in visible for a in p["accessories"] if a.get("product_id")]
     main_ids = [p["product_id"] for p in visible if p["product_id"]]
     files = _files(db, part_ids + main_ids)
@@ -609,7 +631,168 @@ def build_print_payload(
             acc["_photo"] = acc.get("image_attachment_id") or mine.get("photo")
             acc["_drawing"] = acc.get("drawing_attachment_id") or mine.get("drawing")
             wanted += [acc["_photo"], acc["_drawing"]]
-    urls = _sign(db, wanted)
+    return products, wanted
+
+
+def _export_urls(db: Session, wanted: List[Optional[str]], manifest: Optional[dict]) -> Dict[str, str]:
+    """The export's pictures: the capped copies ``prepare_export_images`` made, else the original
+    (exactly what printed before the cap existed)."""
+    urls: Dict[str, str] = {}
+    for attachment_id, entry in (manifest or {}).items():
+        if attachment_id not in wanted:
+            continue
+        url = resolve_signed_url(
+            entry.get("key"),
+            provider=entry.get("provider"),
+            expires_in=_EXPORT_URL_SECONDS,
+            strict=True,
+        )
+        if url:
+            urls[attachment_id] = url
+    rest = [a for a in wanted if a and a not in urls]
+    if rest:
+        urls.update(_sign(db, rest, full=True))
+    return urls
+
+
+def page_images(
+    db: Session,
+    document: ProjectQuotationDocument,
+    issue: ProjectQuotationIssue,
+    key: str,
+    release=None,
+) -> Dict[str, str]:
+    """The ONE open page's pictures at ``MEDIUM_BOX`` (crew, 3 Nov): the strip keeps its
+    thumbnails, the page being read gets a rendition sharp enough for a drawing's figures.
+    Only pictures of a visible page of this issue, so nothing else can be asked for."""
+    from app.services import product_image_service as images
+
+    if key == COVER_KEY:
+        return {}
+    page = [p for p in pages(db, document, issue) if p["key"] == key and not p["hidden"]]
+    if not page:
+        return {}
+    _products_unused, wanted = _media(db, page)
+    return images.medium_urls(db, wanted, release=release)
+
+
+def export_cap_px(size_mm: tuple) -> int:
+    """Longest edge, in px, a picture on this page can use: the page's own long edge at
+    ``EXPORT_DPI``. No picture slot is bigger than the page, so nothing visible is lost."""
+    return math.ceil(max(size_mm) / 25.4 * EXPORT_DPI)
+
+
+def _export_folder(download_id: str) -> str:
+    return f"exports/quotation-spec-sheet/{download_id}/img"
+
+
+def _manifest_key(download_id: str) -> str:
+    return f"{_export_folder(download_id)}/manifest.json"
+
+
+def prepare_export_images(db: Session, download) -> Dict[str, dict]:
+    """Downscale every picture the export prints to ``export_cap_px`` and store the copies beside
+    the PDF, with a manifest the print payload reads (QUOTE-PERF-HOTFIX).
+
+    Runs in the worker, one picture at a time, before Chromium starts: Chromium then decodes
+    page-sized pictures rather than 4000 px originals. A picture already within the cap is printed
+    from its original; one that cannot be read is left out of the manifest and prints from its
+    original exactly as before.
+    """
+    from PIL import Image
+
+    from app.models.base import company_scope
+    from app.models.resources import Attachment
+    from app.services import product_image_service as images
+
+    with company_scope(db, None):
+        document, issue = source_of_download(db, download)
+    if not document.company_id:
+        raise AppException(status_code=404, message="Not found")
+    with company_scope(db, frozenset({document.company_id})):
+        cap = export_cap_px(_templates_for(db, settings_of(document))["size"])
+        visible = [p for p in pages(db, document, issue) if not p["hidden"]]
+        _products_unused, wanted = _media(db, visible)
+        ids = list(dict.fromkeys(str(a) for a in wanted if a))
+        rows = db.query(Attachment).filter(Attachment.id.in_(ids)).all() if ids else []
+        sources = [(str(r.id), r.file_path, r.storage_provider) for r in rows]
+
+    out_provider = _default_provider()
+    out = _storage(out_provider)
+    manifest: Dict[str, dict] = {}
+    for attachment_id, file_path, provider in sources:
+        key = extract_key(file_path) if file_path else None
+        if not key:
+            continue
+        try:
+            raw = _storage(provider).download_file(key)
+            with Image.open(io.BytesIO(raw)) as opened:
+                size = opened.size
+            if max(size) <= cap:
+                manifest[attachment_id] = {"key": file_path, "provider": normalize_provider(provider)}
+                continue
+            rendered = images._downscale(
+                raw,
+                attachment_id,
+                box=cap,
+                quality=85,
+                upright=True,
+                draft=True,
+                max_pixels=EXPORT_MAX_PIXELS,
+            )
+            del raw
+            if rendered is None:
+                continue
+            stored, _signed = out.upload_file(
+                file_content=rendered.data,
+                file_path=f"{_export_folder(str(download.id))}/{attachment_id}.jpg",
+                content_type="image/jpeg",
+            )
+            manifest[attachment_id] = {"key": stored, "provider": out_provider}
+        except Exception:  # noqa: BLE001 - that picture prints from its original instead
+            logger.warning("spec sheet export: cannot cap %s", attachment_id, exc_info=True)
+    try:
+        out.upload_file(
+            file_content=json.dumps(manifest).encode(),
+            file_path=_manifest_key(str(download.id)),
+            content_type="application/json",
+        )
+    except Exception:  # noqa: BLE001 - no manifest: the render prints originals, as before
+        logger.warning("spec sheet export: cannot store manifest for %s", download.id, exc_info=True)
+    return manifest
+
+
+def _load_manifest(download_id: str) -> Optional[dict]:
+    try:
+        data = json.loads(_storage().download_file(_manifest_key(download_id)))
+    except Exception:  # noqa: BLE001 - absent or unreadable: originals, as before
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def build_print_payload(
+    db: Session,
+    document: ProjectQuotationDocument,
+    issue: ProjectQuotationIssue,
+    *,
+    export: bool = False,
+    manifest: Optional[dict] = None,
+) -> dict:
+    """Everything ``TagSheetRenderer`` draws: cover, then one sheet per visible page.
+
+    On screen (the tab) the pictures are thumbnails; ``export`` prints the PDF's pictures, capped
+    by ``manifest`` (``prepare_export_images``).
+    """
+    from app.services.dealer_kit import asset_service
+
+    settings = settings_of(document)
+    templates = _templates_for(db, settings)
+    width, height = templates["size"]
+    doc_fields = _doc_fields(db, document, issue)
+    visible = [p for p in pages(db, document, issue) if not p["hidden"]]
+
+    products, wanted = _media(db, visible)
+    urls = _export_urls(db, wanted, manifest) if export else _sign(db, wanted)
 
     spec_cache: dict = {}
     resolved: Dict[str, dict] = {COVER_KEY: _blank_row(COVER_KEY, "Cover", doc_fields)}
@@ -785,8 +968,9 @@ def print_payload_for_download(db: Session, download) -> dict:
     # Fail closed: a document with no company would otherwise be read with no company filter.
     if not document.company_id:
         raise AppException(status_code=404, message="Not found")
+    manifest = _load_manifest(str(download.id))
     with company_scope(db, frozenset({document.company_id})):
-        return build_print_payload(db, document, issue)
+        return build_print_payload(db, document, issue, export=True, manifest=manifest)
 
 
 def page_size_for_download(db: Session, download) -> tuple:

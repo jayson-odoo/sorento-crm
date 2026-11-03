@@ -36,6 +36,9 @@ vi.mock('../lib/price-tag-request-service', async () => {
   getRequest: vi.fn(),
   createRequest: vi.fn(),
   submitRequest: vi.fn(),
+  submitAndEscalate: vi.fn().mockResolvedValue({ status: 'new' }),
+  submitAndApprove: vi.fn().mockResolvedValue({ status: 'approved' }),
+  lookupTagPreviewForRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
   listReviewComments: vi.fn(async () => []),
@@ -182,7 +185,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     });
 
     await pickPrinting();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
 
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
     const payload = (createRequest as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -204,7 +207,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
 
     await pickPrinting();
-    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    sendToMarketing();
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
     const payload = (createRequest as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload.lines[0]).toMatchObject({
@@ -330,3 +333,19 @@ describe('PriceTagRequestForm - the debtor dropdown explains itself (D46a)', () 
     expect(screen.getByLabelText('Debtor')).toBeInTheDocument();
   });
 });
+
+
+/**
+ * Owner ruling 3 Nov: no plain Submit. These tests drive the draft's validation
+ * and save path through Escalate to marketing, which runs the same checks as
+ * Approve and needs no drawn tag.
+ */
+function sendToMarketing() {
+  if (!screen.queryByLabelText('What marketing needs to fix')) {
+    fireEvent.click(screen.getByRole('button', { name: /escalate to marketing/i }));
+  }
+  fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
+    target: { value: 'Please check' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /send to marketing/i }));
+}

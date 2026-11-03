@@ -29,10 +29,11 @@ export interface StockPositionResponse {
   pagination: { page: number; limit: number; total: number; total_pages: number };
 }
 
+/** Each filter takes several ids, OR-ed; empty or absent is no filter (FILTER-MULTISELECT). */
 export interface StockPositionFilters {
-  supplierId?: string;
-  brandId?: string;
-  warehouseId?: string;
+  supplierIds?: string[];
+  brandIds?: string[];
+  warehouseIds?: string[];
   /**
    * The total-part columns the user hides (`wh:<code>`, `incoming_pool`, `incoming_project`): Total
    * stock and Total incoming add up only the shown ones, on the server, before the sort and the export.

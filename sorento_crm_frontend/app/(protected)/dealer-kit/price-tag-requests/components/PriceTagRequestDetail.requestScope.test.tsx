@@ -119,10 +119,10 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Price Tag Request page, limited user, view', () => {
-  it('Submit POSTs through my-requests and never a staff write route', async () => {
+  it('Escalate on a draft POSTs through my-requests and never a staff write route', async () => {
     await mountDetail(LIMITED);
-    fireEvent.click(await screen.findByText('Submit'));
-    await waitFor(() => expect(posted('submit')).toHaveLength(1));
+    await sendToMarketing();
+    await waitFor(() => expect(posted('submit-escalate')).toHaveLength(1));
     expect(calls.filter(STAFF_WRITE)).toHaveLength(0);
   });
 
@@ -148,7 +148,7 @@ describe('Price Tag Request page, limited user, view', () => {
 describe('Price Tag Request page, page Back (owner hand test 2 point 4)', () => {
   it('a limited user sees no page-level Back link', async () => {
     await mountDetail(LIMITED);
-    await screen.findByText('Submit');
+    await screen.findByRole('button', { name: /escalate to marketing/i });
     expect(screen.queryByText(/^Back to /)).toBeNull();
     expect(screen.queryByRole('link', { name: /^Back to / })).toBeNull();
   });
@@ -161,10 +161,10 @@ describe('Price Tag Request page, page Back (owner hand test 2 point 4)', () => 
 });
 
 describe('Price Tag Request page, limited user, edit and create', () => {
-  it('Submit in edit mode ends in POST .../submit through my-requests', async () => {
+  it('Escalate in edit mode ends in POST .../submit-escalate through my-requests', async () => {
     await mountDetail(LIMITED, {}, 'edit=1');
-    fireEvent.click(await screen.findByRole('button', { name: 'Submit' }));
-    await waitFor(() => expect(posted('submit')).toHaveLength(1));
+    await sendToMarketing();
+    await waitFor(() => expect(posted('submit-escalate')).toHaveLength(1));
     expect(calls.filter(STAFF_WRITE)).toHaveLength(0);
   });
 
@@ -178,3 +178,13 @@ describe('Price Tag Request page, staff user (control)', () => {
     expect(calls.filter((c) => c.url.startsWith('/api/v1/my-requests'))).toHaveLength(0);
   });
 });
+
+
+/** Owner ruling 3 Nov: no plain Submit; the draft goes out through Escalate (or Approve). */
+async function sendToMarketing() {
+  fireEvent.click(await screen.findByRole('button', { name: /escalate to marketing/i }));
+  fireEvent.change(screen.getByLabelText('What marketing needs to fix'), {
+    target: { value: 'Please check' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /send to marketing/i }));
+}
