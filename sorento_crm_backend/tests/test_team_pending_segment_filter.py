@@ -231,6 +231,18 @@ def test_active_coverage_shows_covered_colleague_tasks_in_full(db, do_cs):
             id=str(uuid.uuid4()),
             subscriber_id=project_cs,
             target_user_id=retail_cs,
+            is_active=False,
+        )
+    )
+    db.commit()
+    assert covered_task not in _ids(db, project_cs)
+
+    db.query(NotificationSubscription).delete()
+    db.add(
+        NotificationSubscription(
+            id=str(uuid.uuid4()),
+            subscriber_id=project_cs,
+            target_user_id=retail_cs,
             is_active=True,
         )
     )
@@ -239,4 +251,33 @@ def test_active_coverage_shows_covered_colleague_tasks_in_full(db, do_cs):
     assert covered_task in ids
     # The coverage lifts the filter for the covered colleague only: the holder's
     # retail task is still hidden.
+    assert do_cs["tasks"]["retail"] not in ids
+
+
+def test_viewer_tags_are_the_union_across_memberships(db, do_cs):
+    """Tagged project on one team, untagged on another: still filtered (union, not
+    'any untagged membership = all'). Tagged project on one and retail on another: both."""
+    t = do_cs["tasks"]
+    other = str(uuid.uuid4())
+    db.add(Team(id=other, name="Tier 2"))
+    db.commit()
+    _member(db, other, do_cs["project_cs"])
+    ids = _ids(db, do_cs["project_cs"])
+    assert t["project"] in ids and t["retail"] not in ids
+
+    third = str(uuid.uuid4())
+    db.add(Team(id=third, name="Retail desk"))
+    db.commit()
+    _member(db, third, do_cs["project_cs"], segments=["retail"])
+    ids = _ids(db, do_cs["project_cs"])
+    assert {t["project"], t["retail"]} <= ids
+
+
+def test_search_path_is_filtered_too(db, do_cs):
+    """The free-text path re-reads the base query with a cap; the filter must hold there."""
+    out = ConversationSLATrackingService(db).list_team_pending(
+        do_cs["project_cs"], query="holder"
+    )
+    ids = {r["id"] for r in out["data"]}
+    assert do_cs["tasks"]["project"] in ids
     assert do_cs["tasks"]["retail"] not in ids

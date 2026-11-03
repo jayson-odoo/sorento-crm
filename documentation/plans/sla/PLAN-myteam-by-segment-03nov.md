@@ -1,4 +1,4 @@
-# PLAN: My Team + Coverage show only tasks the viewer's segment/brand tags serve
+# PLAN: My Team shows only tasks the viewer's segment/brand tags serve
 
 Status: in review (small fix track: backend filter only, no migration, no RBAC change)
 
@@ -13,7 +13,8 @@ Coverage picker show every teammate's open tasks, so project CS see retail tasks
 
 - A team membership already carries market segments and brands (empty = serves all). The
   round-robin uses them to pick an assignee for a contact.
-- My Team and the Coverage view keep a task only when its CONTACT's segments overlap the
+- My Team (the dashboard tab AND the sidebar SLA > My Team Tasks page; both read
+  `GET /sla-tracking/team-pending`) keeps a task only when its CONTACT's segments overlap the
   viewer's own membership segments, and its contact brand is one the viewer serves.
 - Viewer with no segment tags (and no brand tags) on any membership sees everything.
 - A task whose contact has no segment (or no brand) stays visible to everyone on that axis.

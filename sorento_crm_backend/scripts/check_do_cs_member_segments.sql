@@ -4,7 +4,7 @@
 -- are ones the viewer serves. A viewer's tags are the UNION over every team they are a
 -- member of; no tag on any membership = serves everything. So an untagged project CS
 -- still sees retail tasks until they are tagged. Run this, then fix tags in
--- User Management > Access agents > team members (market segments / brands).
+-- User Management > AI Agents > (agent) > team member row (market segments / brands).
 --
 -- Read-only:
 --   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'BEGIN READ ONLY' \
@@ -63,6 +63,8 @@ ORDER BY member, m.team_name;
 
 -- 2) Open tasks held by DO Customer Service members, by contact segment, so the owner can
 --    see how many each tag change moves. '(none)' = contact with no segment (visible to all).
+--    Approximate against My Team: it includes the viewer's own tasks (My Team excludes
+--    them) and a contact with two segments counts once in each row.
 SELECT
   COALESCE(seg.segment_code, '(none)') AS contact_segment,
   COUNT(DISTINCT c.id)                 AS open_tasks
