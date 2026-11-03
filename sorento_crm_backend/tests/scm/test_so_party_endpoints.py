@@ -20,6 +20,7 @@ from tests.scm.test_spo_conversion import MARKER, World, _u
 from tests.scm.test_summary_order_service import chain as summary_chain  # noqa: F401
 from tests.scm.test_coverage_service import chain, db  # noqa: F401
 from tests.scm.test_trajectory import db_world  # noqa: F401
+from tests.test_sales_opportunities_s2 import api, world  # noqa: F401
 from tests.scm.test_spo_planner_selection import _project_chain, _retail_demand
 
 pytestmark = requires_pg
@@ -231,6 +232,31 @@ def test_po_line_book_so_carries_customer_and_project():
         miss = by_id[str(unlinked.id)]
         assert miss["book_so_customer_name"] is None
         assert miss["book_so_project_label"] is None
+
+
+def test_opportunity_detail_and_options_carry_customer_and_project(api):
+    from tests import test_sales_opportunities_s2 as o
+
+    client, db, company_id = api
+    customer = o._customer(db, company_id, name="ZZT Master Cust")
+    order = o._sales_order(db, company_id, customer.id, so_number="ZZT-SO-PARTY")
+    _name_order(order)
+    db.flush()
+    created = o._create(client, customer_id=customer.id)
+
+    options = client.get(f"{o.BASE}/{created['id']}/sales-order-options").json()["data"]
+    [option] = [x for x in options if x["id"] == order.id]
+    assert option["customer_name"] == DEBTOR
+    assert option["project_label"] == PROJECT
+
+    won = client.patch(
+        f"{o.BASE}/{created['id']}",
+        json={"status_id": o._status_id(db, "won"), "sales_order_id": order.id},
+    )
+    assert won.status_code == 200, won.text
+    detail = client.get(f"{o.BASE}/{created['id']}").json()
+    assert detail["sales_order_customer_name"] == DEBTOR
+    assert detail["sales_order_project_label"] == PROJECT
 
 
 def test_trend_customer_orders_carry_customer_and_project(db_world):
