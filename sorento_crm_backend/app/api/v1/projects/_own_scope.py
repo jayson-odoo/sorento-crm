@@ -151,6 +151,8 @@ _NESTED: Dict[str, frozenset] = {
             # `page_key` is a page key checked against that sheet's own pages (404 / 422 otherwise).
             "sheet_id",
             "page_key",
+            # apply-all: the layer id is looked up on the sheet's own pages (404 otherwise).
+            "layer_id",
         }
     ),
     "quotation-versions": frozenset({"line_id"}),

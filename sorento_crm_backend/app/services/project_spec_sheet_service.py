@@ -1559,6 +1559,97 @@ def save_page_edit(
     return sheet
 
 
+#: Keys "Apply to every page" may change on a layer: where it sits, how big, turned, stacked and
+#: shown, plus its STYLE props. Never what it says or which data it binds (text, source, fieldKey,
+#: slot_binding, text_override ...): those stay each page's own.
+APPLY_TOP_KEYS = frozenset({"x_mm", "y_mm", "width_mm", "height_mm", "rotation_deg", "z_index", "visible"})
+APPLY_PROPS_KEYS = frozenset(
+    {
+        "fontFamily",
+        "fontSize",
+        "fontWeight",
+        "color",
+        "align",
+        "lineHeight",
+        "letterSpacing",
+        "italic",
+        "underline",
+        "strikethrough",
+        "fit",
+        "fill",
+        "stroke",
+        "strokeWidth",
+        "cornerRadius",
+        "maskShape",
+    }
+)
+
+
+def _invalid_apply(message: str) -> AppException:
+    return AppException(status_code=422, message=message, code="spec_sheet_apply_invalid")
+
+
+def _check_apply(changes: Any) -> dict:
+    """The allowed, plain-valued subset of a layer change; anything else is refused."""
+    if not isinstance(changes, dict) or not changes:
+        raise _invalid_apply("Say what to change.")
+    clean: dict = {}
+    for key, value in changes.items():
+        if key == "props":
+            if not isinstance(value, dict) or not value:
+                raise _invalid_apply("A layer's style must be a set of values.")
+            for pkey, pvalue in value.items():
+                if pkey not in APPLY_PROPS_KEYS:
+                    raise _invalid_apply(f"{pkey} cannot be applied to every page.")
+                if isinstance(pvalue, (dict, list)) or (isinstance(pvalue, str) and len(pvalue) > 200):
+                    raise _invalid_apply(f"{pkey} must be a plain value.")
+            clean["props"] = dict(value)
+        elif key in APPLY_TOP_KEYS:
+            ok = isinstance(value, bool) if key == "visible" else (
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+            )
+            if not ok:
+                raise _invalid_apply(f"{key} has an invalid value.")
+            clean[key] = value
+        else:
+            raise _invalid_apply(f"{key} cannot be applied to every page.")
+    return clean
+
+
+def apply_to_all_pages(
+    db: Session,
+    sheet: ProjectQuotationSpecSheet,
+    layer_id: str,
+    changes: Any,
+    user_id: Optional[str] = None,
+) -> ProjectQuotationSpecSheet:
+    """Merge ``changes`` into the layer ``layer_id`` on every printed page whose effective layers
+    (its edit, else the pinned version) hold it. Other pages are untouched. Each page's edit goes
+    through the same checks and size bounds as a single page edit."""
+    clean = _check_apply(changes)
+    pinned = _pinned(db, sheet)
+    entries = [(COVER_KEY, "cover")] + [
+        (p["key"], p["template"]) for p in pages(db, sheet) if not p["hidden"]
+    ]
+    touched = 0
+    for key, template in entries:
+        layers = _page_layers(sheet, pinned, key, template)
+        if not any(isinstance(layer, dict) and layer.get("id") == layer_id for layer in layers):
+            continue
+        merged = []
+        for layer in layers:
+            if isinstance(layer, dict) and layer.get("id") == layer_id:
+                layer = {**layer, **{k: v for k, v in clean.items() if k != "props"}}
+                if "props" in clean:
+                    layer["props"] = {**(layer.get("props") or {}), **clean["props"]}
+            merged.append(layer)
+        save_page_edit(db, sheet, key, merged, user_id=user_id)
+        touched += 1
+    if not touched:
+        raise AppException(status_code=404, message="No page has that layer.", code="spec_sheet_layer_missing")
+    return sheet
+
+
 def reset_page_edit(
     db: Session, sheet: ProjectQuotationSpecSheet, key: str, user_id: Optional[str] = None
 ) -> ProjectQuotationSpecSheet:

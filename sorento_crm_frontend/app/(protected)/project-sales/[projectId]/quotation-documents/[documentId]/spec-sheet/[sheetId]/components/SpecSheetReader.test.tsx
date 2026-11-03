@@ -27,7 +27,14 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 if (!window.matchMedia) {
@@ -74,7 +81,8 @@ class FakeIntersectionObserver {
     return [];
   }
 }
-(globalThis as { IntersectionObserver: unknown }).IntersectionObserver = FakeIntersectionObserver;
+(globalThis as { IntersectionObserver: unknown }).IntersectionObserver =
+  FakeIntersectionObserver;
 
 /** Tell every observer which page keys are in view; every other observed page is out of view. */
 function report(visibleKeys: string[]) {
@@ -84,8 +92,14 @@ function report(visibleKeys: string[]) {
         .filter((el) => el.getAttribute('data-page-key'))
         .map((el) => ({
           target: el,
-          isIntersecting: visibleKeys.includes(el.getAttribute('data-page-key') as string),
-          intersectionRatio: visibleKeys.includes(el.getAttribute('data-page-key') as string) ? 1 : 0,
+          isIntersecting: visibleKeys.includes(
+            el.getAttribute('data-page-key') as string,
+          ),
+          intersectionRatio: visibleKeys.includes(
+            el.getAttribute('data-page-key') as string,
+          )
+            ? 1
+            : 0,
         }));
       if (entries.length) observer.callback(entries);
     }
@@ -98,21 +112,25 @@ const getSpecSheet = vi.fn();
 const getSpecSheetPreview = vi.fn();
 const updateSpecSheet = vi.fn();
 const getSpecSheetPageImages = vi.fn();
-vi.mock('@/app/(protected)/project-sales/_shared/services/specSheetService', () => ({
-  listSpecSheets: vi.fn(),
-  createSpecSheet: vi.fn(),
-  getSpecSheet: (...a: unknown[]) => getSpecSheet(...a),
-  updateSpecSheet: (...a: unknown[]) => updateSpecSheet(...a),
-  getSpecSheetPreview: (...a: unknown[]) => getSpecSheetPreview(...a),
-  getSpecSheetPageDesign: vi.fn(),
-  getSpecSheetPageImages: (...a: unknown[]) => getSpecSheetPageImages(...a),
-  saveSpecSheetPageEdit: vi.fn(),
-  queueSpecSheetPdf: vi.fn(),
-}));
+vi.mock(
+  '@/app/(protected)/project-sales/_shared/services/specSheetService',
+  () => ({
+    listSpecSheets: vi.fn(),
+    createSpecSheet: vi.fn(),
+    getSpecSheet: (...a: unknown[]) => getSpecSheet(...a),
+    updateSpecSheet: (...a: unknown[]) => updateSpecSheet(...a),
+    getSpecSheetPreview: (...a: unknown[]) => getSpecSheetPreview(...a),
+    getSpecSheetPageDesign: vi.fn(),
+    getSpecSheetPageImages: (...a: unknown[]) => getSpecSheetPageImages(...a),
+    saveSpecSheetPageEdit: vi.fn(),
+    queueSpecSheetPdf: vi.fn(),
+  }),
+);
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
-  usePathname: () => '/project-sales/p1/quotation-documents/d1/spec-sheet/sheet-1',
+  usePathname: () =>
+    '/project-sales/p1/quotation-documents/d1/spec-sheet/sheet-1',
   useSearchParams: () => new URLSearchParams(),
   useParams: () => ({ projectId: 'p1', documentId: 'd1', sheetId: 'sheet-1' }),
 }));
@@ -122,7 +140,10 @@ vi.mock('@/lib/toast', () => ({
 vi.mock('@/services/pendingActionService', () => ({
   createPendingAction: vi.fn(),
   cancelPendingAction: vi.fn(),
-  getCurrentPendingAction: vi.fn(async () => ({ pending: null, last_outcome: null })),
+  getCurrentPendingAction: vi.fn(async () => ({
+    pending: null,
+    last_outcome: null,
+  })),
 }));
 vi.mock('@/lib/dealer-kit/fonts', () => ({
   ensureFontsLoaded: vi.fn(async () => undefined),
@@ -132,7 +153,11 @@ vi.mock('@/lib/dealer-kit/fonts', () => ({
 // The renderer, counted: how many are mounted now, and the most that were ever mounted at once.
 let live = 0;
 let peak = 0;
-function CountedRenderer({ doc }: { doc: { sheets: { tags: { request_tag_id: string }[] }[] } }) {
+function CountedRenderer({
+  doc,
+}: {
+  doc: { sheets: { tags: { request_tag_id: string }[] }[] };
+}) {
   const key = doc?.sheets?.[0]?.tags?.[0]?.request_tag_id ?? 'unknown';
   React.useEffect(() => {
     live += 1;
@@ -143,11 +168,39 @@ function CountedRenderer({ doc }: { doc: { sheets: { tags: { request_tag_id: str
   }, []);
   return <div data-testid={`tag-sheet-renderer-${key}`} data-renderer="1" />;
 }
-vi.mock('@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer', () => ({
-  default: (props: { doc: { sheets: { tags: { request_tag_id: string }[] }[] } }) => (
-    <CountedRenderer {...props} />
-  ),
-}));
+vi.mock(
+  '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer',
+  () => ({
+    default: (props: {
+      doc: { sheets: { tags: { request_tag_id: string }[] }[] };
+    }) => <CountedRenderer {...props} />,
+  }),
+);
+
+// The live designer (F4), counted like a renderer: the first pages in the window draw it, the rest
+// stay pictures, so the mounted total stays bounded either way.
+vi.mock(
+  '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
+  () => ({
+    TagCanvasEditor: (props: {
+      docId: string;
+      doc: { layers: unknown[] };
+      onLayersChange: (layers: unknown[]) => void;
+    }) => (
+      <CountedRenderer
+        doc={{
+          sheets: [
+            {
+              tags: [
+                { request_tag_id: props.docId.split(':').slice(1).join(':') },
+              ],
+            },
+          ],
+        }}
+      />
+    ),
+  }),
+);
 
 // The Add accessory picker, counted: mounted now, and renders since the last reset. With 30+ pages a
 // picker on every page re-rendered on every page change and cost ~500 ms long tasks (crew pass, 3 Nov).
@@ -215,7 +268,13 @@ function previewFor(keys: string[]) {
   return {
     doc: {
       kind: 'tag_sheet',
-      imposition: { preset: 'custom', page_width_mm: 338.7, page_height_mm: 190.5, bleed_mm: 0, gap_mm: 0 },
+      imposition: {
+        preset: 'custom',
+        page_width_mm: 338.7,
+        page_height_mm: 190.5,
+        bleed_mm: 0,
+        gap_mm: 0,
+      },
       sheets: keys.map((key) => ({
         id: `sheet-${key}`,
         tags: [
@@ -243,7 +302,9 @@ function previewFor(keys: string[]) {
 }
 
 function renderReader() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <SpecSheetReader projectId="p1" documentId="d1" sheetId="sheet-1" />
@@ -260,10 +321,15 @@ beforeEach(() => {
   peak = 0;
   getSpecSheet.mockReset().mockResolvedValue(detail());
   updateSpecSheet.mockReset().mockResolvedValue(detail());
-  getSpecSheetPageImages.mockReset().mockResolvedValue({ images: {}, assets: {} });
+  getSpecSheetPageImages
+    .mockReset()
+    .mockResolvedValue({ images: {}, assets: {} });
   getSpecSheetPreview
     .mockReset()
-    .mockImplementation(async (_p: string, _d: string, _s: string, keys: string[]) => previewFor(keys));
+    .mockImplementation(
+      async (_p: string, _d: string, _s: string, keys: string[]) =>
+        previewFor(keys),
+    );
 });
 
 describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () => {
@@ -271,10 +337,14 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     renderReader();
 
     await screen.findByTestId('spec-page-k29');
-    expect(document.querySelectorAll('[data-testid^="spec-page-"]')).toHaveLength(30);
+    expect(
+      document.querySelectorAll('[data-testid^="spec-page-"]'),
+    ).toHaveLength(30);
     expect(getSpecSheet).toHaveBeenCalledTimes(1);
     // Nothing reported visible yet: no renderer is mounted for the other 29, whatever else happens.
-    expect(document.querySelector('[data-testid="tag-sheet-renderer-k29"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="tag-sheet-renderer-k29"]'),
+    ).toBeNull();
   });
 
   it('mounts at most 4 renderers and makes ONE preview request for the first window', async () => {
@@ -284,14 +354,28 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     report(['cover', 'k1', 'k2']);
 
     await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(1));
-    expect(getSpecSheetPreview.mock.calls[0].slice(0, 3)).toEqual(['p1', 'd1', 'sheet-1']);
+    expect(getSpecSheetPreview.mock.calls[0].slice(0, 3)).toEqual([
+      'p1',
+      'd1',
+      'sheet-1',
+    ]);
     // The window snaps to the 6-page chunk holding the visible pages.
-    expect(sortedKeysOf(0)).toEqual(['cover', 'k1', 'k2', 'k3', 'k4', 'k5'].sort());
+    expect(sortedKeysOf(0)).toEqual(
+      ['cover', 'k1', 'k2', 'k3', 'k4', 'k5'].sort(),
+    );
 
-    await waitFor(() => expect(document.querySelectorAll('[data-renderer="1"]').length).toBeGreaterThan(0));
-    expect(document.querySelectorAll('[data-renderer="1"]').length).toBeLessThanOrEqual(4);
+    await waitFor(() =>
+      expect(
+        document.querySelectorAll('[data-renderer="1"]').length,
+      ).toBeGreaterThan(0),
+    );
+    expect(
+      document.querySelectorAll('[data-renderer="1"]').length,
+    ).toBeLessThanOrEqual(4);
     expect(peak).toBeLessThanOrEqual(4);
-    expect(document.querySelector('[data-testid="tag-sheet-renderer-k20"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="tag-sheet-renderer-k20"]'),
+    ).toBeNull();
   });
 
   it('scrolling to pages 10-12 asks once more and unmounts pages 1-3', async () => {
@@ -299,17 +383,23 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     await screen.findByTestId('spec-page-k29');
     report(['cover', 'k1', 'k2']);
     await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryByTestId('tag-sheet-renderer-k1')).not.toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByTestId('tag-sheet-renderer-k1')).not.toBeNull(),
+    );
 
     report(['k9', 'k10', 'k11']);
 
     await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(2));
     expect(sortedKeysOf(1)).toEqual(['k10', 'k11', 'k6', 'k7', 'k8', 'k9']);
-    await waitFor(() => expect(screen.queryByTestId('tag-sheet-renderer-k10')).not.toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByTestId('tag-sheet-renderer-k10')).not.toBeNull(),
+    );
     for (const gone of ['cover', 'k1', 'k2']) {
       expect(screen.queryByTestId(`tag-sheet-renderer-${gone}`)).toBeNull();
     }
-    expect(document.querySelectorAll('[data-renderer="1"]').length).toBeLessThanOrEqual(4);
+    expect(
+      document.querySelectorAll('[data-renderer="1"]').length,
+    ).toBeLessThanOrEqual(4);
     expect(peak).toBeLessThanOrEqual(4);
   });
 
@@ -337,7 +427,9 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(2));
 
     report(['cover', 'k1', 'k2']);
-    await waitFor(() => expect(screen.queryByTestId('tag-sheet-renderer-k1')).not.toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByTestId('tag-sheet-renderer-k1')).not.toBeNull(),
+    );
     expect(getSpecSheetPreview).toHaveBeenCalledTimes(2);
   });
 
@@ -346,11 +438,22 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     renderReader();
     await screen.findByTestId('spec-page-k29');
     report(['cover', 'k1', 'k2']);
-    await waitFor(() => expect(document.querySelectorAll('[data-renderer="1"]').length).toBeGreaterThan(0));
+    await waitFor(() =>
+      expect(
+        document.querySelectorAll('[data-renderer="1"]').length,
+      ).toBeGreaterThan(0),
+    );
 
-    // 29 item pages, but only the drawn ones carry a picker.
-    expect(document.querySelectorAll('[data-picker="1"]').length).toBeGreaterThan(0);
-    expect(document.querySelectorAll('[data-picker="1"]').length).toBeLessThanOrEqual(5);
+    // The actions show on hover and on the page being read; 29 item pages, one picker at a time.
+    fireEvent.mouseEnter(
+      document.querySelector('[data-page-wrap="k1"]') as Element,
+    );
+    expect(
+      document.querySelectorAll('[data-picker="1"]').length,
+    ).toBeGreaterThan(0);
+    expect(
+      document.querySelectorAll('[data-picker="1"]').length,
+    ).toBeLessThanOrEqual(5);
 
     // Moving the current page inside the same chunk re-renders at most the drawn pages' pickers.
     pickerRenders = 0;
@@ -386,9 +489,16 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     await screen.findByTestId('spec-page-k29');
     report(['cover', 'k1', 'k2']);
 
-    await waitFor(() => expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1),
+    );
     // The page being read (the cover until the reader scrolls), never the strip or the others.
-    expect(getSpecSheetPageImages).toHaveBeenCalledWith('p1', 'd1', 'sheet-1', 'cover');
+    expect(getSpecSheetPageImages).toHaveBeenCalledWith(
+      'p1',
+      'd1',
+      'sheet-1',
+      'cover',
+    );
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 400));
     });
@@ -402,13 +512,22 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     // A fast run through the pages, all inside the settle time.
     for (const key of ['k3', 'k4', 'k5']) {
       fireEvent.click(
-        within(screen.getByTestId(`spec-rail-${key}`)).getByRole('button', { name: new RegExp(`CODE-${key}`) }),
+        within(screen.getByTestId(`spec-rail-${key}`)).getByRole('button', {
+          name: new RegExp(`CODE-${key}`),
+        }),
       );
     }
 
     expect(getSpecSheetPageImages).not.toHaveBeenCalled();
-    await waitFor(() => expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1));
-    expect(getSpecSheetPageImages).toHaveBeenCalledWith('p1', 'd1', 'sheet-1', 'k5');
+    await waitFor(() =>
+      expect(getSpecSheetPageImages).toHaveBeenCalledTimes(1),
+    );
+    expect(getSpecSheetPageImages).toHaveBeenCalledWith(
+      'p1',
+      'd1',
+      'sheet-1',
+      'k5',
+    );
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 400));
     });
@@ -416,13 +535,29 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
   });
 
   it('says which template was deleted, offers Pick templates and draws and asks for nothing', async () => {
-    getSpecSheet.mockResolvedValue({ ...detail(), templates_missing: ['cover'], templates: { cover: null, page: { id: 'tp', name: 'Page', version_no: 1 }, single: null } });
+    getSpecSheet.mockResolvedValue({
+      ...detail(),
+      templates_missing: ['cover'],
+      templates: {
+        cover: null,
+        page: { id: 'tp', name: 'Page', version_no: 1 },
+        single: null,
+      },
+    });
     renderReader();
 
-    expect(await screen.findByText('The cover template of this spec sheet was deleted.')).toBeInTheDocument();
-    expect(screen.getByText('Pick new templates to show and export it.')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'The cover template of this spec sheet was deleted.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Pick new templates to show and export it.'),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /export pdf/i })).toBeNull();
-    expect(document.querySelectorAll('[data-testid^="spec-page-"]')).toHaveLength(0);
+    expect(
+      document.querySelectorAll('[data-testid^="spec-page-"]'),
+    ).toHaveLength(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'Pick templates' }));
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
@@ -431,14 +566,26 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
   });
 
   it('a reader without the edit right sees the message and no Pick templates', async () => {
-    getSpecSheet.mockResolvedValue({ ...detail(), can_edit: false, templates_missing: ['page'] });
+    getSpecSheet.mockResolvedValue({
+      ...detail(),
+      can_edit: false,
+      templates_missing: ['page'],
+    });
     renderReader();
 
-    expect(await screen.findByText('The page template of this spec sheet was deleted.')).toBeInTheDocument();
     expect(
-      screen.getByText('Someone who can edit this quotation can pick new templates.'),
+      await screen.findByText(
+        'The page template of this spec sheet was deleted.',
+      ),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Pick new templates to show and export it.')).toBeNull();
+    expect(
+      screen.getByText(
+        'Someone who can edit this quotation can pick new templates.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('Pick new templates to show and export it.'),
+    ).toBeNull();
     expect(screen.queryByRole('button', { name: 'Pick templates' })).toBeNull();
   });
 
@@ -451,7 +598,9 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     expect(screen.queryByText(/\d+ pages/)).toBeNull();
     expect(screen.queryByText(/Cover v1/)).toBeNull();
     expect(screen.queryByText('newer template published')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Use latest templates' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Use latest templates' }),
+    ).toBeInTheDocument();
     // Page N of M stays in the toolbar.
     expect(screen.getByTestId('spec-sheet-page-of')).toBeInTheDocument();
   });
@@ -461,13 +610,23 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     await screen.findByTestId('spec-page-k29');
 
     const back = screen.getByRole('link', { name: /Back to spec sheets/ });
-    expect(back).toHaveAttribute('href', '/project-sales/p1/quotation-documents/d1/spec-sheet');
+    expect(back).toHaveAttribute(
+      'href',
+      '/project-sales/p1/quotation-documents/d1/spec-sheet',
+    );
     const gear = screen.getByRole('button', { name: 'Spec sheet actions' });
     const exportPdf = screen.getByRole('button', { name: /export pdf/i });
     // The gear (and the pager) stand LEFT of the one primary button, never to its right.
-    expect(gear.compareDocumentPosition(exportPdf) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(back.compareDocumentPosition(gear) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      gear.compareDocumentPosition(exportPdf) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      back.compareDocumentPosition(gear) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     const pager = screen.getByRole('button', { name: /Previous spec sheet/ });
-    expect(pager.compareDocumentPosition(gear) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      pager.compareDocumentPosition(gear) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

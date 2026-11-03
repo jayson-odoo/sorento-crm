@@ -1,0 +1,686 @@
+/**
+ * SPEC-SHEET-V2 F4: the reader IS the editor. Every page near the viewport is a LIVE designer
+ * canvas (at most 3), the rest stay still pictures; the inspector follows the selection; every
+ * change autosaves a second later, per page; undo/redo is per page; "Every page" applies a layer
+ * change to the whole sheet; the thumbnail rail draws real mini pages from the chunks the stack
+ * already loads; and a phone edits too.
+ *
+ * The designer is stood in for by a fake that exposes what the host drives: selection in and out,
+ * layers in and out, and the controller handle the inspector and toolbar act through.
+ */
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+if (!window.matchMedia) {
+  (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+  });
+}
+if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
+  (globalThis as { ResizeObserver: unknown }).ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+Element.prototype.scrollIntoView = vi.fn();
+
+// ---- a controllable IntersectionObserver (stack pages carry data-page-key, rail thumbs data-rail-key)
+
+type Observer = {
+  callback: (entries: unknown[]) => void;
+  targets: Set<Element>;
+};
+const observers: Observer[] = [];
+class FakeIntersectionObserver {
+  private readonly record: Observer;
+  constructor(callback: (entries: unknown[]) => void) {
+    this.record = { callback, targets: new Set() };
+    observers.push(this.record);
+  }
+  observe(el: Element) {
+    this.record.targets.add(el);
+  }
+  unobserve(el: Element) {
+    this.record.targets.delete(el);
+  }
+  disconnect() {
+    this.record.targets.clear();
+  }
+  takeRecords() {
+    return [];
+  }
+}
+(globalThis as { IntersectionObserver: unknown }).IntersectionObserver =
+  FakeIntersectionObserver;
+
+function reportAttr(attr: string, visibleKeys: string[]) {
+  act(() => {
+    for (const observer of observers) {
+      const entries = [...observer.targets]
+        .filter((el) => el.getAttribute(attr))
+        .map((el) => ({
+          target: el,
+          isIntersecting: visibleKeys.includes(el.getAttribute(attr) as string),
+        }));
+      if (entries.length) observer.callback(entries);
+    }
+  });
+}
+const report = (keys: string[]) => reportAttr('data-page-key', keys);
+const reportRail = (keys: string[]) => reportAttr('data-rail-key', keys);
+
+// ---- mocks -------------------------------------------------------------------------------------
+
+const getSpecSheet = vi.fn();
+const getSpecSheetPreview = vi.fn();
+const saveSpecSheetPageEdit = vi.fn();
+const applySpecSheetLayerToAll = vi.fn();
+const updateSpecSheet = vi.fn();
+vi.mock(
+  '@/app/(protected)/project-sales/_shared/services/specSheetService',
+  () => ({
+    listSpecSheets: vi.fn(),
+    createSpecSheet: vi.fn(),
+    getSpecSheet: (...a: unknown[]) => getSpecSheet(...a),
+    updateSpecSheet: (...a: unknown[]) => updateSpecSheet(...a),
+    getSpecSheetPreview: (...a: unknown[]) => getSpecSheetPreview(...a),
+    getSpecSheetPageDesign: vi.fn(),
+    getSpecSheetPageImages: vi.fn(async () => ({ images: {}, assets: {} })),
+    saveSpecSheetPageEdit: (...a: unknown[]) => saveSpecSheetPageEdit(...a),
+    applySpecSheetLayerToAll: (...a: unknown[]) =>
+      applySpecSheetLayerToAll(...a),
+    queueSpecSheetPdf: vi.fn(),
+  }),
+);
+
+let pageParam: string | null = null;
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+  usePathname: () =>
+    '/project-sales/p1/quotation-documents/d1/spec-sheet/sheet-1',
+  useSearchParams: () =>
+    new URLSearchParams(pageParam ? { page: pageParam } : {}),
+  useParams: () => ({ projectId: 'p1', documentId: 'd1', sheetId: 'sheet-1' }),
+}));
+vi.mock('@/lib/toast', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    custom: vi.fn(),
+    dismiss: vi.fn(),
+  },
+}));
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: vi.fn(),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn(async () => ({
+    pending: null,
+    last_outcome: null,
+  })),
+}));
+vi.mock('@/lib/dealer-kit/fonts', () => ({
+  ensureFontsLoaded: vi.fn(async () => undefined),
+  ensureSeedFontsLoaded: vi.fn(async () => undefined),
+}));
+let mobile = false;
+vi.mock('@/hooks/use-mobile', () => ({ useIsMobile: () => mobile }));
+
+// The still-picture renderer (rail thumbnails, pages outside the live set).
+vi.mock(
+  '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer',
+  () => ({
+    default: ({
+      doc,
+    }: {
+      doc: { sheets: { tags: { request_tag_id: string }[] }[] };
+    }) => (
+      <div
+        data-testid={`tag-sheet-renderer-${doc?.sheets?.[0]?.tags?.[0]?.request_tag_id}`}
+        data-renderer="1"
+      />
+    ),
+  }),
+);
+
+// The inspector and the library hook, stood in for.
+vi.mock(
+  '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings',
+  () => ({
+    useKitLibrary: () => ({
+      assetUrls: {},
+      thumbUrls: {},
+      fonts: [],
+      specKeys: [],
+      fontOptions: [],
+      reload: vi.fn(),
+      remember: vi.fn(),
+      rename: vi.fn(),
+      forget: vi.fn(),
+    }),
+  }),
+);
+vi.mock(
+  '@/app/(protected)/dealer-kit/tag-templates/components/InspectorPanel',
+  () => ({
+    InspectorPanel: ({
+      layer,
+      onUpdate,
+    }: {
+      layer: { id: string } | null;
+      onUpdate: (id: string, changes: Record<string, unknown>) => void;
+    }) => (
+      <div data-testid="inspector" data-layer={layer?.id ?? ''}>
+        <button
+          type="button"
+          onClick={() => layer && onUpdate(layer.id, { x_mm: 77 })}
+        >
+          move logo
+        </button>
+      </div>
+    ),
+  }),
+);
+
+type FakeProps = {
+  doc: { layers: Record<string, unknown>[] };
+  docId: string;
+  onLayersChange: (layers: Record<string, unknown>[]) => void;
+  embedded: {
+    selectedLayerId: string | null;
+    onSelect: (id: string | null) => void;
+    layers?: Record<string, unknown>[];
+    readOnly?: boolean;
+    controllerRef: { current: unknown };
+  };
+};
+const liveSeen = new Set<string>();
+let livePeak = 0;
+let liveNow = 0;
+vi.mock(
+  '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
+  () => ({
+    TagCanvasEditor: function FakeEditor(props: FakeProps) {
+      const key = props.docId.split(':').slice(1).join(':');
+      // The canvas owns its layers, adopts the host's when they differ, and reports every change.
+      const [layers, setLayers] = React.useState(props.doc.layers);
+      const latest = React.useRef(layers);
+      latest.current = layers;
+      const hostLayers = props.embedded.layers;
+      React.useEffect(() => {
+        if (hostLayers && hostLayers !== latest.current) setLayers(hostLayers);
+      }, [hostLayers]);
+      React.useEffect(() => {
+        liveSeen.add(key);
+        liveNow += 1;
+        livePeak = Math.max(livePeak, liveNow);
+        return () => {
+          liveNow -= 1;
+        };
+      }, [key]);
+      React.useEffect(() => {
+        props.onLayersChange(layers);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [layers]);
+      const change = (next: Record<string, unknown>[]) => setLayers(next);
+      props.embedded.controllerRef.current = {
+        updateLayer: (id: string, changes: Record<string, unknown>) =>
+          change(
+            latest.current.map((l) => (l.id === id ? { ...l, ...changes } : l)),
+          ),
+        updateLayerProps: (id: string, changes: Record<string, unknown>) =>
+          change(
+            latest.current.map((l) =>
+              l.id === id
+                ? { ...l, props: { ...(l.props as object), ...changes } }
+                : l,
+            ),
+          ),
+      };
+      return (
+        <div
+          data-testid={`live-canvas-${key}`}
+          data-readonly={props.embedded.readOnly ? 'yes' : 'no'}
+        >
+          <button type="button" onClick={() => props.embedded.onSelect('logo')}>
+            {`select ${key}`}
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              change(
+                latest.current.map((l) =>
+                  l.id === 'logo' ? { ...l, x_mm: (l.x_mm as number) + 1 } : l,
+                ),
+              )
+            }
+          >
+            {`nudge ${key}`}
+          </button>
+        </div>
+      );
+    },
+  }),
+);
+
+import { SpecSheetReader } from './SpecSheetReader';
+
+// ---- fixtures ------------------------------------------------------------------------------------
+
+const KEYS = ['cover', ...Array.from({ length: 29 }, (_, i) => `k${i + 1}`)];
+const LOGO = {
+  id: 'logo',
+  type: 'text',
+  x_mm: 5,
+  y_mm: 2,
+  width_mm: 30,
+  height_mm: 8,
+  rotation_deg: 0,
+  z_index: 1,
+  visible: true,
+  props: {
+    kind: 'text',
+    text: 'SORENTO',
+    fontFamily: 'DM Sans',
+    fontSize: 12,
+    color: '#000000',
+    align: 'left',
+  },
+};
+
+function detail() {
+  return {
+    id: 'sheet-1',
+    sheet_no: 1,
+    label: 'SS1',
+    source_label: 'PRJQ-2026-0027-R1',
+    source_hint: '',
+    is_draft: false,
+    templates: {
+      cover: { id: 'tc', name: 'Cover', version_no: 1 },
+      page: { id: 'tp', name: 'Page', version_no: 1 },
+      single: null,
+    },
+    templates_missing: [],
+    newer_templates: false,
+    page_size: { width_mm: 338.7, height_mm: 190.5 },
+    pages: KEYS.map((key, i) => ({
+      key,
+      number: key === 'cover' ? 1 : i + 1,
+      code: key === 'cover' ? '' : `CODE-${key}`,
+      name: key === 'cover' ? 'Cover' : `Product ${key}`,
+      brand: '',
+      area: '',
+      area_default: '',
+      comment: '',
+      marker: '',
+      hidden: false,
+      picked: [],
+      accessories: [],
+      edited: false,
+      template: key === 'cover' ? 'cover' : 'page',
+    })),
+    prev_id: null,
+    next_id: null,
+    can_edit: true,
+  };
+}
+
+function previewFor(keys: string[]) {
+  return {
+    doc: {
+      kind: 'tag_sheet',
+      imposition: {
+        preset: 'custom',
+        page_width_mm: 338.7,
+        page_height_mm: 190.5,
+        bleed_mm: 0,
+        gap_mm: 0,
+      },
+      sheets: keys.map((key) => ({
+        id: `sheet-${key}`,
+        tags: [
+          {
+            id: `tag-${key}`,
+            template_id: 't',
+            request_tag_id: key,
+            x_mm: 0,
+            y_mm: 0,
+            width_mm: 338.7,
+            height_mm: 190.5,
+            layers: [LOGO],
+          },
+        ],
+      })),
+    },
+    resolvedData: Object.fromEntries(
+      keys.map((k) => [k, { code: k, images: [], parts: [] }]),
+    ),
+    assets: {},
+    images: {},
+    fonts: [],
+    version: 1,
+    hidden: [],
+    page_size: { width_mm: 338.7, height_mm: 190.5 },
+  };
+}
+
+function renderReader() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <SpecSheetReader projectId="p1" documentId="d1" sheetId="sheet-1" />
+    </QueryClientProvider>,
+  );
+}
+
+const live = () => document.querySelectorAll('[data-testid^="live-canvas-"]');
+
+beforeEach(() => {
+  observers.length = 0;
+  liveSeen.clear();
+  livePeak = 0;
+  liveNow = 0;
+  mobile = false;
+  pageParam = null;
+  getSpecSheet.mockReset().mockResolvedValue(detail());
+  updateSpecSheet.mockReset().mockResolvedValue(detail());
+  saveSpecSheetPageEdit.mockReset().mockResolvedValue(detail());
+  applySpecSheetLayerToAll.mockReset().mockResolvedValue(detail());
+  getSpecSheetPreview
+    .mockReset()
+    .mockImplementation(
+      async (_p: string, _d: string, _s: string, keys: string[]) =>
+        previewFor(keys),
+    );
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe('live canvases', () => {
+  it('mounts at most 3 live canvases for a 30-page sheet; the other visible pages stay still pictures', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(live()).toHaveLength(0);
+
+    report(['cover', 'k1', 'k2', 'k3', 'k4']);
+
+    await waitFor(() => expect(live().length).toBeGreaterThan(0));
+    expect(live()).toHaveLength(3);
+    expect(livePeak).toBeLessThanOrEqual(3);
+    await waitFor(() =>
+      expect(screen.queryByTestId('tag-sheet-renderer-k4')).not.toBeNull(),
+    );
+    expect(screen.queryByTestId('tag-sheet-renderer-k3')).not.toBeNull();
+    expect(screen.queryByTestId('live-canvas-k4')).toBeNull();
+  });
+
+  it('opens the page named in ?page= (the old Edit page link)', async () => {
+    pageParam = 'k7';
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    await waitFor(() =>
+      expect(Element.prototype.scrollIntoView).toHaveBeenCalled(),
+    );
+  });
+});
+
+describe('selection and the inspector', () => {
+  it('shows the inspector for the layer selected on page 5, and nothing before', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k4', 'k5', 'k6']);
+    await screen.findByTestId('live-canvas-k5');
+    expect(screen.queryByTestId('inspector')).toBeNull();
+
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k5')).getByText('select k5'),
+    );
+
+    const inspector = await screen.findByTestId('inspector');
+    expect(inspector).toHaveAttribute('data-layer', 'logo');
+    expect(screen.getByTestId('reader-inspector')).toHaveAttribute(
+      'data-page-key',
+      'k5',
+    );
+  });
+});
+
+describe('autosave and undo', () => {
+  async function ready() {
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout'],
+      shouldAdvanceTime: true,
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+  }
+
+  it('one change triggers exactly one PUT, one second after it', async () => {
+    await ready();
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'),
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(900);
+    });
+    expect(saveSpecSheetPageEdit).not.toHaveBeenCalled();
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
+
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalledTimes(1));
+    const [p, d, s, key, layers] = saveSpecSheetPageEdit.mock.calls[0];
+    expect([p, d, s, key]).toEqual(['p1', 'd1', 'sheet-1', 'k1']);
+    expect((layers as { x_mm: number }[])[0].x_mm).toBe(6);
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+  });
+
+  it('two quick changes make one PUT with the latest layers', async () => {
+    await ready();
+    const nudge = within(screen.getByTestId('live-canvas-k1')).getByText(
+      'nudge k1',
+    );
+    fireEvent.click(nudge);
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+    });
+    fireEvent.click(nudge);
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalledTimes(1));
+    expect(
+      (saveSpecSheetPageEdit.mock.calls[0][4] as { x_mm: number }[])[0].x_mm,
+    ).toBe(7);
+  });
+
+  it('Undo restores the page and saves it', async () => {
+    await ready();
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'),
+    );
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalledTimes(2));
+    expect(
+      (saveSpecSheetPageEdit.mock.calls[1][4] as { x_mm: number }[])[0].x_mm,
+    ).toBe(5);
+    fireEvent.click(screen.getByRole('button', { name: 'Redo' }));
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await waitFor(() => expect(saveSpecSheetPageEdit).toHaveBeenCalledTimes(3));
+    expect(
+      (saveSpecSheetPageEdit.mock.calls[2][4] as { x_mm: number }[])[0].x_mm,
+    ).toBe(6);
+  });
+
+  it('shows an error mark when the save fails', async () => {
+    saveSpecSheetPageEdit.mockRejectedValue(new Error('too large'));
+    await ready();
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    expect(await screen.findByText('Not saved')).toBeInTheDocument();
+  });
+});
+
+describe('apply to every page', () => {
+  it('sends the layer id and the changes to the new endpoint when "Every page" is chosen', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    await screen.findByTestId('inspector');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Every page' }));
+    fireEvent.click(screen.getByRole('button', { name: 'move logo' }));
+
+    await waitFor(() =>
+      expect(applySpecSheetLayerToAll).toHaveBeenCalledTimes(1),
+    );
+    expect(applySpecSheetLayerToAll).toHaveBeenCalledWith(
+      'p1',
+      'd1',
+      'sheet-1',
+      'logo',
+      { x_mm: 77 },
+    );
+  });
+
+  it('by default ("This page") nothing goes to the every-page endpoint', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    await screen.findByTestId('inspector');
+
+    fireEvent.click(screen.getByRole('button', { name: 'move logo' }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    expect(applySpecSheetLayerToAll).not.toHaveBeenCalled();
+  });
+});
+
+describe('thumbnail rail', () => {
+  it('draws real mini pages and asks for chunks, never for single thumbnails', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['cover', 'k1']);
+    await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(1));
+
+    // The rail scrolls on its own: thumbnails 6-8 are in ITS view (chunk 1), 0-5 are loaded.
+    reportRail(['cover', 'k1', 'k2', 'k6', 'k7', 'k8']);
+
+    await waitFor(() => expect(getSpecSheetPreview).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('spec-rail-k7')).queryByTestId(
+          'tag-sheet-renderer-k7',
+        ),
+      ).not.toBeNull(),
+    );
+    expect(
+      within(screen.getByTestId('spec-rail-k2')).queryByTestId(
+        'tag-sheet-renderer-k2',
+      ),
+    ).not.toBeNull();
+    // A thumbnail outside the rail's view is a placeholder, not a renderer and not a request.
+    expect(
+      within(screen.getByTestId('spec-rail-k20')).queryByTestId(
+        'tag-sheet-renderer-k20',
+      ),
+    ).toBeNull();
+    const chunkKeys = getSpecSheetPreview.mock.calls.map(
+      (call) => (call[3] as string[]).length,
+    );
+    expect(chunkKeys.every((n) => n <= 6)).toBe(true);
+    expect(getSpecSheetPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows an edited dot and greys a left-out page', async () => {
+    getSpecSheet.mockResolvedValue({
+      ...detail(),
+      pages: detail().pages.map((p) =>
+        p.key === 'k3'
+          ? { ...p, edited: true }
+          : p.key === 'k4'
+            ? { ...p, hidden: true, number: null }
+            : p,
+      ),
+    });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    expect(
+      within(screen.getByTestId('spec-rail-k3')).getByLabelText('Edited'),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('spec-rail-k4').className).toMatch(/opacity-50/);
+  });
+});
+
+describe('phone', () => {
+  it('opens the inspector in a bottom sheet and keeps the live canvas editable', async () => {
+    mobile = true;
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    const canvas = await screen.findByTestId('live-canvas-k1');
+    expect(canvas).toHaveAttribute('data-readonly', 'no');
+
+    fireEvent.click(within(canvas).getByText('select k1'));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByTestId('inspector')).toHaveAttribute(
+      'data-layer',
+      'logo',
+    );
+    expect(screen.getByTestId('live-canvas-k1')).toHaveAttribute(
+      'data-readonly',
+      'no',
+    );
+  });
+});

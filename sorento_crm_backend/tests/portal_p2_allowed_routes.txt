@@ -218,6 +218,7 @@ POST /projects/{project_id}/quotation-documents/{document_id}/scopes
 POST /projects/{project_id}/quotation-documents/{document_id}/sign
 POST /projects/{project_id}/quotation-documents/{document_id}/spec-sheets
 POST /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/export
+POST /projects/{project_id}/quotation-documents/{document_id}/spec-sheets/{sheet_id}/layers/{layer_id}/apply-all
 POST /projects/{project_id}/quotations
 POST /projects/{project_id}/reject
 POST /projects/{project_id}/samples

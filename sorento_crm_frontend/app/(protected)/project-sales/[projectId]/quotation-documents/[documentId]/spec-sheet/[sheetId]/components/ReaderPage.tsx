@@ -1,8 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
-import { EyeOff, Pencil, RotateCcw, Undo2 } from 'lucide-react';
+import dynamic from 'next/dynamic';
+import { EyeOff, RotateCcw, Undo2 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,11 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import ScaledSheet, { PX_PER_MM } from '@/components/dealer-kit/ScaledSheet';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
-import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
+import type {
+  TagBindingData,
+  TagLayer,
+} from '@/lib/dealer-kit/tag-template-types';
+import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 
 import {
@@ -42,7 +46,9 @@ function editableField(layer: TagLayer): EditableField | null {
   if (layer.props.kind !== 'text') return null;
   const text = layer.text_override ?? layer.props.text ?? '';
   return (
-    (Object.keys(FIELD_TOKENS) as EditableField[]).find((f) => FIELD_TOKENS[f].test(text)) ?? null
+    (Object.keys(FIELD_TOKENS) as EditableField[]).find((f) =>
+      FIELD_TOKENS[f].test(text),
+    ) ?? null
   );
 }
 
@@ -92,6 +98,22 @@ export function ResetPageButton({
   );
 }
 
+// The designer, loaded only when a page goes live (it is a large module).
+const TagCanvasEditor = dynamic(
+  () =>
+    import('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor').then(
+      (m) => ({
+        default: m.TagCanvasEditor,
+      }),
+    ),
+  {
+    ssr: false,
+    loading: () => <Skeleton className="size-full rounded-none" />,
+  },
+);
+
+const NOOP = () => undefined;
+
 export interface ReaderPageProps {
   page: SpecSheetPage;
   /** Printed page number, null for a left-out page. */
@@ -101,25 +123,74 @@ export interface ReaderPageProps {
   boxWidth: number;
   boxHeight: number;
   scale: number;
-  /** The page is in the visible window AND its preview has arrived. */
+  pageMm: { width_mm: number; height_mm: number };
+  /** The still picture's payload: set while the page is in the visible window AND its chunk arrived. */
   payload: TagSheetDesignPayload | null;
   sheetIndex: number | undefined;
+  /** This page draws the live designer instead of the still picture (at most 3 pages). */
+  live: boolean;
+  /** Bumped when the host replaced this page's layers from the server, so the canvas starts over. */
+  epoch: number;
+  /** The layer selected on THIS page, if any. */
+  selectedLayerId: string | null;
+  /** The host's local copy of this page's layers, if it has one. */
+  draftLayers: TagLayer[] | undefined;
+  /** Layers the host set (undo, redo): the canvas adopts them. */
+  externalLayers: TagLayer[] | undefined;
+  /** Whether this is the page being read: its actions show without hovering. */
+  current: boolean;
+  /** Medium urls for the page being worked on (the strip keeps thumbnails). */
+  sharp: {
+    images: Record<string, string>;
+    assets: Record<string, string>;
+  } | null;
   canEdit: boolean;
-  editDisabledReason?: string;
-  editHref: string;
   /** Other pages, for the Add accessory options. */
   pages: SpecSheetPage[];
   documentId: string;
   sheetId: string;
   /** Stable across renders (the page passes its own key), so the memoised page skips re-rendering. */
   onPatch: (key: string, change: Partial<SpecSheetPage>) => void;
+  onSelectLayer: (key: string, layerId: string | null) => void;
+  onLayersReport: (key: string, base: TagLayer[], layers: TagLayer[]) => void;
+  controllerRefFor: (
+    key: string,
+  ) => React.MutableRefObject<EmbeddedController | null>;
+}
+
+/** The bound row with the open page's medium pictures swapped in (thumbnails elsewhere). */
+function boundWithMedium(
+  row: Record<string, unknown>,
+  medium: Record<string, string>,
+) {
+  const swap = (image: unknown) => {
+    const entry = image as { attachment_id?: string } | null;
+    return entry && entry.attachment_id && medium[entry.attachment_id]
+      ? { ...entry, url: medium[entry.attachment_id] }
+      : image;
+  };
+  const parts = (
+    (row.parts as Record<string, unknown>[] | undefined) ?? []
+  ).map((part) => ({
+    ...part,
+    images: ((part.images as unknown[] | undefined) ?? []).map(swap),
+    drawing: swap(part.drawing),
+  }));
+  return {
+    ...row,
+    images: ((row.images as unknown[] | undefined) ?? []).map(swap),
+    drawing: swap(row.drawing),
+    parts,
+    own_parts: parts,
+  };
 }
 
 /**
- * One page of the stack: its bar (Edit page, Reset to template, Add accessory, Leave out / Put
- * back) and a fixed-size box. The box is a placeholder until the page is near the viewport; only
- * then does `ScaledSheet` / `TagSheetRenderer` mount inside it. AREA, COMMENT and the marker are
- * clicked and typed on the page itself, as they were in the single-page tab.
+ * One page of the stack: a fixed-size box and, on hover or when it is the page being read, its
+ * actions (Reset to template, Add accessory, Leave out / Put back). The box is a placeholder until
+ * the page is near the viewport; then a still `ScaledSheet` / `TagSheetRenderer` picture, or, for
+ * the few pages nearest the reader, the live designer canvas (F4). AREA, COMMENT and the marker
+ * are clicked and typed on the page itself; bound product fields stay data.
  */
 export const ReaderPage = React.memo(function ReaderPage({
   page,
@@ -128,33 +199,104 @@ export const ReaderPage = React.memo(function ReaderPage({
   boxWidth,
   boxHeight,
   scale,
+  pageMm,
   payload,
   sheetIndex,
+  live,
+  epoch,
+  selectedLayerId,
+  draftLayers,
+  externalLayers,
+  current,
+  sharp,
   canEdit,
-  editDisabledReason,
-  editHref,
   pages,
   documentId,
   sheetId,
   onPatch,
+  onSelectLayer,
+  onLayersReport,
+  controllerRefFor,
 }: ReaderPageProps) {
   const isCover = page.key === COVER;
   const [editing, setEditing] = React.useState<EditableField | null>(null);
   const [draft, setDraft] = React.useState('');
+  const [hover, setHover] = React.useState(false);
   // Escape unmounts the input, which can fire its blur: the flag stops that blur from saving.
   const cancelled = React.useRef(false);
   const accessoryId = React.useId();
 
   const drawn = !page.hidden && payload !== null && sheetIndex !== undefined;
   const tag = drawn ? payload.doc?.sheets[sheetIndex]?.tags[0] : undefined;
+  const baseLayers = tag?.layers;
+  const layersNow = draftLayers ?? baseLayers;
   const spots =
-    canEdit && tag && !isCover
-      ? tag.layers
+    canEdit && layersNow && !isCover
+      ? layersNow
           .filter((layer) => layer.visible !== false)
           .map((layer) => ({ layer, field: editableField(layer) }))
-          .filter((s): s is { layer: TagLayer; field: EditableField } => s.field !== null)
+          .filter(
+            (s): s is { layer: TagLayer; field: EditableField } =>
+              s.field !== null,
+          )
       : [];
   const px = (mm: number) => mm * PX_PER_MM * scale;
+
+  // The canvas reads its document once, when it mounts; later changes come back through
+  // `externalLayers`.
+  const liveDoc = React.useMemo(
+    () =>
+      payload && baseLayers
+        ? {
+            layers: draftLayers ?? baseLayers,
+            width_mm: pageMm.width_mm,
+            height_mm: pageMm.height_mm,
+          }
+        : null,
+    // The document is a starting point: only a new payload arriving or a restart replaces it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [payload === null, epoch, pageMm.width_mm, pageMm.height_mm],
+  );
+  const bound = React.useMemo<TagBindingData | null>(() => {
+    const row = payload?.resolvedData?.[page.key] as unknown as
+      | Record<string, unknown>
+      | undefined;
+    if (!row) return null;
+    return {
+      kind: 'line',
+      line: (sharp ? boundWithMedium(row, sharp.images) : row) as never,
+    };
+  }, [payload, page.key, sharp]);
+  const assetUrls = React.useMemo(
+    () => ({ ...(payload?.assets ?? {}), ...(sharp?.assets ?? {}) }),
+    [payload, sharp],
+  );
+  const controllerRef = controllerRefFor(page.key);
+  const embedded = React.useMemo(
+    () => ({
+      pxPerMm: scale * PX_PER_MM,
+      selectedLayerId,
+      onSelect: (layerId: string | null) => onSelectLayer(page.key, layerId),
+      layers: externalLayers,
+      controllerRef,
+      readOnly: !canEdit,
+    }),
+    [
+      scale,
+      selectedLayerId,
+      onSelectLayer,
+      page.key,
+      externalLayers,
+      controllerRef,
+      canEdit,
+    ],
+  );
+  const onLayersChange = React.useCallback(
+    (layers: TagLayer[]) => {
+      if (liveDoc) onLayersReport(page.key, liveDoc.layers, layers);
+    },
+    [liveDoc, onLayersReport, page.key],
+  );
 
   const start = (field: EditableField) => {
     cancelled.current = false;
@@ -170,62 +312,61 @@ export const ReaderPage = React.memo(function ReaderPage({
     setEditing(null);
   };
 
-  // Another page's item with no picks of its own, or one this page already picked. Built only for a
-  // drawn page: the picker is mounted for the pages in the window, not for every page of the sheet.
-  const accessoryOptions: SearchableSelectOption[] = React.useMemo(
-    () =>
-      drawn
-        ? [
-            ...pages
-              .filter((other) => other.key !== COVER && other.key !== page.key && other.picked.length === 0)
-              .map((other) => ({ value: other.key, label: `${other.code} ${other.name}`.trim() })),
-            ...page.accessories
-              .filter((a) => a.source === 'picked' && a.key)
-              .map((a) => ({ value: a.key as string, label: `${a.code} ${a.name}`.trim() })),
-          ]
-        : [],
-    [drawn, pages, page],
-  );
+  // Another page's item with no picks of its own, or one this page already picked.
+  const accessoryOptions: SearchableSelectOption[] = [
+    ...pages
+      .filter(
+        (other) =>
+          other.key !== COVER &&
+          other.key !== page.key &&
+          other.picked.length === 0,
+      )
+      .map((other) => ({
+        value: other.key,
+        label: `${other.code} ${other.name}`.trim(),
+      })),
+    ...page.accessories
+      .filter((a) => a.source === 'picked' && a.key)
+      .map((a) => ({
+        value: a.key as string,
+        label: `${a.code} ${a.name}`.trim(),
+      })),
+  ];
 
   const title = isCover ? 'Cover' : page.code || page.name;
+  const showActions = canEdit && (current || hover);
 
   return (
     <div
       className={`flex shrink-0 flex-col gap-2 ${page.hidden ? 'opacity-60' : ''}`}
       style={{ width: boxWidth }}
       data-page-wrap={page.key}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
     >
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-1 text-sm" data-testid={`spec-sheet-bar-${page.key}`}>
+      <div className="flex min-h-8 min-w-0 flex-wrap items-center justify-between gap-2">
+        <span
+          className="flex min-w-0 items-center gap-1 text-sm"
+          data-testid={`spec-sheet-bar-${page.key}`}
+        >
           <b className="shrink-0">{number ?? '-'}</b>
           <span className="truncate" title={`${title} - ${templateLabel}`}>
             {title}
-            {templateLabel ? ` · ${templateLabel}` : ''}
+            {templateLabel ? ` \u00b7 ${templateLabel}` : ''}
           </span>
           {page.edited && (
-            <Badge variant="warning" appearance="light" size="sm" className="shrink-0">
+            <Badge
+              variant="warning"
+              appearance="light"
+              size="sm"
+              className="shrink-0"
+            >
               Edited
             </Badge>
           )}
         </span>
-        {canEdit && (
+        {showActions && (
           <span className="flex flex-wrap items-center gap-2">
-            {!page.hidden &&
-              (editDisabledReason ? (
-                <span title={editDisabledReason} className="inline-flex">
-                  <Button size="sm" variant="outline" disabled>
-                    <Pencil className="size-4" aria-hidden />
-                    Edit page
-                  </Button>
-                </span>
-              ) : (
-                <Button size="sm" variant="outline" asChild>
-                  <Link href={editHref}>
-                    <Pencil className="size-4" aria-hidden />
-                    Edit page
-                  </Link>
-                </Button>
-              ))}
             {page.edited && (
               <ResetPageButton
                 documentId={documentId}
@@ -234,7 +375,7 @@ export const ReaderPage = React.memo(function ReaderPage({
                 code={isCover ? 'Cover' : page.code}
               />
             )}
-            {!isCover && !page.hidden && drawn && (
+            {!isCover && !page.hidden && (
               <div className="w-48 min-w-0">
                 <Label htmlFor={accessoryId} className="sr-only">
                   Add accessory
@@ -272,16 +413,51 @@ export const ReaderPage = React.memo(function ReaderPage({
         // The observed box: one fixed-size placeholder per page.
         data-testid={`spec-page-${page.key}`}
         data-page-key={page.key}
-        className="relative overflow-hidden rounded-sm border border-border bg-white shadow-sm"
+        className={`relative overflow-hidden rounded-sm border bg-white shadow-sm ${
+          current ? 'border-primary' : 'border-border'
+        }`}
         style={{ width: boxWidth, height: boxHeight }}
       >
         {page.hidden ? (
           <div className="flex size-full flex-col items-center justify-center gap-1 bg-muted text-center">
-            <h3 className="text-sm font-semibold">Left out of the spec sheet</h3>
+            <h3 className="text-sm font-semibold">
+              Left out of the spec sheet
+            </h3>
           </div>
         ) : drawn ? (
           <>
-            <ScaledSheet payload={payload} sheetIndex={sheetIndex} scale={scale} />
+            {live && liveDoc ? (
+              <div
+                className="absolute inset-0"
+                data-testid={`spec-page-live-${page.key}`}
+              >
+                <TagCanvasEditor
+                  key={epoch}
+                  doc={liveDoc}
+                  onChange={NOOP}
+                  onLayersChange={onLayersChange}
+                  docId={`${sheetId}:${page.key}`}
+                  boundData={bound}
+                  assetUrls={assetUrls}
+                  specSheet
+                  embedded={embedded}
+                />
+              </div>
+            ) : (
+              <ScaledSheet
+                payload={
+                  sharp && payload
+                    ? {
+                        ...payload,
+                        images: { ...payload.images, ...sharp.images },
+                        assets: assetUrls,
+                      }
+                    : payload
+                }
+                sheetIndex={sheetIndex}
+                scale={scale}
+              />
+            )}
             {spots.map(({ layer, field }) => {
               const style: React.CSSProperties = {
                 position: 'absolute',
@@ -296,7 +472,9 @@ export const ReaderPage = React.memo(function ReaderPage({
                   autoFocus
                   aria-label={FIELD_LABELS[field]}
                   value={draft}
-                  maxLength={field === 'marker' ? 10 : field === 'area' ? 200 : 500}
+                  maxLength={
+                    field === 'marker' ? 10 : field === 'area' ? 200 : 500
+                  }
                   onChange={(e) => setDraft(e.target.value)}
                   onBlur={finish}
                   onKeyDown={(e) => {

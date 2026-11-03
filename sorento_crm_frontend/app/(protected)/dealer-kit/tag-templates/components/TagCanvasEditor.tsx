@@ -172,7 +172,7 @@ import { getProductTagData, comboOptions } from '../../services/tagDataService';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
 import { CanvasToolbar, type CanvasTool, type ToolbarTrailingAction } from './CanvasToolbar';
-import { CanvasRulers, RULER_THICKNESS } from './CanvasRulers';
+import { CanvasRulers, RULER_THICKNESS as RULER_BASE } from './CanvasRulers';
 import { LayersPanel } from './LayersPanel';
 import { InspectorPanel } from './InspectorPanel';
 import { InsertFieldDialog } from './InsertFieldDialog';
@@ -407,7 +407,37 @@ const ZOOM_LIMITS = { min: CANVAS_MIN_ZOOM, max: CANVAS_MAX_ZOOM };
 // Component
 // ---------------------------------------------------------------------------
 
+/**
+ * What the spec sheet reader drives on a canvas it embeds (SPEC-SHEET-V2 F4).
+ * Embedded means: only the Konva stage, drawn at `pxPerMm` with no pan or zoom of its own, no
+ * Layers / Inspector / toolbar / save bar / dialogs, no keyboard or clipboard shortcuts, no
+ * rulers. The host owns selection, the Inspector, undo and saving.
+ */
+export interface EmbeddedController {
+  updateLayer: (id: string, changes: Partial<TagLayer>) => void;
+  updateLayerProps: (id: string, changes: Partial<TagLayerProps>) => void;
+}
+
+export interface EmbeddedMode {
+  /** Screen pixels per millimetre the page is drawn at. */
+  pxPerMm: number;
+  /** The selected layer, owned by the host. */
+  selectedLayerId: string | null;
+  onSelect: (layerId: string | null) => void;
+  /**
+   * Layers the HOST changed (undo, redo, an applied change): the canvas adopts them when this
+   * is a different array from the one it last reported. Absent: the canvas owns its layers.
+   */
+  layers?: TagLayer[];
+  /** The handle the host's Inspector and toolbar change layers through. */
+  controllerRef?: React.MutableRefObject<EmbeddedController | null>;
+  /** A view-only canvas: nothing can be dragged or typed. */
+  readOnly?: boolean;
+}
+
 interface TagCanvasEditorProps {
+  /** SPEC-SHEET-V2 F4: draw only the stage, for the spec sheet reader. See `EmbeddedMode`. */
+  embedded?: EmbeddedMode;
   doc: TagTemplateDoc;
   onChange: (doc: TagTemplateDoc) => void;
   /**
@@ -540,6 +570,7 @@ export function TagCanvasEditor({
   onLayersChange,
   onUseTemplate,
   hideSaveBar,
+  embedded,
   assetUrls: hostAssetUrls,
   docId,
   toolbarTrailing,
@@ -547,6 +578,8 @@ export function TagCanvasEditor({
   onReviewPinResolve,
   specSheet = false,
 }: TagCanvasEditorProps) {
+  // An embedded canvas has no rulers, so its artboard sits at the stage's corner.
+  const RULER_THICKNESS = embedded ? 0 : RULER_BASE;
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   /** Which change-request marker has its comment open (r9 S2/D6). */
   const [openPinId, setOpenPinId] = useState<string | null>(null);
@@ -559,7 +592,16 @@ export function TagCanvasEditor({
    * drag is one undo.
    */
   const [polygonPreview, setPolygonPreview] = useState<PolygonPoint[] | null>(null);
-  const [view, setView] = useState<CanvasView>({ zoom: 1, panX: 0, panY: 0 });
+  const [viewState, setView] = useState<CanvasView>({ zoom: 1, panX: 0, panY: 0 });
+  // Embedded: the host's scale, no pan. Otherwise the editor's own pan and zoom.
+  const embeddedPxPerMm = embedded?.pxPerMm;
+  const view = useMemo<CanvasView>(
+    () =>
+      embeddedPxPerMm !== undefined
+        ? { zoom: embeddedPxPerMm / CANVAS_PX_PER_MM, panX: 0, panY: 0 }
+        : viewState,
+    [embeddedPxPerMm, viewState],
+  );
   const [tool, setTool] = useState<CanvasTool>('select');
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
@@ -762,6 +804,8 @@ export function TagCanvasEditor({
     downClient: { x: number; y: number };
   } | null>(null);
 
+  const layersRef = useRef(layers);
+  layersRef.current = layers;
   const history = useCanvasHistory(doc.layers);
   const { computeSnap, guides, clearGuides } = useSnapGuides();
 
@@ -771,7 +815,7 @@ export function TagCanvasEditor({
   const stageWidth = Math.max(0, containerSize.width - RULER_THICKNESS);
   const stageHeight = Math.max(0, containerSize.height - RULER_THICKNESS);
   /** The hand tool, whether chosen or borrowed by holding Space (D35). */
-  const handMode = tool === 'hand' || spaceHeld;
+  const handMode = tool === 'hand' || spaceHeld || Boolean(embedded?.readOnly);
 
   // -- Commit ----------------------------------------------------------------
 
@@ -1489,6 +1533,11 @@ export function TagCanvasEditor({
       // steps a level in, exactly as before.
       if (target.props.kind === 'text') {
         setSelectedIds(new Set([target.id]));
+        // Embedded in the spec sheet: only text the designer wrote can be typed over. A layer
+        // bound to the quotation's data (a slot, a {{merge field}}) stays data; AREA / COMMENT /
+        // marker are typed through the reader's own spots.
+        const bound = target.slot_binding || /\{\{[^}]+\}\}/.test(target.text_override ?? target.props.text ?? '');
+        if (embedded && (bound || embedded.readOnly)) return;
         setEditingLayerId(target.id);
         return;
       }
@@ -1524,7 +1573,7 @@ export function TagCanvasEditor({
       const pick = childId ?? fallback;
       if (pick) setSelectedIds(new Set([pick]));
     },
-    [layers, resolveTarget, pointerMm],
+    [layers, resolveTarget, pointerMm, embedded],
   );
 
   // -- Polygon corner handles (S4, r4b; select vs edit-points modes, S5) -----
@@ -2304,7 +2353,7 @@ export function TagCanvasEditor({
       x: clientX - rect.left - RULER_THICKNESS,
       y: clientY - rect.top - RULER_THICKNESS,
     };
-  }, []);
+  }, [RULER_THICKNESS]);
 
   /**
    * A guide-drop gesture started on a ruler (D9/D17). The guide is placed (or,
@@ -2493,10 +2542,10 @@ export function TagCanvasEditor({
 
   // Fit once, as soon as the container has a size to fit into.
   useEffect(() => {
-    if (fittedRef.current || stageWidth <= 0 || stageHeight <= 0) return;
+    if (embedded || fittedRef.current || stageWidth <= 0 || stageHeight <= 0) return;
     fittedRef.current = true;
     handleFit();
-  }, [stageWidth, stageHeight, handleFit]);
+  }, [embedded, stageWidth, stageHeight, handleFit]);
 
   // -- Side panels (S1, D7) ---------------------------------------------------
 
@@ -2678,7 +2727,8 @@ export function TagCanvasEditor({
   // so preventDefault there is ignored and the page scrolls instead of zooming.
   useEffect(() => {
     const element = containerRef.current;
-    if (!element) return;
+    // An embedded page scrolls with the reader; the wheel is not a zoom there.
+    if (!element || embeddedPxPerMm !== undefined) return;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       const rect = element.getBoundingClientRect();
@@ -2690,7 +2740,7 @@ export function TagCanvasEditor({
     };
     element.addEventListener('wheel', onWheel, { passive: false });
     return () => element.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [embeddedPxPerMm, RULER_THICKNESS]);
 
   // -- Stage pointer handling (D35, D36) -------------------------------------
 
@@ -2990,6 +3040,8 @@ export function TagCanvasEditor({
   }, []);
 
   useEffect(() => {
+    // Embedded: the reader owns shortcuts (undo, redo); several canvases must not all answer.
+    if (embeddedPxPerMm !== undefined) return;
     const handler = (e: KeyboardEvent) => {
       // The listener is on `window`, so `e.target` is only ever right when
       // the control that has focus is also what dispatched the event. A
@@ -3195,6 +3247,7 @@ export function TagCanvasEditor({
       window.removeEventListener('keyup', release);
     };
   }, [
+    embeddedPxPerMm,
     selectedIds,
     selectedGuideId,
     editingLayerId,
@@ -3303,6 +3356,7 @@ export function TagCanvasEditor({
   );
 
   useEffect(() => {
+    if (embeddedPxPerMm !== undefined) return;
     /** Focus is somewhere typing belongs, or in a dialog other than the editor's own. */
     const elsewhere = (target: EventTarget | null): boolean => {
       if (editingLayerId) return true;
@@ -3364,7 +3418,7 @@ export function TagCanvasEditor({
       window.removeEventListener('cut', onCopyOrCut);
       window.removeEventListener('paste', onPaste);
     };
-  }, [editingLayerId, handlePaste, handlePasteImage, handlePasteText]);
+  }, [embeddedPxPerMm, editingLayerId, handlePaste, handlePasteImage, handlePasteText]);
 
   // A window that loses focus while Space is down would otherwise stay in hand.
   useEffect(() => {
@@ -3386,6 +3440,39 @@ export function TagCanvasEditor({
   useEffect(() => {
     onLayersChange?.(layers);
   }, [layers, onLayersChange]);
+
+  // -- Embedded in the spec sheet reader (F4) --------------------------------
+
+  const embeddedSelected = embedded?.selectedLayerId ?? null;
+  const embeddedOnSelect = embedded?.onSelect;
+  const embeddedLayers = embedded?.layers;
+  const embeddedController = embedded?.controllerRef;
+  // The host's selection in: a layer picked elsewhere (or cleared) is the selection here.
+  useEffect(() => {
+    if (!embeddedOnSelect) return;
+    setSelectedIds((prev) => {
+      if (embeddedSelected === null) return prev.size === 0 ? prev : new Set();
+      return prev.size === 1 && prev.has(embeddedSelected) ? prev : new Set([embeddedSelected]);
+    });
+  }, [embeddedOnSelect, embeddedSelected]);
+  // The canvas selection out: a click on a layer is reported to the host.
+  useEffect(() => {
+    if (!embeddedOnSelect) return;
+    const first = selectedIds.size > 0 ? (Array.from(selectedIds)[0] ?? null) : null;
+    if (first !== embeddedSelected) embeddedOnSelect(first);
+    // Only a change of the canvas selection is news; the host value is read, not watched.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds]);
+  useEffect(() => {
+    if (embeddedController) embeddedController.current = { updateLayer, updateLayerProps };
+    return () => {
+      if (embeddedController) embeddedController.current = null;
+    };
+  }, [embeddedController, updateLayer, updateLayerProps]);
+  // Layers the host changed (undo, redo, apply): adopted when they are not what this canvas holds.
+  useEffect(() => {
+    if (embeddedLayers && embeddedLayers !== layersRef.current) setLayers(embeddedLayers);
+  }, [embeddedLayers]);
 
   // -- Derived state for toolbar ---------------------------------------------
 
@@ -3653,7 +3740,7 @@ export function TagCanvasEditor({
       left: Math.min(Math.max(rawLeft, RULER_THICKNESS + 2), maxLeft),
       top: Math.max(rawTop, RULER_THICKNESS + 2),
     };
-  }, [view.panX, view.panY, canvasWidthPx, containerSize.width]);
+  }, [view.panX, view.panY, canvasWidthPx, containerSize.width, RULER_THICKNESS]);
 
   const sortedLayers = useMemo(
     () => [...layers].sort((a, b) => a.z_index - b.z_index),
@@ -3675,175 +3762,8 @@ export function TagCanvasEditor({
   const canEnterGroup = selectionIsGroup;
   const canSelectParent = insideGroupId !== null;
 
-  return (
-    <div className="flex h-full flex-col overflow-x-hidden">
-      {/* Toolbar */}
-      <CanvasToolbar
-        tool={tool}
-        onToolChange={setTool}
-        onAddText={handleAddText}
-        onAddShape={handleAddShape}
-        onAddImage={handleAddImage}
-        onAddProductSlot={handleAddProductSlot}
-        onAddPriceBadge={handleAddPriceBadge}
-        onAddBadge={handleAddBadge}
-        onAddBarcode={handleAddBarcode}
-        onAddProduct={() => setPicker({ kind: 'add-product' })}
-        onAddSet={() => setPicker({ kind: 'add-set' })}
-        onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
-        onAddAccessoriesStrip={() => setPicker({ kind: 'accessories' })}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        canUndo={history.canUndo}
-        canRedo={history.canRedo}
-        zoom={view.zoom}
-        onZoomIn={handleZoomIn}
-        onZoomOut={handleZoomOut}
-        onZoomReset={handleZoomReset}
-        onFit={handleFit}
-        onDeleteSelected={deleteSelectedLayers}
-        onDuplicateSelected={duplicateSelectedLayers}
-        onGroupSelected={groupSelectedLayers}
-        onUngroupSelected={ungroupSelectedLayers}
-        hasSelection={hasSelection}
-        hasMultiSelection={selectedIds.size >= 2}
-        selectionIsGroup={selectionIsGroup}
-        trailing={toolbarTrailing}
-      />
-
-      {/* Preview combo (AC-5.1): template editor only - the request designer already
-          has its line's combo on the canvas. */}
-      {!boundData && (
-        <div className="flex shrink-0 items-center gap-2 border-b bg-background px-3 py-1">
-          <div className="w-full max-w-xs">
-            <SearchableSelect
-              value={comboPreview?.id ?? ''}
-              onChange={(value: string) => void handlePreviewCombo(value)}
-              fetchOptions={fetchComboOptions}
-              selectedOption={
-                comboPreview ? { value: comboPreview.id, label: comboPreview.label } : undefined
-              }
-              placeholder="Preview combo"
-              aria-label="Preview combo"
-              clearable
-              size="sm"
-            />
-          </div>
-        </div>
-      )}
-
-      <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">
-        {/* Left column collapsed strip: rendered OUTSIDE the panel so it stays
-            clickable while the panel itself is at collapsedSize={0}. */}
-        {panelLayout.leftCollapsed && (
-          <button
-            type="button"
-            className="hidden w-6 shrink-0 items-start justify-center border-r bg-muted/30 pt-2 hover:bg-muted md:flex"
-            title="Expand Lines + Layers"
-            aria-label="Expand Lines + Layers"
-            onClick={() => {
-              leftPanelRef.current?.expand(leftPercent);
-              handleFit();
-            }}
-          >
-            <ChevronRight className="size-3.5" />
-          </button>
-        )}
-
-        <ResizablePanelGroup direction="horizontal" className="flex-1">
-          {/* Left sidebar: the host's rail, then the Layers panel (AC-S1-1, AC-S1-3). */}
-          <ResizablePanel
-            ref={leftPanelRef}
-            id="canvas-left"
-            order={1}
-            collapsible
-            collapsedSize={0}
-            minSize={leftMinPercent}
-            maxSize={leftMaxPercent}
-            defaultSize={panelLayout.leftCollapsed ? 0 : leftPercent}
-            onResize={handleLeftResize}
-            onCollapse={() => {
-              if (!hasHydratedRef.current || !isGroupInteractive) return;
-              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: true }));
-            }}
-            onExpand={() => {
-              if (!hasHydratedRef.current || !isGroupInteractive) return;
-              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: false }));
-            }}
-            className="relative hidden md:flex md:flex-col md:overflow-hidden"
-          >
-            <button
-              type="button"
-              className="absolute right-1 top-1 z-10 flex size-5 items-center justify-center rounded bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="Collapse Lines + Layers"
-              aria-label="Collapse Lines + Layers"
-              onClick={() => {
-                leftPanelRef.current?.collapse();
-                handleFit();
-              }}
-            >
-              <ChevronLeft className="size-3.5" />
-            </button>
-            {leftRail ? (
-              <ResizablePanelGroup direction="vertical" className="h-full">
-                <ResizablePanel
-                  ref={railPanelRef}
-                  id="canvas-left-rail"
-                  order={1}
-                  minSize={railMinPercent}
-                  maxSize={railMaxPercent}
-                  defaultSize={railPercent}
-                  onResize={handleRailResize}
-                  className="flex flex-col"
-                >
-                  {/* D9: no scroll on this wrapper any more - LINES (the
-                      rail's own `flex-1` child) scrolls itself, and TAG SIZE
-                      sits below it, both always in view. */}
-                  <div className="flex h-full flex-col">{leftRail}</div>
-                </ResizablePanel>
-                <ResizableHandle
-                  withHandle
-                  onDragging={handlePanelDragEnd}
-                  aria-label="Resize Lines and Layers"
-                />
-                <ResizablePanel id="canvas-left-layers" order={2} minSize={railMinPercent} className="min-h-0">
-                  <LayersPanel
-                    layers={layers}
-                    selectedIds={selectedIds}
-                    onSelect={handleSelect}
-                    onToggleVisibility={handleToggleVisibility}
-                    onToggleLock={handleToggleLock}
-                    onMoveLayer={handleMoveLayer}
-                    overflowingIds={overflowingIds}
-                    subjectParts={subjectParts}
-                  />
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            ) : (
-              <div className="min-h-0 flex-1">
-                <LayersPanel
-                  layers={layers}
-                  selectedIds={selectedIds}
-                  onSelect={handleSelect}
-                  onToggleVisibility={handleToggleVisibility}
-                  onToggleLock={handleToggleLock}
-                  onMoveLayer={handleMoveLayer}
-                  overflowingIds={overflowingIds}
-                  subjectParts={subjectParts}
-                />
-              </div>
-            )}
-          </ResizablePanel>
-          <ResizableHandle
-            withHandle
-            className="hidden md:flex"
-            onDragging={handlePanelDragEnd}
-            aria-label="Resize Lines and Layers panel"
-          />
-
-          {/* Centre: canvas workspace. The Stage fills it and the artboard sits at
-              a pan offset inside (D33), so there is nothing to scroll. */}
-          <ResizablePanel id="canvas-centre" order={2} className="flex">
+  const canvasArea = (
+    <>
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
@@ -3855,6 +3775,7 @@ export function TagCanvasEditor({
               )}
               onContextMenu={handleStageContextMenu}
             >
+              {!embedded && (
               <CanvasRulers
                 widthMm={doc.width_mm}
                 heightMm={doc.height_mm}
@@ -3868,6 +3789,7 @@ export function TagCanvasEditor({
                 horizontalGuideMm={horizontalGuide?.position_mm ?? null}
                 onGuideRemove={handleGuideRemove}
               />
+              )}
 
               <div
                 className="absolute"
@@ -4668,6 +4590,183 @@ export function TagCanvasEditor({
             )}
           </ContextMenuContent>
         </ContextMenu>
+    </>
+  );
+
+  if (embedded) {
+    return <div className="relative flex h-full w-full overflow-hidden">{canvasArea}</div>;
+  }
+
+  return (
+    <div className="flex h-full flex-col overflow-x-hidden">
+      {/* Toolbar */}
+      <CanvasToolbar
+        tool={tool}
+        onToolChange={setTool}
+        onAddText={handleAddText}
+        onAddShape={handleAddShape}
+        onAddImage={handleAddImage}
+        onAddProductSlot={handleAddProductSlot}
+        onAddPriceBadge={handleAddPriceBadge}
+        onAddBadge={handleAddBadge}
+        onAddBarcode={handleAddBarcode}
+        onAddProduct={() => setPicker({ kind: 'add-product' })}
+        onAddSet={() => setPicker({ kind: 'add-set' })}
+        onAddAlternativesRow={() => setPicker({ kind: 'alternatives' })}
+        onAddAccessoriesStrip={() => setPicker({ kind: 'accessories' })}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={history.canUndo}
+        canRedo={history.canRedo}
+        zoom={view.zoom}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onZoomReset={handleZoomReset}
+        onFit={handleFit}
+        onDeleteSelected={deleteSelectedLayers}
+        onDuplicateSelected={duplicateSelectedLayers}
+        onGroupSelected={groupSelectedLayers}
+        onUngroupSelected={ungroupSelectedLayers}
+        hasSelection={hasSelection}
+        hasMultiSelection={selectedIds.size >= 2}
+        selectionIsGroup={selectionIsGroup}
+        trailing={toolbarTrailing}
+      />
+
+      {/* Preview combo (AC-5.1): template editor only - the request designer already
+          has its line's combo on the canvas. */}
+      {!boundData && (
+        <div className="flex shrink-0 items-center gap-2 border-b bg-background px-3 py-1">
+          <div className="w-full max-w-xs">
+            <SearchableSelect
+              value={comboPreview?.id ?? ''}
+              onChange={(value: string) => void handlePreviewCombo(value)}
+              fetchOptions={fetchComboOptions}
+              selectedOption={
+                comboPreview ? { value: comboPreview.id, label: comboPreview.label } : undefined
+              }
+              placeholder="Preview combo"
+              aria-label="Preview combo"
+              clearable
+              size="sm"
+            />
+          </div>
+        </div>
+      )}
+
+      <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">
+        {/* Left column collapsed strip: rendered OUTSIDE the panel so it stays
+            clickable while the panel itself is at collapsedSize={0}. */}
+        {panelLayout.leftCollapsed && (
+          <button
+            type="button"
+            className="hidden w-6 shrink-0 items-start justify-center border-r bg-muted/30 pt-2 hover:bg-muted md:flex"
+            title="Expand Lines + Layers"
+            aria-label="Expand Lines + Layers"
+            onClick={() => {
+              leftPanelRef.current?.expand(leftPercent);
+              handleFit();
+            }}
+          >
+            <ChevronRight className="size-3.5" />
+          </button>
+        )}
+
+        <ResizablePanelGroup direction="horizontal" className="flex-1">
+          {/* Left sidebar: the host's rail, then the Layers panel (AC-S1-1, AC-S1-3). */}
+          <ResizablePanel
+            ref={leftPanelRef}
+            id="canvas-left"
+            order={1}
+            collapsible
+            collapsedSize={0}
+            minSize={leftMinPercent}
+            maxSize={leftMaxPercent}
+            defaultSize={panelLayout.leftCollapsed ? 0 : leftPercent}
+            onResize={handleLeftResize}
+            onCollapse={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: true }));
+            }}
+            onExpand={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: false }));
+            }}
+            className="relative hidden md:flex md:flex-col md:overflow-hidden"
+          >
+            <button
+              type="button"
+              className="absolute right-1 top-1 z-10 flex size-5 items-center justify-center rounded bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Collapse Lines + Layers"
+              aria-label="Collapse Lines + Layers"
+              onClick={() => {
+                leftPanelRef.current?.collapse();
+                handleFit();
+              }}
+            >
+              <ChevronLeft className="size-3.5" />
+            </button>
+            {leftRail ? (
+              <ResizablePanelGroup direction="vertical" className="h-full">
+                <ResizablePanel
+                  ref={railPanelRef}
+                  id="canvas-left-rail"
+                  order={1}
+                  minSize={railMinPercent}
+                  maxSize={railMaxPercent}
+                  defaultSize={railPercent}
+                  onResize={handleRailResize}
+                  className="flex flex-col"
+                >
+                  {/* D9: no scroll on this wrapper any more - LINES (the
+                      rail's own `flex-1` child) scrolls itself, and TAG SIZE
+                      sits below it, both always in view. */}
+                  <div className="flex h-full flex-col">{leftRail}</div>
+                </ResizablePanel>
+                <ResizableHandle
+                  withHandle
+                  onDragging={handlePanelDragEnd}
+                  aria-label="Resize Lines and Layers"
+                />
+                <ResizablePanel id="canvas-left-layers" order={2} minSize={railMinPercent} className="min-h-0">
+                  <LayersPanel
+                    layers={layers}
+                    selectedIds={selectedIds}
+                    onSelect={handleSelect}
+                    onToggleVisibility={handleToggleVisibility}
+                    onToggleLock={handleToggleLock}
+                    onMoveLayer={handleMoveLayer}
+                    overflowingIds={overflowingIds}
+                    subjectParts={subjectParts}
+                  />
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            ) : (
+              <div className="min-h-0 flex-1">
+                <LayersPanel
+                  layers={layers}
+                  selectedIds={selectedIds}
+                  onSelect={handleSelect}
+                  onToggleVisibility={handleToggleVisibility}
+                  onToggleLock={handleToggleLock}
+                  onMoveLayer={handleMoveLayer}
+                  overflowingIds={overflowingIds}
+                  subjectParts={subjectParts}
+                />
+              </div>
+            )}
+          </ResizablePanel>
+          <ResizableHandle
+            withHandle
+            className="hidden md:flex"
+            onDragging={handlePanelDragEnd}
+            aria-label="Resize Lines and Layers panel"
+          />
+
+          {/* Centre: canvas workspace. The Stage fills it and the artboard sits at
+              a pan offset inside (D33), so there is nothing to scroll. */}
+          <ResizablePanel id="canvas-centre" order={2} className="flex">
+{canvasArea}
           </ResizablePanel>
 
           {/* Right sidebar: Inspector panel (AC-S1-2, AC-S1-3). */}

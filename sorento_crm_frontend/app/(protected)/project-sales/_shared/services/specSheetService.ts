@@ -1,7 +1,10 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
-import type { TagBindingData, TagLayer } from '@/lib/dealer-kit/tag-template-types';
+import type {
+  TagBindingData,
+  TagLayer,
+} from '@/lib/dealer-kit/tag-template-types';
 import type { QueuedDownload } from './quotationDocumentService';
 
 /**
@@ -124,7 +127,10 @@ export interface SpecSheetTemplateOption {
 export interface SpecSheetList {
   items: SpecSheetListRow[];
   sources: SpecSheetSource[];
-  templates: { cover: SpecSheetTemplateOption[]; page: SpecSheetTemplateOption[] };
+  templates: {
+    cover: SpecSheetTemplateOption[];
+    page: SpecSheetTemplateOption[];
+  };
   defaults: {
     source: string | null;
     cover_template_id: string | null;
@@ -151,7 +157,10 @@ export interface UpdateSpecSheetBody {
 }
 
 /** One window of the print payload, thumbnails only, plus the pages the sheet leaves out. */
-export type SpecSheetPreview = Omit<TagSheetDesignPayload, 'page_id' | 'source'> & {
+export type SpecSheetPreview = Omit<
+  TagSheetDesignPayload,
+  'page_id' | 'source'
+> & {
   page_size: { width_mm: number; height_mm: number };
   hidden: string[];
 };
@@ -181,8 +190,14 @@ async function read<T>(response: Response, fallback: string): Promise<T> {
   return response.json();
 }
 
-export async function listSpecSheets(projectId: string, documentId: string): Promise<SpecSheetList> {
-  return read(await apiFetch(url(projectId, documentId)), 'Could not load the spec sheets');
+export async function listSpecSheets(
+  projectId: string,
+  documentId: string,
+): Promise<SpecSheetList> {
+  return read(
+    await apiFetch(url(projectId, documentId)),
+    'Could not load the spec sheets',
+  );
 }
 
 export async function createSpecSheet(
@@ -205,7 +220,10 @@ export async function getSpecSheet(
   documentId: string,
   sheetId: string,
 ): Promise<SpecSheetDetail> {
-  return read(await apiFetch(url(projectId, documentId, `/${sheetId}`)), 'Could not load the spec sheet');
+  return read(
+    await apiFetch(url(projectId, documentId, `/${sheetId}`)),
+    'Could not load the spec sheet',
+  );
 }
 
 export async function updateSpecSheet(
@@ -245,7 +263,13 @@ export async function getSpecSheetPageDesign(
   key: string,
 ): Promise<SpecSheetPageDesign> {
   return read(
-    await apiFetch(url(projectId, documentId, `/${sheetId}/pages/${encodeURIComponent(key)}/design`)),
+    await apiFetch(
+      url(
+        projectId,
+        documentId,
+        `/${sheetId}/pages/${encodeURIComponent(key)}/design`,
+      ),
+    ),
     'Could not open the page',
   );
 }
@@ -258,11 +282,18 @@ export async function saveSpecSheetPageEdit(
   layers: TagLayer[],
 ): Promise<SpecSheetDetail> {
   return read(
-    await apiFetch(url(projectId, documentId, `/${sheetId}/pages/${encodeURIComponent(key)}/edit`), {
-      method: 'PUT',
-      headers: JSON_HEADERS,
-      body: JSON.stringify({ layers }),
-    }),
+    await apiFetch(
+      url(
+        projectId,
+        documentId,
+        `/${sheetId}/pages/${encodeURIComponent(key)}/edit`,
+      ),
+      {
+        method: 'PUT',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ layers }),
+      },
+    ),
     'Could not save the page',
   );
 }
@@ -282,8 +313,51 @@ export async function getSpecSheetPageImages(
   key: string,
 ): Promise<SpecSheetPageImages> {
   return read(
-    await apiFetch(url(projectId, documentId, `/${sheetId}/page-images?key=${encodeURIComponent(key)}`)),
+    await apiFetch(
+      url(
+        projectId,
+        documentId,
+        `/${sheetId}/page-images?key=${encodeURIComponent(key)}`,
+      ),
+    ),
     'Failed to load the page',
+  );
+}
+
+/** Layer keys "Apply to every page" may carry: where it sits and how it is styled, never its content. */
+export interface ApplyAllChanges {
+  x_mm?: number;
+  y_mm?: number;
+  width_mm?: number;
+  height_mm?: number;
+  rotation_deg?: number;
+  z_index?: number;
+  visible?: boolean;
+  props?: Record<string, string | number | boolean>;
+}
+
+/** Move or restyle one layer on every page of the sheet that has it. */
+export async function applySpecSheetLayerToAll(
+  projectId: string,
+  documentId: string,
+  sheetId: string,
+  layerId: string,
+  changes: ApplyAllChanges,
+): Promise<SpecSheetDetail> {
+  return read(
+    await apiFetch(
+      url(
+        projectId,
+        documentId,
+        `/${sheetId}/layers/${encodeURIComponent(layerId)}/apply-all`,
+      ),
+      {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ changes }),
+      },
+    ),
+    'Could not apply the change to every page',
   );
 }
 
@@ -293,7 +367,9 @@ export async function queueSpecSheetPdf(
   sheetId: string,
 ): Promise<QueuedDownload> {
   return read(
-    await apiFetch(url(projectId, documentId, `/${sheetId}/export`), { method: 'POST' }),
+    await apiFetch(url(projectId, documentId, `/${sheetId}/export`), {
+      method: 'POST',
+    }),
     'Could not queue the spec sheet',
   );
 }

@@ -1894,3 +1894,145 @@ def test_r5_a_missing_single_template_alone_falls_back_to_the_page_template():
             assert _tags(ok.json())[1]["template_id"] == t["page"].id
         finally:
             _restore(originals)
+
+
+# ------------------------------------------------------------------ round 7: apply a change to every page
+
+
+def _logo(x=5):
+    return {
+        "id": "logo",
+        "type": "text",
+        "x_mm": x,
+        "y_mm": 2,
+        "width_mm": 30,
+        "height_mm": 8,
+        "rotation_deg": 0,
+        "z_index": 1,
+        "visible": True,
+        "slot_binding": None,
+        "text_override": None,
+        "props": {"kind": "text", "text": "SORENTO", "fontFamily": "DM Sans", "fontSize": 12, "color": "#000000", "align": "left"},
+    }
+
+
+def _apply_url(c, sheet, layer_id="logo"):
+    return _base(c, f"/{sheet.id}/layers/{layer_id}/apply-all")
+
+
+def _logo_templates(db, c):
+    """The WC set's page template carries the logo layer; the single item template does not."""
+    return {
+        "cover": _template(db, c["company_id"], "spec_cover"),
+        "page": _template(db, c["company_id"], "spec_page", layers=[_logo()]),
+        "single": _template(db, c["company_id"], "spec_page", layers=[_layer("no logo here")]),
+    }
+
+
+def _layers_by_page(payload):
+    return {t["request_tag_id"]: t["layers"] for t in _tags(payload)}
+
+
+def test_r7_apply_all_changes_the_layer_on_every_page_that_has_it_and_only_those():
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c, templates=_logo_templates(db, c))
+        set_key = f"set:{c['set'].id}"
+        client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
+        try:
+            ok = client.post(
+                _apply_url(c, sheet),
+                json={"changes": {"x_mm": 33, "props": {"color": "#ff0000", "fontSize": 20}}},
+            )
+            assert ok.status_code == 200, ok.text
+            assert ok.json()["id"] == sheet.id
+            layers = _layers_by_page(spec.build_print_payload(db, sheet))
+            logo = next(layer for layer in layers[set_key] if layer["id"] == "logo")
+            assert logo["x_mm"] == 33 and logo["y_mm"] == 2  # moved, the rest kept
+            assert logo["props"]["color"] == "#ff0000" and logo["props"]["fontSize"] == 20
+            assert logo["props"]["text"] == "SORENTO"  # content never touched
+            # The basin page (single template) and the cover have no such layer: untouched.
+            assert all(layer["id"] != "logo" for layer in layers[c["basin"].id])
+            assert c["basin"].id not in sheet.page_edits and "cover" not in sheet.page_edits
+            assert set_key in sheet.page_edits
+        finally:
+            _restore(originals)
+
+
+def test_r7_apply_all_refuses_bound_content_and_unknown_keys():
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c, templates=_logo_templates(db, c))
+        client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
+        try:
+            for changes in (
+                {"props": {"text": "HACKED"}},
+                {"props": {"source": {"type": "asset", "assetId": "x"}}},
+                {"props": {"fieldKey": "code"}},
+                {"slot_binding": "code"},
+                {"text_override": "x"},
+                {"id": "other"},
+                {"x_mm": "wide"},
+                {"props": "not-a-dict"},
+                {},
+            ):
+                refused = client.post(_apply_url(c, sheet), json={"changes": changes})
+                assert refused.status_code == 422, (changes, refused.text)
+                assert refused.json()["code"] == "spec_sheet_apply_invalid"
+            assert sheet.page_edits == {}
+            assert client.post(_apply_url(c, sheet, "no-such-layer"), json={"changes": {"x_mm": 1}}).status_code == 404
+        finally:
+            _restore(originals)
+
+
+def test_r7_apply_all_needs_the_edit_right_and_write_access():
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c, templates=_logo_templates(db, c))
+        for who, slugs in ((c["owner"], VIEW_ONLY), (_uid(), EDIT_SLUGS[:2])):
+            client, originals = _client(db, who, slugs=slugs)
+            try:
+                refused = client.post(_apply_url(c, sheet), json={"changes": {"x_mm": 1}})
+                assert refused.status_code == 403, refused.text
+            finally:
+                _restore(originals)
+        assert sheet.page_edits == {}
+
+
+def test_r7_apply_all_keeps_the_page_edit_bounds(monkeypatch):
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c, templates=_logo_templates(db, c))
+        monkeypatch.setattr(spec, "PAGE_EDIT_MAX", 50)
+        client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
+        try:
+            refused = client.post(_apply_url(c, sheet), json={"changes": {"x_mm": 1}})
+            assert refused.status_code == 422, refused.text
+            assert refused.json()["code"] == "spec_sheet_page_edit_too_large"
+        finally:
+            _restore(originals)
+
+
+def test_r7_apply_all_skips_left_out_pages_and_works_on_a_sheet_with_edits():
+    from app.services import project_spec_sheet_service as spec
+
+    with blank_session() as db:
+        c = _chain(db)
+        sheet = _make(db, c, templates=_logo_templates(db, c))
+        set_key = f"set:{c['set'].id}"
+        own = _logo(x=9)
+        own["props"]["text"] = "MY OWN WORDING"
+        spec.save_page_edit(db, sheet, set_key, [own])
+        client, originals = _client(db, c["owner"], slugs=EDIT_SLUGS)
+        try:
+            ok = client.post(_apply_url(c, sheet), json={"changes": {"y_mm": 40}})
+            assert ok.status_code == 200, ok.text
+            stored = sheet.page_edits[set_key]["layers"][0]
+            # The page's own edit is the base: its wording stays, only the asked key moved.
+            assert stored["y_mm"] == 40 and stored["x_mm"] == 9 and stored["props"]["text"] == "MY OWN WORDING"
+        finally:
+            _restore(originals)

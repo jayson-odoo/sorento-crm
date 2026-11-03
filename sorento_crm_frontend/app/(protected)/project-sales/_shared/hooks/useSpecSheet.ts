@@ -1,6 +1,12 @@
 'use client';
 
-import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import {
@@ -13,11 +19,14 @@ import {
   getSpecSheetPageDesign,
   getSpecSheetPageImages,
   getSpecSheetPreview,
+  applySpecSheetLayerToAll,
   listSpecSheets,
   queueSpecSheetPdf,
   saveSpecSheetPageEdit,
   updateSpecSheet,
+  type ApplyAllChanges,
   type CreateSpecSheetBody,
+  type SpecSheetPreview,
   type SpecSheetDetail,
   type UpdateSpecSheetBody,
 } from '../services/specSheetService';
@@ -57,7 +66,11 @@ export function useSpecSheets(projectId: string, documentId: string) {
   });
 }
 
-export function useSpecSheetDetail(projectId: string, documentId: string, sheetId: string) {
+export function useSpecSheetDetail(
+  projectId: string,
+  documentId: string,
+  sheetId: string,
+) {
   return useQuery({
     queryKey: specSheetDetailKey(documentId, sheetId),
     queryFn: () => getSpecSheet(projectId, documentId, sheetId),
@@ -103,7 +116,8 @@ export function useSpecSheetPreviews(
       const sorted = [...keys].sort();
       return {
         queryKey: [...specSheetPreviewPrefix(documentId, sheetId), sorted],
-        queryFn: () => getSpecSheetPreview(projectId, documentId, sheetId, sorted),
+        queryFn: () =>
+          getSpecSheetPreview(projectId, documentId, sheetId, sorted),
         enabled: sorted.length > 0,
         retry: false,
         // Scrolling back to a chunk is a cache hit; writes invalidate the previews explicitly.
@@ -139,8 +153,13 @@ export function useSpecSheetPageImages(
   key: string | null,
 ) {
   return useQuery({
-    queryKey: [...specSheetPreviewPrefix(documentId, sheetId), 'page-images', key],
-    queryFn: () => getSpecSheetPageImages(projectId, documentId, sheetId, key as string),
+    queryKey: [
+      ...specSheetPreviewPrefix(documentId, sheetId),
+      'page-images',
+      key,
+    ],
+    queryFn: () =>
+      getSpecSheetPageImages(projectId, documentId, sheetId, key as string),
     enabled: key !== null,
     retry: false,
     staleTime: PREVIEW_STALE_MS,
@@ -153,44 +172,152 @@ export function useSpecSheetMutations(projectId: string, documentId: string) {
   const refreshSheet = (sheetId: string, detail?: SpecSheetDetail) => {
     // The answer of a write IS the sheet's new detail: keep it, no second read. Without one the
     // detail is read again.
-    if (detail) queryClient.setQueryData(specSheetDetailKey(documentId, sheetId), detail);
-    else queryClient.invalidateQueries({ queryKey: specSheetDetailKey(documentId, sheetId) });
+    if (detail)
+      queryClient.setQueryData(specSheetDetailKey(documentId, sheetId), detail);
+    else
+      queryClient.invalidateQueries({
+        queryKey: specSheetDetailKey(documentId, sheetId),
+      });
     queryClient.invalidateQueries({ queryKey: specSheetListKey(documentId) });
-    queryClient.invalidateQueries({ queryKey: specSheetPreviewPrefix(documentId, sheetId) });
-    queryClient.invalidateQueries({ queryKey: [DESIGN_KEY, documentId, sheetId] });
+    queryClient.invalidateQueries({
+      queryKey: specSheetPreviewPrefix(documentId, sheetId),
+    });
+    queryClient.invalidateQueries({
+      queryKey: [DESIGN_KEY, documentId, sheetId],
+    });
   };
 
   const create = useMutation({
-    mutationFn: (body: CreateSpecSheetBody) => createSpecSheet(projectId, documentId, body),
+    mutationFn: (body: CreateSpecSheetBody) =>
+      createSpecSheet(projectId, documentId, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: specSheetListKey(documentId) });
     },
   });
 
   const update = useMutation({
-    mutationFn: ({ sheetId, body }: { sheetId: string; body: UpdateSpecSheetBody }) =>
-      updateSpecSheet(projectId, documentId, sheetId, body),
+    mutationFn: ({
+      sheetId,
+      body,
+    }: {
+      sheetId: string;
+      body: UpdateSpecSheetBody;
+    }) => updateSpecSheet(projectId, documentId, sheetId, body),
     onSuccess: (detail, { sheetId }) => refreshSheet(sheetId, detail),
     onError: (error: Error) => toast.error(error.message),
   });
 
   const savePageEdit = useMutation({
-    mutationFn: ({ sheetId, key, layers }: { sheetId: string; key: string; layers: TagLayer[] }) =>
-      saveSpecSheetPageEdit(projectId, documentId, sheetId, key, layers),
+    mutationFn: ({
+      sheetId,
+      key,
+      layers,
+    }: {
+      sheetId: string;
+      key: string;
+      layers: TagLayer[];
+    }) => saveSpecSheetPageEdit(projectId, documentId, sheetId, key, layers),
     onSuccess: (detail, { sheetId }) => refreshSheet(sheetId, detail),
     onError: (error: Error) => toast.error(error.message),
   });
 
-  const exportPdf = useMutation({
-    mutationFn: (sheetId: string) => queueSpecSheetPdf(projectId, documentId, sheetId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ENTITY_DOWNLOADS_QUERY_KEY });
-      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
-      queryClient.invalidateQueries({ queryKey: specSheetListKey(documentId) });
-      toast.success('Preparing the spec sheet. It will appear in My Downloads.');
+  // The reader's autosave: one page's layers. The answer is the sheet's new detail and the page's
+  // new layers are written into the cached preview chunk that holds it, so the still picture shows
+  // them; nothing is invalidated, so nothing refetches (no loop while the designer is live).
+  const autosavePage = useMutation({
+    mutationFn: ({
+      sheetId,
+      key,
+      layers,
+    }: {
+      sheetId: string;
+      key: string;
+      layers: TagLayer[];
+    }) => saveSpecSheetPageEdit(projectId, documentId, sheetId, key, layers),
+    onSuccess: (detail, { sheetId, key, layers }) => {
+      if (detail)
+        queryClient.setQueryData(
+          specSheetDetailKey(documentId, sheetId),
+          detail,
+        );
+      queryClient.setQueriesData<SpecSheetPreview>(
+        { queryKey: specSheetPreviewPrefix(documentId, sheetId) },
+        (old) => {
+          if (!old || !old.doc || !Array.isArray(old.doc.sheets)) return old;
+          const at = old.doc.sheets.findIndex(
+            (sheet) => sheet.tags[0]?.request_tag_id === key,
+          );
+          if (at < 0) return old;
+          const sheets = old.doc.sheets.map((sheet, i) =>
+            i === at
+              ? {
+                  ...sheet,
+                  tags: sheet.tags.map((tag, t) =>
+                    t === 0 ? { ...tag, layers } : tag,
+                  ),
+                }
+              : sheet,
+          );
+          return { ...old, doc: { ...old.doc, sheets } };
+        },
+      );
+      queryClient.invalidateQueries({
+        queryKey: specSheetListKey(documentId),
+        refetchType: 'none',
+      });
+    },
+  });
+
+  // "Every page": the server changes the layer on every page that has it, so the previews are read
+  // again (the live pages hold their own copy until they next mount).
+  const applyAll = useMutation({
+    mutationFn: ({
+      sheetId,
+      layerId,
+      changes,
+    }: {
+      sheetId: string;
+      layerId: string;
+      changes: ApplyAllChanges;
+    }) =>
+      applySpecSheetLayerToAll(
+        projectId,
+        documentId,
+        sheetId,
+        layerId,
+        changes,
+      ),
+    onSuccess: async (detail, { sheetId }) => {
+      if (detail)
+        queryClient.setQueryData(
+          specSheetDetailKey(documentId, sheetId),
+          detail,
+        );
+      queryClient.invalidateQueries({
+        queryKey: specSheetListKey(documentId),
+        refetchType: 'none',
+      });
+      // Resolves once the previews are read again, so the live pages restart on the new layers.
+      await queryClient.invalidateQueries({
+        queryKey: specSheetPreviewPrefix(documentId, sheetId),
+      });
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { create, update, savePageEdit, exportPdf };
+  const exportPdf = useMutation({
+    mutationFn: (sheetId: string) =>
+      queueSpecSheetPdf(projectId, documentId, sheetId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ENTITY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({ queryKey: specSheetListKey(documentId) });
+      toast.success(
+        'Preparing the spec sheet. It will appear in My Downloads.',
+      );
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update, savePageEdit, autosavePage, applyAll, exportPdf };
 }

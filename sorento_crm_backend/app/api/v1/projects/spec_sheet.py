@@ -64,6 +64,10 @@ class SpecSheetLayersIn(BaseModel):
     layers: List[dict] = Field(default_factory=list, max_length=spec.LAYERS_MAX)
 
 
+class SpecSheetApplyIn(BaseModel):
+    changes: dict = Field(default_factory=dict)
+
+
 def _document(db: Session, project_id: str, document_id: str):
     validate_uuid_path(project_id, resource="Project")
     validate_uuid_path(document_id, resource="Quotation")
@@ -260,6 +264,29 @@ def save_spec_sheet_page(
         document = _document(db, project_id, document_id)
         sheet = _sheet(db, document, sheet_id)
         spec.save_page_edit(db, sheet, page_key, payload.layers, user_id=str(current_user["id"]))
+        db.commit()
+        db.refresh(sheet)
+        return spec.detail_view(db, document, sheet, can_edit=True)
+    except Exception as exc:
+        raise _fail(exc)
+
+
+@router.post(f"{BASE}/{{sheet_id}}/layers/{{layer_id}}/apply-all")
+def apply_spec_sheet_layer_to_all(
+    project_id: str,
+    document_id: str,
+    sheet_id: str,
+    layer_id: str,
+    payload: SpecSheetApplyIn,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Move or restyle one layer on every page of the sheet that has it."""
+    try:
+        _editable_project(db, project_id, current_user)
+        document = _document(db, project_id, document_id)
+        sheet = _sheet(db, document, sheet_id)
+        spec.apply_to_all_pages(db, sheet, layer_id, payload.changes, user_id=str(current_user["id"]))
         db.commit()
         db.refresh(sheet)
         return spec.detail_view(db, document, sheet, can_edit=True)

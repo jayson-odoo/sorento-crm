@@ -1,37 +1,23 @@
-import { Metadata } from 'next';
-import { Container } from '@/components/common/container';
-import RequireAccess from '@/app/components/common/RequireAccess';
-import { SpecSheetPageEditor } from '../../../components/SpecSheetPageEditor';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = {
-  title: 'Edit spec sheet page',
-  description: 'One page of a spec sheet in the tag designer.',
-};
-
+/**
+ * The separate Edit page screen is gone: the reader is the editor. An old link (the reader used to
+ * link here with the page's key) lands on the reader, scrolled to that page.
+ */
 export default async function EditProjectQuotationSpecSheetPage({
   params,
 }: {
   params: Promise<{ projectId: string; documentId: string; sheetId: string; key: string }>;
 }) {
   const { projectId, documentId, sheetId, key } = await params;
-  // The reader links with encodeURIComponent(page.key) and a server page receives the segment
-  // still encoded; decode it once so the service's own encoding does not double it.
+  // A server page receives the segment still encoded; decode it once, then encode it for the query.
   let pageKey = key;
   try {
     pageKey = decodeURIComponent(key);
   } catch {
-    // A malformed escape is left as is; the API answers it with a 404.
+    // A malformed escape is passed on as it is; the reader finds no such page and stays at the top.
   }
-  return (
-    <RequireAccess permission="projects.projects.edit">
-      <Container className="pb-24">
-        <SpecSheetPageEditor
-          projectId={projectId}
-          documentId={documentId}
-          sheetId={sheetId}
-          pageKey={pageKey}
-        />
-      </Container>
-    </RequireAccess>
+  redirect(
+    `/project-sales/${projectId}/quotation-documents/${documentId}/spec-sheet/${sheetId}?page=${encodeURIComponent(pageKey)}`,
   );
 }
