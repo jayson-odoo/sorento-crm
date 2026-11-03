@@ -403,6 +403,14 @@ async function mountWith(board: Board, soNumbers?: string[]) {
 
 const pages = () => screen.queryAllByTestId('confirm-guide-split-page');
 const click = (id: string) => fireEvent.click(screen.getByTestId(id));
+/**
+ * Next waits for the fresh board re-read and the order's email dry run (#2091, #2116); a press
+ * while it is still off is a no-op, which a loaded CI runner hits (run 41565786700). Wait for it.
+ */
+async function clickNext() {
+  await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+  click('confirm-guide-next');
+}
 const pageOf = (so: string) =>
   screen.getAllByTestId('confirm-guide-split-page').find((el) => el.getAttribute('data-so') === so)!;
 
@@ -508,7 +516,7 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     await openConfirmGuide();
     const first = await screen.findByTestId('confirm-guide-split-page');
     expect(first).toHaveAttribute('data-so', 'SO000001');
-    click('confirm-guide-next');
+    await clickNext();
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
@@ -543,7 +551,7 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     const line3 = await within(page).findByTestId('split-line-3');
     expect(line3).toHaveTextContent('USE BRW 522 & ORDER 294');
     expect(within(line3).getAllByRole('row')).toHaveLength(1);
-    click('confirm-guide-next');
+    await clickNext();
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
@@ -637,7 +645,7 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     expect(page.textContent).toMatch(/2 lines/);
     expect(within(page).queryByTestId('confirm-guide-split-edit')).not.toBeInTheDocument();
     expect(within(page).queryByRole('button', { name: /^Split delivery/ })).not.toBeInTheDocument();
-    click('confirm-guide-next');
+    await clickNext();
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
@@ -663,14 +671,14 @@ describe('T-FE3 (F5 B4 F7): walking, editing and failing a page', () => {
     await screen.findByTestId('confirm-guide-split-page');
     expect(screen.getByTestId('confirm-guide-next')).toHaveTextContent('Next order');
     expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
-    click('confirm-guide-next');
+    await clickNext();
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
     expect(screen.queryByTestId('confirm-guide-confirm')).not.toBeInTheDocument();
     // CONFIRM-REMARK-FIX: each page dry-runs its own order; Next waits for this page's words.
     await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
-    click('confirm-guide-next');
+    await clickNext();
     expect(await screen.findByTestId('confirm-guide-confirm')).toBeInTheDocument();
     // CONFIRM-PREVIEW-STALE round 3: only the guide's own quiet email dry run may have run;
     // walking runs no press (no press dry run, no post) until the guide's Confirm button.
@@ -683,7 +691,7 @@ describe('T-FE3 (F5 B4 F7): walking, editing and failing a page', () => {
     await mountWith(coveredBoard());
     await openConfirmGuide();
     await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
+    await clickNext();
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
@@ -691,9 +699,9 @@ describe('T-FE3 (F5 B4 F7): walking, editing and failing a page', () => {
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000001'),
     );
-    click('confirm-guide-next');
+    await clickNext();
     await screen.findByTestId('confirm-guide-split-page');
-    click('confirm-guide-next');
+    await clickNext();
     await screen.findByTestId('confirm-guide-confirm');
     click('confirm-guide-back');
     await waitFor(() =>
@@ -1277,7 +1285,7 @@ describe('T-FE6 (F18 F19 F21): the guide page is the editable split sheet', () =
     await within(page).findByTestId('split-line-3');
     expect((screen.getByLabelText('Remark, line 3') as HTMLInputElement).value).toBe('URGENT ORDER');
     expect(within(page).getByText('edited')).toBeInTheDocument();
-    click('confirm-guide-next');
+    await clickNext();
     await screen.findByTestId('confirm-guide-confirm');
     click('confirm-guide-confirm');
     await waitFor(() => expect(pressDryRuns()).toHaveLength(1));
@@ -1883,7 +1891,7 @@ describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', 
   it('AC-8: Sponsorship beats Mockup and Purchase Request fills for its own order', async () => {
     await openAt(withRemarkType(withMockup(base(), ['pl-1-1']), { 'so-1': 'Sponsorship', 'so-2': 'Purchase Request' }));
     expect(remarkInput('SO000001')).toHaveValue('Sponsorship');
-    click('confirm-guide-next');
+    await clickNext();
     expect(remarkInput('SO000002')).toHaveValue('Purchase Request');
   });
 
@@ -1938,7 +1946,7 @@ describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', 
   it('AC-10: Confirm sends so_remark for every order: the field value, "" when cleared', async () => {
     await openAt(withMockup(base(), ['pl-1-1']));
     fireEvent.change(remarkInput('SO000001'), { target: { value: 'Sample for client' } });
-    click('confirm-guide-next');
+    await clickNext();
     fireEvent.change(remarkInput('SO000002'), { target: { value: 'Temp' } });
     fireEvent.click(within(pageOf('SO000002')).getByRole('button', { name: 'Clear remark' }));
     await walkConfirmGuide();
@@ -2295,7 +2303,7 @@ describe('CONFIRM-REMARK-FIX: one email dry run per read, for the order on scree
     await screen.findByTestId('confirm-guide-split-page');
     await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1']]));
     await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
-    click('confirm-guide-next');
+    await clickNext();
     await waitFor(() =>
       expect(screen.getByTestId('confirm-guide-split-page')).toHaveAttribute('data-so', 'SO000002'),
     );
@@ -2325,7 +2333,7 @@ describe('CONFIRM-REMARK-FIX: one email dry run per read, for the order on scree
           );
         }),
     );
-    click('confirm-guide-next');
+    await clickNext();
     await waitFor(() => expect(emailOrders()).toEqual([['pso-so-1'], ['pso-so-2']]));
     click('confirm-guide-back');
     await waitFor(() =>
