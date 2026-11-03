@@ -386,3 +386,20 @@ def test_d6e_a_reply_that_widens_the_customer_exits_the_which_one_open(request, 
         assert args.get("mine") is True, f"R3 (a): 'my sales' did not run as mine: {args}"
     assert args.get("basis") == "invoiced" and args.get("date_from") == "2026-10-01", f"R3 ({shape}) lost a held slot: {args}"
     assert args.get("channel") == "dealer", f"R3 ({shape}) lost the held dealer channel: {args}"
+
+
+def test_d6g_an_outstanding_which_one_open_and_my_orders_never_runs_every_listed_customer(bot) -> None:
+    """7g engine guard: an outstanding customer which-one is open; 'my orders' (self_reference) means the contact's own book,
+    so it never runs the listed customers (the group's ledgers or the competitor)."""
+    from tests.chatbot.test_report_unify_routing import NO_DATES, _status
+
+    ids, bath = _seed(bot)
+    ask = _status("outstanding", _ent(WORD, "customer"), basis="outstanding", **NO_DATES)
+    text, calls = bot.say(ask, "outstanding for zzdealer")
+    assert not _ran(calls) and "Which one" in text, f"setup: want the outstanding which-one, got {text!r} {_ran(calls)}"
+    mine = _status("outstanding", basis="outstanding", self_reference=True, entity_op="reuse", continuation=True, **NO_DATES)
+    text, calls = bot.say(mine, "my orders")
+    listed = ids | {bath}
+    assert _ran(calls) and _ran(calls)[0].get("mine") is True, f"7g: want the contact's own book (mine), got {text!r}"
+    for args in _ran(calls):
+        assert not (set(args.get("customer_ids") or []) & listed), f"7g: 'my orders' ran listed customers {args.get('customer_ids')}"
