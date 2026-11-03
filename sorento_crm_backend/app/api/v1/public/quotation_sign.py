@@ -47,7 +47,7 @@ def read_quotation_for_signing(
     """
     try:
         record = svc.get_issue_by_sign_token(db, token)
-        return svc.serialize_sign_page(db, record)
+        return svc.serialize_sign_page(db, record, release=db.close)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -80,7 +80,7 @@ def accept_quotation(
             terms_accepted=payload.terms_accepted,
         )
         db.commit()
-        return svc.serialize_sign_page(db, record)
+        return svc.serialize_sign_page(db, record, release=db.close)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -110,7 +110,7 @@ def request_quotation_changes(
             requester_name=payload.requester_name,
         )
         db.commit()
-        return svc.serialize_sign_page(db, record)
+        return svc.serialize_sign_page(db, record, release=db.close)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -176,7 +176,7 @@ def submit_quotation_amendment(
             ip_address=client_ip(request),
         )
         db.commit()
-        return svc.serialize_sign_page(db, record)
+        return svc.serialize_sign_page(db, record, release=db.close)
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

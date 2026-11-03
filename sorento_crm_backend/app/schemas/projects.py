@@ -278,6 +278,8 @@ class ProjectUpdateRequest(BaseModel):
     is_critical: Optional[bool] = None
     management_support: Optional[str] = None
     management_notes: Optional[str] = None
+    # PS-QUOTE-RULES R4.2: route this project's discounts to one person. Null clears it.
+    discount_approver_user_id: Optional[str] = None
 
 
 class ProjectApproveRequest(BaseModel):
@@ -382,6 +384,8 @@ class ProjectResponse(BaseModel):
     critical_at: Optional[datetime] = None
     management_support: Optional[str] = None
     management_notes: Optional[str] = None
+    discount_approver_user_id: Optional[str] = None
+    discount_approver_name: Optional[str] = None
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -1562,6 +1566,8 @@ class ProjectQuotationLineResponse(BaseModel):
     floor_value_applied: Optional[Decimal] = None
     floor_level_applied: Optional[str] = None
     is_below_floor: bool = False
+    # Below its default price when priced (PS-QUOTE-RULES R1): any discount needs approval.
+    is_discounted: bool = False
 
     sort_order: int = 0
     notes: Optional[str] = None
@@ -2187,6 +2193,13 @@ class ProjectQuotationDocumentResponse(ProjectQuotationDocumentBase):
     approval_rejected_reason: Optional[str] = None
     requires_approval: bool = False
     below_floor_line_count: int = 0
+    # PS-QUOTE-RULES: any discount and any off-series line need approval, routed to one person.
+    discounted_line_count: int = 0
+    off_series_line_count: int = 0
+    approval_reasons: Optional[str] = None
+    approver_user_id: Optional[str] = None
+    approver_name: Optional[str] = None
+    viewer_may_decide: Optional[bool] = None
     # PS-PROPOSAL-QUOTATION: quotation lines priced below the proposal revision it came from.
     below_proposal_count: int = 0
 

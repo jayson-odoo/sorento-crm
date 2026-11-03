@@ -238,7 +238,7 @@ describe('QuotationApprovalPanel: the block', () => {
     // Owner ruling 1 Nov: "minimum price", never "floor", on anything a user reads.
     expect(
       screen.getByText(
-        'A manager sent this back. Re-price the lines below the minimum price, then ask again.',
+        'A manager sent this back. Change the lines they asked about, then ask again.',
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/floor/i)).toBeNull();
@@ -262,6 +262,58 @@ describe('QuotationApprovalPanel: the block', () => {
     expect(isBlockedByApproval(
       quotationDocument({ requires_approval: true, approval_status_key: 'approved' }),
     )).toBe(false);
+  });
+});
+
+describe('QuotationApprovalPanel: PS-QUOTE-RULES reasons and routing', () => {
+  it('shows a discount-only or off-series-only block, worded by the server', () => {
+    granted = new Set();
+    renderPanel(
+      quotationDocument({
+        requires_approval: true,
+        off_series_line_count: 1,
+        approval_reasons: "One line is outside the project's series",
+      }),
+    );
+
+    expect(
+      screen.getByText(
+        "One line is outside the project's series, so this quotation needs a manager's approval before it can be sent to the customer.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/floor/i)).toBeNull();
+  });
+
+  it('names the routed approver while it waits, and after they approve', () => {
+    granted = new Set();
+    const { rerender } = renderPanel(
+      quotationDocument({
+        approval_status_id: 's-pending_approval',
+        approval_status_key: 'pending_approval',
+        requires_approval: true,
+        discounted_line_count: 2,
+        approval_reasons: '2 lines are priced below the default price',
+        approver_user_id: 'u-south',
+        approver_name: 'Aminah Rahman',
+      }),
+    );
+    expect(
+      screen.getByText(/2 lines are priced below the default price, so this quotation is with Aminah Rahman for approval/),
+    ).toBeInTheDocument();
+
+    rerender(
+      <QuotationApprovalPanel
+        document={quotationDocument({
+          approval_status_id: 's-rejected',
+          approval_status_key: 'rejected',
+          requires_approval: true,
+          discounted_line_count: 2,
+          approver_name: 'Aminah Rahman',
+        })}
+      />,
+    );
+    // The decider may be someone above the routed approver, so the decision credits no name.
+    expect(screen.getByText(/^A manager sent this back\./)).toBeInTheDocument();
   });
 });
 

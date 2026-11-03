@@ -112,16 +112,49 @@ free-text description as a line.
   the quotation does not save until you pick one.
 * On the quotation form the refusal reads *One line still needs a catalogue product or set.*
 * A **Non-standard** flag on a line means the product is real but outside the series this scope
-  is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed.
+  is quoted from (hover: *Outside the series this scope is quoted from*). That is allowed, but
+  the quotation then needs approval before it can be sent (see below).
 
 ### Minimum price, while you type
 
 * Under a line's rate, **Minimum price RM x** appears as soon as the price you type is below the
   lowest price allowed for that item. It shows on a new quotation too, before the first save.
 * **Non-standard** also appears while you pick, on a new quotation as on a saved one.
-* A quotation with a line below the minimum price says *One line is priced below minimum price*
-  (or *N lines are priced below minimum price*) and needs a manager's approval before it can be
-  sent.
+* A quotation with a line below the minimum price says *One line is priced below the minimum
+  price* (or *N lines are ...*) and needs approval before it can be sent.
+
+### Which quotations need approval, and who approves
+
+A quotation needs approval before it can be sent when any line:
+
+* is priced below its **default price**, even by RM 1. The default price is the price a new line
+  opens at: the series price where the scope's series names one, else the list price. The
+  banner reads *One line is priced below the default price*.
+* is **outside the project's series** (*One line is outside the project's series*).
+
+Press **Send for approval**. The request goes to ONE person, worked out in this order:
+
+1. a line outside the series: the company's **off-series approver** (set in Settings);
+2. the project's own **Discount approver** (on the project's Critical / final negotiation card,
+   set by a sales manager);
+3. your **superior** (your regional sales manager; set on your user in Settings > Users);
+4. the company's **default quotation approver** (Settings).
+
+The banner names who it is with (*... is with Aminah for approval*). Only that person, someone
+they report to, or an admin can approve or reject it. If nobody is set up, Send for approval
+says *Nobody is set up to approve this quotation* and names what an admin should set.
+
+Approval covers the revision you send: issuing spends it, and the next revision that still has a
+discount or an off-series line asks again.
+
+### A discount puts the project in Final Negotiation
+
+Sending a quotation with a discount for approval raises the project's **Critical / final
+negotiation** flag and moves the project to the **Final Negotiation** stage, if it is at an
+earlier stage. A project already at Final Negotiation or later (Sponsorship Form, PO Received,
+Lost, Dormant) keeps its stage. An approval asked only for an off-series line does not move it.
+If the approver rejects the discount, or you take it back to change it, the project stays in
+Final Negotiation; a sales manager moves it back by hand if the deal cooled.
 
 ### The customer wants something we do not sell yet (bespoke item)
 

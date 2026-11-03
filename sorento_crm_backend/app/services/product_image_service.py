@@ -407,12 +407,32 @@ def render(db: Session, attachment_id: Optional[str]) -> Optional[RenderedImage]
     return _downscale(raw, attachment_id)
 
 
-def _downscale(raw: bytes, attachment_id: Any) -> Optional[RenderedImage]:
+def _downscale(
+    raw: bytes,
+    attachment_id: Any,
+    box: int = PRINT_BOX,
+    quality: int = JPEG_QUALITY,
+    upright: bool = False,
+    draft: bool = False,
+    max_pixels: Optional[int] = None,
+) -> Optional[RenderedImage]:
+    """Pillow's own JPEG re-encode of ``raw`` inside ``box`` px; ``None`` when it cannot be.
+
+    ``upright`` applies the EXIF orientation first. The re-encode drops that tag, and a browser
+    honours it on the original, so a copy that stands in for an original must be turned upright.
+
+    ``draft`` lets a JPEG decode at 1/2, 1/4 or 1/8 scale (never below ``box``), so a 48 MP
+    photograph is never decoded at full size; ``max_pixels`` is then checked on what will
+    actually be decoded.
+    """
     try:
         from PIL import Image
 
         with Image.open(io.BytesIO(raw), formats=EMBEDDABLE_FORMATS) as opened:
-            if opened.width * opened.height > MAX_IMAGE_PIXELS:
+            if draft:
+                opened.draft("RGB", (box, box))
+            ceiling = MAX_IMAGE_PIXELS if max_pixels is None else max_pixels
+            if opened.width * opened.height > ceiling:
                 logger.warning(
                     "product image: %s is %dx%d, over the pixel ceiling, left out",
                     attachment_id,
@@ -421,6 +441,10 @@ def _downscale(raw: bytes, attachment_id: Any) -> Optional[RenderedImage]:
                 )
                 return None
             opened.load()
+            if upright:
+                from PIL import ImageOps
+
+                opened = ImageOps.exif_transpose(opened) or opened
             # Flattened onto white rather than converted straight to RGB: a PNG with alpha comes
             # out of a naive convert with black behind it, and a product cut out on transparency
             # is exactly the kind of file that gets uploaded.
@@ -432,9 +456,9 @@ def _downscale(raw: bytes, attachment_id: Any) -> Optional[RenderedImage]:
             else:
                 # CMYK is the other one that bites: a CMYK JPEG re-saved as-is renders inverted.
                 image = opened.convert("RGB")
-            image.thumbnail((PRINT_BOX, PRINT_BOX), Image.Resampling.LANCZOS)
+            image.thumbnail((box, box), Image.Resampling.LANCZOS)
             buffer = io.BytesIO()
-            image.save(buffer, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+            image.save(buffer, format="JPEG", quality=quality, optimize=True)
             return RenderedImage(
                 data=buffer.getvalue(),
                 mime_type="image/jpeg",
@@ -449,6 +473,152 @@ def _downscale(raw: bytes, attachment_id: Any) -> Optional[RenderedImage]:
             len(raw),
         )
         return None
+
+
+#: Longest edge of the rendition the spec sheet tab draws its ONE open page with: at least twice
+#: the ~420 px picture box, so a drawing's measurements read on a Retina screen (crew, 3 Nov).
+MEDIUM_BOX = 1024
+_MEDIUM_QUALITY = 82
+#: A rendition that could not be made is not tried again for this long.
+_MEDIUM_MISS_SECONDS = 10 * 60
+#: attachment id -> (signed url or None, monotonic deadline)
+_medium_cache: Dict[str, tuple] = {}
+
+
+def _medium_key(original_key: str) -> str:
+    return f"{original_key}.medium.jpg"
+
+
+def medium_urls(
+    db: Session,
+    attachment_ids: Iterable[Optional[str]],
+    release: Optional[Any] = None,
+) -> Dict[str, str]:
+    """Signed URLs of a ``MEDIUM_BOX`` rendition of each picture; never the original.
+
+    The rendition is made from the original ONCE, stored beside it (``<key>.medium.jpg``) and
+    reused from then on. Where each file lives is read first; ``release`` then hands the DB
+    connection back before any byte moves. A picture with no rendition is left out, and the
+    caller keeps showing its thumbnail.
+    """
+    wanted = list(dict.fromkeys(str(a) for a in attachment_ids if a))
+    now = monotonic()
+    out: Dict[str, str] = {}
+    missing: List[str] = []
+    for attachment_id in wanted:
+        hit = _medium_cache.get(attachment_id)
+        if hit is not None and hit[1] > now:
+            if hit[0]:
+                out[attachment_id] = hit[0]
+        else:
+            missing.append(attachment_id)
+    rows = (
+        [
+            (str(r.id), r.file_path, r.storage_provider)
+            for r in db.query(Attachment).filter(Attachment.id.in_(missing)).all()
+        ]
+        if missing
+        else []
+    )
+    if release is not None:
+        release()
+    for attachment_id, file_path, provider_name in rows:
+        url: Optional[str] = None
+        try:
+            key = extract_key(file_path) if file_path else None
+            if key:
+                provider = normalize_provider(provider_name)
+                backend = get_backend(provider)
+                medium = _medium_key(key)
+                if not backend.file_exists(medium):
+                    rendered = _downscale(
+                        backend.download_file(key),
+                        attachment_id,
+                        box=MEDIUM_BOX,
+                        quality=_MEDIUM_QUALITY,
+                        upright=True,
+                        draft=True,
+                    )
+                    if rendered is not None:
+                        backend.upload_file(
+                            file_content=rendered.data,
+                            file_path=medium,
+                            content_type="image/jpeg",
+                        )
+                    else:
+                        medium = None
+                if medium:
+                    url = resolve_signed_url(
+                        medium, provider=provider, expires_in=_URL_EXPIRES_IN, strict=True
+                    )
+        except Exception:  # noqa: BLE001 - the thumbnail stays on screen
+            logger.warning("product image: no medium rendition for %s", attachment_id, exc_info=True)
+            url = None
+        if len(_medium_cache) >= _URL_CACHE_MAX:
+            _medium_cache.clear()
+        _medium_cache[attachment_id] = (url, now + (_URL_TTL if url else _MEDIUM_MISS_SECONDS))
+        if url:
+            out[attachment_id] = url
+    return out
+
+
+def as_data_uri(rendered: Optional[RenderedImage]) -> Optional[str]:
+    if rendered is None:
+        return None
+    return f"data:{rendered.mime_type};base64,{base64.b64encode(rendered.data).decode('ascii')}"
+
+
+@dataclass(frozen=True)
+class PictureSource:
+    """Where one attachment's bytes live, read while the DB connection is held so the fetch
+    itself needs none (QUOTE-PERF-HOTFIX)."""
+
+    attachment_id: str
+    thumbnail_key: Optional[str]
+    original_key: Optional[str]
+    provider: str
+    mime_type: Optional[str]
+
+
+def picture_sources(db: Session, attachment_ids: Iterable[Optional[str]]) -> Dict[str, PictureSource]:
+    """One query for every picture a page will inline."""
+    wanted = list(dict.fromkeys(str(a) for a in attachment_ids if a))
+    if not wanted:
+        return {}
+    return {
+        str(row.id): PictureSource(
+            attachment_id=str(row.id),
+            thumbnail_key=extract_key(row.thumbnail_path) if row.thumbnail_path else None,
+            original_key=extract_key(row.file_path) if row.file_path else None,
+            provider=normalize_provider(row.storage_provider),
+            mime_type=row.mime_type,
+        )
+        for row in db.query(Attachment).filter(Attachment.id.in_(wanted)).all()
+    }
+
+
+def render_source(source: PictureSource) -> Tuple[Optional[RenderedImage], Optional[str]]:
+    """``(picture, new thumbnail url)`` with no DB access.
+
+    The stored thumbnail when there is one. Otherwise the original is read ONCE, a thumbnail is
+    made from it and uploaded exactly as the upload path does (``store_thumbnail``), and its URL
+    is handed back for the caller to save on the attachment, so the original is never read for
+    this picture again.
+    """
+    from app.services.image_thumbnailer import store_thumbnail
+
+    try:
+        backend = get_backend(source.provider)
+        if source.thumbnail_key:
+            return _downscale(backend.download_file(source.thumbnail_key), source.attachment_id), None
+        if not source.original_key:
+            return None, None
+        raw = backend.download_file(source.original_key)
+    except Exception:  # noqa: BLE001 - cosmetic, never fatal to the page
+        logger.warning("product image: cannot fetch %s", source.attachment_id, exc_info=True)
+        return None, None
+    made = store_thumbnail(backend, source.provider, source.original_key, raw, source.mime_type)
+    return _downscale(raw, source.attachment_id, upright=True), made
 
 
 def data_uri(
@@ -552,7 +722,13 @@ def serialize(
 __all__: List[str] = [
     "CHOSEN",
     "DRAWING_TYPE",
+    "MEDIUM_BOX",
     "NOT_CHOSEN",
+    "PictureSource",
+    "medium_urls",
+    "as_data_uri",
+    "picture_sources",
+    "render_source",
     "NO_PHOTOS",
     "OFF_CATALOG",
     "PRINT_BOX",
