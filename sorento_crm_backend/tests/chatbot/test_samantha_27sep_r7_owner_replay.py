@@ -210,21 +210,12 @@ class _OwnerChat(_Replay):
         db.flush()
         self.mocha_brand_id = mocha.id
         brand_of = {"sorento": self.brand_id, "mocha": mocha.id, None: None}
-        sorento_cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="CHENG HUAT HARDWARE (SENTUL) SDN BHD - [A/C I]")
-        mocha_cust = customer(db, company_id=MOCHA_ID, name="CHENG HUAT HARDWARE (SENTUL) SDN BHD - [IBORN]")
-        # CUSTOMER-GROUP-GATE (owner ruling 3 Nov 2026): ledgers are one customer only through
-        # a customer group, and a group is one company's. The replay is about the brand, so
-        # the word names ONE customer: the group of the Sorento ledger and the Mocha ledger,
-        # put in Sorento for the test (the DOs stay in their own companies).
-        from app.models.order import CustomerGroup
-
-        group = CustomerGroup(name=CHENG_HUAT, company_id=DEFAULT_COMPANY_ID)
-        db.add(group)
-        db.flush()
-        mocha_cust.company_id = DEFAULT_COMPANY_ID
-        for row in (sorento_cust, mocha_cust):
-            row.customer_group_id = group.id
-        db.flush()
+        # CUSTOMER-GROUP-GATE (owner ruling 3 Nov 2026): ledgers are one customer only through a
+        # customer group (one company's) or, across the two company books, by the IDENTICAL full
+        # name (crew answer on #2144: never ask "Sorento or Mocha?" for the same account). The
+        # replay is about the brand, so the word names that one customer in both companies.
+        sorento_cust = customer(db, company_id=DEFAULT_COMPANY_ID, name=CHENG_HUAT)
+        mocha_cust = customer(db, company_id=MOCHA_ID, name=CHENG_HUAT)
         self.sorento_ledger, self.mocha_ledger = sorento_cust.id, mocha_cust.id
         warehouses = {c: warehouse(db, company_id=c).id for c in (DEFAULT_COMPANY_ID, MOCHA_ID)}
         for number, (company_id, lines) in DOCUMENTS.items():

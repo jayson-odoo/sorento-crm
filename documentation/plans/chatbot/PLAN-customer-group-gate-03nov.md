@@ -1,6 +1,6 @@
 # PLAN: chatbot which-one lists apply the office's explicit customer groups (CUSTOMER-GROUP-GATE)
 
-Status: in review (opened as small fix track; the 3 Nov ruling grew the diff to ~600 lines, still no migration, no auth/RBAC change, no new ingest surface)
+Status: in review (standard track: the 3 Nov ruling grew it past the small fix size; no migration, no auth/RBAC change, no new ingest surface; UAC: customer-group-gate-03nov-acceptance-criteria.md)
 
 ## Bug
 
@@ -66,3 +66,14 @@ owner a reviewed grouping list for those, separately.
 
 - `ledger_family.group_names` / `family_words` (DO / SO-status header text) still print one
   marker-stripped name per trading name. It is header copy, not a list or a figure.
+
+## Review round 1 (reviewer, 3 Nov)
+
+- B1 fixed: a group is keyed by its exact normalised name (`group_key`, suffix " (GROUP)"), never by
+  the trading-name rule, so near-identical group names stay separate entries.
+- The group maps load once per turn (`customer_group_service.family_maps`).
+- The 27 Sep owner replay now uses the identical full name in both companies (crew answer) instead
+  of moving a ledger across companies; pick-carry gained a company-tagged label case.
+- Known and accepted: `session_state._legacy_option` (pre-rearch session shape) and the gate's
+  pinned-pick lookup key by label alone; the engine path carries each option's `uuids`, so no
+  figure changes (pinned by `test_chat_pick_carry.py::test_p3_*`).

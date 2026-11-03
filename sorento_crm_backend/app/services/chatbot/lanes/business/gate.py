@@ -1228,7 +1228,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
 
             # ── the option line NAMES THE LEDGER(S) the family sits in ──────
             # Owner ruling, console pass 3 (6 Sep 2026): "N. <name> (<company code>)".
-            # A family is keyed by NAME (`_cust_base`, n8n's own grouping), so one line can
+            # A family is keyed by `_cust_base` (a customer group, or one identical full name), so one line can
             # stand for accounts in more than one ledger - captures rg-15114061 (JYL JUBIN
             # under Mocha and Sorento) and rg-15125764 (YI HONG TILING under both) are
             # exactly that, and live rendered each as ONE line whose pick carried both

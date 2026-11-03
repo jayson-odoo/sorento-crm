@@ -546,7 +546,7 @@ def _family_names_by_contact(db: Session, contact_ids: set[str]) -> dict[str, st
         return {}
     from app.models.access import RespondContactCustomer
     from app.models.order import Customer
-    from app.services.customer_group_service import family_ids, family_overrides
+    from app.services.customer_group_service import family_maps
     from app.services.ledger_family import customer_group_of, customer_groups, ledger_family_key, without_ledger_marker
 
     keys: dict[str, set[str]] = {}
@@ -558,7 +558,8 @@ def _family_names_by_contact(db: Session, contact_ids: set[str]) -> dict[str, st
         .all()
     )
     # The office's customer groups win over the name rule (CUSTOMER-GROUP).
-    with customer_groups(family_overrides(db), ids=family_ids(db)):
+    names_map, ids_map = family_maps(db)
+    with customer_groups(names_map, ids=ids_map):
         for contact_id, name, customer_id in rows:
             key = ledger_family_key(name or "", str(customer_id))
             if not key:

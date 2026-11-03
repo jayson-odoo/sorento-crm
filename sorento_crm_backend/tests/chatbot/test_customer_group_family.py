@@ -248,10 +248,10 @@ def test_ac14_gate_cust_base_returns_the_group_key_for_a_mapped_match():
     lf = _seam()
     match = {"canonical_code": "ZZT-1", "display": {"customer_name": HOMEMART}}
     own = gate._cust_base(match)
-    assert own == lf.ledger_family_key(HOMEMART) != "CHIN CHUN HARDWARE"
+    assert own == lf.ledger_family_key(HOMEMART) != lf.group_key(HARDWARE)
 
     with lf.customer_groups({HOMEMART: HARDWARE}):
-        assert gate._cust_base(match) == "CHIN CHUN HARDWARE"
+        assert gate._cust_base(match) == lf.group_key(HARDWARE)
     assert gate._cust_base(match) == own
 
 

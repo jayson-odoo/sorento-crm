@@ -229,3 +229,36 @@ def test_an_identical_full_name_in_two_companies_is_one_entry_a_near_identical_o
     out = run_gate(dict(resolver), parser=parser, resolver=resolver)
     families = sorted(sorted(f) for f in (out.get("picker_families") or {}).values())
     assert families == sorted([sorted([srt, mch]), [near_a], [near_b]]), families
+
+
+# ============================================================ review B1: near-identical GROUP names
+
+
+def test_groups_whose_names_differ_only_by_punctuation_or_legal_form_are_separate_entries():
+    """Review B1: a group is keyed by its exact name, never by the trading-name rule. "ZZT CRAFT SDN BHD" (SRT),
+    "ZZT CRAFT SDN. BHD." (MCH) and "ZZT CRAFT" (MCH, a second group of that company) are three groups: three
+    entries, each pick carrying only its own group's ledger."""
+    from app.services.chatbot.turn.narrow import customer_options
+
+    a, b, c = (str(uuid.uuid4()) for _ in range(3))
+    ids = {a: "ZZT CRAFT SDN BHD", b: "ZZT CRAFT SDN. BHD.", c: "ZZT CRAFT"}
+    rows = [
+        {"entity_type": "customer", "uuid": a, "company_code": "SRT", "display": {"customer_name": "ZZT CRAFT SDN BHD [A/C I]"}},
+        {"entity_type": "customer", "uuid": b, "company_code": "MCH", "display": {"customer_name": "ZZT CRAFT SDN. BHD. - [IBORN]"}},
+        {"entity_type": "customer", "uuid": c, "company_code": "MCH", "display": {"customer_name": "ZZT CRAFT - [CERAMIC]"}},
+    ]
+    resolver = {"resolutions": [{"token": "zzt craft", "matches": rows}], "unresolved_tokens": []}
+    parser = {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "entities": [{"raw": "zzt craft", "hint": "customer", "current_message": True, "confident": True}],
+    }
+    with lf.customer_groups({}, ids=ids):
+        out = run_gate(dict(resolver), parser=parser, resolver=resolver)
+        options = customer_options(
+            [{"raw": r["display"]["customer_name"], "name": r["display"]["customer_name"], "uuid": r["uuid"],
+              "canonical_code": r["uuid"][:6], "company_codes": [r["company_code"]]} for r in rows],
+            cap=50,
+        )
+    assert sorted(sorted(f) for f in out["picker_families"].values()) == sorted([[a], [b], [c]]), out["picker_families"]
+    assert sorted(o["uuids"] for o in options) == sorted([[a], [b], [c]]), options

@@ -164,10 +164,9 @@ def _options(
         # member, because `uuids` is the union.
         family = _family_of(c, grouping)
         if family:
-            # Item 1: one line per TRADING NAME. The ledgers of one customer are one
-            # choice to the person reading the list ("CHIN CHUN HARDWARE SDN BHD -
-            # [A/C I]" and "- [A/C II]" are the same shop), and the pick still reaches
-            # every ledger because `uuids` is the union.
+            # Item 1, narrowed by CUSTOMER-GROUP-GATE (3 Nov 2026): one line per customer
+            # GROUP (the office's explicit link), else per ledger; the pick still reaches
+            # every ledger of the line because `uuids` is the union.
             key = family
             label = ledger_family_label(str(name or label or ""), _uuid_of(c))
         else:

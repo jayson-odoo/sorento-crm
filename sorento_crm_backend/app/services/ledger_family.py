@@ -1,9 +1,11 @@
-"""The ledger family of a customer row: the TRADING NAME behind it.
+"""The ledger family of a customer row: which which-one-list entry it belongs to.
 
 A shop is often several `customers` rows, one per ledger, that differ only by a bracketed
-marker: `CHIN CHUN HARDWARE SDN BHD - [A/C I]`, `HANLIM TRADING (JB) SDN BHD (SRT)`. Ledgers
-of one name are one customer. `ledger_family_key` is the comparison key two such rows share;
-`ledger_family_label` is what the family is called.
+marker: `CHIN CHUN HARDWARE SDN BHD - [A/C I]`, `HANLIM TRADING (JB) SDN BHD (SRT)`. They are
+one customer only when the office put them in one customer group (owner ruling,
+CUSTOMER-GROUP-GATE 3 Nov 2026: explicit links only); every other ledger is its own entry.
+`ledger_family_key` is the comparison key the rows of one entry share; `ledger_family_label` is
+what the entry is called. `trading_name_key` is the name rule, kept for SEARCH only.
 
 `group_names` / `family_words` name a list of customer rows by group only (DO-ASK-SIMPLIFY
 rule 1, owner rule 2 Oct 2026: no count, no "and N more"), for the chatbot's DO headers and
@@ -73,7 +75,7 @@ class _TurnGroups:
 _GROUPS: ContextVar[_TurnGroups | None] = ContextVar("ledger_family_groups", default=None)
 
 #: Appended to an UNGROUPED ledger's key: the ledger is its own entry, and the parenthesis
-#: keeps its key apart from every group's key (`_words` never yields one).
+#: keeps its key apart from every group's key (`group_key` ends " (GROUP)").
 _UNGROUPED = " (NO GROUP)"
 UNGROUPED_SUFFIX = _UNGROUPED
 
@@ -118,9 +120,16 @@ def _words(text: str) -> str:
     return " ".join(w for w in cleaned.split() if w not in _LEGAL_FORM_WORDS)
 
 
+#: Appended to a GROUP's key: a group is keyed by its exact (normalised) name, never by the
+#: trading-name rule, so two groups whose names differ only by punctuation or "SDN BHD" stay
+#: two entries (CUSTOMER-GROUP-GATE review B1), and no ledger key can equal it.
+_GROUP = " (GROUP)"
+
+
 def group_key(group_name: str) -> str:
-    """The comparison key of a customer GROUP, by its own name."""
-    return _words(group_name)
+    """The comparison key of a customer GROUP, by its own exact name."""
+    name = normalise_customer_name(group_name)
+    return name + _GROUP if name else ""
 
 
 def trading_name_key(text: str) -> str:
