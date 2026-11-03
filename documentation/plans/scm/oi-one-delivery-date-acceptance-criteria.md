@@ -65,10 +65,12 @@ else `previous_delivery_date` when that differs from the SO line date, else none
 
 ## D. Split SO lines (Q3 a)
 
-- AC-D1: A split line's rows in the email, preview and Excel print the SO line's CURRENT date as the
-  line's DELIVERY DATE, and each part's own date as CHANGE DATE, as today.
-- AC-D2: A part that sits on another SO line prints that line's date; a part with no line yet in
-  AutoCount prints its planned date marked "planned" in the OI Lines split view.
+- AC-D1: A split line's rows in the email, preview and Excel keep today's shape: DELIVERY DATE is
+  the line's base date (the date before the split moved it, the "was" of its DELAY / ADVANCE), each
+  part's own date is CHANGE DATE (same rule as AC-A5 for any changed line).
+- AC-D2: In the OI Lines tab split grid, a part that sits on an SO line prints that line's SO line
+  date, followed by a muted "planned <date>" when its own planned date differs; a part with no line
+  yet in AutoCount prints its own date followed by "planned". A cancel part prints as today.
 
 ## E. How a change shows (owner extra)
 

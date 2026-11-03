@@ -1,6 +1,6 @@
 # PLAN: One delivery date, OI rows use the SO line delivery date (OI-ONE-DELIVERY-DATE)
 
-Status: Phase 2 (red tests) starting 3 Nov. Card answered 3 Nov 22:50. Track: full (L): data
+Status: Phase 2 build green (5 lane suites + wide run, 4 Nov); fix round 1 = AC-D2 split grid date. D1 reworded: split emails keep base date as the was (pinned by test_line_splits_round3). Card answered 3 Nov 22:50. Track: full (L): data
 migration, about 40 readers across backend and one frontend cell. Branch
 `claude/oi-one-delivery-date-43wfua`, PR #2145 (crew lane OI-ONE-DELIVERY-DATE).
 
