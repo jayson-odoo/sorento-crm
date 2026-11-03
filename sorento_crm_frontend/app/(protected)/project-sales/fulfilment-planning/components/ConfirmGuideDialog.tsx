@@ -108,6 +108,9 @@ export function ConfirmGuideDialog({
   refreshing = false,
   refreshFailed = false,
   wordsLoading = false,
+  wordsFailed = false,
+  onRetryWords,
+  onPageSaved,
   onRetryRefresh,
   onPageChange,
   prepareErrors,
@@ -150,6 +153,14 @@ export function ConfirmGuideDialog({
    * stays usable meanwhile, Next included; only Confirm waits.
    */
   wordsLoading?: boolean;
+  /**
+   * CONFIRM-DIALOG-SPEED review B2: the email preview (dry run) failed. The sheet stays as it
+   * is (unsaved edits included); only Confirm waits, behind its own Retry.
+   */
+  wordsFailed?: boolean;
+  onRetryWords?: () => void;
+  /** CONFIRM-DIALOG-SPEED review B1: a page's Save landed, so the email preview is read again. */
+  onPageSaved?: () => void;
   onRetryRefresh?: () => void;
   /**
    * CONFIRM-REMARK-FIX: the planning record of the order on screen (null on the Confirm step,
@@ -312,7 +323,7 @@ export function ConfirmGuideDialog({
     }
   };
   const pressConfirm = async () => {
-    if (posting || refreshing || stale || wordsLoading) return;
+    if (posting || refreshing || stale || wordsLoading || wordsFailed) return;
     setPosting(true);
     if (await runConfirm(new Map(pages.map((entry) => [entry.salesOrderId, remarkOf(entry)])))) {
       onClose();
@@ -490,6 +501,7 @@ export function ConfirmGuideDialog({
                       }
                       readLoaded
                       stayAfterSave
+                      onSaved={onPageSaved}
                       onDirtyChange={setDirty}
                       handleRef={editorRef}
                       className="h-auto"
@@ -573,6 +585,19 @@ export function ConfirmGuideDialog({
               Save or undo your split changes first
             </p>
           ) : null}
+          {wordsFailed && !wordsLoading && !stale ? (
+            <div
+              data-testid="confirm-guide-words-failed"
+              className="flex w-full flex-wrap items-center gap-2 text-xs"
+            >
+              <span role="alert">The email preview could not be prepared.</span>
+              {onRetryWords ? (
+                <Button type="button" variant="outline" size="sm" onClick={onRetryWords}>
+                  Retry
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
           {wordsLoading && !stale ? (
             <p
               data-testid="confirm-guide-words-loading"
@@ -616,7 +641,7 @@ export function ConfirmGuideDialog({
             <Button
               type="button"
               data-testid="confirm-guide-confirm"
-              disabled={posting || refreshing || stale || wordsLoading}
+              disabled={posting || refreshing || stale || wordsLoading || wordsFailed}
               onClick={() => void pressConfirm()}
             >
               {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
