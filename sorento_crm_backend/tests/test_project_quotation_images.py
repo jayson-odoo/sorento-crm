@@ -169,7 +169,9 @@ def _priced_line(db, env, scope, product=None, **payload):
     # A line names a catalogue product (QUOTE-NO-FREE-TEXT), so a caller that does not care
     # which one gets a fresh product.
     product = product if product is not None else _product(db, env)
-    body = {"unit_price": "250.00", "quantity": 4, "product_id": product.id}
+    # At the product's own list price: these tests are about photographs, and a line priced below
+    # it needs a manager's approval before the quotation can be issued (#2096, PS-QUOTE-RULES).
+    body = {"unit_price": "300.00", "quantity": 4, "product_id": product.id}
     body.update(payload)
     return quotes.upsert_line(
         db,
