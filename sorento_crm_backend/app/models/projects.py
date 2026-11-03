@@ -919,7 +919,13 @@ QUOTATION_LOSS_REASON_SET_KEY = "project_quotation_loss_reason"
 # nothing ever prints while looking perfectly configured in Setup.
 TEMPLATE_KIND_COVER_LETTER = "cover_letter"
 TEMPLATE_KIND_TERMS = "terms"
-QUOTATION_TEMPLATE_KINDS = (TEMPLATE_KIND_COVER_LETTER, TEMPLATE_KIND_TERMS)
+# QUOTE-COVER-DESIGN: the cover page design. Its intro is body_html, the rest is ``design``.
+TEMPLATE_KIND_COVER_PAGE = "cover_page"
+QUOTATION_TEMPLATE_KINDS = (
+    TEMPLATE_KIND_COVER_LETTER,
+    TEMPLATE_KIND_TERMS,
+    TEMPLATE_KIND_COVER_PAGE,
+)
 
 # What a line is priced per. Sorento quotes a development by repeating unit, not by
 # one flat bill of quantities: 300 house units at one basin each is a different
@@ -1212,6 +1218,8 @@ class ProjectQuotationDocument(Base, CompanyScopedMixin):
     # The document's OWN editable copy, rendered from the company template at create. Editing it
     # never touches the template, and editing the template never rewrites a document (AC-E2).
     cover_letter_html = Column(Text, nullable=True)
+    # The cover page's closing text (QUOTE-COVER-DESIGN); the letter above is its intro.
+    cover_closing_html = Column(Text, nullable=True)
     terms_html = Column(Text, nullable=True)
 
     # PS-SPEC-SHEET: the spec sheet's settings (templates, revision printed, and per item the page
@@ -1323,6 +1331,8 @@ class QuotationTemplate(Base, CompanyScopedMixin):
     # Defaults beside the terms template, copied onto a new quotation (kind terms only).
     payment_terms = Column(Text, nullable=True)
     validity = Column(Text, nullable=True)
+    # kind cover_page only: {show_letterhead, title, rows: [{key, shown, label}], closing_html}.
+    design = Column(JSONB, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="false", default=False)
 
     created_by = Column(String(100), nullable=True)
@@ -1385,7 +1395,10 @@ class ProjectQuotationIssue(Base, CompanyScopedMixin):
 
     cover_letter_rendered = Column(Text, nullable=True)
     terms_rendered = Column(Text, nullable=True)
-    # 1 = the layout before the cover page, 2 = cover page first. No python default on purpose:
+    # Layout 3: the cover design and closing text frozen at send (QUOTE-COVER-DESIGN).
+    cover_design = Column(JSONB, nullable=True)
+    cover_closing_rendered = Column(Text, nullable=True)
+    # 1 = the layout before the cover page, 2 = cover page first, 3 = designed cover page. No python default on purpose:
     # only issue() opts in, so every other path keeps layout 1.
     layout_version = Column(SmallInteger, nullable=False, server_default="1")
     # Frozen with the terms at issue.

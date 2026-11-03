@@ -441,7 +441,7 @@ class TestOfRequiredAskNamesTheOptionalPick:
     def _slot(asking: str, options: list[list[str]]) -> dict:
         return {"ask": "sales_ranking", "values": {}, "asking": asking, "options": options, "misses": 0, "extras": {}}
 
-    @pytest.mark.parametrize("asking, question", [("company", "Which company?"), ("sales_agent", "Which sales agent?")])
+    @pytest.mark.parametrize("asking, question", [("sales_agent", "Which sales agent?")])
     def test_the_optional_field_asked_is_owed_with_its_options(self, asking, question) -> None:
         import app.services.chatbot.lanes.business.report_ask  # noqa: F401  (registers the ask)
         from app.services.chatbot.turn import question as question_mod
@@ -450,3 +450,11 @@ class TestOfRequiredAskNamesTheOptionalPick:
         assert obj["owed"] == [asking], obj
         assert obj["kind"] == "pick_one" and [o["position"] for o in obj["options"]] == [1, 2], obj
         assert question in obj["question"], obj
+
+
+    def test_the_report_ask_owes_no_company_o_r2(self) -> None:
+        """O-R2 (owner 3 Nov): the bot never asks the company; the report ask holds no company field."""
+        from app.services.chatbot.lanes.business import report_ask
+
+        names = [f.name for f in report_ask.SALES_RANKING_ASK.fields]
+        assert "company" not in names, f"O-R2: the report ask still owes the company: {names}"

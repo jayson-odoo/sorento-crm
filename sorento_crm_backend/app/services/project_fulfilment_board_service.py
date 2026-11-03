@@ -3007,6 +3007,12 @@ class FulfilmentBoardService:
             )
             for row in proposable
         ]
+        # One stock-debt assignment read per GET: every later read (covered rows' donor
+        # lookups) hits the cache this warms.
+        self.supply.planning_assignments(
+            [facts[row.key].product_id for row in plannable if facts[row.key].product_id],
+            as_of=as_of,
+        )
         composed = self.supply.compose_lines(entries, as_of=as_of)
         units = self.supply.unit_totals(entries)
         borrow_cache: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = {}
@@ -3217,6 +3223,7 @@ class FulfilmentBoardService:
                 by_order[str(row.project_sales_order_id)].append(row)
         if not by_order:
             return
+        prepared = []
         for pso_id, rows in by_order.items():
             order = (
                 self.db.query(ProjectSalesOrder)
@@ -3225,10 +3232,21 @@ class FulfilmentBoardService:
             )
             if order is None:
                 continue
+            prepared.append((pso_id, rows, order, self.supply.lines_of(pso_id)))
+        # Safe to share in a GET: every input `assignments_for` reads (incoming_by_location,
+        # po_by_location, lead_times, _fulfilment_settings, the decision allocation query
+        # with exclude_line_ids=None, site pools and reserves) is a request-invariant DB
+        # read; none depends on the per-order `replacing` state `_facts_for` sets.
+        self.supply.planning_assignments(
+            [line.product_id for _p, _r, _o, lines in prepared for line in lines if line.product_id],
+            as_of=as_of,
+        )
+        for pso_id, rows, order, lines in prepared:
             supply = ProjectSupplyService(
                 self.db, reveal_eta_delay=self.supply.reveal_eta_delay
             )
-            lines = supply.lines_of(pso_id)
+            supply._assignment_cache = self.supply._assignment_cache
+            supply._assignment_index = self.supply._assignment_index
             wanted = {str(row.project_line_id) for row in rows}
             replacing = {str(line.id) for line in lines if str(line.id) in wanted}
             if not replacing:
