@@ -151,6 +151,12 @@ describe('StockTransfersPanel - rows', () => {
     // OI-UX-FILTER-SNAPSHOT: the order's project beside its customer.
     expect(screen.getByText('LOT 2752 TOWER')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: /Project/ })).toBeInTheDocument();
+    // Review round: the Customer column keeps its id `customer` (saved column preferences are
+    // keyed by it), and sorts on the server by that key.
+    fireEvent.click(screen.getByRole('button', { name: 'Customer' }));
+    await waitFor(() =>
+      expect(listStockTransfers).toHaveBeenCalledWith(expect.objectContaining({ sort: 'customer' })),
+    );
     expect(
       screen.getAllByText('Proposed').find((el) => el.closest('[data-slot="badge"]')),
     ).toBeDefined();

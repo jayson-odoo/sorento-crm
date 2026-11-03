@@ -6299,6 +6299,10 @@ def test_a_donor_line_says_what_was_lent_off_it_and_to_which_order():
             db, borrower, product, qty="71", required_date=date(2026, 9, 1), warehouse=own
         )
         pso_id = _adopt(db, str(borrower.id))
+        # OI-UX-FILTER-SNAPSHOT review round: the board route names the borrower's customer
+        # and project on the wire (`attach_donor_parties`), proven below.
+        borrower.debtor_name = "ZZT Taker Debtor"
+        borrower.project_label = "ZZT Taker Tower"
         db.flush()
 
         from app.models.project_so import ProjectSalesOrderLine
@@ -6379,7 +6383,7 @@ def test_a_donor_line_says_what_was_lent_off_it_and_to_which_order():
         ]
         assert on_the_wire and on_the_wire[0]["lent_to"] == [
             {"qty": "71", "so_number": "ZZT-SO-TAKER", "line_no": mirror.line_no,
-             "customer_name": None, "project_label": None}
+             "customer_name": "ZZT Taker Debtor", "project_label": "ZZT Taker Tower"}
         ]
 
 

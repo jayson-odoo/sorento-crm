@@ -1088,7 +1088,9 @@ def test_the_list_names_the_orders_customer_and_project_and_sorts_by_both(one_tr
     assert row["customer_name"] == "ZZT Debtor Sdn Bhd"
     assert row["project_label"] == "ZZT Tower"
     assert client.get(f"{TRANSFERS}/{transfer.id}").json()["project_label"] == "ZZT Tower"
-    for sort in ("customer_name", "project_label"):
+    # Review round: the Customer column keeps its id `customer` (saved column preferences
+    # are keyed by it), so that is the sort key the grid sends.
+    for sort in ("customer", "project_label"):
         response = client.get(TRANSFERS, params={"query": transfer.transfer_no, "sort": sort})
         assert response.status_code == 200, (sort, response.text)
     searched = client.get(TRANSFERS, params={"query": "ZZT Tower"}).json()["data"]

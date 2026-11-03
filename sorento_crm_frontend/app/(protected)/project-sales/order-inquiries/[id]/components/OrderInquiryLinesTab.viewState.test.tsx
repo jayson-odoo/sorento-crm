@@ -113,6 +113,23 @@ describe('changing the lines view writes the URL', () => {
     await waitFor(() => expect(lastUrl().searchParams.get('view_q')).toBe('pump'));
   });
 
+  it('a column header click writes view_sort and keeps the list params', async () => {
+    // Review round (AC-1, sort): without this the sort silently stops surviving prev/next.
+    searchParamsValue = 'page=2&tab=lines';
+    renderTab();
+    await screen.findByText('ZZT-PLAIN');
+    // The header cell's drag handle is also role=button with the same text; the sort control
+    // is the real <button> inside it.
+    const header = screen
+      .getAllByRole('button')
+      .find((el) => el.tagName === 'BUTTON' && el.textContent?.trim() === 'Product');
+    expect(header).toBeDefined();
+    fireEvent.click(header!);
+    await waitFor(() => expect(lastUrl().searchParams.get('view_sort')).toBe('item_code:asc'));
+    expect(lastUrl().searchParams.get('page')).toBe('2');
+    expect(lastUrl().searchParams.get('tab')).toBe('lines');
+  });
+
   it('clearing the search drops view_q', async () => {
     searchParamsValue = 'view_q=pump&tab=lines';
     renderTab();

@@ -76,6 +76,24 @@ def test_spo_planner_project_coverage_carries_customer_and_project():
         assert out["project_label"] == PROJECT
 
 
+def test_spo_planner_project_coverage_without_a_core_so_keeps_the_project_title():
+    # Review round: before this lane `customer_name` held the inquiry's project title. An
+    # order not synced from AutoCount yet (or named by its provisional ref) has no
+    # `sales_orders` row to read, and must not lose that title to a pair of dashes: it is
+    # the project, so it lands in `project_label`.
+    from app.models.projects import Project
+
+    with pg_session() as db:
+        w = World(db)
+        row, pso = _project_chain(db, w, "P", qty=4, delivery=date(2026, 9, 1))
+        db.flush()
+        title = db.query(Project.title).filter(Project.id == pso.project_id).scalar()
+        [out] = svc._project_coverage(db, w.product("P").id)
+        assert out["document"] == pso.autocount_doc_no
+        assert out["customer_name"] is None
+        assert out["project_label"] == title
+
+
 def test_po_plan_covers_carry_customer_and_project():
     with pg_session() as db:
         w = World(db)
@@ -91,6 +109,14 @@ def test_po_plan_covers_carry_customer_and_project():
         assert cover["so_number"] == so.so_number
         assert cover["customer_name"] == DEBTOR
         assert cover["project_label"] == PROJECT
+        # Review round: and it reaches the wire. `GET /purchase-orders/{id}` answers through
+        # `response_model=PurchaseOrder`, whose `spo_plan.covers` is `SpoPlanCover`; a field
+        # it does not declare is dropped silently.
+        from app.schemas.scm_orders import SpoPlan
+
+        [wire] = SpoPlan(**svc.plan_of(db, po.id)).model_dump()["covers"]
+        assert wire["customer_name"] == DEBTOR
+        assert wire["project_label"] == PROJECT
 
 
 def test_coverage_undated_demand_carries_customer_and_project(db, chain):

@@ -14,12 +14,12 @@ describe('soCustomerProjectLabel', () => {
       'ACME SDN BHD (PROJECT) / TAMAN JAYA',
     );
   });
-  it('keeps the half that exists', () => {
-    expect(soCustomerProjectLabel('ACME SDN BHD', null)).toBe('ACME SDN BHD');
-    expect(soCustomerProjectLabel(undefined, 'TAMAN JAYA')).toBe('TAMAN JAYA');
+  it('prints a dash in place of a missing half (AC-6), so a project never reads as a customer', () => {
+    expect(soCustomerProjectLabel('ACME SDN BHD', null)).toBe('ACME SDN BHD / -');
+    expect(soCustomerProjectLabel(undefined, 'TAMAN JAYA')).toBe('- / TAMAN JAYA');
   });
   it('trims, and treats blank as missing', () => {
-    expect(soCustomerProjectLabel('  ACME  ', '   ')).toBe('ACME');
+    expect(soCustomerProjectLabel('  ACME  ', '   ')).toBe('ACME / -');
   });
   it('is null when neither is known', () => {
     expect(soCustomerProjectLabel(null, '')).toBeNull();
