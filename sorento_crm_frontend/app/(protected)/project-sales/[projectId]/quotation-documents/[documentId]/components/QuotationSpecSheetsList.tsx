@@ -108,8 +108,8 @@ export function QuotationSpecSheetsList() {
             {row.original.label}
           </span>
         ),
-        size: 80,
-        minSize: 60,
+        size: 56,
+        minSize: 56,
         enableSorting: false,
         meta: { headerTitle: 'No.' },
       },
@@ -123,7 +123,7 @@ export function QuotationSpecSheetsList() {
             {row.original.source_label}
           </span>
         ),
-        size: 200,
+        size: 170,
         minSize: 130,
         enableSorting: false,
         meta: { headerTitle: 'Revision' },
@@ -146,7 +146,7 @@ export function QuotationSpecSheetsList() {
             </span>
           );
         },
-        size: 200,
+        size: 130,
         minSize: 130,
         enableSorting: false,
         meta: { headerTitle: 'Templates' },
@@ -171,7 +171,7 @@ export function QuotationSpecSheetsList() {
             )}
           </span>
         ),
-        size: 130,
+        size: 100,
         minSize: 90,
         enableSorting: false,
         meta: { headerTitle: 'Pages' },
@@ -186,8 +186,8 @@ export function QuotationSpecSheetsList() {
             {row.original.created_by_name}
           </span>
         ),
-        size: 150,
-        minSize: 100,
+        size: 100,
+        minSize: 80,
         enableSorting: false,
         meta: { headerTitle: 'Created by' },
       },
@@ -206,7 +206,7 @@ export function QuotationSpecSheetsList() {
             </span>
           );
         },
-        size: 160,
+        size: 150,
         minSize: 120,
         enableSorting: false,
         meta: { headerTitle: 'Created' },
@@ -226,7 +226,7 @@ export function QuotationSpecSheetsList() {
             </span>
           );
         },
-        size: 160,
+        size: 150,
         minSize: 120,
         enableSorting: false,
         meta: { headerTitle: 'Last edited' },
@@ -243,7 +243,7 @@ export function QuotationSpecSheetsList() {
             onExport={onExport}
           />
         ),
-        size: 56,
+        size: 60,
         minSize: 56,
         enableSorting: false,
         enableResizing: false,

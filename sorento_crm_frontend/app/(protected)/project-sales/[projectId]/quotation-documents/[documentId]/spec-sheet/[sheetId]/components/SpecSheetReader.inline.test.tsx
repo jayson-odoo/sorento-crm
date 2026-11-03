@@ -37,6 +37,7 @@ if (!(globalThis as { ResizeObserver?: unknown }).ResizeObserver) {
   };
 }
 Element.prototype.scrollIntoView = vi.fn();
+HTMLElement.prototype.scrollTo = vi.fn() as never;
 
 // ---- a controllable IntersectionObserver (stack pages carry data-page-key, rail thumbs data-rail-key)
 
@@ -210,10 +211,12 @@ type FakeProps = {
     onSelect: (id: string | null) => void;
     layers?: Record<string, unknown>[];
     readOnly?: boolean;
+    onEditField?: (layerId: string) => void;
     controllerRef: { current: unknown };
   };
 };
 const liveSeen = new Set<string>();
+const mounts = new Map<string, number>();
 let lastDocLayers: Record<string, unknown>[] = [];
 let livePeak = 0;
 let liveNow = 0;
@@ -232,6 +235,7 @@ vi.mock(
         if (hostLayers && hostLayers !== latest.current) setLayers(hostLayers);
       }, [hostLayers]);
       React.useEffect(() => {
+        mounts.set(key, (mounts.get(key) ?? 0) + 1);
         liveSeen.add(key);
         liveNow += 1;
         livePeak = Math.max(livePeak, liveNow);
@@ -278,6 +282,12 @@ vi.mock(
           >
             {`nudge ${key}`}
           </button>
+          <button
+            type="button"
+            onClick={() => props.embedded.onEditField?.('area')}
+          >
+            {`double-click area ${key}`}
+          </button>
         </div>
       );
     },
@@ -307,6 +317,14 @@ const LOGO = {
     color: '#000000',
     align: 'left',
   },
+};
+
+const AREA = {
+  ...LOGO,
+  id: 'area',
+  y_mm: 40,
+  z_index: 2,
+  props: { ...LOGO.props, text: 'AREA : {{line.area}}' },
 };
 
 function detail() {
@@ -369,7 +387,7 @@ function previewFor(keys: string[]) {
             y_mm: 0,
             width_mm: 338.7,
             height_mm: 190.5,
-            layers: [LOGO],
+            layers: [LOGO, AREA],
           },
         ],
       })),
@@ -445,7 +463,7 @@ describe('live canvases', () => {
     renderReader();
     await screen.findByTestId('spec-page-k29');
     await waitFor(() =>
-      expect(Element.prototype.scrollIntoView).toHaveBeenCalled(),
+      expect(HTMLElement.prototype.scrollTo).toHaveBeenCalled(),
     );
   });
 });
@@ -683,6 +701,104 @@ describe('apply to every page: one send per pause, other pages held while it run
   });
 });
 
+describe('apply to every page restarts only the pages the server changed', () => {
+  it('the page it started from keeps its canvas (no remount, selection kept); the others restart', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    await screen.findByTestId('live-canvas-k2');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    await screen.findByTestId('inspector');
+    const k1Before = mounts.get('k1') ?? 0;
+    const k2Before = mounts.get('k2') ?? 0;
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Every page of this sheet/ }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'lower logo' }));
+    await waitFor(() =>
+      expect(applySpecSheetLayerToAll).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() => expect(mounts.get('k2')).toBe(k2Before + 1));
+    expect(mounts.get('k1')).toBe(k1Before);
+    expect(screen.getByTestId('inspector')).toHaveAttribute('data-layer', 'logo');
+  });
+});
+
+describe('a change made ON the canvas in Every-page mode', () => {
+  it('a drag of the selected layer goes to every page, like an Inspector change', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1', 'k2']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    await screen.findByTestId('inspector');
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Every page of this sheet/ }),
+    );
+    // The fake canvas "drags" the selected logo 1 mm right.
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'),
+    );
+    await waitFor(() =>
+      expect(applySpecSheetLayerToAll).toHaveBeenCalledTimes(1),
+    );
+    expect(applySpecSheetLayerToAll).toHaveBeenCalledWith(
+      'p1',
+      'd1',
+      'sheet-1',
+      'logo',
+      { x_mm: 6 },
+      'k1',
+    );
+  });
+
+  it('in This-page mode a drag stays on its page', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('select k1'),
+    );
+    await screen.findByTestId('inspector');
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText('nudge k1'),
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 800));
+    });
+    expect(applySpecSheetLayerToAll).not.toHaveBeenCalled();
+  });
+});
+
+describe('AREA, COMMENT and marker on a live page', () => {
+  it('no button sits over them (a click reaches the canvas); a double-click opens the field box', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['k1']);
+    await screen.findByTestId('live-canvas-k1');
+    const page = screen.getByTestId('spec-page-live-k1').parentElement!;
+    expect(
+      within(page).queryByRole('button', { name: 'Edit Area' }),
+    ).toBeNull();
+
+    fireEvent.click(
+      within(screen.getByTestId('live-canvas-k1')).getByText(
+        'double-click area k1',
+      ),
+    );
+    const box = await screen.findByRole('textbox', { name: 'Area' });
+    fireEvent.change(box, { target: { value: 'lobby' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() => expect(updateSpecSheet).toHaveBeenCalled());
+  });
+});
+
 describe('thumbnail rail', () => {
   it('draws real mini pages and asks for chunks, never for single thumbnails', async () => {
     renderReader();
@@ -755,9 +871,18 @@ describe('phone', () => {
     const button = await screen.findByRole('button', { name: 'Properties' });
     expect(screen.queryByRole('dialog')).toBeNull();
 
+    vi.mocked(HTMLElement.prototype.scrollTo).mockClear();
     fireEvent.click(button);
     const dialog = await screen.findByRole('dialog');
-    expect(dialog.className).toContain('max-h-[45dvh]');
+    // The stack scrolls the selected layer to its top, above the sheet.
+    expect(HTMLElement.prototype.scrollTo).toHaveBeenCalled();
+    // The shared drawer's own bottom cap (80vh) must not survive: it is the one that applies.
+    expect(dialog.className).toContain(
+      'data-[vaul-drawer-direction=bottom]:max-h-[45dvh]',
+    );
+    expect(dialog.className).not.toContain(
+      'data-[vaul-drawer-direction=bottom]:max-h-[80vh]',
+    );
     expect(within(dialog).getByTestId('inspector')).toHaveAttribute(
       'data-layer',
       'logo',

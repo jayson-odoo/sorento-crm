@@ -55,9 +55,23 @@ import { CreateSpecSheetDialog } from '../../../components/CreateSpecSheetDialog
 import { FormatBar } from './FormatBar';
 import { PageRail, type RailPicture } from './PageRail';
 import { ReaderInspector, type ApplyMode } from './ReaderInspector';
-import { applicableChanges } from './selectionTools';
+import { applicableChanges, movedKeys } from './selectionTools';
 import { useSheetEditing } from './useSheetEditing';
 import { COVER, ReaderPage } from './ReaderPage';
+
+/** Scroll the page stack (only the stack, never the window) so that page's top sits at its top. */
+function scrollStackTo(stack: HTMLElement | null, key: string) {
+  if (!stack) return;
+  const el = Array.from(
+    stack.querySelectorAll<HTMLElement>('[data-page-wrap]'),
+  ).find((node) => node.getAttribute('data-page-wrap') === key);
+  if (!el) return;
+  const top =
+    el.getBoundingClientRect().top -
+    stack.getBoundingClientRect().top +
+    stack.scrollTop;
+  stack.scrollTo?.({ top: Math.max(0, top - 8) });
+}
 
 /** How long "Every page" waits for the user to pause before it sends what was changed. */
 export const APPLY_ALL_MS = 600;
@@ -152,7 +166,9 @@ export function SpecSheetReader({
   } | null>(null);
   const [applyMode, setApplyMode] = React.useState<ApplyMode>('page');
   // Bumped when the server replaced other pages' layers (Apply to every page): live canvases restart.
-  const [epoch, setEpoch] = React.useState(0);
+  // Per page, so the page the apply started from keeps its canvas (its selection, undo and any
+  // edit still on its way) and only the pages the server changed start over.
+  const [restarts, setRestarts] = React.useState<Record<string, number>>({});
   const controllers = React.useRef(
     new Map<string, React.MutableRefObject<EmbeddedController | null>>(),
   );
@@ -186,10 +202,26 @@ export function SpecSheetReader({
   }, [selection]);
   const openSheet = () => {
     setSheetOpen(true);
-    if (selectedPageKey)
-      document
-        .querySelector(`[data-page-wrap="${selectedPageKey}"]`)
-        ?.scrollIntoView?.({ block: 'start' });
+    const stack = scroller.current;
+    if (!selectedPageKey || !stack) return;
+    // The stack to the top of the screen (on a phone it starts below where the sheet opens), then
+    // the selected layer to the top of the stack: it stays in view above the sheet.
+    stack.scrollIntoView?.({ block: 'start' });
+    const box = stack.querySelector<HTMLElement>(
+      `[data-page-key="${CSS.escape(selectedPageKey)}"]`,
+    );
+    if (!box) return;
+    const layerTop = (selectedLayer?.y_mm ?? 0) * PX_PER_MM * scale;
+    stack.scrollTo?.({
+      top: Math.max(
+        0,
+        box.getBoundingClientRect().top -
+          stack.getBoundingClientRect().top +
+          stack.scrollTop +
+          layerTop -
+          16,
+      ),
+    });
   };
 
   // The local copy stays until the LAST write in flight settles; clearing it on the first would
@@ -375,9 +407,26 @@ export function SpecSheetReader({
   // ---- current page (page N of M) -----------------------------------------------------------
 
   const frame = React.useRef(0);
-  const updateCurrent = React.useCallback(() => {
+  // A page picked in the rail (or by the pager) stays the current page through the scroll that
+  // brings it in, even when it cannot reach the top (the last page). The user's own scrolling
+  // (wheel, touch, keys, the scrollbar) hands the counter back to the scroll position.
+  const pinned = React.useRef<string | null>(null);
+  React.useEffect(() => {
     const node = scroller.current;
     if (!node) return;
+    const unpin = () => {
+      pinned.current = null;
+    };
+    const kinds = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
+    for (const kind of kinds)
+      node.addEventListener(kind, unpin, { passive: true });
+    return () => {
+      for (const kind of kinds) node.removeEventListener(kind, unpin);
+    };
+  }, [loaded, blocked]);
+  const updateCurrent = React.useCallback(() => {
+    const node = scroller.current;
+    if (!node || pinned.current) return;
     const line = node.scrollTop + node.clientHeight / 3;
     let found: string | null = null;
     node.querySelectorAll<HTMLElement>('[data-page-wrap]').forEach((el) => {
@@ -417,10 +466,8 @@ export function SpecSheetReader({
   );
   const sharpData = sharp.data ?? null;
   const scrollTo = (key: string) => {
-    const el = Array.from(
-      scroller.current?.querySelectorAll<HTMLElement>('[data-page-wrap]') ?? [],
-    ).find((node) => node.getAttribute('data-page-wrap') === key);
-    el?.scrollIntoView?.({ block: 'start' });
+    scrollStackTo(scroller.current, key);
+    pinned.current = key;
     setCurrentKey(key);
   };
   const step = (delta: number) => {
@@ -477,7 +524,12 @@ export function SpecSheetReader({
           });
           // The server changed the other pages: their local copies are stale, start them over.
           editing.forgetOthers(keep);
-          setEpoch((n) => n + 1);
+          setRestarts((prev) => {
+            const next = { ...prev };
+            for (const page of pagesRef.current)
+              if (page.key !== keep) next[page.key] = (prev[page.key] ?? 0) + 1;
+            return next;
+          });
         } catch {
           // The mutation reports its own error.
         } finally {
@@ -526,6 +578,28 @@ export function SpecSheetReader({
       };
     },
     [selection, flushApply],
+  );
+  // In Every-page mode a change made ON the canvas (a drag, a resize, a turn) of the selected layer
+  // goes to every page too, the same as typing it in the Inspector.
+  const everyPageRef = React.useRef({ selection, applyMode, sendToEveryPage });
+  everyPageRef.current = { selection, applyMode, sendToEveryPage };
+  const onLayersReport = React.useCallback(
+    (key: string, base: TagLayer[], layers: TagLayer[]) => {
+      const { selection: sel, applyMode: mode, sendToEveryPage: send } =
+        everyPageRef.current;
+      if (mode === 'all' && sel && sel.pageKey === key) {
+        const before = (editing.draftOf(key) ?? base).find(
+          (l) => l.id === sel.layerId,
+        );
+        const after = layers.find((l) => l.id === sel.layerId);
+        const sent = applicableChanges(movedKeys(before, after), null);
+        if (sent) send(sel.layerId, sent);
+      }
+      report(key, base, layers);
+    },
+    // `draftOf` reads a ref; `report` is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [report],
   );
   // Leaving the reader sends what was gathered.
   React.useEffect(() => () => flushApply(), [flushApply]);
@@ -849,7 +923,7 @@ export function SpecSheetReader({
                     payload={drawn.get(page.key)?.payload ?? null}
                     sheetIndex={drawn.get(page.key)?.index}
                     live={liveKeys.has(page.key)}
-                    epoch={epoch}
+                    epoch={restarts[page.key] ?? 0}
                     selectedLayerId={
                       selection?.pageKey === page.key ? selection.layerId : null
                     }
@@ -866,7 +940,7 @@ export function SpecSheetReader({
                     sheetId={sheetId}
                     onPatch={patch}
                     onSelectLayer={onSelectLayer}
-                    onLayersReport={report}
+                    onLayersReport={onLayersReport}
                     controllerRefFor={controllerRefFor}
                   />
                 ))}
@@ -905,7 +979,7 @@ export function SpecSheetReader({
               open={sheetOpen && Boolean(selectedLayer)}
               onOpenChange={(open) => !open && setSheetOpen(false)}
             >
-              <DrawerContent className="max-h-[45dvh]">
+              <DrawerContent className="data-[vaul-drawer-direction=bottom]:max-h-[45dvh]">
                 <DrawerHeader className="sr-only">
                   <DrawerTitle>Selected layer</DrawerTitle>
                   <DrawerDescription>

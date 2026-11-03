@@ -17,7 +17,7 @@ Two jobs, both read-only unless ``--apply`` is given:
 
 Usage (from sorento_crm_backend, with the target database's env loaded):
     venv/bin/python scripts/seed_spec_sheet_handtest.py --find
-    venv/bin/python scripts/seed_spec_sheet_handtest.py --with-set
+    venv/bin/python scripts/seed_spec_sheet_handtest.py --with-set [--min-items 7]
     venv/bin/python scripts/seed_spec_sheet_handtest.py --company <company> [--apply]
 
 Idempotent: re-running creates nothing new. It never edits or deletes an existing template.
@@ -199,7 +199,7 @@ def seed(db, company, apply: bool) -> None:
             db.commit()
 
 
-def find(db, limit: int = 8, with_set: bool = False) -> None:
+def find(db, limit: int = 8, with_set: bool = False, min_items: int | None = None) -> None:
     from app.models.base import company_scope
     from app.models.projects import Project, ProjectQuotationDocument, ProjectQuotationIssue
     from app.services import product_image_service as images
@@ -219,7 +219,7 @@ def find(db, limit: int = 8, with_set: bool = False) -> None:
             if issue is None:
                 continue
             items = spec.snapshot_items(db, document, issue)
-            if len(items) < (1 if with_set else 4):
+            if len(items) < (min_items or (1 if with_set else 4)):
                 continue
             product_ids = [i.get("product_id") for i in items if i.get("product_id")]
             chosen = images.images_for(db, product_ids) if product_ids else {}
@@ -273,6 +273,11 @@ def main() -> int:
         action="store_true",
         help="List quotations with a product set line and their photo coverage (items with a photo / items).",
     )
+    parser.add_argument(
+        "--min-items",
+        type=int,
+        help="Only quotations with at least this many items (pages, not counting the cover).",
+    )
     parser.add_argument("--company", help="Company id, code or name to create the templates in.")
     parser.add_argument("--apply", action="store_true", help="Write the templates (default: report only).")
     args = parser.parse_args()
@@ -286,9 +291,9 @@ def main() -> int:
         if args.company:
             seed(db, _company(db, args.company), args.apply)
         if args.find:
-            find(db)
+            find(db, min_items=args.min_items)
         if args.with_set:
-            find(db, with_set=True)
+            find(db, with_set=True, min_items=args.min_items)
     finally:
         db.close()
     return 0

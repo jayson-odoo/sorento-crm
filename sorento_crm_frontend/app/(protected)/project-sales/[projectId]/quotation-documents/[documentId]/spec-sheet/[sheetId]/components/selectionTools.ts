@@ -62,3 +62,18 @@ export function applicableChanges(
   if (Object.keys(style).length > 0) out.props = style;
   return Object.keys(out).length > 0 ? out : null;
 }
+
+/** The geometry a canvas change gave one layer (a drag, a resize, a turn): the top-level keys that
+ *  differ between the two copies, or null when none does. */
+export function movedKeys(
+  before: TagLayer | undefined,
+  after: TagLayer | undefined,
+): Partial<TagLayer> | null {
+  if (!before || !after) return null;
+  const out: Partial<TagLayer> = {};
+  for (const key of TOP_KEYS) {
+    if (before[key] !== after[key])
+      (out as Record<string, unknown>)[key] = after[key];
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}

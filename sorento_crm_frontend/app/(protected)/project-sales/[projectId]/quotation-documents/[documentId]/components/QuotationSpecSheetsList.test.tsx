@@ -183,6 +183,17 @@ describe('QuotationSpecSheetsList', () => {
     expect(listSpecSheets).toHaveBeenCalledWith('p1', 'd1');
   });
 
+  it('fits its card at 1280 (about 950 px) with no sideways scroll: the columns add up to 920 px or less', async () => {
+    listSpecSheets.mockResolvedValue(list({ items: [row({})] }));
+    renderList();
+    await screen.findByText('SS1');
+    // The grid's minimum width is the sum of its column sizes.
+    const table = document.querySelector('[data-slot="data-grid-table"]') as HTMLElement;
+    const minWidth = parseFloat(table.style.minWidth);
+    expect(minWidth).toBeGreaterThan(0);
+    expect(minWidth).toBeLessThanOrEqual(920);
+  });
+
   it('opens the sheet when its row is clicked', async () => {
     listSpecSheets.mockResolvedValue(list({ items: [row({})] }));
     renderList();

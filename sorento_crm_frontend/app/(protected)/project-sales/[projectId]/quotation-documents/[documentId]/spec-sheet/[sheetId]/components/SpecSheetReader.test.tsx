@@ -630,3 +630,54 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     ).toBeTruthy();
   });
 });
+
+describe('rail clicks move only the page stack (crew browser pass r6, item e)', () => {
+  it('scrolls the stack itself, never the window (no scrollIntoView)', async () => {
+    const intoView = vi.fn();
+    const scrollTo = vi.fn();
+    Element.prototype.scrollIntoView = intoView;
+    HTMLElement.prototype.scrollTo = scrollTo as never;
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    fireEvent.click(
+      within(screen.getByTestId('spec-rail-k3')).getByRole('button', {
+        name: /CODE-k3/,
+      }),
+    );
+    expect(intoView).not.toHaveBeenCalled();
+    expect(scrollTo).toHaveBeenCalled();
+    expect(scrollTo.mock.contexts.at(-1)).toBe(
+      screen.getByTestId('spec-sheet-stack'),
+    );
+  });
+
+  it('the counter stays on the clicked page through the scroll it causes, and follows the user after', async () => {
+    HTMLElement.prototype.scrollTo = vi.fn() as never;
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    fireEvent.click(
+      within(screen.getByTestId('spec-rail-k3')).getByRole('button', {
+        name: /CODE-k3/,
+      }),
+    );
+    const stack = screen.getByTestId('spec-sheet-stack');
+    // The scroll the click caused (the last page cannot reach the top, so a position-based pick
+    // would name another page).
+    fireEvent.scroll(stack);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.getByTestId('spec-sheet-page-of').textContent).toMatch(
+      /^4 of/,
+    );
+    // The user scrolls: the counter follows the position again.
+    fireEvent.wheel(stack);
+    fireEvent.scroll(stack);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.getByTestId('spec-sheet-page-of').textContent).not.toMatch(
+      /^4 of/,
+    );
+  });
+});

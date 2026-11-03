@@ -237,6 +237,8 @@ export const ReaderPage = React.memo(function ReaderPage({
     [rawLayers],
   );
   const layersNow = draftLayers ?? baseLayers;
+  const layersRef = React.useRef(layersNow);
+  layersRef.current = layersNow;
   const spots =
     canEdit && layersNow && !isCover
       ? layersNow
@@ -287,6 +289,12 @@ export const ReaderPage = React.memo(function ReaderPage({
       layers: externalLayers,
       controllerRef,
       readOnly: !canEdit,
+      // A double-click on AREA / COMMENT / marker opens its box; a single click selects it.
+      onEditField: (layerId: string) => {
+        const layer = layersRef.current?.find((l) => l.id === layerId);
+        const field = layer ? editableField(layer) : null;
+        if (field && !isCover) startRef.current(field);
+      },
     }),
     [
       scale,
@@ -296,6 +304,7 @@ export const ReaderPage = React.memo(function ReaderPage({
       externalLayers,
       controllerRef,
       canEdit,
+      isCover,
     ],
   );
   const onLayersChange = React.useCallback(
@@ -310,6 +319,8 @@ export const ReaderPage = React.memo(function ReaderPage({
     setDraft(page[field]);
     setEditing(field);
   };
+  const startRef = React.useRef(start);
+  startRef.current = start;
   const finish = () => {
     if (cancelled.current) return;
     if (editing && draft !== page[editing]) {
@@ -498,7 +509,7 @@ export const ReaderPage = React.memo(function ReaderPage({
                   style={style}
                   className="h-auto rounded-sm bg-background px-1 py-0 text-xs"
                 />
-              ) : (
+              ) : live && liveDoc ? null : (
                 <button
                   key={layer.id}
                   type="button"

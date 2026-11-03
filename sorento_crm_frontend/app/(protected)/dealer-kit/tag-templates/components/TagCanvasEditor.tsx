@@ -433,6 +433,11 @@ export interface EmbeddedMode {
   controllerRef?: React.MutableRefObject<EmbeddedController | null>;
   /** A view-only canvas: nothing can be dragged or typed. */
   readOnly?: boolean;
+  /**
+   * A double-click on a text layer bound to the quotation's data (AREA, COMMENT, marker...): the
+   * host opens its own box for that page field. A single click selects it like any layer.
+   */
+  onEditField?: (layerId: string) => void;
 }
 
 interface TagCanvasEditorProps {
@@ -583,7 +588,11 @@ export function TagCanvasEditor({
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   /** Which change-request marker has its comment open (r9 S2/D6). */
   const [openPinId, setOpenPinId] = useState<string | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Embedded (spec sheet reader): start from the host's selection, so a canvas the host restarts
+  // does not report "nothing selected" and set off a select / deselect ping-pong.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() =>
+    embedded?.selectedLayerId ? new Set([embedded.selectedLayerId]) : new Set(),
+  );
   /** The text layer the inline editor (S2, D5) is currently open on, if any. */
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   /**
@@ -1537,7 +1546,11 @@ export function TagCanvasEditor({
         // bound to the quotation's data (a slot, a {{merge field}}) stays data; AREA / COMMENT /
         // marker are typed through the reader's own spots.
         const bound = target.slot_binding || /\{\{[^}]+\}\}/.test(target.text_override ?? target.props.text ?? '');
-        if (embedded && (bound || embedded.readOnly)) return;
+        if (embedded && embedded.readOnly) return;
+        if (embedded && bound) {
+          embedded.onEditField?.(target.id);
+          return;
+        }
         setEditingLayerId(target.id);
         return;
       }
@@ -3448,8 +3461,12 @@ export function TagCanvasEditor({
   const embeddedLayers = embedded?.layers;
   const embeddedController = embedded?.controllerRef;
   // The host's selection in: a layer picked elsewhere (or cleared) is the selection here.
+  // What the host last said is selected. The canvas reports only a selection that differs from it,
+  // i.e. one the user made here, never an echo of the host's own value.
+  const hostSelectedRef = useRef<string | null>(embeddedSelected);
   useEffect(() => {
     if (!embeddedOnSelect) return;
+    hostSelectedRef.current = embeddedSelected;
     setSelectedIds((prev) => {
       if (embeddedSelected === null) return prev.size === 0 ? prev : new Set();
       return prev.size === 1 && prev.has(embeddedSelected) ? prev : new Set([embeddedSelected]);
@@ -3459,7 +3476,9 @@ export function TagCanvasEditor({
   useEffect(() => {
     if (!embeddedOnSelect) return;
     const first = selectedIds.size > 0 ? (Array.from(selectedIds)[0] ?? null) : null;
-    if (first !== embeddedSelected) embeddedOnSelect(first);
+    if (first === hostSelectedRef.current) return;
+    hostSelectedRef.current = first;
+    embeddedOnSelect(first);
     // Only a change of the canvas selection is news; the host value is read, not watched.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds]);

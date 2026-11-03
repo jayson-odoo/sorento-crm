@@ -78,3 +78,23 @@ Found and fixed during this pass:
 - **Round 7f.** On a phone, selecting auto-opened a drawer covering 650 of 812px, including the selected layer. The drawer now opens only from the "Properties" button, is compact (45dvh), and scrolls the layer above itself.
 
 Screenshots: `f4-1280-*.png`, `f4-375-*.png`.
+
+## Crew browser pass r6 fixes (head after 28b90671)
+
+Measured in the cloud sandbox (next dev, Chromium via Playwright), sheet SS1 of PRJQ-2026-0030-A (31 pages).
+
+| Item | Before | After |
+|---|---|---|
+| (a) Every page + Y box | "Something went wrong", React "Maximum update depth exceeded" in ScrollArea, 2 of 2 | No error 2 of 2; every item page stores the new Y |
+| (b) Every page + drag | only the current page saved | one apply-all, no error |
+| (c) AREA / COMMENT / marker | click opened a box, drag moved 0 px | click selects with handles, drag moved 30 px, double-click opens the Area box |
+| (d) 375 Properties drawer | 80% of the screen, layer hidden | 45% (365 of 812 px); selected layer at y 68-109, drawer from y 447 |
+| (e) Rail click | window scrolled ~180 px, last page read "3 of 4" | window scroll unchanged on click; last page reads "31 of 31" |
+| (f) List at 1280 | table 1136 px in a 950 px card | table 950 px, no sideways scroll |
+
+Regression: drag at 1280 and 375 still gives exactly 1 PUT and "Saved", no sideways scroll.
+
+Root cause of (a): after an apply, the reader restarted every live canvas, the selected page's included. The new canvas
+mounted with an empty selection and reported "nothing selected"; the host cleared its selection, the canvas re-selected
+from the host's previous value, and the two ping-ponged. The canvas now starts from the host's selection and reports only
+a selection the user made, and the reader restarts only the pages the server changed.
