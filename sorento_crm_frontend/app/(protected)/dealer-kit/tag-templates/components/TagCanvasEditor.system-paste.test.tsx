@@ -8,11 +8,23 @@
  * Ctrl+V does once the keydown is not cancelled.
  */
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
-import { defaultImageProps, defaultShapeProps } from '@/lib/dealer-kit/tag-template-types';
+import type {
+  TagLayer,
+  TagTemplateDoc,
+} from '@/lib/dealer-kit/tag-template-types';
+import {
+  defaultImageProps,
+  defaultShapeProps,
+} from '@/lib/dealer-kit/tag-template-types';
 import { setTagClipboard } from '@/lib/dealer-kit/tag-clipboard';
 import { TAG_LAYERS_MIME } from '@/lib/dealer-kit/clipboard-paste';
 
@@ -41,7 +53,12 @@ vi.mock('./KonvaTagLayer', () => ({
   }: {
     layer: TagLayer;
     onSelect?: (id: string, additive: boolean) => void;
-  }) => <div data-testid={`layer-${layer.id}`} onClick={() => onSelect?.(layer.id, false)} />,
+  }) => (
+    <div
+      data-testid={`layer-${layer.id}`}
+      onClick={() => onSelect?.(layer.id, false)}
+    />
+  ),
 }));
 
 vi.mock('@/lib/dealer-kit/fonts', () => ({
@@ -84,8 +101,12 @@ vi.mock('@/lib/toast', () => ({
 
 // jsdom never decodes an image, so the natural size comes from this stand-in.
 vi.mock('@/lib/dealer-kit/clipboard-paste', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/lib/dealer-kit/clipboard-paste')>();
-  return { ...actual, readImageSize: vi.fn(async () => ({ width: 1920, height: 1080 })) };
+  const actual =
+    await importOriginal<typeof import('@/lib/dealer-kit/clipboard-paste')>();
+  return {
+    ...actual,
+    readImageSize: vi.fn(async () => ({ width: 1920, height: 1080 })),
+  };
 });
 
 import { TagCanvasEditor } from './TagCanvasEditor';
@@ -113,7 +134,10 @@ function docWith(...layers: TagLayer[]): TagTemplateDoc {
   return { width_mm: 100, height_mm: 150, layers };
 }
 
-function pasteEvent(opts: { types?: Record<string, string>; files?: File[] }, target: EventTarget = window) {
+function pasteEvent(
+  opts: { types?: Record<string, string>; files?: File[] },
+  target: EventTarget = window,
+) {
   const types = opts.types ?? {};
   const files = opts.files ?? [];
   const event = new Event('paste', { bubbles: true, cancelable: true });
@@ -130,7 +154,8 @@ function pasteEvent(opts: { types?: Record<string, string>; files?: File[] }, ta
   return event;
 }
 
-const png = () => new File([new Uint8Array(16)], 'image.png', { type: 'image/png' });
+const png = () =>
+  new File([new Uint8Array(16)], 'image.png', { type: 'image/png' });
 
 function renderEditor(doc: TagTemplateDoc) {
   const state: { latest: TagLayer[] } = { latest: doc.layers };
@@ -165,11 +190,17 @@ describe('TagCanvasEditor system clipboard paste', () => {
 
     await waitFor(() => expect(state.latest).toHaveLength(2));
     expect(uploadAsset).toHaveBeenCalledTimes(1);
-    expect(uploadAsset.mock.calls[0][0]).toMatchObject({ file, kind: 'decorative' });
+    expect(uploadAsset.mock.calls[0][0]).toMatchObject({
+      file,
+      kind: 'decorative',
+    });
 
     const added = state.latest.find((l) => l.id !== 'l1')!;
     expect(added.type).toBe('image');
-    expect(added.props).toMatchObject({ kind: 'image', source: { type: 'asset', assetId: 'asset-new' } });
+    expect(added.props).toMatchObject({
+      kind: 'image',
+      source: { type: 'asset', assetId: 'asset-new' },
+    });
     // 1920 x 1080 into 100 x 150: bounded by the width.
     expect(added.width_mm).toBeCloseTo(100);
     expect(added.height_mm).toBeCloseTo(56.25);
@@ -181,17 +212,28 @@ describe('TagCanvasEditor system clipboard paste', () => {
   it('with one image layer selected, the paste replaces that layer image in place (AC-2)', async () => {
     const image = baseLayer('img', {
       type: 'image',
-      props: { ...defaultImageProps(), source: { type: 'asset', assetId: 'old' } },
+      props: {
+        ...defaultImageProps(),
+        source: { type: 'asset', assetId: 'old' },
+      },
     });
     const state = renderEditor(docWith(image));
     fireEvent.click(screen.getByTestId('layer-img'));
     pasteEvent({ files: [png()] });
 
     await waitFor(() =>
-      expect(state.latest[0].props).toMatchObject({ source: { type: 'asset', assetId: 'asset-new' } }),
+      expect(state.latest[0].props).toMatchObject({
+        source: { type: 'asset', assetId: 'asset-new' },
+      }),
     );
     expect(state.latest).toHaveLength(1);
-    expect(state.latest[0]).toMatchObject({ id: 'img', x_mm: 10, y_mm: 10, width_mm: 20, height_mm: 10 });
+    expect(state.latest[0]).toMatchObject({
+      id: 'img',
+      x_mm: 10,
+      y_mm: 10,
+      width_mm: 20,
+      height_mm: 10,
+    });
   });
 
   it('pasted text becomes a text layer holding that text (AC-3)', () => {
@@ -208,7 +250,10 @@ describe('TagCanvasEditor system clipboard paste', () => {
     const input = document.createElement('input');
     document.body.appendChild(input);
     input.focus();
-    const event = pasteEvent({ types: { 'text/plain': 'typed' }, files: [png()] }, input);
+    const event = pasteEvent(
+      { types: { 'text/plain': 'typed' }, files: [png()] },
+      input,
+    );
     expect(event.defaultPrevented).toBe(false);
     expect(state.latest).toHaveLength(1);
     expect(uploadAsset).not.toHaveBeenCalled();
@@ -243,7 +288,9 @@ describe('TagCanvasEditor system clipboard paste', () => {
     uploadAsset.mockRejectedValueOnce(new Error('File too large'));
     const state = renderEditor(docWith(baseLayer('l1')));
     pasteEvent({ files: [png()] });
-    await waitFor(() => expect(toastError).toHaveBeenCalledWith('File too large'));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('File too large'),
+    );
     expect(state.latest).toHaveLength(1);
   });
 
@@ -255,7 +302,9 @@ describe('TagCanvasEditor system clipboard paste', () => {
     const written: Record<string, string> = {};
     const copy = new Event('copy', { bubbles: true, cancelable: true });
     Object.defineProperty(copy, 'clipboardData', {
-      value: { setData: (type: string, value: string) => (written[type] = value) },
+      value: {
+        setData: (type: string, value: string) => (written[type] = value),
+      },
     });
     act(() => {
       window.dispatchEvent(copy);
@@ -265,13 +314,19 @@ describe('TagCanvasEditor system clipboard paste', () => {
 
     pasteEvent({ types: { [TAG_LAYERS_MIME]: written[TAG_LAYERS_MIME] } });
     expect(state.latest).toHaveLength(2);
-    expect(state.latest[1]).toMatchObject({ type: 'shape', x_mm: 15, y_mm: 15 });
+    expect(state.latest[1]).toMatchObject({
+      type: 'shape',
+      x_mm: 15,
+      y_mm: 15,
+    });
   });
 
   it('a copy event with nothing copied in the editor is left alone', () => {
     renderEditor(docWith(baseLayer('l1')));
     const copy = new Event('copy', { bubbles: true, cancelable: true });
-    Object.defineProperty(copy, 'clipboardData', { value: { setData: vi.fn() } });
+    Object.defineProperty(copy, 'clipboardData', {
+      value: { setData: vi.fn() },
+    });
     act(() => {
       window.dispatchEvent(copy);
     });
@@ -280,7 +335,11 @@ describe('TagCanvasEditor system clipboard paste', () => {
 
   it('the Ctrl+V keydown is not cancelled, so the browser goes on to fire the paste event', () => {
     renderEditor(docWith(baseLayer('l1')));
-    const keydown = new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, cancelable: true });
+    const keydown = new KeyboardEvent('keydown', {
+      key: 'v',
+      ctrlKey: true,
+      cancelable: true,
+    });
     act(() => {
       window.dispatchEvent(keydown);
     });

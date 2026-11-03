@@ -9,7 +9,10 @@ import {
   type PasteData,
 } from './clipboard-paste';
 
-function data(opts: { types?: Record<string, string>; files?: File[] }): PasteData {
+function data(opts: {
+  types?: Record<string, string>;
+  files?: File[];
+}): PasteData {
   const types = opts.types ?? {};
   const files = opts.files ?? [];
   return {
@@ -19,12 +22,16 @@ function data(opts: { types?: Record<string, string>; files?: File[] }): PasteDa
   };
 }
 
-const png = (bytes = 10) => new File([new Uint8Array(bytes)], 'image.png', { type: 'image/png' });
+const png = (bytes = 10) =>
+  new File([new Uint8Array(bytes)], 'image.png', { type: 'image/png' });
 
 describe('classifyPaste', () => {
   it('reads the editor own copy marker as an in-editor layer paste, ahead of anything else', () => {
     const intent = classifyPaste(
-      data({ types: { [TAG_LAYERS_MIME]: 'doc', 'text/plain': 'Hello' }, files: [png()] }),
+      data({
+        types: { [TAG_LAYERS_MIME]: 'doc', 'text/plain': 'Hello' },
+        files: [png()],
+      }),
       true,
     );
     expect(intent).toEqual({ kind: 'layers' });
@@ -32,7 +39,9 @@ describe('classifyPaste', () => {
 
   it('an image file on the clipboard is an image paste', () => {
     const file = png();
-    expect(classifyPaste(data({ files: [file], types: { 'text/plain': '' } }), true)).toEqual({
+    expect(
+      classifyPaste(data({ files: [file], types: { 'text/plain': '' } }), true),
+    ).toEqual({
       kind: 'image',
       file,
     });
@@ -40,21 +49,30 @@ describe('classifyPaste', () => {
 
   it('skips a non-image file and falls through to text', () => {
     const pdf = new File(['x'], 'a.pdf', { type: 'application/pdf' });
-    expect(classifyPaste(data({ files: [pdf], types: { 'text/plain': 'hi' } }), false)).toEqual({
+    expect(
+      classifyPaste(
+        data({ files: [pdf], types: { 'text/plain': 'hi' } }),
+        false,
+      ),
+    ).toEqual({
       kind: 'text',
       text: 'hi',
     });
   });
 
   it('plain text from another app is a text paste, even when the editor holds copied layers', () => {
-    expect(classifyPaste(data({ types: { 'text/plain': 'Sale 20%' } }), true)).toEqual({
+    expect(
+      classifyPaste(data({ types: { 'text/plain': 'Sale 20%' } }), true),
+    ).toEqual({
       kind: 'text',
       text: 'Sale 20%',
     });
   });
 
   it('whitespace-only text with copied layers pastes the layers', () => {
-    expect(classifyPaste(data({ types: { 'text/plain': '   ' } }), true)).toEqual({
+    expect(
+      classifyPaste(data({ types: { 'text/plain': '   ' } }), true),
+    ).toEqual({
       kind: 'layers',
     });
   });
@@ -66,7 +84,9 @@ describe('classifyPaste', () => {
   });
 
   it('normalises Windows line endings in pasted text', () => {
-    expect(classifyPaste(data({ types: { 'text/plain': 'a\r\nb' } }), false)).toEqual({
+    expect(
+      classifyPaste(data({ types: { 'text/plain': 'a\r\nb' } }), false),
+    ).toEqual({
       kind: 'text',
       text: 'a\nb',
     });
@@ -75,13 +95,20 @@ describe('classifyPaste', () => {
 
 describe('pastedImageProblem', () => {
   it('accepts the same types the image tool accepts', () => {
-    for (const type of ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml']) {
+    for (const type of [
+      'image/png',
+      'image/jpeg',
+      'image/webp',
+      'image/svg+xml',
+    ]) {
       expect(pastedImageProblem(new File(['x'], 'f', { type }))).toBeNull();
     }
   });
 
   it('refuses another image type', () => {
-    expect(pastedImageProblem(new File(['x'], 'f.gif', { type: 'image/gif' }))).toMatch(/PNG/);
+    expect(
+      pastedImageProblem(new File(['x'], 'f.gif', { type: 'image/gif' })),
+    ).toMatch(/PNG/);
   });
 
   it('refuses a file over 20 MB, the image tool cap', () => {
@@ -95,7 +122,10 @@ describe('pastedImageProblem', () => {
 describe('fitPastedImage', () => {
   it('keeps a small image at 96 dpi, centred', () => {
     // 96 px = 25.4 mm
-    const box = fitPastedImage({ width: 96, height: 48 }, { width_mm: 100, height_mm: 60 });
+    const box = fitPastedImage(
+      { width: 96, height: 48 },
+      { width_mm: 100, height_mm: 60 },
+    );
     expect(box.width_mm).toBeCloseTo(25.4);
     expect(box.height_mm).toBeCloseTo(12.7);
     expect(box.x_mm).toBeCloseTo((100 - 25.4) / 2);
@@ -103,7 +133,10 @@ describe('fitPastedImage', () => {
   });
 
   it('scales a large screenshot down to fit inside the canvas, aspect kept', () => {
-    const box = fitPastedImage({ width: 1920, height: 1080 }, { width_mm: 100, height_mm: 150 });
+    const box = fitPastedImage(
+      { width: 1920, height: 1080 },
+      { width_mm: 100, height_mm: 150 },
+    );
     expect(box.width_mm).toBeCloseTo(100);
     expect(box.height_mm).toBeCloseTo(56.25);
     expect(box.x_mm).toBeCloseTo(0);
@@ -111,7 +144,10 @@ describe('fitPastedImage', () => {
   });
 
   it('a tall image is bounded by the canvas height', () => {
-    const box = fitPastedImage({ width: 1000, height: 4000 }, { width_mm: 100, height_mm: 100 });
+    const box = fitPastedImage(
+      { width: 1000, height: 4000 },
+      { width_mm: 100, height_mm: 100 },
+    );
     expect(box.height_mm).toBeCloseTo(100);
     expect(box.width_mm).toBeCloseTo(25);
   });
