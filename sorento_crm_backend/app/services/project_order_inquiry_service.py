@@ -4912,6 +4912,7 @@ class ProjectOrderInquiryService:
                         if key in _PURCHASING_KEYS
                     ],
                 )
+                self._keep_rows_was(queue, str(line.id), row_lines)
                 continue
             if unchanged and _borrow_donors(before) != _borrow_donors(now):
                 # Only a Borrow's donor moved (owner, 13 Oct 2026, re-confirmed 14 Oct): a
@@ -4992,6 +4993,37 @@ class ProjectOrderInquiryService:
         self._tell_splits(
             pso_id, [line for line, _now, _before in saved], actor_user_id=actor_user_id
         )
+
+    @staticmethod
+    def _keep_rows_was(
+        queue: List[Dict[str, Any]], so_line_id: str, row_lines: Sequence[Mapping[str, Any]]
+    ) -> None:
+        """CONFIRM-REMARK-FIX F2-dates (crew, SO418869 CB771): the planner's words replace
+        the REMARK only. What the line's rows told purchasing moved (a pending AutoCount date
+        or quantity, Was -> Now) stays on the line, as the popup and the generated words show
+        it: a revision that already froze the new date has no Was of its own to tell. The
+        saved line's own Was wins where it has one."""
+        told: Dict[str, Any] = {}
+        for item in row_lines:
+            for key, value in (((item.get("line") or {}).get("was")) or {}).items():
+                if value and key not in told:
+                    told[key] = value
+        if not told:
+            return
+        target = next(
+            (item for item in reversed(queue) if item.get("row_id") == f"saved:{so_line_id}"),
+            None,
+        )
+        if target is None:
+            return
+        entry = target["line"]
+        entry["was"] = {**told, **(entry.get("was") or {})}
+        keys = list(target.get("verb_keys") or [])
+        for item in row_lines:
+            for key in item.get("verb_keys") or ():
+                if key in (IV_DELAY, IV_ADVANCE) and key not in keys:
+                    keys.append(key)
+        target["verb_keys"] = keys
 
     def stamp_so_remark(self, pso_id: str, so_remark: Optional[str]) -> None:
         """FULFIL-SO-REMARK (AC-10, AC-11): the planner's own SO remark for this Confirm

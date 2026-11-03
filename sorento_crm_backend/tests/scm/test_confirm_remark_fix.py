@@ -295,3 +295,77 @@ def test_a_held_back_real_write_is_not_bounded(api):
     )
     assert calls == [2, 1], calls
     assert seen == [], seen
+
+
+# F2-dates (crew re-check at 70e528d7, SO418869 CB771): the line's previous revision already froze
+# AutoCount's new date while purchasing's row still held the old one, so the change's DELAY row
+# carried the Was date and the snapshots did not. With the planner's words the line was rebuilt
+# from the snapshots alone: DELIVERY 15/11, NEW DATE blank, while the popup said 01/10 -> 15/11.
+
+
+def _seed_new_date_frozen_row_old(api):
+    from tests.scm.test_confirm_preview_delivered_change import NOW, WAS, _S
+    from tests.scm.test_line_splits_api import _mirror
+    from tests.test_planning_change_apply_on_board import _build, _change, _confirm
+    from tests.test_planning_changes import _core_so, _project_so
+
+    from app.models.project_so import OrderInquiryRow
+    from app.services.scm.outstanding_diff import DATE_MOVED
+
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+    s = _S()
+    s.client, s.world, s.db, s.order = client, world, db, order
+    s.c10, s.l10 = _mirror(db, order, core_so, world.product, world.own_wh,
+                           line_no=10, qty=3, when=WAS)
+    db.commit()
+    assert _confirm(client, order.id, [_line_payload(s.l10.id, buy_qty="3")]).status_code == 200
+    # The book moved the line and a later Confirm froze the new date...
+    s.c10.required_date = NOW
+    s.l10.delivery_date = NOW
+    db.commit()
+    assert _confirm(client, order.id, [_line_payload(s.l10.id, buy_qty="3")]).status_code == 200
+    # ...while purchasing's row still holds the old one (the move is still pending for them).
+    for row in db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == s.l10.id):
+        row.delivery_date = WAS
+    db.commit()
+    s.batch = _build(world, [
+        _change(DATE_MOVED, s.c10, so_number=core_so.so_number,
+                old_date=WAS, new_date=NOW, old_qty="3", new_qty="3"),
+    ], core_so, [str(s.c10.id)])
+    assert s.batch is not None, "premise: the pending change row exists"
+    return s
+
+
+def _email_rows(calls, item_code):
+    return [
+        {k: line.get(k) for k in ("qty", "delivery_date", "was", "remark", "location")}
+        for call in _handover_calls(calls)
+        for line in call["context"]["handover"]["lines"]
+        if line["item_code"] == item_code
+    ]
+
+
+def test_f2_the_planners_remark_keeps_the_dates_the_change_told(api, monkeypatch):
+    s = _seed_new_date_frozen_row_old(api)
+    _register(s.world)
+    calls = _captured_dispatches(monkeypatch)
+
+    preview = _press_line_remark(s, preview=True)
+    popup = [
+        {k: e.get(k) for k in ("qty", "delivery_date", "was", "remark")}
+        for e in preview.json()["results"][0].get("email_lines") or []
+    ]
+    calls.clear()
+    real = _press_line_remark(s, preview=False)
+    assert real.status_code == 200, real.text
+    assert real.json()["results"][0]["ok"], real.text
+    sent = _email_rows(calls, s.world.product.product_code)
+
+    assert len(sent) == 1, sent
+    assert sent[0]["remark"] == OWN, sent
+    assert sent[0]["delivery_date"] == "02/11/2026", sent
+    assert (sent[0]["was"] or {}).get("delivery_date") == "28/09/2026", sent
+    assert [{k: v for k, v in r.items() if k != "location"} for r in sent] == popup, (sent, popup)
