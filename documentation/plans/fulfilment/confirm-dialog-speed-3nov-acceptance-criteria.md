@@ -16,3 +16,10 @@ describe "CONFIRM-DIALOG-SPEED".
   the body.
 - **S7** Opening Confirm while a board read is in flight joins it; no second read is sent.
 - **S8** #2091 holds: the sheet never prints decisions older than the last board save.
+- **S9** Every page's dry run starts from the open, one at a time in page order; paging cancels
+  none; a page without its words prints "Preparing email preview..." in its REMARK cells;
+  Confirm waits for every page.
+- **S10** A placement pass writes exactly the same links with the per-pass document memo as
+  without it, and reads each product's documents a handful of times, not once per row.
+- **S11** A dry run still runs the placement pass (ordinary and planning-change paths), and the
+  planning-change preview prints the REMARK the press sends.

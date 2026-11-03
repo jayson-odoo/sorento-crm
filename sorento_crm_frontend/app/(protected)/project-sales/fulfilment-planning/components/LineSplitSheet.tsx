@@ -62,6 +62,26 @@ export const lineDropId = (lineId: string) => `line:${lineId}`;
  */
 export const MockupLinesContext = React.createContext<ReadonlySet<string>>(new Set());
 
+/**
+ * CONFIRM-DIALOG-SPEED (crew ruling, 3 Nov 2026; owner rule "email = preview = attachment"):
+ * the guided Confirm sets this on a page whose purchasing-email words are still being read.
+ * Its REMARK cells then print that, never the board's words as if they were the email's, and
+ * take no typing until the words land.
+ */
+export const RemarkWordsPendingContext = React.createContext(false);
+export const REMARK_WORDS_PENDING = 'Preparing email preview...';
+
+function PendingRemark({ value }: { value: string }) {
+  return (
+    <span
+      data-testid="remark-words-pending"
+      className={cn('block ps-2 text-start break-words whitespace-normal', !value && 'text-muted-foreground')}
+    >
+      {value || REMARK_WORDS_PENDING}
+    </span>
+  );
+}
+
 /** The id the focus helpers find a split's date input by. */
 export const dateInputId = (splitId: string) => `split-date-${splitId}`;
 
@@ -399,10 +419,12 @@ function RemarkCell({
 }) {
   // What the focused box holds while the planner types (it may be empty); null otherwise.
   const [typing, setTyping] = React.useState<string | null>(null);
+  const wordsPending = React.useContext(RemarkWordsPendingContext);
   const edited = editedOverride ?? (Boolean(value.trim()) && value !== generated);
   const text = typing ?? (value || generated);
   // Showing the default words (nothing stored): marked, and read muted (AC-G5).
   const showsDefault = typing === null && !value && Boolean(generated);
+  if (wordsPending) return <PendingRemark value={value} />;
   return (
     <div className="flex flex-col items-stretch gap-0.5">
       <Textarea
@@ -437,7 +459,9 @@ function RemarkCell({
 /** A REMARK as the read-only sheet prints it, wrapping: the typed remark, else the generated
  * one muted. */
 function RemarkText({ value, generated }: { value: string; generated: string }) {
+  const wordsPending = React.useContext(RemarkWordsPendingContext);
   const text = value || generated;
+  if (wordsPending) return <PendingRemark value={value} />;
   return (
     <span
       className={cn(

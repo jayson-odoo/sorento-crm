@@ -23,7 +23,7 @@ import { useLineSplitsReads } from '../../_shared/hooks/useLineSplits';
 import { LineSplitEditor, type LineSplitEditorHandle } from './LineSplitEditor';
 import { formatSplitDate } from '../lib/lineSplitModel';
 import { defaultSoRemark, shouldLabelMockupLines } from '../../_shared/lib/soRemark';
-import { MockupLinesContext } from './LineSplitSheet';
+import { MockupLinesContext, RemarkWordsPendingContext } from './LineSplitSheet';
 
 /** One line this Confirm covers, as the board states it, with its editable remark (UAC F25). */
 export type ConfirmGuideLine = CoveredSheetLine & {
@@ -109,6 +109,7 @@ export function ConfirmGuideDialog({
   refreshFailed = false,
   wordsLoading = false,
   wordsFailed = false,
+  wordsPendingPsoIds,
   onRetryWords,
   onPageSaved,
   onRetryRefresh,
@@ -158,6 +159,11 @@ export function ConfirmGuideDialog({
    * is (unsaved edits included); only Confirm waits, behind its own Retry.
    */
   wordsFailed?: boolean;
+  /**
+   * CONFIRM-DIALOG-SPEED (crew ruling S2): the pages (pso ids) whose email words have not
+   * landed yet. Their REMARK cells print "Preparing email preview...", never board words.
+   */
+  wordsPendingPsoIds?: ReadonlySet<string>;
   onRetryWords?: () => void;
   /** CONFIRM-DIALOG-SPEED review B1: a page's Save landed, so the email preview is read again. */
   onPageSaved?: () => void;
@@ -382,6 +388,9 @@ export function ConfirmGuideDialog({
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4">
           {!page && stale ? <RefreshFailed onRetry={onRetryRefresh} /> : null}
           {page ? (
+            <RemarkWordsPendingContext.Provider
+              value={Boolean(page.psoId && wordsPendingPsoIds?.has(page.psoId))}
+            >
             <MockupLinesContext.Provider value={pageFacts?.labelled ?? NO_MOCKUP_LINES}>
             <section
               data-testid="confirm-guide-split-page"
@@ -551,6 +560,7 @@ export function ConfirmGuideDialog({
               )}
             </section>
             </MockupLinesContext.Provider>
+            </RemarkWordsPendingContext.Provider>
           ) : null}
 
           {step.kind === 'confirm' ? (
