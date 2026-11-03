@@ -3103,6 +3103,10 @@ class SPOAllocationService:
                     {
                         "document": doc_no or provisional,
                         "customer": project_title,
+                        # OI-UX-FILTER-SNAPSHOT: the inquiry's own project until its sales
+                        # order is read below; a row with no sales order yet keeps it.
+                        "customer_name": None,
+                        "project_label": project_title,
                         "demand_class": "project",
                         "qty": float(link_qty or 0),
                     }
@@ -3144,6 +3148,8 @@ class SPOAllocationService:
                         {
                             "document": document,
                             "customer": customer,
+                            "customer_name": None,
+                            "project_label": customer,
                             "demand_class": "project",
                             "qty": float(placement.qty),
                             "via_po": placement.via_po,
@@ -3199,7 +3205,8 @@ class SPOAllocationService:
                 self.db, numbers=[e["document"] for e in covered_entries]
             )
             for e in covered_entries:
-                with_party(e, parties, e["document"])
+                if e["document"] in parties or e["demand_class"] != "project":
+                    with_party(e, parties, e["document"])
 
         supplier_counts: Dict[Optional[str], int] = {}
         for allocation, shipment, supplier_name, is_open in rows:

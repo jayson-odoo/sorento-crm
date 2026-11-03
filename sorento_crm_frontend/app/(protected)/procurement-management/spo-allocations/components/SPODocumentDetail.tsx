@@ -1263,7 +1263,8 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                 kind: c.demand_class === 'other' ? 'retail' : c.demand_class,
                 demand_class: c.demand_class,
                 document: c.document,
-                customer_name: c.customer_name ?? c.customer,
+                // A project row's `customer` is its project title, already in project_label.
+                customer_name: c.demand_class === 'project' ? (c.customer_name ?? null) : (c.customer_name ?? c.customer),
                 project_label: c.project_label ?? null,
                 required_date: null,
                 qty: c.qty,

@@ -1732,6 +1732,11 @@ export function SoCoveragePicker({
         options: distinctFieldOptions(coverage, (c) => c.customer_name),
       },
       {
+        id: 'project_label',
+        label: 'Project',
+        options: distinctFieldOptions(coverage, (c) => c.project_label),
+      },
+      {
         id: 'warehouse_code',
         label: 'Location',
         options: distinctFieldOptions(coverage, (c) => c.warehouse_code),
@@ -1747,7 +1752,8 @@ export function SoCoveragePicker({
       out = out.filter(
         (c) =>
           (c.document ?? '').toLowerCase().includes(needle) ||
-          (c.customer_name ?? '').toLowerCase().includes(needle),
+          (c.customer_name ?? '').toLowerCase().includes(needle) ||
+          (c.project_label ?? '').toLowerCase().includes(needle),
       );
     }
     for (const cond of appliedConditions) {
@@ -1755,6 +1761,7 @@ export function SoCoveragePicker({
       const wanted = cond.value;
       if (cond.field === 'document') out = out.filter((c) => wanted.includes(c.document ?? ''));
       if (cond.field === 'customer_name') out = out.filter((c) => wanted.includes(c.customer_name ?? ''));
+      if (cond.field === 'project_label') out = out.filter((c) => wanted.includes(c.project_label ?? ''));
       if (cond.field === 'warehouse_code') out = out.filter((c) => wanted.includes(c.warehouse_code ?? ''));
     }
     return out;
