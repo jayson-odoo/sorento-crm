@@ -203,6 +203,7 @@ export function StockTransferDetail({ id }: { id: string }) {
                 {transfer.so_line_no != null ? `L${transfer.so_line_no}` : '-'}
               </Field>
               <Field label="Customer">{transfer.customer_name ?? '-'}</Field>
+              <Field label="Project">{transfer.project_label ?? '-'}</Field>
               <Field label="Agent">
                 {transfer.agent_name
                   ? `${transfer.agent_code ?? ''} · ${transfer.agent_name}`

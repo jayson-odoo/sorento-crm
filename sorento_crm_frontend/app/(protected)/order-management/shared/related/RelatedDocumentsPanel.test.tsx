@@ -25,7 +25,7 @@ vi.mock('./relatedDocumentsService', () => ({
 import { RelatedDocumentsPanel, relatedHref } from './RelatedDocumentsPanel';
 
 const ROWS = [
-  { kind: 'sales_order', type: 'sales_order', id: 'so-1', doc_no: 'SO427775', doc_date: '2026-10-14', status: 'open', amount: 1360, currency_code: null },
+  { kind: 'sales_order', type: 'sales_order', id: 'so-1', doc_no: 'SO427775', customer_name: 'Maju Debtor', project_label: 'Tuju Residences', doc_date: '2026-10-14', status: 'open', amount: 1360, currency_code: null },
   { kind: 'delivery_order', type: 'delivery_order', id: 'do-1', doc_no: '202610-3905', doc_date: '2026-10-21', status: 'In Transit', amount: 1280, currency_code: 'MYR' },
   { kind: 'billing_document', type: 'credit_note', id: 'cn-1', doc_no: 'CN-202610-0041', doc_date: '2026-10-25', status: 'posted', amount: 80, currency_code: 'MYR' },
   { kind: 'delivery_order', type: 'delivery_order', id: null, doc_no: 'GHOST-DO-1', doc_date: null, status: null, amount: null, currency_code: null },
@@ -60,6 +60,23 @@ describe('RelatedDocumentsPanel', () => {
     expect(screen.getByText('Open')).toBeInTheDocument();
     expect(screen.getByText('Posted')).toBeInTheDocument();
     expect(screen.getByText('In Transit')).toBeInTheDocument();
+  });
+
+  it('names a sales order row\'s Customer then Project and sorts on both on the server', async () => {
+    getRelatedDocuments.mockResolvedValue({ sales_orders: [], delivery_orders: [], billing_documents: [], rows: ROWS });
+    renderPanel('sales_order');
+    expect(await screen.findByText('Maju Debtor')).toBeInTheDocument();
+    expect(screen.getByText('Tuju Residences')).toBeInTheDocument();
+    const headers = screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim());
+    expect(headers.indexOf('Customer')).toBe(headers.indexOf('Number') + 1);
+    expect(headers.indexOf('Project')).toBe(headers.indexOf('Number') + 2);
+
+    const header = (name: RegExp) =>
+      within(screen.getAllByRole('columnheader').find((h) => name.test(h.textContent ?? '')) as HTMLElement);
+    fireEvent.click(header(/Project/).getByRole('button', { name: /Project/ }));
+    await waitFor(() =>
+      expect(getRelatedDocuments).toHaveBeenLastCalledWith('sales_order', 'iv-1', 'project_label', 'asc'),
+    );
   });
 
   it('keeps a DO the CRM does not hold as plain text', async () => {

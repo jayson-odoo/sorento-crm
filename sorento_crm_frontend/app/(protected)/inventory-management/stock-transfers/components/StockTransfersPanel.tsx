@@ -415,14 +415,24 @@ export function StockTransfersPanel({
         },
       },
       {
-        id: 'customer',
+        id: 'customer_name',
         header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
         size: 190,
-        enableSorting: false,
         meta: { headerTitle: 'Customer' },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.customer_name ?? undefined}>
             {row.original.customer_name ?? '-'}
+          </span>
+        ),
+      },
+      {
+        id: 'project_label',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        size: 190,
+        meta: { headerTitle: 'Project' },
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.project_label ?? undefined}>
+            {row.original.project_label ?? '-'}
           </span>
         ),
       },

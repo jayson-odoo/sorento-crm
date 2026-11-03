@@ -79,6 +79,7 @@ function transfer(overrides: Partial<StockTransfer> = {}): StockTransfer {
     so_line_no: 1,
     project_sales_order_id: 'pso-1',
     customer_name: 'YOTU BUILDER',
+    project_label: 'LOT 2752 TOWER',
     sales_agent_id: 'sa-1',
     agent_code: 'CYNDI',
     agent_name: 'Cyndi Lee',
@@ -147,6 +148,9 @@ describe('StockTransfersPanel - rows', () => {
     expect(screen.getByText('Use shared stock')).toBeInTheDocument();
     expect(screen.getByText('SO415472 L1')).toBeInTheDocument();
     expect(screen.getByText('YOTU BUILDER')).toBeInTheDocument();
+    // OI-UX-FILTER-SNAPSHOT: the order's project beside its customer.
+    expect(screen.getByText('LOT 2752 TOWER')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /Project/ })).toBeInTheDocument();
     expect(
       screen.getAllByText('Proposed').find((el) => el.closest('[data-slot="badge"]')),
     ).toBeDefined();
