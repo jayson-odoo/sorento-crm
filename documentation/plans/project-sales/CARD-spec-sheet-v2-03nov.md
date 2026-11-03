@@ -1,6 +1,29 @@
 # CARD: SPEC-SHEET-V2, saved spec sheets + PDF-style viewer (3 Nov 2026)
 
-**Status:** Behaviour card, asked (crew-ask on PR #2124). Track: L (new table, new routes).
+**Status:** Answered (owner, 3 Nov, via crew). Mock v2 asked. Track: L (new table, new routes).
+
+**Owner answers:** Q1 = any quotation, INCLUDING the unissued draft (before Sign / Issue); the sheet records
+what it was built from. Q2 = (a) keep the versions + "Use latest templates". Q3 = (a) this sheet's page only.
+Q4 = (b) start clean every time. Q5 = (a) today's set-up becomes SS1. Crew perf note: #2103 draws one full
+renderer per thumbnail with full-size originals (`FE/.../QuotationSpecSheetTab.tsx:337-420`;
+`_sign(full=True)` in the preview, `project_spec_sheet_service.py:335-339, 612`); v2 renders the stack
+lazily at preview size and signs full size for the export only.
+
+**Rule changes from the answers** (they override the rules below where they differ):
+- Rule 2: Revision lists "Current draft" first (when there is no issue yet, or a scope's current version is
+  newer than the last issue's), then every issue newest first. Create is disabled only when the quotation has
+  no product line at all.
+- Rule 3: a draft's versions keep taking edits until issued, so EVERY sheet snapshots its items at create
+  (JSONB `items`: key, code, name, brand, product id, set parts, section, frozen photo / drawing ids, quoted
+  price) and prints from that snapshot; one code path for issue and draft. The record keeps `issue_id`
+  (null for a draft), `based_on_issue_no` (the last issue at the time, for "Draft after R2") and
+  `items_taken_at`.
+- Rule 4 (Q4): no carry-over. A new sheet starts clean: AREA = Section heading, every item printed,
+  quotation order, set parts as accessories, no page edits.
+- Rule 5 (perf): the rail and page stack draw from preview-size signed images and mount a renderer only near
+  the viewport; full-size originals are signed only in the export payload.
+- Q2: "Use latest templates" shows when a newer published version exists; it re-points the version ids
+  and keeps page edits (an edit is layers for that page; it does not depend on the template version).
 Paths: BE = `sorento_crm_backend/app`, FE = `sorento_crm_frontend`. Code read on main c7ee22cf.
 
 ## The owner's ask (3 Nov ~11:35)
