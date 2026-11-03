@@ -147,6 +147,25 @@ vi.mock('@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRender
   ),
 }));
 
+// The Add accessory picker, counted: mounted now, and renders since the last reset. With 30+ pages a
+// picker on every page re-rendered on every page change and cost ~500 ms long tasks (crew pass, 3 Nov).
+let pickersLive = 0;
+let pickerRenders = 0;
+function CountedPicker() {
+  pickerRenders += 1;
+  React.useEffect(() => {
+    pickersLive += 1;
+    return () => {
+      pickersLive -= 1;
+    };
+  }, []);
+  return <div data-picker="1" />;
+}
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: () => <CountedPicker />,
+  default: () => <CountedPicker />,
+}));
+
 import { SpecSheetReader } from './SpecSheetReader';
 
 // ---- fixtures ------------------------------------------------------------------------------------
@@ -317,6 +336,27 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     report(['cover', 'k1', 'k2']);
     await waitFor(() => expect(screen.queryByTestId('tag-sheet-renderer-k1')).not.toBeNull());
     expect(getSpecSheetPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it('mounts Add accessory pickers only for pages in the drawn window, and a page change re-renders none outside it', async () => {
+    pickersLive = 0;
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    report(['cover', 'k1', 'k2']);
+    await waitFor(() => expect(document.querySelectorAll('[data-renderer="1"]').length).toBeGreaterThan(0));
+
+    // 29 item pages, but only the drawn ones carry a picker.
+    expect(document.querySelectorAll('[data-picker="1"]').length).toBeGreaterThan(0);
+    expect(document.querySelectorAll('[data-picker="1"]').length).toBeLessThanOrEqual(5);
+
+    // Moving the current page inside the same chunk re-renders at most the drawn pages' pickers.
+    pickerRenders = 0;
+    report(['k1', 'k2', 'k3']);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(pickerRenders).toBeLessThanOrEqual(5);
+    expect(pickersLive).toBeLessThanOrEqual(5);
   });
 
   it('does not refetch in a loop once the window is settled', async () => {

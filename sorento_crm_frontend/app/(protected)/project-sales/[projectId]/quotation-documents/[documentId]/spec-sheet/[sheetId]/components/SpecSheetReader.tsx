@@ -117,8 +117,17 @@ export function SpecSheetReader({
         if (inflight.current === 0) setOverride(null);
       });
   };
-  const patch = (key: string, change: Partial<SpecSheetPage>) =>
-    commit(pages.map((page) => (page.key === key ? { ...page, ...change } : page)));
+  // Stable for the memoised pages: it reads the latest pages / commit through refs, so a page
+  // change elsewhere in the stack does not re-render every page (and its Add accessory picker).
+  const pagesRef = React.useRef(pages);
+  pagesRef.current = pages;
+  const commitRef = React.useRef(commit);
+  commitRef.current = commit;
+  const patch = React.useCallback(
+    (key: string, change: Partial<SpecSheetPage>) =>
+      commitRef.current(pagesRef.current.map((page) => (page.key === key ? { ...page, ...change } : page))),
+    [],
+  );
 
   // ---- the stack: measured width, zoom, the visible window ---------------------------------
 
@@ -461,7 +470,7 @@ export function SpecSheetReader({
                 pages={pages}
                 documentId={documentId}
                 sheetId={sheetId}
-                onPatch={(change) => patch(page.key, change)}
+                onPatch={patch}
               />
             ))}
           </div>

@@ -111,7 +111,8 @@ export interface ReaderPageProps {
   pages: SpecSheetPage[];
   documentId: string;
   sheetId: string;
-  onPatch: (change: Partial<SpecSheetPage>) => void;
+  /** Stable across renders (the page passes its own key), so the memoised page skips re-rendering. */
+  onPatch: (key: string, change: Partial<SpecSheetPage>) => void;
 }
 
 /**
@@ -120,7 +121,7 @@ export interface ReaderPageProps {
  * then does `ScaledSheet` / `TagSheetRenderer` mount inside it. AREA, COMMENT and the marker are
  * clicked and typed on the page itself, as they were in the single-page tab.
  */
-export function ReaderPage({
+export const ReaderPage = React.memo(function ReaderPage({
   page,
   number,
   templateLabel,
@@ -164,20 +165,27 @@ export function ReaderPage({
     if (cancelled.current) return;
     if (editing && draft !== page[editing]) {
       const value = editing === 'area' ? draft.trim().toUpperCase() : draft;
-      onPatch({ [editing]: value } as Partial<SpecSheetPage>);
+      onPatch(page.key, { [editing]: value } as Partial<SpecSheetPage>);
     }
     setEditing(null);
   };
 
-  // Another page's item with no picks of its own, or one this page already picked.
-  const accessoryOptions: SearchableSelectOption[] = [
-    ...pages
-      .filter((other) => other.key !== COVER && other.key !== page.key && other.picked.length === 0)
-      .map((other) => ({ value: other.key, label: `${other.code} ${other.name}`.trim() })),
-    ...page.accessories
-      .filter((a) => a.source === 'picked' && a.key)
-      .map((a) => ({ value: a.key as string, label: `${a.code} ${a.name}`.trim() })),
-  ];
+  // Another page's item with no picks of its own, or one this page already picked. Built only for a
+  // drawn page: the picker is mounted for the pages in the window, not for every page of the sheet.
+  const accessoryOptions: SearchableSelectOption[] = React.useMemo(
+    () =>
+      drawn
+        ? [
+            ...pages
+              .filter((other) => other.key !== COVER && other.key !== page.key && other.picked.length === 0)
+              .map((other) => ({ value: other.key, label: `${other.code} ${other.name}`.trim() })),
+            ...page.accessories
+              .filter((a) => a.source === 'picked' && a.key)
+              .map((a) => ({ value: a.key as string, label: `${a.code} ${a.name}`.trim() })),
+          ]
+        : [],
+    [drawn, pages, page],
+  );
 
   const title = isCover ? 'Cover' : page.code || page.name;
 
@@ -226,7 +234,7 @@ export function ReaderPage({
                 code={isCover ? 'Cover' : page.code}
               />
             )}
-            {!isCover && !page.hidden && (
+            {!isCover && !page.hidden && drawn && (
               <div className="w-48 min-w-0">
                 <Label htmlFor={accessoryId} className="sr-only">
                   Add accessory
@@ -235,7 +243,7 @@ export function ReaderPage({
                   id={accessoryId}
                   size="sm"
                   value={page.picked}
-                  onChange={(v: string[]) => onPatch({ picked: v })}
+                  onChange={(v: string[]) => onPatch(page.key, { picked: v })}
                   options={accessoryOptions}
                   placeholder="Add accessory"
                 />
@@ -245,7 +253,7 @@ export function ReaderPage({
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => onPatch({ hidden: !page.hidden })}
+                onClick={() => onPatch(page.key, { hidden: !page.hidden })}
                 data-testid={`spec-sheet-leave-out-${page.key}`}
               >
                 {page.hidden ? (
@@ -320,4 +328,4 @@ export function ReaderPage({
       </div>
     </div>
   );
-}
+});
