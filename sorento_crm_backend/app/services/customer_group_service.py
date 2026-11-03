@@ -265,21 +265,53 @@ class CustomerGroupService:
         return True
 
 
+def _group_labels(db: Session) -> dict[str, str]:
+    """`{group id: the name the chatbot calls it}`, for the groups in the caller's scope.
+
+    A group belongs to ONE company. A group name that exists in more than one company in scope
+    (190 names sit in both MCH and SRT on the 20 Oct prod copy) carries that company's code,
+    "FULLSHUN SANITARYWARE SDN BHD (SRT)", so the two groups are two customers to the chatbot,
+    never one (owner ruling, CUSTOMER-GROUP-GATE: explicit links only, never across companies).
+    """
+    from app.models.company import Company
+
+    rows = (
+        db.query(CustomerGroup.id, CustomerGroup.name, CustomerGroup.company_id, Company.code)
+        .outerjoin(Company, Company.id == CustomerGroup.company_id)
+        .all()
+    )
+    companies: dict[str, set[str]] = {}
+    for _gid, name, company_id, _code in rows:
+        companies.setdefault(normalise_customer_name(name), set()).add(str(company_id))
+    labels: dict[str, str] = {}
+    for gid, name, _company_id, code in rows:
+        shared = len(companies[normalise_customer_name(name)]) > 1
+        labels[str(gid)] = f"{name} ({code})" if shared and code else name
+    return labels
+
+
+def family_ids(db: Session) -> dict[str, str]:
+    """`{customer id: group name}` for every grouped ledger in the caller's scope: the chatbot
+    turn's explicit links, read by id so two rows of one full name can sit apart."""
+    labels = _group_labels(db)
+    rows = db.query(Customer.id, Customer.customer_group_id).filter(Customer.customer_group_id.isnot(None)).all()
+    return {str(cid): labels[str(gid)] for cid, gid in rows if str(gid) in labels}
+
+
 def family_overrides(db: Session) -> dict[str, str]:
     """`{normalised customer name: group name}` for the chatbot turn, in the caller's scope.
 
-    A name whose rows do not all sit in one group (two groups, or a group and none) is
-    left out, so it falls back to the name rule instead of guessing a side.
+    For callers that hold only a name. A name whose rows do not all sit in one group (two
+    groups, in one company or two, or a group and none) is left out, so it stays ungrouped by
+    name instead of guessing a side; a caller holding the row's id reads `family_ids`.
     """
-    rows = (
-        db.query(Customer.customer_name, CustomerGroup.name)
-        .outerjoin(CustomerGroup, CustomerGroup.id == Customer.customer_group_id)
-        .all()
-    )
+    labels = _group_labels(db)
+    rows = db.query(Customer.customer_name, Customer.customer_group_id).all()
     seen: dict[str, Optional[str]] = {}
     clashing: set[str] = set()
-    for customer_name, group_name in rows:
+    for customer_name, group_id in rows:
         key = normalise_customer_name(customer_name)
-        if seen.setdefault(key, group_name) != group_name:
+        gid = str(group_id) if group_id is not None else None
+        if seen.setdefault(key, gid) != gid:
             clashing.add(key)
-    return {k: v for k, v in seen.items() if v is not None and k not in clashing}
+    return {k: labels[g] for k, g in seen.items() if g is not None and k not in clashing and g in labels}

@@ -83,8 +83,16 @@ def _family_of(candidate: dict[str, Any], grouping: str | None) -> str | None:
     name = candidate.get("name") or candidate.get("label") or candidate.get("raw")
     if not name:
         return None
-    key = ledger_family_key(str(name))
+    # CUSTOMER-GROUP-GATE: by id as well, so the office's group (per company) decides and an
+    # ungrouped ledger stays its own line.
+    key = ledger_family_key(str(name), _uuid_of(candidate))
     return key or None
+
+
+def _uuid_of(candidate: dict[str, Any]) -> str | None:
+    """The row's own id, when the candidate carries one."""
+    value = candidate.get("uuid")
+    return str(value) if value else None
 
 
 def _options(
@@ -135,6 +143,7 @@ def _options(
     by_label: dict[Any, dict[str, Any]] = {}
     companies_of: dict[int, list[str]] = {}
     exact_of: dict[int, str] = {}
+    grouped_of: dict[int, bool] = {}
     for c in candidates:
         code = c.get("canonical_code") or c.get("raw")
         identity = c.get("uuid") or code
@@ -160,7 +169,7 @@ def _options(
             # [A/C I]" and "- [A/C II]" are the same shop), and the pick still reaches
             # every ledger because `uuids` is the union.
             key = family
-            label = ledger_family_label(str(name or label or ""))
+            label = ledger_family_label(str(name or label or ""), _uuid_of(c))
         else:
             label_key = str(label).strip().casefold() if label else str(identity)
             multi_company = bool(company) and len(company_counts.get(label_key, ())) > 1
@@ -197,6 +206,7 @@ def _options(
             option["stamp"] = stamp
         if family:
             exact_of[id(option)] = str(name or c.get("raw") or code or "").strip()
+            grouped_of[id(option)] = customer_group_of(exact_of[id(option)], _uuid_of(c)) is not None
         by_label[key] = option
         companies_of[id(option)] = list(codes)
         built.append(option)
@@ -214,7 +224,7 @@ def _options(
     # Several ledgers, or a customer group, print the family label.
     for option in built:
         exact = exact_of.get(id(option))
-        if exact and len(set(option["uuids"])) <= 1 and customer_group_of(exact) is None:
+        if exact and len(set(option["uuids"])) <= 1 and not grouped_of.get(id(option)):
             option["label"] = exact
     # PICKER-ONE (owner, 13 Oct 2026): a customer line names the companies it sits in
     # ("HANLIM (MCH, SRT)") ONLY when the options' companies differ - the tag is there to
@@ -227,8 +237,10 @@ def _options(
     if len(company_sets) > 1:
         for option in built:
             codes = companies_of[id(option)]
-            if codes:
-                option["label"] = f"{option['label']} ({', '.join(codes)})"
+            tag = f" ({', '.join(codes)})"
+            # A group named in two companies already carries its company (`family_ids`).
+            if codes and not option["label"].endswith(tag):
+                option["label"] = f"{option['label']}{tag}"
     return built
 
 

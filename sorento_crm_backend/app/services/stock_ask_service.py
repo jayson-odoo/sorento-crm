@@ -538,33 +538,33 @@ def notify_salesman(db: Session, facts: dict[str, Any]) -> dict[str, Any]:
 
 
 def _family_names_by_contact(db: Session, contact_ids: set[str]) -> dict[str, str]:
-    """contact id -> the trading name of the customers it is linked to, for the contacts whose
-    links are all ledgers of ONE shop (`ledger_family_key`, `app/services/ledger_family.py`,
-    the rule the chatbot's narrower groups its roster by); a contact linked to two shops, or
-    to nothing, is absent. Read under the caller's company scope, like the links themselves."""
+    """contact id -> the name of the customer it is linked to, for the contacts whose links are
+    all ONE entry of the chatbot's lists (one customer group, or one ledger: `ledger_family_key`,
+    `app/services/ledger_family.py`, CUSTOMER-GROUP-GATE); a contact linked to two, or to
+    nothing, is absent. Read under the caller's company scope, like the links themselves."""
     if not contact_ids:
         return {}
     from app.models.access import RespondContactCustomer
     from app.models.order import Customer
-    from app.services.customer_group_service import family_overrides
+    from app.services.customer_group_service import family_ids, family_overrides
     from app.services.ledger_family import customer_groups, ledger_family_key, ledger_family_label
 
     keys: dict[str, set[str]] = {}
     labels: dict[str, str] = {}
     rows = (
-        db.query(RespondContactCustomer.contact_id, Customer.customer_name)
+        db.query(RespondContactCustomer.contact_id, Customer.customer_name, Customer.id)
         .join(Customer, Customer.id == RespondContactCustomer.customer_id)
         .filter(RespondContactCustomer.contact_id.in_(contact_ids))
         .all()
     )
     # The office's customer groups win over the name rule (CUSTOMER-GROUP).
-    with customer_groups(family_overrides(db)):
-        for contact_id, name in rows:
-            key = ledger_family_key(name or "")
+    with customer_groups(family_overrides(db), ids=family_ids(db)):
+        for contact_id, name, customer_id in rows:
+            key = ledger_family_key(name or "", str(customer_id))
             if not key:
                 continue
             keys.setdefault(contact_id, set()).add(key)
-            labels.setdefault(contact_id, ledger_family_label(name))
+            labels.setdefault(contact_id, ledger_family_label(name, str(customer_id)))
     return {cid: labels[cid] for cid, found in keys.items() if len(found) == 1}
 
 
