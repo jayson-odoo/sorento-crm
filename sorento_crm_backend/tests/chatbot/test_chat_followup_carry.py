@@ -479,13 +479,20 @@ def test_s1_a_new_axis_over_a_ranking_with_rows_keeps_the_customer():
 
 @pytest.mark.parametrize(
     "over",
-    [{"ranking_drill": "global"}, {"broaden_axis": "customer", "broaden_to": "all"}, {"topic_reset": True}, {"entity_op": "replace"}],
-    ids=["the-parser-read-it-global", "all-customers", "a-reset", "replace"],
+    [{"ranking_drill": "global"}, {"broaden_axis": "customer", "broaden_to": "all"}, {"topic_reset": True}],
+    ids=["the-parser-read-it-global", "all-customers", "a-reset"],
 )
 def test_s2_a_new_axis_over_a_ranking_drops_the_customer_when_the_message_says_so(over):
     """`ranking_drill` global: "global when it says so ('overall', 'all customers')" (`parser_template.py`)."""
     _outcome, args = _settled(_new_axis("brand", top_n=5, **over), RANKING)
     assert not args.get("customer_ids"), args
+
+
+def test_s2b_a_replace_naming_no_subject_keeps_the_customer():
+    """S3 (owner O-R3 3 Nov supersedes the older 'replace drops the customer' pin): entity_op replace with NO entity in
+    the message names no subject, so the held customer stays. (Was the `replace` case of the test above.)"""
+    _outcome, args = _settled(_new_axis("brand", top_n=5, entity_op="replace"), RANKING)
+    assert args.get("customer_ids") == [U1, U2], f"S3: replace with no subject dropped the customer: {args}"
 
 
 def test_s3_a_stale_ranking_refined_to_another_axis_keeps_the_customer():

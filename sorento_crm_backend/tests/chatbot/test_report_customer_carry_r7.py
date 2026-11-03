@@ -227,3 +227,90 @@ def test_o_r4_a_customer_only_narrows_the_report_to_it(rbot, world, shape, words
     assert args.get("customer_ids") == [cid] and args.get("channel") == "dealer", f"O-R4: {args}"
     assert args.get("basis") == "invoiced" and args.get("date_from") == "2026-10-01" and args.get("company") == DEFAULT_COMPANY_ID, args
     assert "?" not in text.splitlines()[0], f"O-R4: a question or menu came back: {text!r}"
+
+
+# ------------------------------------------------------------------------------------------ round 7b
+
+
+@pytest.mark.parametrize(
+    "widen",
+    [
+        dict(broaden_axis="customer", broaden_to="all"),
+        dict(ranking_drill="global"),
+        dict(self_reference=True),
+    ],
+    ids=["all-customers", "ranking-drill-global", "my-sales"],
+)
+def test_b1_flag_on_a_kind_the_parse_itself_widens_is_not_carried(rbot, world, widen) -> None:
+    """B1 (flag ON, regression vs 4a5babb25b; C6-2 'a held filter carries ... except a kind the parse widens'): 'how about all
+    customers' / a global drill / 'my sales' with the object's customers [] runs with the held customer DROPPED."""
+    sorento, mocha = world
+    cid = _seed(rbot)
+    _held_customer(rbot, sorento, mocha, cid)
+    ra = _ra(channel="dealer", basis="invoiced", customers=[], **OCT)
+    v = _v("sales_report", ra, basis="invoiced", entity_op="reuse", continuation=True, **widen)
+    text, calls = rbot.say(v, "how about all customers")
+    ran = _ran(calls)
+    assert ran, f"B1: no run; the bot said {text.strip()!r}"
+    assert not ran[0].get("customer_ids"), f"B1: the widened ask kept the held customer: {ran[0]}"
+    if widen.get("self_reference"):
+        assert ran[0].get("mine") is True, f"B1: 'my sales' did not run as mine: {ran[0]}"
+
+
+def test_s3_flag_off_replace_naming_no_subject_keeps_the_customer_and_the_channel(bot, world) -> None:
+    """S3 (owner O-R3 3 Nov supersedes the older 'replace drops the customer' pin for a message that names no subject):
+    held customer + dealer channel, 'and by month' with entity_op replace and NO current-message entity keeps both."""
+    sorento, mocha = world
+    cid = _seed(bot)
+    _held_customer(bot, sorento, mocha, cid)
+    ra = _ra(channel="dealer", basis="invoiced", group_by="month", **OCT)
+    v = _v("sales_analysis", ra, group_by="month", sales_basis="invoiced", by_words="by month", continuation=True,
+           entity_op="replace", **OCTF)
+    text, calls = bot.say(v, "and by month")
+    args = _must_run(text, calls, "replace", sorento, mocha)
+    assert args.get("customer_ids") == [cid], f"S3: entity_op replace dropped the held customer: {args}"
+    assert args.get("channel") == "dealer" and args.get("group_by") == "month", f"S3: {args}"
+
+
+def _two_customers_and_a_supplier_word(bot) -> tuple[str, str]:
+    c1 = _seed(bot)
+    c2 = _seed(bot, "ZZT ZZCUST TRADING")
+    return c1, c2
+
+
+def _first_ask(text_state: dict | None = None):
+    ra1 = _ra(channel="dealer", customers=[WORD], **OCT)
+    return _v("sales_report", ra1, _ent(WORD, "customer"), sales_channel="dealer", domain_in_message=True,
+              basis="invoiced", sales_basis="invoiced", **OCTF)
+
+
+def test_s1_flag_off_a_kind_pick_with_two_matching_customers_asks_which_one_never_merges(bot, monkeypatch) -> None:
+    """S1 (rule A: a picked kind binds its rows, but never merges two different customers silently): one-company contact,
+    two customers answer to the word plus a supplier. Kind pick 'customer' -> the SAME which-one question the typed word
+    gets with no kind pick, nothing runs; picking one runs that customer only."""
+    c1, c2 = _two_customers_and_a_supplier_word(bot)
+    state: dict = {}
+    _kind_pick_on(monkeypatch, state)
+    # the reference path: the word typed as a customer, no kind pick
+    text0, calls0 = bot.say(_first_ask(), "dealer zzcust oct sale invoiced")
+    assert not _ran(calls0) and text0.strip(), f"setup: want the which-one question for the typed word, got {calls0}"
+    # the kind-pick path (a fresh ask replaces the open question)
+    state["inject"] = True
+    text1, calls1 = bot.say(_first_ask(), "dealer zzcust oct sale invoiced")
+    state["inject"] = False
+    lines = {ln.split(". ", 1)[1]: int(ln.split(". ", 1)[0]) for ln in text1.splitlines() if ln[:1].isdigit() and ". " in ln}
+    pos = next((p for label, p in lines.items() if "(customer)" in label), None)
+    assert pos is not None and not _ran(calls1), f"setup: want the kind question, got {text1!r}"
+    pick = _v("sales_report", _ra(channel="dealer", customers=[WORD], **OCT), message_type="answer", intent_hint=None,
+              domain_hint=None, entities=[], reference_positions=[pos], date_filter_start=None, date_filter_end=None, basis=None)
+    text2, calls2 = bot.say(pick, "customer")
+    assert not _ran(calls2), f"S1: the kind pick ran the report: {_ran(calls2)}"
+    assert text2.strip() == text0.strip(), f"S1: want the typed word's which-one question {text0!r}, got {text2!r}"
+    one = _v("sales_report", _ra(channel="dealer", customers=[WORD], **OCT), message_type="answer", intent_hint=None,
+             domain_hint=None, entities=[], reference_positions=[1], open_question_answer=_pick_of(1),
+             date_filter_start=None, date_filter_end=None, basis=None)
+    text3, calls3 = bot.say(one, "the first")
+    ran = _ran(calls3)
+    assert ran and len(ran[0].get("customer_ids") or []) == 1 and ran[0]["customer_ids"][0] in (c1, c2), (
+        f"S1: picking one must run that customer only, got {ran or text3!r}"
+    )

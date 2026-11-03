@@ -70,3 +70,21 @@ def test_a_breakdown_carries_company_totals_only(client, db) -> None:
     assert [c["name"] for c in companies] == [sorento, mocha_name], companies
     assert all(set(c) <= {"name", "amount", "qty", "count"} for c in companies), f"totals only, no rows: {companies}"
     assert sum(money(c["amount"]) for c in companies) == money(body["total"]["amount"]), (companies, body["total"])
+
+
+def test_no_companies_when_compare_to_is_set(client, db) -> None:
+    """Q5 route: a comparison run carries no per-company split."""
+    mocha, _sorento, _m = _world(db)
+    body = _ok(client, _staff(db, extra_company=mocha.id), compare_to="previous_period")
+    assert body.get("status") == "ok", body
+    assert "companies" not in body or not body["companies"], body.get("companies")
+
+
+def test_no_companies_when_the_run_is_not_ok(client, db) -> None:
+    """Q5 route: a refused / not-ok run carries no per-company split."""
+    mocha, _sorento, _m = _world(db)
+    resp = _ask(client, _staff(db, extra_company=mocha.id), account_types="ZZNOPE")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body.get("status") != "ok", f"setup: want a not-ok run, got {body.get('status')}"
+    assert "companies" not in body or not body["companies"], body.get("companies")

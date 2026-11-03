@@ -1321,7 +1321,7 @@ def test_r5_1_a_newer_object_replaces_the_word_an_open_question_asked_even_with_
         domain_in_message=True, **YR,
     )
     text, calls = rbot.say(first, "sorento sales for agent a sorento 2026 invoiced")
-    assert not calls and "brand or account type?" in text, f"setup: want the kind question for SORENTO, got {text or calls!r}"
+    assert not calls and "brand, account type or company?" in text, f"setup: want the three-option question for SORENTO (Sorento is held), got {text or calls!r}"
     reply = _v(
         "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], account_types=["ceramic"], **Y),
         _ent("ceramic", "account_type", None, "account type"), entity_op="replace_combine", continuation=True,
@@ -1477,7 +1477,7 @@ def test_r5_1c_a_carried_brand_does_not_drop_the_asked_account_type(rbot, world)
         _ent("sorento", "brand", "SORENTO", None), basis="invoiced", sales_company=sorento, continuation=True, **YR,
     )
     text, calls = rbot.say(add, "and sorento")
-    assert not _ran(calls) and "brand or account type?" in text, f"setup: want the kind question, got {text!r}"
+    assert not _ran(calls) and "brand, account type or company?" in text, f"setup: want the three-option question (Sorento is held), got {text!r}"
     reply = _v(
         "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], brands=["Cabana"], **Y),
         entity_op="reuse", continuation=True, open_question_answer=_pick_of(2), **YR,

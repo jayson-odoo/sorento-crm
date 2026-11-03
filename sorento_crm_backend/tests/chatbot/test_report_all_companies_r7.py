@@ -236,7 +236,7 @@ def test_c6_2_b_invoiced_after_an_open_question_keeps_type_month_company_and_age
            _ent("sorento", "brand"), basis="invoiced", sales_basis="invoiced", group_by="month", sales_company=sorento,
            domain_in_message=True, **YR)
     text, calls = rbot.say(v, "agent a ceramic account type sorento by month 2026 invoiced")
-    assert not _ran(calls) and "brand or account type" in text.lower(), f"setup: want the brand-or-account-type question, got {text!r} {calls}"
+    assert not _ran(calls) and "brand, account type or company?" in text.lower(), f"setup: want the three-option question (Sorento is held), got {text!r} {calls}"
     # f26a5645 parser_raw: report_ask company "Sorento", group_by "sales_agent", account_types [], brand_or_account_type [],
     # entities [], open_question_answer fill / picked [], order_status sales_ranking, entity_op reuse, continuation true.
     ra2 = _ra(basis="invoiced", group_by="sales_agent", company=sorento, sales_agents=[AGENT_1], account_types=[], **Y)
@@ -337,3 +337,69 @@ def test_c6_2_e_a_typed_breakdown_on_a_plain_turn_still_applies(rbot, world) -> 
     text, calls = rbot.say(v2, "breakdown by month")
     ran = _ran(calls)
     assert ran and ran[0].get("group_by") == "month", f"{ran or text!r}"
+
+
+# ------------------------------------------------------------------------------------------ round 7b
+
+THREE = "brand, account type or company?"
+
+
+def test_b1_flag_on_all_companies_drops_the_held_company(rbot, world) -> None:
+    """B1 (flag ON): held company Sorento, then 'and for all companies' (object company null, broaden_axis company,
+    broaden_to all) runs with no company arg."""
+    sorento, _mocha = world
+    t1 = _v("sales_report", _ra(company=sorento, basis="invoiced", **Y), basis="invoiced", sales_company=sorento,
+            domain_in_message=True, **YR)
+    text, calls = rbot.say(t1, "sorento sales 2026 invoiced")
+    assert _ran(calls) and _ran(calls)[0].get("company") == DEFAULT_COMPANY_ID, f"setup: {text!r}"
+    t2 = _v("sales_report", _ra(company=None, basis="invoiced", **Y), basis="invoiced", entity_op="replace_combine",
+            continuation=True, broaden_axis="company", broaden_to="all")
+    text, calls = rbot.say(t2, "and for all companies")
+    ran = _ran(calls)
+    assert ran and "company" not in ran[0], f"B1: 'all companies' kept the held company: {ran[0] if ran else text!r}"
+
+
+@pytest.mark.parametrize("code", [None, "SORENTO"], ids=["no-code", "bound-code"])
+def test_s2_only_company_sorento_with_sorento_held_offers_brand_account_type_and_company(rbot, world, code) -> None:
+    """S2 (SC-19 has no exception for the held company; C6-1): company Sorento HELD, 'only company sorento' read as brands
+    [SORENTO] with the object's company null -> the question offers brand, account type AND company; picking company runs
+    company Sorento with no SORENTO brand / account type."""
+    sorento, _mocha = world
+    _sorento_type(rbot)
+    t1 = _v("sales_report", _ra(company=sorento, **OCT_ASK), sales_channel="dealer", basis="invoiced", sales_basis="invoiced",
+            sales_company=sorento, domain_in_message=True, **OCTF)
+    text, calls = rbot.say(t1, "sorento dealer sales oct invoiced")
+    assert _ran(calls), f"setup: {text!r}"
+    ra = _ra(company=None, brands=["SORENTO"], **OCT_ASK)
+    v = _v("sales_report", ra, _ent("sorento", "brand", code), entity_op="replace_combine", continuation=True)
+    text, calls = rbot.say(v, "only company sorento")
+    assert not _ran(calls) and THREE in text.lower(), f"S2: want the three-option question, got {text!r} {calls}"
+    pos = _first_position(text, "company")
+    follow = _v("sales_report", _ra(company=None, brands=["SORENTO"], **OCT_ASK), entity_op="reuse", continuation=True,
+                open_question_answer=_pick_of(pos), reference_positions=[pos])
+    text, calls = rbot.say(follow, "company")
+    ran = _ran(calls)
+    assert ran, f"S2: the company pick did not run: {text!r}"
+    assert ran[0].get("company") == DEFAULT_COMPANY_ID and not ran[0].get("brand_ids") and not ran[0].get("account_types"), ran[0]
+
+
+def test_q6_an_old_stored_company_question_and_a_reply_is_read_fresh(bot, world) -> None:
+    """Q6 (a session stored before the release holds the retired company question): the reply '2' never runs the held ask
+    for a company; it is read fresh (the basis question for that shape)."""
+    from tests.chatbot.test_report_unify_routing import YEAR as YEAR_F, _status
+
+    sorento, mocha = world
+    text, calls = bot.say(_status("sales_report", basis="delivered", sales_company=sorento, **YEAR_F), "sorento total sales 2026")
+    assert calls, text
+    focus = bot.console.session_vars["focus"]
+    opts = [["00000000-0000-0000-0000-000000000001", sorento], ["x", mocha]]
+    focus["required_ask"] = {
+        "ask": "sales_ranking", "asking": "company", "values": {}, "misses": 0, "options": opts,
+        "extras": {"args": {"sort": "desc", "basis": "delivered", "date_from": "2026-01-01", "date_to": "2026-12-31"},
+                   "company_options": opts, "company_codes": ["S", "M"]},
+    }
+    v = _status("sales_report", basis=None, sales_company=None, entity_op="reuse", continuation=True,
+                open_question_answer={"mode": "pick", "picked": [2], "items": [], "qty_for_all": None}, reference_positions=[2])
+    text, calls = bot.say(v, "2")
+    assert not _ran(calls), f"Q6: the reply ran the held ask: {calls}"
+    assert text.strip() == BASIS_Q, f"Q6: want the basis question (read fresh), got {text!r}"
