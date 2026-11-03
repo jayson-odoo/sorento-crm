@@ -20,6 +20,7 @@ import {
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
 import { productSearchQuery } from '@/lib/sample-request-form';
+import { shownDeliveryDate } from '@/lib/sample-request-tracking';
 import { portalFetch, type PortalSubmissionSummary } from './portal-client';
 
 const BASE = '/api/v1/public/portal/submissions/sample_request';
@@ -105,6 +106,7 @@ export function makeSampleRequestService(fetcher: typeof portalFetch) {
     const rows = await listSampleRequests(q);
     return rows.map((r) => {
       const isDraft = r.status === 'draft';
+      const shown = shownDeliveryDate(r);
       return {
         id: r.id,
         kind: 'sample_request' as const,
@@ -118,6 +120,8 @@ export function makeSampleRequestService(fetcher: typeof portalFetch) {
         created_at: r.request_date,
         customer_name: r.customer_name,
         project_title: r.project_name,
+        delivery_date: shown.date,
+        delivery_date_is_new: shown.isNew,
       };
     });
   }

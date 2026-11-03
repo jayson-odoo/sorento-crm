@@ -129,6 +129,7 @@ GET /sales-orders/{pso_id}/worksheet
 GET /sample-requests
 GET /sample-requests/products
 GET /sample-requests/{request_id}
+GET /sample-requests/{request_id}/consignments
 GET /sample-requests/{request_id}/pdf
 GET /status-graph/{entity_type}
 GET /stock-debt
@@ -207,6 +208,7 @@ POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/xlsx
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/sign-link
 POST /projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/whatsapp-opened
+POST /projects/{project_id}/quotation-documents/{document_id}/make-quotation
 POST /projects/{project_id}/quotation-documents/{document_id}/reject
 POST /projects/{project_id}/quotation-documents/{document_id}/scopes
 POST /projects/{project_id}/quotation-documents/{document_id}/sign
@@ -277,6 +279,8 @@ PUT /sales-orders/{pso_id}/line-splits
 PUT /sales-orders/{pso_id}/lines/order
 PUT /sales-orders/{pso_id}/lines/{line_id}
 PUT /sample-requests/{request_id}
+PUT /sample-requests/{request_id}/consignment
+PUT /sample-requests/{request_id}/date-answer
 PUT /sample-requests/{request_id}/internal
 PUT /samples/{sample_id}
 PUT /stock-debt/snapshots/{snapshot_id}/rows/{row_id}/decision

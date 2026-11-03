@@ -39,7 +39,7 @@ LABELS = [
     "Contact",
     "Add",
     "Email",
-    "Quotation Purpose",
+    "Proposal Purpose",
     "Terms & Conditions",
     "Payment Terms",
     "Validity",
@@ -240,7 +240,7 @@ def test_cover_rows_in_uac_order_with_reference_and_cleaned_terms():
         assert [r["label"] for r in rows] == LABELS
         by = {r["key"]: r for r in rows}
         assert by["reference"]["text"] == (
-            f"{document.document_no}-R{record.issue_no} {env['project'].title}"
+            f"{document.document_no}-A {env['project'].title}"
         )
         assert by["attn"]["text"] == f"{MARKER} Kelly"
         assert by["company"]["text"] == f"{MARKER} Nadi Cergas Sdn Bhd"
@@ -302,7 +302,7 @@ def test_pdf_layout_2_rows_in_order_with_uppercase_labels_and_no_fax():
             "CONTACT:",
             "ADD:",
             "EMAIL:",
-            "QUOTATION PURPOSE:",
+            "PROPOSAL PURPOSE:",
             "TERMS &amp; CONDITIONS:",
             "PAYMENT TERMS:",
             "VALIDITY:",
@@ -320,9 +320,9 @@ def test_pdf_layout_2_reference_on_cover_and_in_the_price_page_ref():
     with blank_session() as db:
         env = _setup(db)
         document, record, html = _html_of(db, env)
-        ref = f"{document.document_no}-R{record.issue_no} {env['project'].title}"
+        ref = f"{document.document_no}-A {env['project'].title}"
         assert html.count(ref) >= 2
-        assert re.search(r"Quotation No\.</th>\s*<td>" + re.escape(ref), html)
+        assert re.search(r"Proposal No\.</th>\s*<td>" + re.escape(ref), html)
 
 
 def test_pdf_layout_2_values_prepared_by_email_contact_and_letterhead():
@@ -333,7 +333,7 @@ def test_pdf_layout_2_values_prepared_by_email_contact_and_letterhead():
         assert "012-345 6789" in html
         cover = html[: html.index(f"{MARKER} Townhouse")]
         assert re.search(r"PREPARED BY:.*?Baser Ramli", cover, re.S)
-        assert "QUOTATION" in cover
+        assert "PROPOSAL" in cover
         sender = db.execute(text("select name from companies where code = 'SRT'")).scalar()
         assert html.count(sender) >= 2  # letterhead on the cover and on the price page
 
@@ -342,7 +342,7 @@ def test_pdf_layout_2_empty_purpose_row_is_omitted_and_script_is_escaped():
     with blank_session() as db:
         env = _setup(db)
         _d, _r, html = _html_of(db, env, purpose=None)
-        assert "QUOTATION PURPOSE" not in html
+        assert "PROPOSAL PURPOSE" not in html
     with blank_session() as db:
         env = _setup(db)
         _d, _r, html = _html_of(db, env, purpose="<script>alert(1)</script>")
@@ -385,9 +385,9 @@ def test_pdf_layout_1_is_exactly_the_old_layout():
         html = qpdf.build_issue_html(db, record)
         assert "@page cover" not in html and "page: cover" not in html
         assert "REFERENCE NO.:" not in html
-        assert f"{document.document_no}-R1 {env['project'].title}" not in html
+        assert f"{document.document_no}-A {env['project'].title}" not in html
         assert re.search(
-            r"Quotation No\.</th>\s*<td>" + re.escape(f"{document.document_no}-R1") + "</td>", html
+            r"Proposal No\.</th>\s*<td>" + re.escape(f"{document.document_no}-A") + "</td>", html
         )
         after_total = html.split("TOTAL AMOUNT", 1)[1]
         assert "<ol>" in after_total and f"{MARKER} clause one" in after_total
@@ -421,7 +421,7 @@ def test_countersign_layout_2_returns_cover_rows_in_order_with_the_pdf_reference
         document, record, body = _sign_page(db, env)
         rows = body["cover_rows"]
         assert [r["key"] for r in rows] == KEYS
-        ref = f"{document.document_no}-R{record.issue_no} {env['project'].title}"
+        ref = f"{document.document_no}-A {env['project'].title}"
         assert rows[0]["text"] == ref
         assert body["our_ref"] == ref
         terms = next(r for r in rows if r["key"] == "terms")
@@ -441,7 +441,7 @@ def test_countersign_layout_1_has_null_cover_rows_and_the_old_ref():
         env = _setup(db)
         document, record, body = _sign_page(db, env, layout=1)
         assert "cover_rows" in body and body["cover_rows"] is None
-        assert body["our_ref"] == f"{document.document_no}-R{record.issue_no}"
+        assert body["our_ref"] == f"{document.document_no}-A"
 
 
 # ------------------------------------------------------------------ fix round 1

@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import List
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
@@ -40,6 +40,7 @@ from app.schemas.projects import (
     ProjectSponsorshipRollupResponse,
     SponsorshipConversionResponse,
 )
+from app.services import after_response
 from app.services import project_po_service as po_svc
 from app.services import project_sample_service as sample_svc
 from app.services import project_service as projects
@@ -231,6 +232,7 @@ def create_purchase_order(
 def update_purchase_order(
     po_id: str,
     payload: ProjectPurchaseOrderUpdate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
@@ -257,9 +259,17 @@ def update_purchase_order(
         po = po_svc.get_po(db, po_id)
         _project_for_edit(db, po.project_id, current_user)
         body = payload.model_dump(exclude_unset=True)
+        reason = body.pop("qty_over_reason", None)
         lines = po_svc.save_po_document(db, po=po, payload=body)
+        # PS-PROPOSAL-QUOTATION soft stop: a 409 here rolls the save back and the screen sends
+        # it again with the reason; with one, it saves and management is told.
+        over = po_svc.enforce_qty_over(db, po, reason=reason, actor_user_id=current_user["id"])
         db.commit()
         db.refresh(po)
+        if over:
+            after_response.defer(
+                background_tasks, db, po_svc.alert_qty_over_job, str(po.id), over, current_user["id"]
+            )
         # Mismatch alerts on a whole-set save are raised ONCE for the PO, not once per line:
         # a 90-line PO would otherwise send the owner 90 notifications for one button press.
         if body.get("lines") is not None:

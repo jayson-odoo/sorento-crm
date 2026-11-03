@@ -58,6 +58,9 @@ def _submitted(w):
 
 
 def _move(w, rid, to, **extra):
+    if to == "processing":
+        # PS-SAMPLE-TRACKING: Start processing carries the date answer.
+        extra.setdefault("date_feasible", True)
     return w.as_user(w.coord).post(f"{SR_BASE}/{rid}/move", json={"to": to, **extra})
 
 

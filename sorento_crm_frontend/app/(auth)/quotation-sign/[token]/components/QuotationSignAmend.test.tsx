@@ -50,7 +50,7 @@ import { SIGN_COLUMNS } from './signColumns.fixture';
 
 const OPEN_SENTENCE = 'You can sign once Sorento has answered your suggestions.';
 const TICK_HINT = 'Tick to agree to the terms before you accept.';
-const REPLACED = 'This quotation has been replaced by Quotation No. PRJQ-0000-R2.';
+const REPLACED = 'This proposal has been replaced by Proposal No. PRJQ-0000-R2.';
 
 type Line = {
   id: string;
@@ -749,7 +749,7 @@ describe('a replaced revision', () => {
   it('says which quotation replaced it and offers neither suggesting nor signing', async () => {
     getQuotationSignPage.mockResolvedValue(
       page({
-        superseded_by_ref: 'Quotation No. PRJQ-0000-R2',
+        superseded_by_ref: 'Proposal No. PRJQ-0000-R2',
         can_sign: false,
         sign_blocked_reason: 'superseded',
       }),

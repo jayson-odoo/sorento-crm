@@ -53,11 +53,16 @@ import {
   type LineEdits,
 } from './quotationSuggest';
 
+/** "Proposal" or "Quotation": what the customer is holding (PS-PROPOSAL-QUOTATION). */
+function noun(page: QuotationSignPage): string {
+  return page.document_kind === 'quotation' ? 'Quotation' : 'Proposal';
+}
+
 /** "Quotation No. X", whether or not the ref already carries the label. */
-function quotationLabel(ref: string): string {
-  return /^quotation no\./i.test(ref.trim())
+function quotationLabel(ref: string, word = 'Quotation'): string {
+  return /^(quotation|proposal) no\./i.test(ref.trim())
     ? ref.trim()
-    : `Quotation No. ${ref.trim()}`;
+    : `${word} No. ${ref.trim()}`;
 }
 
 function text(value: string | null | undefined): string {
@@ -93,7 +98,7 @@ function SenderRow({ page }: { page: QuotationSignPage }) {
       )}
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Quotation from
+          {`${noun(page)} from`}
         </p>
         <p className="min-w-0 break-words text-base font-semibold">
           {text(page.sender_name)}
@@ -196,7 +201,7 @@ function Letterhead({
           <div className="min-w-0 space-y-2 md:justify-self-end">
             <div className="flex gap-2 text-sm">
               <span className="w-28 shrink-0 text-muted-foreground">
-                Quotation No.
+                {`${noun(page)} No.`}
               </span>
               <span className="min-w-0 break-words font-medium">
                 {text(page.our_ref)}
@@ -367,7 +372,7 @@ function CustomerSignature({
         </CardHeader>
         <CardContent className="py-5">
           <p className="min-w-0 break-words text-sm">
-            {`This quotation has been replaced by ${quotationLabel(page.superseded_by_ref)}.`}
+            {`This ${noun(page).toLowerCase()} has been replaced by ${quotationLabel(page.superseded_by_ref, noun(page))}.`}
           </p>
         </CardContent>
       </Card>

@@ -1502,7 +1502,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "incoming, but a PO is placed') the CRM probes this tool itself.\n\n"
             "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
             "repeated; the line's warehouse - an SPO allocation also matches by its book "
-            "location code). "
+            "location code), `supplier_ids` (the PO's supplier, for 'outstanding POs for supplier "
+            "X'; under a `contact_id` it needs that contact's purchase_orders.supplier reveal, else "
+            "a 403). "
             "Date window: expected_date_from / expected_date_to (filters only; the expected "
             "date is not rendered in the reply).\n\n"
             "SORT: `sort` = expected_date | product | supplier | outstanding_qty | po_date | "
@@ -1517,8 +1519,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/procurement/purchase-orders/placed",
         (),
         (
-            "limit", "product_ids", "warehouse_ids", "expected_date_from", "expected_date_to",
-            "group_by", "include_summary", "sort", "dir",
+            "limit", "product_ids", "warehouse_ids", "supplier_ids", "expected_date_from",
+            "expected_date_to", "group_by", "include_summary", "sort", "dir",
             "contact_id", "space_id",
         ),
         domain="purchase_order",
@@ -1740,6 +1742,9 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "List the QUOTATION SCOPES on one project (e.g. House Units, Common Area) with each scope's "
             "current version number, current total, outcome (open / won / lost) and loss reason. "
+            "Each row names its document (`document_no`) and `document_kind`: 'proposal' (a priced offer, "
+            "a project may hold several, one per party) or 'quotation' (the one the won project's POs "
+            "are checked against; quote ITS figure when it exists). "
             "USE for 'what did we quote on <project>', 'how much is <project> worth', 'did we win the "
             "common area', 'why did we lose <project>'. "
             "A project has MANY quotations, one per scope, and each quotation has versions -- the total "
