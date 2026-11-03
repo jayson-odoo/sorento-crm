@@ -1,10 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft,
   ChevronDown,
   ChevronUp,
   FileDown,
@@ -13,13 +11,13 @@ import {
   Trash2,
 } from 'lucide-react';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { PageHeader } from '@/components/common/PageHeader';
 import { projectCrumbs } from '../../../../../../_shared/lib/crumbs';
-import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import DetailActions from '@/components/common/DetailActions';
+import BackToList from '@/components/common/BackToList';
 import type { RecordAction } from '@/components/common/recordActions';
 import { PX_PER_MM } from '@/components/dealer-kit/ScaledSheet';
 import { clampZoom, ZOOM_STEP } from '@/components/common/pdf-viewer/zoom';
@@ -385,14 +383,6 @@ export function SpecSheetReader({
   }
 
   const canEdit = detail.can_edit;
-  const versions = [
-    detail.templates.cover,
-    detail.templates.page,
-    detail.templates.single,
-  ]
-    .filter((t): t is NonNullable<typeof t> => t !== null)
-    .map((t) => `${t.name} v${t.version_no}`)
-    .join(' / ');
   const templateLabelOf = (page: SpecSheetPage) =>
     page.template === 'cover'
       ? (detail.templates.cover?.name ?? '')
@@ -430,28 +420,32 @@ export function SpecSheetReader({
         )}
         titleClassName="truncate"
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" asChild>
-              <Link href={listHref}>
-                <ArrowLeft className="size-4" aria-hidden />
-                Spec sheets
-              </Link>
-            </Button>
-            {canEdit && detail.newer_templates && (
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={update.isPending}
-                onClick={() =>
-                  update.mutate({
-                    sheetId,
-                    body: { use_latest_templates: true },
-                  })
-                }
-              >
-                Use latest templates
-              </Button>
-            )}
+          <BackToList
+            listPath={listHref}
+            label="Back to spec sheets"
+            appendListState={false}
+          />
+        }
+      />
+      {/* The system's detail-page group (DetailActions): pager, gear, then the one primary. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        {canEdit && detail.newer_templates && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={update.isPending}
+            onClick={() =>
+              update.mutate({
+                sheetId,
+                body: { use_latest_templates: true },
+              })
+            }
+          >
+            Use latest templates
+          </Button>
+        )}
+        <DetailActions
+          pagerNode={
             <RecordNavigation
               index={null}
               total={0}
@@ -465,43 +459,29 @@ export function SpecSheetReader({
               }
               ariaLabel="spec sheet"
             />
-            {deletion.countdown ??
-              (blocked ? (
-                canEdit && (
-                  <Button size="sm" onClick={() => setPicking(true)}>
-                    Pick templates
-                  </Button>
-                )
-              ) : (
-                <Button
-                  size="sm"
-                  disabled={exportPdf.isPending}
-                  onClick={() => exportPdf.mutate(sheetId)}
-                >
-                  <FileDown className="size-4" aria-hidden />
-                  Export PDF
+          }
+          actions={menu}
+          gearLabel="Spec sheet actions"
+          pendingAction={deletion.countdown}
+          primary={
+            blocked ? (
+              canEdit && (
+                <Button size="sm" onClick={() => setPicking(true)}>
+                  Pick templates
                 </Button>
-              ))}
-            {menu.length > 0 && !deletion.countdown && (
-              <DetailActionsMenu
-                actions={menu}
-                trigger="ellipsis"
-                ariaLabel="spec sheet actions"
-              />
-            )}
-          </div>
-        }
-      />
-      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span className="truncate" title={versions}>
-          {versions} &middot; {printedCount} pages
-        </span>
-        {detail.source_hint && <span>{detail.source_hint}</span>}
-        {detail.newer_templates && (
-          <Badge variant="warning" appearance="light" size="sm">
-            newer template published
-          </Badge>
-        )}
+              )
+            ) : (
+              <Button
+                size="sm"
+                disabled={exportPdf.isPending}
+                onClick={() => exportPdf.mutate(sheetId)}
+              >
+                <FileDown className="size-4" aria-hidden />
+                Export PDF
+              </Button>
+            )
+          }
+        />
       </div>
 
       {blocked ? (

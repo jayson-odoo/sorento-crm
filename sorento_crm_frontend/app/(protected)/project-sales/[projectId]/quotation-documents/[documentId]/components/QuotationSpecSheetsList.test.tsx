@@ -172,7 +172,8 @@ describe('QuotationSpecSheetsList', () => {
     expect(screen.getByText('SS1')).toBeInTheDocument();
     expect(screen.getByText('Draft after R1')).toBeInTheDocument();
     expect(screen.getByText('PRJQ-2026-0027-R1')).toBeInTheDocument();
-    expect(screen.getByText(/Spec page B/)).toBeInTheDocument();
+    // One line per cell: the page template is in the Templates tooltip, not a second line.
+    expect(screen.getByTitle(/Spec page B/)).toBeInTheDocument();
     expect(screen.getByText(/2 edited/)).toBeInTheDocument();
     const order = screen.getAllByText(/^SS\d$/).map((el) => el.textContent);
     expect(order).toEqual(['SS2', 'SS1']);
@@ -271,5 +272,45 @@ describe('QuotationSpecSheetsList', () => {
     expect(await screen.findByRole('menuitem', { name: /export pdf/i })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: /view/i })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: /delete/i })).toBeNull();
+  });
+
+  it('renders every row as one line: no second-line element, long values carry a title', async () => {
+    listSpecSheets.mockResolvedValue(
+      list({
+        items: [
+          row({
+            id: 'sheet-2',
+            sheet_no: 2,
+            label: 'SS2',
+            source_label: 'Draft after A',
+            source_hint: 'lines taken 03 Nov 2026 16:10',
+            is_draft: true,
+            edited_count: 2,
+            single_name: 'Single item',
+            last_exported_at: '2026-11-03T04:00:00',
+          }),
+        ],
+      }),
+    );
+    renderList();
+    await screen.findByText('SS2');
+
+    const cells = Array.from(document.querySelectorAll('[role="row"] [role="cell"], tbody td'));
+    expect(cells.length).toBeGreaterThan(5);
+    for (const cell of cells) {
+      // A cell holds inline content only: no block child, no stacked sub line.
+      expect(cell.querySelector('.block.text-xs, .sub, p, br')).toBeNull();
+    }
+    // The old second lines are gone.
+    expect(screen.queryByText(/lines taken/)).toBeNull();
+    expect(screen.queryByText(/issued 03 Nov/)).toBeNull();
+    expect(screen.queryByText(/no PDF yet/)).toBeNull();
+    expect(screen.queryByText(/PDF 0?3/)).toBeNull();
+    // Templates: the cover name in the cell, all three in the tooltip.
+    expect(screen.getByTitle('Spec cover / Spec page / Single item')).toHaveTextContent(/^Spec cover$/);
+    // Revision label only, with its tooltip; the creator and the two dates each in their own cell.
+    expect(screen.getByTitle('Draft after A')).toHaveTextContent(/^Draft after A$/);
+    expect(screen.getByTitle('Baser Ramli')).toBeInTheDocument();
+    expect(screen.getByText(/2 edited/)).toBeInTheDocument();
   });
 });

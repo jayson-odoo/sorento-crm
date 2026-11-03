@@ -441,4 +441,33 @@ describe('SpecSheetReader: a 30-page sheet mounts only the pages in view', () =>
     expect(screen.queryByText('Pick new templates to show and export it.')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Pick templates' })).toBeNull();
   });
+
+  it('has no meta line under the header, and the newer-template state is only the action', async () => {
+    getSpecSheet.mockResolvedValue({ ...detail(), newer_templates: true });
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+
+    expect(screen.queryByText(/issued 03 Nov 2026/)).toBeNull();
+    expect(screen.queryByText(/\d+ pages/)).toBeNull();
+    expect(screen.queryByText(/Cover v1/)).toBeNull();
+    expect(screen.queryByText('newer template published')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Use latest templates' })).toBeInTheDocument();
+    // Page N of M stays in the toolbar.
+    expect(screen.getByTestId('spec-sheet-page-of')).toBeInTheDocument();
+  });
+
+  it('uses the system header: BackToList, then the gear before the primary Export PDF', async () => {
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+
+    const back = screen.getByRole('link', { name: /Back to spec sheets/ });
+    expect(back).toHaveAttribute('href', '/project-sales/p1/quotation-documents/d1/spec-sheet');
+    const gear = screen.getByRole('button', { name: 'Spec sheet actions' });
+    const exportPdf = screen.getByRole('button', { name: /export pdf/i });
+    // The gear (and the pager) stand LEFT of the one primary button, never to its right.
+    expect(gear.compareDocumentPosition(exportPdf) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(back.compareDocumentPosition(gear) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const pager = screen.getByRole('button', { name: /Previous spec sheet/ });
+    expect(pager.compareDocumentPosition(gear) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });

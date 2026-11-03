@@ -26,10 +26,6 @@ import { useQuotationDocumentScreen } from './QuotationDocumentContext';
 const sheetHref = (projectId: string, documentId: string, sheetId: string) =>
   `/project-sales/${projectId}/quotation-documents/${documentId}/spec-sheet/${sheetId}`;
 
-function Sub({ children }: { children: React.ReactNode }) {
-  return <span className="block truncate text-xs text-muted-foreground">{children}</span>;
-}
-
 /** The row's "..." menu: View, Export PDF, and (with the edit right) Delete as a countdown. */
 function SpecSheetRowMenu({
   row,
@@ -101,8 +97,17 @@ export function QuotationSpecSheetsList() {
     () => [
       {
         accessorKey: 'label',
-        header: ({ column }) => <DataGridColumnHeader title="No." column={column} />,
-        cell: ({ row }) => <span className="font-medium">{row.original.label}</span>,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="No." column={column} />
+        ),
+        cell: ({ row }) => (
+          <span
+            className="block truncate font-medium"
+            title={row.original.label}
+          >
+            {row.original.label}
+          </span>
+        ),
         size: 80,
         minSize: 60,
         enableSorting: false,
@@ -110,91 +115,118 @@ export function QuotationSpecSheetsList() {
       },
       {
         id: 'revision',
-        header: ({ column }) => <DataGridColumnHeader title="Revision" column={column} />,
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <span className="block truncate" title={row.original.source_label}>
-              {row.original.source_label}
-            </span>
-            <Sub>{row.original.source_hint}</Sub>
-          </div>
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Revision" column={column} />
         ),
-        size: 220,
-        minSize: 140,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.source_label}>
+            {row.original.source_label}
+          </span>
+        ),
+        size: 200,
+        minSize: 130,
         enableSorting: false,
         meta: { headerTitle: 'Revision' },
       },
       {
         id: 'templates',
-        header: ({ column }) => <DataGridColumnHeader title="Templates" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Templates" column={column} />
+        ),
         cell: ({ row }) => {
           const { cover_name, page_name, single_name } = row.original;
-          const second = [page_name, single_name].filter(Boolean).join(' / ');
           return (
-            <div
-              className="min-w-0"
-              title={[cover_name, page_name, single_name].filter(Boolean).join(' / ')}
+            <span
+              className="block truncate"
+              title={[cover_name, page_name, single_name]
+                .filter(Boolean)
+                .join(' / ')}
             >
-              <span className="block truncate">{cover_name}</span>
-              <Sub>{second}</Sub>
-            </div>
+              {cover_name}
+            </span>
           );
         },
-        size: 240,
-        minSize: 140,
+        size: 200,
+        minSize: 130,
         enableSorting: false,
         meta: { headerTitle: 'Templates' },
       },
       {
         id: 'pages',
-        header: ({ column }) => <DataGridColumnHeader title="Pages" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Pages" column={column} />
+        ),
         cell: ({ row }) => (
-          <div className="flex items-center gap-1">
-            <span>{row.original.page_count}</span>
+          <span className="flex items-center gap-1 whitespace-nowrap">
+            {row.original.page_count}
             {row.original.edited_count > 0 && (
-              <Badge variant="warning" appearance="light" size="sm" className="shrink-0">
+              <Badge
+                variant="warning"
+                appearance="light"
+                size="sm"
+                className="shrink-0"
+              >
                 {row.original.edited_count} edited
               </Badge>
             )}
-          </div>
+          </span>
         ),
-        size: 120,
-        minSize: 80,
+        size: 130,
+        minSize: 90,
         enableSorting: false,
         meta: { headerTitle: 'Pages' },
       },
       {
-        id: 'created',
-        header: ({ column }) => <DataGridColumnHeader title="Created" column={column} />,
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <span className="block truncate" title={row.original.created_by_name}>
-              {row.original.created_by_name}
-            </span>
-            <Sub>{row.original.created_at ? formatDateTimeInMalaysia(row.original.created_at) : ''}</Sub>
-          </div>
+        id: 'created_by',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Created by" column={column} />
         ),
-        size: 170,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.created_by_name}>
+            {row.original.created_by_name}
+          </span>
+        ),
+        size: 150,
+        minSize: 100,
+        enableSorting: false,
+        meta: { headerTitle: 'Created by' },
+      },
+      {
+        id: 'created',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Created" column={column} />
+        ),
+        cell: ({ row }) => {
+          const text = row.original.created_at
+            ? formatDateTimeInMalaysia(row.original.created_at)
+            : '';
+          return (
+            <span className="block truncate" title={text}>
+              {text}
+            </span>
+          );
+        },
+        size: 160,
         minSize: 120,
         enableSorting: false,
         meta: { headerTitle: 'Created' },
       },
       {
         id: 'updated',
-        header: ({ column }) => <DataGridColumnHeader title="Last edited" column={column} />,
-        cell: ({ row }) => (
-          <div className="min-w-0">
-            <span className="block truncate">
-              {row.original.updated_at ? formatDateTimeInMalaysia(row.original.updated_at) : ''}
-            </span>
-            <Sub>
-              {row.original.last_exported_at
-                ? `PDF ${formatDateTimeInMalaysia(row.original.last_exported_at)}`
-                : 'no PDF yet'}
-            </Sub>
-          </div>
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Last edited" column={column} />
         ),
-        size: 170,
+        cell: ({ row }) => {
+          const text = row.original.updated_at
+            ? formatDateTimeInMalaysia(row.original.updated_at)
+            : '';
+          return (
+            <span className="block truncate" title={text}>
+              {text}
+            </span>
+          );
+        },
+        size: 160,
         minSize: 120,
         enableSorting: false,
         meta: { headerTitle: 'Last edited' },
@@ -238,13 +270,17 @@ export function QuotationSpecSheetsList() {
             ? 'Add products on the Lines tab.'
             : 'A spec sheet prints a cover and one page per item of the quotation.'
         }
-        onRowClick={(row) => router.push(sheetHref(projectId, documentId, row.id))}
+        onRowClick={(row) =>
+          router.push(sheetHref(projectId, documentId, row.id))
+        }
         toolbar={
           canEdit ? (
             // The reason sits on the button itself: the test and the hover both read it there.
             <Button
               size="sm"
-              disabled={Boolean(reason) || list.isLoading || Boolean(list.error)}
+              disabled={
+                Boolean(reason) || list.isLoading || Boolean(list.error)
+              }
               title={reason ?? undefined}
               onClick={() => setCreating(true)}
             >

@@ -102,4 +102,25 @@ describe('SpecSheetPageEditor', () => {
     expect(editorProps.assetUrls).toEqual({ a1: MEDIUM });
     expect(libraryOriginalFor).not.toHaveBeenCalled();
   });
+
+  it('has no banner, no sub line, and the system header order', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <SpecSheetPageEditor projectId="p1" documentId="d1" sheetId="s1" pageKey="k1" />
+      </QueryClientProvider>,
+    );
+    await screen.findByTestId('editor');
+
+    expect(screen.queryByText(/only\. The template and other spec sheets stay/)).toBeNull();
+    expect(screen.queryByText(/Changes apply to/)).toBeNull();
+    expect(screen.queryByText(/from template/)).toBeNull();
+    const back = screen.getByRole('link', { name: /Back to spec sheet/ });
+    expect(back).toHaveAttribute('href', '/project-sales/p1/quotation-documents/d1/spec-sheet/s1');
+    const gear = screen.getByRole('button', { name: 'Page actions' });
+    const save = screen.getByRole('button', { name: 'Save page' });
+    expect(gear.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Edited page: Reset to template is a header action.
+    expect(screen.getByRole('button', { name: /Reset to template/ })).toBeInTheDocument();
+  });
 });

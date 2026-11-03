@@ -2,12 +2,13 @@
 
 import * as React from 'react';
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/components/common/PageHeader';
+import BackToList from '@/components/common/BackToList';
+import DetailActions from '@/components/common/DetailActions';
 import { ensureFontsLoaded } from '@/lib/dealer-kit/fonts';
 import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 
@@ -103,14 +104,6 @@ export function SpecSheetPageEditor({
     : `Edit page ${page?.number ?? ''} · ${page?.code ?? ''}`
         .replace(/\s+/g, ' ')
         .trim();
-  const sub = [
-    detail.data?.label,
-    detail.data?.source_label,
-    data.template_name && `from template ${data.template_name}`,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-
   const save = () =>
     savePageEdit.mutate(
       { sheetId, key: pageKey, layers: layers.current ?? data.layers },
@@ -133,33 +126,15 @@ export function SpecSheetPageEditor({
         )}
         titleClassName="truncate"
         actions={
-          <div className="flex flex-wrap items-center gap-2">
-            {data.template_id && (
-              <Button size="sm" variant="outline" asChild>
-                <Link href={`/dealer-kit/tag-templates/${data.template_id}`}>
-                  Open template
-                </Link>
-              </Button>
-            )}
-            <Button size="sm" variant="outline" asChild>
-              <Link href={back}>Cancel</Link>
-            </Button>
-            <Button size="sm" disabled={savePageEdit.isPending} onClick={save}>
-              Save page
-            </Button>
-          </div>
+          <BackToList
+            listPath={back}
+            label="Back to spec sheet"
+            appendListState={false}
+          />
         }
       />
-      <div className="truncate text-xs text-muted-foreground" title={sub}>
-        {sub}
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted px-4 py-2 text-sm">
-        <span>
-          Changes apply to{' '}
-          {isCover ? 'the cover' : `page ${page?.number ?? ''}`.trim()} of{' '}
-          {detail.data?.label ?? 'this spec sheet'} only. The template and other
-          spec sheets stay as they are.
-        </span>
+      {/* The system's detail-page group: gear for the secondary, then the one primary. */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
         {data.edited && (
           <ResetPageButton
             documentId={documentId}
@@ -169,6 +144,28 @@ export function SpecSheetPageEditor({
             onReset={() => router.push(back)}
           />
         )}
+        <DetailActions
+          actions={
+            data.template_id
+              ? [
+                  {
+                    key: 'spec_sheet_page.open_template',
+                    label: 'Open template',
+                    run: () =>
+                      router.push(
+                        `/dealer-kit/tag-templates/${data.template_id}`,
+                      ),
+                  },
+                ]
+              : []
+          }
+          gearLabel="Page actions"
+          primary={
+            <Button size="sm" disabled={savePageEdit.isPending} onClick={save}>
+              Save page
+            </Button>
+          }
+        />
       </div>
       <div className="flex h-[calc(100dvh-18rem)] min-h-[32rem] flex-col overflow-hidden rounded-lg border border-border">
         <div className="min-h-0 flex-1">
