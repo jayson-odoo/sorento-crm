@@ -2,9 +2,12 @@
 
 The path crew profiled on SO373923 (pending AutoCount batch): `planning_change_service`
 defers the pass and then calls `auto_place_for_confirmed_products` (76% of a warm dry run).
-Skipping it in a dry run was measured and REFUSED (crew ruling, 3 Nov 2026): the pass moves
-line 1's acknowledged link, and without it the dry run's REMARK for line 1 changed ("ADVANCE,
-ORDER 15" against "ADVANCE, ORDER 25" with it) (owner rule: email = preview = attachment). The pass is made cheap instead (`tests/test_auto_place_document_memo.py`).
+Crew ruling (3 Nov 2026): keep the pass in the dry run, as the press runs it, and make it
+cheap instead (`tests/test_auto_place_document_memo.py`), so the dry run stays the press's own
+write by construction. An earlier "ORDER 25 vs ORDER 15" measurement here was an artifact of
+stale handover items on the test session (the post-commit listeners were not registered; see
+PREVIEW-EMAIL-PLANCHANGE #2135, which owns the preview/press parity tests). This module only
+pins that the dry run runs the pass and still answers the email's lines; it pins no words.
 Its own module because the fixture chain (`api`, `world`, `_form_three`)
 is the real-DB one of `tests/test_planning_change_apply_on_board.py`, which clashes by name
 with the blank-schema `api` of the ordinary-confirm module.
@@ -88,8 +91,14 @@ def _post(fixture, *, preview):
 
 
 def test_a_planning_change_dry_run_runs_the_placement_pass(api, monkeypatch):
-    """The pass runs in the dry run (it moves line 1's acknowledged link, which the email's
-    REMARK reads), and the dry run still answers the email's own lines."""
+    """The pass runs in the dry run, and the dry run still answers the email's own lines."""
+    from app.services.project_order_inquiry_service import (
+        register_order_inquiry_post_commit_dispatch,
+    )
+
+    # As prod does at startup (app/main.py): without it the session keeps the fixture's
+    # earlier handover items and they leak into this write's email.
+    register_order_inquiry_post_commit_dispatch()
     fixture = _form_three(api)
     world = fixture["world"]
     _another_orders_raised_row(fixture)

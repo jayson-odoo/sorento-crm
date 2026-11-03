@@ -1,11 +1,10 @@
 """CONFIRM-DIALOG-SPEED regression: a confirm-all DRY RUN runs the draft-link placement pass.
 
 Crew profile of the prod clone (3 Nov 2026, SO373923): the pass was 76% of a warm dry run.
-Skipping it in a dry run was measured and refused (crew ruling, 3 Nov): on the planning-change
-path the email's REMARK changes without it
-(`tests/test_confirm_preview_runs_placement_planning_change.py`). The pass stays, in the dry
-run and the real press alike, and is made cheap instead
-(`tests/test_auto_place_document_memo.py`).
+Crew ruling (3 Nov): the pass stays, in the dry run and the real press alike, so the dry run
+is the press's own write by construction, and it is made cheap instead
+(`tests/test_auto_place_document_memo.py`). Preview/press parity is PREVIEW-EMAIL-PLANCHANGE's
+(#2135); this module only pins that the dry run runs the pass.
 """
 from __future__ import annotations
 

@@ -27,8 +27,9 @@ confirm-all dry run as well, in series.
 5. Backend (crew profile hot spot 1): the placement pass reads each product's open PO lines and
    SPO allocations once per pass (`_document_rows_memo`, keyed by product and the session's
    company scope) instead of once per row walked.
-   Skipping the pass in a dry run was measured and refused: on the planning-change path the
-   email REMARK changes without it ("ADVANCE, ORDER 15" against the press's "ADVANCE, ORDER 25").
+   Skipping the pass in a dry run was considered and refused by crew ruling: keeping it keeps
+   the dry run the press's own write by construction. (An "ORDER 25 vs ORDER 15" measurement
+   offered as the reason was a test-session artifact, PREVIEW-EMAIL-PLANCHANGE #2135.)
 
 Not done, on evidence: re-reading only the opened SO. The board is the selection itself and its
 cells pile several orders together, so one order's read cannot be merged into it safely; PR 2
