@@ -8,7 +8,8 @@ import {
   isInlineChecked,
   type InlineDraft,
 } from '../../_shared/components/InlineLineTable';
-import { multiplyMoney, sumMoney } from '../../_shared/lib/money';
+import { compareMoney, isDecimalString, multiplyMoney, sumMoney } from '../../_shared/lib/money';
+import { sumCells, type MatrixCells } from '../../_shared/lib/quotationMatrix';
 import type {
   QuotationLine,
   QuotationLineBulkItem,
@@ -33,9 +34,39 @@ export const PRICED_PER_OPTIONS: { value: UnitType; label: string }[] = [
 /** The two picked files a line can carry. Only ever sent when set, or when clearing one. */
 const PICKS = ['image_attachment_id', 'drawing_attachment_id'] as const;
 
+/**
+ * The draft key that holds a grid line's cells (PS-QUOTE-MATRIX), as JSON: the draft is all
+ * strings. PRESENT only on a version with columns, which is what tells the Save body to send
+ * `qty_cells`; a scope without columns never carries it, so its body is exactly today's.
+ */
+export const CELLS_KEY = 'qty_cells';
+
+/** The line's cells, or null on a scope without columns. */
+export function draftCells(draft: LineDraft): MatrixCells | null {
+  const raw = draft[CELLS_KEY];
+  if (raw === undefined || raw === '') return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as MatrixCells) : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * The patch that puts `cells` on a draft: the cells, and the quantity they sum to (R6), so every
+ * total, stock chip and price check that reads `quantity` keeps working unchanged. Null takes the
+ * grid off the line (its quantity is left as given).
+ */
+export function cellsPatch(cells: MatrixCells | null, quantity?: string): LineDraft {
+  if (cells === null) return { [CELLS_KEY]: '', ...(quantity !== undefined ? { quantity } : {}) };
+  return { [CELLS_KEY]: JSON.stringify(cells), quantity: sumCells(cells) };
+}
+
 /** A stored line as an editable draft. Every field the bulk write sends has to be in here. */
-export function serverToDraft(line: QuotationLine): LineDraft {
+export function serverToDraft(line: QuotationLine, withCells = false): LineDraft {
   return {
+    ...(withCells ? { [CELLS_KEY]: JSON.stringify(line.qty_cells ?? {}) } : {}),
     product_id: line.product_id ?? '',
     product_set_id: line.product_set_id ?? '',
     description: line.description ?? '',
@@ -86,20 +117,34 @@ export function isUntouched(draft: LineDraft): boolean {
   const empty = emptyDraft();
   const keys = new Set([...Object.keys(empty), ...Object.keys(draft)]);
   for (const key of keys) {
+    // An empty grid is no more typed-into than an empty Qty.
+    if (key === CELLS_KEY && Object.keys(draftCells(draft) ?? {}).length === 0) continue;
+    if (key === 'quantity' && draftCells(draft) !== null) continue;
     if ((draft[key] ?? '') !== (empty[key] ?? '')) return false;
   }
   return true;
 }
 
 /**
- * The one rule a quotation line has to satisfy before it can be stored, keyed by the field at
+ * The rules a quotation line has to satisfy before it can be stored, keyed by the field at
  * fault: it names a catalogue product or a product set, whatever its description says. Used to
  * mark the Product cell and to stop a Save that would only come back as the server's 422.
  */
 export function lineErrors(draft: LineDraft): Record<string, string> {
-  return !draft.product_id && !draft.product_set_id
-    ? { product: 'Pick a catalogue product or set' }
-    : {};
+  const errors: Record<string, string> = {};
+  if (!draft.product_id && !draft.product_set_id) errors.product = 'Pick a catalogue product or set';
+  // A grid line (PS-QUOTE-MATRIX): every cell a quantity of 0 or more, or blank.
+  const cells = draftCells(draft);
+  if (
+    cells &&
+    Object.values(cells).some((value) => {
+      const text = (value ?? '').trim();
+      return text !== '' && (!isDecimalString(text) || compareMoney(text, '0') === -1);
+    })
+  ) {
+    errors.cells = 'A quantity is not a number';
+  }
+  return errors;
 }
 
 /**
@@ -150,6 +195,17 @@ export function toBody(
     const value = (draft[key] ?? '').trim() || null;
     if (value || stored?.[key]) body[key] = value;
   });
+  // A grid line: its cells, blanks left out; the server derives `quantity` from them.
+  const cells = draftCells(draft);
+  if (cells !== null) {
+    const sent: Record<string, string> = {};
+    Object.entries(cells).forEach(([key, value]) => {
+      const text = (value ?? '').trim();
+      if (text) sent[key] = text;
+    });
+    body.qty_cells = sent;
+    body.quantity = sumCells(sent);
+  }
   return body;
 }
 

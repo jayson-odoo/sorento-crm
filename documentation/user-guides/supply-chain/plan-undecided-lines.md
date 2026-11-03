@@ -76,6 +76,19 @@ project sales order and on a dealer (retail) one.
   linked to a shipping order, but only while the order reads **Outstanding**. The Loading Plan
   shows no line of a **Completed** order, dealer or project.
 
+## Consignment lines
+
+A consignment's goods sit at its own consignment location. While that location is outside
+fulfilment planning, the line is planned there.
+
+* The suggestion is a **Borrow** of the whole quantity still out (ordered less cancelled and
+  returned) from the consignment's own location, never a **Buy**.
+* Confirmed, a **Borrow** is owed back at the location it came from, the consignment's own
+  included, exactly as on a sales order: purchasing gets an **ORDER BACK** row in the order
+  inquiry and a line in the purchasing email. With a **Buy** beside it, that line reads both, for
+  example **ORDER BACK 6 & ORDER 4**.
+* A **Buy** you add goes to purchasing in the order inquiry the usual way.
+
 ## Finding a dealer order
 
 On [Fulfilment Planning](/project-sales/fulfilment-planning), open **Filters** and pick under

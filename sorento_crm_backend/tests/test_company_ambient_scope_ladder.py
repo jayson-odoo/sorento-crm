@@ -25,7 +25,6 @@ import os
 import uuid
 
 import pytest
-from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -34,7 +33,7 @@ from app.models.company import Company
 from app.models.user import User
 from app.services.company_scope import company_scope, register_company_scope_listeners
 from app.services.user_service import AccessAgentService
-from tests._company_cleanup import delete_project_seed_rows
+from tests._company_cleanup import delete_companies_and_children
 
 register_company_scope_listeners()
 
@@ -124,25 +123,29 @@ def ladder(db: Session):
         db.rollback()
         # The startup seed runs for every company, so a TestClient booting on another
         # xdist worker can have written projects.types for these two while they existed.
-        delete_project_seed_rows(db, [seeded["a"], seeded["b"]])
-        for sql, params in (
-            ("DELETE FROM agent_teams WHERE agent_id = :a", {"a": seeded["agent_id"]}),
+        delete_companies_and_children(
+            db,
+            [seeded["a"], seeded["b"]],
             (
-                "DELETE FROM team_members WHERE team_id IN (:t2, :t3)",
-                {"t2": seeded["tier2_id"], "t3": seeded["tier3_id"]},
+                ("DELETE FROM agent_teams WHERE agent_id = :a", {"a": seeded["agent_id"]}),
+                (
+                    "DELETE FROM team_members WHERE team_id IN (:t2, :t3)",
+                    {"t2": seeded["tier2_id"], "t3": seeded["tier3_id"]},
+                ),
+                (
+                    "DELETE FROM teams WHERE id IN (:t2, :t3)",
+                    {"t2": seeded["tier2_id"], "t3": seeded["tier3_id"]},
+                ),
+                ("DELETE FROM access_agents WHERE id = :a", {"a": seeded["agent_id"]}),
+                ("DELETE FROM team_members WHERE user_id = :u", {"u": seeded["user_id"]}),
+                ("DELETE FROM users WHERE id = :u", {"u": seeded["user_id"]}),
+                (
+                    "DELETE FROM user_companies WHERE company_id IN (:ca, :cb)",
+                    {"ca": seeded["a"], "cb": seeded["b"]},
+                ),
+                ("DELETE FROM companies WHERE id IN (:ca, :cb)", {"ca": seeded["a"], "cb": seeded["b"]}),
             ),
-            ("DELETE FROM teams WHERE id IN (:t2, :t3)", {"t2": seeded["tier2_id"], "t3": seeded["tier3_id"]}),
-            ("DELETE FROM access_agents WHERE id = :a", {"a": seeded["agent_id"]}),
-            ("DELETE FROM team_members WHERE user_id = :u", {"u": seeded["user_id"]}),
-            ("DELETE FROM users WHERE id = :u", {"u": seeded["user_id"]}),
-            (
-                "DELETE FROM user_companies WHERE company_id IN (:ca, :cb)",
-                {"ca": seeded["a"], "cb": seeded["b"]},
-            ),
-            ("DELETE FROM companies WHERE id IN (:ca, :cb)", {"ca": seeded["a"], "cb": seeded["b"]}),
-        ):
-            db.execute(sa_text(sql), params)
-        db.commit()
+        )
 
 
 def test_tier_lookup_follows_the_named_company_not_the_active_one(db: Session, ladder):

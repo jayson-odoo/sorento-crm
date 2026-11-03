@@ -33,7 +33,7 @@ from app.services.chatbot.head.lookup_lists import Embedder, LookupRow, _fold, _
 
 SPAN_TYPES = (
     "brand", "customer", "salesperson", "location", "category", "spec_key", "spec_value",
-    "file_type", "promotion_kind", "sales_channel", "product_code",
+    "file_type", "promotion_kind", "sales_channel", "product_code", "supplier",
 )
 #: The list a span type prefers on a tie; every type but `spec_value` is its own list's name.
 TYPE_LIST = {t: t for t in SPAN_TYPES} | {"spec_value": "spec"}
@@ -49,6 +49,8 @@ FLOORS: dict[str, dict[str, float]] = {
     "location": {"spell": 0.5, "partial": 0.8, "meaning": 0.55},
     "salesperson": {"spell": 0.4, "partial": 0.8, "meaning": 0.6},
     "customer": {"spell": 0.5, "partial": 0.6, "meaning": 0.6},
+    # SUPPLIER-ASK: company names like the customer list; Customer's floors until measured for suppliers.
+    "supplier": {"spell": 0.5, "partial": 0.6, "meaning": 0.6},
     "sales_channel": {"spell": 0.5, "partial": 0.8, "meaning": 0.55},
     "spec_key": {"spell": 0.5, "partial": 0.8, "meaning": 0.6},
 }
@@ -60,6 +62,10 @@ MEANING_FLOORS_BY_MODEL: dict[str, dict[str, float]] = {
     "gemini-embedding-001": {
         "category": 0.70, "spec": 0.75, "file_type": 0.65, "brand": 0.60, "promotion_kind": 0.75,
         "location": 0.65, "salesperson": 0.70, "customer": 0.75, "sales_channel": 0.65, "spec_key": 0.75,
+        # SUPPLIER-ASK: measured on the dev copy (crew, 1 Nov 2026, scripts/measure_supplier_span_floor.py, all 1,502
+        # supplier texts): the owner's "太阳" scores 0.665-0.669 and "tai yang" 0.696-0.699 on the three TAIYANG
+        # suppliers; the closest real negative ("water closet") 0.628. At 0.75 every TAIYANG name phrase missed.
+        "supplier": 0.65,
     },
 }
 _OPENAI_MODEL = "text-embedding-3-small"
@@ -358,17 +364,48 @@ def resolve(spans: Sequence[Span], rows: Sequence[LookupRow], *, embed: Embedder
     return [by_meaning[i] if i in by_meaning else by_text[i] for i in range(len(spans))]
 
 
+def text_readings(spans: Sequence[Span], resolutions: Sequence[Resolution], rows: Sequence[LookupRow], *,
+                  embed: Embedder | None = None) -> list[Resolution]:
+    """SUPPLIER-ASK fix round 5 (crew sweep: 太阳 typed brand, meaning "Sun", placed on Sun* rows and never on the
+    TAIYANG suppliers its own text scores): a span placed by its `meaning` also has its own text resolved, so both
+    readings reach the candidate blocks and the parser sees both. Only the text readings that place something are
+    returned (their span carries no meaning)."""
+    asked = [Span(s.text, s.type) for s, r in zip(spans, resolutions) if r.matched_by == "meaning"]
+    if not asked:
+        return []
+    return [r for r in _resolve_texts(asked, rows, embed) if r.status in ("resolved", "ambiguous")]
+
+
+def _supplier_codes(rows: Sequence[LookupRow]) -> dict[str, LookupRow]:
+    """Folded supplier code -> its row (the row's own `code` text, `LookupRow.homes`)."""
+    out: dict[str, LookupRow] = {}
+    for row in rows:
+        if row.list_name != "supplier":
+            continue
+        for text, home in zip(row.texts or (), row.homes or ()):
+            if home == "code" and _fold(text):
+                out.setdefault(_fold(text), row)
+    return out
+
+
 def _resolve_texts(spans: Sequence[Span], rows: Sequence[LookupRow], embed: Embedder | None) -> list[Resolution]:
     """One `Resolution` per span by its text. Never raises on an embedder failure (spelling and partial
-    names still resolve); a `product_code` span is `skipped` and a span naming nothing is `unresolved`."""
+    names still resolve); a `product_code` span is `skipped` (unless it is exactly a supplier's own code, fix round
+    5) and a span naming nothing is `unresolved`."""
     indexes = _prepare(rows) if rows else {}
+    supplier_codes = _supplier_codes(rows) if any(s.type == "product_code" for s in spans) else {}
     live = [s.text for s in spans if s.type != "product_code" and _fold(s.text) and s.text]
     meaning = _meaning_scores(list(dict.fromkeys(live)), indexes, embed)
     out: list[Resolution] = []
     for span in spans:
         folded = _fold(span.text)
         if span.type == "product_code":
-            out.append(Resolution(span, "skipped"))
+            # SUPPLIER-ASK fix round 5 (crew sweep 'code-direct', "outstanding PO for 400-X008"): a code is the
+            # resolver's, except one that IS a supplier record's own code, which only the Supplier list holds.
+            code_row = supplier_codes.get(folded) if folded else None
+            out.append(
+                Resolution(span, "resolved", (Candidate(code_row, 1.0, "exact"),)) if code_row else Resolution(span, "skipped")
+            )
             continue
         if not folded or not indexes:
             out.append(Resolution(span, "unresolved"))

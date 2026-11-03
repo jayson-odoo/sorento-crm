@@ -5,7 +5,16 @@ import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { type ColumnDef, type ExpandedState } from '@tanstack/react-table';
-import { ChevronDown, ChevronRight, Link2, Printer, Settings2, Trash2 } from 'lucide-react';
+import {
+  CalendarClock,
+  ChevronDown,
+  ChevronRight,
+  Link2,
+  PackageCheck,
+  Printer,
+  Settings2,
+  Trash2,
+} from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,7 +30,9 @@ import {
 } from '@/components/ui/dialog';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -35,7 +46,8 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
 import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, todayMalaysiaYyyyMmDd } from '@/lib/helpers';
+import { dateAnswerProblem, dateAnswerText } from '@/lib/sample-request-tracking';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
   DELIVERY_MODE_LABELS,
@@ -50,7 +62,10 @@ import {
   useSampleRequestMutations,
   useSampleRequestQuery,
 } from '../hooks/useSampleRequests';
-import { downloadSampleRequestPdf } from '../services/sampleRequestService';
+import {
+  downloadSampleRequestPdf,
+  searchSampleRequestConsignments,
+} from '../services/sampleRequestService';
 
 const BASE_PATH = '/project-sales/sample-requests';
 
@@ -59,7 +74,8 @@ interface Move {
   label: string;
   /** Who may make it: `process` holders, or the request's owner too (`either`). */
   needs: 'process' | 'either';
-  ask?: 'date' | 'reason';
+  /** `answer`: Start processing carries the date answer (PS-SAMPLE-TRACKING rule 2). */
+  ask?: 'date' | 'reason' | 'answer';
   tone: 'emerald' | 'primary' | 'destructive';
 }
 
@@ -67,7 +83,13 @@ interface Move {
 const MOVES: Record<SampleRequestStatus, Move[]> = {
   draft: [{ to: 'cancelled', label: 'Cancel request', needs: 'either', tone: 'destructive' }],
   submitted: [
-    { to: 'processing', label: 'Change to processing', needs: 'process', tone: 'emerald' },
+    {
+      to: 'processing',
+      label: 'Change to processing',
+      needs: 'process',
+      ask: 'answer',
+      tone: 'emerald',
+    },
     { to: 'cancelled', label: 'Cancel request', needs: 'either', tone: 'destructive' },
   ],
   processing: [
@@ -98,6 +120,12 @@ const MOVE_CLASS: Record<Move['tone'], string> = {
   primary: '',
   destructive: 'border-destructive text-destructive hover:bg-destructive/10',
 };
+
+/** Where a consignment's delivered date came from (PS-SAMPLE-TRACKING, crew b). */
+const DELIVERED_SOURCE_LABELS = {
+  tracking: 'Order Tracking',
+  consignment: 'consignment date',
+} as const;
 
 const day = (value: string | null | undefined) => (value ? formatDateInMalaysia(value) : '');
 
@@ -179,6 +207,178 @@ function AskDialog({
   );
 }
 
+export interface DateAnswerValue {
+  date_feasible: boolean;
+  proposed_delivery_date?: string;
+  date_note?: string;
+}
+
+/**
+ * Can the sample team meet the requested date? Yes, or No with the date it can (rule 2). Used
+ * by Start processing and by "Change date answer".
+ */
+export function DateAnswerDialog({
+  title,
+  confirmLabel,
+  requested,
+  initial,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  confirmLabel: string;
+  requested: string | null;
+  initial?: Pick<Detail, 'date_feasible' | 'proposed_delivery_date' | 'date_note'>;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: (value: DateAnswerValue) => void;
+}) {
+  const [feasible, setFeasible] = useState<boolean | null>(initial?.date_feasible ?? null);
+  const [proposed, setProposed] = useState(initial?.proposed_delivery_date ?? '');
+  const [note, setNote] = useState(initial?.date_note ?? '');
+  const today = todayMalaysiaYyyyMmDd();
+  const problem = dateAnswerProblem(feasible, proposed, today);
+  const send = () => {
+    if (problem || feasible === null) return;
+    onConfirm({
+      date_feasible: feasible,
+      ...(feasible ? {} : { proposed_delivery_date: proposed }),
+      ...(note.trim() ? { date_note: note.trim() } : {}),
+    });
+  };
+  return (
+    <Dialog open onOpenChange={(next) => !next && onCancel()}>
+      <DialogContent className="w-full max-w-md">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription className="sr-only">Answer the requested delivery date.</DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-4">
+          <div className="space-y-2">
+            <p className="text-sm font-medium">
+              Can we deliver by {requested ? formatDateInMalaysia(requested) : 'the requested date'}? *
+            </p>
+            <RadioGroup
+              value={feasible === null ? '' : feasible ? 'yes' : 'no'}
+              onValueChange={(v) => setFeasible(v === 'yes')}
+              className="flex flex-col gap-3"
+            >
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="yes" id="sr-answer-yes" />
+                <Label htmlFor="sr-answer-yes" className="font-normal">
+                  Yes, we can meet it
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <RadioGroupItem value="no" id="sr-answer-no" />
+                <Label htmlFor="sr-answer-no" className="font-normal">
+                  No, propose a new date
+                </Label>
+              </div>
+            </RadioGroup>
+          </div>
+          {feasible === false && (
+            <div className="space-y-1.5">
+              <Label htmlFor="sr-answer-date">Proposed date *</Label>
+              <Input
+                id="sr-answer-date"
+                type="date"
+                min={today}
+                value={proposed}
+                onChange={(e) => setProposed(e.target.value)}
+              />
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label htmlFor="sr-answer-note">Note</Label>
+            <Textarea
+              id="sr-answer-note"
+              rows={2}
+              maxLength={255}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </div>
+          {feasible === false && proposed && problem && (
+            <p className="text-sm text-destructive">{problem}</p>
+          )}
+        </DialogBody>
+        <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={onCancel}>
+            Back
+          </Button>
+          <Button disabled={Boolean(problem) || busy} onClick={send}>
+            {confirmLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Stage 2: the sample team picks the AutoCount consignment that delivered the request. */
+export function ConsignmentDialog({
+  request,
+  busy,
+  onCancel,
+  onLink,
+}: {
+  request: Detail;
+  busy: boolean;
+  onCancel: () => void;
+  onLink: (consignmentOrderId: string) => void;
+}) {
+  const current = request.consignment;
+  const [picked, setPicked] = useState<SearchableSelectOption | null>(
+    current ? { value: current.id, label: current.so_number } : null,
+  );
+  const fetchOptions = async (q: string) =>
+    (await searchSampleRequestConsignments(request.id, q)).map((c) => ({
+      value: c.id,
+      label: c.so_number,
+      description: [c.debtor_code, c.debtor_name, c.order_date ? day(c.order_date) : null]
+        .filter(Boolean)
+        .join(' - '),
+    }));
+  return (
+    <Dialog open onOpenChange={(next) => !next && onCancel()}>
+      <DialogContent className="w-full max-w-md">
+        <DialogHeader>
+          <DialogTitle>Link consignment</DialogTitle>
+          <DialogDescription className="sr-only">
+            Choose the AutoCount consignment that delivered this request.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-1.5">
+          <Label htmlFor="sr-consignment-pick">Consignment *</Label>
+          <SearchableSelect
+            id="sr-consignment-pick"
+            value={picked?.value ?? ''}
+            selectedOption={picked ?? undefined}
+            onChange={() => undefined}
+            onOptionChange={setPicked}
+            fetchOptions={fetchOptions}
+            placeholder="Search CG number or debtor"
+            triggerClassName="w-full"
+          />
+        </DialogBody>
+        <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+          <Button variant="outline" onClick={onCancel}>
+            Back
+          </Button>
+          <Button
+            disabled={!picked || picked.value === current?.id || busy}
+            onClick={() => picked && onLink(picked.value)}
+          >
+            Link
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function InternalDialog({
   request,
   busy,
@@ -206,6 +406,8 @@ function InternalDialog({
             <Label htmlFor="sr-consignment">Consignment no</Label>
             <Input
               id="sr-consignment"
+              // A linked consignment owns the number (Link consignment changes it).
+              disabled={Boolean(request.consignment)}
               value={consignment}
               onChange={(e) => setConsignment(e.target.value)}
             />
@@ -253,7 +455,8 @@ export default function SampleRequestDetail({ requestId }: { requestId: string }
 function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
   const router = useRouter();
   const { data: request, isLoading, isError, error } = useSampleRequestQuery(requestId);
-  const { submit, move, saveInternal } = useSampleRequestMutations();
+  const { submit, move, saveInternal, answerDate, linkConsignment } =
+    useSampleRequestMutations();
   const canProcess = useHasPermission('projects.sample_requests.process');
   const canCreate = useHasPermission('projects.sample_requests.create');
   // The history endpoint answers only admins and `view` holders; a salesperson who holds
@@ -262,6 +465,8 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
   const userId = useEffectiveUserId();
   const [asking, setAsking] = useState<Move | null>(null);
   const [internalOpen, setInternalOpen] = useState(false);
+  const [answerOpen, setAnswerOpen] = useState(false);
+  const [consignmentOpen, setConsignmentOpen] = useState(false);
   const [expanded, setExpanded] = useState<ExpandedState>({});
 
   // Delete draft asks nothing (D7): a countdown takes the primary area, Cancel is the way back.
@@ -398,9 +603,12 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
   const ownerActs = isOwner && canCreate;
   const busy = move.isPending || submit.isPending;
   const allowed = (m: Move) => canProcess || (m.needs === 'either' && ownerActs);
-  const moves = MOVES[r.status].filter(allowed);
+  // Stage 2: a linked consignment is the delivery, so there is no Mark delivered by hand.
+  const moves = MOVES[r.status].filter(
+    (m) => allowed(m) && !(m.to === 'delivered' && r.consignment),
+  );
 
-  const run = async (m: Move, value?: string) => {
+  const run = async (m: Move, value?: string, answer?: DateAnswerValue) => {
     try {
       await move.mutateAsync({
         id: r.id,
@@ -408,6 +616,7 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
           to: m.to,
           ...(m.ask === 'date' && value ? { date: value } : {}),
           ...(m.ask === 'reason' && value ? { reason: value } : {}),
+          ...(m.ask === 'answer' && answer ? answer : {}),
         },
       });
       setAsking(null);
@@ -417,6 +626,11 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
   };
 
   const stamp = r.submitted_at ?? r.created_at;
+  const answerText = dateAnswerText(r, formatDateInMalaysia);
+  const canLink =
+    canProcess && ['processing', 'customer_confirmed', 'delivered'].includes(r.status);
+  const canAnswer =
+    canProcess && (r.status === 'processing' || r.status === 'customer_confirmed');
   const project = r.project_id
     ? [r.project_code, r.project_name].filter(Boolean).join(' - ')
     : r.project_name;
@@ -472,6 +686,18 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
                 <Link2 className="size-4" />
                 Copy link
               </DropdownMenuItem>
+              {canLink && (
+                <DropdownMenuItem onSelect={() => setConsignmentOpen(true)}>
+                  <PackageCheck className="size-4" />
+                  Link consignment
+                </DropdownMenuItem>
+              )}
+              {canAnswer && (
+                <DropdownMenuItem onSelect={() => setAnswerOpen(true)}>
+                  <CalendarClock className="size-4" />
+                  Change date answer
+                </DropdownMenuItem>
+              )}
               {canProcess && r.status !== 'cancelled' && (
                 <DropdownMenuItem onSelect={() => setInternalOpen(true)}>
                   <Settings2 className="size-4" />
@@ -552,6 +778,16 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
             <Field label="Request Delivery Date">
               {day(r.delivery_date)}
             </Field>
+            <div>
+              <p className="text-sm text-muted-foreground">Sample team</p>
+              <p className="flex flex-wrap items-center gap-2 font-medium">
+                {answerText ?? 'Not answered yet'}
+                {r.date_feasible === false && <Badge variant="warning">New date</Badge>}
+              </p>
+              {r.date_note && (
+                <p className="text-sm whitespace-pre-wrap text-muted-foreground">{r.date_note}</p>
+              )}
+            </div>
             <Field label="Delivery">
               {r.delivery_mode ? DELIVERY_MODE_LABELS[r.delivery_mode] : null}
             </Field>
@@ -574,16 +810,35 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
               {r.purpose}
             </Field>
             {r.confirmed_at && <Field label="Customer confirmed">{day(r.confirmed_at)}</Field>}
-            {r.delivered_at && <Field label="Delivered">{day(r.delivered_at)}</Field>}
+            {r.delivered_at && (
+              <Field label="Delivered">
+                {day(r.delivered_at)}
+                {/* The source is worked out live; name it only while it still gives the stored date. */}
+                {r.consignment?.delivered_source &&
+                r.consignment.delivered_on === r.delivered_at
+                  ? ` (${DELIVERED_SOURCE_LABELS[r.consignment.delivered_source]})`
+                  : ''}
+              </Field>
+            )}
             {r.return_due && <Field label="Return due">{day(r.return_due)}</Field>}
             {r.cancel_reason && (
               <Field label="Cancel reason" wide>
                 {r.cancel_reason}
               </Field>
             )}
-            <Field label="Consignment No (internal)" empty="Not set">
-              {r.consignment_no}
-            </Field>
+            <div>
+              <p className="text-sm text-muted-foreground">Consignment No</p>
+              <p className="flex flex-wrap items-center gap-2 font-medium">
+                {r.consignment
+                  ? [r.consignment.so_number, day(r.consignment.order_date)]
+                      .filter(Boolean)
+                      .join(' - ')
+                  : r.consignment_no || 'Not linked'}
+                {r.consignment?.status === 'cancelled' && (
+                  <Badge variant="destructive">Voided in AutoCount</Badge>
+                )}
+              </p>
+            </div>
             <Field label="PO No (internal)" empty="Not set">
               {r.po_no}
             </Field>
@@ -615,7 +870,43 @@ function StaffSampleRequestDetail({ requestId }: { requestId: string }) {
         <AuditTrail entityType="project_sample_requests" entityId={requestId} title="Audit Trail" />
       )}
 
-      {asking && (
+      {asking?.ask === 'answer' && (
+        <DateAnswerDialog
+          title={asking.label}
+          confirmLabel={asking.label}
+          requested={r.delivery_date ?? null}
+          busy={move.isPending}
+          onCancel={() => setAsking(null)}
+          onConfirm={(answer) => void run(asking, undefined, answer)}
+        />
+      )}
+      {consignmentOpen && (
+        <ConsignmentDialog
+          request={r}
+          busy={linkConsignment.isPending}
+          onCancel={() => setConsignmentOpen(false)}
+          onLink={(consignmentOrderId) =>
+            linkConsignment.mutate(
+              { id: r.id, consignmentOrderId },
+              { onSuccess: () => setConsignmentOpen(false) },
+            )
+          }
+        />
+      )}
+      {answerOpen && (
+        <DateAnswerDialog
+          title="Change date answer"
+          confirmLabel="Save"
+          requested={r.delivery_date ?? null}
+          initial={r}
+          busy={answerDate.isPending}
+          onCancel={() => setAnswerOpen(false)}
+          onConfirm={(body) =>
+            answerDate.mutate({ id: r.id, body }, { onSuccess: () => setAnswerOpen(false) })
+          }
+        />
+      )}
+      {asking && asking.ask !== 'answer' && (
         <AskDialog
           move={asking}
           busy={move.isPending}

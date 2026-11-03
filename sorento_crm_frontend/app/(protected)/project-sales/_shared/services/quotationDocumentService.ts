@@ -1,11 +1,8 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import type { CoverPageData } from '@/lib/quotation-cover';
-import type {
-  QuotationAmendmentDecision,
-  QuotationAmendmentRequest,
-  QuotationLineBulkItem,
-} from '../types/project.types';
+import type { QuotationFeedback, QuotationLineBulkItem } from '../types/project.types';
+import type { MatrixHeader } from '../lib/quotationMatrix';
 import type { StatusGraph } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 
 /**
@@ -39,14 +36,10 @@ import type { StatusGraph } from '@/app/(protected)/system-management/status-gra
  *   POST   /projects/{projectId}/quotation-documents/{id}/approve          -> QuotationDocument
  *   POST   /projects/{projectId}/quotation-documents/{id}/reject           -> QuotationDocument
  *
- * The customer's suggested changes (QUOTE-CUSTOMER-AMEND) add three:
+ * The customer's feedback (PS-QUOTE-MATRIX R19-R22, replacing Accept / Reject / Apply) adds two:
  *
- *   GET    /projects/{projectId}/quotation-documents/{id}/amendment-request
- *                                                                         -> QuotationAmendmentRequest | null
- *   PUT    /projects/{projectId}/quotation-documents/{id}/amendment-requests/{requestId}/rows/{rowId}
- *                                                                         -> QuotationAmendmentRequest
- *   POST   /projects/{projectId}/quotation-documents/{id}/amendment-requests/{requestId}/apply
- *                                                                         -> QuotationAmendmentApplied
+ *   GET    /projects/{projectId}/quotation-documents/{id}/feedback         -> QuotationFeedback
+ *   PATCH  /projects/{projectId}/quotation-documents/{id}/feedback/{rowId} -> 200 (body {handled})
  *
  * `/issue` gains one refusal: 422 `quotation_below_floor_pending_approval` when the document
  * carries a line priced below its floor and is not `approved`.
@@ -294,6 +287,8 @@ export type QuotationLetterTemplates = {
  */
 export type QuotationFormScopeBody = {
   id?: string;
+  /** PS-QUOTE-MATRIX: a NEW scope's column headers (no id), set before its lines. */
+  matrix_columns?: MatrixHeader[];
   scope_label?: string;
   series_id?: string | null;
   notes?: string | null;
@@ -680,55 +675,34 @@ export async function queueQuotationIssueXlsx(
   return response.json();
 }
 
-// ------------------------------------------------------- customer suggested changes
+// ------------------------------------------------------------------ customer feedback
 
-/** What Apply answers: the request, now applied, and the draft versions it opened. */
-export type QuotationAmendmentApplied = {
-  request: QuotationAmendmentRequest;
-  version_ids: string[];
-};
-
-/** The open (or latest) request on the document's latest issue, or null when nobody asked. */
-export async function getQuotationAmendmentRequest(
+/** Every feedback note the customer left on this document, newest request first. */
+export async function getQuotationFeedback(
   projectId: string,
   documentId: string,
-): Promise<QuotationAmendmentRequest | null> {
+): Promise<QuotationFeedback> {
   const response = await apiFetch(
-    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/amendment-request`,
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/feedback`,
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, "Failed to load the customer's suggestions"));
+    throw new Error(await extractApiError(response, "Failed to load the customer's feedback"));
   return response.json();
 }
 
-export async function decideQuotationAmendmentRow(
+/** Ticks (or unticks) one note as handled. The only action feedback has. */
+export async function setQuotationFeedbackHandled(
   projectId: string,
   documentId: string,
-  requestId: string,
   rowId: string,
-  body: { decision: QuotationAmendmentDecision; reason?: string | null },
-): Promise<QuotationAmendmentRequest> {
+  handled: boolean,
+): Promise<void> {
   const response = await apiFetch(
-    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/amendment-requests/${requestId}/rows/${rowId}`,
-    { method: 'PUT', body: JSON.stringify({ decision: body.decision, reason: body.reason ?? null }) },
+    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/feedback/${rowId}`,
+    { method: 'PATCH', body: JSON.stringify({ handled }) },
   );
   if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to save the decision'));
-  return response.json();
-}
-
-export async function applyQuotationAmendmentRequest(
-  projectId: string,
-  documentId: string,
-  requestId: string,
-): Promise<QuotationAmendmentApplied> {
-  const response = await apiFetch(
-    `${BASE}/projects/${projectId}/quotation-documents/${documentId}/amendment-requests/${requestId}/apply`,
-    { method: 'POST' },
-  );
-  if (!response.ok)
-    throw new Error(await extractApiError(response, 'Failed to apply the decisions'));
-  return response.json();
+    throw new Error(await extractApiError(response, 'Failed to save that'));
 }
 
 /**

@@ -97,6 +97,32 @@ class ReconcileResult:
         self.queued_kind_picks: list[list[dict[str, Any]]] = []
 
 
+def _is_row_id(value: Any) -> bool:
+    """A row id (a uuid), never a code or a printed label."""
+    import uuid
+
+    try:
+        return isinstance(value, str) and str(uuid.UUID(value)) == value.lower()
+    except ValueError:
+        return False
+
+
+def _option_rows(entity: dict[str, Any], kind: str, hint_kind: Any) -> list[str]:
+    """SUPPLIER-ASK fix round 6: the rows a "customer or supplier?" option binds, from the word itself: its own row id
+    for the kind it carries one for, and for `customer` the one customer the same word named on a both-sides read
+    (`party_customers`, `engine._both_side_words`). Several, or none: [] and the word is resolved again (asked)."""
+    if kind == "supplier":
+        rows = [r for r in (entity.get("party_suppliers") or []) if _is_row_id(r)]
+        if rows:
+            return rows  # every supplier the word named; several are then narrowed or asked by purchase_order
+    if kind == hint_kind and _is_row_id(entity.get("canonical_code")):
+        return [entity["canonical_code"]]
+    if kind == "customer":
+        rows = [r for r in (entity.get("party_customers") or []) if _is_row_id(r)]
+        return rows if len(rows) == 1 else []
+    return []
+
+
 def apply_reconciliation(
     entities: list[dict[str, Any]],
     resolved: dict[str, dict[str, int]] | None,
@@ -174,7 +200,11 @@ def apply_reconciliation(
                     "raw": raw,
                     "code": raw,
                     "uuid": None,
-                    "uuids": [],
+                    # SUPPLIER-ASK fix round 6: the option of the kind the word already carries a row id for
+                    # (a both-sides supplier word bound by id, `engine._both_side_words`) binds that row, so a
+                    # supplier pick never lists the PO book with no supplier; every other option is resolved again
+                    # from its word, as before (several customers under one word still ask which).
+                    "uuids": _option_rows(e, k, hint_kind),
                     "entity_type": k,
                     "payload": {"kind": k},
                 }

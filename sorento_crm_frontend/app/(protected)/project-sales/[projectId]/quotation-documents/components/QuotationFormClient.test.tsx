@@ -19,6 +19,7 @@ import {
   screen,
   waitFor,
   within,
+  cleanup,
 } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotationDocument } from '../../../_shared/services/quotationDocumentService';
@@ -66,6 +67,7 @@ const createQuotationDocument = vi.fn();
 const updateQuotationDocument = vi.fn();
 const getQuotationDocument = vi.fn();
 const getQuotationLetterTemplates = vi.fn();
+const getQuotationFeedback = vi.fn();
 vi.mock(
   '../../../_shared/services/quotationDocumentService',
   async (importOriginal) => {
@@ -83,6 +85,7 @@ vi.mock(
         getQuotationDocument(...args),
       getQuotationLetterTemplates: (...args: unknown[]) =>
         getQuotationLetterTemplates(...args),
+      getQuotationFeedback: (...args: unknown[]) => getQuotationFeedback(...args),
     };
   },
 );
@@ -1493,5 +1496,179 @@ describe('QuotationFormClient cover editor labels', () => {
     const intro = await screen.findByRole('textbox', { name: 'Intro text' });
     expect(intro).toHaveValue('<p>Dear {{attn_name}}</p>');
     expect(screen.getByRole('textbox', { name: 'Closing text' })).toBeInTheDocument();
+  });
+});
+
+describe('QuotationFormClient: open feedback on the revision-2 draft (PS-QUOTE-MATRIX fix round 2)', () => {
+  it('marks the draft line the v1 note names, while it is being edited', async () => {
+    listQuotationVersions.mockResolvedValue([
+      version({ id: 'v1', version_no: 1, is_current: false, is_editable: false, is_issued: true }),
+      version({ id: 'v2', version_no: 2, is_current: true, is_editable: true }),
+    ]);
+    listQuotationLines.mockImplementation(async (versionId: string) =>
+      versionId === 'v1'
+        ? [{ ...LINE, id: 'l1', version_id: 'v1' }]
+        : [{ ...LINE, id: 'l1-v2', version_id: 'v2' }],
+    );
+    getQuotationFeedback.mockResolvedValue({
+      open_count: 1,
+      requests: [
+        {
+          id: 'r1',
+          issue_label: 'Rev A',
+          submitted_at: null,
+          requester_name: null,
+          note: null,
+          rows: [
+            {
+              id: 'f1',
+              line_id: 'l1',
+              scope_id: 'q1',
+              scope_label: 'Townhouse',
+              line_description: 'Wall-hung WC',
+              cell_key: null,
+              cell_label: null,
+              kind: 'note',
+              value_from: null,
+              value_to: null,
+              model: null,
+              note: 'Check the WC',
+              handled_at: null,
+              handled_by_name: null,
+            },
+          ],
+        },
+      ],
+    });
+    renderForm('d1');
+    const card = await openLines('Townhouse');
+    await within(card).findByRole('textbox', { name: 'Qty on SRT-WC-01' });
+
+    expect(await screen.findByTestId('line-feedback-dot')).toBeInTheDocument();
+    expect(getQuotationFeedback).toHaveBeenCalledWith('p1', 'd1');
+  });
+});
+
+/**
+ * Owner, hand test (3 Nov): the create view must behave like the edit view. Rule of 28 Oct: create,
+ * edit and view of a form are identical and use the same component. So New proposal has the grid
+ * editor Edit proposal has, column headers included, and Save carries the new scope's columns.
+ */
+describe('QuotationFormClient: New and Edit proposal are one editor (PS-QUOTE-MATRIX)', () => {
+  /** What the open scope's grid offers: the controls and the header/footer it draws. */
+  function gridShape(card: HTMLElement) {
+    const table = within(card).getByRole('table');
+    return {
+      headerInputs: within(table)
+        .queryAllByRole('textbox')
+        .map((input) => input.getAttribute('aria-label'))
+        .filter((label) => label?.startsWith('Column header')),
+      columnHeaders: within(table)
+        .getAllByRole('columnheader')
+        .map((th) => (th.textContent ?? '').trim())
+        .filter(Boolean),
+      footer: (table.querySelector('tfoot')?.textContent ?? '').replace(/\s+/g, ' ').trim(),
+    };
+  }
+
+  it('offers + Column header on a new scope exactly as on a saved one', async () => {
+    renderForm();
+    const created = await openLines();
+    expect(within(created).getByRole('button', { name: 'Column header' })).toBeInTheDocument();
+    cleanup();
+
+    renderForm('d1');
+    const edited = await openLines('Townhouse');
+    expect(within(edited).getByRole('button', { name: 'Column header' })).toBeInTheDocument();
+  });
+
+  it('draws the same header and footer for a scope with columns, new or saved', async () => {
+    // Create: a new scope gets its first column header from the same control.
+    renderForm();
+    const created = await openLines();
+    await addLine(created, 1);
+    fireEvent.click(within(created).getByRole('button', { name: 'Column header' }));
+    await within(created).findByRole('textbox', { name: 'Column header Header 1' });
+    const createShape = gridShape(created);
+    cleanup();
+
+    // Edit: a saved scope whose version holds that same header.
+    listQuotationVersions.mockResolvedValue([
+      version({ matrix_columns: [{ key: 'h1', label: 'Header 1', cols: [] }] }),
+    ]);
+    listQuotationLines.mockResolvedValue([{ ...LINE, qty_cells: { h1: '10.00' } }]);
+    renderForm('d1');
+    const edited = await openLines('Townhouse');
+    await within(edited).findByRole('textbox', { name: 'Column header Header 1' });
+    const editShape = gridShape(edited);
+
+    expect(createShape.headerInputs).toEqual(['Column header Header 1']);
+    expect(createShape.headerInputs).toEqual(editShape.headerInputs);
+    expect(createShape.columnHeaders).toEqual(editShape.columnHeaders);
+    expect(createShape.columnHeaders).toContain('Total qty');
+    expect(createShape.columnHeaders).not.toContain('Qty');
+    expect(createShape.footer).toMatch(/Total qty.*Total \(RM\)/);
+    expect(editShape.footer).toMatch(/Total qty.*Total \(RM\)/);
+  });
+
+  it('Save on create sends the new scope\'s columns and each line\'s cells in the one request', async () => {
+    renderForm();
+    await nameScope(await openLines(), 'Townhouse');
+    const card = scopeCard('Townhouse');
+    await addLine(card, 1);
+    await pickProduct(card, 1);
+    fireEvent.click(within(card).getByRole('button', { name: 'Column header' }));
+    await within(card).findByRole('textbox', { name: 'Column header Header 1' });
+    fireEvent.change(within(card).getByRole('textbox', { name: /^Qty on SRT-BASIN-02, Header 1/ }), {
+      target: { value: '995' },
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    const [, body] = createQuotationDocument.mock.calls[0];
+    const [scope] = body.scopes;
+    expect(scope.matrix_columns).toEqual([{ key: expect.any(String), label: 'Header 1', cols: [] }]);
+    const key = scope.matrix_columns[0].key;
+    expect(scope.lines).toEqual([
+      expect.objectContaining({ product_id: 'p9', qty_cells: { [key]: '995' }, quantity: '995.00' }),
+    ]);
+  });
+});
+
+describe('QuotationFormClient round 4: Copy columns from on New proposal', () => {
+  it('a second unsaved section copies the first one\'s headers and columns (fresh keys, no quantities)', async () => {
+    renderForm();
+    await nameScope(await openLines(), 'UNIT');
+    const unit = scopeCard('UNIT');
+    await addLine(unit, 1);
+    await pickProduct(unit, 1);
+    fireEvent.click(within(unit).getByRole('button', { name: 'Column header' }));
+    await within(unit).findByRole('textbox', { name: 'Column header Header 1' });
+    fireEvent.click(within(unit).getByRole('button', { name: '+ Column' }));
+    await within(unit).findByRole('textbox', { name: 'Column Column 1' });
+    fireEvent.change(within(unit).getByRole('textbox', { name: /^Qty on SRT-BASIN-02, Header 1 \/ Column 1/ }), {
+      target: { value: '7' },
+    });
+
+    const second = await addScope('LEVEL 9');
+    const trigger = within(second).getByRole('button', { name: /Copy columns from/ });
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    const menu = await screen.findByRole('menu');
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'UNIT' }));
+
+    const card = scopeCard('LEVEL 9');
+    expect(await within(card).findByRole('textbox', { name: 'Column header Header 1' })).toBeInTheDocument();
+    expect(within(card).getByRole('textbox', { name: 'Column Column 1' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save proposal' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    const [, body] = createQuotationDocument.mock.calls[0];
+    const [first, copy] = body.scopes;
+    expect(copy.matrix_columns.map((h: { label: string }) => h.label)).toEqual(['Header 1']);
+    expect(copy.matrix_columns[0].cols.map((c: { label: string }) => c.label)).toEqual(['Column 1']);
+    // Fresh keys, never the source's; and no quantities come across.
+    expect(copy.matrix_columns[0].key).not.toBe(first.matrix_columns[0].key);
+    expect(copy.matrix_columns[0].cols[0].key).not.toBe(first.matrix_columns[0].cols[0].key);
+    expect(copy.lines).toEqual([]);
   });
 });
