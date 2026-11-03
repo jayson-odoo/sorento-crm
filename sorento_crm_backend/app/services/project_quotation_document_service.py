@@ -1843,7 +1843,9 @@ def _sign_remember(attachment_id: str, uri: Optional[str]) -> None:
     _SIGN_PICTURES[attachment_id] = (uri, deadline)
 
 
-def _save_thumbnails(made: Dict[str, str], db: Optional[Session] = None) -> None:
+def _save_thumbnails(
+    made: Dict[str, str], company_id: Optional[str], db: Optional[Session] = None
+) -> None:
     """Record thumbnails the sign page made, so the original is never read for them again.
 
     Through ``db`` when the caller still holds it, else a short session of its own: by now the
@@ -1858,7 +1860,9 @@ def _save_thumbnails(made: Dict[str, str], db: Optional[Session] = None) -> None
     own = db is None
     session = SessionLocal() if own else db
     try:
-        with company_scope(session, None):
+        # Pinned to the issue's company: the ids came from a read scoped to it.
+        scope = frozenset({company_id}) if company_id else None
+        with company_scope(session, scope):
             for attachment_id, url in made.items():
                 session.query(Attachment).filter(
                     Attachment.id == attachment_id, Attachment.thumbnail_path.is_(None)
@@ -1880,6 +1884,7 @@ def _sign_pictures(
     db: Session,
     wanted: List[str],
     release: Optional[Callable[[], None]],
+    company_id: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
     """Every picture the page inlines, as data URIs. A data URI rather than a link: the customer
     has no login, and a signed URL would carry the storage key into their browser.
@@ -1911,7 +1916,7 @@ def _sign_pictures(
             made[key] = thumb
         _sign_remember(key, uri)
         out[key] = uri
-    _save_thumbnails(made, None if release is not None else db)
+    _save_thumbnails(made, company_id, None if release is not None else db)
     return out
 
 
@@ -2112,7 +2117,8 @@ def serialize_sign_page(
         "sign_blocked_reason": blocked,
     }
     # Last, once every row has been read: the connection goes back before any picture work.
-    pictures = _sign_pictures(db, wanted, release)
+    company_id = str(document.company_id) if document is not None and document.company_id else None
+    pictures = _sign_pictures(db, wanted, release, company_id)
     for row, field, key in slots:
         row[field] = pictures.get(key)
     return page

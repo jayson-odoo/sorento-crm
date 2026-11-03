@@ -412,8 +412,13 @@ def _downscale(
     attachment_id: Any,
     box: int = PRINT_BOX,
     quality: int = JPEG_QUALITY,
+    upright: bool = False,
 ) -> Optional[RenderedImage]:
-    """Pillow's own JPEG re-encode of ``raw`` inside ``box`` px; ``None`` when it cannot be."""
+    """Pillow's own JPEG re-encode of ``raw`` inside ``box`` px; ``None`` when it cannot be.
+
+    ``upright`` applies the EXIF orientation first. The re-encode drops that tag, and a browser
+    honours it on the original, so a copy that stands in for an original must be turned upright.
+    """
     try:
         from PIL import Image
 
@@ -427,6 +432,10 @@ def _downscale(
                 )
                 return None
             opened.load()
+            if upright:
+                from PIL import ImageOps
+
+                opened = ImageOps.exif_transpose(opened) or opened
             # Flattened onto white rather than converted straight to RGB: a PNG with alpha comes
             # out of a naive convert with black behind it, and a product cut out on transparency
             # is exactly the kind of file that gets uploaded.
@@ -513,7 +522,7 @@ def render_source(source: PictureSource) -> Tuple[Optional[RenderedImage], Optio
         logger.warning("product image: cannot fetch %s", source.attachment_id, exc_info=True)
         return None, None
     made = store_thumbnail(backend, source.provider, source.original_key, raw, source.mime_type)
-    return _downscale(raw, source.attachment_id), made
+    return _downscale(raw, source.attachment_id, upright=True), made
 
 
 def data_uri(

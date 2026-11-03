@@ -409,3 +409,186 @@ def test_a_picture_with_no_thumbnail_reads_its_original_once_and_saves_a_thumbna
         qdocs.serialize_sign_page(db, issued)
         assert len(store.keys) == 2
         assert all(k in store.uploads for k in store.keys)  # the stored thumbnails, not originals
+
+
+# ------------------------------------------------------------------ review round 1
+
+
+def _rotated_jpeg(width=4000, height=3000) -> bytes:
+    """A landscape-stored JPEG tagged "rotate 90 CW" (EXIF 6): it displays as portrait."""
+    from PIL import Image
+
+    image = Image.new("RGB", (width, height), (200, 30, 30))
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", exif=exif.tobytes())
+    return buffer.getvalue()
+
+
+def test_a_made_thumbnail_is_upright_and_flattened_on_white():
+    from PIL import Image
+
+    from app.services.image_thumbnailer import generate_thumbnail
+
+    clear = Image.new("RGBA", (400, 400), (0, 0, 0, 0))
+    buffer = io.BytesIO()
+    clear.save(buffer, format="PNG")
+    with Image.open(io.BytesIO(generate_thumbnail(buffer.getvalue(), "image/png"))) as thumb:
+        assert thumb.getpixel((0, 0)) == (255, 255, 255)
+
+    with Image.open(io.BytesIO(generate_thumbnail(_rotated_jpeg(), "image/jpeg"))) as thumb:
+        assert thumb.height > thumb.width  # portrait, as the original displays
+
+
+def test_an_export_copy_of_a_phone_photo_stays_upright(monkeypatch):
+    from PIL import Image
+
+    from app.services import project_spec_sheet_service as spec
+    from app.services.storage_router import extract_key
+
+    with blank_session() as db:
+        c = _chain(db)
+        photo, drawing = _with_line_media(db, c)
+        _settings(db, c)
+        download = _download(db, c)
+        store = _Store(
+            {
+                extract_key(photo.file_path): _rotated_jpeg(),
+                extract_key(drawing.file_path): _photo_bytes(800, 600, seed=1),
+            }
+        )
+        monkeypatch.setattr(spec, "_storage", lambda provider=None: store)
+        monkeypatch.setattr(spec, "_default_provider", lambda: "s3")
+
+        manifest = spec.prepare_export_images(db, download)
+
+        with Image.open(io.BytesIO(store.uploads[manifest[photo.id]["key"]])) as im:
+            assert im.height > im.width
+            assert max(im.size) == spec.export_cap_px((338.7, 190.5))
+
+
+def test_the_export_worker_holds_no_db_connection_during_the_render(monkeypatch):
+    from app.services import project_spec_sheet_service as spec
+    from app.tasks import dealer_kit_export_tasks as tasks
+
+    events = []
+
+    class Session:
+        """A worker session stand-in that records whether it is open at render time."""
+
+        def __init__(self):
+            self.open = True
+
+        def query(self, *_a, **_k):
+            self.open = True
+            return self
+
+        def filter(self, *_a, **_k):
+            return self
+
+        def first(self):
+            return type("D", (), {"filename": "x.pdf", "id": "d1", "kind": spec.KIND})()
+
+        def close(self):
+            self.open = False
+            events.append("close")
+
+        info: dict = {}
+
+    session = Session()
+
+    class Downloads:
+        def __init__(self, _db):
+            pass
+
+        def mark_processing(self, _id):
+            pass
+
+        def mark_ready(self, *_a, **_k):
+            pass
+
+        def mark_failed(self, *_a, **_k):
+            events.append("failed")
+
+    def render(*_a, **_k):
+        events.append("render-open" if session.open else "render-closed")
+        return b"%PDF"
+
+    class Backend:
+        def upload_file(self, **_k):
+            return "k", "u"
+
+    monkeypatch.setattr(tasks, "SessionLocal", lambda: session)
+    monkeypatch.setattr(tasks, "DownloadService", Downloads)
+    monkeypatch.setattr(tasks, "_render_pdf", render)
+    monkeypatch.setattr(tasks, "get_backend", lambda _p: Backend())
+    monkeypatch.setattr(tasks, "default_provider", lambda: "s3")
+    monkeypatch.setattr(spec, "page_size_for_download", lambda db, d: (338.7, 190.5))
+    monkeypatch.setattr(spec, "prepare_export_images", lambda db, d: events.append("prep"))
+
+    result = tasks.generate_spec_sheet_pdf("d1")
+
+    assert result["status"] == "ready", result
+    assert events[:3] == ["prep", "close", "render-closed"]
+
+
+def test_a_thumbnail_made_after_release_is_saved_through_its_own_session_pinned_to_the_company(
+    monkeypatch,
+):
+    import app.database as database
+    from app.models.base import _SCOPE_KEY
+    from app.models.resources import Attachment
+    from app.services import product_image_service as images
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import storage_router
+
+    class Store(_FakeBackend):
+        def upload_file(self, file_content, file_path, content_type=None, **_kw):
+            return file_path, file_path
+
+    with blank_session() as db:
+        issued = _sign_issue(db, monkeypatch, photos=1, thumbnails=False)
+        monkeypatch.setattr(images, "get_backend", lambda provider: Store(_photo_bytes(600, 600)))
+        monkeypatch.setattr(
+            storage_router, "cdn_base_url", lambda provider, key: f"https://cdn.zzt.test/{key}"
+        )
+        scopes = []
+
+        class Own:
+            """The test session behind the service's own SessionLocal()."""
+
+            info = db.info
+
+            def query(self, *a, **k):
+                scopes.append(db.info.get(_SCOPE_KEY))
+                return db.query(*a, **k)
+
+            def commit(self):
+                db.flush()
+
+            def rollback(self):
+                pass
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(database, "SessionLocal", lambda: Own())
+        from app.models.projects import ProjectQuotationDocument
+
+        company_id = (
+            db.query(ProjectQuotationDocument)
+            .filter(ProjectQuotationDocument.id == issued.document_id)
+            .one()
+            .company_id
+        )
+
+        qdocs.serialize_sign_page(db, issued, release=lambda: None)
+
+        assert scopes and all(s == frozenset({str(company_id)}) for s in scopes)
+        saved = (
+            db.query(Attachment)
+            .filter(Attachment.original_filename.like("%zzt%"), Attachment.thumbnail_path.isnot(None))
+            .count()
+        )
+        assert saved == 2

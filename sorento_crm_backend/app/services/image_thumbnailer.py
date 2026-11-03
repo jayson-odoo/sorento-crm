@@ -65,12 +65,20 @@ def generate_thumbnail(
         return None
 
     try:
-        from PIL import Image
+        from PIL import Image, ImageOps
 
-        with Image.open(io.BytesIO(content)) as im:
-            # Flatten alpha / palette / CMYK onto white so the JPEG is valid and
-            # WhatsApp-safe, matching the RGB normalization done on upload.
-            if im.mode not in ("RGB", "L"):
+        with Image.open(io.BytesIO(content)) as opened:
+            # Upright first: a JPEG re-encode drops the EXIF orientation a browser honours on
+            # the original, so a phone photo's thumbnail came out on its side.
+            im = ImageOps.exif_transpose(opened) or opened
+            # Flatten alpha / palette onto WHITE (a plain convert puts black behind a cut-out
+            # product), CMYK straight to RGB, so the JPEG is valid and WhatsApp-safe.
+            if im.mode in ("RGBA", "LA", "P", "PA"):
+                rgba = im.convert("RGBA")
+                canvas = Image.new("RGB", rgba.size, (255, 255, 255))
+                canvas.paste(rgba, mask=rgba.split()[-1])
+                im = canvas
+            elif im.mode not in ("RGB", "L"):
                 im = im.convert("RGB")
             im.thumbnail((max_edge, max_edge), Image.LANCZOS)
             out = io.BytesIO()

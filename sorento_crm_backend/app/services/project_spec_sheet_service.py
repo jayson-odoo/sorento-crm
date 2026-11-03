@@ -706,7 +706,7 @@ def prepare_export_images(db: Session, download) -> Dict[str, dict]:
             if max(size) <= cap:
                 manifest[attachment_id] = {"key": file_path, "provider": normalize_provider(provider)}
                 continue
-            rendered = images._downscale(raw, attachment_id, box=cap, quality=85)
+            rendered = images._downscale(raw, attachment_id, box=cap, quality=85, upright=True)
             del raw
             if rendered is None:
                 continue
