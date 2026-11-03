@@ -72,7 +72,6 @@ import {
 import {
   annotationsByCell,
   annotationsByLine,
-  lineKeyOf,
   preMarkedKeys,
   uncoverChangedLines,
 } from '../../_shared/lib/boardChangeAnnotations';
@@ -146,7 +145,6 @@ import {
   emailWordsFor,
   newerServerDraftKeys,
   queuedPerKey,
-  suggestionMovedOf,
 } from '../../_shared/lib/confirmPreviewFresh';
 import { VERB_LABEL } from '../../_shared/components/OrderInquiryVerbPill';
 import { LineSplitOpenerContext, type LineSplitOpener } from './lineSplitOpener';
@@ -2392,15 +2390,6 @@ export function FulfilmentBoardPanel({
               ownRemark: facts.own,
               remarkEditable: facts.editable,
               isMockup: Boolean(line.is_mockup),
-              // CONFIRM-PREVIEW-STALE: the saved decision is not what AutoCount now suggests.
-              moved: suggestionMovedOf(
-                line,
-                draftWithoutPreMark[line.key],
-                (line.project_line_id
-                  ? changeAnnotationsByLine.get(line.project_line_id)
-                  : undefined) ??
-                  changeAnnotationsByLine.get(lineKeyOf(line.so_number, line.line_no)),
-              ),
             };
           }),
         },
@@ -2415,7 +2404,6 @@ export function FulfilmentBoardPanel({
     batchNamedKeys,
     remarkFactsOf,
     guideAdopted,
-    changeAnnotationsByLine,
     guideEmail,
   ]);
   const unplannedGuideOrders = React.useMemo(
@@ -2432,7 +2420,7 @@ export function FulfilmentBoardPanel({
   /**
    * CONFIRM-PREVIEW-STALE round 2 (crew browser pass, 2 Nov 2026): a re-read that FAILED (a
    * timeout on a slow board) leaves the guide on the tab's older decisions, so the guide
-   * writes nothing from it: Next, Keep and Take suggestion wait behind a Retry.
+   * writes nothing from it: Next and Confirm wait behind a Retry.
    */
   const [guideRefreshFailed, setGuideRefreshFailed] = React.useState(false);
   const refreshGuide = React.useCallback(() => {
@@ -4000,8 +3988,6 @@ export function FulfilmentBoardPanel({
           wordsLoading={guideEmail.status === 'loading'}
           refreshFailed={guideRefreshFailed || guideEmail.status === 'failed'}
           onRetryRefresh={refreshGuide}
-          // The board is read again after it, so the email words follow (one dry run per read).
-          onTakeSuggestion={(key) => decide(key, null).finally(() => void rawBoard.refetch())}
           onPageChange={setGuidePagePso}
           prepareErrors={guidePrep.errors}
           onRetryPrepare={() => prepareGuide(unplannedGuideOrders)}

@@ -518,10 +518,9 @@ describe('AC-B13: Undo on a pre-marked line returns to "Change proposed", not "S
     getPlanningChangeBatch.mockResolvedValue(NAMED_BATCH);
   });
 
-  // CONFIRM-PREVIEW-STALE round 2 (crew browser pass: "Take suggestion from that stale view
-  // DELETED the other tab's newer decision"). Take suggestion is `decide(key, null)`, the same
-  // path as this Undo on a line the batch names.
-  it('Undo (and Take suggestion) says which draft it stands on: the saved_at of this tab\'s own save', async () => {
+  // CONFIRM-PREVIEW-STALE round 2: an Undo from a stale view must not delete another tab's
+  // newer decision, so it says which draft it stands on.
+  it('Undo says which draft it stands on: the saved_at of this tab\'s own save', async () => {
     getPlanningBoard.mockResolvedValue(
       buildBoard([namedDemand()], { today: TODAY, freeStock: {}, granularity: 'week' }),
     );
