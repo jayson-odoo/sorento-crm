@@ -98,29 +98,35 @@ def line_date_sql(row_table: Any = OrderInquiryRow):
     return func.coalesce(line, row_table.delivery_date)
 
 
+def line_dates(db: Session, line_ids: Iterable[Any]) -> Dict[str, Optional[date]]:
+    """`{str(mirror line id): the line's own date}` (core first, then mirror; None when
+    undated), one batched read."""
+    wanted = {str(i) for i in line_ids if i}
+    if not wanted:
+        return {}
+    query = (
+        db.query(
+            ProjectSalesOrderLine.id,
+            SalesOrderLine.required_date,
+            ProjectSalesOrderLine.delivery_date,
+        )
+        .outerjoin(
+            SalesOrderLine,
+            SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+        )
+        .filter(ProjectSalesOrderLine.id.in_(wanted))
+    )
+    return {
+        str(line_id): pick(core_date, mirror_date)
+        for line_id, core_date, mirror_date in query.all()
+    }
+
+
 def resolve(db: Session, rows: Iterable[Any]) -> Dict[str, OiDate]:
     """`{str(row.id): OiDate}` for `rows` (anything with id, so_line_id, delivery_date and
     previous_delivery_date), one batched read for all of them."""
     rows = list(rows)
-    line_ids = {str(r.so_line_id) for r in rows if getattr(r, "so_line_id", None)}
-    found: Dict[str, Optional[date]] = {}  # line id -> the line's own date, None if undated
-    if line_ids:
-        query = (
-            db.query(
-                ProjectSalesOrderLine.id,
-                SalesOrderLine.required_date,
-                ProjectSalesOrderLine.delivery_date,
-            )
-            .outerjoin(
-                SalesOrderLine,
-                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
-            )
-            .filter(ProjectSalesOrderLine.id.in_(line_ids))
-        )
-        found = {
-            str(line_id): pick(core_date, mirror_date)
-            for line_id, core_date, mirror_date in query.all()
-        }
+    found = line_dates(db, (getattr(r, "so_line_id", None) for r in rows))
     out: Dict[str, OiDate] = {}
     for r in rows:
         told = r.delivery_date

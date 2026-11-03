@@ -120,6 +120,7 @@ from app.models.projects import (
 from app.services.error_handler import AppException
 from app.services.oi_delivery_date import (
     line_date_sql as oi_line_date_sql,
+    line_dates,
     resolve as resolve_oi_date,
 )
 from app.services.oi_auto_confirm_backfill import (
@@ -8648,6 +8649,10 @@ class ProjectOrderInquiryService:
         from app.services.project_line_split_service import SplitOutputs
 
         splits = SplitOutputs(self.db, [str(i) for i in line_ids if i])
+        # AC-D2: the SO line date of the line each part sits on, one read for all parts.
+        sits_dates = line_dates(
+            self.db, [v.sits_on for views in splits.by_origin.values() for v in views]
+        )
         return {
             line_id: [
                 {
@@ -8662,6 +8667,11 @@ class ProjectOrderInquiryService:
                     "change": view.word,
                     "sits_on_line_id": view.sits_on,
                     "sits_on_line_no": splits.line_nos.get(view.sits_on) if view.sits_on else None,
+                    "sits_on_line_date": (
+                        sits_dates[str(view.sits_on)].isoformat()
+                        if view.sits_on and sits_dates.get(str(view.sits_on))
+                        else None
+                    ),
                     "remark": view.split.remark or "",
                 }
                 for view in views
