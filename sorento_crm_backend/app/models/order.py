@@ -853,6 +853,8 @@ class SalesOrderLine(Base, CompanyScopedMixin):
         Index("ix_sales_order_lines_product_id", "product_id"),
         Index("ix_sales_order_lines_warehouse_id", "warehouse_id"),
         Index("ix_sales_order_lines_product_warehouse_status", "product_id", "warehouse_id", "line_status"),
+        # CONFIRM-DIALOG-SPEED PR 2: `_oi_placements` reads lines by source_ref (cdsp_0001).
+        Index("ix_sales_order_lines_source_ref", "source_ref"),
     )
 
 

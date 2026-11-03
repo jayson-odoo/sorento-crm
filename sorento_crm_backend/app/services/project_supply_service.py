@@ -3406,15 +3406,28 @@ class ProjectSupplyService:
         """The raw rows behind `_oi_linked_landed_by_ref`: `(line source_ref, product,
         company, spo_number, placed, received)` for every live order-inquiry SPO placement
         on a line holding one of `refs`. The SPO row must be for the line's own product and
-        company (the same AC-6 pairing the SPO receipt join states in its JOIN)."""
+        company (the same AC-6 pairing the SPO receipt join states in its JOIN).
+
+        CONFIRM-DIALOG-SPEED (prod clone, 3 Nov 2026): two reads, never one join. As one
+        statement the planner expected 42 rows for 1,331 refs, got 1,331, and nested-looped
+        over the 1.45M-row `spo_allocations` table: ~2 s warm per call, up to 6.5 s per board
+        read. It now starts from the lines' own placements (the SO lines, their order-inquiry
+        rows and links) and then reads only the SPO rows those links name, by primary key.
+        The pairing below is the old JOIN's: same product and same company, where NULL equals
+        nothing, as in SQL. `tests/scm/test_oi_placements_equivalence.py` keeps the old
+        statement as its oracle.
+        """
+        refs = list(refs)
+        product_ids = list(product_ids)
+        if not refs or not product_ids:
+            return []
         query = (
             self.db.query(
                 SalesOrderLine.source_ref,
                 SalesOrderLine.product_id,
                 SalesOrderLine.company_id,
-                SPOAllocation.spo_number,
                 OrderInquiryLink.qty,
-                SPOAllocation.quantity_received,
+                OrderInquiryLink.spo_allocation_id,
             )
             .join(
                 ProjectSalesOrderLine,
@@ -3422,21 +3435,46 @@ class ProjectSupplyService:
             )
             .join(OrderInquiryRow, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
             .join(OrderInquiryLink, OrderInquiryLink.row_id == OrderInquiryRow.id)
-            .join(
-                SPOAllocation,
-                (SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
-                & (SPOAllocation.product_id == SalesOrderLine.product_id)
-                & (SPOAllocation.company_id == SalesOrderLine.company_id),
-            )
             .filter(
-                SalesOrderLine.source_ref.in_(list(refs)),
-                SalesOrderLine.product_id.in_(list(product_ids)),
+                SalesOrderLine.source_ref.in_(refs),
+                SalesOrderLine.product_id.in_(product_ids),
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
+                OrderInquiryLink.spo_allocation_id.isnot(None),
             )
         )
         if company_id is not None:
             query = query.filter(SalesOrderLine.company_id == company_id)
-        return query.all()
+        placements = query.all()
+        if not placements:
+            return []
+        spo_ids = sorted({str(row.spo_allocation_id) for row in placements})
+        spo_rows: Dict[str, Any] = {}
+        for start in range(0, len(spo_ids), _REF_CHUNK):
+            for spo in (
+                self.db.query(
+                    SPOAllocation.id,
+                    SPOAllocation.product_id,
+                    SPOAllocation.company_id,
+                    SPOAllocation.spo_number,
+                    SPOAllocation.quantity_received,
+                )
+                .filter(SPOAllocation.id.in_(spo_ids[start:start + _REF_CHUNK]))
+                .all()
+            ):
+                spo_rows[str(spo.id)] = spo
+        out: List[Any] = []
+        for ref, product_id, line_company, placed, spo_id in placements:
+            spo = spo_rows.get(str(spo_id))
+            if spo is None or product_id is None or line_company is None:
+                continue
+            if spo.product_id is None or str(spo.product_id) != str(product_id):
+                continue
+            if spo.company_id is None or str(spo.company_id) != str(line_company):
+                continue
+            out.append(
+                (ref, product_id, line_company, spo.spo_number, placed, spo.quantity_received)
+            )
+        return out
 
     def _prefetch_own_arrival(
         self, entries: Sequence[Tuple[Any, _LineFacts, Any]]

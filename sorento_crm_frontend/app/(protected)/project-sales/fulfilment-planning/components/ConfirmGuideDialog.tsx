@@ -110,6 +110,7 @@ export function ConfirmGuideDialog({
   wordsLoading = false,
   wordsFailed = false,
   wordsPendingPsoIds,
+  refusedByPso,
   onRetryWords,
   onPageSaved,
   onRetryRefresh,
@@ -164,6 +165,11 @@ export function ConfirmGuideDialog({
    * landed yet. Their REMARK cells print "Preparing email preview...", never board words.
    */
   wordsPendingPsoIds?: ReadonlySet<string>;
+  /**
+   * PR 2 (owner rule "email = preview"): per page (pso id), why the press would refuse the
+   * order, from its own dry run. The page says so and Confirm is held.
+   */
+  refusedByPso?: ReadonlyMap<string, string>;
   onRetryWords?: () => void;
   /** CONFIRM-DIALOG-SPEED review B1: a page's Save landed, so the email preview is read again. */
   onPageSaved?: () => void;
@@ -328,8 +334,10 @@ export function ConfirmGuideDialog({
       setStep({ kind: 'review', index: pages.length - 1 });
     }
   };
+  const anyRefused = Boolean(refusedByPso && refusedByPso.size > 0);
+  const pageRefusal = page?.psoId ? refusedByPso?.get(page.psoId) ?? null : null;
   const pressConfirm = async () => {
-    if (posting || refreshing || stale || wordsLoading || wordsFailed) return;
+    if (posting || refreshing || stale || wordsLoading || wordsFailed || anyRefused) return;
     setPosting(true);
     if (await runConfirm(new Map(pages.map((entry) => [entry.salesOrderId, remarkOf(entry)])))) {
       onClose();
@@ -445,6 +453,15 @@ export function ConfirmGuideDialog({
                   ) : null}
                 </InputWrapper>
               </div>
+              {pageRefusal !== null ? (
+                <div
+                  data-testid="confirm-guide-dry-run-refused"
+                  role="alert"
+                  className="rounded-md bg-destructive/5 px-3 py-2 text-sm break-words text-destructive"
+                >
+                  {pageRefusal}
+                </div>
+              ) : null}
               {prepareFailed ? (
                 <div
                   data-testid="confirm-guide-prepare-error"
@@ -651,7 +668,7 @@ export function ConfirmGuideDialog({
             <Button
               type="button"
               data-testid="confirm-guide-confirm"
-              disabled={posting || refreshing || stale || wordsLoading || wordsFailed}
+              disabled={posting || refreshing || stale || wordsLoading || wordsFailed || anyRefused}
               onClick={() => void pressConfirm()}
             >
               {pages.length > 0 ? `Confirm ${plural(pages.length, 'order')}` : applyLabel}
