@@ -139,7 +139,7 @@ def test_d4_a_held_grouped_customer_carries_through_breakdown_and_top_n(rbot, ob
     assert got == want, f"setup: the object path differs from the typed-word path: typed {want}, object {got}"
     _not_a_strict_subset(got, ids, "setup")
     if got[0] == "asked":  # the typed path asks which one: pick the group
-        text, calls = rbot.say(_pick_one(), "1")
+        text, calls = rbot.say(_pick_one(_group_position(got[1])), "1")
         got = _outcome(text, calls)
     assert got[0] == "ran", f"setup: no run for the held ask: {got}"
     held = set(got[1])
@@ -175,9 +175,19 @@ def _answer_basis(flag_on: bool) -> dict[str, Any]:
     return _v("sales_report", ra, basis="invoiced", sales_basis="invoiced", entity_op="reuse", continuation=True, **extra)
 
 
-def _pick_one() -> dict[str, Any]:
+def _pick_one(position: int = 1) -> dict[str, Any]:
     return _v("sales_report", None, message_type="answer", intent_hint=None, domain_hint=None, entities=[],
-              reference_positions=[1], open_question_answer=_pick_of(1), date_filter_start=None, date_filter_end=None, basis=None)
+              reference_positions=[position], open_question_answer=_pick_of(position), date_filter_start=None,
+              date_filter_end=None, basis=None)
+
+
+def _group_position(text: str) -> int:
+    """The roster option for the group, found by its label (the group's name), never by position."""
+    for ln in text.splitlines():
+        head, _, label = ln.partition(". ")
+        if head.isdigit() and label.strip() == BASE:
+            return int(head)
+    raise AssertionError(f"no option labelled {BASE!r} in {text!r}")
 
 
 def _which_one_open(b, flag_on: bool) -> str:
@@ -198,7 +208,7 @@ def test_d6_another_slots_answer_while_the_which_one_is_open_keeps_the_slot_and_
     text, calls = b.say(_answer_basis(flag_on), "invoiced")
     assert not _ran(calls), f"R3: 'invoiced' ran the report with no customer: {_ran(calls)[0] if _ran(calls) else ''}"
     assert text.strip() == first.strip(), f"R3: want the same which-one question again, got {text!r}"
-    text, calls = b.say(_pick_one(), "1")
+    text, calls = b.say(_pick_one(_group_position(first)), "1")
     ran = _ran(calls)
     assert ran, f"R3: the pick did not run; the bot said {text.strip()!r}"
     args = ran[0]
@@ -212,7 +222,7 @@ def test_d6_control_a_pick_right_away_runs_the_group(request, flag_on) -> None:
     ids, _bath = _seed(b)
     text, calls = b.say(_ask([WORD], _ent(WORD, "customer"), flag_on=flag_on), "dealer zzdealer oct sale invoiced")
     assert not _ran(calls), f"setup: want the which-one, got a run: {calls}"
-    text, calls = b.say(_pick_one(), "1")
+    text, calls = b.say(_pick_one(_group_position(text)), "1")
     ran = _ran(calls)
     assert ran and _is_the_group(ran[0].get("customer_ids"), ids), f"control: {ran or text!r}"
 
@@ -267,14 +277,16 @@ def test_d7_a_customer_whose_code_equals_the_typed_word_runs_every_ledger_of_its
     assert got == {one, two}, f"d7: want both ledgers of the group {sorted({one, two})}, got {sorted(got)}"
 
 
-def test_d7c_guard_a_dealer_linked_to_one_ledger_never_sees_the_other(bot) -> None:
-    """Guard: a dealer contact linked to [A/C I] only -> the run never includes [A/C II] (dealer links win over the group)."""
+def test_d7c_guard_a_dealer_linked_to_one_ledger_never_sees_the_other(console) -> None:
+    """Guard: a real DEALER contact (customer-scoped, linked to [A/C I] only) never gets [A/C II] (links win over the group)."""
     from sqlalchemy import text as _sql
 
     from tests.chatbot.test_engine import CONTACT_ID
+    from tests.chatbot.test_report_unify_routing import Routing
 
-    one, two = _seed_fs(bot)
-    db = bot.console.session_factory()
+    b = Routing(console)
+    one, two = _seed_fs(b)
+    db = console.session_factory()
     try:
         db.execute(
             _sql(
@@ -286,6 +298,8 @@ def test_d7c_guard_a_dealer_linked_to_one_ledger_never_sees_the_other(bot) -> No
         db.commit()
     finally:
         db.close()
-    text, calls = bot.say(_fs_ask(FS, False), "zzt fs oct sale invoiced")
-    for _name, args in calls:
-        assert two not in (args.get("customer_ids") or []), f"d7c: the unlinked ledger ran for a dealer: {args.get('customer_ids')}"
+    text, calls = b.say(_fs_ask(FS, False), "zzt fs oct sale invoiced")
+    ran = _ran(calls)
+    assert ran, f"d7c: the dealer's ask did not run; the bot said {text.strip()!r}"
+    assert ran[0].get("customer_ids") == [one], f"d7c: want only the linked ledger {one}, got {ran[0].get('customer_ids')}"
+    assert two not in (ran[0].get("customer_ids") or []), f"d7c: the unlinked ledger ran for a dealer: {ran[0].get('customer_ids')}"
