@@ -1,8 +1,9 @@
 # PLAN: CONFIRM-DIALOG-SPEED
 
-Status: in review, PR 1 #2128. Track: standard (the diff passes ~300 lines, mostly tests; no
-migration, no auth/RBAC change). PR 2 (`_oi_placements` and the confirm-all hot spots crew profiles) follows from main
-after PR 1 merges. UAC: `confirm-dialog-speed-3nov-acceptance-criteria.md`.
+Status: PR 1 #2128 merged (81d653330b). PR 2 #2141 in progress (draft): `_oi_placements` rewrite
++ `source_ref` index (cdsp_0001) built; email-line and refusal gaps from crew's pass in progress;
+stock-debt "build once" measured unsafe (equivalence tests changed answers), proposed as its
+own planned lane. Track: standard (migration). UAC: `confirm-dialog-speed-3nov-acceptance-criteria.md`.
 
 Owner report (3 Nov 13:15): Fulfilment Planning -> Confirm SO423361 sits on the Review split
 skeleton for a very long time on prod. Prod request log (3 Nov 12:50-13:32 MYT): POST
@@ -40,7 +41,16 @@ makes the read itself faster instead.
 `_oi_placements` starts from the SO lines' own order-inquiry placements and reads only the SPO
 rows those name, by id, instead of one join the planner nested-looped over 1.45M
 `spo_allocations` rows. Results identical: an equivalence test keeps the old statement as the
-oracle. Stock-debt assignments are built once per request for every product it needs (board:
-one shared service across `_suggest_live_for_covered`; confirm-all: all products gathered up
-front), with a multi-order equivalence test so a later order still sees what an earlier one held
-(plan rule R21).
+oracle. `sales_order_lines.source_ref` gets an index (cdsp_0001, CONCURRENTLY); in the sandbox
+the index alone made the old statement as fast as the rewrite, so the rewrite stays only if
+crew's clone measure says it still pays.
+
+Crew pass on PR 1 (owner rule "email = preview"), folded into PR 2: (1) a page whose dry run
+refuses the order shows the refusal, never board words; (2) every email line appears on the
+Review split, a line the press does not cover included (read-only, the email's own words).
+
+Stock-debt assignments "built once per request": measured and NOT done. The per-order board
+service un-nets that order's holds before building, and the confirm's first build depends on
+which holds are un-netted when; sharing or warming the product-keyed cache changed a covered
+line's live suggestion (5 -> 20) and moved a dry run's stock-short notice. Needs the cache
+keyed by its real inputs: its own lane.
