@@ -1,6 +1,6 @@
 # PLAN: Integration Log search box + pager number format (INTLOG-SEARCH)
 
-Status: built, in review (small fix track: no migration, no auth/RBAC change)
+Status: built, reviewer findings fixed (small fix track: no migration, no auth/RBAC change)
 
 Follow-up to INTLOG-SPEED (`_archive/infra/PLAN-intlog-speed-03nov.md`, PR #2129, merged), found by crew's browser pass.
 
@@ -13,10 +13,13 @@ Follow-up to INTLOG-SPEED (`_archive/infra/PLAN-intlog-speed-03nov.md`, PR #2129
 
 ## Fix
 1. `query` on the route -> `IntegrationLogService._apply_search`:
-   - a full UUID (any case) matches `id`, `business_id` or `correlation_id` exactly;
-   - anything else is a case-insensitive substring of `integration_channel`, `business_table`,
+   - every term is a case-insensitive substring of `integration_channel`, `business_table`,
      `business_id` as text (the grid shows its first 8 characters), `endpoint`,
-     `external_reference`, `error_message`; LIKE wildcards in the term are literal;
+     `external_reference`, `error_code`, `error_message`; LIKE wildcards and backslashes in the
+     term are literal;
+   - a term that is a UUID also matches `id` and `correlation_id` exactly. It still searches the
+     text columns (review round): `external_reference` holds other records' UUIDs, e.g. the
+     stock inquiry id procurement stores there;
    - blank is ignored; it ANDs with every filter and goes through the same capped count.
 2. The pager formats from, to and count with one en-US thousands format on every grid
    (no grid passes its own `info`; checked all 195 users of `DataGridPagination`).
@@ -26,8 +29,7 @@ Follow-up to INTLOG-SPEED (`_archive/infra/PLAN-intlog-speed-03nov.md`, PR #2129
 | Search | Count | Page |
 | --- | --- | --- |
 | common term (`respond`) | 30 ms | fast (stops at 50) |
-| full UUID | 260 ms | - |
-| rare substring (no match) | 1.0 s | 3.6 s |
+| rare substring or a pasted UUID that matches nothing | 1.0 s | 3.6 s |
 
 A rare term reads the whole table (no index serves `ILIKE '%x%'`). Accepted for now: it costs
 only when someone searches, never on page load. Trigger to revisit: crew measures a rare-term
@@ -36,6 +38,7 @@ columns, built CONCURRENTLY through `app/utils/online_index.py` like il_0001.
 
 ## Tests (red first)
 - BE `tests/test_integration_logs_search.py`: each text column, business_id prefix, full UUID on
-  each id column, combined with a filter, literal wildcards, blank term.
+  each id column and in external_reference, combined with a filter, literal wildcards and
+  backslash, blank term.
 - FE `components/ui/data-grid-pagination.capped.test.tsx`: `1 - 50 of 1,304`,
   `9,951 - 10,000 of 19,950+`.

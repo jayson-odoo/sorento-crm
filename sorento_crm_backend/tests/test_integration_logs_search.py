@@ -65,7 +65,7 @@ def test_search_matches_channel_case_insensitively(client, db):
 
 
 @pytest.mark.parametrize(
-    "field", ["business_table", "endpoint", "external_reference", "error_message"]
+    "field", ["business_table", "endpoint", "external_reference", "error_code", "error_message"]
 )
 def test_search_matches_each_text_column(client, db, field):
     tag = unique_code("txt", alpha=True)
@@ -114,3 +114,21 @@ def test_blank_search_is_ignored(client, db):
     b = _log(db, 2)
     ids, total = _ids(client, ("query", "   "))
     assert ids == [b.id, a.id] and total == 2
+
+
+def test_a_uuid_held_in_external_reference_is_found(client, db):
+    """A pasted UUID still searches the text columns: external_reference carries other records'
+    ids (procurement stores the stock inquiry id there)."""
+    inquiry_id = str(uuid.uuid4())
+    hit = _log(db, 1, external_reference=inquiry_id)
+    _log(db, 2)
+    ids, total = _ids(client, ("query", inquiry_id))
+    assert ids == [hit.id] and total == 1
+
+
+def test_a_backslash_in_the_term_is_literal(client, db):
+    tag = unique_code("bs", alpha=True)
+    literal = _log(db, 1, error_message=f"{tag} C:\\tmp failed")
+    _log(db, 2, error_message=f"{tag} C:tmp failed")
+    ids, _ = _ids(client, ("query", f"{tag} C:\\tmp"))
+    assert ids == [literal.id]

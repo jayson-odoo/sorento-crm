@@ -1028,11 +1028,12 @@ class IntegrationLogService:
     def _apply_search(q, search: Optional[str]):
         """The list's search box (INTLOG-SEARCH).
 
-        A full UUID matches ``id``, ``business_id`` or ``correlation_id`` exactly (the id is the
-        PK; the rest are what a support person pastes from another screen). Anything else is a
-        case-insensitive substring of the columns the grid shows or a person reads off a failure:
-        channel, business table, business id (the grid shows its first 8 characters), endpoint,
-        external reference, error message. LIKE wildcards in the term are literal.
+        Every term is a case-insensitive substring of the columns the grid shows or a person
+        reads off a failure: channel, business table, business id (the grid shows its first 8
+        characters), endpoint, external reference, error code, error message. LIKE wildcards in
+        the term are literal. A term that is a UUID also matches ``id`` and ``correlation_id``
+        exactly; it still searches the text columns, because ``external_reference`` and
+        endpoints carry other records' UUIDs (a stock inquiry id, for one).
         """
         import uuid as _uuid
 
@@ -1041,30 +1042,24 @@ class IntegrationLogService:
         term = (search or "").strip()
         if not term:
             return q
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        matches = [
+            IntegrationLog.integration_channel.ilike(pattern, escape="\\"),
+            IntegrationLog.business_table.ilike(pattern, escape="\\"),
+            cast(IntegrationLog.business_id, String).ilike(pattern, escape="\\"),
+            IntegrationLog.endpoint.ilike(pattern, escape="\\"),
+            IntegrationLog.external_reference.ilike(pattern, escape="\\"),
+            IntegrationLog.error_code.ilike(pattern, escape="\\"),
+            IntegrationLog.error_message.ilike(pattern, escape="\\"),
+        ]
         try:
             exact = str(_uuid.UUID(term))
         except ValueError:
             exact = None
         if exact is not None:
-            return q.filter(
-                or_(
-                    IntegrationLog.id == exact,
-                    IntegrationLog.business_id == exact,
-                    IntegrationLog.correlation_id == exact,
-                )
-            )
-        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        pattern = f"%{escaped}%"
-        return q.filter(
-            or_(
-                IntegrationLog.integration_channel.ilike(pattern, escape="\\"),
-                IntegrationLog.business_table.ilike(pattern, escape="\\"),
-                cast(IntegrationLog.business_id, String).ilike(pattern, escape="\\"),
-                IntegrationLog.endpoint.ilike(pattern, escape="\\"),
-                IntegrationLog.external_reference.ilike(pattern, escape="\\"),
-                IntegrationLog.error_message.ilike(pattern, escape="\\"),
-            )
-        )
+            matches += [IntegrationLog.id == exact, IntegrationLog.correlation_id == exact]
+        return q.filter(or_(*matches))
 
     @staticmethod
     def _capped_count(q, offset: int) -> tuple[int, bool]:
