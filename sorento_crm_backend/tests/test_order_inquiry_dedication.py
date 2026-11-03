@@ -412,6 +412,32 @@ def world():
 # --------------------------------------------------------------------- AC-6.1
 
 
+def test_the_dedicating_order_names_its_customer_and_project(world):
+    """OI-UX-FILTER-SNAPSHOT: the dialog's "Dedicated to SO x" also names x's customer and
+    project (None for an order that names neither)."""
+    lines = world.purchase_order("ZZT-PO-PARTY", date(2026, 8, 1), [("BRW-IB", 100, SOON, "1")])
+    world.set_own_so_number("ZZT-SO-OWN-PARTY")
+    row = world.row("ORDER", 5)
+    _, so_line = world.claiming_so("ZZT-SO-PARTY", date(2026, 7, 1), qty=30)
+    world.claim(
+        so_number="ZZT-SO-PARTY", po_number="ZZT-PO-PARTY", so_line_id=so_line,
+        po_line_id=lines[0],
+    )
+    world.db.execute(
+        text(
+            "UPDATE sales_orders SET debtor_name = 'ZZT Debtor', project_label = 'ZZT Tower' "
+            "WHERE so_number = 'ZZT-SO-PARTY'"
+        )
+    )
+    world.db.flush()
+
+    [candidate] = world.svc.po_candidates_for_row(row.id)
+
+    assert candidate["dedicated_to"] == "ZZT-SO-PARTY"
+    assert candidate["dedicated_customer_name"] == "ZZT Debtor"
+    assert candidate["dedicated_project_label"] == "ZZT Tower"
+
+
 def test_ac_6_1_a_claim_reserves_its_full_qty_leaving_the_rest_free(world):
     """AC-6.1: PO 100, SO A 30 claimed -> 30 reserved / 70 free; +SO B 50 -> 80
     reserved / 20 free. A third, EARLIER-dated claim added last still decides

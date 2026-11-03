@@ -1028,6 +1028,9 @@ class OrderInquiryPoCandidateClaim(BaseModel):
     """
 
     so_number: Optional[str] = None
+    #: That order's customer (debtor name, else customer master) and project label.
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     item_code: Optional[str] = None
     qty: str
     placed_date: Optional[datetime] = None
@@ -1086,6 +1089,8 @@ class OrderInquiryPoCandidate(BaseModel):
     # dialog greys the row "Dedicated to SO xxxx". `None` when nobody but this row's own
     # SO (or nobody at all) claims it.
     dedicated_to: Optional[str] = None
+    dedicated_customer_name: Optional[str] = None
+    dedicated_project_label: Optional[str] = None
     # G12's project-bin lock: this line sits at a `segment = 'project'` warehouse and NO
     # SO has claimed it, not even this row's own - the dialog greys it "Unattributed -
     # link manually". Always `False` for a pool-destination line (AC-6.10).

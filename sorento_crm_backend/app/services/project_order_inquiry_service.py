@@ -12163,6 +12163,23 @@ class ProjectOrderInquiryService:
         )
         if recommended is not None:
             recommended["recommended"] = True
+        # OI-UX-FILTER-SNAPSHOT: every sales order named here (a placed claim, the order a
+        # line is dedicated to) also names its customer and project.
+        from app.services.scm.so_party import so_parties, with_party
+
+        parties = so_parties(
+            self.db,
+            numbers=[
+                *(c["so_number"] for entry in out for c in entry["claims"]),
+                *(entry["dedicated_to"] for entry in out),
+            ],
+        )
+        for entry in out:
+            for claim in entry["claims"]:
+                with_party(claim, parties, claim["so_number"])
+            dedicated = with_party({}, parties, entry["dedicated_to"])
+            entry["dedicated_customer_name"] = dedicated["customer_name"]
+            entry["dedicated_project_label"] = dedicated["project_label"]
         return out
 
     def linkable_qty_for_row(self, row_id: str) -> str:
