@@ -145,8 +145,9 @@ export function ConfirmGuideDialog({
    */
   refreshFailed?: boolean;
   /**
-   * CONFIRM-PREVIEW-STALE review round 3 (S1): the email's words are being read again after a
-   * save. The sheet stays up with the last words; only Next and Confirm wait.
+   * CONFIRM-PREVIEW-STALE review round 3 (S1): the email's words are being read (as the guide
+   * opens, and again after a save). CONFIRM-DIALOG-SPEED (owner, 3 Nov 2026): the Review split
+   * stays usable meanwhile, Next included; only Confirm waits.
    */
   wordsLoading?: boolean;
   onRetryRefresh?: () => void;
@@ -176,9 +177,14 @@ export function ConfirmGuideDialog({
 
   const page = step.kind === 'review' ? pages[step.index] : undefined;
   const pagePsoId = page?.psoId ?? null;
+  // CONFIRM-DIALOG-SPEED: the Confirm step keeps the last page's order, so an email dry run
+  // still out when Next was pressed finishes there (Confirm waits for it) instead of being
+  // cancelled.
+  const onConfirmStep = step.kind === 'confirm';
   React.useEffect(() => {
+    if (onConfirmStep) return;
     onPageChange?.(pagePsoId);
-  }, [pagePsoId, onPageChange]);
+  }, [pagePsoId, onPageChange, onConfirmStep]);
   // Every page's split read, kept while the guide is open; the current page reads its own.
   // CONFIRM-PREVIEW-STALE (owner, 2 Nov 2026): each read is taken again as the guide opens,
   // and a page reads as loading until the read answered after that moment: a cached sheet
@@ -331,7 +337,6 @@ export function ConfirmGuideDialog({
     !readFailed &&
     !unready &&
     !stale &&
-    !wordsLoading &&
     !dirty;
 
   return (
@@ -566,6 +571,15 @@ export function ConfirmGuideDialog({
           {dirty ? (
             <p className="w-full text-xs text-muted-foreground">
               Save or undo your split changes first
+            </p>
+          ) : null}
+          {wordsLoading && !stale ? (
+            <p
+              data-testid="confirm-guide-words-loading"
+              role="status"
+              className="w-full text-xs text-muted-foreground"
+            >
+              Reading the purchasing email
             </p>
           ) : null}
           <Button

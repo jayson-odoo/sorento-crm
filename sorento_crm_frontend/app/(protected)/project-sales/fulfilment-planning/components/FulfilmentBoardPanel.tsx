@@ -2430,8 +2430,10 @@ export function FulfilmentBoardPanel({
     setGuideRefreshFailed(false);
     setGuideEmail({ status: 'loading', byOrder: new Map() });
     emailWordsRead.current = new Map();
+    // CONFIRM-DIALOG-SPEED: a board read already out (a save's re-read) is joined, never
+    // cancelled and sent again: on a slow board that doubled the wait.
     void rawBoard
-      .refetch()
+      .refetch({ cancelRefetch: false })
       .then((result) => {
         const failed = Boolean(result?.isError);
         setGuideRefreshFailed(failed);
@@ -3979,14 +3981,10 @@ export function FulfilmentBoardPanel({
           runConfirm={runConfirmAll}
           saveRemarks={saveLineRemarks}
           preparing={guidePrep.running}
-          // A page's first words wait behind its loading state; a later re-run (after a save)
-          // keeps the sheet up with the last words and only holds Next and Confirm (S1).
-          refreshing={
-            guideRefreshing ||
-            (guideEmail.status === 'loading' &&
-              Boolean(guidePagePso) &&
-              !guideEmail.byOrder.has(guidePagePso as string))
-          }
+          // CONFIRM-DIALOG-SPEED (owner, 3 Nov 2026): the Review split waits for the order's
+          // own fresh data (this board re-read, and its split read in the guide), never for
+          // the email dry run; that runs behind it and only the Confirm step waits for it.
+          refreshing={guideRefreshing}
           wordsLoading={guideEmail.status === 'loading'}
           refreshFailed={guideRefreshFailed || guideEmail.status === 'failed'}
           onRetryRefresh={refreshGuide}

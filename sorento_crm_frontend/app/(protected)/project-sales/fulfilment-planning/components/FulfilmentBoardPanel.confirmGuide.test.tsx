@@ -2255,7 +2255,9 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     expect(pressDryRuns()).toHaveLength(0);
   });
 
-  it('after a save the sheet stays up with the last words; only Next waits for the new ones', async () => {
+  // CONFIRM-DIALOG-SPEED (owner, 3 Nov 2026): Next no longer waits for the words; only the
+  // Confirm step does (see that lane's own block below).
+  it('after a save the sheet stays up with the last words while the new ones are read', async () => {
     serveSplits({ 'pso-so-1': LINE3_READ() });
     dryRunAnswers({ 'pso-so-1': { email: [{ so_line_id: 'pl-1-3', remark: 'DELAY' }] } });
     await mountWith(boardWithRemark('ORDER', { verdict: 'approved' }, '2026-11-02T01:00:00Z'), ['SO000001']);
@@ -2278,10 +2280,13 @@ describe('CONFIRM-PREVIEW-STALE: Confirm reads the server fresh', () => {
     fireEvent.change(screen.getByLabelText('Remark, line 3'), { target: { value: 'URGENT' } });
     fireEvent.click(within(page).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(emailDryRuns().length).toBeGreaterThan(1));
-    // Still the sheet, never the loading skeleton, and Next waits.
+    // Still the sheet, never the loading skeleton, and the page says the words are being read.
     expect(screen.getByTestId('split-line-3')).toBeInTheDocument();
-    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    expect(screen.getByTestId('confirm-guide-words-loading')).toBeInTheDocument();
     answer({ results: [{ pso_id: 'pso-so-1', ok: true, preview: true, email_lines: [{ so_line_id: 'pl-1-3', remark: 'URGENT' }] }] });
+    await waitFor(() =>
+      expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument(),
+    );
     await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
   });
 
@@ -2517,5 +2522,89 @@ describe('NO-AC-MOVED-WARNING: a saved decision is never second-guessed by the c
     expect(posted).toContain('"buy_qty":"0"');
     expect(toast.warning).not.toHaveBeenCalledWith(expect.stringContaining('suggest'));
     expect(toast.success).not.toHaveBeenCalledWith(expect.stringContaining('suggest'));
+  });
+});
+
+/*
+ * CONFIRM-DIALOG-SPEED (owner, 3 Nov 2026, prod SO423361: "Review split" sat on its skeleton):
+ * the Review split waits for the order's own fresh data only (the board re-read and its split
+ * read), never for the email dry run, which runs behind it. The Confirm step waits for it.
+ */
+describe('CONFIRM-DIALOG-SPEED: the Review split never waits on the email dry run', () => {
+  function savedBoard() {
+    return mapContributions(boardOf([SO1_L3]), (entry) =>
+      entry.project_line_id === 'pl-1-3'
+        ? {
+            ...entry,
+            saved_remark: 'ORDER',
+            draft: { decision: { verdict: 'approved' }, saved_by: 'Test Planner', saved_at: '2026-11-02T01:00:00Z' },
+          }
+        : entry,
+    );
+  }
+
+  it('step 1 renders and is interactive while the email dry run is still pending', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    let answer: (value: unknown) => void = () => {};
+    previewConfirmMany.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    await mountWith(savedBoard(), ['SO000001']);
+    await openConfirmGuide();
+    await waitFor(() => expect(emailDryRuns()).toHaveLength(1));
+    // The dry run is still out: the sheet is up, its Remark box editable, Next on.
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    const block = await within(page).findByTestId('split-line-3');
+    expect(within(block).getByLabelText('Remark, line 3')).toBeEnabled();
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    expect(screen.getByTestId('confirm-guide-words-loading')).toBeInTheDocument();
+    // The Confirm step shows its own wait while the email's words are still being read.
+    click('confirm-guide-next');
+    const confirm = await screen.findByTestId('confirm-guide-confirm');
+    expect(confirm).toBeDisabled();
+    expect(screen.getByTestId('confirm-guide-words-loading')).toBeInTheDocument();
+    // The Confirm step started no dry run of its own and did not cancel the one out.
+    expect(emailDryRuns()).toHaveLength(1);
+    const heldSignal = emailDryRuns()[0][1] as AbortSignal | undefined;
+    expect(heldSignal?.aborted).toBe(false);
+    await act(async () => {
+      answer({
+        results: [
+          { pso_id: 'pso-so-1', ok: true, preview: true, email_lines: [{ so_line_id: 'pl-1-3', remark: 'ORDER' }] },
+        ],
+      });
+    });
+    await waitFor(() => expect(confirm).toBeEnabled());
+    expect(screen.queryByTestId('confirm-guide-words-loading')).not.toBeInTheDocument();
+    expect(pressDryRuns()).toHaveLength(0);
+  });
+
+  it('opening Confirm while the board is already reading joins that read, never a second one', async () => {
+    serveSplits({ 'pso-so-1': LINE3_READ() });
+    await mountWith(savedBoard(), ['SO000001']);
+    const board = savedBoard();
+    let release: () => void = () => {};
+    getPlanningBoard.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(board);
+        }),
+    );
+    const reads = getPlanningBoard.mock.calls.length;
+    // A read is already out (the board re-reading after a save elsewhere on the screen).
+    act(() => {
+      void lastClient?.refetchQueries({ type: 'active' });
+    });
+    await waitFor(() => expect(getPlanningBoard.mock.calls.length).toBe(reads + 1));
+    await openConfirmGuide();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getPlanningBoard.mock.calls.length).toBe(reads + 1);
+    await act(async () => release());
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    await within(page).findByTestId('split-line-3');
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
   });
 });
