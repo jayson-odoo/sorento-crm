@@ -24,6 +24,7 @@ from app.models.projects import (
     ProjectQuotationVersion,
 )
 
+from ._quote_fixture_prices import UNDISCOUNTED_LIST_PRICE
 from .test_project_quotation_document_routes import (  # noqa: F401  (fixture import)
     BASE,
     MARKER,
@@ -69,7 +70,7 @@ def _patch(client, project_id: str, document_id: str, body: dict):
     )
 
 
-def _seed_product(db, list_price: str = "300.00"):
+def _seed_product(db, list_price: str = UNDISCOUNTED_LIST_PRICE):
     uom = _uom(db)
     category = _category(db, "Sanitary Ware")
     product = _product(db, category.id, uom, list_price)
