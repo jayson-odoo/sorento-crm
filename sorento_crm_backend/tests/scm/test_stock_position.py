@@ -452,6 +452,55 @@ def test_brand_item_code_and_warehouse_filters(scm_app):
     assert _get(app, warehouse_id="nope")["data"] == []
 
 
+def test_supplier_brand_and_warehouse_filters_take_several_values_or_ed(scm_app):
+    """FILTER-MULTISELECT (STOCKPOS-FILTER-MULTI): each filter takes several ids, comma-joined
+    (what the grid sends) or repeated, OR-ed within the filter and AND-ed across filters; the
+    page total and the export read the same set, sorting stays on the server."""
+    from openpyxl import load_workbook
+
+    app, db, w = _setup(scm_app)
+    brw, mwh, dc1 = _wh(db, "BRW"), _wh(db, "MWH"), _wh(db, "DC1")
+    s1, s2, s3 = _supplier(db, "M1"), _supplier(db, "M2"), _supplier(db, "M3")
+    b1, b2, b3 = (
+        Brand(id=str(uuid.uuid4()), brand_code=f"{MARKER}-{uuid.uuid4().hex[:6]}", brand_name=f"ZZ {n}")
+        for n in ("one", "two", "three")
+    )
+    db.add_all([b1, b2, b3])
+    db.flush()
+    a, b, c, d = (w.product(k) for k in "ABCD")
+    for p, brand, sup, wh, qty in ((a, b1, s1, brw, 5), (b, b2, s2, mwh, 50), (c, b3, s3, dc1, 20), (d, b1, s2, dc1, 7)):
+        p.brand_id = brand.id
+        _on_hand(db, p, wh, qty)
+        _po_from(db, p, sup, wh, date(2026, 3, 1))
+    db.flush()
+
+    def ids(**params):
+        return {r["product_id"] for r in _get(app, **params)["data"]}
+
+    # Comma-joined, the grid's shape.
+    assert ids(brand_id=f"{b1.id},{b2.id}") == {str(a.id), str(b.id), str(d.id)}
+    assert ids(supplier_id=f"{s1.id},{s3.id}") == {str(a.id), str(c.id)}
+    assert ids(warehouse_id=f"{brw.id},{mwh.id}") == {str(a.id), str(b.id)}
+    # Repeated params read the same; one value is still a one-value filter.
+    r = TestClient(app).get(URL, params=[("brand_id", str(b2.id)), ("brand_id", str(b3.id)), ("limit", "100")])
+    assert {x["product_id"] for x in r.json()["data"]} == {str(b.id), str(c.id)}
+    assert ids(brand_id=str(b3.id)) == {str(c.id)}
+    # AND across filters: brand one or two, AND supplier two.
+    assert ids(brand_id=f"{b1.id},{b2.id}", supplier_id=str(s2.id)) == {str(b.id), str(d.id)}
+
+    # Sort and the page total follow the selection.
+    body = _get(app, brand_id=f"{b1.id},{b2.id}", sort="total_stock", dir="desc")
+    assert [x["product_id"] for x in body["data"]] == [str(b.id), str(d.id), str(a.id)]
+    assert body["pagination"]["total"] == 3
+
+    # The export writes the same filtered, sorted set.
+    r = TestClient(app).get(f"{URL}/export", params={
+        "brand_id": f"{b1.id},{b2.id}", "warehouse_id": f"{brw.id},{dc1.id}", "sort": "item_code", "dir": "asc"})
+    assert r.status_code == 200, r.text
+    rows = list(load_workbook(io.BytesIO(r.content)).active.iter_rows(values_only=True))
+    assert [row[0] for row in rows[1:]] == sorted([a.product_code, d.product_code])
+
+
 def test_every_column_sorts_on_the_server_and_pages(scm_app):
     app, db, w = _setup(scm_app)
     brw, mwh = _wh(db, "BRW"), _wh(db, "MWH")
