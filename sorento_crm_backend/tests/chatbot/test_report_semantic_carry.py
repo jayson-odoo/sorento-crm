@@ -1311,3 +1311,142 @@ def test_r4_3_the_held_customer_resolves_to_the_exact_name_row_among_many_partia
     text, calls = rbot.say(t2, "mocha")
     ran = _ran(calls)
     assert ran and ran[0].get("customer_ids") == [m_id], f"R4-3: want Mocha's exact-name row, got {ran[0].get('customer_ids') if ran else text!r}"
+
+
+# ------------------------------------------------------------------------------------------ round 5 (console pass)
+
+
+def test_r5_1_a_newer_object_replaces_the_word_an_open_question_asked_even_with_a_declared_pick(rbot, world) -> None:
+    """Console step 11: the kind question is open for SORENTO (a brand and an account type); the reply's object holds
+    CERAMIC only, and the parse also declares an answer to the open question. SORENTO is not added back."""
+    sorento, _mocha = world
+    db = rbot.console.session_factory()
+    try:
+        _ledger(db, DEFAULT_COMPANY_ID, "ZZT LEDGER FIVE [A/C V]", "SORENTO")
+        db.commit()
+    finally:
+        db.close()
+    first = _v(
+        "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], brands=["Sorento"], **Y),
+        _ent(AGENT_1, "sales_agent"), _ent("sorento", "brand", "SORENTO", None), basis="invoiced", sales_company=sorento,
+        domain_in_message=True, **YR,
+    )
+    text, calls = rbot.say(first, "sorento sales for agent a sorento 2026 invoiced")
+    assert not calls and "brand or account type?" in text, f"setup: want the kind question for SORENTO, got {text or calls!r}"
+    reply = _v(
+        "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=[AGENT_1], account_types=["ceramic"], **Y),
+        _ent("ceramic", "account_type", None, "account type"), entity_op="replace_combine", continuation=True,
+        open_question_answer=_pick_of(2), **YR,
+    )
+    text, calls = rbot.say(reply, "for ceramic account type")
+    ran = _ran(calls)
+    assert ran, f"R5-1: the reply did not run: {text!r}"
+    assert ran[0].get("account_types") == ["CERAMIC"], f"R5-1: want CERAMIC only, got {ran[0].get('account_types')} (SORENTO added back from the open question)"
+    assert not ran[0].get("brand_ids"), f"R5-1: {ran[0].get('brand_ids')}"
+
+
+def _seed_agb(rbot_: Routing) -> dict[str, str]:
+    """One person, three codes of one company, all answering to the word "zz agb"."""
+    db = rbot_.console.session_factory()
+    ids: dict[str, str] = {}
+    try:
+        for code in ("ZZ AGB I", "ZZ AGB III", "ZZ AGB IV"):
+            row = SalesAgent(id=str(uuid.uuid4()), sales_agent=code, aliases="zz agb", company_id=DEFAULT_COMPANY_ID)
+            db.add(row)
+            ids[code] = str(row.id)
+        db.commit()
+    finally:
+        db.close()
+    return ids
+
+
+def test_r5_2_a_person_named_by_the_word_that_matches_three_codes_never_runs_one_silently(rbot, world) -> None:
+    """Console step 14, variant (a): the object carries the person word. The held line carries all three codes of one
+    person; "only sales agent zz agb" runs all three ids or asks the agent pick, never one code alone."""
+    sorento, _mocha = world
+    ids = _seed_agb(rbot)
+    first = _v("sales_report", _ra(basis="invoiced", group_by="month", company=sorento, **Y), basis="invoiced", group_by="month", sales_company=sorento, domain_in_message=True, **YR)
+    text, calls = rbot.say(first, "sorento sales by month 2026 invoiced")
+    assert _ran(calls), f"setup: {text!r}"
+    frame = rbot.console.session_vars["focus"]["sales_ranking_frame"]
+    frame["sales_agent_ids"] = list(ids.values())
+    frame.setdefault("names", {})["sales_agent_ids"] = {v: k for k, v in ids.items()}
+    follow = _v(
+        "sales_analysis", _ra(basis="invoiced", group_by="month", company=sorento, sales_agents=["zz agb"], **Y),
+        _ent("zz agb", "sales_agent"), sales_basis="invoiced", group_by="month", sales_company=sorento, continuation=True,
+        entity_op="replace_combine", **YR,
+    )
+    text, calls = rbot.say(follow, "breakd down by month, only sales agent zz agb")
+    ran = _ran(calls)
+    asked = not ran and "Which sales agent?" in text
+    all_three = bool(ran) and set(ran[0].get("sales_agent_ids") or []) == set(ids.values())
+    assert asked or all_three, f"R5-2: one code ran silently: {ran[0].get('sales_agent_ids') if ran else text!r}, want all of {sorted(ids.values())} or the agent pick"
+
+
+def _kind_question_for_cabana(rbot_: Routing, sorento: str) -> None:
+    ask = _cabana_ask(sorento, bucket="brands", kind_said=None)
+    text, calls = rbot_.say(ask, "sorento sales for agent a cabana 2026 invoiced")
+    assert not _ran(calls) and text.strip() == QUESTION, f"setup: want {QUESTION!r}, got {text or calls!r}"
+
+
+def test_r5_3_an_answer_to_the_kind_question_sets_no_axis_when_the_message_names_none(rbot, world) -> None:
+    """Console step 3: "account type" answers the kind question; the object also sets `group_by` account_type and this
+    message's `by_words` is null. A plain total runs: no measure question, no one-row account type list."""
+    sorento, _mocha = world
+    _kind_question_for_cabana(rbot, sorento)
+    reply = _v(
+        "sales_ranking", _ra(basis="invoiced", group_by="account_type", company=sorento, sales_agents=[AGENT_1], account_types=["cabana"], **Y),
+        basis="invoiced", group_by="account_type", entity_op="reuse", continuation=True, ranking_refine=True,
+        open_question_answer=_pick_of(2), by_words=None,
+    )
+    text, calls = rbot.say(reply, "account type")
+    ran = _ran(calls)
+    assert MEASURE_Q not in text, f"R5-3: the measure was asked on an answer turn: {text!r}"
+    assert ran and not ran[0].get("group_by"), f"R5-3: want a plain total, got {ran[0].get('group_by') if ran else text!r}"
+    assert "Top 1 account type" not in text, f"R5-3: {text!r}"
+    assert ran[0].get("account_types") == ["CABANA"], ran[0]
+
+
+def test_r5_3_an_answer_that_says_by_account_type_still_breaks_down(rbot, world) -> None:
+    sorento, _mocha = world
+    _kind_question_for_cabana(rbot, sorento)
+    reply = _v(
+        "sales_ranking", _ra(basis="invoiced", group_by="account_type", measure="amount", company=sorento, sales_agents=[AGENT_1], account_types=["cabana"], **Y),
+        basis="invoiced", group_by="account_type", measure="amount", rank_direction=None, entity_op="reuse", continuation=True,
+        open_question_answer=_pick_of(2), by_words="by account type",
+    )
+    text, calls = rbot.say(reply, "account type, by account type")
+    ran = _ran(calls)
+    assert ran and ran[0].get("group_by") == "account_type", f"R5-3: a typed axis was dropped: {ran or text!r}"
+
+
+def _agent_report(sorento: str, words: list[str]) -> dict[str, Any]:
+    return _v(
+        "sales_report", _ra(basis="invoiced", company=sorento, sales_agents=words, **Y),
+        *[_ent(w, "sales_agent") for w in words], basis="invoiced", sales_company=sorento, domain_in_message=True, **YR,
+    )
+
+
+def test_r5_2c_the_held_line_shows_the_person_word_when_it_resolves_back_to_exactly_the_held_agents(rbot, world) -> None:
+    sorento, _mocha = world
+    ids = _seed_agb(rbot)
+    text, calls = rbot.say(_agent_report(sorento, ["zz agb"]), "sorento sales for zz agb 2026 invoiced")
+    assert _ran(calls) and set(_ran(calls)[0].get("sales_agent_ids") or []) == set(ids.values()), f"setup: {_ran(calls) or text!r}"
+    follow = _v("sales_report", _ra(), continuation=True, entity_op="reuse", date_filter_start="2025-01-01", date_filter_end="2025-12-31")
+    seen = _copy_held(rbot, follow, date_from="2025-01-01", date_to="2025-12-31")
+    text, calls = rbot.say(follow, "and 2025")
+    assert seen.get("sales_agents") == ["zz agb"], f"R5-2c: the Held line shows {seen.get('sales_agents')}, want the one person word ['zz agb']"
+    ran = _ran(calls)
+    assert ran and set(ran[0].get("sales_agent_ids") or []) == set(ids.values()), f"R5-2c: copying the word back ran {ran[0].get('sales_agent_ids') if ran else text!r}"
+
+
+def test_r5_2c_guard_separately_typed_codes_stay_codes_on_the_held_line(rbot, world) -> None:
+    sorento, _mocha = world
+    ids = _seed_agb(rbot)
+    typed = ["ZZ AGB I", "ZZ AGB III"]  # no single word resolves to exactly these two ("zz agb" gives all three)
+    text, calls = rbot.say(_agent_report(sorento, typed), "sorento sales for zz agb i and zz agb iii 2026 invoiced")
+    assert _ran(calls) and set(_ran(calls)[0].get("sales_agent_ids") or []) == {ids[c] for c in typed}, f"setup: {_ran(calls) or text!r}"
+    follow = _v("sales_report", _ra(), continuation=True, entity_op="reuse", date_filter_start="2025-01-01", date_filter_end="2025-12-31")
+    seen = _copy_held(rbot, follow, date_from="2025-01-01", date_to="2025-12-31")
+    rbot.say(follow, "and 2025")
+    assert sorted(seen.get("sales_agents") or []) == sorted(typed), f"R5-2c guard: the Held line shows {seen.get('sales_agents')}, want the codes {typed}"
