@@ -2,7 +2,7 @@
 
 TEST-FIRST: the migration file does not exist yet, so a red is the file missing.
 
-Contract (PLAN section 5): revision `oiod_0001_backfill` on `pqr_0001_quote_rules_routing`;
+Contract (PLAN section 5): revision `oiod_0001_backfill` on main's alembic head;
 it creates `projects.oi_delivery_date_backfill(row_id, old_delivery_date,
 old_previous_delivery_date)`. Upgrade: for every `order_inquiry_rows` row not cancelled whose
 SO line date (core `required_date`, else mirror `delivery_date`) is NOT NULL and differs

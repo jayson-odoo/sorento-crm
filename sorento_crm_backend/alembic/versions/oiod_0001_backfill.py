@@ -16,13 +16,13 @@ Each changed row is first logged in ``projects.oi_delivery_date_backfill`` (row 
 delivery date, old previous date) so the downgrade restores them exactly and drops the log.
 
 Revision ID: oiod_0001_backfill
-Revises: pqr_0001_quote_rules_routing
+Revises: qcd_0001_cover_designs
 """
 from alembic import op
 
 
 revision = "oiod_0001_backfill"
-down_revision = "pqr_0001_quote_rules_routing"
+down_revision = "qcd_0001_cover_designs"
 branch_labels = None
 depends_on = None
 
