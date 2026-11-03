@@ -7,6 +7,7 @@ import {
   ColumnDef,
   PaginationState,
   SortingState,
+  VisibilityState,
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
@@ -25,6 +26,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { toast } from '@/lib/toast';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { idFilterLabels, joinMulti, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
 import { getSuppliersSelect } from '@/services/supplierSelectService';
@@ -55,6 +57,22 @@ export const FIGURE_COLUMNS: { id: keyof StockPositionRow; title: string; size: 
   { id: 'monthly_sales', title: 'Monthly sales', size: 135 },
   { id: 'highest_month', title: 'Highest / month', size: 140 },
 ];
+
+/** The columns each total adds up, by column id: a hidden one drops out (owner 2 Nov). */
+const INCOMING_PARTS = ['incoming_pool', 'incoming_project'] as const;
+const isTotalPart = (id: string) =>
+  id.startsWith(WAREHOUSE_COLUMN_PREFIX) || (INCOMING_PARTS as readonly string[]).includes(id);
+
+/** The hidden total-part column ids, sorted (one cache entry per set, whatever the toggle order). */
+export const hiddenParts = (visibility: VisibilityState) =>
+  Object.keys(visibility)
+    .filter((id) => visibility[id] === false && isTotalPart(id))
+    .sort();
+
+/** What a total header's tooltip says it adds up: the shown parts, by their headers. */
+export function totalTooltip(shownParts: string[]): string {
+  return `Sum of ${shownParts.length ? shownParts.join(', ') : 'none'}`;
+}
 
 /** A row opens Stock status for its item, with its documents behind every figure. */
 const stockStatusHref = (row: StockPositionRow) => `/inventory-management/stock-status?product_id=${row.product_id}`;
@@ -89,6 +107,14 @@ export default function StockPositionGrid() {
   const [brandIds, setBrandIds] = useState('');
   const [warehouseIds, setWarehouseIds] = useState('');
   const [exporting, setExporting] = useState(false);
+  // Controlled so the hidden columns reach the query: the saved layout and saved views apply
+  // through `table.setColumnVisibility`, which writes here.
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  // Kept the same array while the hidden SET is unchanged (hiding a non-total column changes
+  // `columnVisibility` but no total), so the query key and the page reset below ignore it.
+  const hiddenKey = JSON.stringify(hiddenParts(columnVisibility));
+  const hiddenColumns = useMemo<string[]>(() => JSON.parse(hiddenKey), [hiddenKey]);
+
   // Supplier names by id from the picker's own pages, for the chosen chips (rows add theirs below).
   const pickedSupplierNames = useRef<Record<string, string>>({});
 
@@ -117,8 +143,9 @@ export default function StockPositionGrid() {
       supplierIds: splitMulti(supplierIds),
       brandIds: splitMulti(brandIds),
       warehouseIds: splitMulti(warehouseIds),
+      hiddenColumns,
     }),
-    [supplierIds, brandIds, warehouseIds],
+    [supplierIds, brandIds, warehouseIds, hiddenColumns],
   );
   const params = { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery };
   const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useStockPosition(params, filters);
@@ -143,6 +170,17 @@ export default function StockPositionGrid() {
   }, [urlSearch, searchKey, pathname, router]);
   const total = data?.pagination.total ?? 0;
   const warehouseCodes = useMemo(() => (data?.warehouses ?? []).map((w) => w.code), [data?.warehouses]);
+  const tooltips = useMemo(() => {
+    const hidden = new Set(hiddenColumns);
+    const shown = (id: string) => !hidden.has(id);
+    const shownCodes = warehouseCodes.filter((code) => shown(`${WAREHOUSE_COLUMN_PREFIX}${code}`));
+    const pool = shown('incoming_pool') ? ['Incoming BRW'] : [];
+    const project = shown('incoming_project') ? ['Incoming (Project)'] : [];
+    return {
+      total_stock: totalTooltip([...shownCodes, ...pool]),
+      total_incoming: totalTooltip([...pool, ...project]),
+    } as Partial<Record<keyof StockPositionRow, string>>;
+  }, [warehouseCodes, hiddenColumns]);
 
   const columns = useMemo<ColumnDef<StockPositionRow>[]>(
     () => [
@@ -200,13 +238,21 @@ export default function StockPositionGrid() {
       ...FIGURE_COLUMNS.map<ColumnDef<StockPositionRow>>((c) => ({
         id: c.id,
         accessorKey: c.id,
-        header: ({ column }) => <DataGridColumnHeader title={c.title} column={column} />,
+        // A total's header names the shown columns it adds up (hover).
+        header: ({ column }) =>
+          tooltips[c.id] ? (
+            <div title={tooltips[c.id]}>
+              <DataGridColumnHeader title={c.title} column={column} />
+            </div>
+          ) : (
+            <DataGridColumnHeader title={c.title} column={column} />
+          ),
         cell: ({ row }) => numberCell(row.original[c.id] as number),
         size: c.size,
         meta: { headerTitle: c.title },
       })),
     ],
-    [warehouseCodes],
+    [warehouseCodes, tooltips],
   );
 
   const table = useReactTable({
@@ -216,8 +262,9 @@ export default function StockPositionGrid() {
     getRowId: (row) => row.product_id,
     // The item code stays in view while the figures scroll, as on the supplier sheet.
     initialState: { columnPinning: { left: ['item_code'] } },
-    state: { pagination, sorting },
+    state: { pagination, sorting, columnVisibility },
     onPaginationChange: setPagination,
+    onColumnVisibilityChange: setColumnVisibility,
     onSortingChange: (updater) => {
       setSorting(updater);
       setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -231,6 +278,9 @@ export default function StockPositionGrid() {
   });
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
+  // A total changes on every row with its parts, so the server re-sorts: back to page 1. Not on
+  // mount, which would stamp page 1 over the page restored from the URL.
+  useResetPageOnFilterChange(setPagination, [hiddenColumns]);
   // The badge counts filters, not values (FILTER-MULTISELECT).
   const activeCount = (supplierIds ? 1 : 0) + (brandIds ? 1 : 0) + (warehouseIds ? 1 : 0);
   const fetchSuppliers = async (q: string, pageIndex: number) => {
@@ -242,12 +292,8 @@ export default function StockPositionGrid() {
   const onExport = async () => {
     setExporting(true);
     try {
-      // The warehouse columns the user shows (Columns chooser, owner ruling Q5), in the export too.
-      const shownWarehouses = table
-        .getAllLeafColumns()
-        .filter((c) => c.id.startsWith(WAREHOUSE_COLUMN_PREFIX) && c.getIsVisible())
-        .map((c) => c.id.slice(WAREHOUSE_COLUMN_PREFIX.length));
-      await exportStockPosition(params, filters, shownWarehouses);
+      // The same hidden columns as the grid: the workbook's warehouse columns and totals are the screen's.
+      await exportStockPosition(params, filters);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to export the stock position');
     } finally {

@@ -60,13 +60,23 @@ describe('stockPositionService', () => {
     expect(read.has('supplier_id') || read.has('brand_id') || read.has('warehouse_id')).toBe(false);
   });
 
-  it('exports only the warehouse columns the user shows; none shown is an empty code, not all', async () => {
+  it('sends the hidden total-part columns as repeated hide params, none when nothing is hidden', async () => {
+    api.apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    await getStockPosition(params, { hiddenColumns: ['wh:DC1', 'incoming_pool'] });
+    expect(new URL(api.apiFetch.mock.calls[0][0], 'http://x').searchParams.getAll('hide')).toEqual([
+      'wh:DC1', 'incoming_pool',
+    ]);
+    api.apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
+    await getStockPosition(params, { hiddenColumns: [] });
+    expect(new URL(api.apiFetch.mock.calls[1][0], 'http://x').searchParams.getAll('hide')).toEqual([]);
+  });
+
+  it('exports with the same hidden columns, so the workbook total is the screen total', async () => {
     api.apiFetch.mockResolvedValue(new Response('xlsx', { status: 200 }));
-    await exportStockPosition(params, {}, ['BRW', 'DC1']);
-    expect(new URL(api.apiFetch.mock.calls[0][0], 'http://x').searchParams.getAll('wh')).toEqual(['BRW', 'DC1']);
-    api.apiFetch.mockResolvedValue(new Response('xlsx', { status: 200 }));
-    await exportStockPosition(params, {}, []);
-    expect(new URL(api.apiFetch.mock.calls[1][0], 'http://x').searchParams.getAll('wh')).toEqual(['']);
+    await exportStockPosition(params, { hiddenColumns: ['wh:BRW', 'wh:DC1'] });
+    const url = new URL(api.apiFetch.mock.calls[0][0], 'http://x');
+    expect(url.searchParams.getAll('hide')).toEqual(['wh:BRW', 'wh:DC1']);
+    expect(url.searchParams.getAll('wh')).toEqual([]);
   });
 
   it('throws the server message on a failed read', async () => {
