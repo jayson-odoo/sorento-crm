@@ -1554,6 +1554,14 @@ class ProjectOrderInquiryService:
         # tier asks it for every candidate of every row, and it does not change inside one
         # request.
         self._pool_codes_cache: Optional[set] = None
+        # CONFIRM-DIALOG-SPEED (crew profile, prod clone 3 Nov 2026): a placement pass walks
+        # every open row of its products (489 rows over 8 products for SO373923) and each
+        # row read the SAME product's open purchase-order lines and SPO allocations again:
+        # ~3,000 statements, 76% of a warm confirm-all dry run. Those two reads depend on
+        # the product alone and nothing in the pass writes a purchase-order line or an SPO
+        # allocation, so `auto_place_for_products` holds them for the length of ONE pass
+        # (`_document_rows`); None outside a pass, so the Link dialog always reads fresh.
+        self._document_rows_memo: Optional[Dict[Tuple[Any, ...], List[Any]]] = None
         # What every link already claims, per target. `auto_place_for_products` asks for
         # it once per ROW through `_candidates_for_row`, which on a full pass is two
         # aggregate queries per row over the whole link table. Cached here and dropped by
@@ -11080,6 +11088,16 @@ class ProjectOrderInquiryService:
         _add(row.spo_ref)
         return {document: rank for rank, document in enumerate(ordered)}
 
+    def _document_rows(self, key: Tuple[Any, ...], read: Callable[[], List[Any]]) -> List[Any]:
+        """`read()`, held for the rest of the placement pass running now (see
+        `_document_rows_memo`); read fresh every time outside a pass."""
+        memo = self._document_rows_memo
+        if memo is None:
+            return read()
+        if key not in memo:
+            memo[key] = read()
+        return memo[key]
+
     def _candidates_for_row(
         self, row: OrderInquiryRow, *, manual: bool = False, credit_own_links: bool = False
     ) -> List[Dict[str, Any]]:
@@ -11196,8 +11214,9 @@ class ProjectOrderInquiryService:
 
         candidates: List[Dict[str, Any]] = []
 
-        po_rows = (
-            self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier, Warehouse)
+        po_rows = self._document_rows(
+            ("po", product_id, manual),
+            lambda: self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier, Warehouse)
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
             .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
             .outerjoin(Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id)
@@ -11211,7 +11230,7 @@ class ProjectOrderInquiryService:
                     else (PurchaseOrder.status.in_(("active", "partial")),)
                 ),
             )
-            .all()
+            .all(),
         )
         # LADDER V4's group-deficit rule applies to what is OFFERED - the dialog's list and
         # the cascade's walk. A PERSON naming a line by hand is let through, exactly as
@@ -11281,8 +11300,9 @@ class ProjectOrderInquiryService:
             )
 
         if spo_allowed:
-            spo_rows = (
-                self.db.query(SPOAllocation, Supplier, Warehouse)
+            spo_rows = self._document_rows(
+                ("spo", product_id),
+                lambda: self.db.query(SPOAllocation, Supplier, Warehouse)
                 .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
                 # OI-SUPPLIER-FROM-PO: the source PO's supplier, not the SPO's own.
                 .outerjoin(Supplier, Supplier.id == spo_supply.supplier_id_for())
@@ -11292,7 +11312,7 @@ class ProjectOrderInquiryService:
                     SPOAllocation.spo_number.isnot(None),
                     *spo_supply.open_incoming_clauses(),
                 )
-                .all()
+                .all(),
             )
             self._prime_claims([str(a.id) for a, _sup, _wh in spo_rows])
             for allocation, supplier, warehouse in spo_rows:
@@ -13350,7 +13370,20 @@ class ProjectOrderInquiryService:
             and row.delivery_date > link_up_to
         )
 
-    def auto_place_for_products(
+    def auto_place_for_products(self, product_ids: Optional[Sequence[str]], **kwargs: Any) -> Dict[str, Any]:
+        """`_auto_place_for_products` with the per-pass document memo held (CONFIRM-DIALOG-
+        SPEED, `_document_rows_memo`). A nested pass (a displaced holder re-offered) shares
+        the outer pass's memo; only the outermost drops it."""
+        owner = self._document_rows_memo is None
+        if owner:
+            self._document_rows_memo = {}
+        try:
+            return self._auto_place_for_products(product_ids, **kwargs)
+        finally:
+            if owner:
+                self._document_rows_memo = None
+
+    def _auto_place_for_products(
         self,
         product_ids: Optional[Sequence[str]],
         *,
