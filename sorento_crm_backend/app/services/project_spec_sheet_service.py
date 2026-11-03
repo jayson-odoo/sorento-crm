@@ -1,31 +1,35 @@
-"""Project spec sheet (PS-SPEC-SHEET): a cover page plus one page per quoted item.
+"""Project spec sheets (PS-SPEC-SHEET, SPEC-SHEET-V2): a cover page plus one page per quoted item.
 
-Card: ``documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md``.
+Cards: ``documentation/plans/project-sales/CARD-ps-spec-sheet-02nov.md`` and
+``PLAN-spec-sheet-v2-03nov.md``.
 
 Nothing here draws. The pages are TAG TEMPLATES (families ``spec_cover`` / ``spec_page``) designed
 in the Dealer Kit tag template editor, and the PDF is the price tag print pipeline as it stands:
 this module builds a ``TagSheetDoc`` with one full-page "tag" per sheet plus the resolved rows the
-template's slots and merge fields read, and ``TagSheetRenderer`` draws it in Chromium. So a page
-looks exactly like the template the designer published, through the one renderer that already
-prints price tags.
+template's slots and merge fields read, and ``TagSheetRenderer`` draws it in Chromium.
 
-What it prints is an ISSUED revision, the same doctrine as the quotation PDF: what the customer
-received. The per-item settings (order, Area, Comment, Marker, Hide, hand-picked accessories) are
-keyed by product id or ``set:<set id>``, not by line id, so they survive the next revision.
+A spec sheet is a SAVED record (``projects.quotation_spec_sheets``, SS1, SS2 ... per quotation
+document). It freezes an items snapshot (from an issued revision, or from the draft's lines), the
+template VERSIONS it was made with and its per-page layer edits, so a later line edit or a
+re-published template never moves a sheet the customer may already hold. The per-item settings
+(order, Area, Comment, Marker, Hide, hand-picked accessories) are keyed by product id or
+``set:<set id>``.
 
-Price (owner Q-B, 2 Nov): each page row carries the issued line's quoted unit price in the same
-``list_price`` field a price tag reads, so the price tag designer's own List Price slot and price
-badge print it. A template that places no price prints none (the owner's sample has none).
+Price (owner Q-B, 2 Nov): each page row carries the quoted unit price in the same ``list_price``
+field a price tag reads, so the price tag designer's own List Price slot and price badge print it.
+A template that places no price prints none (the owner's sample has none).
 """
 from __future__ import annotations
 
 import math
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.dealer_kit import TagTemplate
+from app.models.dealer_kit import TagTemplate, TagTemplateVersion
 from app.models.product import Brand, Product
 from app.models.projects import (
     Project,
@@ -33,17 +37,21 @@ from app.models.projects import (
     ProjectQuotationIssue,
     ProjectQuotationIssueScope,
     ProjectQuotationLine,
+    ProjectQuotationSpecSheet,
 )
 from app.services.dealer_kit.pricing import DEFAULT_CURRENCY
 from app.services.error_handler import AppException
 
 #: ``user_downloads.kind`` of a spec sheet PDF. The print payload route answers it.
 KIND = "quotation_spec_sheet_pdf"
+#: ``user_downloads.source_entity_type`` of a spec sheet PDF (the sheet's own id).
+SOURCE_TYPE = "quotation_spec_sheet"
 
 COVER_FAMILY = "spec_cover"
 PAGE_FAMILY = "spec_page"
 
 COVER_KEY = "cover"
+DRAFT = "draft"
 
 #: Free-text limits. Area holds a unit-type list ("TOILET (ALL TYPE, PODIUM FACILITIES & GUARD
 #: HOUSE)"), so it is generous; a marker is the sample's ``*`` / ``**`` / ``***``.
@@ -51,20 +59,18 @@ AREA_MAX = 200
 COMMENT_MAX = 500
 MARKER_MAX = 10
 
+#: One preview call serves one window of the reader; more than this is a client bug.
+PREVIEW_KEYS_MAX = 12
+#: Layers one page edit may carry.
+LAYERS_MAX = 300
+
 #: A template page outside this range (or not a finite number) is refused before Chromium sees
 #: it: zero or negative sizes fail obscurely in the worker, and a huge one ties up the shared
 #: render queue until the subprocess times out.
 PAGE_MM_MIN = 10.0
 PAGE_MM_MAX = 1500.0
 
-_TEMPLATE_FIELDS = {
-    "cover_template_id": COVER_FAMILY,
-    "page_template_id": PAGE_FAMILY,
-    "single_page_template_id": PAGE_FAMILY,
-}
-
-
-# ----------------------------------------------------------------------------- settings
+NO_LINES_REASON = "Add a line to the quotation first."
 
 
 def _text(value: Any, limit: int) -> str:
@@ -80,18 +86,6 @@ def _row(raw: dict) -> dict:
         "marker": _text(raw.get("marker"), MARKER_MAX),
         "hidden": bool(raw.get("hidden")),
         "accessories": [str(a) for a in accessories if a],
-    }
-
-
-def settings_of(document: ProjectQuotationDocument) -> dict:
-    """The document's spec sheet settings, every key present."""
-    raw = document.spec_sheet or {}
-    return {
-        "cover_template_id": raw.get("cover_template_id"),
-        "page_template_id": raw.get("page_template_id"),
-        "single_page_template_id": raw.get("single_page_template_id"),
-        "issue_id": raw.get("issue_id"),
-        "rows": [_row(r) for r in raw.get("rows") or [] if isinstance(r, dict)],
     }
 
 
@@ -118,8 +112,23 @@ def _check_rows(rows: List[dict]) -> None:
             )
 
 
+def _is_uuid(value: Any) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+# ----------------------------------------------------------------------------- templates
+
+
 def _published_template(db: Session, template_id: str, family: str) -> TagTemplate:
-    template = db.query(TagTemplate).filter(TagTemplate.id == str(template_id)).first()
+    template = (
+        db.query(TagTemplate).filter(TagTemplate.id == str(template_id)).first()
+        if _is_uuid(template_id)
+        else None
+    )
     if (
         template is None
         or template.family != family
@@ -135,64 +144,105 @@ def _published_template(db: Session, template_id: str, family: str) -> TagTempla
     return template
 
 
-def _is_uuid(value: Any) -> bool:
+def _doc_size(name: str, doc: Optional[dict]) -> tuple:
+    doc = doc or {}
     try:
-        uuid.UUID(str(value))
+        size = (float(doc.get("width_mm") or 0), float(doc.get("height_mm") or 0))
     except (TypeError, ValueError):
-        return False
-    return True
+        size = (0.0, 0.0)
+    if not all(math.isfinite(v) and PAGE_MM_MIN <= v <= PAGE_MM_MAX for v in size):
+        raise AppException(
+            status_code=422,
+            message=(
+                f"The template {name} has a page size the PDF cannot print "
+                f"({PAGE_MM_MIN:g} to {PAGE_MM_MAX:g} mm)."
+            ),
+            code="spec_sheet_size_invalid",
+        )
+    return size
 
 
-def save_settings(db: Session, document: ProjectQuotationDocument, payload: dict) -> dict:
-    """Write the settings the payload names; a key it leaves out keeps its saved value.
+def _same_size(sizes: Sequence[tuple]) -> None:
+    if any(size != sizes[0] for size in sizes):
+        raise AppException(
+            status_code=422,
+            message="Page templates must be the same size as the cover.",
+            code="spec_sheet_size_mismatch",
+        )
 
-    ``rows`` MERGES: the payload's rows come first, in the payload's order, and every stored row
-    whose item the payload does not mention is kept after them. The tab only sends the rows it
-    shows, and it does not show an item printed as another page's accessory or an item of a
-    different revision; replacing the list would wipe their Area, Comment and order.
-    """
-    current = settings_of(document)
-    for field, family in _TEMPLATE_FIELDS.items():
-        if field not in payload:
+
+def _resolve_templates(
+    db: Session,
+    cover_id: Optional[str],
+    page_id: Optional[str],
+    single_id: Optional[str],
+) -> dict:
+    """The three templates as they publish today, refused with the #2103 codes."""
+    if not cover_id or not page_id:
+        raise AppException(
+            status_code=422,
+            message="Pick a cover template and a page template first.",
+            code="spec_sheet_templates_missing",
+        )
+    cover = _published_template(db, cover_id, COVER_FAMILY)
+    page = _published_template(db, page_id, PAGE_FAMILY)
+    single = _published_template(db, single_id, PAGE_FAMILY) if single_id else None
+    used = [cover, page] + ([single] if single is not None else [])
+    sizes = [_doc_size(t.name, t.published_version.doc) for t in used]
+    _same_size(sizes)
+    return {"cover": cover, "page": page, "single": single, "size": sizes[0]}
+
+
+def _pinned(db: Session, sheet: ProjectQuotationSpecSheet) -> dict:
+    """The version docs the sheet prints from: the pinned versions, never today's published ones.
+    A pinned version that is gone falls back to its template's published version."""
+
+    def version_of(version_id, template_id) -> Optional[TagTemplateVersion]:
+        version = db.get(TagTemplateVersion, version_id) if version_id else None
+        if version is None and template_id:
+            template = db.get(TagTemplate, template_id)
+            version = template.published_version if template is not None else None
+        return version
+
+    cover = version_of(sheet.cover_version_id, sheet.cover_template_id)
+    page = version_of(sheet.page_version_id, sheet.page_template_id)
+    single = version_of(sheet.single_version_id, sheet.single_page_template_id) or page
+    if cover is None or page is None:
+        raise AppException(
+            status_code=422,
+            message="A template of this spec sheet is gone.",
+            code="spec_sheet_template_invalid",
+        )
+    sizes = [_doc_size(f"v{v.version_no}", v.doc) for v in (cover, page, single)]
+    _same_size(sizes)
+    return {"cover": cover, "page": page, "single": single, "size": sizes[0]}
+
+
+def newer_templates(db: Session, sheet: ProjectQuotationSpecSheet) -> bool:
+    """True when a used template has published a version the sheet is not on."""
+    for template_id, version_id in (
+        (sheet.cover_template_id, sheet.cover_version_id),
+        (sheet.page_template_id, sheet.page_version_id),
+        (sheet.single_page_template_id, sheet.single_version_id),
+    ):
+        if not template_id:
             continue
-        value = payload.get(field) or None
-        if value is not None:
-            if not _is_uuid(value):
-                raise AppException(
-                    status_code=422,
-                    message="Pick a published template.",
-                    code="spec_sheet_template_invalid",
-                )
-            _published_template(db, value, family)
-        current[field] = value
-    if "issue_id" in payload:
-        issue_id = payload.get("issue_id") or None
-        if issue_id is not None and (
-            not _is_uuid(issue_id) or _issue_of(db, document, issue_id) is None
+        template = db.get(TagTemplate, template_id)
+        if (
+            template is not None
+            and template.published_version_id
+            and template.published_version_id != version_id
         ):
-            raise AppException(
-                status_code=422,
-                message="That revision is not on this quotation.",
-                code="spec_sheet_issue_invalid",
-            )
-        current["issue_id"] = issue_id
-    if "rows" in payload:
-        rows = [_row(r) for r in payload.get("rows") or [] if isinstance(r, dict)]
-        keys = [r["key"] for r in rows]
-        if any(not k for k in keys) or len(set(keys)) != len(keys):
-            raise _invalid_rows("Each item can appear once on the spec sheet.")
-        rows += [r for r in current["rows"] if r["key"] not in set(keys)]
-        _check_rows(rows)
-        current["rows"] = rows
-    document.spec_sheet = current
-    db.flush()
-    return current
+            return True
+    return False
 
 
 # ----------------------------------------------------------------------------- items
 
 
 def _issue_of(db: Session, document, issue_id: str) -> Optional[ProjectQuotationIssue]:
+    if not _is_uuid(issue_id):
+        return None
     return (
         db.query(ProjectQuotationIssue)
         .filter(
@@ -203,15 +253,7 @@ def _issue_of(db: Session, document, issue_id: str) -> Optional[ProjectQuotation
     )
 
 
-def issue_for(
-    db: Session, document: ProjectQuotationDocument, issue_id: Optional[str] = None
-) -> Optional[ProjectQuotationIssue]:
-    """The revision to print: the one asked for, else the saved pick, else the latest."""
-    wanted = issue_id or settings_of(document)["issue_id"]
-    if wanted:
-        found = _issue_of(db, document, wanted)
-        if found is not None:
-            return found
+def _newest_issue(db: Session, document) -> Optional[ProjectQuotationIssue]:
     return (
         db.query(ProjectQuotationIssue)
         .filter(ProjectQuotationIssue.document_id == document.id)
@@ -220,25 +262,19 @@ def issue_for(
     )
 
 
-def _issue_lines(db: Session, issue: ProjectQuotationIssue) -> List[tuple]:
-    """``(line, section)`` for every line the issue froze, scope order then line order.
+def _version_lines(db: Session, version_ids: Sequence[str]) -> List[tuple]:
+    """``(line, section)`` for every line of the given versions, scope order then line order.
 
     ``section`` is the Section heading the line sits under on the Lines tab: the nearest
     ``band_label`` at or above it in its own scope (a heading never runs into the next scope).
     It is the page's default AREA (owner, mock v5): one rule, typed over on the page when needed.
     """
-    scopes = (
-        db.query(ProjectQuotationIssueScope)
-        .filter(ProjectQuotationIssueScope.issue_id == issue.id)
-        .order_by(ProjectQuotationIssueScope.sort_order, ProjectQuotationIssueScope.id)
-        .all()
-    )
     lines: List[tuple] = []
-    for scope in scopes:
+    for version_id in version_ids:
         section = ""
         for line in (
             db.query(ProjectQuotationLine)
-            .filter(ProjectQuotationLine.version_id == scope.version_id)
+            .filter(ProjectQuotationLine.version_id == version_id)
             .order_by(ProjectQuotationLine.sort_order, ProjectQuotationLine.created_at)
             .all()
         ):
@@ -247,6 +283,23 @@ def _issue_lines(db: Session, issue: ProjectQuotationIssue) -> List[tuple]:
                 section = heading
             lines.append((line, section))
     return lines
+
+
+def _issue_version_ids(db: Session, issue: ProjectQuotationIssue) -> List[str]:
+    return [
+        row.version_id
+        for row in db.query(ProjectQuotationIssueScope)
+        .filter(ProjectQuotationIssueScope.issue_id == issue.id)
+        .order_by(ProjectQuotationIssueScope.sort_order, ProjectQuotationIssueScope.id)
+        .all()
+    ]
+
+
+def _draft_version_ids(db: Session, document) -> List[str]:
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_service as quotes
+
+    return [quotes.current_version(db, scope.id).id for scope in qdocs.list_scopes(db, document)]
 
 
 def item_key(line: ProjectQuotationLine) -> Optional[str]:
@@ -269,24 +322,63 @@ def _set_parts(line: ProjectQuotationLine) -> List[dict]:
     return [p for p in (line.set_parts_snapshot or []) if p is not driver]
 
 
-def _items(db: Session, issue: ProjectQuotationIssue) -> Dict[str, dict]:
-    """Ordered ``{key: item}``, one per product or set, at its first position."""
-    items: Dict[str, dict] = {}
-    for line, section in _issue_lines(db, issue):
+def snapshot_items(
+    db: Session, document: ProjectQuotationDocument, issue: Optional[ProjectQuotationIssue]
+) -> List[dict]:
+    """The frozen item list a spec sheet is made from, one per product or set at its first
+    position. An issue freezes its scope pairs; ``None`` reads each scope's current version."""
+    version_ids = _issue_version_ids(db, issue) if issue is not None else _draft_version_ids(db, document)
+    found: Dict[str, dict] = {}
+    for line, section in _version_lines(db, version_ids):
         key = item_key(line)
-        if key is None or key in items:
+        if key is None or key in found:
             continue
         driver = _driver_part(line) if line.product_set_id else None
-        items[key] = {
+        found[key] = {
             "key": key,
-            "line": line,
+            "line_id": line.id,
             "product_id": (driver or {}).get("product_id") or line.product_id,
             "code": (driver or {}).get("product_code") or line.product_code_snapshot or "",
             "description": (driver or {}).get("description") or line.description_snapshot or "",
-            "set_parts": _set_parts(line) if line.product_set_id else [],
+            "brand": line.brand_snapshot or "",
+            "image_attachment_id": line.image_attachment_id,
+            "drawing_attachment_id": line.drawing_attachment_id,
             "section": section,
+            "unit_price": float(line.unit_price) if line.unit_price is not None else None,
+            "set_parts": [
+                {
+                    "product_id": p.get("product_id"),
+                    "product_code": p.get("product_code"),
+                    "description": p.get("description"),
+                }
+                for p in (_set_parts(line) if line.product_set_id else [])
+            ],
         }
-    return items
+    # The product's own brand and files fill what the line did not freeze, once, at snapshot time.
+    products = _products(db, [i["product_id"] for i in found.values()])
+    brands = _brands(db, products)
+    files = _files(db, [i["product_id"] for i in found.values() if i["product_id"]])
+    for item in found.values():
+        product = products.get(str(item["product_id"])) if item["product_id"] else None
+        own = files.get(str(item["product_id"]), {}) if item["product_id"] else {}
+        if not item["brand"] and product is not None and product.brand_id:
+            item["brand"] = brands.get(str(product.brand_id), "")
+        item["image_attachment_id"] = item["image_attachment_id"] or own.get("photo")
+        item["drawing_attachment_id"] = item["drawing_attachment_id"] or own.get("drawing")
+    return list(found.values())
+
+
+def has_lines(db: Session, document: ProjectQuotationDocument) -> bool:
+    """Any product line on a scope's current version (the Create button's only precondition)."""
+    version_ids = _draft_version_ids(db, document)
+    if not version_ids:
+        return False
+    return (
+        db.query(ProjectQuotationLine.id)
+        .filter(ProjectQuotationLine.version_id.in_(version_ids))
+        .first()
+        is not None
+    )
 
 
 # ----------------------------------------------------------------------------- products
@@ -332,11 +424,14 @@ def _files(db: Session, product_ids: Sequence[str]) -> Dict[str, dict]:
     return out
 
 
-def _sign(db: Session, attachment_ids: Sequence[Optional[str]]) -> Dict[str, str]:
-    """Full-size signed URLs, omitting any that cannot be signed (a print needs the original)."""
+def _sign(
+    db: Session, attachment_ids: Sequence[Optional[str]], *, full: bool
+) -> Dict[str, str]:
+    """Signed URLs, omitting any that cannot be signed. The reader asks for thumbnails; only the
+    export asks for the original (SPEC-SHEET-V2 AC-V5)."""
     from app.services import product_image_service as images
 
-    return {k: v for k, v in images.preview_urls(db, attachment_ids, full=True).items() if v}
+    return {k: v for k, v in images.preview_urls(db, attachment_ids, full=full).items() if v}
 
 
 def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -> dict:
@@ -359,19 +454,23 @@ def _product_fields(db: Session, product: Optional[Product], spec_cache: dict) -
 # ----------------------------------------------------------------------------- pages
 
 
-def _row_settings(document) -> Dict[str, dict]:
-    return {r["key"]: r for r in settings_of(document)["rows"]}
+def _quoted_price(value: Optional[float]) -> Optional[float]:
+    """The quoted unit price (owner Q-B, 2 Nov 23:29). A template prints it only where the
+    designer placed a price; a template without one prints no price at all. Zero prints nothing:
+    it means "no separate charge" (a component quoted after its priced parent), the same rule as
+    the quotation PDF's `_line_money`, and a printed 0 reads as a free product."""
+    if value is None or float(value) == 0:
+        return None
+    return float(value)
 
 
-def pages(
-    db: Session, document: ProjectQuotationDocument, issue: Optional[ProjectQuotationIssue]
-) -> List[dict]:
-    """The pages after the cover, in print order, hidden ones included (flagged)."""
-    if issue is None:
-        return []
-    items = _items(db, issue)
-    rows = settings_of(document)["rows"]
+def pages(db: Session, sheet: ProjectQuotationSpecSheet) -> List[dict]:
+    """The pages after the cover, in print order, hidden ones included (flagged), built from the
+    sheet's own snapshot and rows (never from live lines)."""
+    items = {i["key"]: i for i in sheet.items or []}
+    rows = [_row(r) for r in sheet.rows or [] if isinstance(r, dict)]
     by_key = {r["key"]: r for r in rows}
+    edits = sheet.page_edits or {}
 
     absorbed = {
         picked
@@ -395,16 +494,13 @@ def pages(
         product = products.get(str(product_id)) if product_id else None
         return (product.product_name if product is not None else None) or fallback or ""
 
-    def brand_of(product_id, fallback=None):
+    def brand_of(product_id):
         product = products.get(str(product_id)) if product_id else None
-        if fallback:
-            return fallback
         return brands.get(str(product.brand_id), "") if product and product.brand_id else ""
 
     out: List[dict] = []
     for key in ordered:
         item = items[key]
-        line = item["line"]
         setting = by_key.get(key) or _row({"key": key})
         accessories = [
             {
@@ -428,22 +524,22 @@ def pages(
                     "product_id": other["product_id"],
                     "code": other["code"],
                     "name": name_of(other["product_id"], other["description"]),
-                    "brand": brand_of(other["product_id"], other["line"].brand_snapshot),
-                    "image_attachment_id": other["line"].image_attachment_id,
-                    "drawing_attachment_id": other["line"].drawing_attachment_id,
-                    "_price": _quoted(other["line"]),
+                    "brand": other["brand"] or brand_of(other["product_id"]),
+                    "image_attachment_id": other["image_attachment_id"],
+                    "drawing_attachment_id": other["drawing_attachment_id"],
+                    "_price": _quoted_price(other["unit_price"]),
                 }
             )
         out.append(
             {
                 "key": key,
-                "line_id": line.id,
+                "line_id": item["line_id"],
                 "product_id": item["product_id"],
                 "code": item["code"],
                 "name": name_of(item["product_id"], item["description"]),
-                "brand": brand_of(item["product_id"], line.brand_snapshot),
-                "image_attachment_id": line.image_attachment_id,
-                "drawing_attachment_id": line.drawing_attachment_id,
+                "brand": item["brand"] or brand_of(item["product_id"]),
+                "image_attachment_id": item["image_attachment_id"],
+                "drawing_attachment_id": item["drawing_attachment_id"],
                 "accessories": accessories,
                 "picked": list(setting["accessories"]),
                 # Typed on the page, else the Section heading the line sits under.
@@ -452,28 +548,30 @@ def pages(
                 "comment": setting["comment"],
                 "marker": setting["marker"],
                 "hidden": setting["hidden"],
+                "edited": key in edits,
+                "template": "page" if accessories else "single",
                 # Print-only (underscore keys never leave the API): the quoted unit price.
-                "_price": _quoted(line),
+                "_price": _quoted_price(item["unit_price"]),
             }
         )
     return out
 
 
-def _quoted(line: ProjectQuotationLine) -> Optional[float]:
-    """The issued line's quoted unit price (owner Q-B, 2 Nov 23:29). A template prints it only
-    where the designer placed a price (the price tag designer's List Price slot or price
-    badge); a template without one prints no price at all. Zero prints nothing."""
-    # Zero means "no separate charge" (a component quoted after its priced parent), and prints
-    # blank, the same rule as the quotation PDF's `_line_money`: a printed 0 reads as a free product.
-    if line.unit_price is None or float(line.unit_price) == 0:
-        return None
-    return float(line.unit_price)
+def _recount(db: Session, sheet: ProjectQuotationSpecSheet) -> None:
+    sheet.page_count = 1 + sum(1 for p in pages(db, sheet) if not p["hidden"])
 
 
 # ----------------------------------------------------------------------------- print
 
 
-def _doc_fields(db: Session, document, issue) -> dict:
+def _document_of(db: Session, sheet: ProjectQuotationSpecSheet) -> ProjectQuotationDocument:
+    document = db.get(ProjectQuotationDocument, sheet.document_id)
+    if document is None:
+        raise AppException(status_code=404, message="Not found")
+    return document
+
+
+def _doc_fields(db: Session, document, sheet: ProjectQuotationSpecSheet) -> dict:
     from app.models.user import User
     from app.services.project_quotation_document_service import quotation_no
 
@@ -481,10 +579,15 @@ def _doc_fields(db: Session, document, issue) -> dict:
     owner = None
     if project is not None and project.owner_user_id:
         owner = db.query(User).filter(User.id == project.owner_user_id).first()
-    number = quotation_no(document.document_no, issue.issue_no)
+    issue = db.get(ProjectQuotationIssue, sheet.issue_id) if sheet.issue_id else None
+    number = (
+        quotation_no(document.document_no, issue.issue_no, issue.revision_label)
+        if issue is not None
+        else f"{document.document_no}-draft"
+    )
     your_ref = (document.your_ref or "").strip()
     # The quotation's own date, as its PDF and cover print it, else the day it was issued.
-    issued = document.doc_date or issue.issued_at
+    issued = document.doc_date or (issue.issued_at if issue is not None else sheet.items_taken_at)
     return {
         "project_title": ((project.title if project is not None else "") or "").strip(),
         "your_ref": your_ref,
@@ -497,48 +600,6 @@ def _doc_fields(db: Session, document, issue) -> dict:
         ).strip(),
         "date": issued.strftime("%d %b %Y").upper() if issued else "",
     }
-
-
-def _template_size(template: TagTemplate) -> tuple:
-    doc = template.published_version.doc or {}
-    try:
-        size = (float(doc.get("width_mm") or 0), float(doc.get("height_mm") or 0))
-    except (TypeError, ValueError):
-        size = (0.0, 0.0)
-    if not all(math.isfinite(v) and PAGE_MM_MIN <= v <= PAGE_MM_MAX for v in size):
-        raise AppException(
-            status_code=422,
-            message=(
-                f"The template {template.name} has a page size the PDF cannot print "
-                f"({PAGE_MM_MIN:g} to {PAGE_MM_MAX:g} mm)."
-            ),
-            code="spec_sheet_size_invalid",
-        )
-    return size
-
-
-def _templates_for(db: Session, settings: dict) -> dict:
-    if not settings["cover_template_id"] or not settings["page_template_id"]:
-        raise AppException(
-            status_code=422,
-            message="Pick a cover template and a page template first.",
-            code="spec_sheet_templates_missing",
-        )
-    cover = _published_template(db, settings["cover_template_id"], COVER_FAMILY)
-    page = _published_template(db, settings["page_template_id"], PAGE_FAMILY)
-    single = (
-        _published_template(db, settings["single_page_template_id"], PAGE_FAMILY)
-        if settings["single_page_template_id"]
-        else page
-    )
-    size = _template_size(cover)
-    if any(_template_size(t) != size for t in (page, single)):
-        raise AppException(
-            status_code=422,
-            message="Page templates must be the same size as the cover.",
-            code="spec_sheet_size_mismatch",
-        )
-    return {"cover": cover, "page": page, "single": single, "size": size}
 
 
 def _image(attachment_id: Optional[str], urls: Dict[str, str]) -> Optional[dict]:
@@ -581,40 +642,96 @@ def _blank_row(tag_id: str, label: str, doc: dict) -> dict:
     }
 
 
+def _sheet(key: str, version: TagTemplateVersion, width: float, height: float, layers=None) -> dict:
+    return {
+        "id": f"sheet-{key}",
+        "tags": [
+            {
+                "id": f"tag-{key}",
+                "template_id": version.template_id,
+                "request_tag_id": key,
+                "x_mm": 0,
+                "y_mm": 0,
+                "width_mm": width,
+                "height_mm": height,
+                "layers": layers if layers is not None else (version.doc or {}).get("layers") or [],
+            }
+        ],
+    }
+
+
+def _invalid_keys() -> AppException:
+    return AppException(
+        status_code=422,
+        message="Those pages are not on this spec sheet.",
+        code="spec_sheet_keys_invalid",
+    )
+
+
 def build_print_payload(
-    db: Session, document: ProjectQuotationDocument, issue: ProjectQuotationIssue
+    db: Session,
+    sheet: ProjectQuotationSpecSheet,
+    *,
+    keys: Optional[Sequence[str]] = None,
+    full: bool = False,
 ) -> dict:
-    """Everything ``TagSheetRenderer`` draws: cover, then one sheet per visible page."""
+    """Everything ``TagSheetRenderer`` draws.
+
+    Export (``keys=None``): the cover, then one sheet per VISIBLE page. A window (``keys``): just
+    those pages, hidden ones included and listed under ``hidden`` so the reader can grey them.
+    ``full`` signs the original images (export only); the default signs thumbnails.
+    """
     from app.services.dealer_kit import asset_service
 
-    settings = settings_of(document)
-    templates = _templates_for(db, settings)
-    width, height = templates["size"]
-    doc_fields = _doc_fields(db, document, issue)
-    visible = [p for p in pages(db, document, issue) if not p["hidden"]]
+    document = _document_of(db, sheet)
+    pinned = _pinned(db, sheet)
+    width, height = pinned["size"]
+    doc_fields = _doc_fields(db, document, sheet)
+    every = pages(db, sheet)
+    visible = [p for p in every if not p["hidden"]]
+    numbers = {COVER_KEY: 1}
+    numbers.update({p["key"]: n for n, p in enumerate(visible, start=2)})
+
+    if keys is None:
+        chosen, with_cover = visible, True
+    else:
+        known = {COVER_KEY} | {p["key"] for p in every}
+        if any(k not in known for k in keys):
+            raise _invalid_keys()
+        wanted = set(keys)
+        chosen, with_cover = [p for p in every if p["key"] in wanted], COVER_KEY in wanted
 
     # Media: the frozen line photo / drawing first, the product's own files for accessories.
-    part_ids = [a["product_id"] for p in visible for a in p["accessories"] if a.get("product_id")]
-    main_ids = [p["product_id"] for p in visible if p["product_id"]]
+    part_ids = [a["product_id"] for p in chosen for a in p["accessories"] if a.get("product_id")]
+    main_ids = [p["product_id"] for p in chosen if p["product_id"]]
     files = _files(db, part_ids + main_ids)
     products = _products(db, part_ids + main_ids)
-    wanted: List[Optional[str]] = []
-    for page in visible:
-        own = files.get(str(page["product_id"]), {}) if page["product_id"] else {}
-        page["_photo"] = page["image_attachment_id"] or own.get("photo")
-        page["_drawing"] = page["drawing_attachment_id"] or own.get("drawing")
-        wanted += [page["_photo"], page["_drawing"]]
+    wanted_media: List[Optional[str]] = []
+    for page in chosen:
+        page["_photo"] = page["image_attachment_id"]
+        page["_drawing"] = page["drawing_attachment_id"]
+        wanted_media += [page["_photo"], page["_drawing"]]
         for acc in page["accessories"]:
             mine = files.get(str(acc.get("product_id")), {}) if acc.get("product_id") else {}
             acc["_photo"] = acc.get("image_attachment_id") or mine.get("photo")
             acc["_drawing"] = acc.get("drawing_attachment_id") or mine.get("drawing")
-            wanted += [acc["_photo"], acc["_drawing"]]
-    urls = _sign(db, wanted)
+            wanted_media += [acc["_photo"], acc["_drawing"]]
+    # Export prints originals; PR #2126 adds the ~200 dpi cap for these, merged later.
+    urls = _sign(db, wanted_media, full=full)
+
+    edits = sheet.page_edits or {}
+
+    def layers_of(key: str):
+        edit = edits.get(key)
+        return edit.get("layers") if isinstance(edit, dict) else None
 
     spec_cache: dict = {}
-    resolved: Dict[str, dict] = {COVER_KEY: _blank_row(COVER_KEY, "Cover", doc_fields)}
-    sheets: List[dict] = [_sheet(COVER_KEY, templates["cover"], width, height)]
-    for number, page in enumerate(visible, start=2):
+    resolved: Dict[str, dict] = {}
+    sheets: List[dict] = []
+    if with_cover:
+        resolved[COVER_KEY] = _blank_row(COVER_KEY, "Cover", doc_fields)
+        sheets.append(_sheet(COVER_KEY, pinned["cover"], width, height, layers_of(COVER_KEY)))
+    for page in chosen:
         product = products.get(str(page["product_id"])) if page["product_id"] else None
         fields = _product_fields(db, product, spec_cache)
         parts = []
@@ -642,7 +759,7 @@ def build_print_payload(
                 }
             )
         photo = _image(page["_photo"], urls)
-        row = _blank_row(page["key"], str(number), doc_fields)
+        row = _blank_row(page["key"], str(numbers.get(page["key"], "")), doc_fields)
         row.update(
             {
                 "line_id": page["line_id"],
@@ -668,8 +785,8 @@ def build_print_payload(
             }
         )
         resolved[page["key"]] = row
-        template = templates["page"] if parts else templates["single"]
-        sheets.append(_sheet(page["key"], template, width, height))
+        version = pinned["page"] if parts else pinned["single"]
+        sheets.append(_sheet(page["key"], version, width, height, layers_of(page["key"])))
 
     doc = {
         "kind": "tag_sheet",
@@ -689,62 +806,473 @@ def build_print_payload(
         "images": urls,
         "fonts": asset_service.font_assets(db),
         "requestDocNumber": doc_fields["quotation_no"],
-        "version": issue.issue_no,
+        "version": sheet.sheet_no,
         "page_size": {"width_mm": width, "height_mm": height},
+        "hidden": [p["key"] for p in chosen if p["hidden"]],
     }
 
 
-def _sheet(key: str, template: TagTemplate, width: float, height: float) -> dict:
-    version = template.published_version
-    return {
-        "id": f"sheet-{key}",
-        "tags": [
+# ----------------------------------------------------------------------------- sheets
+
+
+def label_of(sheet: ProjectQuotationSpecSheet) -> str:
+    return f"SS{sheet.sheet_no}"
+
+
+def _issue_date(issue: ProjectQuotationIssue) -> str:
+    return issue.issued_at.strftime("%d %b %Y") if issue.issued_at else ""
+
+
+def _issue_label(document, issue: ProjectQuotationIssue) -> str:
+    from app.services.project_quotation_document_service import quotation_no
+
+    return quotation_no(document.document_no, issue.issue_no, issue.revision_label)
+
+
+def sources(db: Session, document: ProjectQuotationDocument) -> List[dict]:
+    """The revisions a sheet can be made from: the draft first when it is ahead of the newest
+    issue (or nothing was issued), then every issue newest first. No signature is required."""
+    from app.services import project_quotation_document_service as qdocs
+    from app.services import project_quotation_service as quotes
+
+    issues = qdocs.list_issues(db, document)
+    out: List[dict] = []
+    if not issues:
+        out.append({"value": DRAFT, "label": "Current draft", "hint": "not issued yet"})
+    else:
+        newest = issues[0]
+        pairs = {
+            row.quotation_id: row.version_id
+            for row in db.query(ProjectQuotationIssueScope).filter(
+                ProjectQuotationIssueScope.issue_id == newest.id
+            )
+        }
+        changed = any(
+            pairs.get(scope.id) != quotes.current_version(db, scope.id).id
+            for scope in qdocs.list_scopes(db, document)
+        )
+        if changed:
+            out.append(
+                {
+                    "value": DRAFT,
+                    "label": "Current draft",
+                    "hint": f"changed after {_revision_name(newest)} · not issued",
+                }
+            )
+    for issue in issues:
+        out.append(
             {
-                "id": f"tag-{key}",
-                "template_id": template.id,
-                "request_tag_id": key,
-                "x_mm": 0,
-                "y_mm": 0,
-                "width_mm": width,
-                "height_mm": height,
-                "layers": (version.doc or {}).get("layers") or [],
+                "value": issue.id,
+                "label": _issue_label(document, issue),
+                "hint": f"issued {_issue_date(issue)}".strip(),
             }
-        ],
+        )
+    return out
+
+
+def source_text(db: Session, document, sheet: ProjectQuotationSpecSheet, issues: Optional[dict] = None) -> tuple:
+    """``(label, hint)`` of the revision a sheet was made from."""
+    if sheet.issue_id:
+        issue = (issues or {}).get(sheet.issue_id) or db.get(ProjectQuotationIssue, sheet.issue_id)
+        if issue is not None:
+            return _issue_label(document, issue), f"issued {_issue_date(issue)}".strip()
+        return "Revision", ""
+    taken = sheet.items_taken_at.strftime("%d %b %Y %H:%M") if sheet.items_taken_at else ""
+    if sheet.based_on_issue_no is None:
+        return "Draft", f"lines taken {taken}".strip()
+    return f"Draft after R{sheet.based_on_issue_no}", f"lines taken {taken}".strip()
+
+
+def create_sheet(
+    db: Session,
+    document: ProjectQuotationDocument,
+    *,
+    source: str,
+    cover_template_id: Optional[str],
+    page_template_id: Optional[str],
+    single_page_template_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> ProjectQuotationSpecSheet:
+    """Save a new spec sheet: the items snapshot, the three templates and their published versions
+    as of now. Page rows start clean (nothing is copied from another sheet)."""
+    if source == DRAFT:
+        issue = None
+    else:
+        issue = _issue_of(db, document, source) if source else None
+        if issue is None:
+            raise AppException(
+                status_code=422,
+                message="That revision is not on this quotation.",
+                code="spec_sheet_issue_invalid",
+            )
+    templates = _resolve_templates(db, cover_template_id, page_template_id, single_page_template_id)
+    items = snapshot_items(db, document, issue)
+    if not items:
+        raise AppException(status_code=422, message=NO_LINES_REASON, code="spec_sheet_no_lines")
+
+    newest = _newest_issue(db, document)
+    now = datetime.utcnow()
+    sheet = ProjectQuotationSpecSheet(
+        id=str(uuid.uuid4()),
+        company_id=document.company_id,
+        document_id=document.id,
+        issue_id=issue.id if issue is not None else None,
+        based_on_issue_no=(newest.issue_no if newest is not None else None) if issue is None else None,
+        sheet_no=(
+            db.query(func.max(ProjectQuotationSpecSheet.sheet_no))
+            .filter(ProjectQuotationSpecSheet.document_id == document.id)
+            .scalar()
+            or 0
+        )
+        + 1,
+        cover_template_id=templates["cover"].id,
+        page_template_id=templates["page"].id,
+        single_page_template_id=templates["single"].id if templates["single"] is not None else None,
+        cover_version_id=templates["cover"].published_version_id,
+        page_version_id=templates["page"].published_version_id,
+        single_version_id=(
+            templates["single"].published_version_id if templates["single"] is not None else None
+        ),
+        items=items,
+        rows=[],
+        page_edits={},
+        items_taken_at=now,
+        created_by=str(user_id) if user_id else None,
+        created_at=now,
+        updated_at=now,
+        page_count=0,
+    )
+    _recount(db, sheet)
+    db.add(sheet)
+    db.flush()
+    return sheet
+
+
+def update_sheet(
+    db: Session, sheet: ProjectQuotationSpecSheet, payload: dict, user_id: Optional[str] = None
+) -> ProjectQuotationSpecSheet:
+    """``rows`` MERGES: the payload's rows come first, in the payload's order, and every stored
+    row whose item the payload does not mention is kept after them. The reader only sends the
+    rows it shows, and it does not show an item printed as another page's accessory; replacing
+    the list would wipe their Area, Comment and order. ``use_latest_templates`` moves the sheet to
+    the templates' current published versions and keeps its page edits."""
+    if "rows" in payload:
+        rows = [_row(r) for r in payload.get("rows") or [] if isinstance(r, dict)]
+        keys = [r["key"] for r in rows]
+        if any(not k for k in keys) or len(set(keys)) != len(keys):
+            raise _invalid_rows("Each item can appear once on the spec sheet.")
+        stored = [_row(r) for r in sheet.rows or [] if isinstance(r, dict)]
+        rows += [r for r in stored if r["key"] not in set(keys)]
+        _check_rows(rows)
+        sheet.rows = rows
+    if payload.get("use_latest_templates"):
+        templates = _resolve_templates(
+            db, sheet.cover_template_id, sheet.page_template_id, sheet.single_page_template_id
+        )
+        sheet.cover_version_id = templates["cover"].published_version_id
+        sheet.page_version_id = templates["page"].published_version_id
+        sheet.single_version_id = (
+            templates["single"].published_version_id if templates["single"] is not None else None
+        )
+    _recount(db, sheet)
+    _stamp(sheet, user_id)
+    db.flush()
+    return sheet
+
+
+def _stamp(sheet: ProjectQuotationSpecSheet, user_id: Optional[str]) -> None:
+    sheet.updated_at = datetime.utcnow()
+    if user_id:
+        sheet.updated_by = str(user_id)
+
+
+def ensure_key(db: Session, sheet: ProjectQuotationSpecSheet, key: str) -> None:
+    """404 unless ``key`` is the cover or a page of this sheet (hidden ones included)."""
+    if key != COVER_KEY and key not in {p["key"] for p in pages(db, sheet)}:
+        raise AppException(status_code=404, message="Page not found.", code="spec_sheet_page_missing")
+
+
+def save_page_edit(
+    db: Session,
+    sheet: ProjectQuotationSpecSheet,
+    key: str,
+    layers: Any,
+    user_id: Optional[str] = None,
+) -> ProjectQuotationSpecSheet:
+    """Store ``layers`` as this page's override. The template and its versions are untouched."""
+    ensure_key(db, sheet, key)
+    if not isinstance(layers, list) or len(layers) > LAYERS_MAX or not all(
+        isinstance(layer, dict) for layer in layers
+    ):
+        raise AppException(
+            status_code=422,
+            message=f"A page holds at most {LAYERS_MAX} layers.",
+            code="spec_sheet_layers_invalid",
+        )
+    sheet.page_edits = {**(sheet.page_edits or {}), key: {"layers": layers}}
+    _stamp(sheet, user_id)
+    db.flush()
+    return sheet
+
+
+def reset_page_edit(
+    db: Session, sheet: ProjectQuotationSpecSheet, key: str, user_id: Optional[str] = None
+) -> ProjectQuotationSpecSheet:
+    """Drop the page's override so it draws the template version again."""
+    edits = dict(sheet.page_edits or {})
+    if edits.pop(key, None) is not None:
+        sheet.page_edits = edits
+        _stamp(sheet, user_id)
+        db.flush()
+    return sheet
+
+
+def design(db: Session, sheet: ProjectQuotationSpecSheet, key: str) -> dict:
+    """What the page designer opens: the page's layers (its override, else the frozen template
+    version's), bound to that page's data, at thumbnail image size."""
+    ensure_key(db, sheet, key)
+    payload = build_print_payload(db, sheet, keys=[key])
+    tag = payload["doc"]["sheets"][0]["tags"][0]
+    template = db.get(TagTemplate, tag["template_id"]) if tag.get("template_id") else None
+    return {
+        "layers": tag["layers"],
+        "bound": payload["resolvedData"][key],
+        "images": payload["images"],
+        "assets": payload["assets"],
+        "fonts": payload["fonts"],
+        "width_mm": payload["page_size"]["width_mm"],
+        "height_mm": payload["page_size"]["height_mm"],
+        "template_name": template.name if template is not None else "",
+        "template_id": template.id if template is not None else None,
+        "edited": key in (sheet.page_edits or {}),
+    }
+
+
+# ----------------------------------------------------------------------------- views
+
+
+def _public(page: dict) -> dict:
+    """A page without its print-only (underscore) keys, accessories included."""
+    out = {k: v for k, v in page.items() if not k.startswith("_")}
+    out["accessories"] = [
+        {k: v for k, v in acc.items() if not k.startswith("_")} for acc in page["accessories"]
+    ]
+    return out
+
+
+def published_templates(db: Session) -> dict:
+    rows = (
+        db.query(TagTemplate)
+        .filter(
+            TagTemplate.family.in_([COVER_FAMILY, PAGE_FAMILY]),
+            TagTemplate.published_version_id.isnot(None),
+        )
+        .order_by(TagTemplate.name)
+        .all()
+    )
+    out: dict = {"cover": [], "page": []}
+    for row in rows:
+        doc = (row.published_version.doc if row.published_version else None) or {}
+        out["cover" if row.family == COVER_FAMILY else "page"].append(
+            {
+                "id": row.id,
+                "name": row.name,
+                "width_mm": doc.get("width_mm"),
+                "height_mm": doc.get("height_mm"),
+            }
+        )
+    return out
+
+
+def _user_names(db: Session, ids: Sequence[Optional[str]]) -> Dict[str, str]:
+    from app.models.user import User
+
+    wanted = list({str(i) for i in ids if i})
+    if not wanted:
+        return {}
+    return {str(u.id): u.name or "" for u in db.query(User).filter(User.id.in_(wanted)).all()}
+
+
+def sheets_of(db: Session, document: ProjectQuotationDocument) -> List[ProjectQuotationSpecSheet]:
+    """Newest first."""
+    return (
+        db.query(ProjectQuotationSpecSheet)
+        .filter(ProjectQuotationSpecSheet.document_id == document.id)
+        .order_by(ProjectQuotationSpecSheet.sheet_no.desc())
+        .all()
+    )
+
+
+def list_view(db: Session, document: ProjectQuotationDocument, user_id: str) -> dict:
+    rows = sheets_of(db, document)
+    issues = {i.id: i for i in db.query(ProjectQuotationIssue).filter(
+        ProjectQuotationIssue.document_id == document.id
+    )}
+    template_ids = {
+        t
+        for r in rows
+        for t in (r.cover_template_id, r.page_template_id, r.single_page_template_id)
+        if t
+    }
+    names = (
+        {t.id: t.name for t in db.query(TagTemplate).filter(TagTemplate.id.in_(template_ids)).all()}
+        if template_ids
+        else {}
+    )
+    users = _user_names(db, [r.created_by for r in rows])
+    items = []
+    for r in rows:
+        source_label, source_hint = source_text(db, document, r, issues)
+        items.append(
+            {
+                "id": r.id,
+                "sheet_no": r.sheet_no,
+                "label": label_of(r),
+                "source_label": source_label,
+                "source_hint": source_hint,
+                "is_draft": r.issue_id is None,
+                "cover_name": names.get(r.cover_template_id, ""),
+                "page_name": names.get(r.page_template_id, ""),
+                "single_name": names.get(r.single_page_template_id) if r.single_page_template_id else None,
+                "page_count": r.page_count,
+                "edited_count": len(r.page_edits or {}),
+                "created_by_name": users.get(str(r.created_by), ""),
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                "last_exported_at": r.last_exported_at.isoformat() if r.last_exported_at else None,
+                "newer_templates": newer_templates(db, r),
+            }
+        )
+    options = sources(db, document)
+    templates = published_templates(db)
+    published = {t["id"] for group in templates.values() for t in group}
+    mine = (
+        db.query(ProjectQuotationSpecSheet)
+        .filter(ProjectQuotationSpecSheet.created_by == str(user_id))
+        .order_by(ProjectQuotationSpecSheet.created_at.desc(), ProjectQuotationSpecSheet.sheet_no.desc())
+        .first()
+    )
+
+    def default(field: str) -> Optional[str]:
+        value = getattr(mine, field, None) if mine is not None else None
+        return value if value in published else None
+
+    reason = None
+    if not rows and not has_lines(db, document) and not issues:
+        reason = NO_LINES_REASON
+    return {
+        "items": items,
+        "sources": options,
+        "templates": templates,
+        "defaults": {
+            "source": options[0]["value"] if options else None,
+            "cover_template_id": default("cover_template_id"),
+            "page_template_id": default("page_template_id"),
+            "single_page_template_id": default("single_page_template_id"),
+        },
+        "create_disabled_reason": reason,
+    }
+
+
+def detail_view(
+    db: Session, document: ProjectQuotationDocument, sheet: ProjectQuotationSpecSheet, *, can_edit: bool
+) -> dict:
+    pinned = _pinned(db, sheet)
+    width, height = pinned["size"]
+    source_label, source_hint = source_text(db, document, sheet)
+    edits = sheet.page_edits or {}
+    page_rows = pages(db, sheet)
+    visible_no = {p["key"]: n for n, p in enumerate([p for p in page_rows if not p["hidden"]], start=2)}
+    out_pages = [
+        {
+            "key": COVER_KEY,
+            "number": 1,
+            "code": "",
+            "name": "Cover",
+            "brand": "",
+            "area": "",
+            "area_default": "",
+            "comment": "",
+            "marker": "",
+            "hidden": False,
+            "picked": [],
+            "accessories": [],
+            "edited": COVER_KEY in edits,
+            "template": "cover",
+        }
+    ]
+    for page in page_rows:
+        public = _public(page)
+        public["number"] = visible_no.get(page["key"])
+        out_pages.append(public)
+    for page in out_pages:
+        page.pop("line_id", None)
+        page.pop("product_id", None)
+        page.pop("image_attachment_id", None)
+        page.pop("drawing_attachment_id", None)
+
+    def template_ref(template_id, version: Optional[TagTemplateVersion]):
+        template = db.get(TagTemplate, template_id) if template_id else None
+        if template is None or version is None:
+            return None
+        return {"id": template.id, "name": template.name, "version_no": version.version_no}
+
+    siblings = [
+        row.id
+        for row in db.query(ProjectQuotationSpecSheet.id)
+        .filter(ProjectQuotationSpecSheet.document_id == document.id)
+        .order_by(ProjectQuotationSpecSheet.sheet_no.desc())
+        .all()
+    ]
+    at = siblings.index(sheet.id) if sheet.id in siblings else -1
+    return {
+        "id": sheet.id,
+        "sheet_no": sheet.sheet_no,
+        "label": label_of(sheet),
+        "source_label": source_label,
+        "source_hint": source_hint,
+        "is_draft": sheet.issue_id is None,
+        "templates": {
+            "cover": template_ref(sheet.cover_template_id, pinned["cover"]),
+            "page": template_ref(sheet.page_template_id, pinned["page"]),
+            "single": template_ref(sheet.single_page_template_id, pinned["single"])
+            if sheet.single_page_template_id
+            else None,
+        },
+        "newer_templates": newer_templates(db, sheet),
+        "page_size": {"width_mm": width, "height_mm": height},
+        "pages": out_pages,
+        "prev_id": siblings[at - 1] if at > 0 else None,
+        "next_id": siblings[at + 1] if 0 <= at < len(siblings) - 1 else None,
+        "can_edit": can_edit,
     }
 
 
 # ----------------------------------------------------------------------------- export
 
 
-def export_filename(document, issue) -> str:
-    from app.services.project_quotation_document_service import quotation_no
-
-    return f"spec-sheet-{quotation_no(document.document_no, issue.issue_no)}.pdf".replace("/", "-")
-
-
-def request_export(
-    db: Session,
-    document: ProjectQuotationDocument,
-    issue: ProjectQuotationIssue,
-    *,
-    user_id: str,
-):
+def request_export(db: Session, sheet: ProjectQuotationSpecSheet, user_id: str):
     """Check it can print, then queue the render; the file lands in My Downloads."""
     from app.services.download_service import DownloadService
     from app.services.queue_service import enqueue_job
     from app.tasks.dealer_kit_export_tasks import generate_spec_sheet_pdf
 
-    # Refuse NOW what would fail in the worker: no templates, or templates of two sizes.
-    _templates_for(db, settings_of(document))
+    document = _document_of(db, sheet)
+    # Refuse NOW what would fail in the worker: a gone template, or templates of two sizes.
+    _pinned(db, sheet)
+    number = _doc_fields(db, document, sheet)["quotation_no"]
+    filename = f"spec-sheet-{number}-{label_of(sheet)}.pdf"
 
     downloads = DownloadService(db)
     download = downloads.create(
         user_id=str(user_id),
         kind=KIND,
-        source_entity_type="quotation_issue",
-        source_entity_id=str(issue.id),
-        filename=export_filename(document, issue),
+        source_entity_type=SOURCE_TYPE,
+        source_entity_id=str(sheet.id),
+        filename=filename,
     )
+    sheet.last_exported_at = datetime.utcnow()
+    db.flush()
     try:
         enqueue_job(
             generate_spec_sheet_pdf,
@@ -758,22 +1286,17 @@ def request_export(
 
 
 def source_of_download(db: Session, download) -> tuple:
-    """``(document, issue)`` behind a spec sheet download, or 404."""
-    issue = (
-        db.query(ProjectQuotationIssue)
-        .filter(ProjectQuotationIssue.id == str(download.source_entity_id))
-        .first()
-    )
-    document = (
-        db.query(ProjectQuotationDocument)
-        .filter(ProjectQuotationDocument.id == issue.document_id)
-        .first()
-        if issue is not None
+    """``(document, sheet)`` behind a spec sheet download, or 404 (a legacy ``quotation_issue``
+    source and a deleted sheet both answer 404)."""
+    sheet = (
+        db.get(ProjectQuotationSpecSheet, str(download.source_entity_id))
+        if download.source_entity_type == SOURCE_TYPE and _is_uuid(download.source_entity_id)
         else None
     )
-    if issue is None or document is None:
+    document = db.get(ProjectQuotationDocument, sheet.document_id) if sheet is not None else None
+    if sheet is None or document is None:
         raise AppException(status_code=404, message="Not found")
-    return document, issue
+    return document, sheet
 
 
 def print_payload_for_download(db: Session, download) -> dict:
@@ -781,12 +1304,12 @@ def print_payload_for_download(db: Session, download) -> dict:
     from app.models.base import company_scope
 
     with company_scope(db, None):
-        document, issue = source_of_download(db, download)
+        document, sheet = source_of_download(db, download)
     # Fail closed: a document with no company would otherwise be read with no company filter.
     if not document.company_id:
         raise AppException(status_code=404, message="Not found")
     with company_scope(db, frozenset({document.company_id})):
-        return build_print_payload(db, document, issue)
+        return build_print_payload(db, sheet, full=True)
 
 
 def page_size_for_download(db: Session, download) -> tuple:
@@ -794,8 +1317,8 @@ def page_size_for_download(db: Session, download) -> tuple:
     from app.models.base import company_scope
 
     with company_scope(db, None):
-        document, _issue = source_of_download(db, download)
+        document, sheet = source_of_download(db, download)
     if not document.company_id:
         raise AppException(status_code=404, message="Not found")
     with company_scope(db, frozenset({document.company_id})):
-        return _templates_for(db, settings_of(document))["size"]
+        return _pinned(db, sheet)["size"]

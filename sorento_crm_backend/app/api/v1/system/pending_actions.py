@@ -154,6 +154,7 @@ _REQUIRED_PAYLOAD_KEYS: dict = {
     "project_sales_order.undo_confirm": ("decision_id",),
     # The ss comment route is addressed by idea AND comment, and the row only holds the comment.
     "idea_comment.delete": ("idea_id",),
+    "quotation_spec_sheet.reset_page": ("page_key",),
 }
 
 # A record action whose PARK gate accepts more than one grant (SF-4,
@@ -195,6 +196,8 @@ _UUID_ENTITY_ACTIONS = (
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
     "quotation_document.delete",
+    "quotation_spec_sheet.delete",
+    "quotation_spec_sheet.reset_page",
     "stock_debt_snapshot.delete",
 )
 
@@ -255,6 +258,10 @@ def _assert_entity_visible(
         from app.services.record_actions import assert_quotation_deletable
 
         assert_quotation_deletable(db, entity_id, actor_id)
+    elif action_key in ("quotation_spec_sheet.delete", "quotation_spec_sheet.reset_page"):
+        from app.services.record_actions import assert_spec_sheet_editable
+
+        assert_spec_sheet_editable(db, entity_id, actor_id)
     elif action_key == "form_comment.delete":
         from app.services.form_comment_service import FormCommentService
 
@@ -381,6 +388,8 @@ _PARK_SCOPE_EXEMPT: frozenset = frozenset({
     "product_alternatives.reset_auto",
     "product_compatibility.unlink",
     "quotation_document.delete",
+    "quotation_spec_sheet.delete",
+    "quotation_spec_sheet.reset_page",
     "sample_request.delete",
     "stock_debt_snapshot.delete",
     # `entity_id` is not a company-owned row's id: a click token (the templates ride in

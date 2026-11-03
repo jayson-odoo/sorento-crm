@@ -2761,6 +2761,65 @@ register(
 )
 
 
+def assert_spec_sheet_editable(db: Session, sheet_id: str, user_id):
+    """The spec sheet routes' write checks (edit right + write access to the project), run at park
+    time and again when the window lapses. 404 when the sheet is gone or not in the caller's
+    company, 403 without the right. Returns the sheet."""
+    from app.models.projects import Project, ProjectQuotationDocument, ProjectQuotationSpecSheet
+    from app.services import project_service
+    from app.services.error_handler import handle_not_found
+    from app.services.user_service import UserPermissionService
+
+    sheet = db.query(ProjectQuotationSpecSheet).filter(ProjectQuotationSpecSheet.id == sheet_id).first()
+    document = db.get(ProjectQuotationDocument, sheet.document_id) if sheet is not None else None
+    project = db.query(Project).filter(Project.id == document.project_id).first() if document else None
+    if sheet is None or project is None:
+        raise handle_not_found("Spec sheet", sheet_id)
+    slugs = set(UserPermissionService(db).get_user_permission_slugs(user_id)) if user_id else set()
+    project_service.assert_can_write_project(db, project, user_id, slugs)
+    return sheet
+
+
+def _delete_quotation_spec_sheet(db: Session, payload: dict):
+    sheet = assert_spec_sheet_editable(db, _entity_id(payload), payload.get("requested_by_id"))
+    db.delete(sheet)
+    db.flush()
+    return {"deleted": True}
+
+
+def _reset_quotation_spec_sheet_page(db: Session, payload: dict):
+    from app.services import project_spec_sheet_service as spec
+
+    sheet = assert_spec_sheet_editable(db, _entity_id(payload), payload.get("requested_by_id"))
+    spec.reset_page_edit(
+        db, sheet, str(payload.get("page_key") or ""), user_id=payload.get("requested_by_id")
+    )
+    return {"reset": True}
+
+
+register(
+    FormAction(
+        key="quotation_spec_sheet.delete",
+        entity_types=("quotation_spec_sheet",),
+        execute=_delete_quotation_spec_sheet,
+        window=WINDOW_DESTRUCTIVE,
+        permission="projects.projects.edit",
+        label="Delete spec sheet",
+    )
+)
+
+register(
+    FormAction(
+        key="quotation_spec_sheet.reset_page",
+        entity_types=("quotation_spec_sheet",),
+        execute=_reset_quotation_spec_sheet_page,
+        window=WINDOW_REVERSIBLE,
+        permission="projects.projects.edit",
+        label="Reset page to template",
+    )
+)
+
+
 def _delete_project_party_contact(db: Session, payload: dict):
     """The same hard delete `DELETE /project-sales/parties/{id}/contacts/{cid}` runs
     (PS-REGISTRATION-V3 rule 4). Stakeholders copied from it keep their copy."""

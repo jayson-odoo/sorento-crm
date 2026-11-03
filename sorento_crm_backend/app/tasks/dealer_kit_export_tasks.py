@@ -297,7 +297,8 @@ def generate_spec_sheet_pdf(download_id: str) -> dict:
             paper="A4",
             size_mm=size_mm,
         )
-        filename = download.filename or f"spec-sheet-{download_id}.pdf"
+        # A document number can carry a slash; a storage key and a download name must not.
+        filename = (download.filename or f"spec-sheet-{download_id}.pdf").replace("/", "-")
         provider = default_provider()
         backend = get_backend(provider)
         stored_key, _signed = backend.upload_file(
