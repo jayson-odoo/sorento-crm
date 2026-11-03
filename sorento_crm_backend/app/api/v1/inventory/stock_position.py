@@ -14,6 +14,7 @@ from app.database import get_db
 from app.dependencies import require_any_permission_with_api_key
 from app.services import stock_position_service as svc
 from app.utils.heavy_work import heavy
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -21,12 +22,14 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir):
+    # FILTER-MULTISELECT: each filter takes several ids, comma-joined (the grid) or repeated,
+    # OR-ed within the filter. A value that is no id still matches nothing (the service's rule).
     return svc.stock_position(
         db,
         query=query,
-        supplier_ids=supplier_id,
-        brand_ids=brand_id,
-        warehouse_ids=warehouse_id,
+        supplier_ids=multi_values(supplier_id, "supplier_id"),
+        brand_ids=multi_values(brand_id, "brand_id"),
+        warehouse_ids=multi_values(warehouse_id, "warehouse_id"),
         sort=sort,
         direction=dir,
     )
