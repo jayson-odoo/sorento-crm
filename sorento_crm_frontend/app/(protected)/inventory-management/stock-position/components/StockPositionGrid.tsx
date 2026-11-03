@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -26,6 +27,7 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { toast } from '@/lib/toast';
 import { getSuppliersSelect } from '@/services/supplierSelectService';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
+import { useUserListColumnConfigQuery } from '@/lib/listing-column-preferences/useUserListColumnConfigQuery';
 import { useStockPosition } from '../hooks/useStockPosition';
 import { exportStockPosition } from '../services/stockPositionService';
 import type { StockPositionRow } from '../services/stockPosition.types';
@@ -97,6 +99,33 @@ export default function StockPositionGrid() {
   const hiddenKey = JSON.stringify(hiddenParts(columnVisibility));
   const hiddenColumns = useMemo<string[]>(() => JSON.parse(hiddenKey), [hiddenKey]);
 
+  // The saved column layout, read through the SAME cached query the DataGrid's preferences hook
+  // applies it from (the page path is the listing key), so the first stock request already
+  // carries its hidden columns: no total briefly counts a column the user hid. Seeded once, during
+  // render; the hook's later apply sets the same visibility, so it changes no total.
+  const savedLayout = useUserListColumnConfigQuery(usePathname());
+  const layoutSettled = savedLayout.isSuccess || savedLayout.isError;
+  const [seeded, setSeeded] = useState(false);
+  if (layoutSettled && !seeded) {
+    setSeeded(true);
+    const saved = (savedLayout.data?.config as { columnVisibility?: Record<string, unknown> } | null | undefined)
+      ?.columnVisibility;
+    if (saved && typeof saved === 'object') {
+      const fromSaved: VisibilityState = {};
+      for (const [id, visible] of Object.entries(saved)) if (typeof visible === 'boolean') fromSaved[id] = visible;
+      setColumnVisibility((prev) => ({ ...fromSaved, ...prev }));
+    }
+  }
+
+  // A total changes on every row with its parts, so the server re-sorts: back to page 1, in the
+  // SAME render the hidden set changes, so no request goes out for the old page with the new set.
+  const [pagedFor, setPagedFor] = useState(hiddenKey);
+  const pageIndex = pagedFor === hiddenKey ? pagination.pageIndex : 0;
+  if (pagedFor !== hiddenKey) {
+    setPagedFor(hiddenKey);
+    if (pagination.pageIndex !== 0) setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }
+
   const { data: brands } = useBrandSelectQuery();
 
   const filters = {
@@ -105,8 +134,10 @@ export default function StockPositionGrid() {
     warehouseId: warehouseId || undefined,
     hiddenColumns,
   };
-  const params = { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery };
-  const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useStockPosition(params, filters);
+  const params = { pageIndex, pageSize: pagination.pageSize, sorting, searchQuery };
+  const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useStockPosition(params, filters, {
+    enabled: layoutSettled && seeded,
+  });
   const rows = data?.data ?? [];
   const total = data?.pagination.total ?? 0;
   const warehouseCodes = useMemo(() => (data?.warehouses ?? []).map((w) => w.code), [data?.warehouses]);
@@ -218,10 +249,6 @@ export default function StockPositionGrid() {
   });
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
-  // A total changes on every row with its parts, so the server re-sorts: back to page 1.
-  useEffect(() => {
-    setPagination((p) => (p.pageIndex === 0 ? p : { ...p, pageIndex: 0 }));
-  }, [hiddenColumns]);
   const activeCount = (supplier ? 1 : 0) + (brandId ? 1 : 0) + (warehouseId ? 1 : 0);
 
   const onExport = async () => {
