@@ -3781,7 +3781,7 @@ def _which_one_keeps_its_ask(pending: Pending | None, verdict: dict[str, Any]) -
     (`asked_report` on its payload) with the slot this reply fills held on it (`ranking_ask`, the reply's own values
     winning, every such reply adding to the last), when the reply names no subject and no domain of its own, resets no
     topic and does not widen the customer (`decide.widened_kinds`). None otherwise: a real new ask closes the roster as
-    before. Parser fields only."""
+    earlier. Parser fields only."""
     if pending is None or pending.kind != "customer_pick" or not pending.payload.get("status"):
         return None
     if pending.answered_positions:
