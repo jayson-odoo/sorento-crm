@@ -498,3 +498,21 @@ def test_delete_storage_files_reads_an_encoded_legacy_url_as_its_real_key(monkey
     monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: store)
     delete_storage_files([("r2", "https://cdn.test/p/my%20photo.png")])
     assert store.objects == {}
+
+
+def test_a_failing_reference_check_never_fails_the_replace(env, monkeypatch, caplog):
+    """Review round 3: the cleanup's guard runs after the Replace committed; its failure must not
+    turn a saved Replace into a 500. The old objects are then kept (the safe side) and logged."""
+    from app.tasks import s3_tasks
+
+    def hiccup(*_a, **_k):
+        raise RuntimeError("db hiccup")
+
+    monkeypatch.setattr(s3_tasks, "_still_referenced", hiccup)
+    client, store = env
+    old_key = _key(_upload(client, _png((7, 7, 7))).json()["file_path"])
+    with caplog.at_level("WARNING"):
+        replaced = _upload(client, _png((8, 8, 8)), on_conflict="replace")
+    assert replaced.status_code == 201, replaced.text
+    assert old_key in store.objects
+    assert any(old_key in record.getMessage() for record in caplog.records)

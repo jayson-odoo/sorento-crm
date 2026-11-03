@@ -108,10 +108,16 @@ def enqueue_replaced_original_cleanup(
     old_key = _normalize_key(old_file_path or "")
     if not old_key or old_key == _normalize_key(new_key or ""):
         return
-    if db is not None and old_file_path and _still_referenced(db, old_file_path, attachment_id):
-        # Rows from the old flat key schemes can share one object; the other row still shows it.
-        logger.info("Replaced file kept: another attachment still points at key=%s", old_key)
-        return
+    if db is not None and old_file_path:
+        try:
+            shared = _still_referenced(db, old_file_path, attachment_id)
+        except Exception as e:  # noqa: BLE001 - the Replace already committed; keep, never fail it
+            logger.warning("Replaced file kept, reference check failed (key=%s): %s", old_key, e)
+            return
+        if shared:
+            # Rows from the old flat key schemes can share one object; the other row still shows it.
+            logger.info("Replaced file kept: another attachment still points at key=%s", old_key)
+            return
     try:
         from app.services.queue_service import enqueue_job
 
