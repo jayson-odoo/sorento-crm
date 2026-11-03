@@ -9,7 +9,7 @@ from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user_or_api_key
 from app.services.integration_service import IntegrationLogService
-from app.schemas.integration import IntegrationLogResponse, IntegrationLogUpdateRequest, IntegrationLogCreate
+from app.schemas.integration import IntegrationLogResponse, IntegrationLogUpdateRequest, IntegrationLogCreate, IntegrationLogListResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 from app.utils.multi_value import multi_values
@@ -18,10 +18,12 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/", response_model=ListResponse[IntegrationLogResponse])
+@router.get("/", response_model=IntegrationLogListResponse)
 def get_integration_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    sort: Optional[str] = Query(None, description="Column to sort by; unknown columns fall back to created_at"),
+    dir: Optional[str] = Query(None, description="asc or desc"),
     status: Optional[List[str]] = Query(None),
     integration_channel: Optional[List[str]] = Query(None),
     business_table: Optional[List[str]] = Query(None),
@@ -40,6 +42,8 @@ def get_integration_logs(
         result = service.list_integration_logs(
             page=page,
             limit=limit,
+            sort=sort,
+            sort_dir=dir,
             status=multi_values(status),
             integration_channel=multi_values(integration_channel),
             business_table=multi_values(business_table),

@@ -8,6 +8,7 @@ cross it.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -235,10 +236,7 @@ def test_default_page_query_reads_created_at_index_backward(db, seven):
     assert "Index Scan Backward using ix_integration_log_created_at" in plan, plan
     # Only an Incremental Sort (the id tiebreaker within equal timestamps) may sit above it,
     # never a full Sort of every row.
-    assert not any(
-        line.strip().startswith("->  Sort") or line.strip().startswith("Sort")
-        for line in plan.splitlines()
-    ), plan
+    assert not re.search(r"(^|->)\s*Sort\s+\(", plan, re.MULTILINE), plan
 
 
 def test_created_at_index_exists_on_the_model():
