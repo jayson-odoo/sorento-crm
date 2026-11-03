@@ -204,3 +204,28 @@ def test_the_list_names_each_group_once_per_company_and_each_ungrouped_ledger_in
         assert f"{name} ({srt})" in labels, labels
     # a company tag is printed once, never twice
     assert not any(label.endswith(f"({srt}) ({srt})") or label.endswith(f"({mch}) ({mch})") for label in labels)
+
+
+# ============================================================ identical vs near-identical names across companies
+
+
+def test_an_identical_full_name_in_two_companies_is_one_entry_a_near_identical_one_is_not():
+    """Crew answer on #2144 (owner ruling 3 Nov 2026, R2 on #2105: never ask "Sorento or Mocha?"): the SAME ungrouped
+    ledger name in both company books is one entry whose pick covers both; a near-identical name (another marker,
+    punctuation) is another customer, never joined by a trading-name match."""
+    srt, mch, near_a, near_b = (str(uuid.uuid4()) for _ in range(4))
+    rows = [
+        {"entity_type": "customer", "uuid": srt, "company_code": "SRT", "display": {"customer_name": "ZZT CRAFT SDN BHD"}},
+        {"entity_type": "customer", "uuid": mch, "company_code": "MCH", "display": {"customer_name": "ZZT  craft sdn bhd"}},
+        {"entity_type": "customer", "uuid": near_a, "company_code": "MCH", "display": {"customer_name": "ZZT CRAFT SDN. BHD."}},
+        {"entity_type": "customer", "uuid": near_b, "company_code": "SRT", "display": {"customer_name": "ZZT CRAFT SDN BHD - [A/C I]"}},
+    ]
+    resolver = {"resolutions": [{"token": "zzt craft", "matches": rows}], "unresolved_tokens": []}
+    parser = {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "entities": [{"raw": "zzt craft", "hint": "customer", "current_message": True, "confident": True}],
+    }
+    out = run_gate(dict(resolver), parser=parser, resolver=resolver)
+    families = sorted(sorted(f) for f in (out.get("picker_families") or {}).values())
+    assert families == sorted([sorted([srt, mch]), [near_a], [near_b]]), families
