@@ -1259,17 +1259,27 @@ class FulfilmentBoardService:
         # the sales-order rows above, and listing it again would subtract it twice. Only the
         # GROUP reading asks: one bin's drill is read beside its own Available, which does
         # not net holds either.
-        holds = [
-            {
-                "so_number": hold["so_number"],
-                "location": codes.get(hold["warehouse_id"]),
-                "required_date": hold["required_date"],
-                "qty": qty_text(hold["qty"]),
-            }
+        outside_holds = [
+            hold
             for hold in (
                 self.supply.holds_at_locations([product_id], target_ids) if group else []
             )
             if hold["line_warehouse_id"] not in codes
+        ]
+        # OI-UX-FILTER-SNAPSHOT: a hold names its order's customer and project.
+        hold_parties = so_parties(self.db, numbers=[h["so_number"] for h in outside_holds])
+        holds = [
+            with_party(
+                {
+                    "so_number": hold["so_number"],
+                    "location": codes.get(hold["warehouse_id"]),
+                    "required_date": hold["required_date"],
+                    "qty": qty_text(hold["qty"]),
+                },
+                hold_parties,
+                hold["so_number"],
+            )
+            for hold in outside_holds
         ]
         holds.sort(
             key=lambda hold: (

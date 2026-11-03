@@ -929,6 +929,8 @@ class StockDetailHold(BaseModel):
     #: The order holding it. Null when its line has not been reconciled to a core order yet,
     #: which is the only case with no number a person could read.
     so_number: Optional[str] = None
+    customer_name: Optional[str] = None
+    project_label: Optional[str] = None
     location: Optional[str] = None
     #: The holder's own required date, which is where the hold sits in the walk.
     required_date: Optional[date] = None

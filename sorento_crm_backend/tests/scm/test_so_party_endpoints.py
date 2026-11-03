@@ -259,6 +259,18 @@ def test_opportunity_detail_and_options_carry_customer_and_project(api):
     assert detail["sales_order_project_label"] == PROJECT
 
 
+def test_stock_detail_hold_declares_customer_and_project():
+    """`response_model` drops undeclared fields. Holds are empty on the live book since
+    BORROW-NO-HOLD, so the wire shape is pinned at the schema."""
+    from app.schemas.project_board import StockDetailHold
+
+    hold = StockDetailHold(
+        so_number="SO1", customer_name=DEBTOR, project_label=PROJECT, qty="3"
+    ).model_dump()
+    assert hold["customer_name"] == DEBTOR
+    assert hold["project_label"] == PROJECT
+
+
 def test_trend_customer_orders_carry_customer_and_project(db_world):
     from sqlalchemy import text
 
