@@ -1,8 +1,8 @@
 # PLAN: Quotation cover page designer (QUOTE-COVER-DESIGN, follow-up to #2088)
 
 **Status:** Review. PR #2094 open (ready). Rounds: main (red 293ba35f70), fix round 1 (crew browser FAILs +
-security should-fix), round 2 (reviewer findings), round 3 (render cap), round 4 (test gaps). Security PASS at
-7c9e02444e. Track: L. UAC: `quote-cover-design-02nov-acceptance-criteria.md`. Mock:
+security should-fix), round 2 (reviewer findings), round 3 (render cap), round 4 (test gaps), round 5 (crew pass 3 Nov: B1 drag
+overlay, M1 proposal noun; red 255368ce51). Security PASS at 7c9e02444e. Track: L. UAC: `quote-cover-design-02nov-acceptance-criteria.md`. Mock:
 `documentation/mockups/QUOTE-COVER-DESIGN/index.html`.
 
 ## Journey
@@ -83,6 +83,11 @@ tab, edits the intro and closing for that customer, and the sent PDF and sign li
   `_sender` adds address and Tel from system settings), `_cover_row_html` (one row renderer for #2088 and designed
   covers), `next_issue_no` (send and preview).
 - **Drag**: rows are direct children of `Sortable`; an extra wrapper left the DragOverlay clone empty.
+- **Drag overlay out of the dialog** (crew pass 3 Nov, B1): the shared `Sortable` portals its `DragOverlay` to
+  `document.body`. Inside the Radix dialog (translate transform) the fixed overlay was offset by the dialog's corner and
+  dnd-kit collided against that rect, so a drag landed on the wrong row. Shared fix, so `TileDesignDialog` gets it too.
+- **Document noun on the CRM preview** (M1): the Cover letter tab passes `documentNoun(document)` to `CoverPagePreview`,
+  so a proposal prints "Proposal from" like the sign page. The designer's sample stays "Quotation".
 
 ## Test list (tester, red first)
 
