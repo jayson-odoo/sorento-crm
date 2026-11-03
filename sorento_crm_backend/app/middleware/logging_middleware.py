@@ -7,6 +7,7 @@ from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.services.logging import log_api_request
 from app.audit_context import AuditActor, stamp_actor, set_trace_id, start_request_context
+from app.utils.log_redaction import redact_url
 
 # An inbound X-Trace-Id is echoed in the response and written to every audit row, so
 # only a plain token is accepted; anything else gets a freshly minted id.
@@ -70,7 +71,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             # Note: This requires database session, which we'll handle in a background task
             # For now, just log to application logger
             logger.info(
-                f"{request.method} {request.url.path} - "
+                f"{request.method} {redact_url(request.url.path)} - "
                 f"Status: {response.status_code} - "
                 f"Duration: {process_time:.3f}s"
             )
