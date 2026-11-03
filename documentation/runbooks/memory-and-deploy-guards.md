@@ -18,6 +18,7 @@ What the code now does on every release (no action needed for these):
 | Memory guard: `MemAvailable` must be at least 4500 MB, checked before and after the dump | same | deploy stops; old colour keeps serving |
 | Disk check: free space in the snapshot dir at least twice the newest dump and at least 10240 MB | same | deploy stops before the dump |
 | Pre-migration snapshot of the database the APP uses (`DEPLOY_DB_NAME`, else the active backend's `DATABASE_URL`; never the db container's own `POSTGRES_DB`). `pg_dump -Fc` must exit 0, the file must start with `PGDMP`, and `pg_restore -l` must list `TABLE DATA public alembic_version` | same | deploy stops before any migration; old colour keeps serving |
+| Snapshot skip (DEPLOY-SKIP-SNAPSHOT, 3 Nov): after the pull, `alembic heads` runs inside the NEW backend image (`docker compose run --rm --no-deps --entrypoint alembic backend_<new> heads`, no db connection, no `start.sh`) and is compared with `select version_num from public.alembic_version` in the app's database. Identical: the log says `no pending migrations: snapshot skipped` and the dump (and its disk check) is not taken. Different, or either read fails or prints anything that is not a revision id: the log says `migration check: ...` and the snapshot runs exactly as above. Every other guard runs either way | same | fail safe: any doubt takes the snapshot |
 | Every number in `.deploy.env` must be a whole number | same | deploy stops; nothing changed |
 | Postgres check: db container restarted, replaced, or crash-recovered in place | same, before the nginx swap and at the end | before the swap: new colour stopped, old keeps serving. At the end: the run goes red |
 | `lock_timeout` 5s, `statement_timeout` 180s on every migration | `sorento_crm_backend/alembic/env.py` | migration fails, new colour never goes healthy, old keeps serving. **This changes behaviour: see step 9** |
@@ -382,8 +383,12 @@ guards above, snapshot included) with `IMAGE_TAG=<RELEASED_SHA>` and `SKIP_MIGRA
 
 ## 8. Restore from a pre-migration snapshot (emergency only)
 
-Every release writes `/opt/sorento-crm2/backups/pre-migrate/pre-migrate-<UTC time>-<sha>.dump`
-(owner-only permissions) before the new colour migrates, and deletes ones older than 48 h.
+Every release that has a migration to run writes
+`/opt/sorento-crm2/backups/pre-migrate/pre-migrate-<UTC time>-<sha>.dump` (owner-only permissions)
+before the new colour migrates, and deletes ones older than 48 h. A release whose image head the
+database is already at logs `no pending migrations: snapshot skipped` and writes none (nothing
+migrated, so there is nothing to restore to); the newest file is then from the last release that
+migrated, if that was within the last 48 h.
 **Restoring loses every write since the snapshot.** Use it only when a migration damaged data and
 a code rollback cannot fix it. Rehearse into a scratch database first:
 
