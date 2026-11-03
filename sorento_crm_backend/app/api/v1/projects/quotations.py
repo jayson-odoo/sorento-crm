@@ -27,6 +27,8 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_board import StockDetail
 from app.schemas.projects import (
     PriceFloorEffectiveResponse,
+    QuotationColumnsResponse,
+    QuotationColumnsWrite,
     PriceFloorRuleResponse,
     PriceFloorRuleUpsert,
     DrawingEscalationResponse,
@@ -643,6 +645,32 @@ def update_line(
         db.commit()
         db.refresh(line)
         return svc.serialize_lines(db, [line], viewer_id=current_user["id"])[0]
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/quotation-versions/{version_id}/columns",
+    response_model=QuotationColumnsResponse,
+)
+def set_version_columns(
+    version_id: str,
+    payload: QuotationColumnsWrite,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Set the scope's column headers; each line's cells move with them (PS-QUOTE-MATRIX)."""
+    try:
+        validate_uuid_path(version_id, resource="Quotation version")
+        version, _quotation = _version_for_edit(db, version_id, current_user)
+        lines = svc.set_columns(db, version=version, columns=payload.columns)
+        db.commit()
+        db.refresh(version)
+        return {
+            "version": svc.serialize_versions(db, [version])[0],
+            "lines": svc.serialize_lines(db, lines, viewer_id=current_user["id"]),
+        }
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

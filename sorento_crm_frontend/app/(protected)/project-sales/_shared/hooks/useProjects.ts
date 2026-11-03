@@ -66,6 +66,7 @@ import {
   reviseQuotation,
   setQuotationOutcome,
   updateQuotation,
+  replaceQuotationColumns,
   replaceQuotationLines,
   updateQuotationLine,
   updateSeries,
@@ -140,8 +141,10 @@ import type {
   ProjectSeriesBody,
   QuotationLineBody,
   MediaKind,
+  QuotationLine,
   QuotationLineBulkItem,
   QuotationOutcomeBody,
+  QuotationVersion,
   SeriesProductImportBody,
   LeadQualifyBody,
   ProjectLeadBody,
@@ -153,8 +156,9 @@ import type {
   TaskStatusChangeBody,
 } from '../types/project.types';
 import { importJobPhase } from '../types/project.types';
+import type { MatrixHeader } from '../lib/quotationMatrix';
 // Keys only, and the document hooks import nothing from here, so the two files do not circle.
-import { AMENDMENT_KEY, quotationDocumentsKey } from './useQuotationDocuments';
+import { FEEDBACK_KEY, quotationDocumentsKey } from './useQuotationDocuments';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const PROJECTS_KEY = 'projects';
@@ -1052,6 +1056,23 @@ export function useQuotationLines(versionId: string | undefined) {
   });
 }
 
+/**
+ * The lines of several versions at once, each under the same key `useQuotationLines` uses, so a
+ * version already open costs nothing. One array per version that has loaded.
+ */
+export function useQuotationLinesOf(versionIds: string[]): QuotationLine[][] {
+  return useQueries({
+    queries: versionIds.map((versionId) => ({
+      queryKey: linesKey(versionId),
+      queryFn: () => listQuotationLines(versionId),
+      staleTime: 30_000,
+    })),
+    // Combined, so the answer keeps its identity until a version's lines actually change.
+    combine: (results) =>
+      results.flatMap((result) => (result.data ? [result.data] : [])),
+  });
+}
+
 export function useQuotationLossReasons() {
   return useQuery({
     queryKey: LOSS_REASONS_KEY,
@@ -1102,8 +1123,6 @@ export function useQuotationMutations(projectId: string) {
     queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
     queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY, 'list'] });
     if (quotationId) queryClient.invalidateQueries({ queryKey: versionsKey(quotationId) });
-    // A revise can open the draft that blocks a customer's suggestions (QUOTE-CUSTOMER-AMEND).
-    queryClient.invalidateQueries({ queryKey: [AMENDMENT_KEY] });
   };
 
   const create = useMutation({
@@ -1258,6 +1277,35 @@ export function useQuotationBulkLineMutation(projectId: string) {
     },
     // No toast: the screen raises ONE for the whole Save, and a quotation with four scopes
     // would otherwise stack four notifications for a single button press.
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/**
+ * A version's column headers and columns (PS-QUOTE-MATRIX), written at once rather than staged:
+ * the server moves quantities in and out and answers the lines. Same invalidations as a line
+ * write, plus the customer feedback (its cell labels follow the columns).
+ */
+export function useQuotationColumnsMutation(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ versionId, columns }: { versionId: string; columns: MatrixHeader[] }) =>
+      replaceQuotationColumns(versionId, columns),
+    onSuccess: (result, { versionId }) => {
+      // The new columns on screen at once, before the refetch lands: the header is what was
+      // just edited, and a beat of the old one reads as the edit not taking.
+      queryClient.setQueryData<QuotationVersion[]>(
+        versionsKey(result.version.quotation_id),
+        (old) => old?.map((version) => (version.id === versionId ? { ...version, ...result.version } : version)),
+      );
+      queryClient.setQueryData(linesKey(versionId), result.lines);
+      queryClient.invalidateQueries({ queryKey: linesKey(versionId) });
+      queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
+      queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'versions'] });
+      queryClient.invalidateQueries({ queryKey: quotationDocumentsKey(projectId) });
+      queryClient.invalidateQueries({ queryKey: [FEEDBACK_KEY] });
+    },
     onError: (error: Error) => toast.error(error.message),
   });
 }

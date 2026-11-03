@@ -7,12 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuotations } from '../../../../_shared/hooks/useProjects';
-import {
-  useQuotationAmendmentMutations,
-  useQuotationAmendmentRequest,
-} from '../../../../_shared/hooks/useQuotationDocuments';
-import type { QuotationLinesReview } from '../../../components/QuotationLinesGrid';
-import { QuotationAmendmentSummary } from './QuotationAmendmentSummary';
+import { useQuotationFeedback } from '../../../../_shared/hooks/useQuotationDocuments';
 import { OutcomePill } from '../../../../_shared/components/OutcomePill';
 import { QuotationOutcomeDialog } from '../../../components/QuotationOutcomeDialog';
 import { QuotationVersionEditor } from '../../../components/QuotationVersionEditor';
@@ -49,38 +44,15 @@ export function QuotationScopesTab() {
     null,
   );
 
-  // The customer's suggestions on the latest issue, decided in the grid's own cells. Only an
-  // OPEN request is offered for deciding; an answered one is history on the sign link.
-  const amendment = useQuotationAmendmentRequest(
-    projectId,
-    documentId,
-    canEdit,
-  );
-  const amendments = useQuotationAmendmentMutations(projectId, documentId);
-  const openRequest = amendment.data?.status === 'open' ? amendment.data : null;
-  // On by default while a request with line suggestions is open, so the lines to decide are the
-  // lines on screen; a note-only request has none to narrow to. Null until the reader chooses.
-  const [suggestedChoice, setSuggestedOnly] = React.useState<boolean | null>(
-    null,
-  );
-  const suggestedOnly = suggestedChoice ?? (openRequest?.rows.length ?? 0) > 0;
-  const decideRow = amendments.decide.mutate;
-  const review = React.useMemo<QuotationLinesReview | undefined>(
+  // Open customer feedback, marked on the lines it names (PS-QUOTE-MATRIX, mock frame 5). The
+  // same query as the Customer feedback tab and its badge.
+  const feedback = useQuotationFeedback(projectId, documentId);
+  const openFeedback = React.useMemo(
     () =>
-      openRequest
-        ? {
-            rows: openRequest.rows,
-            disabled: amendments.decide.isPending || amendments.apply.isPending,
-            onDecide: (rowId, decision, reason) =>
-              decideRow({ requestId: openRequest.id, rowId, decision, reason }),
-          }
-        : undefined,
-    [
-      amendments.apply.isPending,
-      amendments.decide.isPending,
-      decideRow,
-      openRequest,
-    ],
+      (feedback.data?.requests ?? []).flatMap((request) =>
+        request.rows.filter((row) => !row.handled_at),
+      ),
+    [feedback.data],
   );
 
   const scopes = record.scopes ?? [];
@@ -115,17 +87,6 @@ export function QuotationScopesTab() {
 
   return (
     <div className="space-y-5">
-      {openRequest && (
-        <QuotationAmendmentSummary
-          request={openRequest}
-          canApply={canEdit && !isLockedForApproval(record)}
-          applying={amendments.apply.isPending}
-          onApply={() => amendments.apply.mutate(openRequest.id)}
-          suggestedOnly={suggestedOnly}
-          onSuggestedOnly={setSuggestedOnly}
-        />
-      )}
-
       <QuotationScopeTabs
         scopes={scopes}
         activeScopeId={activeScope?.id ?? ''}
@@ -177,15 +138,7 @@ export function QuotationScopesTab() {
               // Pending or approved: the whole quotation is locked, and the way out is the
               // header's Edit quotation (Revise with a reason), not a per-scope revise.
               locked={isLockedForApproval(record)}
-              review={review}
-              suggestedOnly={suggestedOnly}
-              // A scope with a hand-made draft: the suggestions name the ISSUED version's lines,
-              // so the review is decided there.
-              reviewVersionId={
-                openRequest?.blocked_scopes?.find(
-                  (scope) => scope.quotation_id === activeQuotation.id,
-                )?.version_id ?? null
-              }
+              feedback={openFeedback}
             />
           </CardContent>
         </Card>

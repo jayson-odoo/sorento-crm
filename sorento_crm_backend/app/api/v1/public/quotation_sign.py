@@ -157,10 +157,10 @@ def submit_quotation_amendment(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """The customer suggests quantities and prices, or a line's removal, in ONE request.
+    """The customer leaves notes on items or cells, with optional hints, in ONE request.
 
-    Nothing the customer holds changes: the suggestions wait for the salesperson, and until they
-    are answered the quotation cannot be signed. Answers the page, as `accept` does.
+    Nothing the customer holds changes and nothing is blocked: the notes wait for the
+    salesperson. Answers the page, as `accept` does.
     """
     from app.services import quotation_amendment_service as amendments
 
@@ -170,7 +170,7 @@ def submit_quotation_amendment(
         amendments.submit_request(
             db,
             record=record,
-            lines=[line.model_dump() for line in payload.lines],
+            items=[item.model_dump() for item in payload.items],
             note=payload.note,
             requester_name=payload.requester_name,
             ip_address=client_ip(request),

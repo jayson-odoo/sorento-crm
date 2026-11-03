@@ -19,6 +19,7 @@ import {
 import {
   useQuotationDocument,
   useQuotationDocumentMutations,
+  useQuotationFeedback,
   useQuotationLetterTemplates,
 } from '../../../_shared/hooks/useQuotationDocuments';
 import type {
@@ -30,10 +31,12 @@ import type {
 import type {
   Project,
   ProjectQuotation,
+  QuotationFeedbackRow,
   StagedQuotationLine,
 } from '../../../_shared/types/project.types';
 import { OutcomePill } from '../../../_shared/components/OutcomePill';
 import { isDecimalString, sumMoney } from '../../../_shared/lib/money';
+import type { MatrixHeader } from '../../../_shared/lib/quotationMatrix';
 import { QuotationDialog, soleActiveSeriesId } from '../../components/QuotationDialog';
 import {
   QuotationVersionEditor,
@@ -69,6 +72,11 @@ type FormScope = {
   series_id: string;
   /** Undefined until the Edit scope dialog sets it, so an untouched saved note is not sent. */
   notes?: string | null;
+  /**
+   * PS-QUOTE-MATRIX: a NEW scope's column headers, set in its table header like a saved one's and
+   * sent with its lines on Save. A saved scope's columns are its version's, written at once.
+   */
+  matrix_columns?: MatrixHeader[];
 };
 
 type FormTab = 'header' | 'lines' | 'cover-letter' | 'terms';
@@ -120,7 +128,12 @@ function newScope(): FormScope {
  * Edit scope dialog, the one place a series is picked, always writes a name with it.
  */
 function isUntouchedNewScope(scope: FormScope, lines: StagedQuotationLine[]): boolean {
-  return !scope.id && !scope.scope_label.trim() && lines.length === 0;
+  return (
+    !scope.id &&
+    !scope.scope_label.trim() &&
+    lines.length === 0 &&
+    !(scope.matrix_columns?.length ?? 0)
+  );
 }
 
 /** Staged lines whose quantity or unit price is typed but is not a number: the server would 422. */
@@ -241,6 +254,19 @@ export function QuotationFormClient({
   const details = useQuotationHeaderDetails(isEdit ? projectId : undefined, keptScopes);
   const [error, setError] = React.useState<string | null>(null);
   const [isSaving, setIsSaving] = React.useState(false);
+  // A grid column removal counting down, or a column write on its way (PS-QUOTE-MATRIX): Save
+  // waits, because lines sent across a column write 422 on cells under a removed key.
+  const [columnsBusy, setColumnsBusy] = React.useState(false);
+  // Open customer feedback, marked on the lines being edited (PS-QUOTE-MATRIX R20, E6): the
+  // salesperson acts on a note in this form, so it has to show here, not only on the read.
+  const feedbackQuery = useQuotationFeedback(projectId, documentId);
+  const openFeedback = React.useMemo(
+    () =>
+      (feedbackQuery.data?.requests ?? []).flatMap((request) =>
+        request.rows.filter((row) => !row.handled_at),
+      ),
+    [feedbackQuery.data],
+  );
   /** Anything typed since the page opened. Drives the warning on leaving the site. */
   const [dirty, setDirty] = React.useState(false);
 
@@ -431,6 +457,8 @@ export function QuotationFormClient({
       // they moved, the rule the quotation page's Save kept: the write replaces the WHOLE set, and
       // a scope the customer holds is never staged, so it is never sent.
       if (!scope.id) item.lines = stagedLinesToBody(stagedLinesOf(scope.key));
+      // A new scope's column headers ride with its lines; the server sets them first.
+      if (!scope.id && scope.matrix_columns?.length) item.matrix_columns = scope.matrix_columns;
       else if (changed.has(scope.key)) item.lines = stagedLinesToBody(stagedLinesOf(scope.key));
       return item;
     });
@@ -511,7 +539,7 @@ export function QuotationFormClient({
             </Button>
             <Button
               type="button"
-              disabled={isSaving || loading || failed || !letterReady}
+              disabled={isSaving || columnsBusy || loading || failed || !letterReady}
               onClick={() => void save()}
             >
               {isSaving ? 'Saving...' : saveLabel(saved.data?.kind)}
@@ -580,6 +608,9 @@ export function QuotationFormClient({
                 onSelect={setActiveKey}
                 scopeTotal={scopeTotal}
                 edit={edit}
+                onColumns={(key, next) => updateScope(key, { matrix_columns: next })}
+                onColumnsBusy={setColumnsBusy}
+                feedback={openFeedback}
                 canRemoveSaved={canRemoveSaved}
                 onAddScope={() => setAddingScope(true)}
                 onEditScope={setEditingScopeKey}
@@ -755,6 +786,9 @@ function FormLines({
   onSelect,
   scopeTotal,
   edit,
+  onColumns,
+  onColumnsBusy,
+  feedback,
   canRemoveSaved,
   onAddScope,
   onEditScope,
@@ -768,6 +802,11 @@ function FormLines({
   onSelect: (key: string) => void;
   scopeTotal: (scope: FormScope) => string;
   edit: ReturnType<typeof useQuotationEditSession>;
+  /** A new scope's column headers, held here until Save (PS-QUOTE-MATRIX). */
+  onColumns: (key: string, next: MatrixHeader[]) => void;
+  onColumnsBusy: (busy: boolean) => void;
+  /** Open customer feedback on this document: marked on the draft being edited (R20). */
+  feedback: QuotationFeedbackRow[];
   canRemoveSaved: boolean;
   onAddScope: () => void;
   onEditScope: (key: string) => void;
@@ -787,6 +826,7 @@ function FormLines({
   /** The open scope's edit handles, bound to its key, exactly as the quotation page bound them. */
   const { scopes: stagedScopes, seedScope, stageScope, toggleRemoved } = edit;
   const activeKeyForEdit = active?.key ?? null;
+  const activeColumns = active?.matrix_columns;
   const scopeEditing = React.useMemo<QuotationScopeEditing | null>(() => {
     if (!activeKeyForEdit) return null;
     const key = activeKeyForEdit;
@@ -795,8 +835,21 @@ function FormLines({
       seed: (versionId, lines) => seedScope(key, versionId, lines),
       stage: (lines) => stageScope(key, lines),
       toggleRemoved: (lineKey) => toggleRemoved(key, lineKey),
+      setColumnsBusy: onColumnsBusy,
+      // Read by the editor only while the scope has no saved version (the same header controls).
+      columns: activeColumns ?? [],
+      setColumns: (next) => onColumns(key, next),
     };
-  }, [activeKeyForEdit, seedScope, stageScope, stagedScopes, toggleRemoved]);
+  }, [
+    activeColumns,
+    activeKeyForEdit,
+    onColumns,
+    onColumnsBusy,
+    seedScope,
+    stageScope,
+    stagedScopes,
+    toggleRemoved,
+  ]);
 
   if (!active) {
     return (
@@ -892,6 +945,20 @@ function FormLines({
                 quotation={savedRow}
                 seriesId={active.series_id || null}
                 edit={scopeEditing}
+                feedback={feedback}
+                // Copy columns from: the document's other saved scopes, as their versions hold them...
+                siblingScopes={scopes
+                  .filter((scope) => scope.id && scope.id !== active.id)
+                  .map((scope) => quotations.find((row) => row.id === scope.id))
+                  .filter((row): row is ProjectQuotation => Boolean(row))}
+                // ...and its sections not saved yet (New proposal): their headers as the form
+                // holds them. Copying takes headers and columns with fresh keys, never quantities.
+                formCopySources={scopes
+                  .filter((scope) => !scope.id && scope.key !== active.key)
+                  .map((scope) => ({
+                    label: scopeTitle(scope, scopes.indexOf(scope)),
+                    columns: scope.matrix_columns ?? [],
+                  }))}
               />
             )}
           </CardContent>
