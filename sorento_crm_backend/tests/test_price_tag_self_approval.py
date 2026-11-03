@@ -920,3 +920,136 @@ def test_a_short_sheet_refusal_carries_no_ids(client):
     assert res.status_code == 422
     assert res.json().get("detail") in (None, "")
     assert "leaves out" in res.json()["message"]
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling 3 Nov 14:10: no plain Submit on the form. A draft is approved or
+# escalated in ONE step from the create screen.
+# --------------------------------------------------------------------------- #
+
+
+def _draft(c, db, *, product_id=None) -> dict:
+    created = c.post(_BASE, json=_payload(product_id or _linked_product(db)))
+    assert created.status_code == 201, created.text
+    return created.json()
+
+
+class TestApproveFromTheDraft:
+    def test_a_draft_is_submitted_and_approved_in_one_call(self, client):
+        c, db, _ = client
+        draft = _draft(c, db)
+
+        res = c.post(
+            f"{_BASE}/{draft['id']}/submit-approve",
+            json={"doc": _sheet(_placed_tag_ids(db, draft["id"]))},
+        )
+
+        assert res.status_code == 200, res.text
+        row = _row(db, draft["id"])
+        assert row.portal_draft_at is None
+        assert row.status == "approved"
+        assert row.assigned_to_id is None
+        assert len(_versions(db, draft["id"])) == 1
+        assert _trackers(db, draft["id"]) == []
+
+    def test_a_bad_sheet_leaves_it_a_draft(self, client):
+        c, db, _ = client
+        draft = _draft(c, db)
+        other = _draft(c, db)
+
+        res = c.post(
+            f"{_BASE}/{draft['id']}/submit-approve",
+            json={"doc": _sheet(_placed_tag_ids(db, other["id"]))},
+        )
+
+        assert res.status_code == 422, res.text
+        row = _row(db, draft["id"])
+        assert row.portal_draft_at is not None
+        assert _versions(db, draft["id"]) == []
+
+    def test_an_incomplete_draft_is_refused_and_stays_a_draft(self, client):
+        c, db, _ = client
+        draft = _draft(c, db)
+        row = _row(db, draft["id"])
+        row.debtor_name = None
+        db.commit()
+
+        res = c.post(
+            f"{_BASE}/{draft['id']}/submit-approve",
+            json={"doc": _sheet(_placed_tag_ids(db, draft["id"]))},
+        )
+
+        assert res.status_code == 422, res.text
+        assert res.json().get("code") == "SUBMIT_INCOMPLETE"
+        assert _row(db, draft["id"]).portal_draft_at is not None
+
+    def test_a_line_with_no_template_is_refused_and_stays_a_draft(self, client):
+        c, db, _ = client
+        draft = _draft(c, db, product_id=_seed_product(db))
+
+        res = c.post(
+            f"{_BASE}/{draft['id']}/submit-approve",
+            json={"doc": _sheet(_placed_tag_ids(db, draft["id"]))},
+        )
+
+        assert res.status_code == 422, res.text
+        assert res.json().get("code") == "NO_TEMPLATE"
+        assert _row(db, draft["id"]).portal_draft_at is not None
+
+    def test_an_already_submitted_request_is_refused(self, client):
+        c, db, _ = client
+        body = _submitted(c, db)
+
+        res = c.post(
+            f"{_BASE}/{body['id']}/submit-approve",
+            json={"doc": _sheet(_placed_tag_ids(db, body["id"]))},
+        )
+
+        assert res.status_code == 409, res.text
+
+
+class TestEscalateFromTheDraft:
+    def test_a_draft_goes_to_the_config_assignee_with_the_note(self, client):
+        from app.services import price_tag_review_service
+
+        c, db, _ = client
+        member_id = _seed_one_member_tier1_config(db)
+        draft = _draft(c, db)
+
+        res = c.post(f"{_BASE}/{draft['id']}/submit-escalate", json={"note": "Wrong photo"})
+
+        assert res.status_code == 200, res.text
+        row = _row(db, draft["id"])
+        assert row.portal_draft_at is None
+        assert row.status == "designing"
+        assert row.assigned_to_id == member_id
+        assert len(_trackers(db, draft["id"])) == 1
+        notes = [x.body for x in price_tag_review_service.list_comments(db, row.id)]
+        assert "Wrong photo" in notes
+
+    def test_a_line_with_no_template_can_still_be_escalated(self, client):
+        c, db, _ = client
+        draft = _draft(c, db, product_id=_seed_product(db))
+
+        res = c.post(f"{_BASE}/{draft['id']}/submit-escalate", json={"note": "No template"})
+
+        assert res.status_code == 200, res.text
+        assert _row(db, draft["id"]).status == "new"
+
+    def test_no_note_leaves_it_a_draft(self, client):
+        c, db, _ = client
+        draft = _draft(c, db)
+
+        res = c.post(f"{_BASE}/{draft['id']}/submit-escalate", json={"note": "  "})
+
+        assert res.status_code == 422, res.text
+        assert _row(db, draft["id"]).portal_draft_at is not None
+
+    def test_someone_elses_draft_is_404(self, client):
+        c, db, state = client
+        draft = _draft(c, db)
+        state["contact_id"] = _seed_contact_who_can_see_the_form(db)
+
+        res = c.post(f"{_BASE}/{draft['id']}/submit-escalate", json={"note": "x"})
+
+        assert res.status_code == 404, res.text

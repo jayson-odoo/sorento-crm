@@ -555,6 +555,71 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
 
 
     # ---------------------------------------------------------------------------
+    # One step from the draft (owner ruling 3 Nov 14:10): the form has no plain
+    # Submit. The salesperson approves the tag he previewed, or escalates it, and
+    # the draft is submitted by the same click. Everything that can refuse runs
+    # BEFORE the draft stops being a draft, so a refusal leaves it editable.
+    # ---------------------------------------------------------------------------
+
+
+    @router.post("/submissions/price_tag_request/{request_id}/submit-approve")
+    def portal_submit_and_approve_price_tag_request(
+        request_id: str,
+        payload: ApprovePayload,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Submit a draft and approve its tag sheet in one step."""
+        request_id = validate_uuid_path(request_id, resource="Price tag request")
+        _assert_visible(db, token.contact_id)
+        req = _require_own_request(db, token, request_id)
+        _require_draft(req, "This request has already been submitted.", code="ALREADY_SUBMITTED")
+        PriceTagRequestService.validate_submittable(req)
+        if not payload.doc:
+            raise AppException(
+                status_code=422,
+                message="Approve needs the tag sheet you are approving.",
+                code="DOC_REQUIRED",
+            )
+        with company_scope(db, frozenset({req.company_id})):
+            # Read-only: the same checks the approval runs, so a bad sheet or a
+            # line with no template is refused while it is still a draft.
+            PriceTagRequestService._server_sheet(db, req, payload.doc)
+        _submit_in_place(db, req)
+        with company_scope(db, frozenset({req.company_id})):
+            result = PriceTagRequestService.self_approve(
+                db, req, payload.doc, _contact_name(db, token.contact_id)
+            )
+        db.commit()
+        return PriceTagRequestResponse.model_validate(result)
+
+
+    @router.post("/submissions/price_tag_request/{request_id}/submit-escalate")
+    def portal_submit_and_escalate_price_tag_request(
+        request_id: str,
+        payload: EscalatePayload,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Submit a draft straight to marketing with a note (no template needed)."""
+        request_id = validate_uuid_path(request_id, resource="Price tag request")
+        _assert_visible(db, token.contact_id)
+        req = _require_own_request(db, token, request_id)
+        _require_draft(req, "This request has already been submitted.", code="ALREADY_SUBMITTED")
+        PriceTagRequestService.validate_submittable(req)
+        if not (payload.note or "").strip():
+            raise AppException(
+                status_code=422,
+                message="Say what marketing needs to fix.",
+                code="NOTE_REQUIRED",
+            )
+        _submit_in_place(db, req)
+        result = PriceTagRequestService.escalate(db, req, payload.note, token.contact_id)
+        db.refresh(result)
+        return PriceTagRequestResponse.model_validate(result)
+
+
+    # ---------------------------------------------------------------------------
     # Escalate (PRICETAG-SELF-APPROVAL R6)
     # ---------------------------------------------------------------------------
 
@@ -1011,6 +1076,20 @@ def price_tag_neighbours(db: Session, token: PortalToken, request_id: str) -> di
         "position": idx + 1,
         "total": total,
     }
+
+
+def _submit_in_place(db: Session, req) -> None:
+    """The draft becomes a submitted request at his own proof, committed.
+
+    The same state the plain submit leaves (R1) - package warnings stamped, no
+    form SLA, nobody assigned - without the "received" message: the approve or
+    escalate that follows sends its own, and two in one click read as noise.
+    """
+    PriceTagRequestService.apply_package_warnings(db, req)
+    req.portal_draft_at = None
+    req.status = STATUS_PROOF_READY
+    db.flush()
+    db.commit()
 
 
 def _require_draft(req, message: str, code: str = "NOT_DRAFT") -> None:
