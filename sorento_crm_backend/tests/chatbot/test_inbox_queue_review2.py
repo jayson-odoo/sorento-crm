@@ -103,7 +103,14 @@ def _queue_held(world: World, contact: str, mids: list[int]) -> None:
 
 def test_the_real_sweep_query_plans_onto_the_inbox_open_index(iq_serial):
     """IQ-38: the SQL `sweep()` actually sends, EXPLAINed with sequential scans off, runs on
-    `ix_chatbot_turns_inbox_open` (its `is_test` filter must match the index predicate)."""
+    `ix_chatbot_turns_inbox_open` (its `is_test` filter must match the index predicate).
+
+    EXPLAINed against an empty temp copy of `chatbot.turns` that carries ONLY that index,
+    its definition read from the real one: on the real table the planner may cost another
+    index on `contact_respond_id` lower from whatever rows other tests left behind (release
+    run 41547116862 chose `ix_chatbot_turns_contact_status_created`), which says nothing about
+    the predicate. On the copy the partial index is the one way to avoid the sequential scan,
+    and the planner can take it only when the query implies its predicate."""
     module = iq()
     module._reset_for_tests()
     captured: list[tuple[str, Any]] = []
@@ -119,10 +126,20 @@ def test_the_real_sweep_query_plans_onto_the_inbox_open_index(iq_serial):
         event.remove(db_engine, "before_cursor_execute", grab)
     assert captured, "could not capture the sweep's query"
     statement, params = captured[0]
+    assert statement.count("chatbot.turns") >= 1, statement
     with db_engine.connect() as conn:
         with conn.begin():
+            index_def = conn.exec_driver_sql(
+                "SELECT pg_get_indexdef(%(name)s::regclass)", {"name": f"chatbot.{OPEN_INDEX}"}
+            ).scalar_one()
+            assert " ON chatbot.turns " in index_def, index_def
+            conn.exec_driver_sql(
+                "CREATE TEMP TABLE turns_plan (LIKE chatbot.turns INCLUDING DEFAULTS) ON COMMIT DROP"
+            )
+            conn.exec_driver_sql(index_def.replace(" ON chatbot.turns ", " ON pg_temp.turns_plan "))
             conn.exec_driver_sql("SET LOCAL enable_seqscan = off")
-            plan = "\n".join(str(r[0]) for r in conn.exec_driver_sql("EXPLAIN " + statement, params))
+            probe = statement.replace("chatbot.turns", "pg_temp.turns_plan")
+            plan = "\n".join(str(r[0]) for r in conn.exec_driver_sql("EXPLAIN " + probe, params))
     assert OPEN_INDEX in plan, f"the sweep does not use {OPEN_INDEX}:\n{plan}\n-- for --\n{statement}"
 
 
