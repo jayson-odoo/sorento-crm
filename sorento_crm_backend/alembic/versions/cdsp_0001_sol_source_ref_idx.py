@@ -7,7 +7,7 @@ column had no index (crew profile, 3 Nov 2026). Same build shape as sodv_0001: C
 bounded lock wait, an INVALID leftover dropped and rebuilt. Additive only.
 
 Revision ID: cdsp_0001_sol_source_ref_idx
-Revises: sask_0002_span_supplier
+Revises: pqm_0001_quote_matrix
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "cdsp_0001_sol_source_ref_idx"
-down_revision = "sask_0002_span_supplier"
+down_revision = "pqm_0001_quote_matrix"
 branch_labels = None
 depends_on = None
 
