@@ -1,7 +1,11 @@
 # PLAN: IMAGE-UNIFY - one image rendition service, one image component
 
 Status: P0 done; owner answered Q1-Q5 (3 Nov 14:35, recorded below); re-planned. P1 design settled,
-P1 code starts after #2126 merges. P2 after P1 and #2101 (PRICETAG-SELF-APPROVAL) merge. P4 closed
+P1 code that does not depend on #2126 is built (crew answer 3 Nov: P1 stacks on #2133):
+`print_box_px` / `print_scale`, `single_flight`, `cache_control` on both backends,
+`new_upload_storage_key`; `tests/test_image_unify_p1.py` 27 red on main, green here, 8 of 8
+kill mutations red. The rest of P1 (rendition service on `_downscale`, cache removal, the 7
+upload sites, BE guard) starts when #2126 merges. P2 after P1 and #2101 (PRICETAG-SELF-APPROVAL) merge. P4 closed
 with no PR (Q2). Track: LEAD, phased.
 
 UAC: `image-unify-acceptance-criteria.md`. Behaviour card: `behaviour-card-image-unify.md`.
