@@ -3144,8 +3144,9 @@ def _word_kinds(ask: dict[str, Any], verdict: dict[str, Any], focus: Any, picked
     """V4: each brand / account type word of the object as `(word, how)`, how = brand | account_type | unsure (`unsure`:
     the tables decide, `_account_plan`, and a word in both is asked). Not the object's list alone (a model may list a word
     the message left open as a brand), never the message's text: in order, the declared pick of an offered option while
-    the brand-or-account-type question is open fills the asked words the object still carries (the V5 list-pick class;
-    an asked word the object dropped stays dropped, the object being the newer value); a word this message names
+    the brand-or-account-type question is open fills the asked words (the V5 list-pick class): all of them when the
+    object names no such word of its own, else only those it still carries (a dropped one stays dropped, the object
+    being the newer value); a word this message names
     as an entity is that entity's kind when `kind_said` says it, unsure when null; a word the open question still owes is
     unsure (asked again); a word left in `brand_or_account_type` is unsure; any other word, carried from the held report,
     keeps its list and is never asked."""
@@ -3166,6 +3167,10 @@ def _word_kinds(ask: dict[str, Any], verdict: dict[str, Any], focus: Any, picked
     out: list[tuple[str, str]] = []
     lists = [(key, default) for key, default in (("brands", "brand"), ("account_types", "account_type"), ("brand_or_account_type", None))]
     words = [(w, default) for key, default in lists for w in jsc.array(ask.get(key))]
+    if picked and not any(fold(w) for w, _default in words):
+        # The answer names no word of its own: the asked words are what the pick answers. One that names its own (the
+        # newer value) leaves a dropped asked word dropped.
+        words = [(w, None) for w in owed_words]
     for word, default in words:
         word = " ".join(jsc.js_string(word).split())
         key = fold(word)
