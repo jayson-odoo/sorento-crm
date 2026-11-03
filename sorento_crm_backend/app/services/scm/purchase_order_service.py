@@ -36,7 +36,7 @@ from app.models.product import Product
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm import order_link_service, priority, supply_claim
-from app.services.scm.so_party import so_parties, with_party
+from app.services.scm.so_party import fill_party, so_parties, with_party
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
 from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as CRM_SPO_SOURCE
 
@@ -529,7 +529,10 @@ class PurchaseOrderService:
         )
         from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
         from app.models.sales_agent import SalesAgent
-        from app.services.project_order_inquiry_service import project_customer_label
+        from app.services.project_order_inquiry_service import (
+            project_customer_label,
+            project_title_with_note,
+        )
 
         lines = {str(ln.id): ln for ln in po.lines}
         if not lines:
@@ -600,6 +603,10 @@ class PurchaseOrderService:
                 "customer": project_customer_label(
                     row.customer_name, row.title, row.is_pre_order
                 ),
+                # OI-UX-FILTER-SNAPSHOT: the same two halves, split the way the OI worklist
+                # prints them; the sales order fills only a blank one (`fill_party` below).
+                "customer_name": row.customer_name or None,
+                "project_label": project_title_with_note(row.title, row.is_pre_order),
                 # The person label a human would say, falling back to the agent code.
                 "agent": row.person_label or row.sales_agent,
                 "qty": qty,
@@ -656,7 +663,7 @@ class PurchaseOrderService:
             ],
         )
         for placement in inquiry_placements:
-            with_party(placement, parties, placement["so_number"])
+            fill_party(placement, parties, placement["so_number"])
         for line_id, claims in reservations.items():
             for claim in claims:
                 owed_in_total = float(claim["outstanding"])

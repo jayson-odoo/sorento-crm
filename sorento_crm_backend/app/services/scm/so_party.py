@@ -80,3 +80,19 @@ def with_party(row: Dict[str, Any], parties: Dict[str, Dict[str, Optional[str]]]
     """`row` plus its order's `customer_name` / `project_label` (nulls when unknown)."""
     row.update(parties.get(str(key), EMPTY_PARTY) if key else EMPTY_PARTY)
     return row
+
+
+def fill_party(
+    row: Dict[str, Any], parties: Dict[str, Dict[str, Optional[str]]], key: Optional[str]
+) -> Dict[str, Any]:
+    """`row` with a BLANK `customer_name` / `project_label` filled from its order.
+
+    For a row that comes from an order inquiry: it already names its halves the way the OI
+    worklist prints them (the issuing party; the project title with its PRE-ORDER note), and
+    those win. The sales order only fills a half the row does not know, so an order not synced
+    yet, a provisional ref, a stand-in debtor or a NULL label never erases what the row knew."""
+    party = parties.get(str(key), EMPTY_PARTY) if key else EMPTY_PARTY
+    for field in ("customer_name", "project_label"):
+        if not row.get(field):
+            row[field] = party[field]
+    return row
