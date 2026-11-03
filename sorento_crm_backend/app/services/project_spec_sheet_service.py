@@ -823,6 +823,11 @@ def _issue_date(issue: ProjectQuotationIssue) -> str:
     return issue.issued_at.strftime("%d %b %Y") if issue.issued_at else ""
 
 
+def _revision_name(issue: ProjectQuotationIssue) -> str:
+    """The revision as the customer reads it: A / B for a proposal, R<n> when none is stored."""
+    return issue.revision_label or f"R{issue.issue_no}"
+
+
 def _issue_label(document, issue: ProjectQuotationIssue) -> str:
     from app.services.project_quotation_document_service import quotation_no
 
@@ -880,7 +885,16 @@ def source_text(db: Session, document, sheet: ProjectQuotationSpecSheet, issues:
     taken = sheet.items_taken_at.strftime("%d %b %Y %H:%M") if sheet.items_taken_at else ""
     if sheet.based_on_issue_no is None:
         return "Draft", f"lines taken {taken}".strip()
-    return f"Draft after R{sheet.based_on_issue_no}", f"lines taken {taken}".strip()
+    based_on = (
+        db.query(ProjectQuotationIssue)
+        .filter(
+            ProjectQuotationIssue.document_id == document.id,
+            ProjectQuotationIssue.issue_no == sheet.based_on_issue_no,
+        )
+        .first()
+    )
+    name = _revision_name(based_on) if based_on is not None else f"R{sheet.based_on_issue_no}"
+    return f"Draft after {name}", f"lines taken {taken}".strip()
 
 
 def create_sheet(

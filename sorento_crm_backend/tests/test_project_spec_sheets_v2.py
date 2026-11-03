@@ -261,8 +261,17 @@ def test_02_a_draft_sheet_after_an_issue_reads_draft_after_r1_and_keeps_its_own_
         try:
             got = client.get(_base(c, f"/{sheet.id}"))
             assert got.status_code == 200, got.text
-            assert got.json()["source_label"] == f"Draft after R{c['issue'].issue_no}"
+            assert got.json()["source_label"] == f"Draft after {c['issue'].revision_label}"
             assert got.json()["is_draft"] is True
+
+            # An issue stored without a label reads as R<n>.
+            c["issue"].revision_label = None
+            db.flush()
+            again = client.get(_base(c, f"/{sheet.id}"))
+            assert again.json()["source_label"] == f"Draft after R{c['issue'].issue_no}"
+            assert spec.sources(db, c["document"])[0]["hint"] == (
+                f"changed after R{c['issue'].issue_no} · not issued"
+            )
         finally:
             _restore(originals)
 
@@ -291,7 +300,7 @@ def test_03_sources_list_the_draft_first_only_when_lines_changed_after_the_newes
         sources = spec.sources(db, c["document"])
         assert sources[0]["value"] == "draft"
         assert sources[0]["label"] == "Current draft"
-        assert sources[0]["hint"] == f"changed after R{c['issue'].issue_no} · not issued"
+        assert sources[0]["hint"] == f"changed after {c['issue'].revision_label} · not issued"
         assert [s["value"] for s in sources[1:]] == [c["issue"].id]
 
 

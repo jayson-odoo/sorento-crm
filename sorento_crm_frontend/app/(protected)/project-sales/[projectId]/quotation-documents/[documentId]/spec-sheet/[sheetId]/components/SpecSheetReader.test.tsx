@@ -130,18 +130,21 @@ vi.mock('@/lib/dealer-kit/fonts', () => ({
 // The renderer, counted: how many are mounted now, and the most that were ever mounted at once.
 let live = 0;
 let peak = 0;
+function CountedRenderer({ doc }: { doc: { sheets: { tags: { request_tag_id: string }[] }[] } }) {
+  const key = doc?.sheets?.[0]?.tags?.[0]?.request_tag_id ?? 'unknown';
+  React.useEffect(() => {
+    live += 1;
+    peak = Math.max(peak, live);
+    return () => {
+      live -= 1;
+    };
+  }, []);
+  return <div data-testid={`tag-sheet-renderer-${key}`} data-renderer="1" />;
+}
 vi.mock('@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer', () => ({
-  default: ({ doc }: { doc: { sheets: { tags: { request_tag_id: string }[] }[] } }) => {
-    const key = doc?.sheets?.[0]?.tags?.[0]?.request_tag_id ?? 'unknown';
-    React.useEffect(() => {
-      live += 1;
-      peak = Math.max(peak, live);
-      return () => {
-        live -= 1;
-      };
-    }, []);
-    return <div data-testid={`tag-sheet-renderer-${key}`} data-renderer="1" />;
-  },
+  default: (props: { doc: { sheets: { tags: { request_tag_id: string }[] }[] } }) => (
+    <CountedRenderer {...props} />
+  ),
 }));
 
 import { SpecSheetReader } from './SpecSheetReader';

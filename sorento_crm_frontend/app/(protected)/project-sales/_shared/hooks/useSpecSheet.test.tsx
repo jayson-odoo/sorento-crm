@@ -100,7 +100,7 @@ describe('useSpecSheet queries', () => {
     const queries = client.getQueryCache().getAll();
     expect(queries.length).toBeGreaterThanOrEqual(4);
     for (const query of queries) {
-      expect(query.options.refetchOnWindowFocus).toBe(false);
+      expect((query.options as { refetchOnWindowFocus?: boolean }).refetchOnWindowFocus).toBe(false);
     }
   });
 
