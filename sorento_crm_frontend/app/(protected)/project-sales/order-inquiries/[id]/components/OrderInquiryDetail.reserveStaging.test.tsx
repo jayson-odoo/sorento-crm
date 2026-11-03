@@ -594,7 +594,7 @@ describe('AC-RS-88: the State SearchableMultiSelect filter, and ?reserve= presel
     expect(screen.getAllByText('ZZT-DECLINED').length).toBeGreaterThan(0);
   });
 
-  it('?reserve=<id> preselects Request to reserve and opens no dialog', async () => {
+  it('?reserve=<id> narrows to that request (Request filter) and opens no dialog', async () => {
     searchParamsValue = 'reserve=rr-1';
     renderDetail();
     await screen.findByText('ZZT-REQUESTED');
@@ -839,7 +839,7 @@ describe('6e.4 review round: declined lines, the action column gate, amend prefi
     const trigger = document.querySelector('[data-slot="searchable-multi-select-trigger"]');
     fireEvent.click(trigger as Element);
     const listbox = await screen.findByRole('listbox');
-    fireEvent.click(within(listbox).getByRole('option', { name: 'Request to reserve' }));
+    // The request id no longer preselects State (OI-RESERVE-ROUND): it ticks the Request filter.
     fireEvent.click(within(listbox).getByRole('option', { name: 'Done' }));
 
     await waitFor(() =>

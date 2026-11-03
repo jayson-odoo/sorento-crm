@@ -454,9 +454,7 @@ describe('AC-10 (OI-RESERVE-ROUND) the Lines screen reads and sends reserve_requ
     await waitFor(() => expect(sent(lastList().reserve_request)).toBe(IDS));
     expect(sent(lastList().inquiry_no)).toBe(NUMBERS);
     expect(sent(lastSummary().reserve_request)).toBe(IDS);
-    expect(await screen.findByRole('button', { name: RESERVE_CHIP })).toHaveTextContent(
-      'Reserve requests: 2',
-    );
+    expect(await screen.findByRole('button', { name: /clear filter: reserve requests: 2$/i })).toBeInTheDocument();
   });
 
   it('without the param nothing is sent', async () => {

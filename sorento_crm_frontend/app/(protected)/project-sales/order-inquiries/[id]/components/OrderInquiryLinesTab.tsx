@@ -44,9 +44,12 @@ import {
 } from '../../../_shared/lib/orderInquiryLineFold';
 import type { OrderInquiryWorklistRow } from '../../../_shared/types/orderInquiry.types';
 import type { LineSplitsPayload } from '../../../_shared/types/lineSplit.types';
+import type { OrderInquiryReserveRequest } from '../../../_shared/services/orderInquiryReserveService';
 
 /** `PLAN-oi-header-list-detail.md`, AC-DP-03. */
 const LISTING_KEY = 'projects.projects.view::order-inquiry-lines';
+
+const NO_REQUESTS: OrderInquiryReserveRequest[] = [];
 
 function lineMatches(row: OrderInquiryWorklistRow, needle: string): boolean {
   if (!needle) return true;
@@ -139,6 +142,7 @@ export function OrderInquiryLinesTab({
   canEditAttachments,
   decideSlot,
   splitSheet,
+  reserveRequests = NO_REQUESTS,
 }: {
   lines: OrderInquiryWorklistRow[];
   isLoading: boolean;
@@ -171,6 +175,9 @@ export function OrderInquiryLinesTab({
     error?: unknown;
     onRetry?: () => void;
   };
+  /** OI-RESERVE-ROUND: this OI's reserve requests; feeds the Request filter, which a
+   * one-OI email link (`?reserve=<id>[,<id>]`) ticks. */
+  reserveRequests?: OrderInquiryReserveRequest[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -180,15 +187,40 @@ export function OrderInquiryLinesTab({
   const [sorting, setSorting] = useState<SortingState>([]);
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<ExpandedState>({});
-  // AC-RS-88: `?reserve=<id>` preselects "Request to reserve" - never opens a dialog
-  // any more (round 3's own deep-link dialog is retired).
-  // Not for `reserved` / `notice_parked`: those lines are already answered (AC-RF-83).
+  // `?reserve=` holds a list status (written by the list) or request ids (written by the
+  // one-OI email link). A status that still needs an answer preselects "Request to reserve"
+  // (never `reserved` / `notice_parked`, AC-RF-83); request ids tick the Request filter and
+  // leave State empty, so that request's lines show in every state (OI-RESERVE-ROUND).
   const [stateFilter, setStateFilter] = useState<string[]>(() => {
     const reserve = searchParams.get('reserve');
-    return reserve && reserve !== 'reserved' && reserve !== 'notice_parked'
+    return reserveStatusFrom(reserve) && reserve !== 'reserved' && reserve !== 'notice_parked'
       ? [RESERVE_REQUESTED_FILTER_VALUE]
       : [];
   });
+  // The raw ids are kept and intersected with the requests at filter time: the requests
+  // arrive after the first render, and an id that is not one of this OI's narrows nothing.
+  const [requestIds, setRequestIds] = useState<string[]>(() => {
+    const reserve = searchParams.get('reserve');
+    return reserve && !reserveStatusFrom(reserve) ? reserve.split(',').filter(Boolean) : [];
+  });
+  const requestFilter = useMemo(
+    () => requestIds.filter((id) => reserveRequests.some((request) => request.id === id)),
+    [requestIds, reserveRequests],
+  );
+  const requestOptions = useMemo<SearchableMultiSelectOption[]>(
+    () =>
+      [...reserveRequests]
+        .sort((a, b) => a.ordinal - b.ordinal)
+        .map((request) => ({ value: request.id, label: `Request #${request.ordinal}` })),
+    [reserveRequests],
+  );
+  const requestRowIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const request of reserveRequests) {
+      if (requestFilter.includes(request.id)) for (const row of request.rows) ids.add(row.row_id);
+    }
+    return ids;
+  }, [reserveRequests, requestFilter]);
   // #1312 (AC-U6): ONE lookup call for every line's attachments, never one per row -
   // the same shape the fulfilment board's own list view reads.
   const attachmentLineIds = useMemo(
@@ -210,12 +242,11 @@ export function OrderInquiryLinesTab({
     splitSheet,
   });
 
-  function handleStateFilterChange(next: string[]) {
-    setStateFilter(next);
-    // The param is dropped the moment the reader touches the filter themselves - it
-    // has done its one job (preselecting) and must not keep re-forcing that selection
-    // back on every unrelated re-render.
-    // A list status is the list's own filter and stays, so the pager keeps its list (AC-RF-81).
+  // The param is dropped the moment the reader touches a filter themselves - it has done
+  // its one job (preselecting) and must not keep re-forcing that selection back on every
+  // unrelated re-render. A list status is the list's own filter and stays, so the pager keeps
+  // its list (AC-RF-81).
+  function dropRequestParam() {
     const reserve = searchParams.get('reserve');
     if (reserve && !reserveStatusFrom(reserve)) {
       const params = new URLSearchParams(searchParams.toString());
@@ -225,13 +256,29 @@ export function OrderInquiryLinesTab({
     }
   }
 
+  function handleStateFilterChange(next: string[]) {
+    setStateFilter(next);
+    dropRequestParam();
+  }
+
+  function handleRequestFilterChange(next: string[]) {
+    setRequestIds(next);
+    dropRequestParam();
+  }
+
   // S0 (owner ruling 26 Sep, G5): ONE row per sales order line. S2 (AC-ND-20): `lines`
   // carries the header's cancelled rows too; the fold keeps them as their line's History
   // (G1) and never renders a line for them alone.
   const allLineRows = useMemo(() => toLineRows(foldInquiryLines(lines)), [lines]);
   const rows = useMemo(
-    () => allLineRows.filter((lineRow) => lineMatchesStateFilter(lineOf(lineRow), stateFilter)),
-    [allLineRows, stateFilter],
+    () =>
+      allLineRows.filter(
+        (lineRow) =>
+          lineMatchesStateFilter(lineOf(lineRow), stateFilter) &&
+          (requestFilter.length === 0 ||
+            lineOf(lineRow).rows.some((row) => requestRowIds.has(row.id))),
+      ),
+    [allLineRows, stateFilter, requestFilter, requestRowIds],
   );
   const lineSelection = useMemo(
     () => lineSelectionOf(allLineRows, rowSelection),
@@ -304,7 +351,7 @@ export function OrderInquiryLinesTab({
       emptyMessage={
         allLineRows.length === 0
           ? 'Nothing was raised on this order inquiry.'
-          : stateFilter.length > 0 && rows.length === 0
+          : (stateFilter.length > 0 || requestFilter.length > 0) && rows.length === 0
             ? 'No line matches the filter.'
             : 'No product matches that search.'
       }
@@ -343,6 +390,21 @@ export function OrderInquiryLinesTab({
                     className="w-48"
                   />
                 </div>
+                {reserveRequests.length > 0 ? (
+                  <div className="flex items-center gap-1.5">
+                    <Label htmlFor="oi-lines-request-filter" className="sr-only">
+                      Request
+                    </Label>
+                    <SearchableMultiSelect
+                      id="oi-lines-request-filter"
+                      value={requestFilter}
+                      onChange={handleRequestFilterChange}
+                      options={requestOptions}
+                      placeholder="Request"
+                      className="w-40"
+                    />
+                  </div>
+                ) : null}
               </div>
             }
             exportConfig={false}

@@ -1393,6 +1393,8 @@ class OrderInquiryWorklistService:
         dead_document: Optional[str] = None,
         # RESERVE-EMAIL-FULL-TABLE: exact OI nos (already split by the route's `multi_values`).
         inquiry_no: Optional[Sequence[str]] = None,
+        # OI-RESERVE-ROUND: reserve request ids; keeps a row any of them asked, whatever the answer.
+        reserve_request: Optional[Sequence[str]] = None,
         # Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C3): the OI worksheet's own
         # row set - a run's `run_scope_oi_rows` result, fed in as the row ids to print
         # rather than as a new set of filter clauses. `None` (the default) means "every
@@ -1505,6 +1507,17 @@ class OrderInquiryWorklistService:
                 .where(
                     OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
                     reserve_status_predicates()[reserve],
+                )
+                .correlate(OrderInquiryRow)
+                .exists()
+            )
+        request_ids = multi_values(reserve_request, capped=False)
+        if request_ids:
+            base = base.filter(
+                select(OrderInquiryReserveRequestRow.id)
+                .where(
+                    OrderInquiryReserveRequestRow.row_id == OrderInquiryRow.id,
+                    OrderInquiryReserveRequestRow.request_id.in_(request_ids),
                 )
                 .correlate(OrderInquiryRow)
                 .exists()
