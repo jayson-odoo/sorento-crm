@@ -2224,8 +2224,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           {/* A disabled button fires no hover, so the reason sits on its wrapper
               AND beside it (owner ruling 3 Nov: next to the button, not 1,600 px
               down under the preview). */}
-          <span title={approveBlockedReason ?? undefined} className="inline-flex">
+          {/* Full width in the stacked phone layout like its siblings; its own
+              width from sm up (crew pass: narrower than the others at 375). */}
+          <span
+            title={approveBlockedReason ?? undefined}
+            className="flex w-full sm:inline-flex sm:w-auto"
+          >
             <Button
+              className="w-full sm:w-auto"
               onClick={() => void handleFinish({ kind: 'approve' })}
               disabled={submitting || saving || approveBlockedReason !== null}
             >

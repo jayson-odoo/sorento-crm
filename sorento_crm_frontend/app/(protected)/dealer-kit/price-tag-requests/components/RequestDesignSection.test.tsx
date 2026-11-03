@@ -45,6 +45,7 @@ vi.mock('@/components/dealer-kit/DesignViewer', () => ({
     payload: unknown;
     loading?: boolean;
     emptyMessage?: string;
+    emptyHint?: string;
     headerActions?: React.ReactNode;
     footer?: React.ReactNode;
     review?: { comments: unknown[]; currentRound?: number };
@@ -52,6 +53,7 @@ vi.mock('@/components/dealer-kit/DesignViewer', () => ({
     <div data-testid="design-viewer">
       {props.loading && <span>loading</span>}
       {!props.loading && !props.payload && <span>{props.emptyMessage}</span>}
+      {!props.loading && !props.payload && <span>{props.emptyHint}</span>}
       <span data-testid="review-comment-count">
         {props.review?.comments.length ?? 0}
       </span>
@@ -177,6 +179,24 @@ describe('loading the design (AC-S1-2)', () => {
     renderSection();
 
     expect(await screen.findByText('No design yet')).toBeInTheDocument();
+  });
+
+  it.each([
+    [{}, 'Claim the request and open the designer to draw the tags.'],
+    [{ claimed: true }, 'Open the designer to draw the tags.'],
+    [{ withSalesperson: true }, 'With the salesperson for approval.'],
+  ])('the empty hint fits who holds it (%o)', async (props, hint) => {
+    mockPayload.mockResolvedValue(null as never);
+    render(
+      <RequestDesignSection
+        requestId="req-1"
+        docNumber="PT-202609-0001"
+        tagLabels={new Map()}
+        {...props}
+      />,
+    );
+
+    expect(await screen.findByText(hint)).toBeInTheDocument();
   });
 
   it('a failed load is the empty state, not a broken card', async () => {
