@@ -777,15 +777,15 @@ describe('a change made ON the canvas in Every-page mode', () => {
 });
 
 describe('AREA, COMMENT and marker on a live page', () => {
-  it('no button sits over them (a click reaches the canvas); a double-click opens the field box', async () => {
+  it('their button lets clicks through to the canvas but stays reachable by keyboard; a double-click opens the field box', async () => {
     renderReader();
     await screen.findByTestId('spec-page-k29');
     report(['k1']);
     await screen.findByTestId('live-canvas-k1');
     const page = screen.getByTestId('spec-page-live-k1').parentElement!;
-    expect(
-      within(page).queryByRole('button', { name: 'Edit Area' }),
-    ).toBeNull();
+    // Tab + Enter still reach the field; the pointer passes through to select / drag the layer.
+    const button = within(page).getByRole('button', { name: 'Edit Area' });
+    expect(button.className).toContain('pointer-events-none');
 
     fireEvent.click(
       within(screen.getByTestId('live-canvas-k1')).getByText(

@@ -202,6 +202,8 @@ export function SpecSheetReader({
   }, [selection]);
   const openSheet = () => {
     setSheetOpen(true);
+    // This scroll is the reader's, not a page pick: the counter follows the position again.
+    pinned.current = null;
     const stack = scroller.current;
     if (!selectedPageKey || !stack) return;
     // The stack to the top of the screen (on a phone it starts below where the sheet opens), then
@@ -411,6 +413,11 @@ export function SpecSheetReader({
   // brings it in, even when it cannot reach the top (the last page). The user's own scrolling
   // (wheel, touch, keys, the scrollbar) hands the counter back to the scroll position.
   const pinned = React.useRef<string | null>(null);
+  // A zoom moves every page: the counter follows the position again.
+  const zoomTo = (next: number | null) => {
+    pinned.current = null;
+    setZoom(next);
+  };
   React.useEffect(() => {
     const node = scroller.current;
     if (!node) return;
@@ -797,7 +804,7 @@ export function SpecSheetReader({
               size="icon"
               variant="outline"
               aria-label="Zoom out"
-              onClick={() => setZoom(clampZoom(scale / ZOOM_STEP))}
+              onClick={() => zoomTo(clampZoom(scale / ZOOM_STEP))}
             >
               <Minus className="size-4" />
             </Button>
@@ -808,11 +815,11 @@ export function SpecSheetReader({
               size="icon"
               variant="outline"
               aria-label="Zoom in"
-              onClick={() => setZoom(clampZoom(scale * ZOOM_STEP))}
+              onClick={() => zoomTo(clampZoom(scale * ZOOM_STEP))}
             >
               <Plus className="size-4" />
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setZoom(null)}>
+            <Button size="sm" variant="outline" onClick={() => zoomTo(null)}>
               Fit width
             </Button>
             {canEdit && (

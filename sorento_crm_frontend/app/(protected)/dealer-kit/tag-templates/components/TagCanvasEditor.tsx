@@ -3461,12 +3461,8 @@ export function TagCanvasEditor({
   const embeddedLayers = embedded?.layers;
   const embeddedController = embedded?.controllerRef;
   // The host's selection in: a layer picked elsewhere (or cleared) is the selection here.
-  // What the host last said is selected. The canvas reports only a selection that differs from it,
-  // i.e. one the user made here, never an echo of the host's own value.
-  const hostSelectedRef = useRef<string | null>(embeddedSelected);
   useEffect(() => {
     if (!embeddedOnSelect) return;
-    hostSelectedRef.current = embeddedSelected;
     setSelectedIds((prev) => {
       if (embeddedSelected === null) return prev.size === 0 ? prev : new Set();
       return prev.size === 1 && prev.has(embeddedSelected) ? prev : new Set([embeddedSelected]);
@@ -3476,9 +3472,7 @@ export function TagCanvasEditor({
   useEffect(() => {
     if (!embeddedOnSelect) return;
     const first = selectedIds.size > 0 ? (Array.from(selectedIds)[0] ?? null) : null;
-    if (first === hostSelectedRef.current) return;
-    hostSelectedRef.current = first;
-    embeddedOnSelect(first);
+    if (first !== embeddedSelected) embeddedOnSelect(first);
     // Only a change of the canvas selection is news; the host value is read, not watched.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds]);

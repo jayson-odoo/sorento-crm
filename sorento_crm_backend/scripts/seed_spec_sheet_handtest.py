@@ -219,7 +219,8 @@ def find(db, limit: int = 8, with_set: bool = False, min_items: int | None = Non
             if issue is None:
                 continue
             items = spec.snapshot_items(db, document, issue)
-            if len(items) < (min_items or (1 if with_set else 4)):
+            floor = min_items if min_items is not None else (1 if with_set else 4)
+            if len(items) < floor:
                 continue
             product_ids = [i.get("product_id") for i in items if i.get("product_id")]
             chosen = images.images_for(db, product_ids) if product_ids else {}

@@ -20,6 +20,7 @@ import type {
 import { normalizeLayers } from '@/lib/dealer-kit/tag-template-types';
 import type { EmbeddedController } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { cn } from '@/lib/utils';
 
 import {
   specSheetDetailKey,
@@ -509,7 +510,7 @@ export const ReaderPage = React.memo(function ReaderPage({
                   style={style}
                   className="h-auto rounded-sm bg-background px-1 py-0 text-xs"
                 />
-              ) : live && liveDoc ? null : (
+              ) : (
                 <button
                   key={layer.id}
                   type="button"
@@ -517,7 +518,12 @@ export const ReaderPage = React.memo(function ReaderPage({
                   title={`Edit ${FIELD_LABELS[field]}`}
                   onClick={() => start(field)}
                   style={style}
-                  className="rounded-sm outline-dashed outline-1 outline-transparent hover:bg-primary/5 hover:outline-primary focus-visible:outline-primary"
+                  className={cn(
+                    'rounded-sm outline-dashed outline-1 outline-transparent hover:bg-primary/5 hover:outline-primary focus-visible:outline-primary',
+                    // On a live page the pointer goes to the canvas (select, drag; a double-click
+                    // opens the box); Tab + Enter still reach the field from the keyboard.
+                    live && liveDoc && 'pointer-events-none',
+                  )}
                 />
               );
             })}

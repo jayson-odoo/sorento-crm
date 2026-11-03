@@ -98,3 +98,8 @@ Root cause of (a): after an apply, the reader restarted every live canvas, the s
 mounted with an empty selection and reported "nothing selected"; the host cleared its selection, the canvas re-selected
 from the host's previous value, and the two ping-ponged. The canvas now starts from the host's selection and reports only
 a selection the user made, and the reader restarts only the pages the server changed.
+
+Reviewer round on f88747a6 (READY) follow-ups, re-measured after them: AREA single click selects with handles, a drag
+moves 30-34 px, a double-click opens the Area box (2 of 2); Every page + Y box and Every page + drag: no error, one
+apply-all. On a live page the AREA / COMMENT / marker buttons stay in the tab order with `pointer-events-none`, so Tab
++ Enter still opens the field from the keyboard.

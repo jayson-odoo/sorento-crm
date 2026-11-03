@@ -680,4 +680,23 @@ describe('rail clicks move only the page stack (crew browser pass r6, item e)', 
       /^4 of/,
     );
   });
+
+  it('a zoom change hands the counter back to the scroll position (no stale pin)', async () => {
+    HTMLElement.prototype.scrollTo = vi.fn() as never;
+    renderReader();
+    await screen.findByTestId('spec-page-k29');
+    fireEvent.click(
+      within(screen.getByTestId('spec-rail-k3')).getByRole('button', {
+        name: /CODE-k3/,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Fit width' }));
+    fireEvent.scroll(screen.getByTestId('spec-sheet-stack'));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect(screen.getByTestId('spec-sheet-page-of').textContent).not.toMatch(
+      /^4 of/,
+    );
+  });
 });
