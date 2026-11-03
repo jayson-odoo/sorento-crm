@@ -31,6 +31,8 @@ people Agnes' orders should reach. Confirms, undos and "Send to purchasing" then
 
 5. **Resend dialog (review round 1).** A single OI going through several rows keeps its line ticks (`single` counts OIs, not emails); the 50 limit counts OIs; the dialog names each OI once on Send; an OI some of whose emails went reads `partly_failed` and is not retried (no second email to a row that has it); a tab names its recipient when one OI has several emails.
 
+6. **To/Cc split kept on save (crew finding, 4 Nov).** `AutomationForm` set `explicit_to_cc: true` on every save (on main since #2083), so adding only a condition to a legacy row flipped it from "first address To, the rest Cc" to "everyone To". Per the 1 Nov Q2 (b) ruling it now keeps the saved flag unless one of the six To/Cc address lists changed; a new row stays explicit.
+
 ## Not changed
 
 - No migration; no condition-editor code (the RuleBuilder already renders the picker); reserve emails untouched.
@@ -38,4 +40,4 @@ people Agnes' orders should reach. Confirms, undos and "Send to purchasing" then
 
 ## Tests
 
-`tests/test_oi_route_by_raiser.py` (19), `OrderInquiryHeadersList.handoverResend.test.tsx` (+2).
+`tests/test_oi_route_by_raiser.py` (19), `OrderInquiryHeadersList.handoverResend.test.tsx` (+2), `AutomationForm.hydration.test.tsx` (+4, one rewritten).

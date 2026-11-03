@@ -109,8 +109,9 @@ named **Order inquiry to purchasing**.
   address and click **Add**). Everyone under **To** is on the mail's To line; everyone under
   **Cc** is on its Cc line. A row saved before Cc existed shows all its recipients under
   **To** but keeps sending as it always did (the first address on To, everyone else on Cc) until
-  you save it here. From that save on, To and Cc mean exactly what the boxes say, so check both
-  boxes before you save.
+  you add, remove or move an address under **To** or **Cc** here and save. Saving any other
+  change (a condition, the name, a tick box) leaves it sending as before. Once you change an
+  address, To and Cc mean exactly what the boxes say, so check both boxes before you save.
 * **Cc the person who raised it** (in the **Cc** block) - keeps the CS admin who made the change
   on the thread.
 * **One email, everyone on the thread** - sends a single mail to everyone, so a reply-all
