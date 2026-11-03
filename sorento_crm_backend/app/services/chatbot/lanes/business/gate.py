@@ -373,8 +373,11 @@ def _display_name(match: Any) -> str | None:
 def _cust_base(match: Any) -> str:
     """`_custBase` - the family GROUPING KEY, never customer copy."""
     name = _cust_name(match) or jsc.js_string(jsc.get(match, "canonical_code") or "")
-    # A customer group the turn holds for this name wins over the name rule.
-    group = customer_group_of(name)
+    # A customer group the office set for this ledger wins over the name rule. The group map
+    # is keyed by the FULL ledger name (`customer_group_of`, exact-name only), so it is asked
+    # with the unstripped display name: `name` above has lost its "[A/C ..]" suffix and never
+    # matched a suffixed grouped ledger (CUSTOMER-GROUP-GATE).
+    group = customer_group_of(_display_name(match) or name)
     if group is not None:
         return group_key(group)
     base = name.upper()

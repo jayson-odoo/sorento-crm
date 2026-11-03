@@ -137,6 +137,6 @@ def test_stock_which_one_list_puts_grouped_ledgers_in_their_group():
     with lf.customer_groups(GROUPS):
         options = _options([cand(n) for n in (GROUPED_I, GROUPED_II, UNGROUPED, OTHER)], "customer", "ledger_family")
     labels = [o["label"] for o in options]
-    assert labels == [GROUP, UNGROUPED, "ZZTFULL TILES SDN BHD"], labels
+    assert labels == [GROUP, UNGROUPED, OTHER], labels
     by_label = {o["label"]: o for o in options}
     assert len(set(by_label[GROUP]["uuids"])) == 2
