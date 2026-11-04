@@ -1,5 +1,4 @@
 'use client';
-'use client';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, {
@@ -46,7 +45,7 @@ function setToPath(obj: any, path: string, value: any): Settings {
 function storeLeaf(path: string, value: unknown) {
   if (!isBrowser()) return;
   try {
-    localStorage.setItem(
+    window.localStorage.setItem(
       `${LOCAL_STORAGE_PREFIX}${path}`,
       JSON.stringify(value),
     );
@@ -58,7 +57,7 @@ function storeLeaf(path: string, value: unknown) {
 function getLeafFromStorage(path: string): any {
   if (!isBrowser()) return undefined;
   try {
-    const item = localStorage.getItem(`${LOCAL_STORAGE_PREFIX}${path}`);
+    const item = window.localStorage.getItem(`${LOCAL_STORAGE_PREFIX}${path}`);
     return item ? JSON.parse(item) : undefined;
   } catch (err) {
     console.error('LocalStorage read error:', err);
@@ -66,27 +65,47 @@ function getLeafFromStorage(path: string): any {
   }
 }
 
+/**
+ * A fresh copy of the defaults. Not `structuredClone`: Safari before 15.4 has none,
+ * and a ReferenceError here took down every page, sign-in included, with "The app
+ * could not start" (CLIENT-ERROR-REPORT). APP_SETTINGS is plain JSON data.
+ */
+function defaultSettings(): Settings {
+  return JSON.parse(JSON.stringify(APP_SETTINGS)) as Settings;
+}
+
+/**
+ * Stored setting paths, or none when storage is blocked. Safari with "Block all
+ * cookies" (and some private modes) throws SecurityError on any localStorage access,
+ * the bare `localStorage` reference included; settings then live in memory only.
+ */
+function storedPaths(): string[] {
+  if (!isBrowser()) return [];
+  try {
+    return Object.keys(window.localStorage)
+      .filter((key) => key.startsWith(LOCAL_STORAGE_PREFIX))
+      .map((key) => key.slice(LOCAL_STORAGE_PREFIX.length));
+  } catch {
+    return [];
+  }
+}
+
 export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [settings, setSettings] = useState<Settings>(
-    structuredClone(APP_SETTINGS),
-  );
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
 
   // Load settings from localStorage after mount
   useEffect(() => {
     if (!isBrowser()) return;
 
-    const init = structuredClone(APP_SETTINGS);
-    Object.keys(localStorage)
-      .filter((key) => key.startsWith(LOCAL_STORAGE_PREFIX))
-      .forEach((key) => {
-        const path = key.replace(LOCAL_STORAGE_PREFIX, '');
-        const value = getLeafFromStorage(path);
-        if (value !== undefined) {
-          setToPath(init, path, value);
-        }
-      });
+    const init = defaultSettings();
+    storedPaths().forEach((path) => {
+      const value = getLeafFromStorage(path);
+      if (value !== undefined) {
+        setToPath(init, path, value);
+      }
+    });
     setSettings(init);
   }, []); // Empty dependency array to run once on mount
 
