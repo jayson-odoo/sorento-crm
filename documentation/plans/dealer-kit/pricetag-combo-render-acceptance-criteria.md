@@ -92,8 +92,8 @@ Shapes:
 - AC-E2. The import's dry run (default) writes a report with one row per combo: shape, status
   `new` / `matches` / `differs` (what differs) / `unsure` (why), flyer page, discontinued
   products named. Nothing is written.
-- AC-E3. `--apply` loads prices (combo LP/SP, option SP, top-up) and, for a combo that differs,
-  updates it to the flyer (adds, removes, regroups parts). A combo the flyer no longer shows is
+- AC-E3. `--apply` loads prices (combo LP/SP, option SP, top-up); `--apply --update` also brings
+  a combo that differs to the flyer (adds, removes, regroups parts). A combo the flyer no longer shows is
   untouched.
 - AC-E4. Cabana and every no-selling-price brand: no combo SP, option SP or top-up is written;
   the report says "price not loaded: no selling price brand".

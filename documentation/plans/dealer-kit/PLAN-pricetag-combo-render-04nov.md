@@ -148,6 +148,25 @@ Choosing a `slot:` value writes `subjectSlot` and `subjectPart: undefined`.
   `--templates` builds the starter templates from one generic `position_template(name, fixed,
   groups, upgrades, free_asset)` layout (replaces `STARTER_TEMPLATES`).
 
+## Tester rulings (4 Nov, captain)
+
+1. `LinePricingRow.list_price` (`app/schemas/price_tag.py:1181`) becomes `Optional[float]`; any
+   `sell < list` compare in `pricing.py` guards None.
+2. Existing tests that pin the part sum on a combo line (`tests/test_price_tag_combo_tag_data.py`
+   `test_ac_2_4_*`) or "no price loaded" / `would_create` / `unchanged` / the two fixed starter
+   templates (`tests/test_import_product_combos.py`) are updated to the new owner-ruled contract.
+3. A differing combo is brought to the flyer only by `--apply --update`.
+4. A picked upgrade is a resolved part with role "Upgrade"; it appears only in `slots.upgrades`
+   (`chosen: true`). `slots.fixed` excludes role "Upgrade" and any product that is one of the
+   combo's upgrade parts.
+5. `needs` is on both `ProductTagTemplateItem` and `TagTemplateResponse` (`price_tag.py:818`).
+6. Only the portal combos lookup exists (`portal_price_tag.py:839`); it carries `is_discontinued`.
+7. The coder also wires `approveBlockedReason` (`PriceTagRequestForm.tsx:1485`) to
+   `linePickProblems` and passes the Add combo modal's draft parts to `ComboTemplatesPicker`.
+   Test-file header comments record the remaining names (`resolvePicks`, `trimPicksToTemplate`,
+   `linePickProblems(lines, pricingByKey, priceMode)`, `layerSubjectSuffix(layer, parts, slots?)`,
+   `subjectSlots` prop, `flyer_combo_read.main(argv, *, provider=None, out=None)`).
+
 ## Slices (one lane, one PR)
 
 1. Tests first (tester): the list below, red.
